@@ -1,4 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import type { ModelReasoningEffort } from "@/agent/model";
 import {
   DEFAULT_PI_PROVIDER,
   isUnselectedLocalModelHandle,
@@ -48,6 +50,11 @@ interface LocalModelListEntry {
   model_endpoint_type: string;
   name: string;
   provider_type: string;
+  /** Reasoning efforts this model supports, so the UI can offer a level picker. */
+  reasoning_capabilities?: {
+    supported_efforts?: ModelReasoningEffort[] | null;
+    mandatory?: boolean;
+  };
 }
 
 interface ListLocalModelsOptions {
@@ -247,6 +254,30 @@ export async function resolveAvailableLocalModelForTurn(input: {
   };
 }
 
+// Translates a pi-ai Model's reasoning capabilities (reasoning flag +
+// thinkingLevelMap) into Letta's reasoning_capabilities contract so the UI can
+// offer a level picker for locally-hosted pi-ai models. pi-ai exposes the
+// canonical supported list via getSupportedThinkingLevels, which honors
+// `reasoning: false` and null thinkingLevelMap entries. The one naming
+// mismatch: pi calls the reasoning-disabled level "off", Letta calls it "none"
+// (the picker renders it as "Off", a 0-bar state distinct from the
+// provider-default null option). A model that cannot disable reasoning
+// reports `mandatory: true`.
+function reasoningCapabilitiesForPiModel(
+  model: Model<Api> | undefined,
+): LocalModelListEntry["reasoning_capabilities"] {
+  if (!model?.reasoning) return undefined;
+  const supportedLevels = getSupportedThinkingLevels(model);
+  const mandatory = !supportedLevels.includes("off");
+  const supportedEfforts = supportedLevels.map((level) =>
+    level === "off" ? "none" : (level as ModelReasoningEffort),
+  );
+  return {
+    supported_efforts: supportedEfforts,
+    ...(mandatory ? { mandatory: true } : {}),
+  };
+}
+
 export async function listLocalModels(
   storageDir?: string,
   options: ListLocalModelsOptions = {},
@@ -277,6 +308,8 @@ export async function listLocalModels(
       maxOutputTokens?: number;
       modelEndpointType?: string;
       name?: string;
+      /** Full pi-ai Model published by a runtime-managed provider. */
+      model?: Model<Api>;
     } = {},
   ) => {
     const handle =
@@ -312,6 +345,9 @@ export async function listLocalModels(
     const providerType =
       options.modelEndpointType ?? localProviderTypeForModelConfig(provider);
     const name = options.name ?? catalogModel?.name ?? modelId;
+    const reasoningCapabilities = reasoningCapabilitiesForPiModel(
+      options.model ?? catalogModel,
+    );
     models.push({
       display_name: name,
       handle,
@@ -321,6 +357,9 @@ export async function listLocalModels(
       model_endpoint_type: providerType,
       name,
       provider_type: providerType,
+      ...(reasoningCapabilities
+        ? { reasoning_capabilities: reasoningCapabilities }
+        : {}),
     });
   };
 
@@ -398,6 +437,7 @@ export async function listLocalModels(
         maxContextWindow: model.contextWindow,
         maxOutputTokens: model.maxTokens,
         name: model.name,
+        model,
       });
     }
   }

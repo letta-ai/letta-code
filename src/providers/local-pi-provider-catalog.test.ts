@@ -431,6 +431,60 @@ describe("local pi provider catalog", () => {
     }
   });
 
+  test("local model listing surfaces reasoning capabilities for mod providers", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-acme-reasoning-"));
+    try {
+      // Register the way a provider mod does: through registerPiProvider with
+      // an owner (the mod engine passes { id: owner.id, path: owner.path }).
+      registerPiProvider(
+        "acme",
+        {
+          baseUrl: "https://api.acme.dev/v1",
+          apiKey: "ACME_API_KEY",
+          api: "openai-completions",
+          listModels() {
+            return [
+              {
+                id: "acme-reasoner",
+                name: "Acme Reasoner",
+                reasoning: true,
+                thinkingLevelMap: {
+                  minimal: null,
+                  low: null,
+                  medium: null,
+                  high: "high",
+                  max: "max",
+                },
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 128000,
+                maxTokens: 8192,
+              },
+            ];
+          },
+        },
+        { id: "mod-owner", path: "/tmp/mod-owner" },
+      );
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "acme",
+        providerName: "acme",
+        apiKey: "acme-key",
+      });
+
+      const models = await listLocalModels(storageDir);
+      const reasoner = models.find(
+        (model) => model.handle === "acme/acme-reasoner",
+      );
+
+      expect(reasoner?.reasoning_capabilities).toEqual({
+        supported_efforts: ["none", "high", "max"],
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("local model listing passes mod OAuth api keys to listModels", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-kilo-oauth-"));
     try {
@@ -516,6 +570,76 @@ describe("local pi provider catalog", () => {
 
       expect(handles).toContain("deepseek/deepseek-v4-flash");
       expect(handles).toContain("deepseek/deepseek-v4-pro");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("local model listing surfaces pi-ai reasoning capabilities", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-pi-provider-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "deepseek",
+        providerName: "deepseek",
+        apiKey: "deepseek-key",
+      });
+
+      const flash = (await listLocalModels(storageDir)).find(
+        (model) => model.handle === "deepseek/deepseek-v4-flash",
+      );
+      // deepseek-v4-flash declares reasoning: true with thinkingLevelMap
+      // { high, max } and reasoning-able-off, so the UI should expose a level
+      // picker for it (null default + none/Off + high + max), never mandatory.
+      expect(flash?.reasoning_capabilities).toEqual({
+        supported_efforts: ["none", "high", "max"],
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("local model listing marks reasoning as mandatory when off is unsupported", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-pi-provider-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "opencode",
+        providerName: "opencode",
+        apiKey: "opencode-key",
+      });
+
+      const fable = (await listLocalModels(storageDir)).find(
+        (model) => model.handle === "opencode/claude-fable-5",
+      );
+      // claude-fable-5 is an adaptive-thinking model that cannot disable
+      // reasoning (no "off" in its supported levels), so the UI must not offer
+      // an Off option and must mark the capability mandatory.
+      expect(fable?.reasoning_capabilities).toEqual({
+        supported_efforts: ["minimal", "low", "medium", "high", "xhigh", "max"],
+        mandatory: true,
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("local model listing omits reasoning capabilities for non-reasoning models", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-pi-provider-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "groq",
+        providerName: "groq",
+        apiKey: "groq-key",
+      });
+
+      const llama = (await listLocalModels(storageDir)).find(
+        (model) => model.handle === "groq/llama-3.1-8b-instant",
+      );
+      // Non-reasoning models emit no reasoning_capabilities: the UI falls back
+      // to no picker / default effort for them.
+      expect(llama?.reasoning_capabilities).toBeUndefined();
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
