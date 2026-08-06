@@ -89,6 +89,7 @@ export interface ErrorData {
   model_handle?: string;
   fallback_kind?: string;
   platform?: string;
+  version?: string;
 }
 
 export interface UserInputData {
@@ -744,6 +745,7 @@ class TelemetryManager {
       model_handle: options?.modelHandle,
       fallback_kind: options?.fallbackKind,
       platform: process.platform,
+      version: getVersion(),
     };
     this.track("error", data);
   }
