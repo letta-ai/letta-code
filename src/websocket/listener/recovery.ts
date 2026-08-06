@@ -33,6 +33,7 @@ import {
   applySuggestedPermissionsForApproval,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
+import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
@@ -229,9 +230,11 @@ export async function drainRecoveryStreamWithEmission(
       }
 
       if (shouldOutput) {
-        const normalizedChunk = normalizeToolReturnWireMessage(
-          chunk as unknown as Record<string, unknown>,
-        );
+        const normalizedChunk =
+          normalizeCloudRetryWireMessage(chunk) ??
+          normalizeToolReturnWireMessage(
+            chunk as unknown as Record<string, unknown>,
+          );
         if (normalizedChunk) {
           emitCanonicalMessageDelta(
             socket,
