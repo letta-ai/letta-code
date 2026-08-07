@@ -54,6 +54,7 @@ import {
   emitLoopErrorNotice,
   emitRecoverableRetryNotice,
   emitRecoverableStatusNotice,
+  emitTerminalEofGuardNotice,
   getConsumerLoopErrorMessage,
   getTranscriptLoopErrorMessage as getSafeTerminalError,
 } from "./recoverable-notices";
@@ -443,9 +444,15 @@ async function handleIncomingMessageInner(
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
       const fallbackError = result.fallbackError ?? null;
-      if (finishIfInterrupted(runId || runtime.activeRunId)) {
-        break;
+
+      if (result.terminalEofGuardFired) {
+        emitTerminalEofGuardNotice(socket, runtime, {
+          runId: runId || runtime.activeRunId,
+          agentId,
+          conversationId,
+        });
       }
+
       if (finishIfInterrupted(runId || runtime.activeRunId)) {
         break;
       }

@@ -30,6 +30,7 @@ import {
   markIncompleteToolsAsCancelled,
   onChunk,
   removeIncompleteTools,
+  upsertStatusLine,
 } from "./accumulator";
 import { chunkLog } from "./chunk-log";
 import type { ContextTracker } from "./context-tracker";
@@ -76,6 +77,7 @@ export type DrainResult = {
   approvals?: ApprovalRequest[]; // NEW: supports parallel approvals
   apiDurationMs: number; // time spent in API call
   fallbackError?: string | null; // Error message for when we can't fetch details from server (no run_id)
+  terminalEofGuardFired?: boolean; // HTTP body never ended after the terminal SSE sequence; guard aborted the read
 };
 
 function summarizeStreamForDebug(stream: unknown): string {
@@ -193,6 +195,18 @@ export async function drainStream(
     getStopReason: () => streamProcessor.stopReason,
     getRunId: () => streamProcessor.lastRunId,
     abortHttpRead: () => abortStreamController(stream, "terminal_eof_guard"),
+    onFired: (graceMs) => {
+      // Surface the stall in the transcript: the turn already waited graceMs
+      // of dead air, so silently continuing would read as unexplained slowness.
+      upsertStatusLine(
+        buffers,
+        `terminal-eof-${streamProcessor.lastRunId ?? startTime}`,
+        [
+          `Stream did not close within ${Math.round(graceMs / 1000)}s of completing, continuing without waiting`,
+        ],
+      );
+      queueMicrotask(refresh);
+    },
   });
 
   // Capture the abort generation at stream start to detect if handleInterrupt ran
@@ -536,6 +550,7 @@ export async function drainStream(
     lastSeqId: streamProcessor.lastSeqId,
     apiDurationMs,
     fallbackError,
+    terminalEofGuardFired: terminalEofGuard.fired(),
   };
 }
 

@@ -37,14 +37,19 @@ export type TerminalEofGuard = {
   arm: () => void;
   /** Cancel the timer. Call when the stream ends for any reason. */
   clear: () => void;
+  /** True if the guard aborted the HTTP read. */
+  fired: () => boolean;
 };
 
 export function createTerminalEofGuard(context: {
   getStopReason: () => string | null;
   getRunId: () => string | null;
   abortHttpRead: () => void;
+  /** Notify the consumer (e.g. to render a transcript notice). */
+  onFired?: (graceMs: number) => void;
 }): TerminalEofGuard {
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let fired = false;
 
   return {
     arm: () => {
@@ -53,6 +58,7 @@ export function createTerminalEofGuard(context: {
       }
       const graceMs = getTerminalEofGraceMs();
       timer = setTimeout(() => {
+        fired = true;
         debugWarn(
           "drainStream",
           "Terminal-EOF guard fired: stop_reason=%s received but stream did not end within %dms - aborting HTTP read",
@@ -67,6 +73,7 @@ export function createTerminalEofGuard(context: {
             runId: context.getRunId() ?? undefined,
           },
         );
+        context.onFired?.(graceMs);
         context.abortHttpRead();
       }, graceMs);
     },
@@ -76,5 +83,6 @@ export function createTerminalEofGuard(context: {
         timer = null;
       }
     },
+    fired: () => fired,
   };
 }

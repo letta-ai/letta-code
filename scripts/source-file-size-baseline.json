@@ -16,7 +16,7 @@
   "src/cli/components/ModelSelector.tsx": 1259,
   "src/cli/components/ProviderSelector.tsx": 1692,
   "src/cli/components/ToolCallMessageRich.tsx": 1109,
-  "src/cli/helpers/accumulator.ts": 1596,
+  "src/cli/helpers/accumulator.ts": 1600,
   "src/cli/helpers/reflection-transcript.ts": 1956,
   "src/cli/mods/local-mod-loader.test.ts": 1043,
   "src/cli/reflection-transcript.test.ts": 1084,
@@ -46,5 +46,6 @@
   "src/websocket/listener/file-commands.ts": 1053,
   "src/websocket/listener/lifecycle.ts": 1051,
   "src/websocket/listener/protocol-inbound.ts": 2264,
-  "src/websocket/listener/protocol-outbound.ts": 1085
+  "src/websocket/listener/protocol-outbound.ts": 1085,
+  "src/websocket/listener/turn.ts": 1007
 }

@@ -19,7 +19,9 @@ import {
 import type { ListenerTransport } from "./transport";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
-export type RecoverableStatusNoticeKind = "stale_approval_conflict_recovery";
+export type RecoverableStatusNoticeKind =
+  | "stale_approval_conflict_recovery"
+  | "stream_terminal_eof_guard";
 export type RecoverableRetryNoticeKind = "transient_provider_retry";
 
 type LifecycleNoticeVisibility = "debug_only" | "transcript";
@@ -44,6 +46,8 @@ export function getRecoverableStatusNoticeVisibility(
   switch (kind) {
     case "stale_approval_conflict_recovery":
       return "debug_only";
+    case "stream_terminal_eof_guard":
+      return "transcript";
     default:
       return "transcript";
   }
@@ -311,6 +315,28 @@ export function emitLoopErrorNotice(
     apiError: decision.apiError,
   });
   return decision.message;
+}
+
+/**
+ * The HTTP response body never ended after the terminal SSE sequence; the
+ * terminal-EOF guard aborted the read after a grace period of dead air.
+ * Surface it so the wait doesn't read as unexplained slowness (LET-10707).
+ */
+export function emitTerminalEofGuardNotice(
+  socket: ListenerTransport,
+  runtime: ListenerRuntime | ConversationRuntime,
+  params: {
+    runId?: string | null;
+    agentId?: string | null;
+    conversationId?: string | null;
+  },
+): void {
+  emitRecoverableStatusNotice(socket, runtime, {
+    kind: "stream_terminal_eof_guard",
+    message: "Stream did not close after completing, continued without waiting",
+    level: "warning",
+    ...params,
+  });
 }
 
 export function emitRecoverableStatusNotice(

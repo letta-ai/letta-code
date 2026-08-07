@@ -101,6 +101,14 @@ describe("drainStream terminal-EOF guard", () => {
       },
     ]);
     expect(buffers.usage.totalTokens).toBe(110);
+    // The firing is reported so consumers (listener/headless) can surface it.
+    expect(result.terminalEofGuardFired).toBe(true);
+    // The stall is surfaced as a nonblocking status line in the transcript.
+    const statusLines = Array.from(buffers.byId.values()).filter(
+      (line) => line.kind === "status",
+    );
+    expect(statusLines).toHaveLength(1);
+    expect(statusLines[0]?.lines[0]).toContain("Stream did not close");
   });
 
   test("returns end_turn when body never ends after terminal sequence", async () => {
@@ -156,14 +164,16 @@ describe("drainStream terminal-EOF guard", () => {
       },
     } as unknown as Stream<LettaStreamingResponse>;
 
-    const result = await drainStream(
-      stream,
-      createBuffers("agent-test"),
-      () => {},
-    );
+    const buffers = createBuffers("agent-test");
+    const result = await drainStream(stream, buffers, () => {});
 
     expect(controller.signal.aborted).toBe(false);
     expect(result.stopReason).toBe("end_turn");
+    expect(result.terminalEofGuardFired).toBe(false);
+    // No stall, no notice.
+    expect(
+      Array.from(buffers.byId.values()).some((line) => line.kind === "status"),
+    ).toBe(false);
   });
 
   test("guard does not fire before a stop_reason chunk arrives", async () => {
