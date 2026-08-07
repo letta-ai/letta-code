@@ -32,6 +32,7 @@ describe("listener tool prep metadata reuse", () => {
       "cachedAgent = (await getBackend().retrieveAgent(",
     );
     expect(listenSource).toContain('skills: { type: "string" }');
+    expect(listenSource).toContain("process.env.LETTA_SKILLS_DIRECTORY");
     expect(listenSource.match(/skillsDirectory,/g)).toHaveLength(2);
     expect(setupSource).toContain("prepareToolExecutionContextForScope({");
     expect(setupSource).toContain(

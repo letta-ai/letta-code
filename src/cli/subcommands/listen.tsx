@@ -288,7 +288,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   }
 
   const debugMode = !!values.debug;
-  const skillsDirectory = values.skills;
+  const skillsDirectory = values.skills ?? process.env.LETTA_SKILLS_DIRECTORY;
 
   // Show help
   if (values.help) {
