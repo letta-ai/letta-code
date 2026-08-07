@@ -80,6 +80,26 @@ describe("dream subcommand", () => {
     }
   });
 
+  test.each(["0", "-1", "1.5", "30seconds", " ", "9007199254740992", "86401"])(
+    "rejects invalid timeout %p",
+    async (timeout) => {
+      const captured = captureConsole();
+      try {
+        const exitCode = await runDreamSubcommand([
+          timeout.startsWith("-") ? `--timeout=${timeout}` : "--timeout",
+          ...(timeout.startsWith("-") ? [] : [timeout]),
+        ]);
+
+        expect(exitCode).toBe(1);
+        expect(captured.errors.join("\n")).toContain(
+          "--timeout must be an integer between 1 and 86400",
+        );
+      } finally {
+        captured.restore();
+      }
+    },
+  );
+
   test("accepts an explicit reflection model", () => {
     const parsed = parseDreamArgs(["--model", "zai/glm-5.2"]);
 

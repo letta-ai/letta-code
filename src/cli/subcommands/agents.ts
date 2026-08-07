@@ -8,6 +8,7 @@ import {
 } from "@/agent/personality";
 import { resolvePersonalityId } from "@/agent/personality-presets";
 import { getBackend } from "@/backend";
+import { CLI_NUMERIC_OPTION_MAX, parsePositiveIntFlag } from "@/cli/flag-utils";
 import { listSharedAgentsForCurrentUser } from "@/cli/helpers/shared-agent-listing";
 import { settingsManager } from "@/settings-manager";
 
@@ -33,7 +34,7 @@ List Options:
   --match-all-tags      Require ALL tags (default: ANY)
   --include-blocks      Include agent.blocks in response
   --shared              List agents shared with the current user
-  --limit <n>           Max results (default: 20)
+  --limit <n>           Max results (1-1000; default: 20)
 
 Create Options:
   --name <name>         Agent name (default: "Letta Code")
@@ -50,12 +51,6 @@ Notes:
   - Uses CLI auth; override with LETTA_API_KEY/LETTA_BASE_URL if needed.
 `.trim(),
   );
-}
-
-function parseLimit(value: unknown, fallback: number): number {
-  if (typeof value !== "string" || value.length === 0) return fallback;
-  const parsed = Number.parseInt(value, 10);
-  return Number.isNaN(parsed) ? fallback : parsed;
 }
 
 function parseTags(value: unknown): string[] | undefined {
@@ -371,6 +366,19 @@ async function runConfigAction(
 async function runListAction(
   values: ReturnType<typeof parseAgentsArgs>["values"],
 ): Promise<number> {
+  let limit: number;
+  try {
+    limit =
+      parsePositiveIntFlag({
+        rawValue: values.limit,
+        flagName: "limit",
+        maxValue: CLI_NUMERIC_OPTION_MAX.pageSize,
+      }) ?? 20;
+  } catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : error}`);
+    return 1;
+  }
+
   await settingsManager.initialize();
 
   if (values.shared) {
@@ -387,7 +395,7 @@ async function runListAction(
 
     try {
       const result = await listSharedAgentsForCurrentUser({
-        limit: parseLimit(values.limit, 20),
+        limit,
         order: "desc",
         orderBy: "last_run_completion",
         queryText: typeof values.query === "string" ? values.query : undefined,
@@ -401,7 +409,7 @@ async function runListAction(
   }
 
   const params: AgentListParams = {
-    limit: parseLimit(values.limit, 20),
+    limit,
   };
 
   if (typeof values.name === "string") {
