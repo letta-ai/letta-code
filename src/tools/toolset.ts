@@ -94,6 +94,31 @@ function resolveIncludedToolNames(toolNames: string[] | undefined): ToolName[] {
   });
 }
 
+/**
+ * Bundled client tools named in the allowlist, so that allowlisting a tool
+ * also loads it. Without this an allowlist is only a filter over whatever the
+ * base happens to carry, so a client asking for exactly ["Read", "LS",
+ * "Glob", "Grep"] silently gets just the ones its base already had.
+ *
+ * Unknown names are skipped rather than rejected: unlike `include`, an
+ * allowlist legitimately carries MCP and other external tool names that are
+ * not bundled client tools.
+ */
+function resolveAllowlistedToolNames(
+  allowlist: string[] | undefined,
+): ToolName[] {
+  if (!allowlist) return [];
+
+  const toolNames: ToolName[] = [];
+  for (const allowedName of allowlist) {
+    const internalName = getInternalToolName(allowedName);
+    if (Object.hasOwn(TOOL_DEFINITIONS, internalName)) {
+      toolNames.push(internalName as ToolName);
+    }
+  }
+  return toolNames;
+}
+
 function appendUniqueToolNames(
   baseToolNames: ToolName[],
   includedToolNames: ToolName[],
@@ -236,7 +261,10 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       ? (resolveModel(modelIdentifier) ?? modelIdentifier)
       : null;
   const effectiveToolsetPreference = clientToolset?.base ?? toolsetPreference;
-  const includedToolNames = resolveIncludedToolNames(clientToolset?.include);
+  const includedToolNames = appendUniqueToolNames(
+    resolveIncludedToolNames(clientToolset?.include),
+    resolveAllowlistedToolNames(clientToolAllowlist),
+  );
 
   if (effectiveToolsetPreference === "auto") {
     const derivedToolset = effectiveModel

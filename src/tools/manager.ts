@@ -1507,13 +1507,10 @@ async function resolveBaseToolNamesForModel(
   }
 
   if (options?.include && options.include.length > 0) {
-    const seen = new Set(baseToolNames);
-    for (const name of options.include) {
-      if (!seen.has(name)) {
-        baseToolNames.push(name);
-        seen.add(name);
-      }
-    }
+    // Copy rather than push: the branches above bind shared module-level
+    // preset arrays, so appending in place would leak one turn's tools into
+    // the preset itself for the life of the process.
+    baseToolNames = [...new Set([...baseToolNames, ...options.include])];
   }
 
   if (options?.exclude && options.exclude.length > 0) {
