@@ -45,6 +45,7 @@ import {
   emitLoopStatusUpdate,
   emitRetryDelta,
   emitRuntimeStateUpdates,
+  emitStatusDelta,
 } from "./protocol-outbound";
 import {
   createProviderFallbackState,
@@ -54,7 +55,6 @@ import {
   emitLoopErrorNotice,
   emitRecoverableRetryNotice,
   emitRecoverableStatusNotice,
-  emitTerminalEofGuardNotice,
   getConsumerLoopErrorMessage,
   getTranscriptLoopErrorMessage as getSafeTerminalError,
 } from "./recoverable-notices";
@@ -446,7 +446,10 @@ async function handleIncomingMessageInner(
       const fallbackError = result.fallbackError ?? null;
 
       if (result.terminalEofGuardFired) {
-        emitTerminalEofGuardNotice(socket, runtime, {
+        emitStatusDelta(socket, runtime, {
+          message:
+            "Stream did not close after completing, continued without waiting",
+          level: "warning",
           runId: runId || runtime.activeRunId,
           agentId,
           conversationId,

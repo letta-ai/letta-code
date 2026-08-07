@@ -45,8 +45,6 @@ export function createTerminalEofGuard(context: {
   getStopReason: () => string | null;
   getRunId: () => string | null;
   abortHttpRead: () => void;
-  /** Notify the consumer (e.g. to render a transcript notice). */
-  onFired?: (graceMs: number) => void;
 }): TerminalEofGuard {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let fired = false;
@@ -73,7 +71,6 @@ export function createTerminalEofGuard(context: {
             runId: context.getRunId() ?? undefined,
           },
         );
-        context.onFired?.(graceMs);
         context.abortHttpRead();
       }, graceMs);
     },
