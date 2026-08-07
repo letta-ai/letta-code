@@ -43,7 +43,7 @@ import {
   shouldEmitDeviceStatus,
 } from "./device-status-cache";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
-import { listListenerModCommands } from "./mod-commands";
+import { listListenerModCommands } from "./mod-command-registry";
 import { enqueueOutboundFrame, type OutboundFrameClass } from "./outbound-wire";
 import { getConversationPermissionModeState } from "./permission-mode";
 import {

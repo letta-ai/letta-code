@@ -1,5 +1,6 @@
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { attachDeprecatedGetContextTrap } from "@/mods/deprecated-api";
+import { runWithModInvocationContext } from "@/mods/invocation-context";
 import type { ModCommand, ModCommandContext, ModCommandResult } from "./types";
 
 const MOD_COMMAND_TIMEOUT_MS = 30_000;
@@ -130,15 +131,16 @@ export async function runModCommandWithTimeout(
 ): Promise<ModCommandResult> {
   let timeout: ReturnType<typeof setTimeout> | null = null;
   try {
+    const invocationContext = attachDeprecatedGetContextTrap(
+      context,
+      command.recordDiagnostic,
+      "ctx.getContext",
+    );
     return normalizeModCommandResult(
       await Promise.race([
         Promise.resolve(
-          command.run(
-            attachDeprecatedGetContextTrap(
-              context,
-              command.recordDiagnostic,
-              "ctx.getContext",
-            ),
+          runWithModInvocationContext(invocationContext, () =>
+            command.run(invocationContext),
           ),
         ),
         new Promise<never>((_, reject) => {
