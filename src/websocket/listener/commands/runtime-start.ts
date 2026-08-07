@@ -22,6 +22,7 @@ import {
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
 import { isRuntimeStartCommand } from "@/websocket/listener/protocol-inbound";
+import { setConversationRuntimeStateless } from "@/websocket/listener/runtime-memory";
 import type {
   ConversationRuntime,
   ListenerConnectionId,
@@ -304,6 +305,8 @@ async function applyRuntimeStartState(
       skillSources,
     );
   }
+
+  setConversationRuntimeStateless(scopedRuntime, parsed.stateless === true);
 
   if (parsed.mode) {
     const mode = migratePermissionMode(parsed.mode);

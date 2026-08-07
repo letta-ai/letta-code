@@ -28,6 +28,10 @@ import {
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
+import {
+  getConversationSkillSources,
+  isConversationMemfsEnabled,
+} from "./runtime-memory";
 import { emitListenerTurnStart } from "./turn-events";
 import {
   createTurnInputState,
@@ -92,7 +96,7 @@ export async function prepareListenerTurn(params: {
 
   let listenAgentMetadata = await ensureListenerWarmStateForTurn(
     runtime.listener,
-    { agentId, conversationId },
+    { agentId, conversationId, stateless: runtime.stateless },
   );
   if (isInterrupted()) {
     return { kind: "interrupted" };
@@ -138,19 +142,21 @@ export async function prepareListenerTurn(params: {
         cachedAgent = (await getBackend().retrieveAgent(agentId, {
           include: ["agent.tags"],
         })) as AgentState;
-        const {
-          ensureLettaCodeOriginTag,
-          getMemoryPromptModeForAgent,
-          scheduleManagedSystemPromptUpdate,
-        } = await import("@/agent/system-prompt-versioning");
-        cachedAgent = await ensureLettaCodeOriginTag(cachedAgent);
-        scheduleManagedSystemPromptUpdate({
-          agent: cachedAgent,
-          memoryMode: getMemoryPromptModeForAgent(cachedAgent.id),
-          onUpdated: (updatedAgent) => {
-            cachedAgent = updatedAgent;
-          },
-        });
+        if (!runtime.stateless) {
+          const {
+            ensureLettaCodeOriginTag,
+            getMemoryPromptModeForAgent,
+            scheduleManagedSystemPromptUpdate,
+          } = await import("@/agent/system-prompt-versioning");
+          cachedAgent = await ensureLettaCodeOriginTag(cachedAgent);
+          scheduleManagedSystemPromptUpdate({
+            agent: cachedAgent,
+            memoryMode: getMemoryPromptModeForAgent(cachedAgent.id),
+            onUpdated: (updatedAgent) => {
+              cachedAgent = updatedAgent;
+            },
+          });
+        }
       } catch (error) {
         debugWarn(
           "listen",
@@ -233,6 +239,7 @@ export async function prepareListenerTurn(params: {
         workingDirectory,
         permissionMode: permissionModeState.mode,
         cachedAgent,
+        stateless: runtime.stateless,
       })
     : ({ cancelled: false, handlerCount: 0, input: messagesToSend } as const);
   if (isInterrupted()) {
@@ -267,6 +274,7 @@ export async function prepareListenerTurn(params: {
   const modAdapters = await ensureListenerModAdaptersForAgent(
     runtime.listener,
     agentId,
+    { includeAgent: !runtime.stateless },
   );
   const listenerOptions = connectionId
     ? runtime.listener.connections.get(connectionId)?.options
@@ -288,11 +296,17 @@ export async function prepareListenerTurn(params: {
     workingDirectory,
     permissionModeState,
     skillsDirectory: listenerOptions?.skillsDirectory,
-    skillSources: runtime.skillSources,
+    skillSources: getConversationSkillSources(runtime),
     cachedAgent,
-    modContext: createListenerAgentModContext(agentId),
+    modContext: createListenerAgentModContext(
+      agentId,
+      isConversationMemfsEnabled(runtime),
+    ),
     modAdapters,
     modEvents: createListenerModEvents(modAdapters),
+    runtimeContext: {
+      memfsEnabled: isConversationMemfsEnabled(runtime),
+    },
   });
   if (isInterrupted()) {
     return { kind: "interrupted" };

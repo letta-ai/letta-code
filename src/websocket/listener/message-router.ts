@@ -4,7 +4,6 @@ import {
   estimateSystemPromptTokensFromMemoryDir,
   setSystemPromptDoctorState,
 } from "@/cli/helpers/system-prompt-warning";
-import { settingsManager } from "@/settings-manager";
 import type {
   AbortMessageCommand,
   ApprovalResponseBody,
@@ -63,6 +62,7 @@ import {
 } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
+import { isConversationMemfsEnabled } from "./runtime-memory";
 import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
 import type {
@@ -761,7 +761,12 @@ export function createListenerMessageHandler(
         // Internal-only: refresh doctor state after recompile (no chat output)
         if (parsed.command_id === "refresh_doctor_state") {
           const agentId = parsed.runtime.agent_id;
-          if (agentId && settingsManager.isMemfsEnabled(agentId)) {
+          const doctorRuntime = getOrCreateScopedRuntime(
+            runtime,
+            agentId,
+            parsed.runtime.conversation_id,
+          );
+          if (agentId && isConversationMemfsEnabled(doctorRuntime)) {
             try {
               const { getScopedMemoryFilesystemRoot } = await import(
                 "@/agent/memory-filesystem"

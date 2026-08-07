@@ -3,6 +3,7 @@ import { debugWarn } from "@/utils/debug";
 import { ensureMemfsSyncedForAgent } from "./memfs-sync";
 import { ensureListenerAgentModAdapter } from "./mod-adapter";
 import { emitDeviceStatusUpdateIfChanged } from "./protocol-outbound";
+import { getConversationRuntime } from "./runtime";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import { isListenerTransportOpen } from "./transport";
 import type { ListenerRuntime } from "./types";
@@ -16,6 +17,7 @@ export type ListenerAgentMetadata = {
 export type ListenerWarmupScope = {
   agentId: string;
   conversationId: string;
+  stateless?: boolean;
 };
 
 function getAgentMetadataPromise(
@@ -91,14 +93,15 @@ export async function ensureListenerWarmStateForTurn(
 
   try {
     await Promise.all([
-      warmupDeps.ensureMemfsSyncedForAgent(listener, agentId),
+      ...(scope.stateless
+        ? []
+        : [warmupDeps.ensureMemfsSyncedForAgent(listener, agentId)]),
       warmupDeps.ensureSecretsHydratedForAgent(listener, agentId),
       agentMetadataPromise,
     ]);
-    const agentModAdapter = await ensureListenerAgentModAdapter(
-      listener,
-      agentId,
-    );
+    const agentModAdapter = scope.stateless
+      ? null
+      : await ensureListenerAgentModAdapter(listener, agentId);
     const transport = listener.transport ?? listener.socket;
     if (agentModAdapter && transport && isListenerTransportOpen(transport)) {
       emitDeviceStatusUpdateIfChanged(transport, listener, {
@@ -134,9 +137,16 @@ export function scheduleListenerWarmupsAfterSync(
     return;
   }
 
+  const normalizedConversationId = conversationId ?? "default";
+  const conversationRuntime = getConversationRuntime(
+    listener,
+    agentId,
+    normalizedConversationId,
+  );
   void ensureListenerWarmStateForTurn(listener, {
     agentId,
-    conversationId: conversationId ?? "default",
+    conversationId: normalizedConversationId,
+    stateless: conversationRuntime?.stateless === true,
   }).catch((error) => {
     debugWarn(
       "listener-warmup",

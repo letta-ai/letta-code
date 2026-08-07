@@ -91,6 +91,7 @@ export function createListenerModContext(
         reasoning_effort?: string | null;
       } | null;
     } | null;
+    memfsEnabled?: boolean;
     modelIdentifier?: string | null;
     permissionMode?: string | null;
     toolset?: string | null;
@@ -107,12 +108,21 @@ export function createListenerModContext(
   });
   return {
     ...context,
-    memfs: resolveListenerAgentMemfsContext(context.agent.id),
+    memfs:
+      options.memfsEnabled === false
+        ? { enabled: false, memoryDir: null }
+        : resolveListenerAgentMemfsContext(context.agent.id),
   };
 }
 
-export function createListenerAgentModContext(agentId: string): ModContext {
-  return createListenerModContext({ agent: { id: agentId } });
+export function createListenerAgentModContext(
+  agentId: string,
+  memfsEnabled?: boolean,
+): ModContext {
+  return createListenerModContext({
+    agent: { id: agentId },
+    ...(memfsEnabled !== undefined ? { memfsEnabled } : {}),
+  });
 }
 
 export function createListenerModAdapter(
@@ -235,8 +245,12 @@ export async function ensureListenerAgentModAdapter(
 export async function ensureListenerModAdaptersForAgent(
   runtime: ListenerRuntime,
   agentId: string,
+  options: { includeAgent?: boolean } = {},
 ): Promise<ModAdapter[]> {
   const globalAdapter = ensureListenerModAdapter(runtime);
+  if (options.includeAgent === false) {
+    return [globalAdapter];
+  }
   const agentAdapter = await ensureListenerAgentModAdapter(runtime, agentId);
   return agentAdapter ? [globalAdapter, agentAdapter] : [globalAdapter];
 }

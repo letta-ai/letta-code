@@ -284,7 +284,6 @@ function stampInboundUserMessageOtids(
 }
 
 export function createRuntime(): ListenerRuntime {
-  const bootWorkingDirectory = getCurrentWorkingDirectory();
   return {
     socket: null,
     transport: null,
@@ -312,11 +311,12 @@ export function createRuntime(): ListenerRuntime {
     pendingQueueEmitScope: undefined,
     onWsEvent: undefined,
     reminderState: createSharedReminderState(),
-    bootWorkingDirectory,
+    bootWorkingDirectory: getCurrentWorkingDirectory(),
     workingDirectoryByConversation: loadPersistedCwdMap(),
     worktreeWatcherByConversation: new Map(),
     permissionModeByConversation: loadPersistedPermissionModeMap(),
     skillSourcesByConversation: new Map(),
+    statelessByConversation: new Set(),
     reminderStateByConversation: new Map(),
     contextTrackerByConversation: new Map(),
     systemPromptRecompileByConversation: new Map(),

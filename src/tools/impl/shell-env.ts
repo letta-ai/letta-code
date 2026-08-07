@@ -375,10 +375,11 @@ export function getShellEnv(): NodeJS.ProcessEnv {
       const localBackendEnabled =
         process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL === "1" ||
         process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL?.toLowerCase() === "true";
-      if (
-        !localBackendNoMemfs &&
-        (settingsManager.isMemfsEnabled(agentId) || localBackendEnabled)
-      ) {
+      const runtimeMemfsEnabled = getRuntimeContext()?.memfsEnabled;
+      const memfsEnabled =
+        runtimeMemfsEnabled ??
+        (settingsManager.isMemfsEnabled(agentId) || localBackendEnabled);
+      if (!localBackendNoMemfs && memfsEnabled) {
         const memoryDir = resolveScopedMemoryDir({ agentId });
         if (!memoryDir) {
           throw new Error("Unable to resolve memory directory");

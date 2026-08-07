@@ -19,6 +19,8 @@ export interface RuntimeContextSnapshot {
   conversationId?: string | null;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
+  /** Runtime override for whether tools may project the agent's MemFS. */
+  memfsEnabled?: boolean;
   workingDirectory?: string | null;
   /**
    * Set when the runtime-scoped working directory was found deleted and

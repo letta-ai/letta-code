@@ -6,7 +6,6 @@ import {
   applySetMaxContext,
   formatSetMaxContextResult,
 } from "@/agent/max-context";
-import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
@@ -54,6 +53,10 @@ import {
 } from "./protocol-outbound";
 import { flushRemoteSettingsWrites } from "./remote-settings";
 import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
+import {
+  getConversationMemoryDirectory,
+  isConversationMemfsEnabled,
+} from "./runtime-memory";
 import {
   ensureSecretsHydratedForAgent,
   invalidateSecretsCacheForAgent,
@@ -110,6 +113,15 @@ export async function handleExecuteCommand(
 
   try {
     let output: string;
+
+    if (
+      conversationRuntime.stateless &&
+      ["doctor", "init", "remember", "reflect"].includes(command.command_id)
+    ) {
+      throw new Error(
+        `/${command.command_id} is unavailable in a stateless runtime because it writes agent memory.`,
+      );
+    }
 
     switch (command.command_id) {
       case "clear":
@@ -341,7 +353,10 @@ export async function handleReloadCommand(
     );
   }
 
-  await reloadListenerModAdapter(listener, conversationRuntime.agentId);
+  await reloadListenerModAdapter(
+    listener,
+    conversationRuntime.stateless ? undefined : conversationRuntime.agentId,
+  );
 
   if (conversationRuntime.agentId) {
     invalidateSecretsCacheForAgent(listener, conversationRuntime.agentId);
@@ -558,7 +573,7 @@ async function handleCompactCommand(
       );
       if (
         reflectionSettings.trigger === "compaction-event" &&
-        settingsManager.isMemfsEnabled(agentId)
+        isConversationMemfsEnabled(conversationRuntime)
       ) {
         void buildMaybeLaunchReflectionSubagent({
           runtime: conversationRuntime,
@@ -687,9 +702,8 @@ async function handleDoctorCommand(
   }
 
   const { context: gitContext } = gatherInitGitContext();
-  const memoryDir = settingsManager.isMemfsEnabled(agentId)
-    ? getScopedMemoryFilesystemRoot(agentId)
-    : undefined;
+  const memoryDir =
+    getConversationMemoryDirectory(conversationRuntime) ?? undefined;
   const skillNameFrontmatterRepair =
     await repairMissingSkillNameFrontmatter(memoryDir);
   const skillNameFrontmatterRepairReport =
@@ -747,9 +761,8 @@ async function handleInitCommand(
   }
 
   const { context: gitContext } = gatherInitGitContext();
-  const memoryDir = settingsManager.isMemfsEnabled(agentId)
-    ? getScopedMemoryFilesystemRoot(agentId)
-    : undefined;
+  const memoryDir =
+    getConversationMemoryDirectory(conversationRuntime) ?? undefined;
 
   const initMessage = buildInitMessage({ gitContext, memoryDir });
 
@@ -900,7 +913,7 @@ async function handleReflectCommand(
   const result = await launchReflectionSubagent({
     agentId,
     conversationId,
-    memfsEnabled: settingsManager.isMemfsEnabled(agentId),
+    memfsEnabled: isConversationMemfsEnabled(conversationRuntime),
     triggerSource: "manual",
     description: "Reflecting on conversation",
     recompileByConversation: listener.systemPromptRecompileByConversation,

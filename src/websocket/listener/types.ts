@@ -190,6 +190,8 @@ export type ConversationRuntime = {
   conversationId: string;
   /** Runtime-scoped SDK override. Undefined uses the process defaults. */
   skillSources: SkillSource[] | undefined;
+  /** Skip local MemFS reads and writes for this conversation runtime. */
+  stateless: boolean;
   /** Connection currently executing this conversation's turn, if client-owned. */
   activeConnectionId: ListenerConnectionId | null;
   turnLifecycle: TurnLifecycle;
@@ -341,6 +343,8 @@ export type ListenerRuntime = {
   >;
   /** Per-conversation skill overrides survive idle ConversationRuntime eviction. */
   skillSourcesByConversation: Map<string, SkillSource[]>;
+  /** Stateless runtime scopes survive idle ConversationRuntime eviction. */
+  statelessByConversation?: Set<string>;
   /** Per-conversation reminder state survives ConversationRuntime eviction. */
   reminderStateByConversation: Map<string, SharedReminderState>;
   /** Per-conversation context tracker survives ConversationRuntime eviction. */

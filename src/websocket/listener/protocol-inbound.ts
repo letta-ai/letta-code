@@ -522,7 +522,6 @@ function isRuntimeStartClientInfo(value: unknown): boolean {
     (value.version === undefined || typeof value.version === "string")
   );
 }
-
 export function isRuntimeStartCommand(
   value: unknown,
 ): value is RuntimeStartCommand {
@@ -542,6 +541,7 @@ export function isRuntimeStartCommand(
       isStringArray(c.conversation_source_tags)) &&
     (c.cwd === undefined || c.cwd === null || typeof c.cwd === "string") &&
     (c.mode === undefined || isDevicePermissionMode(c.mode)) &&
+    (c.stateless === undefined || typeof c.stateless === "boolean") &&
     (c.skill_sources === undefined || isSkillSourceArray(c.skill_sources)) &&
     (c.preserve_skill_sources === undefined ||
       typeof c.preserve_skill_sources === "boolean") &&
