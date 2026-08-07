@@ -16,7 +16,12 @@ try {
   secretsAvailable = false;
 }
 
-let SERVICE_NAME = "letta-code";
+function scopeServiceName(name: string): string {
+  const testPrefix = process.env.LETTA_TEST_SECRETS_SERVICE_PREFIX?.trim();
+  return testPrefix ? `${testPrefix}:${name}` : name;
+}
+
+let SERVICE_NAME = scopeServiceName("letta-code");
 const API_KEY_NAME = "letta-api-key";
 const REFRESH_TOKEN_NAME = "letta-refresh-token";
 
@@ -125,7 +130,7 @@ export async function deleteSecretValue(name: string): Promise<boolean> {
  * Override the keychain service name (useful for tests to avoid touching real credentials)
  */
 export function setServiceName(name: string): void {
-  SERVICE_NAME = name;
+  SERVICE_NAME = scopeServiceName(name);
 }
 
 // Note: When secrets API is unavailable (Node.js), tokens will be managed

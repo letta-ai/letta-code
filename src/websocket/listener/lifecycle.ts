@@ -426,9 +426,9 @@ export async function startConnectedListenerRuntime(
         );
         runtime.socket?.terminate();
       },
-      () => {
+      (heartbeatTransport) => {
         return safeTransportSend(
-          transport,
+          heartbeatTransport,
           { type: "ping" },
           "listener_ping_send_failed",
           "listener_heartbeat",

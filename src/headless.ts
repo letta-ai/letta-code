@@ -11,7 +11,10 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
-import { trackBoundaryError } from "@/telemetry/error-reporting";
+import {
+  trackBoundaryError,
+  trackEndTurnNoAssistant,
+} from "@/telemetry/error-reporting";
 import { extractTelemetryInputText } from "@/telemetry/input";
 import { installHeadlessStdoutGuard } from "@/utils/headless-stdout-guard";
 import {
@@ -3546,6 +3549,19 @@ ${SYSTEM_REMINDER_CLOSE}
     lastReasoning?.text ||
     lastToolResult?.resultText ||
     "No assistant response found";
+
+  // end_turn with no assistant text → trajectory ended on reasoning or tool call (parse error)
+  if (!lastAssistant && (lastReasoning || lastToolResult)) {
+    trackEndTurnNoAssistant({
+      fallbackKind: lastReasoning ? "reasoning" : "tool_call",
+      modelHandle: agent.llm_config?.model ?? model,
+      runId: lastKnownRunId ?? undefined,
+      isSubagent,
+      subagentType:
+        systemPromptPreset ??
+        agent.tags?.find((t) => t.startsWith("type:"))?.slice(5),
+    });
+  }
 
   const stats = sessionStats.getSnapshot();
   const usage = {

@@ -209,6 +209,7 @@ export const __listenSubcommandTestUtils = {
 const LISTEN_OPTIONS = {
   "env-name": { type: "string" },
   channels: { type: "string" },
+  skills: { type: "string" },
   "install-channel-runtimes": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   debug: { type: "boolean" },
@@ -216,7 +217,7 @@ const LISTEN_OPTIONS = {
 
 function printListenUsage(): void {
   console.log(
-    "Usage: letta server [--env-name <name>] [--channels <list>] [--debug]\n",
+    "Usage: letta server [--env-name <name>] [--channels <list>] [--skills <path>] [--debug]\n",
   );
   console.log(
     "Register this letta-code instance to receive messages from Letta Cloud.\n",
@@ -227,6 +228,9 @@ function printListenUsage(): void {
   );
   console.log(
     "  --channels <list>  Comma-separated channel names to enable (e.g. telegram)",
+  );
+  console.log(
+    "  --skills <path>     Use this directory for environment-provided skills",
   );
   console.log(
     "  --install-channel-runtimes  Install missing runtime deps for the selected channels before startup",
@@ -284,6 +288,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   }
 
   const debugMode = !!values.debug;
+  const skillsDirectory = values.skills ?? process.env.LETTA_SKILLS_DIRECTORY;
 
   // Show help
   if (values.help) {
@@ -750,6 +755,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
           deviceId,
           connectionName,
+          skillsDirectory,
           onWsEvent: shouldLogWsEvents ? wsEventLogger : undefined,
           onStatusChange: (status) => {
             sessionLog.log(`status: ${status}`);
@@ -844,6 +850,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
           deviceId,
           connectionName,
+          skillsDirectory,
           onWsEvent: shouldLogWsEvents ? wsEventLogger : undefined,
           onStatusChange: (status) => {
             sessionLog.log(`status: ${status}`);

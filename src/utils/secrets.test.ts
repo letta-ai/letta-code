@@ -16,6 +16,7 @@ import {
   setApiKey,
   setRefreshToken,
   setSecureTokens,
+  setServiceName,
 } from "@/utils/secrets";
 
 const keychainAvailablePrecompute = await isKeychainAvailable();
@@ -44,6 +45,21 @@ describe("Secrets utilities", () => {
   test("isKeychainAvailable works", async () => {
     const available = await isKeychainAvailable();
     expect(typeof available).toBe("boolean");
+  });
+
+  test("uses a test-scoped keyring service", async () => {
+    const prefix = process.env.LETTA_TEST_SECRETS_SERVICE_PREFIX;
+    if (!prefix) throw new Error("Test keyring namespace was not configured");
+    let service: string | undefined;
+    __setSecretGetOverrideForTests(async (options) => {
+      service = options.service;
+      return null;
+    });
+
+    setServiceName("letta-code");
+    await getApiKey();
+
+    expect(service).toBe(`${prefix}:letta-code`);
   });
 
   test.skipIf(!keychainAvailablePrecompute)(

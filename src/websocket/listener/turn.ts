@@ -25,6 +25,7 @@ import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { debugLog, isDebugEnabled } from "@/utils/debug";
+import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
@@ -44,6 +45,7 @@ import {
   emitLoopStatusUpdate,
   emitRetryDelta,
   emitRuntimeStateUpdates,
+  emitStatusDelta,
 } from "./protocol-outbound";
 import {
   createProviderFallbackState,
@@ -100,8 +102,7 @@ export async function handleIncomingMessage(
   dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
   existingTurnLease?: TurnLease,
 ): Promise<void> {
-  // Notify OTID-keyed turn observers (see turn-observers.ts) around the
-  // whole turn, regardless of which dispatch closure invoked it.
+  // Notify OTID-keyed observers around the complete turn.
   notifyTurnStarted(msg);
   try {
     await handleIncomingMessageInner(
@@ -414,9 +415,11 @@ async function handleIncomingMessageInner(
           }
 
           if (shouldOutput) {
-            const normalizedChunk = normalizeToolReturnWireMessage(
-              chunk as unknown as Record<string, unknown>,
-            );
+            const normalizedChunk =
+              normalizeCloudRetryWireMessage(chunk) ??
+              normalizeToolReturnWireMessage(
+                chunk as unknown as Record<string, unknown>,
+              );
             if (normalizedChunk) {
               emitCanonicalMessageDelta(
                 socket,
@@ -441,9 +444,18 @@ async function handleIncomingMessageInner(
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
       const fallbackError = result.fallbackError ?? null;
-      if (finishIfInterrupted(runId || runtime.activeRunId)) {
-        break;
+
+      if (result.terminalEofGuardFired) {
+        emitStatusDelta(socket, runtime, {
+          message:
+            "Stream did not close after completing, continued without waiting",
+          level: "warning",
+          runId: runId || runtime.activeRunId,
+          agentId,
+          conversationId,
+        });
       }
+
       if (finishIfInterrupted(runId || runtime.activeRunId)) {
         break;
       }
