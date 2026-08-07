@@ -375,6 +375,7 @@ export async function prepareToolExecutionContextForScope(params: {
   modContext?: ModContext;
   modEvents?: ModEvents;
   modAdapters?: ModAdapter[];
+  runtimeContext?: Partial<RuntimeContextSnapshot>;
 }): Promise<PreparedScopeToolContext> {
   const {
     connectionId,
@@ -396,6 +397,7 @@ export async function prepareToolExecutionContextForScope(params: {
     modContext,
     modEvents,
     modAdapters,
+    runtimeContext,
   } = params;
 
   const backend = getBackend();
@@ -462,6 +464,7 @@ export async function prepareToolExecutionContextForScope(params: {
     modAdapters,
     agent: agent as AgentState,
     runtimeContext: {
+      ...runtimeContext,
       connectionId,
       environmentDeviceId,
       agentId,

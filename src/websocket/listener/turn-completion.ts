@@ -4,8 +4,8 @@ import type { Line } from "@/cli/helpers/accumulator";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
 import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
-import { settingsManager } from "@/settings-manager";
 import { debugWarn } from "@/utils/debug";
+import { isConversationMemfsEnabled } from "./runtime-memory";
 import type { ListenerTransport } from "./transport";
 import {
   buildMaybeLaunchReflectionSubagent,
@@ -35,6 +35,7 @@ export async function completeSuccessfulListenerTurn(params: {
     workingDirectory: params.workingDirectory,
     permissionMode: params.permissionMode,
     cachedAgent: params.getCachedAgent(),
+    stateless: params.runtime.stateless,
   });
   if (params.isInterrupted()) {
     return "interrupted";
@@ -55,7 +56,10 @@ export async function completeSuccessfulListenerTurn(params: {
   }
 
   try {
-    if (params.transcriptLines.length > 0) {
+    if (
+      isConversationMemfsEnabled(params.runtime) &&
+      params.transcriptLines.length > 0
+    ) {
       await appendTranscriptDeltaJsonl(
         params.agentId,
         params.conversationId,
@@ -82,7 +86,7 @@ export async function completeSuccessfulListenerTurn(params: {
     await maybeLaunchPostTurnReflection({
       agentId: params.agentId,
       conversationId: params.conversationId,
-      memfsEnabled: settingsManager.isMemfsEnabled(params.agentId),
+      memfsEnabled: isConversationMemfsEnabled(params.runtime),
       reflectionSettings,
       reminderState: params.runtime.reminderState,
       contextTracker: params.runtime.contextTracker,

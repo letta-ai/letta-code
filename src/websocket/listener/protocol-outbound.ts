@@ -1,6 +1,5 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
 import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
@@ -53,6 +52,7 @@ import {
   hasInterruptedCacheForScope,
   safeEmitWsEvent,
 } from "./runtime";
+import { runtimeMemoryDir } from "./runtime-memory";
 import {
   resolveRuntimeScope,
   resolveScopedAgentId,
@@ -267,9 +267,7 @@ export function buildDeviceStatus(
       ? []
       : getPendingControlRequests(listener, scope),
     experiments: experimentManager.list(),
-    memory_directory: scopedAgentId
-      ? getScopedMemoryFilesystemRoot(scopedAgentId)
-      : null,
+    memory_directory: runtimeMemoryDir(conversationRuntime, scopedAgentId),
     ...(params === undefined
       ? {
           cwd_map: getExportedCwdMap(listener),

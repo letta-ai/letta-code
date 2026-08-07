@@ -62,6 +62,68 @@ describe("runtime_start skill sources", () => {
     }
   });
 
+  test("keeps stateless policy across idle runtime eviction until reset", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "runtime-stateless-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Stateless SDK worker",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const listener = createRuntime();
+      const context = {
+        socket: {} as WebSocket,
+        connectionId: "test-connection",
+        runtime: listener,
+        safeSocketSend: () => true,
+        runDetachedListenerTask: () => {},
+        getOrCreateScopedRuntime,
+        replaySyncStateForRuntime: async () => {},
+      };
+
+      await handleRuntimeStartCommand(
+        {
+          type: "runtime_start",
+          request_id: "runtime-stateless",
+          agent_id: agent.id,
+          conversation_id: "default",
+          stateless: true,
+          recover_approvals: false,
+        },
+        context,
+      );
+
+      const scoped = getOrCreateScopedRuntime(listener, agent.id, "default");
+      expect(scoped.stateless).toBe(true);
+      expect(listener.statelessByConversation?.has(scoped.key)).toBe(true);
+      expect(evictConversationRuntimeIfIdle(scoped)).toBe(true);
+      expect(
+        getOrCreateScopedRuntime(listener, agent.id, "default").stateless,
+      ).toBe(true);
+
+      await handleRuntimeStartCommand(
+        {
+          type: "runtime_start",
+          request_id: "runtime-stateful",
+          agent_id: agent.id,
+          conversation_id: "default",
+          recover_approvals: false,
+        },
+        context,
+      );
+      expect(
+        getOrCreateScopedRuntime(listener, agent.id, "default").stateless,
+      ).toBe(false);
+      expect(listener.statelessByConversation?.has(scoped.key)).toBe(false);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("preserves skill sources when a secondary controller updates runtime tools", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "runtime-skills-"));
     try {

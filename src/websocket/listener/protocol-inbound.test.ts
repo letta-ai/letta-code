@@ -109,6 +109,7 @@ describe("agent/conversation management protocol-inbound validators", () => {
       conversation_source_tags: ["channel:slack"],
       cwd: "/tmp/project",
       mode: "acceptEdits",
+      stateless: true,
       skill_sources: [],
       preserve_skill_sources: true,
       client_info: { name: "test", title: "Test", version: "1.0.0" },
@@ -238,6 +239,12 @@ describe("agent/conversation management protocol-inbound validators", () => {
       request_id: "r0",
       agent_id: "agent-1",
       mode: "bad",
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      stateless: "yes",
     },
     {
       type: "runtime_start",

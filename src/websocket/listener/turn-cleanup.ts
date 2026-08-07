@@ -1,11 +1,11 @@
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import { enqueueMemoryGitSyncReminder } from "@/reminders/state";
-import { settingsManager } from "@/settings-manager";
 import {
   persistPermissionModeMapForRuntime,
   pruneConversationPermissionModeStateIfDefault,
 } from "./permission-mode";
 import { emitDeviceStatusIfOpen } from "./protocol-outbound";
+import { isConversationMemfsEnabled } from "./runtime-memory";
 import type { ConversationRuntime } from "./types";
 
 export async function runListenerTurnCleanup(params: {
@@ -30,7 +30,7 @@ export async function runListenerTurnCleanup(params: {
   if (agentId) {
     await runPostTurnMemorySync({
       agentId,
-      isEnabled: (id) => settingsManager.isMemfsEnabled(id),
+      isEnabled: () => isConversationMemfsEnabled(runtime),
       debugLabel: "Post-turn listener memory sync",
       enqueueReminder: (text) => {
         enqueueMemoryGitSyncReminder(runtime.reminderState, { text });

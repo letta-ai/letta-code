@@ -12,7 +12,6 @@ import {
   launchReflectionSubagent,
 } from "@/cli/helpers/reflection-launcher";
 import { getTurnStartCancel } from "@/mods/turn-start-cancel";
-import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface } from "@/telemetry";
 import type { StreamDelta } from "@/types/protocol_v2";
 import {
@@ -21,6 +20,7 @@ import {
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import { emitCanonicalMessageDelta } from "./protocol-outbound";
+import { isConversationMemfsEnabled } from "./runtime-memory";
 import type { ListenerTransport } from "./transport";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
@@ -56,17 +56,20 @@ export async function emitListenerTurnStart(options: {
   workingDirectory: string;
   permissionMode?: string | null;
   cachedAgent?: AgentState | null;
+  stateless?: boolean;
 }): Promise<ListenerTurnStartEmission> {
   try {
     const modAdapters = await ensureListenerModAdaptersForAgent(
       options.runtime,
       options.agentId,
+      { includeAgent: !options.stateless },
     );
     const context = createListenerModContext({
       sessionId: options.conversationId,
       workingDirectory: options.workingDirectory,
       permissionMode: options.permissionMode ?? null,
       agent: options.cachedAgent ?? { id: options.agentId },
+      ...(options.stateless ? { memfsEnabled: false } : {}),
     });
     const event = {
       agentId: options.agentId,
@@ -102,17 +105,20 @@ export async function emitListenerTurnEnd(options: {
   workingDirectory: string;
   permissionMode?: string | null;
   cachedAgent?: AgentState | null;
+  stateless?: boolean;
 }): Promise<string | undefined> {
   try {
     const modAdapters = await ensureListenerModAdaptersForAgent(
       options.runtime,
       options.agentId,
+      { includeAgent: !options.stateless },
     );
     const context = createListenerModContext({
       sessionId: options.conversationId,
       workingDirectory: options.workingDirectory,
       permissionMode: options.permissionMode ?? null,
       agent: options.cachedAgent ?? { id: options.agentId },
+      ...(options.stateless ? { memfsEnabled: false } : {}),
     });
     const event: {
       agentId: string;
@@ -154,7 +160,7 @@ export function buildMaybeLaunchReflectionSubagent(params: {
     const result = await launchReflectionSubagent({
       agentId,
       conversationId,
-      memfsEnabled: settingsManager.isMemfsEnabled(agentId),
+      memfsEnabled: isConversationMemfsEnabled(runtime),
       triggerSource,
       reflectionSettings,
       description: AUTO_REFLECTION_DESCRIPTION,
