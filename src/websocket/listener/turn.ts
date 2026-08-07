@@ -45,6 +45,7 @@ import {
   emitLoopStatusUpdate,
   emitRetryDelta,
   emitRuntimeStateUpdates,
+  emitStatusDelta,
 } from "./protocol-outbound";
 import {
   createProviderFallbackState,
@@ -443,9 +444,18 @@ async function handleIncomingMessageInner(
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
       const fallbackError = result.fallbackError ?? null;
-      if (finishIfInterrupted(runId || runtime.activeRunId)) {
-        break;
+
+      if (result.terminalEofGuardFired) {
+        emitStatusDelta(socket, runtime, {
+          message:
+            "Stream did not close after completing, continued without waiting",
+          level: "warning",
+          runId: runId || runtime.activeRunId,
+          agentId,
+          conversationId,
+        });
       }
+
       if (finishIfInterrupted(runId || runtime.activeRunId)) {
         break;
       }
