@@ -81,6 +81,9 @@ export function loadRoutes(channelId: string): void {
             enabled: route.enabled !== false,
             outboundEnabled: route.outboundEnabled !== false,
             detached: route.detached === true,
+            ...(route.bootstrapUserMessageSeenAt
+              ? { bootstrapUserMessageSeenAt: route.bootstrapUserMessageSeenAt }
+              : {}),
             createdAt: route.createdAt ?? new Date().toISOString(),
             updatedAt:
               route.updatedAt ?? route.createdAt ?? new Date().toISOString(),
@@ -113,6 +116,9 @@ export function loadRoutes(channelId: string): void {
             enabled: route.enabled !== false,
             outboundEnabled: route.outboundEnabled !== false,
             detached: route.detached === true,
+            ...(route.bootstrapUserMessageSeenAt
+              ? { bootstrapUserMessageSeenAt: route.bootstrapUserMessageSeenAt }
+              : {}),
             createdAt: route.createdAt ?? new Date().toISOString(),
             updatedAt:
               route.updatedAt ?? route.createdAt ?? new Date().toISOString(),

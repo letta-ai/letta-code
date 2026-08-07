@@ -498,6 +498,11 @@ export interface ChannelRoute {
   outboundEnabled?: boolean;
   /** Slack-only: a detached thread stays silent until the app is mentioned again. */
   detached?: boolean;
+  /**
+   * Slack-only: set after the backend proves this route has a durable user turn.
+   * Older routes without this marker may need one bootstrap recovery probe after restart.
+   */
+  bootstrapUserMessageSeenAt?: string;
   /** ISO 8601 creation timestamp. */
   createdAt: string;
   /** ISO 8601 update timestamp. */

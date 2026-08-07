@@ -1,4 +1,4 @@
-import { getBackend } from "@/backend";
+import { type ConversationMessageListBody, getBackend } from "@/backend";
 import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import type { ChannelRegistryEvent } from "./registry-events";
 import {
@@ -22,6 +22,26 @@ import type {
   TelegramChannelAccount,
   WhatsAppChannelAccount,
 } from "./types";
+
+async function hasDurableUserMessage(
+  route: ChannelRoute,
+): Promise<boolean | null> {
+  try {
+    const page = await getBackend().listConversationMessages(
+      route.conversationId,
+      {
+        limit: 1,
+        order: "desc",
+        include_return_message_types: ["user_message"],
+        ...(route.agentId ? { agent_id: route.agentId } : {}),
+      } as ConversationMessageListBody,
+    );
+    return page.getPaginatedItems().length > 0;
+  } catch {
+    // Only suppress or replay bootstrap context when the backend proves user-turn state.
+    return null;
+  }
+}
 
 export function createChannelRouteProvisioner(deps: {
   emitEvent: (event: ChannelRegistryEvent) => void;
@@ -123,26 +143,42 @@ export function createChannelRouteProvisioner(deps: {
     }
 
     if (route) {
+      let routeForDelivery = route;
+      let shouldPersistRoute = false;
+      let isFirstRouteTurn = false;
+      if (msg.chatType === "channel" && !route.bootstrapUserMessageSeenAt) {
+        const durableUserMessageExists = await hasDurableUserMessage(route);
+        if (durableUserMessageExists === true) {
+          routeForDelivery = {
+            ...routeForDelivery,
+            bootstrapUserMessageSeenAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          shouldPersistRoute = true;
+        } else if (durableUserMessageExists === false) {
+          isFirstRouteTurn = true;
+        }
+      }
       if (
         msg.chatType === "channel" &&
         msg.isMention === true &&
-        (route.outboundEnabled === false || route.detached === true)
+        (routeForDelivery.outboundEnabled === false ||
+          routeForDelivery.detached === true)
       ) {
-        const updatedRoute: ChannelRoute = {
-          ...route,
+        routeForDelivery = {
+          ...routeForDelivery,
           outboundEnabled: true,
           detached: false,
           updatedAt: new Date().toISOString(),
         };
-        addRoute(msg.channel, updatedRoute);
-        return {
-          route: updatedRoute,
-          isFirstRouteTurn: false,
-        };
+        shouldPersistRoute = true;
+      }
+      if (shouldPersistRoute) {
+        addRoute(msg.channel, routeForDelivery);
       }
       return {
-        route,
-        isFirstRouteTurn: false,
+        route: routeForDelivery,
+        isFirstRouteTurn,
       };
     }
 
