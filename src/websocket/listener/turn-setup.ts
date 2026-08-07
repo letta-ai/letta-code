@@ -268,9 +268,10 @@ export async function prepareListenerTurn(params: {
     runtime.listener,
     agentId,
   );
-  const environmentDeviceId = connectionId
-    ? runtime.listener.connections.get(connectionId)?.options.deviceId
-    : undefined;
+  const listenerOptions = connectionId
+    ? runtime.listener.connections.get(connectionId)?.options
+    : runtime.listener.connections.values().next().value?.options;
+  const environmentDeviceId = listenerOptions?.deviceId;
   const preparedToolContext = await prepareToolExecutionContextForScope({
     connectionId,
     environmentDeviceId,
@@ -286,6 +287,7 @@ export async function prepareListenerTurn(params: {
     externalToolScopeIds: msg.externalToolScopeIds,
     workingDirectory,
     permissionModeState,
+    skillsDirectory: listenerOptions?.skillsDirectory,
     skillSources: runtime.skillSources,
     cachedAgent,
     modContext: createListenerAgentModContext(agentId),
