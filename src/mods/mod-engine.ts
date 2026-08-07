@@ -32,6 +32,7 @@ import {
   recordDeprecatedContextApiSourceDiagnostics,
 } from "@/mods/deprecated-api";
 import { isTypeScriptModFileExtension } from "@/mods/file-extensions";
+import * as modInvocationContext from "@/mods/invocation-context";
 import {
   appendModDiagnostic,
   recordModDiagnostic,
@@ -94,6 +95,7 @@ import type {
   ModTurnStartCancelResult,
   ModTurnStartEvent,
 } from "@/mods/types";
+import { createNoopModPanelHandle } from "@/mods/ui-helpers";
 
 export type {
   LocalModSource,
@@ -220,7 +222,7 @@ export interface LoadLocalModsOptions extends ResolveLocalModSourcesOptions {
   generation?: number;
   onChange?: () => void;
   onDiagnostic?: (diagnostic: ModDiagnostic) => void;
-  onNotification?: (message: string) => void;
+  onNotification?: modInvocationContext.ModNotificationHandler;
   onRegistryCreated?: (registry: LocalModRegistry) => void;
   registerCapabilitiesGlobally?: boolean;
   reservedToolNames?: Iterable<string>;
@@ -882,13 +884,6 @@ function upsertModPanel(
   };
 }
 
-function createNoopModPanelHandle(): ModPanelHandle {
-  return {
-    close() {},
-    update() {},
-  };
-}
-
 function createLettaModApi(
   registry: LocalModRegistry,
   owner: ModOwner,
@@ -896,7 +891,7 @@ function createLettaModApi(
   getClient: () => Promise<Letta>,
   onChange: () => void,
   onDiagnostic: ((diagnostic: ModDiagnostic) => void) | undefined,
-  onNotification: ((message: string) => void) | undefined,
+  onNotification: modInvocationContext.ModNotificationHandler | undefined,
   builtinCommandIds: Set<string>,
   reservedToolNames: Set<string>,
   signal: AbortSignal,
@@ -1274,9 +1269,9 @@ function createLettaModApi(
     ui: {
       closePanel,
       notify(message) {
-        if (!capabilities.ui.panels || !message.trim()) return;
+        if (!onNotification || !message.trim()) return;
         if (!guardLive({ id: "notify", kind: "panel" })) return;
-        onNotification?.(message.trim());
+        modInvocationContext.notifyMod(onNotification, message);
       },
       openPanel(panel) {
         if (!capabilities.ui.panels) {
@@ -1588,7 +1583,11 @@ export async function emitLocalModEvent<TName extends ModEventName>(
         recordEventDiagnostic,
         "ctx.getContext",
       );
-      const result = await registration.handler(event, eventContext);
+      const result = await modInvocationContext.invoke(
+        eventContext,
+        registration,
+        event,
+      );
       if (isTurnStartResultWithInput(name, result)) {
         (event as ModTurnStartEvent).input = result.input;
       }
