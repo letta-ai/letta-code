@@ -10,6 +10,11 @@ export interface MissedPongWatchdog {
   recordPing(sentAt: number): void;
 }
 
+export interface ConnectionHeartbeatOptions {
+  intervalMs?: number;
+  sendStreamPing?: () => void;
+}
+
 /**
  * Count actual unanswered heartbeat probes instead of elapsed wall time.
  *
@@ -47,6 +52,7 @@ export function startConnectionHeartbeat(
   transport: ListenerTransport,
   onStale: () => void,
   sendPing: () => boolean,
+  options: ConnectionHeartbeatOptions = {},
 ): void {
   runtime.lastPongAt = Date.now();
   const maxUnansweredPings = Math.max(
@@ -68,5 +74,6 @@ export function startConnectionHeartbeat(
     if (sendPing()) {
       watchdog.recordPing(sentAt);
     }
-  }, LISTENER_HEARTBEAT_INTERVAL_MS);
+    options.sendStreamPing?.();
+  }, options.intervalMs ?? LISTENER_HEARTBEAT_INTERVAL_MS);
 }
