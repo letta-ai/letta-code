@@ -19,6 +19,10 @@ export {
 export type { CreateSlackMessageActionAdapterOptions } from "./channels/slack/message-action-contract";
 export { createSlackMessageActionAdapter } from "./channels/slack/message-action-contract";
 export {
+  formatSlackLifecycleErrorMessage,
+  shouldPostSlackTerminalError,
+} from "./channels/slack/presentation";
+export {
   resolveSlackConcreteActivity,
   SLACK_ASSISTANT_STARTUP_STATUS,
   SLACK_ASSISTANT_WORKING_STATUS,
