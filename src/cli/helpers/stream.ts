@@ -42,6 +42,7 @@ import {
   type StreamResumePolicy,
   waitForResumeRetry,
 } from "./stream-resume";
+import { createTerminalEofGuard } from "./stream-terminal-eof-guard";
 
 export type { ApprovalRequest } from "./stream-processor";
 
@@ -186,6 +187,14 @@ export async function drainStream(
   // Track if we triggered abort via our listener (for eager cancellation)
   let abortedViaListener = false;
 
+  // Terminal-EOF guard: once the terminal SSE sequence has arrived, don't wait
+  // forever for HTTP body EOF (see stream-terminal-eof-guard.ts).
+  const terminalEofGuard = createTerminalEofGuard({
+    getStopReason: () => streamProcessor.stopReason,
+    getRunId: () => streamProcessor.lastRunId,
+    abortHttpRead: () => abortStreamController(stream, "terminal_eof_guard"),
+  });
+
   // Capture the abort generation at stream start to detect if handleInterrupt ran
   const startAbortGen = buffers.abortGeneration || 0;
 
@@ -263,6 +272,14 @@ export async function drainStream(
 
       const { shouldOutput, errorInfo, updatedApproval } =
         streamProcessor.processChunk(chunk);
+
+      // Once the terminal sequence starts (stop_reason received), (re-)arm the
+      // EOF guard on every subsequent chunk. Only usage_statistics and [DONE]
+      // legitimately follow stop_reason, so this fires only when the HTTP body
+      // stays open with no data after the terminal sequence.
+      if (streamProcessor.stopReason !== null) {
+        terminalEofGuard.arm();
+      }
 
       // Log chunk for feedback diagnostics
       try {
@@ -391,6 +408,8 @@ export async function drainStream(
     }
     queueMicrotask(refresh);
   } finally {
+    terminalEofGuard.clear();
+
     // Persist chunk log to disk (one write per stream, not per chunk)
     try {
       chunkLog.flush();
