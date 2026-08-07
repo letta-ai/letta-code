@@ -19,7 +19,11 @@ import { debugWarn } from "@/utils/debug";
  * The SDK iterator returns cleanly on its own controller's abort, so
  * drainStream proceeds with the stop reason it already received.
  */
-const DEFAULT_TERMINAL_EOF_GRACE_MS = 10_000;
+// The terminal frames normally follow within milliseconds (observed ~11ms in
+// production traces), and firing early costs nothing: the terminal state is
+// already in hand, so the abort only skips waiting for bookkeeping bytes.
+// 2s is ~200x the normal gap while keeping the user-visible dead air short.
+const DEFAULT_TERMINAL_EOF_GRACE_MS = 2_000;
 
 function getTerminalEofGraceMs(): number {
   const raw = process.env.LETTA_STREAM_TERMINAL_EOF_GRACE_MS;
