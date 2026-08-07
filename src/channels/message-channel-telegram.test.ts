@@ -5,7 +5,10 @@ import {
   clearChannelAccountStores,
   upsertChannelAccount,
 } from "@/channels/accounts";
-import { createMessageChannelIdempotencyScope } from "@/channels/message-channel-idempotency";
+import {
+  createMessageChannelIdempotencyScope,
+  MessageChannelDuplicateActionError,
+} from "@/channels/message-channel-idempotency";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import { clearAllRoutes, setRouteInMemory } from "@/channels/routing";
 import {
@@ -159,9 +162,10 @@ describe("MessageChannel Telegram", () => {
     const idempotencyScope = createMessageChannelIdempotencyScope();
 
     const first = await message_channel(input, idempotencyScope);
-    const second = await message_channel(input, idempotencyScope);
 
-    expect(second).toBe(first);
+    await expect(
+      message_channel(input, idempotencyScope),
+    ).rejects.toBeInstanceOf(MessageChannelDuplicateActionError);
     expect(first).toContain("message_id: telegram-once");
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });

@@ -4,8 +4,20 @@ export interface MessageChannelIdempotencyScope {
 
 type LastSuccessfulAction = {
   key: string;
-  result: string;
 };
+
+export class MessageChannelDuplicateActionError extends Error {
+  constructor(state: "in-flight" | "completed") {
+    const detail =
+      state === "in-flight"
+        ? "an identical text send is already in progress"
+        : "the immediately previous MessageChannel call already sent this exact text to the same destination";
+    super(
+      `Duplicate MessageChannel action suppressed: ${detail}. The duplicate was not sent; continue the turn instead of retrying it.`,
+    );
+    this.name = "MessageChannelDuplicateActionError";
+  }
+}
 
 function isErrorResult(result: string): boolean {
   return result.startsWith("Error:");
@@ -13,8 +25,8 @@ function isErrorResult(result: string): boolean {
 
 /**
  * Suppress only an adjacent repeat of the last successful action. Distinct
- * MessageChannel actions clear the remembered result, while identical actions
- * already in flight still share one external side effect.
+ * MessageChannel actions clear the remembered result. Suppressed duplicates
+ * throw so the agent receives explicit feedback instead of a false success.
  */
 export function createMessageChannelIdempotencyScope(): MessageChannelIdempotencyScope {
   const inFlight = new Map<string, Promise<string>>();
@@ -30,8 +42,12 @@ export function createMessageChannelIdempotencyScope(): MessageChannelIdempotenc
       }
 
       const pendingDuplicate = inFlight.get(key);
-      if (pendingDuplicate) return pendingDuplicate;
-      if (lastSuccessful?.key === key) return lastSuccessful.result;
+      if (pendingDuplicate) {
+        throw new MessageChannelDuplicateActionError("in-flight");
+      }
+      if (lastSuccessful?.key === key) {
+        throw new MessageChannelDuplicateActionError("completed");
+      }
 
       const invocation = ++latestInvocation;
       // A different MessageChannel action makes a later repeat legitimate.
@@ -42,7 +58,7 @@ export function createMessageChannelIdempotencyScope(): MessageChannelIdempotenc
       try {
         const result = await pending;
         if (invocation === latestInvocation && !isErrorResult(result)) {
-          lastSuccessful = { key, result };
+          lastSuccessful = { key };
         }
         return result;
       } finally {

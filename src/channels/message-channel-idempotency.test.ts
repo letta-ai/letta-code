@@ -20,6 +20,7 @@ import {
 } from "./gateway-test-support";
 import {
   createMessageChannelIdempotencyScope,
+  MessageChannelDuplicateActionError,
   type MessageChannelIdempotencyScope,
 } from "./message-channel-idempotency";
 import type { ChannelMessageActionTransport } from "./plugin-types";
@@ -71,7 +72,7 @@ function execOpts(
 }
 
 describe("MessageChannel idempotency (executor)", () => {
-  test("concurrent normalized sends coalesce", async () => {
+  test("concurrent normalized sends suppress one call with agent-visible feedback", async () => {
     const sendMessage = mock(async () => ({ messageId: "m1" }));
     const resolver = createResolver(sendMessage);
     const scope = createMessageChannelIdempotencyScope();
@@ -89,13 +90,18 @@ describe("MessageChannel idempotency (executor)", () => {
       message: "hi",
     };
 
-    const [r1, r2] = await Promise.all([
+    const outcomes = await Promise.allSettled([
       executeMessageChannel(a, o),
       executeMessageChannel(b, o),
     ]);
 
-    expect(r1).toBe("Message sent to slack (message_id: m1)");
-    expect(r2).toBe(r1);
+    const fulfilled = outcomes.find(
+      (outcome) => outcome.status === "fulfilled",
+    );
+    const rejected = outcomes.find((outcome) => outcome.status === "rejected");
+    expect(fulfilled?.value).toBe("Message sent to slack (message_id: m1)");
+    expect(rejected?.reason).toBeInstanceOf(MessageChannelDuplicateActionError);
+    expect(String(rejected?.reason)).toContain("already in progress");
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
@@ -119,7 +125,9 @@ describe("MessageChannel idempotency (executor)", () => {
     const b = SEND("C123", "B");
 
     await executeMessageChannel(a, o);
-    await executeMessageChannel(a, o);
+    await expect(executeMessageChannel(a, o)).rejects.toThrow(
+      "the immediately previous MessageChannel call already sent this exact text",
+    );
     await executeMessageChannel(b, o);
     await executeMessageChannel(a, o);
 
@@ -133,10 +141,12 @@ describe("MessageChannel idempotency (executor)", () => {
     const input = SEND("C123", "same external message");
 
     await executeMessageChannel(input, o);
-    await executeMessageChannel(
-      { ...input, messageId: "ignored", emoji: "ignored", remove: false },
-      o,
-    );
+    await expect(
+      executeMessageChannel(
+        { ...input, messageId: "ignored", emoji: "ignored", remove: false },
+        o,
+      ),
+    ).rejects.toBeInstanceOf(MessageChannelDuplicateActionError);
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
@@ -263,14 +273,31 @@ describe("MessageChannel idempotency (gateway)", () => {
       executeExternalTool: async (req, _s, scope) => {
         const rt = req.runtime;
         if (!rt) throw new Error("runtime required");
-        const text = await executeMessageChannel(req.input, {
-          resolver,
-          scope: { agentId: rt.agent_id, conversationId: rt.conversation_id },
-          idempotencyScope: scope,
-        });
-        const result: ExternalToolCallResult = {
-          content: [{ type: "text", text }],
-        };
+        let result: ExternalToolCallResult;
+        try {
+          const text = await executeMessageChannel(req.input, {
+            resolver,
+            scope: {
+              agentId: rt.agent_id,
+              conversationId: rt.conversation_id,
+            },
+            idempotencyScope: scope,
+          });
+          result = {
+            content: [{ type: "text", text }],
+            is_error: text.startsWith("Error:"),
+          };
+        } catch (error) {
+          result = {
+            content: [
+              {
+                type: "text",
+                text: error instanceof Error ? error.message : String(error),
+              },
+            ],
+            is_error: true,
+          };
+        }
         results.push(result);
         return result;
       },
@@ -304,7 +331,11 @@ describe("MessageChannel idempotency (gateway)", () => {
     const first = results[0]?.content?.[0];
     const second = results[1]?.content?.[0];
     expect(first?.text).toBe("Message sent to slack (message_id: m4)");
-    expect(second?.text).toBe(first?.text);
+    expect(results[0]?.is_error).toBe(false);
+    expect(results[1]?.is_error).toBe(true);
+    expect(second?.text).toContain(
+      "Duplicate MessageChannel action suppressed",
+    );
 
     client.emit(makeTurnFinished("end_turn"));
     await Bun.sleep(0);

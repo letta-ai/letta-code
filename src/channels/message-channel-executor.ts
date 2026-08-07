@@ -1,5 +1,8 @@
 import { formatOutboundChannelMessage } from "./message-channel-formatting";
-import type { MessageChannelIdempotencyScope } from "./message-channel-idempotency";
+import {
+  MessageChannelDuplicateActionError,
+  type MessageChannelIdempotencyScope,
+} from "./message-channel-idempotency";
 import type {
   MessageChannelInput,
   NormalizedMessageChannelInput,
@@ -449,6 +452,7 @@ export async function executeMessageChannel(
       options.idempotencyScope,
     );
   } catch (error) {
+    if (error instanceof MessageChannelDuplicateActionError) throw error;
     const message = error instanceof Error ? error.message : "unknown error";
     return `Error sending message to ${normalized.channel}: ${message}`;
   }

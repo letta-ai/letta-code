@@ -255,6 +255,7 @@ export async function startLocalChannelGateway(
       );
       return {
         content: [{ type: "text", text }],
+        is_error: text.startsWith("Error:"),
       };
     },
     onLifecycle: (event) => registry.dispatchTurnLifecycleEvent(event),
