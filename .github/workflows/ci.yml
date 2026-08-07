@@ -18,6 +18,7 @@ jobs:
       release_bump_only: ${{ steps.classify.outputs.release_bump_only }}
       run_heavy_ci: ${{ steps.classify.outputs.run_heavy_ci }}
       channels_changed: ${{ steps.classify.outputs.channels_changed }}
+      packaging_changed: ${{ steps.classify.outputs.packaging_changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -69,13 +70,32 @@ jobs:
             esac
           done
 
+          # The packed-artifact checks are expensive (Docker image build + a full
+          # registry install), and they can only regress when dependencies, the
+          # packed file list, the build, or the checks themselves change.
+          PACKAGING_CHANGED=false
+          for file in $CHANGED_FILES; do
+            case "$file" in
+              package.json|bun.lock|build.js|scripts/postinstall-patches.js|scripts/check-minimal-linux-npm-artifact.js|scripts/check-windows-node-pty-artifact.js|.github/workflows/ci.yml)
+                PACKAGING_CHANGED=true
+                ;;
+            esac
+          done
+
           RELEASE_BUMP_ONLY=false
           if [ "$TITLE_MATCH" = true ] && [ "$FILES_MATCH" = true ]; then
             RELEASE_BUMP_ONLY=true
           fi
 
+          # A release bump touches package.json only; the artifact was already
+          # verified on the commit it bumps.
+          if [ "$RELEASE_BUMP_ONLY" = true ]; then
+            PACKAGING_CHANGED=false
+          fi
+
           echo "release_bump_only=$RELEASE_BUMP_ONLY" >> "$GITHUB_OUTPUT"
           echo "channels_changed=$CHANNELS_CHANGED" >> "$GITHUB_OUTPUT"
+          echo "packaging_changed=$PACKAGING_CHANGED" >> "$GITHUB_OUTPUT"
 
           if [ "$RELEASE_BUMP_ONLY" = true ]; then
             echo "run_heavy_ci=false" >> "$GITHUB_OUTPUT"
@@ -85,6 +105,7 @@ jobs:
 
           echo "title=$TITLE"
           echo "channels_changed=$CHANNELS_CHANGED"
+          echo "packaging_changed=$PACKAGING_CHANGED"
           printf 'changed_files=%s\n' "$CHANGED_FILES"
 
   check:
@@ -198,6 +219,16 @@ jobs:
       - name: Build bundle
         run: bun run build
 
+      # Covers both Linux legs: the x64 and arm64 prebuilds are published
+      # independently, so a missing arm64 prebuild breaks npx the same way.
+      # Gated on packaging changes / pushes to main because the Docker build and
+      # registry install cost several minutes per leg.
+      - name: Minimal Linux npm artifact check
+        if: runner.os == 'Linux' && (github.event_name == 'push' || needs.classify.outputs.packaging_changed == 'true')
+        env:
+          LETTA_CODE_MINIMAL_LINUX_ARTIFACT_SKIP_BUILD: "1"
+        run: bun run check:minimal-linux-npm-artifact
+
       - name: CLI help smoke test
         run: ./letta.js --help
 
@@ -229,6 +260,13 @@ jobs:
           npm pack
           npm install -g (Get-Item letta-ai-letta-code-*.tgz).FullName
           letta --help
+
+      - name: Windows node-pty artifact smoke test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:LETTA_CODE_GLOBAL_NODE_MODULES = npm root -g
+          bun run check:windows-node-pty-artifact
 
       - name: Test npm install flow (Unix)
         if: runner.os != 'Windows'

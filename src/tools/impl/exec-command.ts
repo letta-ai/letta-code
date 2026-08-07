@@ -1,5 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  isNodePtyUnavailableError,
+  requireNodePty,
+} from "@/utils/node-pty-loader";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
   appendBackgroundProcessOutput,
@@ -569,8 +573,24 @@ function spawnPtyProcess(params: {
     };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const pty = require("node-pty") as NodePtyModule;
+  let pty: NodePtyModule;
+  try {
+    pty = requireNodePty() as NodePtyModule;
+  } catch (error) {
+    if (!isNodePtyUnavailableError(error)) throw error;
+    // No usable PTY on this install (musl/old-glibc prebuild). Run the command
+    // through a pipe instead of failing the tool call — output is still
+    // captured, but stdin is closed, so write_stdin will be rejected. The
+    // reason lands in the session output so the caller can see why `tty: true`
+    // was downgraded.
+    appendOutput(
+      `${(error as Error).message}\nFalling back to a non-TTY pipe for this command; stdin is closed.\n`,
+      "stderr",
+    );
+    params.session.tty = false;
+    return spawnPipeProcess(params);
+  }
+
   const ptyProcess = pty.spawn(executable, args, {
     name: "xterm-256color",
     cols: 80,
