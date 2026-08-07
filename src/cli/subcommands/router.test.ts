@@ -94,6 +94,24 @@ describe("subcommand router", () => {
     }
   });
 
+  test("routes models help", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      const exitCode = await runSubcommand(["models", "help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain("Usage:");
+      expect(messages.join("\n")).toContain("letta models [list]");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   test("routes dream help", async () => {
     const messages: string[] = [];
     const originalLog = console.log;
@@ -137,6 +155,7 @@ describe("subcommand router", () => {
     expect(subcommandNeedsEarlyBackendMode("environments")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("envs")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("memory")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("models")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("mods")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("version")).toBe(false);
     expect(subcommandNeedsEarlyBackendMode("backend")).toBe(false);
