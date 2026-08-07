@@ -381,7 +381,6 @@ export async function startConnectedListenerRuntime(
     startProcessServices?: boolean;
     streamTransport?: ListenerTransport | null;
     emitInitialState?: boolean;
-    heartbeatIntervalMs?: number;
   } = {},
 ): Promise<void> {
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) return;
@@ -427,30 +426,13 @@ export async function startConnectedListenerRuntime(
         );
         runtime.socket?.terminate();
       },
-      () => {
+      (heartbeatTransport) => {
         return safeTransportSend(
-          transport,
+          heartbeatTransport,
           { type: "ping" },
           "listener_ping_send_failed",
           "listener_heartbeat",
         );
-      },
-      {
-        intervalMs: options.heartbeatIntervalMs,
-        sendStreamPing: options.streamTransport
-          ? () => {
-              const connection = runtime.connections.get(opts.connectionId);
-              if (connection?.writer !== transport) return;
-              const streamTransport = connection.streamWriter;
-              if (!streamTransport || streamTransport === transport) return;
-              safeTransportSend(
-                streamTransport,
-                { type: "ping" },
-                "listener_stream_ping_send_failed",
-                "listener_stream_heartbeat",
-              );
-            }
-          : undefined,
       },
     );
   }

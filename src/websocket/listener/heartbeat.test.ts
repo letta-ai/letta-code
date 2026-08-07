@@ -1,29 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { __listenClientTestUtils } from "./client";
 import { openListenerConnection } from "./connection";
-import { createMissedPongWatchdog } from "./heartbeat";
-import { startConnectedListenerRuntime, stopRuntime } from "./lifecycle";
-import { setActiveRuntime } from "./runtime";
+import {
+  createMissedPongWatchdog,
+  startConnectionHeartbeat,
+} from "./heartbeat";
+import { clearRuntimeTimers } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import type { StartListenerOptions } from "./types";
 
-function createRecordingTransport(messages: string[]): ListenerTransport {
+function createOpenTransport(): ListenerTransport {
   return {
     kind: "local",
     bufferedAmount: 0,
     isOpen: () => true,
-    send: (data: string) => messages.push(data),
+    send: () => {},
   };
-}
-
-function countPings(messages: string[]): number {
-  return messages.filter((message) => {
-    try {
-      return (JSON.parse(message) as { type?: string }).type === "ping";
-    } catch {
-      return false;
-    }
-  }).length;
 }
 
 async function waitFor(
@@ -85,96 +77,85 @@ describe("listener heartbeat watchdog", () => {
   test("split listeners ping control and the current stream transport", async () => {
     const runtime = __listenClientTestUtils.createListenerRuntime();
     const connectionId = "split-heartbeat";
-    const options = createOptions(connectionId);
-    const controlMessages: string[] = [];
-    const firstStreamMessages: string[] = [];
-    const replacementStreamMessages: string[] = [];
-    const control = createRecordingTransport(controlMessages);
-    const firstStream = createRecordingTransport(firstStreamMessages);
-    const replacementStream = createRecordingTransport(
-      replacementStreamMessages,
-    );
-    setActiveRuntime(runtime);
+    const control = createOpenTransport();
+    const firstStream = createOpenTransport();
+    const replacementStream = createOpenTransport();
+    const pingTargets: ListenerTransport[] = [];
     openListenerConnection({
       runtime,
       connectionId,
       writer: control,
       streamWriter: firstStream,
-      options,
+      options: createOptions(connectionId),
     });
 
     try {
-      await startConnectedListenerRuntime(
+      startConnectionHeartbeat(
         runtime,
         control,
-        options,
-        async () => {},
-        {
-          startCronScheduler: false,
-          startProcessServices: false,
-          streamTransport: firstStream,
-          heartbeatIntervalMs: 5,
+        () => {},
+        (target) => {
+          pingTargets.push(target);
+          return true;
         },
+        { intervalMs: 5 },
       );
       await waitFor(
         () =>
-          countPings(controlMessages) > 0 &&
-          countPings(firstStreamMessages) > 0,
+          pingTargets.includes(control) && pingTargets.includes(firstStream),
         "split listener did not ping both transports",
       );
 
-      const firstStreamPingCount = countPings(firstStreamMessages);
+      const firstStreamPingCount = pingTargets.filter(
+        (target) => target === firstStream,
+      ).length;
       const connection = runtime.connections.get(connectionId);
       if (!connection) throw new Error("listener connection missing");
       connection.streamWriter = replacementStream;
 
       await waitFor(
-        () => countPings(replacementStreamMessages) > 0,
+        () => pingTargets.includes(replacementStream),
         "replacement stream transport was not pinged",
       );
-      expect(countPings(firstStreamMessages)).toBe(firstStreamPingCount);
-      expect(countPings(controlMessages)).toBeGreaterThan(0);
+      expect(
+        pingTargets.filter((target) => target === firstStream),
+      ).toHaveLength(firstStreamPingCount);
+      expect(pingTargets).toContain(control);
     } finally {
-      stopRuntime(runtime, true);
-      setActiveRuntime(null);
+      clearRuntimeTimers(runtime);
     }
   });
 
   test("single-socket listeners send only the control heartbeat", async () => {
     const runtime = __listenClientTestUtils.createListenerRuntime();
     const connectionId = "single-heartbeat";
-    const options = createOptions(connectionId);
-    const controlMessages: string[] = [];
-    const control = createRecordingTransport(controlMessages);
-    setActiveRuntime(runtime);
+    const control = createOpenTransport();
+    const pingTargets: ListenerTransport[] = [];
     openListenerConnection({
       runtime,
       connectionId,
       writer: control,
-      options,
+      options: createOptions(connectionId),
     });
 
     try {
-      await startConnectedListenerRuntime(
+      startConnectionHeartbeat(
         runtime,
         control,
-        options,
-        async () => {},
-        {
-          startCronScheduler: false,
-          startProcessServices: false,
-          heartbeatIntervalMs: 5,
+        () => {},
+        (target) => {
+          pingTargets.push(target);
+          return true;
         },
+        { intervalMs: 5 },
       );
       await waitFor(
-        () => countPings(controlMessages) > 0,
+        () => pingTargets.length > 0,
         "single listener did not send its control heartbeat",
       );
-      expect(runtime.connections.get(connectionId)?.streamWriter).toBeNull();
-      expect(countPings(controlMessages)).toBeGreaterThan(0);
+      expect(pingTargets.every((target) => target === control)).toBe(true);
     } finally {
-      stopRuntime(runtime, true);
-      setActiveRuntime(null);
+      clearRuntimeTimers(runtime);
     }
   });
 });
