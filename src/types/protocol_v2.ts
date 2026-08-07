@@ -558,6 +558,12 @@ export interface RetryMessage extends UmiLifecycleMessageBase {
   attempt: number;
   max_attempts: number;
   delay_ms: number;
+  retry_kind?: "provider_retry" | "transport_fallback";
+  provider?: string;
+  from_transport?: string | null;
+  to_transport?: string | null;
+  error_code?: string | null;
+  step_id?: string | null;
 }
 
 export interface LoopErrorMessage extends UmiLifecycleMessageBase {
@@ -568,10 +574,6 @@ export interface LoopErrorMessage extends UmiLifecycleMessageBase {
   api_error?: LettaStreamingResponse.LettaErrorMessage;
 }
 
-/**
- * Expanded message-delta union.
- * stream_delta is the only message stream event the WS server emits in v2.
- */
 export type StreamDelta =
   | MessageDelta
   | ClientToolStartMessage
@@ -590,7 +592,6 @@ export interface StreamDeltaMessage extends RuntimeEnvelope {
   subagent_id?: string;
 }
 
-/** Exactly-once terminal lifecycle event for a completed harness turn. */
 export interface TurnFinishedMessage extends RuntimeEnvelope {
   type: "turn_finished";
   turn_id: string;
@@ -599,10 +600,6 @@ export interface TurnFinishedMessage extends RuntimeEnvelope {
   error?: string;
 }
 
-/**
- * Subagent state snapshot.
- * Emitted via `update_subagent_state` on every subagent mutation.
- */
 export interface SubagentSnapshotToolCall {
   id: string;
   name: string;
