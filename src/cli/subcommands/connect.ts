@@ -26,6 +26,7 @@ import {
   checkProviderApiKey,
   createOrUpdateProvider,
   type ProviderConnectionOptions,
+  type ProviderOperationOptions,
   providerStorageTargetLabel,
 } from "@/providers/byok-providers";
 import {
@@ -62,6 +63,7 @@ interface ConnectSubcommandDeps {
     accessKey?: string,
     region?: string,
     profile?: string,
+    operationOptions?: ProviderOperationOptions,
   ) => Promise<void>;
   createOrUpdateProvider: (
     providerType: string,
@@ -466,7 +468,23 @@ export async function runConnectSubcommand(
       if (provider.target !== "local") {
         await io.ensureSettingsReady();
       }
-      await io.checkProviderApiKey(provider.byokProvider.providerType, apiKey);
+      if (hasConnectionOptions(connectionOptions)) {
+        // The API key must be validated against the user-supplied endpoint, not
+        // the provider's default one, or third-party keys fail with a 401.
+        await io.checkProviderApiKey(
+          provider.byokProvider.providerType,
+          apiKey,
+          undefined,
+          undefined,
+          undefined,
+          { connection: connectionOptions },
+        );
+      } else {
+        await io.checkProviderApiKey(
+          provider.byokProvider.providerType,
+          apiKey,
+        );
+      }
 
       io.stdout("Saving provider...");
       if (hasConnectionOptions(connectionOptions)) {
