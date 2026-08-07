@@ -9,8 +9,8 @@
 import {
   executeMessageChannel,
   type MessageChannelExecutionResolver,
-  type MessageChannelIdempotencyScope,
 } from "@/channels/message-channel-executor";
+import type { MessageChannelIdempotencyScope } from "@/channels/message-channel-idempotency";
 import type { MessageChannelArgs } from "@/channels/message-channel-types";
 import {
   isSupportedChannelId,

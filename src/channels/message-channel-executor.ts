@@ -1,4 +1,5 @@
 import { formatOutboundChannelMessage } from "./message-channel-formatting";
+import type { MessageChannelIdempotencyScope } from "./message-channel-idempotency";
 import type {
   MessageChannelInput,
   NormalizedMessageChannelInput,
@@ -58,11 +59,6 @@ export interface ExecuteMessageChannelOptions {
   resolver: MessageChannelExecutionResolver;
   channelTurnSources?: ChannelTurnSource[];
   idempotencyScope?: MessageChannelIdempotencyScope | null;
-}
-
-/** Deduplicates MessageChannel side effects within one active channel turn. */
-export interface MessageChannelIdempotencyScope {
-  execute(key: string, effect: () => Promise<string>): Promise<string>;
 }
 
 function firstNonEmptyString(...values: unknown[]): string | undefined {
@@ -285,30 +281,71 @@ async function dispatchMessageChannelAction(params: {
   });
 }
 
+function trimmedOrNull(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function effectiveTextThreadId(
+  request: ChannelMessageActionRequest,
+  route: ChannelMessageActionRoute,
+): string | null {
+  const requestThreadId = trimmedOrNull(request.threadId);
+  const routeThreadId = trimmedOrNull(route.threadId);
+
+  if (request.channel === "telegram") {
+    if (requestThreadId) return requestThreadId;
+    if (route.chatType === "direct") return null;
+    return route.chatId.trim().startsWith("-") ? routeThreadId : null;
+  }
+  if (request.channel === "discord") {
+    return route.chatType === "direct"
+      ? route.chatId
+      : (requestThreadId ?? routeThreadId);
+  }
+  if (request.channel === "slack") {
+    const isDirect =
+      route.chatType === "direct" || request.chatId.startsWith("D");
+    if (isDirect) return requestThreadId ?? routeThreadId;
+    return request.replyToMessageId ? null : (requestThreadId ?? routeThreadId);
+  }
+  return null;
+}
+
+function effectiveTextReplyId(
+  request: ChannelMessageActionRequest,
+  route: ChannelMessageActionRoute,
+): string | null {
+  const isSlackDirect =
+    request.channel === "slack" &&
+    (route.chatType === "direct" || request.chatId.startsWith("D"));
+  return isSlackDirect ? null : trimmedOrNull(request.replyToMessageId);
+}
+
 /**
- * Build a dedup key from the normalized request and resolved route. This is
- * computed after normalization and route resolution so that alias/whitespace
- * variants resolving to the same destination share a key.
+ * Fingerprint only immutable text deliveries. Reactions are reversible,
+ * downloads are repeatable, and a local media path can change contents during
+ * a turn, so those actions intentionally bypass suppression.
  */
 function messageIdempotencyKey(
   request: ChannelMessageActionRequest,
   route: ChannelMessageActionRoute,
-): string {
+): string | null {
+  if (
+    (request.action !== "send" && request.action !== "send-rich") ||
+    request.mediaPath
+  ) {
+    return null;
+  }
   return JSON.stringify({
     action: request.action,
     channel: request.channel,
     chatId: route.chatId,
     accountId: route.accountId ?? null,
-    threadId: request.threadId ?? null,
+    chatType: route.chatType ?? null,
+    threadId: effectiveTextThreadId(request, route),
     message: request.message ?? null,
-    replyToMessageId: request.replyToMessageId ?? null,
-    messageId: request.messageId ?? null,
-    attachmentId: request.attachmentId ?? null,
-    emoji: request.emoji ?? null,
-    remove: request.remove ?? null,
-    mediaPath: request.mediaPath ?? null,
-    filename: request.filename ?? null,
-    title: request.title ?? null,
+    replyToMessageId: effectiveTextReplyId(request, route),
   });
 }
 
@@ -423,7 +460,6 @@ function dispatchWithIdempotency(
   scope: MessageChannelIdempotencyScope | null | undefined,
 ): Promise<string> {
   const dispatch = () => dispatchMessageChannelAction({ request, context });
-  return scope
-    ? scope.execute(messageIdempotencyKey(request, context.route), dispatch)
-    : dispatch();
+  const key = messageIdempotencyKey(request, context.route);
+  return scope ? scope.execute(key, dispatch) : dispatch();
 }

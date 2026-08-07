@@ -18,7 +18,10 @@ import type {
   StreamDeltaMessage,
   WsProtocolMessage,
 } from "@/types/app-server-protocol";
-import type { MessageChannelIdempotencyScope } from "./message-channel-executor";
+import {
+  createMessageChannelIdempotencyScope,
+  type MessageChannelIdempotencyScope,
+} from "./message-channel-idempotency";
 import { createChannelTurnProgressBuilder } from "./progress-builder";
 import type {
   ChannelControlRequestEvent,
@@ -95,30 +98,8 @@ type ActiveGatewayTurn = {
   progress: ReturnType<typeof createChannelTurnProgressBuilder>;
   richDraft: ChannelGatewayRichDraft | null;
   runId?: string;
-  idempotencyScope: MessageChannelIdempotencyScopeImpl;
+  idempotencyScope: MessageChannelIdempotencyScope;
 };
-
-class MessageChannelIdempotencyScopeImpl
-  implements MessageChannelIdempotencyScope
-{
-  private entries = new Map<string, Promise<string>>();
-
-  async execute(key: string, effect: () => Promise<string>): Promise<string> {
-    const existing = this.entries.get(key);
-    if (existing) return existing;
-
-    const pending = effect();
-    this.entries.set(key, pending);
-    try {
-      const result = await pending;
-      if (result.startsWith("Error:")) this.entries.delete(key);
-      return result;
-    } catch (error) {
-      this.entries.delete(key);
-      throw error;
-    }
-  }
-}
 
 type GatewayRuntimeState = {
   runtime: RuntimeScope;
@@ -328,7 +309,7 @@ export class ChannelGateway {
         sources: uniqueSources(sources),
         progress: createChannelTurnProgressBuilder(),
         richDraft: null,
-        idempotencyScope: new MessageChannelIdempotencyScopeImpl(),
+        idempotencyScope: createMessageChannelIdempotencyScope(),
       };
       state.active = recoveredTurn;
     }
@@ -630,7 +611,7 @@ export class ChannelGateway {
           batchId: `channel-${clientMessageId}`,
           sources,
         }) ?? null,
-      idempotencyScope: new MessageChannelIdempotencyScopeImpl(),
+      idempotencyScope: createMessageChannelIdempotencyScope(),
     };
     const processingEvent: ChannelTurnLifecycleEvent = {
       type: "processing",

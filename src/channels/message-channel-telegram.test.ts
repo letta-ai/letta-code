@@ -5,6 +5,7 @@ import {
   clearChannelAccountStores,
   upsertChannelAccount,
 } from "@/channels/accounts";
+import { createMessageChannelIdempotencyScope } from "@/channels/message-channel-idempotency";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import { clearAllRoutes, setRouteInMemory } from "@/channels/routing";
 import {
@@ -116,6 +117,53 @@ describe("MessageChannel Telegram", () => {
       title: undefined,
       parseMode: "HTML",
     });
+  });
+
+  test("suppresses an adjacent repeated Telegram text delivery", async () => {
+    installChannelStateTestOverrides();
+    const registry = new ChannelRegistry();
+    const sendMessage = mock(async () => ({ messageId: "telegram-once" }));
+    const adapter: ChannelAdapter = {
+      id: "telegram:account-1",
+      channelId: "telegram",
+      accountId: "account-1",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+    registry.registerAdapter(adapter);
+    upsertTelegramTestAccount({ richPrivateChatDefault: false });
+    setRouteInMemory("telegram", {
+      accountId: "account-1",
+      chatId: "7952253975",
+      chatType: "direct",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+    const input = {
+      action: "send",
+      channel: "telegram",
+      chat_id: "7952253975",
+      message: "one reply",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    };
+    const idempotencyScope = createMessageChannelIdempotencyScope();
+
+    const first = await message_channel(input, idempotencyScope);
+    const second = await message_channel(input, idempotencyScope);
+
+    expect(second).toBe(first);
+    expect(first).toContain("message_id: telegram-once");
+    expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
   test("does not reuse route thread ids for Telegram private chats", async () => {

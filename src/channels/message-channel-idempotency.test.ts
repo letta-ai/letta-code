@@ -18,7 +18,10 @@ import {
   makeTurnFinished,
   TEST_RUNTIME,
 } from "./gateway-test-support";
-import type { MessageChannelIdempotencyScope } from "./message-channel-executor";
+import {
+  createMessageChannelIdempotencyScope,
+  type MessageChannelIdempotencyScope,
+} from "./message-channel-idempotency";
 import type { ChannelMessageActionTransport } from "./plugin-types";
 
 const SCOPE = { agentId: "agent-1", conversationId: "conv-1" };
@@ -54,29 +57,9 @@ function createResolver(
               return opts.errorString ?? "Error:";
             },
           }
-        : createSlackMessageActionAdapter({ react: true }),
+        : createSlackMessageActionAdapter({ react: true, uploadFile: true }),
     }),
     resolveProactiveContext: () => "Error: not used",
-  };
-}
-
-function createScope(): MessageChannelIdempotencyScope {
-  const entries = new Map<string, Promise<string>>();
-  return {
-    async execute(key, effect) {
-      const existing = entries.get(key);
-      if (existing) return existing;
-      const pending = effect();
-      entries.set(key, pending);
-      try {
-        const result = await pending;
-        if (result.startsWith("Error:")) entries.delete(key);
-        return result;
-      } catch (error) {
-        entries.delete(key);
-        throw error;
-      }
-    },
   };
 }
 
@@ -91,7 +74,7 @@ describe("MessageChannel idempotency (executor)", () => {
   test("concurrent normalized sends coalesce", async () => {
     const sendMessage = mock(async () => ({ messageId: "m1" }));
     const resolver = createResolver(sendMessage);
-    const scope = createScope();
+    const scope = createMessageChannelIdempotencyScope();
     const o = execOpts(resolver, scope);
     const a = {
       action: "SEND",
@@ -119,13 +102,102 @@ describe("MessageChannel idempotency (executor)", () => {
   test("different payloads and resolved destinations remain distinct", async () => {
     const sendMessage = mock(async () => ({ messageId: "m2" }));
     const resolver = createResolver(sendMessage);
-    const o = execOpts(resolver, createScope());
+    const o = execOpts(resolver, createMessageChannelIdempotencyScope());
 
     await executeMessageChannel(SEND("C123", "hello"), o);
     await executeMessageChannel(SEND("C123", "world"), o);
     await executeMessageChannel(SEND("C456", "hello"), o);
 
     expect(sendMessage).toHaveBeenCalledTimes(3);
+  });
+
+  test("allows A-B-A while suppressing only an adjacent repeated send", async () => {
+    const sendMessage = mock(async () => ({ messageId: "m-sequence" }));
+    const resolver = createResolver(sendMessage);
+    const o = execOpts(resolver, createMessageChannelIdempotencyScope());
+    const a = SEND("C123", "A");
+    const b = SEND("C123", "B");
+
+    await executeMessageChannel(a, o);
+    await executeMessageChannel(a, o);
+    await executeMessageChannel(b, o);
+    await executeMessageChannel(a, o);
+
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+  });
+
+  test("ignores fields that do not affect a text send", async () => {
+    const sendMessage = mock(async () => ({ messageId: "m-canonical" }));
+    const resolver = createResolver(sendMessage);
+    const o = execOpts(resolver, createMessageChannelIdempotencyScope());
+    const input = SEND("C123", "same external message");
+
+    await executeMessageChannel(input, o);
+    await executeMessageChannel(
+      { ...input, messageId: "ignored", emoji: "ignored", remove: false },
+      o,
+    );
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not suppress reversible reaction sequences", async () => {
+    const sendMessage = mock(async () => ({ messageId: "m-reaction" }));
+    const resolver = createResolver(sendMessage);
+    const o = execOpts(resolver, createMessageChannelIdempotencyScope());
+    const add = {
+      action: "react",
+      channel: "slack",
+      chat_id: "C123",
+      messageId: "target-1",
+      emoji: "thumbsup",
+    };
+
+    await executeMessageChannel(add, o);
+    await executeMessageChannel({ ...add, remove: true }, o);
+    await executeMessageChannel(add, o);
+
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+  });
+
+  test("a non-text action separates otherwise identical sends", async () => {
+    const sendMessage = mock(async () => ({ messageId: "m-separated" }));
+    const resolver = createResolver(sendMessage);
+    const o = execOpts(resolver, createMessageChannelIdempotencyScope());
+    const send = SEND("C123", "A");
+
+    await executeMessageChannel(send, o);
+    await executeMessageChannel(
+      {
+        action: "react",
+        channel: "slack",
+        chat_id: "C123",
+        messageId: "target-1",
+        emoji: "thumbsup",
+      },
+      o,
+    );
+    await executeMessageChannel(send, o);
+
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+  });
+
+  test("does not suppress repeated uploads from a mutable local path", async () => {
+    const sendMessage = mock(async () => ({ messageId: "m-upload" }));
+    const resolver = createResolver(sendMessage);
+    const o = execOpts(resolver, createMessageChannelIdempotencyScope());
+    const upload = {
+      action: "upload-file",
+      channel: "slack",
+      chat_id: "C123",
+      message: "updated artifact",
+      media: "/tmp/report.pdf",
+    };
+
+    await executeMessageChannel(upload, o);
+    await executeMessageChannel(upload, o);
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
   });
 
   test("thrown result permits a later retry", async () => {
@@ -135,7 +207,10 @@ describe("MessageChannel idempotency (executor)", () => {
       if (call === 1) throw new Error("boom");
       return { messageId: "m3" };
     });
-    const o = execOpts(createResolver(sendMessage), createScope());
+    const o = execOpts(
+      createResolver(sendMessage),
+      createMessageChannelIdempotencyScope(),
+    );
     const input = SEND("C123", "hi");
 
     const r1 = await executeMessageChannel(input, o);
@@ -155,7 +230,7 @@ describe("MessageChannel idempotency (executor)", () => {
         actionCalls++;
       },
     });
-    const o = execOpts(resolver, createScope());
+    const o = execOpts(resolver, createMessageChannelIdempotencyScope());
     const input = SEND("C123", "hi");
 
     expect(await executeMessageChannel(input, o)).toBe("Error: refused");
