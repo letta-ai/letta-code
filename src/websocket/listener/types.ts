@@ -41,6 +41,7 @@ export interface StartListenerOptions {
   supportsSplitStatusChannels?: boolean;
   deviceId: string;
   connectionName: string;
+  skillsDirectory?: string;
   onConnected: (connectionId: string) => void | Promise<void>;
   onDisconnected: () => void;
   onNeedsReregister?: () => void;

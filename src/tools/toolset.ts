@@ -341,6 +341,7 @@ export async function prepareToolExecutionContextForScope(params: {
   externalToolScopeIds?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
+  skillsDirectory?: string;
   skillSources?: SkillSource[];
   cachedAgent?: AgentState | null;
   modContext?: ModContext;
@@ -361,6 +362,7 @@ export async function prepareToolExecutionContextForScope(params: {
     externalToolScopeIds,
     workingDirectory,
     permissionModeState,
+    skillsDirectory,
     skillSources,
     cachedAgent,
     modContext,
@@ -438,6 +440,7 @@ export async function prepareToolExecutionContextForScope(params: {
       agentName: (agent as AgentState).name ?? null,
       conversationId: scopedConversationId,
       workingDirectory,
+      ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
       ...(skillSources !== undefined ? { skillSources } : {}),
     },
   });
