@@ -1218,12 +1218,13 @@ export function AppView(props: AppViewProps) {
                         agentState,
                         convId,
                       );
-
+                      const resumedSummary =
+                        selectorContext?.summary ??
+                        (resumeData.conversation?.summary?.trim() || undefined);
                       // Only update state after validation succeeds
                       setConversationIdAndRef(convId);
                       setConversationAutoTitleEligibility(false);
-                      setConversationSummary(selectorContext?.summary ?? null);
-
+                      setConversationSummary(resumedSummary ?? null);
                       pendingConversationSwitchRef.current = {
                         origin: "resume-selector",
                         conversationId: convId,
@@ -1231,12 +1232,10 @@ export function AppView(props: AppViewProps) {
                         messageCount:
                           selectorContext?.messageCount ??
                           resumeData.messageHistory.length,
-                        summary: selectorContext?.summary,
+                        summary: resumedSummary,
                         messageHistory: resumeData.messageHistory,
                       };
-
                       settingsManager.persistSession(agentId, convId);
-
                       // Build success command with agent + conversation info
                       const currentAgentName =
                         agentState.name || "Unnamed Agent";
@@ -1490,20 +1489,21 @@ export function AppView(props: AppViewProps) {
                         agentState,
                         actualTargetConv,
                       );
-
+                      const resumedSummary =
+                        resumeData.conversation?.summary?.trim() || undefined;
                       setConversationIdAndRef(actualTargetConv);
                       setConversationAutoTitleEligibility(false);
-
+                      setConversationSummary(resumedSummary ?? null);
                       pendingConversationSwitchRef.current = {
                         origin: "search",
                         conversationId: actualTargetConv,
                         isDefault: actualTargetConv === "default",
                         messageCount: resumeData.messageHistory.length,
+                        summary: resumedSummary,
                         messageHistory: resumeData.messageHistory,
                         searchQuery: searchContext?.query,
                         searchMessage: searchContext?.message,
                       };
-
                       settingsManager.persistSession(agentId, actualTargetConv);
 
                       const currentAgentName =
