@@ -189,6 +189,35 @@ describe("EnterWorktree tool", () => {
     );
   });
 
+  test("clips oversized root AGENTS.md with the shared tool limit", async () => {
+    const repo = await trackRepo();
+    await writeFile(
+      path.join(repo, "AGENTS.md"),
+      `# Oversized instructions\n${"A".repeat(40_000)}\nEND-MARKER\n`,
+    );
+    git(["add", "AGENTS.md"], repo);
+    git(["commit", "-m", "add oversized agent instructions"], repo);
+
+    const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
+      enter_worktree({
+        name: "Oversized Instructions",
+        refresh_base: false,
+        switch_cwd: false,
+      }),
+    );
+    const text = result.content[0]?.text ?? "";
+
+    expect(result.status).toBe("success");
+    expect(text).toContain(
+      "[Output truncated: showing 30,000 of 40,036 characters.]",
+    );
+    expect(text).toContain("END-MARKER");
+    expect(text).toContain(
+      "AGENTS.md was truncated. Read the file before continuing.",
+    );
+    expect(text.length).toBeLessThan(32_000);
+  });
+
   test("switches only the active conversation cwd", async () => {
     const repo = await trackRepo();
     const fakeHome = await mkdtemp(

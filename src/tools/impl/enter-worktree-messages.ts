@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-
-const MAX_PROJECT_INSTRUCTIONS_CHARS = 32_000;
+import { LIMITS, truncateByChars } from "./truncation.js";
 
 export interface ProjectInstructions {
   content: string;
@@ -16,12 +15,14 @@ export async function readProjectInstructions(
       await readFile(path.join(worktreePath, "AGENTS.md"), "utf8")
     ).trim();
     if (!content) return null;
-    if (content.length <= MAX_PROJECT_INSTRUCTIONS_CHARS) {
-      return { content, truncated: false };
-    }
+    const truncated = truncateByChars(
+      content,
+      LIMITS.READ_OUTPUT_CHARS,
+      "EnterWorktree",
+    );
     return {
-      content: content.slice(0, MAX_PROJECT_INSTRUCTIONS_CHARS),
-      truncated: true,
+      content: truncated.content,
+      truncated: truncated.wasTruncated,
     };
   } catch {
     return null;
@@ -41,9 +42,7 @@ function appendProjectInstructions(
     "--- END AGENTS.md ---",
   );
   if (instructions.truncated) {
-    lines.push(
-      `AGENTS.md was truncated after ${MAX_PROJECT_INSTRUCTIONS_CHARS} characters. Read the file before continuing.`,
-    );
+    lines.push("AGENTS.md was truncated. Read the file before continuing.");
   }
 }
 
