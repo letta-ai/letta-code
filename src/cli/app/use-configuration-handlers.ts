@@ -636,7 +636,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             settingsManager.getToolsetPreference(agentId);
           const previousToolsetSnapshot = currentToolset;
           const previousToolNamesSnapshot = getToolNames();
-          let toolsetNoticeLine: string | null = null;
 
           if (persistedToolsetPreference === "auto") {
             const { switchToolsetForModel } = await import("@/tools/toolset");
@@ -647,12 +646,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             );
             setCurrentToolsetPreference("auto");
             setCurrentToolset(toolsetName);
-            // Only notify when the toolset actually changes (e.g., Claude → Codex)
             if (toolsetName !== currentToolset) {
-              toolsetNoticeLine =
-                "Auto toolset selected: switched to " +
-                formatToolsetName(toolsetName) +
-                ". Use /toolset to set a manual override.";
               maybeRecordToolsetChangeReminder({
                 source: "/model (auto toolset)",
                 previousToolset: previousToolsetSnapshot,
@@ -675,20 +669,14 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               });
             }
             setCurrentToolsetPreference(persistedToolsetPreference);
-            toolsetNoticeLine =
-              "Manual toolset override remains active: " +
-              formatToolsetName(persistedToolsetPreference) +
-              ".";
           }
 
-          const outputLines = [
+          const output =
             "Switched to " +
-              model.label +
-              (reasoningLevel ? ` (${reasoningLevel} reasoning)` : ""),
-            ...(toolsetNoticeLine ? [toolsetNoticeLine] : []),
-          ].join("\n");
+            model.label +
+            (reasoningLevel ? ` (${reasoningLevel} reasoning)` : "");
 
-          cmd.finish(outputLines, true);
+          cmd.finish(output, true);
         });
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
