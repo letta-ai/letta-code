@@ -26,6 +26,7 @@ import type {
 } from "./reflection-settings";
 import { getRuntimeContext } from "./runtime-context";
 import { trackBoundaryError } from "./telemetry/error-reporting";
+import type { ToolsetPreference } from "./tools/toolset-types";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
 import {
@@ -55,14 +56,8 @@ export interface AgentSettings {
   baseUrl?: string; // undefined = Letta API (api.letta.com)
   pinned?: boolean; // true if agent is pinned
   memfs?: boolean; // true if memory filesystem is enabled
-  toolset?:
-    | "auto"
-    | "codex"
-    | "codex_snake"
-    | "default"
-    | "gemini"
-    | "gemini_snake"
-    | "none"; // toolset mode for this agent (manual override or auto)
+  toolset?: ToolsetPreference; // Virtual default-conversation preference
+  toolsetsByConversation?: Record<string, Exclude<ToolsetPreference, "auto">>;
   systemPromptPreset?: string; // known preset ID, "custom", or undefined (legacy/subagent)
   systemPromptHash?: string; // hash of the managed prompt content last written by Letta Code
   systemPromptVersion?: string; // Letta Code version that wrote systemPromptHash
@@ -270,6 +265,22 @@ function shouldSkipLegacyLocalBackendSessionFallback(): boolean {
   );
 }
 
+function stripEmptyAgentSettings(settings: AgentSettings): AgentSettings {
+  if (!settings.pinned) delete settings.pinned;
+  if (settings.memfs === undefined) delete settings.memfs;
+  if (!settings.toolset || settings.toolset === "auto") delete settings.toolset;
+  if (Object.keys(settings.toolsetsByConversation ?? {}).length === 0) {
+    delete settings.toolsetsByConversation;
+  }
+  if (!settings.systemPromptPreset) delete settings.systemPromptPreset;
+  if (!settings.systemPromptHash) delete settings.systemPromptHash;
+  if (!settings.systemPromptVersion) delete settings.systemPromptVersion;
+  if (!settings.mcpServers || settings.mcpServers.length === 0) {
+    delete settings.mcpServers;
+  }
+  if (!settings.baseUrl) delete settings.baseUrl;
+  return settings;
+}
 /**
  * Get the current server key for indexing settings.
  * Uses the local backend storage path when local backend mode is active,
@@ -1679,19 +1690,7 @@ class SettingsManager {
             ? undefined
             : (updates.systemPromptVersion ?? existing.systemPromptVersion),
       };
-      // Clean up undefined/false values (explicit memfs:false is kept — it
-      // marks deliberately memfs-less worker agents; see isMemfsExplicitlyDisabled)
-      if (!updated.pinned) delete updated.pinned;
-      if (updated.memfs === undefined) delete updated.memfs;
-      if (!updated.toolset || updated.toolset === "auto")
-        delete updated.toolset;
-      if (!updated.systemPromptPreset) delete updated.systemPromptPreset;
-      if (!updated.systemPromptHash) delete updated.systemPromptHash;
-      if (!updated.systemPromptVersion) delete updated.systemPromptVersion;
-      if (!updated.mcpServers || updated.mcpServers.length === 0)
-        delete updated.mcpServers;
-      if (!updated.baseUrl) delete updated.baseUrl;
-      agents[idx] = updated;
+      agents[idx] = stripEmptyAgentSettings(updated);
     } else {
       const newAgent: AgentSettings = {
         agentId,
@@ -1700,18 +1699,7 @@ class SettingsManager {
         systemPromptHash: updates.systemPromptHash ?? undefined,
         systemPromptVersion: updates.systemPromptVersion ?? undefined,
       };
-      // Clean up undefined/false values (explicit memfs:false is kept)
-      if (!newAgent.pinned) delete newAgent.pinned;
-      if (newAgent.memfs === undefined) delete newAgent.memfs;
-      if (!newAgent.toolset || newAgent.toolset === "auto")
-        delete newAgent.toolset;
-      if (!newAgent.systemPromptPreset) delete newAgent.systemPromptPreset;
-      if (!newAgent.systemPromptHash) delete newAgent.systemPromptHash;
-      if (!newAgent.systemPromptVersion) delete newAgent.systemPromptVersion;
-      if (!newAgent.mcpServers || newAgent.mcpServers.length === 0)
-        delete newAgent.mcpServers;
-      if (!newAgent.baseUrl) delete newAgent.baseUrl;
-      agents.push(newAgent);
+      agents.push(stripEmptyAgentSettings(newAgent));
     }
 
     this.updateSettings({ agents });
@@ -1751,38 +1739,40 @@ class SettingsManager {
   setMcpServers(agentId: string, servers: McpServerConfig[]): void {
     this.upsertAgentSettings(agentId, { mcpServers: servers });
   }
-  /**
-   * Get toolset preference for an agent on the current server.
-   * Defaults to "auto" when no manual override is stored.
-   */
+  /** Resolve the manual override for one conversation; unset means auto. */
   getToolsetPreference(
     agentId: string,
-  ):
-    | "auto"
-    | "codex"
-    | "codex_snake"
-    | "default"
-    | "gemini"
-    | "gemini_snake"
-    | "none" {
-    return this.getAgentSettings(agentId)?.toolset ?? "auto";
+    conversationId: string = "default",
+  ): ToolsetPreference {
+    const agentSettings = this.getAgentSettings(agentId);
+    if (!conversationId || conversationId === "default") {
+      return agentSettings?.toolset ?? "auto";
+    }
+    return agentSettings?.toolsetsByConversation?.[conversationId] ?? "auto";
   }
 
-  /**
-   * Set toolset preference for an agent on the current server.
-   */
+  /** Persist a manual override for one conversation; auto clears it. */
   setToolsetPreference(
     agentId: string,
-    preference:
-      | "auto"
-      | "codex"
-      | "codex_snake"
-      | "default"
-      | "gemini"
-      | "gemini_snake"
-      | "none",
+    preference: ToolsetPreference,
+    conversationId: string = "default",
   ): void {
-    this.upsertAgentSettings(agentId, { toolset: preference });
+    const agentSettings = this.getAgentSettings(agentId);
+    if (!conversationId || conversationId === "default") {
+      if (preference === "auto" && agentSettings?.toolset === undefined) return;
+      this.upsertAgentSettings(agentId, { toolset: preference });
+      return;
+    }
+    const toolsetsByConversation = {
+      ...agentSettings?.toolsetsByConversation,
+    };
+    if (preference === "auto") {
+      if (!(conversationId in toolsetsByConversation)) return;
+      delete toolsetsByConversation[conversationId];
+    } else {
+      toolsetsByConversation[conversationId] = preference;
+    }
+    this.upsertAgentSettings(agentId, { toolsetsByConversation });
   }
 
   /**

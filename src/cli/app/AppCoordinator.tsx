@@ -180,6 +180,7 @@ import {
   type ToolExecutionResult,
 } from "@/tools/manager";
 import {
+  deriveToolsetFromModel,
   prepareToolExecutionContextForResolvedTarget,
   prepareToolExecutionContextForScope,
   type ToolsetName,
@@ -3095,32 +3096,6 @@ export function App({
           // Store full handle for API calls (e.g., compaction)
           setCurrentModelHandle(agentModelHandle || null);
 
-          const persistedToolsetPreference =
-            settingsManager.getToolsetPreference(agentId);
-          setCurrentToolsetPreference(persistedToolsetPreference);
-
-          if (persistedToolsetPreference === "auto") {
-            if (agentModelHandle) {
-              const { switchToolsetForModel } = await import("@/tools/toolset");
-              const providerType =
-                providerTypeFromModelSettings(agent.model_settings) ??
-                agent.llm_config?.model_endpoint_type ??
-                null;
-              const derivedToolset = await switchToolsetForModel(
-                agentModelHandle,
-                agentId,
-                providerType,
-              );
-              setCurrentToolset(derivedToolset);
-            } else {
-              setCurrentToolset(null);
-            }
-          } else {
-            const { forceToolsetSwitch } = await import("@/tools/toolset");
-            await forceToolsetSwitch(persistedToolsetPreference, agentId);
-            setCurrentToolset(persistedToolsetPreference);
-          }
-
           if (backend.capabilities.serverSideToolManagement) {
             const client = await getClient();
             void reconcileExistingAgentState(client, agent)
@@ -3265,6 +3240,29 @@ export function App({
 
     let cancelled = false;
 
+    const syncToolset = (
+      modelHandle: string | null,
+      modelSettings: AgentState["model_settings"] | null | undefined,
+    ) => {
+      const preference = settingsManager.getToolsetPreference(
+        agentId,
+        conversationId,
+      );
+      const toolset =
+        preference === "auto"
+          ? modelHandle
+            ? deriveToolsetFromModel(
+                modelHandle,
+                providerTypeFromModelSettings(modelSettings) ??
+                  agentState.llm_config?.model_endpoint_type ??
+                  null,
+              )
+            : null
+          : preference;
+      setCurrentToolsetPreference(preference);
+      setCurrentToolset(toolset);
+    };
+
     const applyAgentModelLocally = () => {
       const agentModelHandle = getPreferredAgentModelHandle(agentState);
       setHasConversationModelOverride(false);
@@ -3272,6 +3270,7 @@ export function App({
       setConversationOverrideContextWindowLimit(null);
       setLlmConfig(agentState.llm_config);
       setCurrentModelHandle(agentModelHandle ?? null);
+      syncToolset(agentModelHandle, agentState.model_settings);
 
       // If the model handle hasn't changed, skip re-deriving the model ID.
       // The current ID (set by handleModelSelect or a prior derivation) is
@@ -3351,7 +3350,7 @@ export function App({
           conversationModelSettings !== null &&
           Object.keys(conversationModelSettings as Record<string, unknown>)
             .length > 0;
-        const resolvedConversationModelSettings = hasConversationModelSettings
+        const resolvedModelSettings = hasConversationModelSettings
           ? conversationModelSettings
           : conversationModel === undefined ||
               conversationModel === null ||
@@ -3360,12 +3359,12 @@ export function App({
             : null;
 
         const reasoningEffort = deriveReasoningEffort(
-          resolvedConversationModelSettings,
+          resolvedModelSettings,
           agentState.llm_config,
         );
         const conversationServiceTier =
           (
-            resolvedConversationModelSettings as
+            resolvedModelSettings as
               | { service_tier?: unknown }
               | null
               | undefined
@@ -3396,7 +3395,7 @@ export function App({
             : conversationContextWindowLimit;
 
         setHasConversationModelOverride(true);
-        setConversationOverrideModelSettings(resolvedConversationModelSettings);
+        setConversationOverrideModelSettings(resolvedModelSettings);
         setConversationOverrideContextWindowLimit(
           resolvedConversationContextWindowLimit,
         );
@@ -3406,16 +3405,17 @@ export function App({
           ...agentState.llm_config,
           ...mapHandleToLlmConfigPatch(
             effectiveModelHandle,
-            providerTypeFromModelSettings(resolvedConversationModelSettings),
+            providerTypeFromModelSettings(resolvedModelSettings),
           ),
           ...reasoningEffortLlmConfigPatch(
-            resolvedConversationModelSettings,
+            resolvedModelSettings,
             agentState.llm_config,
           ),
           ...(typeof resolvedConversationContextWindowLimit === "number"
             ? { context_window: resolvedConversationContextWindowLimit }
             : {}),
         } as LlmConfig);
+        syncToolset(effectiveModelHandle, resolvedModelSettings);
       } catch (error) {
         if (cancelled) return;
         debugLog(

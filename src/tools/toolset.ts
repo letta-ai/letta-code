@@ -34,6 +34,9 @@ import {
 } from "./manager";
 import type { PermissionModeState } from "./permission-mode-state";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
+import type { ToolsetName, ToolsetPreference } from "./toolset-types";
+
+export type { ToolsetName, ToolsetPreference } from "./toolset-types";
 
 // Toolset definitions from manager.ts (single source of truth)
 
@@ -64,16 +67,6 @@ export const MEMORY_TOOL_NAMES = new Set([
   "memory_replace",
   "memory_rethink",
 ]);
-
-// Toolset type including snake_case variants
-export type ToolsetName =
-  | "codex"
-  | "codex_snake"
-  | "default"
-  | "gemini"
-  | "gemini_snake"
-  | "none";
-export type ToolsetPreference = ToolsetName | "auto";
 
 export interface ClientToolsetConfig {
   /** Request-scoped base toolset. Omitted preserves the runtime preference. */
@@ -438,7 +431,10 @@ export async function prepareToolExecutionContextForScope(params: {
 
   const toolsetPreference = (() => {
     try {
-      return settingsManager.getToolsetPreference(agentId);
+      return settingsManager.getToolsetPreference(
+        agentId,
+        conversationId ?? "default",
+      );
     } catch {
       return "auto" as const;
     }

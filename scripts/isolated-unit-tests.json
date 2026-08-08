@@ -71,6 +71,11 @@
       "reason": "Mutates the settings singleton, keychain test overrides, HOME, and the secrets service name."
     },
     {
+      "path": "src/settings-manager-toolset.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates the settings singleton and HOME while checking persisted conversation overrides."
+    },
+    {
       "path": "src/cli/reflection-worktree-completion.test.ts",
       "timeoutMs": 15000,
       "env": { "LETTA_CODE_TELEM": "1" },
