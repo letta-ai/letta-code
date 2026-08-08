@@ -1,20 +1,14 @@
-import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import {
   type ApprovalDecision,
   executeApprovalBatch,
 } from "@/agent/approval-execution";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
 import {
-  getResumeDataFromBackend,
-  type ResumeData,
-} from "@/agent/check-approval";
-import {
-  buildFreshDenialApprovals,
   isApprovalPendingError,
   isInvalidToolCallIdsError,
   normalizeStreamErrorTypeToStopReason,
-  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryPostStreamRunError,
 } from "@/agent/turn-recovery-policy";
@@ -95,14 +89,6 @@ export function getApprovalToolCallDesyncErrorText(errorInfo: {
     return message;
   }
   return null;
-}
-
-function isBackendNotFoundError(error: unknown): boolean {
-  return (
-    (error instanceof APIError &&
-      (error.status === 404 || error.status === 422)) ||
-    (error instanceof Error && error.name === "LocalBackendNotFoundError")
-  );
 }
 
 export function shouldAttemptPostStopApprovalRecovery(params: {
@@ -397,73 +383,6 @@ function buildRecoveredAutoDecisions(
       reason: formatPermissionDenial(ac.permission, ac.denyReason),
     })),
   ];
-}
-
-export async function recoverApprovalStateForSync(
-  runtime: ConversationRuntime,
-  scope: { agent_id: string; conversation_id: string },
-): Promise<void> {
-  if (hasInterruptedCacheForScope(runtime.listener, scope)) {
-    clearRecoveredApprovalState(runtime);
-    return;
-  }
-
-  const sameActiveScope =
-    runtime.agentId === scope.agent_id &&
-    runtime.conversationId === scope.conversation_id;
-
-  if (sameActiveScope && runtime.turnLifecycle.kind !== "idle") {
-    clearRecoveredApprovalState(runtime);
-    return;
-  }
-
-  if (runtime.pendingApprovalResolvers.size > 0 && sameActiveScope) {
-    clearRecoveredApprovalState(runtime);
-    return;
-  }
-
-  const backend = getBackend();
-  let agent: Awaited<ReturnType<typeof backend.retrieveAgent>>;
-  try {
-    agent = await backend.retrieveAgent(scope.agent_id);
-  } catch (error) {
-    if (isBackendNotFoundError(error)) {
-      clearRecoveredApprovalState(runtime);
-      return;
-    }
-    throw error;
-  }
-
-  let resumeData: ResumeData;
-  try {
-    resumeData = await getResumeDataFromBackend(agent, scope.conversation_id, {
-      includeMessageHistory: false,
-    });
-  } catch (error) {
-    if (isBackendNotFoundError(error)) {
-      clearRecoveredApprovalState(runtime);
-      return;
-    }
-    throw error;
-  }
-
-  const pendingApprovals = resumeData.pendingApprovals ?? [];
-  if (pendingApprovals.length === 0) {
-    clearRecoveredApprovalState(runtime);
-    return;
-  }
-
-  runtime.pendingInterruptedResults = buildFreshDenialApprovals(
-    pendingApprovals,
-    STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-  );
-  runtime.pendingInterruptedContext = {
-    agentId: scope.agent_id,
-    conversationId: scope.conversation_id,
-    continuationEpoch: runtime.continuationEpoch,
-  };
-  runtime.pendingInterruptedToolCallIds = null;
-  clearRecoveredApprovalState(runtime);
 }
 
 export async function resolveRecoveredApprovalResponse(

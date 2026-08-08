@@ -80,9 +80,9 @@ import {
 import { consumeQueuedTurn, scheduleQueuePump } from "./queue";
 import {
   getApprovalToolCallDesyncErrorText,
-  recoverApprovalStateForSync,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
+import { recoverApprovalStateForSync } from "./recovery-sync";
 import {
   clearRecoveredApprovalStateForScope,
   getListenerStatus,

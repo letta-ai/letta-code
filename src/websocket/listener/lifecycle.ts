@@ -65,7 +65,7 @@ import {
   waitForProcessServicesSlot,
 } from "./process-services";
 import { scheduleQueuePump } from "./queue";
-import { recoverApprovalStateForSync } from "./recovery";
+import { recoverApprovalStateForSync } from "./recovery-sync";
 import {
   clearConversationRuntimeState,
   clearRuntimeTimers,
