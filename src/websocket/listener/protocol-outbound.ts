@@ -258,7 +258,7 @@ export function buildDeviceStatus(
     current_toolset_preference:
       conversationRuntime?.currentToolsetPreference ?? toolsetPreference,
     current_loaded_tools: conversationRuntime?.currentLoadedTools ?? [],
-    current_available_skills: [],
+    current_available_skills: conversationRuntime?.currentAvailableSkills ?? [],
     background_processes: buildBackgroundProcessSnapshot(
       scopedAgentId,
       scopedConversationId,

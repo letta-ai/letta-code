@@ -538,6 +538,8 @@ export function isRuntimeStartCommand(
       typeof c.conversation_id === "string") &&
     (c.create_conversation === undefined ||
       isRuntimeStartCreateConversationOptions(c.create_conversation)) &&
+    (c.conversation_source_tags === undefined ||
+      isStringArray(c.conversation_source_tags)) &&
     (c.cwd === undefined || c.cwd === null || typeof c.cwd === "string") &&
     (c.mode === undefined || isDevicePermissionMode(c.mode)) &&
     (c.skill_sources === undefined || isSkillSourceArray(c.skill_sources)) &&

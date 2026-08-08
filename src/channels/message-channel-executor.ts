@@ -1,4 +1,8 @@
 import { formatOutboundChannelMessage } from "./message-channel-formatting";
+import {
+  MessageChannelDuplicateActionError,
+  type MessageChannelIdempotencyScope,
+} from "./message-channel-idempotency";
 import type {
   MessageChannelInput,
   NormalizedMessageChannelInput,
@@ -57,6 +61,7 @@ export interface ExecuteMessageChannelOptions {
   scope: MessageChannelExecutionScope;
   resolver: MessageChannelExecutionResolver;
   channelTurnSources?: ChannelTurnSource[];
+  idempotencyScope?: MessageChannelIdempotencyScope | null;
 }
 
 function firstNonEmptyString(...values: unknown[]): string | undefined {
@@ -279,6 +284,74 @@ async function dispatchMessageChannelAction(params: {
   });
 }
 
+function trimmedOrNull(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function effectiveTextThreadId(
+  request: ChannelMessageActionRequest,
+  route: ChannelMessageActionRoute,
+): string | null {
+  const requestThreadId = trimmedOrNull(request.threadId);
+  const routeThreadId = trimmedOrNull(route.threadId);
+
+  if (request.channel === "telegram") {
+    if (requestThreadId) return requestThreadId;
+    if (route.chatType === "direct") return null;
+    return route.chatId.trim().startsWith("-") ? routeThreadId : null;
+  }
+  if (request.channel === "discord") {
+    return route.chatType === "direct"
+      ? route.chatId
+      : (requestThreadId ?? routeThreadId);
+  }
+  if (request.channel === "slack") {
+    const isDirect =
+      route.chatType === "direct" || request.chatId.startsWith("D");
+    if (isDirect) return requestThreadId ?? routeThreadId;
+    return request.replyToMessageId ? null : (requestThreadId ?? routeThreadId);
+  }
+  return null;
+}
+
+function effectiveTextReplyId(
+  request: ChannelMessageActionRequest,
+  route: ChannelMessageActionRoute,
+): string | null {
+  const isSlackDirect =
+    request.channel === "slack" &&
+    (route.chatType === "direct" || request.chatId.startsWith("D"));
+  return isSlackDirect ? null : trimmedOrNull(request.replyToMessageId);
+}
+
+/**
+ * Fingerprint only immutable text deliveries. Reactions are reversible,
+ * downloads are repeatable, and a local media path can change contents during
+ * a turn, so those actions intentionally bypass suppression.
+ */
+function messageIdempotencyKey(
+  request: ChannelMessageActionRequest,
+  route: ChannelMessageActionRoute,
+): string | null {
+  if (
+    (request.action !== "send" && request.action !== "send-rich") ||
+    request.mediaPath
+  ) {
+    return null;
+  }
+  return JSON.stringify({
+    action: request.action,
+    channel: request.channel,
+    chatId: route.chatId,
+    accountId: route.accountId ?? null,
+    chatType: route.chatType ?? null,
+    threadId: effectiveTextThreadId(request, route),
+    message: request.message ?? null,
+    replyToMessageId: effectiveTextReplyId(request, route),
+  });
+}
+
 /**
  * Execute the canonical MessageChannel contract against host-owned routing and
  * transport adapters. This owns normalization, scope checks, thread/account
@@ -338,14 +411,16 @@ export async function executeMessageChannel(
             context.route.chatType === "direct"
               ? normalized.threadId
               : (context.route.threadId ?? normalized.threadId)));
-      return await dispatchMessageChannelAction({
-        request: buildMessageChannelRequest(
-          normalized,
-          normalized.chatId,
-          requestThreadId,
-        ),
+      const request = buildMessageChannelRequest(
+        normalized,
+        normalized.chatId,
+        requestThreadId,
+      );
+      return await dispatchWithIdempotency(
+        request,
         context,
-      });
+        options.idempotencyScope,
+      );
     }
 
     if (normalized.channel !== "slack") {
@@ -366,16 +441,29 @@ export async function executeMessageChannel(
       transport: proactive.transport,
       messageActions: proactive.messageActions,
     };
-    return await dispatchMessageChannelAction({
-      request: buildMessageChannelRequest(
-        normalized,
-        proactive.target.chatId,
-        proactive.target.threadId,
-      ),
+    const request = buildMessageChannelRequest(
+      normalized,
+      proactive.target.chatId,
+      proactive.target.threadId,
+    );
+    return await dispatchWithIdempotency(
+      request,
       context,
-    });
+      options.idempotencyScope,
+    );
   } catch (error) {
+    if (error instanceof MessageChannelDuplicateActionError) throw error;
     const message = error instanceof Error ? error.message : "unknown error";
     return `Error sending message to ${normalized.channel}: ${message}`;
   }
+}
+
+function dispatchWithIdempotency(
+  request: ChannelMessageActionRequest,
+  context: ResolvedMessageChannelContext,
+  scope: MessageChannelIdempotencyScope | null | undefined,
+): Promise<string> {
+  const dispatch = () => dispatchMessageChannelAction({ request, context });
+  const key = messageIdempotencyKey(request, context.route);
+  return scope ? scope.execute(key, dispatch) : dispatch();
 }

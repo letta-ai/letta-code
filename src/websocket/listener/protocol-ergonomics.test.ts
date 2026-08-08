@@ -368,4 +368,32 @@ describe("listener protocol ergonomics", () => {
     expect(status.current_working_directory).toBe(runtime.bootWorkingDirectory);
     expect(runtime.workingDirectoryRevision).toBe(1);
   });
+
+  test("reports the skills prepared for the active conversation", () => {
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+    const conversationRuntime =
+      __listenClientTestUtils.getOrCreateScopedRuntime(
+        runtime,
+        "agent-1",
+        "conv-1",
+      );
+    conversationRuntime.currentAvailableSkills = [
+      {
+        id: "searching-and-viewing-slack",
+        name: "searching-and-viewing-slack",
+        description: "Search Slack from a managed computer.",
+        path: "/root/.letta/cloud-skills/searching-and-viewing-slack/SKILL.md",
+        source: "project",
+      },
+    ];
+
+    const status = __listenClientTestUtils.buildDeviceStatus(runtime, {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    });
+
+    expect(status.current_available_skills).toEqual(
+      conversationRuntime.currentAvailableSkills,
+    );
+  });
 });

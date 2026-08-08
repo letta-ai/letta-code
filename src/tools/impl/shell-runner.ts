@@ -18,7 +18,7 @@ export type ShellSpawnOptions = {
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
 };
 
-const ABORT_KILL_TIMEOUT_MS = 2000;
+const FORCE_KILL_GRACE_MS = 2000;
 
 function buildSpawnError(
   err: NodeJS.ErrnoException,
@@ -83,17 +83,42 @@ export function spawnWithLauncher(
       detached: process.platform !== "win32",
     });
 
-    // Helper to kill the entire process group
-    const killProcessGroup = (signal: "SIGTERM" | "SIGKILL") => {
+    // Helper to kill the entire process tree.
+    const killProcessTree = (signal: "SIGTERM" | "SIGKILL") => {
       if (childProcess.pid) {
+        if (process.platform === "win32") {
+          // Windows has no Unix-style process groups or graceful SIGTERM.
+          // taskkill is required so descendants cannot keep stdio open after
+          // the launcher exits.
+          const taskkill = spawn(
+            "taskkill.exe",
+            ["/pid", String(childProcess.pid), "/t", "/f"],
+            {
+              stdio: "ignore",
+              windowsHide: true,
+            },
+          );
+          taskkill.once("error", () => {
+            try {
+              childProcess.kill("SIGKILL");
+            } catch {
+              // Already dead, ignore.
+            }
+          });
+          taskkill.once("close", (code) => {
+            if (code === 0) return;
+            try {
+              childProcess.kill("SIGKILL");
+            } catch {
+              // Already dead, ignore.
+            }
+          });
+          return;
+        }
+
         try {
-          if (process.platform !== "win32") {
-            // Unix: kill the process group using negative PID
-            process.kill(-childProcess.pid, signal);
-          } else {
-            // Windows: process groups work differently, just kill the child
-            childProcess.kill(signal);
-          }
+          // Unix: kill the process group using negative PID.
+          process.kill(-childProcess.pid, signal);
         } catch {
           // Process may already be dead, try killing just the child
           try {
@@ -109,24 +134,34 @@ export function spawnWithLauncher(
     const stderrChunks: Buffer[] = [];
     let timedOut = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
+    let completed = false;
+
+    const terminateProcess = () => {
+      if (process.platform === "win32") {
+        killProcessTree("SIGKILL");
+        return;
+      }
+
+      killProcessTree("SIGTERM");
+      if (!killTimer) {
+        killTimer = setTimeout(() => {
+          if (!completed) {
+            killProcessTree("SIGKILL");
+          }
+        }, FORCE_KILL_GRACE_MS);
+      }
+    };
 
     // Only set timeout if timeoutMs > 0 (0 means no timeout)
     const timeoutId = options.timeoutMs
       ? setTimeout(() => {
           timedOut = true;
-          killProcessGroup("SIGTERM");
+          terminateProcess();
         }, options.timeoutMs)
       : null;
 
     const abortHandler = () => {
-      killProcessGroup("SIGTERM");
-      if (!killTimer) {
-        killTimer = setTimeout(() => {
-          if (childProcess.exitCode === null && !childProcess.killed) {
-            killProcessGroup("SIGKILL");
-          }
-        }, ABORT_KILL_TIMEOUT_MS);
-      }
+      terminateProcess();
     };
     if (options.signal) {
       options.signal.addEventListener("abort", abortHandler, { once: true });
@@ -143,6 +178,7 @@ export function spawnWithLauncher(
     });
 
     childProcess.on("error", (err: NodeJS.ErrnoException) => {
+      completed = true;
       if (timeoutId) clearTimeout(timeoutId);
       if (killTimer) {
         clearTimeout(killTimer);
@@ -156,6 +192,7 @@ export function spawnWithLauncher(
     });
 
     childProcess.on("close", (code) => {
+      completed = true;
       if (timeoutId) clearTimeout(timeoutId);
       if (killTimer) {
         clearTimeout(killTimer);

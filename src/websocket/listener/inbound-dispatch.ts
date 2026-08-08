@@ -1,3 +1,4 @@
+import { getOrCreateProcessTransport } from "./connection";
 import {
   enqueueInboundUserMessage,
   getInboundClientMessageId,
@@ -135,7 +136,7 @@ export function dispatchInboundMessageWhenReady(params: {
       acknowledgeInput({ accepted: true, disposition: "started" });
       await processIncomingMessage(
         incoming,
-        socket,
+        getOrCreateProcessTransport(listener),
         runtime,
         options.onStatusChange,
         options.connectionId,

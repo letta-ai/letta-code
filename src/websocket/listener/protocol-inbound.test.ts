@@ -106,6 +106,7 @@ describe("agent/conversation management protocol-inbound validators", () => {
       request_id: "r0",
       create_agent: { body: { name: "Agent" }, pin_global: false },
       create_conversation: { body: { summary: "New conversation" } },
+      conversation_source_tags: ["channel:slack"],
       cwd: "/tmp/project",
       mode: "acceptEdits",
       skill_sources: [],
@@ -225,6 +226,12 @@ describe("agent/conversation management protocol-inbound validators", () => {
       request_id: "r0",
       agent_id: "agent-1",
       create_conversation: [],
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      conversation_source_tags: ["channel:slack", 42],
     },
     {
       type: "runtime_start",

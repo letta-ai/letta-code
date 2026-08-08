@@ -14,6 +14,7 @@ import type { SkillSource } from "@/agent/skill-sources";
 import { type Backend, getBackend } from "@/backend";
 import {
   type ClientTool,
+  getExecutionContextById,
   type PreparedToolExecutionContext,
   prepareCurrentToolExecutionContext,
   waitForToolsetReady,
@@ -349,6 +350,8 @@ export async function sendMessageStreamWithBackend(
   const { clientSkills, errors: clientSkillDiscoveryErrors } =
     await buildClientSkillsPayload({
       agentId: opts.agentId,
+      skillsDirectory: getExecutionContextById(preparedToolContext.contextId)
+        ?.runtimeContext.skillsDirectory,
       skillSources: opts.skillSources ?? getSkillSources(),
     });
 
@@ -406,9 +409,6 @@ export async function sendMessageStreamWithBackend(
   }
 
   const extraHeaders: Record<string, string> = {};
-  if (process.env.LETTA_RESPONSES_WS === "1") {
-    extraHeaders["X-Experimental-OpenAI-Responses-Websocket"] = "true";
-  }
   if (previousResponseId) {
     extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader({
       v: 1,

@@ -84,6 +84,12 @@ export interface ErrorData {
   run_id?: string;
   recent_chunks?: Record<string, unknown>[];
   debug_log_tail?: string;
+  is_subagent?: boolean;
+  subagent_type?: string;
+  model_handle?: string;
+  fallback_kind?: string;
+  platform?: string;
+  version?: string;
 }
 
 export interface UserInputData {
@@ -709,6 +715,10 @@ class TelemetryManager {
       modelId?: string;
       runId?: string;
       recentChunks?: Record<string, unknown>[];
+      isSubagent?: boolean;
+      subagentType?: string;
+      modelHandle?: string;
+      fallbackKind?: string;
     },
   ) {
     // Skip error telemetry for self-hosted users to avoid spamming cloud analytics
@@ -730,6 +740,12 @@ class TelemetryManager {
       run_id: options?.runId,
       recent_chunks: options?.recentChunks,
       debug_log_tail: debugLogFile.getTail(),
+      is_subagent: options?.isSubagent,
+      subagent_type: options?.subagentType,
+      model_handle: options?.modelHandle,
+      fallback_kind: options?.fallbackKind,
+      platform: process.platform,
+      version: getVersion(),
     };
     this.track("error", data);
   }

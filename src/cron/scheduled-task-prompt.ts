@@ -2,6 +2,14 @@ export type ScheduledTaskRecurrence =
   | { type: "one-off" }
   | { type: "recurring"; cron: string; fireNumber?: number };
 
+/**
+ * Conversation tag marking a conversation created by a scheduled task fire.
+ *
+ * Every schedule runner stamps this when it creates a conversation, so clients
+ * can identify scheduled conversations without parsing the summary text.
+ */
+export const SCHEDULE_ORIGIN_TAG = "origin:schedule";
+
 export interface ScheduledTaskPromptInput {
   name: string;
   description?: string | null;

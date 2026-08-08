@@ -78,6 +78,48 @@ describe("request-scoped client toolsets", () => {
     );
   });
 
+  test("loads bundled tools named only in the allowlist", async () => {
+    const prepared = await prepareToolExecutionContextForResolvedTarget({
+      modelIdentifier: "anthropic/claude-sonnet-5",
+      toolsetPreference: "auto",
+      clientToolAllowlist: ["Read", "LS", "Glob", "Grep"],
+    });
+
+    // LS, Glob and Grep are not in the default base; allowlisting them is
+    // what loads them.
+    expect([...prepared.preparedToolContext.loadedToolNames].sort()).toEqual([
+      "Glob",
+      "Grep",
+      "LS",
+      "Read",
+    ]);
+  });
+
+  test("ignores allowlist entries that are not bundled client tools", async () => {
+    const prepared = await prepareToolExecutionContextForResolvedTarget({
+      modelIdentifier: "anthropic/claude-sonnet-5",
+      toolsetPreference: "auto",
+      clientToolAllowlist: ["Read", "mcp__files__read", "SomeCustomTool"],
+    });
+
+    expect(prepared.preparedToolContext.loadedToolNames).toEqual(["Read"]);
+  });
+
+  test("does not leak one turn's tools into the next", async () => {
+    await prepareToolExecutionContextForResolvedTarget({
+      modelIdentifier: "anthropic/claude-sonnet-5",
+      toolsetPreference: "auto",
+      clientToolset: { include: ["Glob"] },
+    });
+
+    const prepared = await prepareToolExecutionContextForResolvedTarget({
+      modelIdentifier: "anthropic/claude-sonnet-5",
+      toolsetPreference: "auto",
+    });
+
+    expect(prepared.preparedToolContext.loadedToolNames).not.toContain("Glob");
+  });
+
   test("rejects unknown bundled tool names", async () => {
     expect(
       prepareToolExecutionContextForResolvedTarget({

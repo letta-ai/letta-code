@@ -133,17 +133,17 @@ export function buildSlackConversationSummary(
     if (msg.threadId?.trim()) {
       const preview = truncateChannelSummaryPreview(msg.text);
       return preview
-        ? `[Slack] DM thread with ${msg.senderName?.trim() || msg.senderId}: ${preview}`
-        : `[Slack] DM thread with ${msg.senderName?.trim() || msg.senderId}`;
+        ? `DM thread with ${msg.senderName?.trim() || msg.senderId}: ${preview}`
+        : `DM thread with ${msg.senderName?.trim() || msg.senderId}`;
     }
-    return `[Slack] DM with ${msg.senderName?.trim() || msg.senderId}`;
+    return `DM with ${msg.senderName?.trim() || msg.senderId}`;
   }
 
   const preview = truncateChannelSummaryPreview(msg.text);
   const channelLabel =
     msg.chatLabel && msg.chatLabel !== msg.chatId ? ` in ${msg.chatLabel}` : "";
-  if (preview) return `[Slack] Thread${channelLabel}: ${preview}`;
-  return `[Slack] Thread${channelLabel || ` ${msg.chatId}`}`;
+  if (preview) return `Thread${channelLabel}: ${preview}`;
+  return `Thread${channelLabel || ` ${msg.chatId}`}`;
 }
 
 export function buildDiscordConversationSummary(
@@ -153,13 +153,13 @@ export function buildDiscordConversationSummary(
   >,
 ): string {
   if (msg.chatType === "direct") {
-    return `[Discord] DM with ${msg.senderName?.trim() || msg.senderId}`;
+    return `DM with ${msg.senderName?.trim() || msg.senderId}`;
   }
   const preview = truncateChannelSummaryPreview(msg.text);
   const channelLabel =
     msg.chatLabel && msg.chatLabel !== msg.chatId ? ` in ${msg.chatLabel}` : "";
-  if (preview) return `[Discord] Thread${channelLabel}: ${preview}`;
-  return `[Discord] Thread${channelLabel || ` ${msg.chatId}`}`;
+  if (preview) return `Thread${channelLabel}: ${preview}`;
+  return `Thread${channelLabel || ` ${msg.chatId}`}`;
 }
 
 export function buildTelegramConversationSummary(
@@ -169,13 +169,13 @@ export function buildTelegramConversationSummary(
   >,
 ): string {
   if (msg.chatType === "direct") {
-    return `[Telegram] DM with ${msg.senderName?.trim() || msg.senderId}`;
+    return `DM with ${msg.senderName?.trim() || msg.senderId}`;
   }
   const preview = truncateChannelSummaryPreview(msg.text);
   const channelLabel =
     msg.chatLabel && msg.chatLabel !== msg.chatId ? ` in ${msg.chatLabel}` : "";
-  if (preview) return `[Telegram] Topic${channelLabel}: ${preview}`;
-  return `[Telegram] Topic${channelLabel || ` ${msg.chatId}`}`;
+  if (preview) return `Topic${channelLabel}: ${preview}`;
+  return `Topic${channelLabel || ` ${msg.chatId}`}`;
 }
 
 export function buildWhatsAppConversationSummary(

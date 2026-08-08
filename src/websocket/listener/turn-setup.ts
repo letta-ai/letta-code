@@ -3,6 +3,7 @@ import type {
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
+import { buildClientSkillsPayload } from "@/agent/client-skills";
 import {
   setConversationId,
   setCurrentAgentId,
@@ -268,9 +269,10 @@ export async function prepareListenerTurn(params: {
     runtime.listener,
     agentId,
   );
-  const environmentDeviceId = connectionId
-    ? runtime.listener.connections.get(connectionId)?.options.deviceId
-    : undefined;
+  const listenerOptions = connectionId
+    ? runtime.listener.connections.get(connectionId)?.options
+    : runtime.listener.connections.values().next().value?.options;
+  const environmentDeviceId = listenerOptions?.deviceId;
   const preparedToolContext = await prepareToolExecutionContextForScope({
     connectionId,
     environmentDeviceId,
@@ -286,6 +288,7 @@ export async function prepareListenerTurn(params: {
     externalToolScopeIds: msg.externalToolScopeIds,
     workingDirectory,
     permissionModeState,
+    skillsDirectory: listenerOptions?.skillsDirectory,
     skillSources: runtime.skillSources,
     cachedAgent,
     modContext: createListenerAgentModContext(agentId),
@@ -296,10 +299,22 @@ export async function prepareListenerTurn(params: {
     return { kind: "interrupted" };
   }
 
+  const availableSkills = (
+    await buildClientSkillsPayload({
+      agentId,
+      skillsDirectory: listenerOptions?.skillsDirectory,
+      skillSources: runtime.skillSources,
+    })
+  ).availableSkills;
+  if (isInterrupted()) {
+    return { kind: "interrupted" };
+  }
+
   runtime.currentToolset = preparedToolContext.toolset;
   runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
+  runtime.currentAvailableSkills = availableSkills;
   return {
     kind: "ready",
     getCachedAgent: () => cachedAgent,

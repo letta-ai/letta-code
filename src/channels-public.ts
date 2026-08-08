@@ -1,4 +1,20 @@
 export type {
+  ChannelDisplayNameResolver,
+  ChannelSlashCommandDefinition,
+  ChannelSlashCommandHandlerResult,
+  ChannelSlashCommandHandlers,
+  ChannelSlashCommandKind,
+  ParsedChannelSlashCommand,
+} from "./channels/command-surface";
+export {
+  buildChannelHelpMessage,
+  buildUnsupportedChannelCommandMessage,
+  defaultChannelDisplayName,
+  listChannelSlashCommands,
+  parseChannelBangCommand,
+  parseChannelSlashCommand,
+} from "./channels/command-surface";
+export type {
   CollectLettaSseAssistantTextOptions,
   CollectLettaSseAssistantTextResult,
   FormatLettaStreamCoreErrorOptions,
@@ -11,6 +27,20 @@ export {
   LettaStreamCoreError,
   LettaStreamNoAssistantMessageError,
 } from "./channels/core-stream";
+export type {
+  ChannelLifecycleErrorDisplay,
+  ChannelLifecycleErrorDisplayOptions,
+  ChannelLifecycleErrorFormatOptions,
+  ChannelLifecycleErrorKind,
+} from "./channels/lifecycle-error";
+export {
+  CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE,
+  extractChannelLifecycleRunId,
+  formatChannelLifecycleErrorMessage,
+  getChannelLifecycleErrorDisplay,
+  normalizeChannelLifecycleErrorMessage,
+  sanitizeChannelLifecycleErrorText,
+} from "./channels/lifecycle-error";
 export type {
   ChannelMessageActionAdapter,
   ChannelMessageActionContext,
