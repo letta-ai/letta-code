@@ -129,6 +129,11 @@
       "reason": "Uses several top-level Bun module mocks and exercises real concurrent listener state."
     },
     {
+      "path": "src/websocket/listen-turn-model-pin.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Uses top-level Bun module mocks for agent message/stream/backend modules to capture per-request override_model."
+    },
+    {
       "path": "src/websocket/listener/auth-lifecycle.test.ts",
       "timeoutMs": 30000,
       "reason": "Exercises real WebSockets while mutating listener, settings, HOME, and process environment state."

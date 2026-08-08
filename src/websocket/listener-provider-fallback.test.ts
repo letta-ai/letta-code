@@ -3,6 +3,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import {
   createProviderFallbackState,
   maybeApplyProviderFallback,
+  resolveTurnRequestOverrideModel,
 } from "@/websocket/listener/provider-fallback";
 
 function agentWithModel(
@@ -65,5 +66,45 @@ describe("listener provider fallback", () => {
       );
       expect(state.overrideModel).toBe("bedrock/us.anthropic.claude-opus-4-7");
     }
+  });
+});
+
+describe("turn request override model precedence", () => {
+  test("falls back to the turn-start snapshot when nothing else is set", () => {
+    expect(
+      resolveTurnRequestOverrideModel({
+        turnStartEffectiveModel: "anthropic/claude-sonnet-5",
+      }),
+    ).toBe("anthropic/claude-sonnet-5");
+  });
+
+  test("a live /model switch beats the turn-start snapshot", () => {
+    expect(
+      resolveTurnRequestOverrideModel({
+        liveModelSwitchHandle: "openai/gpt-5.4",
+        turnStartEffectiveModel: "anthropic/claude-sonnet-5",
+      }),
+    ).toBe("openai/gpt-5.4");
+  });
+
+  test("provider fallback beats both the live switch and the snapshot", () => {
+    expect(
+      resolveTurnRequestOverrideModel({
+        providerFallbackOverride: "bedrock/us.anthropic.claude-sonnet-5",
+        liveModelSwitchHandle: "openai/gpt-5.4",
+        turnStartEffectiveModel: "anthropic/claude-sonnet-5",
+      }),
+    ).toBe("bedrock/us.anthropic.claude-sonnet-5");
+  });
+
+  test("returns undefined when no source resolves a model", () => {
+    expect(
+      resolveTurnRequestOverrideModel({
+        providerFallbackOverride: null,
+        liveModelSwitchHandle: null,
+        turnStartEffectiveModel: null,
+      }),
+    ).toBeUndefined();
+    expect(resolveTurnRequestOverrideModel({})).toBeUndefined();
   });
 });

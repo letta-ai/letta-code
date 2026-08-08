@@ -3,10 +3,7 @@ import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/ag
 import type { ApprovalResult } from "@/agent/approval-execution";
 import { fetchRunErrorInfo } from "@/agent/approval-recovery";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
-import {
-  getStreamToolContextId,
-  type sendMessageStream,
-} from "@/agent/message";
+import { getStreamToolContextId } from "@/agent/message";
 import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
@@ -83,7 +80,10 @@ import {
 } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { notifyTurnFinished, notifyTurnStarted } from "./turn-observers";
-import { createTurnInputSender } from "./turn-send";
+import {
+  createTurnInputSender,
+  createTurnSendOptionsBuilder,
+} from "./turn-send";
 import { prepareListenerTurn } from "./turn-setup";
 import { setTurnLoopStatus } from "./turn-status";
 import { finishListenerTurn } from "./turn-terminal";
@@ -207,6 +207,9 @@ async function handleIncomingMessageInner(
   try {
     runtime.lastTerminalLoopErrorMessage = null;
     runtime.lastTerminalLoopErrorRunId = null;
+    // Each turn re-resolves its effective model at turn start; a live /model
+    // switch recorded for a previous turn must not leak into this one.
+    runtime.liveModelSwitchHandle = null;
     setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
       agent_id: agentId ?? null,
       conversation_id: conversationId,
@@ -280,34 +283,18 @@ async function handleIncomingMessageInner(
     let pendingNormalizationInterruptedToolCallIds =
       setup.pendingNormalizationInterruptedToolCallIds;
     const preparedToolContext = setup.preparedToolContext;
-    const buildSendOptions = (): Parameters<typeof sendMessageStream>[2] => ({
+    const buildSendOptions = createTurnSendOptionsBuilder({
       agentId,
-      streamTokens: true,
-      background: true,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
-      ...(runtime.skillSources !== undefined
-        ? { skillSources: runtime.skillSources }
-        : {}),
+      runtime,
       preparedToolContext: preparedToolContext.preparedToolContext,
-      ...(turnInput.imageFailureModesByMessageOtid
-        ? {
-            imageFailureModesByMessageOtid:
-              turnInput.imageFailureModesByMessageOtid,
-          }
-        : {}),
-      ...(providerFallback.overrideModel
-        ? { overrideModel: providerFallback.overrideModel }
-        : {}),
-      ...(msg.actingUserId ? { actingUserId: msg.actingUserId } : {}),
-      ...(pendingNormalizationInterruptedToolCallIds.length > 0
-        ? {
-            approvalNormalization: {
-              interruptedToolCallIds:
-                pendingNormalizationInterruptedToolCallIds,
-            },
-          }
-        : {}),
+      turnStartEffectiveModel: preparedToolContext.effectiveModel,
+      providerFallback,
+      actingUserId: msg.actingUserId,
+      getTurnInput: () => turnInput,
+      getPendingNormalizationInterruptedToolCallIds: () =>
+        pendingNormalizationInterruptedToolCallIds,
     });
 
     const turnInputSender = createTurnInputSender({

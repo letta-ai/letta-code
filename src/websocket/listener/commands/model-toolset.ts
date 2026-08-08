@@ -517,6 +517,11 @@ export async function applyModelUpdateForRuntime(params: {
     appliedTo = "conversation";
   }
 
+  // A turn in flight pins its turn-start effective model on every request
+  // (override_model), so a deliberate live switch must be recorded on the
+  // runtime for the active turn's next continuation to pick it up.
+  scopedRuntime.liveModelSwitchHandle = model.handle;
+
   const toolsetPreference = settingsManager.getToolsetPreference(agentId);
   const previousToolNames = scopedRuntime.currentLoadedTools;
   let nextToolset: ToolsetName;

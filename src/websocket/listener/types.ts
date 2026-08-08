@@ -218,6 +218,15 @@ export type ConversationRuntime = {
   currentToolsetPreference: ToolsetPreference;
   currentLoadedTools: string[];
   currentAvailableSkills: AvailableSkillSummary[];
+  /**
+   * Model handle applied by a live /model (update_model) switch. Active turns
+   * pin their turn-start effective model on every request of the turn, so a
+   * deliberate mid-turn switch must be recorded here to still take effect on
+   * the next continuation request. Beats the turn-start snapshot but not
+   * provider fallback; cleared at each turn start so new turns re-resolve
+   * from conversation/agent config.
+   */
+  liveModelSwitchHandle: string | null;
   pendingApprovalBatchByToolCallId: Map<string, string>;
   /**
    * tool_call_id -> server-assigned id of the approval_request_message that
