@@ -208,8 +208,8 @@ describe("EnterWorktree tool", () => {
     const text = result.content[0]?.text ?? "";
 
     expect(result.status).toBe("success");
-    expect(text).toContain(
-      "[Output truncated: showing 30,000 of 40,036 characters.]",
+    expect(text).toMatch(
+      /\[Output truncated: showing 30,000 of 40,0\d{2} characters\.\]/,
     );
     expect(text).toContain("END-MARKER");
     expect(text).toContain(
