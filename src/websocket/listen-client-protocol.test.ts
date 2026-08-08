@@ -3660,24 +3660,24 @@ describe("listen-client v2 status builders", () => {
     });
   });
 
-  test("sync wiring converts recovered stale approvals into queued denials", () => {
+  test("sync wiring denies recovered stale approvals and never auto-runs them", () => {
     const recoveryPath = fileURLToPath(
-      new URL("../websocket/listener/recovery.ts", import.meta.url),
+      new URL("../websocket/listener/recovery-sync.ts", import.meta.url),
     );
     const source = readFileSync(recoveryPath, "utf-8");
-    const recoverySection =
-      source
-        .split("export async function recoverApprovalStateForSync")[1]
-        ?.split("export async function resolveRecoveredApprovalResponse")[0] ??
-      "";
 
-    expect(recoverySection).toContain(
+    // Replay-unsafe tools become stale denials; interactive tools are
+    // re-presented as recovered control requests (LET-10821). Neither path
+    // may classify or auto-execute restored approvals (#1876).
+    expect(source).toContain(
       "runtime.pendingInterruptedResults = buildFreshDenialApprovals(",
     );
-    expect(recoverySection).toContain("STALE_APPROVAL_RECOVERY_DENIAL_REASON");
-    expect(recoverySection).toContain("clearRecoveredApprovalState(runtime);");
-    expect(recoverySection).not.toContain("classifyApprovalsWithSuggestions(");
-    expect(recoverySection).not.toContain("buildRecoveredAutoDecisions(");
+    expect(source).toContain("STALE_APPROVAL_RECOVERY_DENIAL_REASON");
+    expect(source).toContain("clearRecoveredApprovalState(runtime);");
+    expect(source).toContain("isInteractiveApprovalTool");
+    expect(source).not.toContain("classifyApprovalsWithSuggestions(");
+    expect(source).not.toContain("buildRecoveredAutoDecisions(");
+    expect(source).not.toContain("executeApprovalBatch");
   });
 
   test("sync ignores backend recovered approvals while a live turn is already processing", async () => {
