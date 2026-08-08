@@ -247,6 +247,7 @@ function createLocalConversationRecord(
     ...(typeof bodyRecord.hidden === "boolean"
       ? { hidden: bodyRecord.hidden }
       : {}),
+    ...(isStringArray(bodyRecord.tags) ? { tags: bodyRecord.tags } : {}),
   } as StoredConversation;
 }
 
