@@ -18,15 +18,20 @@ import type {
 } from "@/types/service-protocol";
 import { createChannelRichDraftStreamer } from "./channel-rich-draft-streamer";
 import {
+  type RuntimeCommandClient,
+  runChannelCancelCommand,
+  runChannelModelListCommand,
+  runChannelModelUpdateCommand,
+  runChannelReflectionCommand,
+  runChannelReloadCommand,
+} from "./command-runtime-executor";
+import {
   buildChannelCurrentModelMessage,
   buildChannelCurrentModelUnavailableMessage,
-  buildChannelModelListMessage,
-  buildChannelModelListUnavailableMessage,
-  buildChannelModelUpdatedMessage,
-  buildChannelModelUpdateFailedMessage,
 } from "./commands";
 import { ChannelGateway, type ChannelGatewayDelivery } from "./gateway-core";
 import { buildGatewayMessageChannelTool } from "./message-channel-gateway-tool";
+import { getChannelDisplayName } from "./plugin-registry";
 import {
   type ChannelsCommand,
   handleChannelsProtocolCommand,
@@ -136,6 +141,14 @@ function gatewayClientMessageId(delivery: {
     .digest("hex")
     .slice(0, 32);
   return `cm-channel-${digest}`;
+}
+
+function channelDisplayName(channelId: string): string {
+  try {
+    return getChannelDisplayName(channelId);
+  } catch {
+    return channelId;
+  }
 }
 
 function isListModelsResponse(
@@ -438,9 +451,86 @@ export async function startLocalChannelGateway(
     routedRuntimeRegistrationRefresher.requestRefresh();
   });
 
+  const executeRemoteCommand = (
+    runtime: RuntimeScope,
+    commandId: "reload" | "reflect",
+  ): Promise<ExecuteCommandResponseMessage> =>
+    client.request<ExecuteCommandResponseMessage>(
+      {
+        type: "execute_command",
+        request_id: client.nextRequestId(`channel-${commandId}`),
+        runtime,
+        command_id: commandId,
+      },
+      { predicate: isExecuteCommandResponse },
+    );
+
+  // In-process transport for the shared runtime-command executor: the same
+  // command semantics Letta Cloud reaches over its listener relay, backed
+  // here by the direct App Server connection. Local-only side effects
+  // (recent-model tracking, gateway model-status cache) stay in this client.
+  const runtimeCommandClient: RuntimeCommandClient = {
+    listModels: async () => {
+      const response = await client.request<ListModelsResponseMessage>(
+        {
+          type: "list_models",
+          request_id: client.nextRequestId("channel-model-list"),
+        },
+        { predicate: isListModelsResponse },
+      );
+      return {
+        success: response.success,
+        entries: response.entries,
+        availableHandles: response.available_handles,
+        error: response.error,
+      };
+    },
+    updateModel: async ({ runtime, modelIdentifier }) => {
+      const response = await client.request<UpdateModelResponseMessage>(
+        {
+          type: "update_model",
+          request_id: client.nextRequestId("channel-model-update"),
+          runtime,
+          payload: {
+            model_id: modelIdentifier,
+            model_handle: modelIdentifier,
+          },
+        },
+        { predicate: isUpdateModelResponse },
+      );
+      if (!response.success) {
+        return { success: false, error: response.error };
+      }
+      settingsManager.addRecentModel(response.model_handle ?? modelIdentifier);
+      gateway.updateModelStatus(
+        runtime,
+        response.model_handle ?? modelIdentifier,
+      );
+      return {
+        success: true,
+        modelHandle: response.model_handle,
+        appliedTo: response.applied_to,
+      };
+    },
+    abortMessage: async ({ runtime, runId }) => {
+      const response = await client.abort({ runtime, run_id: runId });
+      return { success: response.success, aborted: response.aborted };
+    },
+    executeCommand: async ({ runtime, commandId }) => {
+      const response =
+        commandId === "reflect"
+          ? await executeRemoteCommand(runtime, "reflect")
+          : await executeRemoteCommand(runtime, "reload");
+      return { success: response.success, output: response.output };
+    },
+  };
+
   registry.setCancelHandler(async ({ runtime }) => {
-    const response = await client.abort({ runtime, run_id: null });
-    return response.success && response.aborted;
+    const result = await runChannelCancelCommand({
+      client: runtimeCommandClient,
+      runtime,
+    });
+    return result.cancelled;
   });
 
   registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
@@ -498,88 +588,30 @@ export async function startLocalChannelGateway(
     }
 
     if (modelIdentifier.toLowerCase() === "list") {
-      const response = await client.request<ListModelsResponseMessage>(
-        {
-          type: "list_models",
-          request_id: client.nextRequestId("channel-model-list"),
-        },
-        { predicate: isListModelsResponse },
-      );
-      return {
-        handled: true,
-        text: response.success
-          ? buildChannelModelListMessage(channelId, {
-              entries: response.entries,
-              availableHandles: response.available_handles,
-              recentHandles: settingsManager.getRecentModels(),
-            })
-          : buildChannelModelListUnavailableMessage(
-              channelId,
-              response.error ?? "Failed to list models",
-            ),
-      };
+      return runChannelModelListCommand({
+        channelId,
+        client: runtimeCommandClient,
+        recentHandles: settingsManager.getRecentModels(),
+        channelDisplayName,
+      });
     }
 
-    const response = await client.request<UpdateModelResponseMessage>(
-      {
-        type: "update_model",
-        request_id: client.nextRequestId("channel-model-update"),
-        runtime,
-        payload: {
-          model_id: modelIdentifier,
-          model_handle: modelIdentifier,
-        },
-      },
-      { predicate: isUpdateModelResponse },
-    );
-    if (!response.success) {
-      return {
-        handled: true,
-        text: buildChannelModelUpdateFailedMessage(
-          channelId,
-          modelIdentifier,
-          response.error ?? "Failed to update model",
-        ),
-      };
-    }
-    settingsManager.addRecentModel(response.model_handle ?? modelIdentifier);
-    gateway.updateModelStatus(
+    return runChannelModelUpdateCommand({
+      channelId,
+      client: runtimeCommandClient,
       runtime,
-      response.model_handle ?? modelIdentifier,
-    );
-    return {
-      handled: true,
-      text: buildChannelModelUpdatedMessage(channelId, {
-        modelLabel:
-          getModelInfo(response.model_handle ?? modelIdentifier)?.label ??
-          modelIdentifier,
-        modelHandle: response.model_handle ?? modelIdentifier,
-        appliedTo: response.applied_to,
-      }),
-    };
+      modelIdentifier,
+      resolveModelLabel: (modelHandle) => getModelInfo(modelHandle)?.label,
+      channelDisplayName,
+    });
   });
 
-  const executeRemoteCommand = (
-    runtime: RuntimeScope,
-    commandId: "reload" | "reflect",
-  ): Promise<ExecuteCommandResponseMessage> =>
-    client.request<ExecuteCommandResponseMessage>(
-      {
-        type: "execute_command",
-        request_id: client.nextRequestId(`channel-${commandId}`),
-        runtime,
-        command_id: commandId,
-      },
-      { predicate: isExecuteCommandResponse },
-    );
-  registry.setReloadHandler(async ({ runtime }) => {
-    const response = await executeRemoteCommand(runtime, "reload");
-    return { handled: true, text: response.output };
-  });
-  registry.setReflectionHandler(async ({ runtime }) => {
-    const response = await executeRemoteCommand(runtime, "reflect");
-    return { handled: true, text: response.output };
-  });
+  registry.setReloadHandler(async ({ runtime }) =>
+    runChannelReloadCommand({ client: runtimeCommandClient, runtime }),
+  );
+  registry.setReflectionHandler(async ({ runtime }) =>
+    runChannelReflectionCommand({ client: runtimeCommandClient, runtime }),
+  );
 
   registry.setReady();
   return {
