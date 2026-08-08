@@ -118,6 +118,63 @@ describe("listener mod adapter", () => {
     expect(context.toolset).toBe("default");
   });
 
+  test("delivers UI notifications with the active invocation scope when panels are unavailable", async () => {
+    const root = createTempDir();
+    const modsDir = join(root, "mods");
+    const cacheDir = join(root, "cache");
+    mkdirSync(modsDir, { recursive: true });
+    writeFileSync(
+      join(modsDir, "notify.ts"),
+      `export default function activate(letta) {
+        letta.events.on("turn_start", (_event, ctx) => {
+          letta.ui.notify("Desktop-only message");
+        });
+      }`,
+    );
+
+    const notifications: Array<{
+      message: string;
+      agentId: string | null;
+      conversationId: string | null;
+    }> = [];
+    const adapter = createListenerModAdapter({
+      cacheDirectory: cacheDir,
+      globalModsDirectory: modsDir,
+      includeGlobalMods: true,
+      onNotification: (message, context) => {
+        notifications.push({
+          message,
+          agentId: context?.agent.id ?? null,
+          conversationId: context?.sessionId ?? null,
+        });
+      },
+    });
+    await adapter.reload();
+
+    const context = createListenerModContext({
+      agent: { id: "agent-123" },
+      sessionId: "conversation-456",
+    });
+    await adapter.events.emit(
+      "turn_start",
+      {
+        agentId: "agent-123",
+        conversationId: "conversation-456",
+        input: [],
+      },
+      context,
+    );
+
+    expect(notifications).toEqual([
+      {
+        message: "Desktop-only message",
+        agentId: "agent-123",
+        conversationId: "conversation-456",
+      },
+    ]);
+    adapter.dispose();
+  });
+
   test("builds isolated agent MemFS roots", () => {
     settingsManager.isMemfsEnabled = (agentId) => agentId !== "agent-disabled";
 

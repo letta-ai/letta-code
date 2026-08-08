@@ -9,6 +9,7 @@ import type {
 } from "@/mods/types";
 import { attachDeprecatedGetContextTrap } from "./deprecated-api";
 import { areModsDisabled } from "./disable";
+import { runWithModInvocationContext } from "./invocation-context";
 
 const MOD_TOOLS_KEY = Symbol.for("@letta/modTools");
 
@@ -140,5 +141,5 @@ export async function runModTool(
   if (tool.activationSignal.aborted) {
     throw new Error(`Mod tool '${tool.name}' is no longer available`);
   }
-  return tool.run(context);
+  return runWithModInvocationContext(context, () => tool.run(context));
 }

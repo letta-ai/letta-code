@@ -18,6 +18,10 @@ import {
 } from "@/websocket/listener/connection";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { createRuntime as createListenerRuntime } from "@/websocket/listener/lifecycle";
+import {
+  createListenerModContext,
+  emitListenerModNotification,
+} from "@/websocket/listener/mod-adapter";
 import { OUTBOUND_QUEUE_LIMITS } from "@/websocket/listener/outbound-wire";
 import {
   emitDequeuedUserMessage,
@@ -123,6 +127,46 @@ describe("emitProtocolV2Message backpressure", () => {
 });
 
 describe("emitProtocolV2Message connection routing", () => {
+  test("routes mod notifications as UI-only status deltas", () => {
+    const listener = createListenerRuntime();
+    const socket = new MockSocket();
+    const connectionId = "desktop-client";
+    const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+    openListenerConnection({
+      runtime: listener,
+      connectionId,
+      writer: socket as never,
+      options: {
+        connectionId,
+        wsUrl: "ws://test",
+        deviceId: "test",
+        connectionName: connectionId,
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+      },
+    });
+    markListenerConnectionInitialized(listener, connectionId);
+    subscribeListenerConnection(listener, connectionId, scope);
+
+    emitListenerModNotification(
+      listener,
+      "Desktop-only message",
+      createListenerModContext({
+        agent: { id: scope.agent_id },
+        sessionId: scope.conversation_id,
+      }),
+    );
+
+    const message = parseOnlyStreamDelta(socket);
+    expect(message.runtime).toEqual(scope);
+    expect(message.delta).toMatchObject({
+      message_type: "status",
+      message: "Desktop-only message",
+      level: "info",
+    });
+  });
+
   test("fans notifications out to subscribers and honors an explicit target", () => {
     const listener = createListenerRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
