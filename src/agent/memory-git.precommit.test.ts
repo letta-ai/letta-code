@@ -13,6 +13,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PRE_COMMIT_HOOK_SCRIPT } from "@/agent/memory-git-hooks";
+import {
+  DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT,
+  formatMemoryTokenLimit,
+  MEMORY_TOKEN_LIMIT_POLICY_PATH,
+  MEMORY_TOKEN_LIMIT_UPDATE_ENV,
+} from "@/agent/memory-token-limit";
 
 let tempDir: string;
 
@@ -24,11 +30,11 @@ const GIT_ENV = {
   GIT_COMMITTER_EMAIL: "test@test.com",
 };
 
-function git(args: string): string {
+function git(args: string, env: NodeJS.ProcessEnv = GIT_ENV): string {
   return execSync(`git ${args}`, {
     cwd: tempDir,
     encoding: "utf-8",
-    env: GIT_ENV,
+    env,
   });
 }
 
@@ -39,9 +45,12 @@ function writeAndStage(relativePath: string, content: string): void {
   git(`add ${relativePath}`);
 }
 
-function tryCommit(): { success: boolean; output: string } {
+function tryCommit(env: NodeJS.ProcessEnv = GIT_ENV): {
+  success: boolean;
+  output: string;
+} {
   try {
-    const output = git('commit -m "test"');
+    const output = git('commit -m "test"', env);
     return { success: true, output };
   } catch (err) {
     const output =
@@ -50,6 +59,14 @@ function tryCommit(): { success: boolean; output: string } {
         : String(err);
     return { success: false, output };
   }
+}
+
+function installPolicy(limit: number): void {
+  writeAndStage(MEMORY_TOKEN_LIMIT_POLICY_PATH, formatMemoryTokenLimit(limit));
+  git('commit -m "set policy"', {
+    ...GIT_ENV,
+    [MEMORY_TOKEN_LIMIT_UPDATE_ENV]: "1",
+  });
 }
 
 /** Valid frontmatter for convenience */
@@ -307,5 +324,97 @@ describe("pre-commit hook: non-memory files", () => {
     writeAndStage("memory/system/.sync-state.json", '{"bad": "frontmatter"}');
     const result = tryCommit();
     expect(result.success).toBe(true);
+  });
+});
+
+describe("pre-commit hook: system prompt token limit", () => {
+  const contentWithEstimatedTokens = (tokens: number): string => {
+    const frontmatter = "---\ndescription: Large block\n---\n\n";
+    return `${frontmatter}${"x".repeat(tokens * 4 - Buffer.byteLength(frontmatter))}`;
+  };
+
+  test("allows a staged system prompt below the default limit", () => {
+    writeAndStage(
+      "system/context.md",
+      contentWithEstimatedTokens(DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT - 1),
+    );
+    expect(tryCommit().success).toBe(true);
+  });
+
+  test("rejects a staged system prompt equal to the default limit", () => {
+    writeAndStage(
+      "system/context.md",
+      contentWithEstimatedTokens(DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT),
+    );
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain(
+      `must be less than ${DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT} tokens`,
+    );
+  });
+
+  test("enforces the default limit for legacy memory/system repos", () => {
+    writeAndStage(
+      "memory/system/context.md",
+      contentWithEstimatedTokens(DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT),
+    );
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain(
+      `must be less than ${DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT} tokens`,
+    );
+  });
+
+  test("uses the configured per-repo limit", () => {
+    installPolicy(100);
+    writeAndStage("system/context.md", contentWithEstimatedTokens(100));
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("must be less than 100 tokens");
+  });
+
+  test("sums nested system files", () => {
+    installPolicy(100);
+    writeAndStage("system/human/one.md", contentWithEstimatedTokens(50));
+    writeAndStage("system/project/two.md", contentWithEstimatedTokens(50));
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("approximately 100 tokens");
+  });
+
+  test("estimates the staged snapshot rather than unstaged content", () => {
+    writeAndStage("system/context.md", contentWithEstimatedTokens(100));
+    writeFileSync(
+      join(tempDir, "system/context.md"),
+      contentWithEstimatedTokens(DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT),
+      "utf-8",
+    );
+    expect(tryCommit().success).toBe(true);
+  });
+
+  test("rejects changing the tracked policy without approval", () => {
+    installPolicy(100);
+    writeAndStage(MEMORY_TOKEN_LIMIT_POLICY_PATH, formatMemoryTokenLimit(200));
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("memory policy is protected");
+  });
+
+  test("rejects deleting the tracked policy without approval", () => {
+    installPolicy(100);
+    git(`rm ${MEMORY_TOKEN_LIMIT_POLICY_PATH}`);
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("memory policy is protected");
+  });
+
+  test("rejects an invalid tracked policy", () => {
+    writeAndStage(
+      MEMORY_TOKEN_LIMIT_POLICY_PATH,
+      "system_prompt_token_limit: nope\n",
+    );
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("positive integer");
   });
 });

@@ -9,7 +9,13 @@
 
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT,
+  MEMORY_TOKEN_LIMIT_POLICY_PATH,
+  MEMORY_TOKEN_LIMIT_UPDATE_ENV,
+} from "@/agent/memory-token-limit";
 import { debugLog } from "@/utils/debug";
+import { SYSTEM_PROMPT_BYTES_PER_TOKEN } from "@/utils/system-prompt-size";
 
 /**
  * Bash pre-commit hook that validates frontmatter in memory .md files.
@@ -23,6 +29,7 @@ import { debugLog } from "@/utils/debug";
  * - Only allowed agent-editable key: description
  * - Legacy key 'limit' is tolerated for backward compatibility
  * - read_only may exist (from server) but agent must not change it
+ * - The staged system/ context must stay below the configured token limit
  */
 export const PRE_COMMIT_HOOK_SCRIPT = `#!/usr/bin/env bash
 # Validate frontmatter in staged memory .md files
@@ -31,6 +38,10 @@ export const PRE_COMMIT_HOOK_SCRIPT = `#!/usr/bin/env bash
 AGENT_EDITABLE_KEYS="description"
 PROTECTED_KEYS="read_only"
 ALL_KNOWN_KEYS="description read_only limit"
+DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT=${DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT}
+SYSTEM_PROMPT_BYTES_PER_TOKEN=${SYSTEM_PROMPT_BYTES_PER_TOKEN}
+MEMORY_TOKEN_LIMIT_POLICY_PATH="${MEMORY_TOKEN_LIMIT_POLICY_PATH}"
+MEMORY_TOKEN_LIMIT_UPDATE_ENV="${MEMORY_TOKEN_LIMIT_UPDATE_ENV}"
 errors=""
 
 # Skills must always be directories: skills/<name>/SKILL.md
@@ -156,8 +167,49 @@ for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memor
   fi
 done
 
+# The tracked token-limit policy can only be changed through the approval-gated
+# CLI command. This marker is an anti-accident guard, not a security boundary.
+if ! git diff --cached --quiet -- "$MEMORY_TOKEN_LIMIT_POLICY_PATH"; then
+  if [ "\${!MEMORY_TOKEN_LIMIT_UPDATE_ENV:-}" != "1" ]; then
+    errors="$errors\\n  memory policy is protected; use: letta memory token-limit set <tokens>"
+  fi
+fi
+
+# Read the policy from the staged snapshot so unstaged content cannot affect
+# the commit.
+system_prompt_token_limit=$DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT
+if git cat-file -e ":$MEMORY_TOKEN_LIMIT_POLICY_PATH" 2>/dev/null; then
+  policy_content=$(git show ":$MEMORY_TOKEN_LIMIT_POLICY_PATH")
+  policy_lines=$(printf '%s\\n' "$policy_content" | grep -cve '^[[:space:]]*$' || true)
+  policy_value=$(printf '%s\\n' "$policy_content" | sed -nE 's/^[[:space:]]*system_prompt_token_limit:[[:space:]]*([0-9]+)[[:space:]]*$/\\1/p')
+  if [ "$policy_lines" -ne 1 ] || [ -z "$policy_value" ] || [ "$policy_value" -le 0 ] 2>/dev/null; then
+    errors="$errors\\n  $MEMORY_TOKEN_LIMIT_POLICY_PATH: expected 'system_prompt_token_limit: <positive integer>'"
+  else
+    system_prompt_token_limit=$policy_value
+  fi
+fi
+
+# Estimate the complete staged system prompt with the same bytes-per-token
+# heuristic and current-layout preference as the letta memory tokens command.
+system_pathspec='system/*.md'
+if ! git ls-files -- "$system_pathspec" | grep -Ev '(^|/)\\.' | grep -q .; then
+  system_pathspec='memory/system/*.md'
+fi
+system_prompt_tokens=0
+while IFS= read -r -d '' file; do
+  case "$file" in */.*) continue ;; esac
+  bytes=$(git cat-file -s ":$file")
+  file_tokens=$(( (bytes + SYSTEM_PROMPT_BYTES_PER_TOKEN - 1) / SYSTEM_PROMPT_BYTES_PER_TOKEN ))
+  system_prompt_tokens=$((system_prompt_tokens + file_tokens))
+done < <(git ls-files -z -- "$system_pathspec")
+
+if [ "$system_prompt_tokens" -ge "$system_prompt_token_limit" ]; then
+  errors="$errors\\n  system prompt is approximately $system_prompt_tokens tokens; it must be less than $system_prompt_token_limit tokens"
+  errors="$errors\\n  Reduce files under system/, or request approval for: letta memory token-limit set <tokens>"
+fi
+
 if [ -n "$errors" ]; then
-  echo "Frontmatter validation failed:"
+  echo "MemFS pre-commit validation failed:"
   echo -e "$errors"
   exit 1
 fi

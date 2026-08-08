@@ -106,6 +106,25 @@ cd "$MEMORY_DIR" && git add <changed-files> && git commit --author="$AGENT_NAME 
 
 Do not use API system-prompt replacement for ordinary learning. That can clobber the compiled prompt. Edit memory instead.
 
+### MemFS system prompt token limit
+
+MemFS memory repos enforce an estimated token limit for the complete staged `system/` context in their pre-commit hook. The default is strictly fewer than 20,000 tokens. This is separate from the model's context window: it limits durable in-context memory, not the total context available for messages and tool results.
+
+Measure the current working-tree estimate with the shared estimator:
+
+```bash
+letta memory tokens --format json --quiet --memory-dir "$MEMORY_DIR"
+```
+
+The hook evaluates the staged Git snapshot, so stage the intended memory changes before comparing its result with the CLI estimate. Read or configure the tracked memory policy with:
+
+```bash
+letta memory token-limit get --memory-dir "$MEMORY_DIR"
+letta memory token-limit set 30000 --memory-dir "$MEMORY_DIR"
+```
+
+The configured value is exclusive: `20000` requires an estimate below 20,000 tokens. Prefer moving non-core material out of `system/` rather than raising the limit automatically. The setting lives in tracked `system/.letta-policy.yml`, syncs with the memory repo, and cannot be changed or removed by an ordinary commit. `token-limit set` always requires fresh human approval when invoked through an agent tool and creates the protected policy commit; never edit the policy file directly or bypass its hook.
+
 ## Server-side agent and conversation settings
 
 Server fields control model execution and agent metadata. Use the agent endpoint for persistent defaults. Use the conversation endpoint for scoped experiments.

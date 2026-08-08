@@ -62,19 +62,18 @@ function walkMarkdownFiles(dir: string): string[] {
 }
 
 /**
- * Estimate total token usage of files under `<memoryDir>/system/`, with a per-file breakdown.
- *
- * Returns { total: 0, files: [] } when `system/` does not exist (instead of throwing).
+ * Estimate total token usage under the current `system/` layout, falling back
+ * to legacy `memory/system/` repositories when no current-layout blocks exist.
  */
 export function estimateSystemPromptSize(
   memoryDir: string,
 ): SystemPromptSizeEstimate {
-  const systemDir = join(memoryDir, "system");
-  if (!existsSync(systemDir)) {
-    return { total: 0, files: [] };
-  }
-
-  const files = walkMarkdownFiles(systemDir).sort();
+  const currentFiles = walkMarkdownFiles(join(memoryDir, "system"));
+  const files = (
+    currentFiles.length > 0
+      ? currentFiles
+      : walkMarkdownFiles(join(memoryDir, "memory", "system"))
+  ).sort();
   const rows: FileEstimate[] = [];
 
   for (const filePath of files) {
