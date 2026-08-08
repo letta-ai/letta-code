@@ -414,6 +414,12 @@ export async function resolveStaleApprovals(
 
       const continuationMessagesWithSkillContent = injectQueuedSkillContent(
         continuationInput.messages,
+        {
+          socket,
+          runtime,
+          agentId: runtime.agentId,
+          conversationId: recoveryConversationId,
+        },
       );
       const recoverySendResult = await sendApprovalContinuationWithRetry(
         recoveryConversationId,
