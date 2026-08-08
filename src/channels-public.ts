@@ -1,4 +1,33 @@
 export type {
+  ChannelModelListEntry,
+  ParsedChannelModelCommand,
+  RuntimeCommandAbortResult,
+  RuntimeCommandClient,
+  RuntimeCommandExecuteResult,
+  RuntimeCommandListModelsResult,
+  RuntimeCommandReply,
+  RuntimeCommandScope,
+  RuntimeCommandUpdateModelResult,
+  RuntimeExecuteCommandId,
+} from "./channels/command-runtime-executor";
+export {
+  buildChannelCancelAcceptedMessage,
+  buildChannelCancelNoActiveTurnMessage,
+  buildChannelCurrentModelMessage,
+  buildChannelCurrentModelUnavailableMessage,
+  buildChannelModelListMessage,
+  buildChannelModelListUnavailableMessage,
+  buildChannelModelNotFoundText,
+  buildChannelModelUpdatedMessage,
+  buildChannelModelUpdateFailedMessage,
+  parseChannelModelCommand,
+  runChannelCancelCommand,
+  runChannelModelListCommand,
+  runChannelModelUpdateCommand,
+  runChannelReflectionCommand,
+  runChannelReloadCommand,
+} from "./channels/command-runtime-executor";
+export type {
   ChannelDisplayNameResolver,
   ChannelSlashCommandDefinition,
   ChannelSlashCommandHandlerResult,
