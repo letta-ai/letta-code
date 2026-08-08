@@ -321,9 +321,9 @@ async function handleIncomingMessageInner(
       onTerminal: noteFinalization,
       getTurnId: () => activeDequeuedBatchId,
     });
-
     const currentInputWithSkillContent = injectQueuedSkillContent(
       turnInput.messages,
+      { socket, runtime, agentId, conversationId },
     );
     const initialSendResult = await turnInputSender.send(
       currentInputWithSkillContent,
@@ -553,13 +553,13 @@ async function handleIncomingMessageInner(
           if (finishIfInterrupted(lastRunId || runtime.activeRunId)) {
             break;
           }
-
           setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
             agent_id: agentId,
             conversation_id: conversationId,
           });
           const retryInputWithSkillContent = injectQueuedSkillContent(
             turnInput.messages,
+            { socket, runtime, agentId, conversationId },
           );
           const retrySendResult = await turnInputSender.send(
             retryInputWithSkillContent,
@@ -632,13 +632,13 @@ async function handleIncomingMessageInner(
             throw new Error("Cancelled by user");
           }
           turnInput = refreshTurnInputOtidsForNewRequest(turnInput);
-
           setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
             agent_id: agentId,
             conversation_id: conversationId,
           });
           const retryInputWithSkillContent = injectQueuedSkillContent(
             turnInput.messages,
+            { socket, runtime, agentId, conversationId },
           );
           const retrySendResult = await turnInputSender.send(
             retryInputWithSkillContent,
@@ -713,13 +713,13 @@ async function handleIncomingMessageInner(
             throw new Error("Cancelled by user");
           }
           turnInput = refreshTurnInputOtidsForNewRequest(turnInput);
-
           setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
             agent_id: agentId,
             conversation_id: conversationId,
           });
           const retryInputWithSkillContent = injectQueuedSkillContent(
             turnInput.messages,
+            { socket, runtime, agentId, conversationId },
           );
           const retrySendResult = await turnInputSender.send(
             retryInputWithSkillContent,

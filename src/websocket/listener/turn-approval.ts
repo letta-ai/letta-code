@@ -587,6 +587,7 @@ export async function handleApprovalStop(params: {
 
   const nextInputWithSkillContent = injectQueuedSkillContent(
     nextTurnInput.messages,
+    { socket, runtime, agentId, conversationId },
   );
   nextTurnInput = updateTurnInputMessagesPreservingOtids(
     nextTurnInput,
