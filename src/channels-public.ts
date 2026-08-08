@@ -1,4 +1,20 @@
 export type {
+  ChannelDisplayNameResolver,
+  ChannelSlashCommandDefinition,
+  ChannelSlashCommandHandlerResult,
+  ChannelSlashCommandHandlers,
+  ChannelSlashCommandKind,
+  ParsedChannelSlashCommand,
+} from "./channels/command-surface";
+export {
+  buildChannelHelpMessage,
+  buildUnsupportedChannelCommandMessage,
+  defaultChannelDisplayName,
+  listChannelSlashCommands,
+  parseChannelBangCommand,
+  parseChannelSlashCommand,
+} from "./channels/command-surface";
+export type {
   CollectLettaSseAssistantTextOptions,
   CollectLettaSseAssistantTextResult,
   FormatLettaStreamCoreErrorOptions,
