@@ -399,6 +399,9 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
         reasoning: { reasoning_effort: "high" },
       });
       expect(scopedRuntime.currentToolset).toBe("codex");
+      // Active turns pin their turn-start model on every request, so a live
+      // switch must be recorded on the runtime to take effect mid-turn.
+      expect(scopedRuntime.liveModelSwitchHandle).toBe("chatgpt-jin/gpt-5.5");
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;

@@ -46,6 +46,5 @@
   "src/websocket/listener/file-commands.ts": 1053,
   "src/websocket/listener/lifecycle.ts": 1051,
   "src/websocket/listener/protocol-inbound.ts": 2264,
-  "src/websocket/listener/protocol-outbound.ts": 1085,
-  "src/websocket/listener/turn.ts": 1010
+  "src/websocket/listener/protocol-outbound.ts": 1085
 }
