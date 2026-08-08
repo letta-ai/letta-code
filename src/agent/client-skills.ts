@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
+import type { AvailableSkillSummary } from "@/types/protocol_v2";
 import { getSkillSources, getSkillsDirectory } from "./context";
 import { resolveScopedMemoryDir } from "./memory-filesystem";
 import {
@@ -191,6 +192,7 @@ function cloneResult(
 ): BuildClientSkillsPayloadResult {
   return {
     clientSkills: result.clientSkills.map((s) => ({ ...s })),
+    availableSkills: result.availableSkills.map((skill) => ({ ...skill })),
     skillPathById: { ...result.skillPathById },
     errors: result.errors.map((e) => ({ ...e })),
   };
@@ -310,6 +312,7 @@ export interface BuildClientSkillsPayloadOptions {
 
 export interface BuildClientSkillsPayloadResult {
   clientSkills: NonNullable<ConversationMessageCreateParams["client_skills"]>;
+  availableSkills: AvailableSkillSummary[];
   skillPathById: Record<string, string>;
   errors: SkillDiscoveryError[];
 }
@@ -533,6 +536,13 @@ export async function buildClientSkillsPayload(
 
   const result: BuildClientSkillsPayloadResult = {
     clientSkills: sortedSkills.map(toClientSkill),
+    availableSkills: sortedSkills.map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      path: skill.path,
+      source: skill.source,
+    })),
     skillPathById: Object.fromEntries(
       sortedSkills
         .filter(
