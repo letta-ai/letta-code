@@ -56,7 +56,7 @@ There are two ways to change memory:
 - **The `memory` tool (shorthand).** Use it for small, targeted edits. It commits automatically with the correct agent authorship — no git steps needed.
 - **Direct file edits (full control).** For larger changes — restructuring directories, rewriting several blocks — edit the projected files directly, then commit:
 
-Memory markdown files must start with YAML frontmatter containing a non-empty `description:` field. The `memory` and `memory_apply_patch` tools add and preserve this automatically; when using raw file edits, preserve existing frontmatter or add it before committing. The MemFS pre-commit hook enforces this requirement, rejects unknown keys, and prevents changes to protected `read_only` files. Skill `SKILL.md` files use their own skill frontmatter format.
+Memory markdown files must start with YAML frontmatter containing a non-empty `description:` field. The `memory` and `memory_apply_patch` tools add and preserve this automatically; when using raw file edits, preserve existing frontmatter or add it before committing. The MemFS pre-commit hook enforces this requirement, rejects unknown keys, prevents changes to protected `read_only` files, and keeps the staged `system/` context below its configured token limit (20,000 by default). Use `letta memory tokens` to measure it and the approval-gated `letta memory token-limit set <tokens>` command to change it. Skill `SKILL.md` files use their own skill frontmatter format.
 
 `$AGENT_NAME` is normally populated when the runtime knows the current agent name, but direct shell environments can still miss it. Use a non-empty author name fallback when committing directly.
 

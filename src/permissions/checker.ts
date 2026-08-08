@@ -109,18 +109,14 @@ interface ModPermissionCheckOptions {
   toolCallId?: string | null;
 }
 
-function envFlagEnabled(name: string): boolean {
-  const value = process.env[name];
-  if (!value) return false;
-  return value === "1" || value.toLowerCase() === "true";
-}
+const envFlagEnabled = (name: string): boolean =>
+  ["1", "true"].includes(process.env[name]?.toLowerCase() ?? "");
 
 function isPermissionsV2Enabled(): boolean {
   const value = process.env.LETTA_PERMISSIONS_V2;
   if (!value) return true;
   return !(value === "0" || value.toLowerCase() === "false");
 }
-
 function shouldAttachTrace(result: PermissionCheckResult): boolean {
   if (envFlagEnabled("LETTA_PERMISSION_TRACE_ALL")) {
     return true;

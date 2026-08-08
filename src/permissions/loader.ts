@@ -42,6 +42,11 @@ type PermissionCacheEntry = {
   signatures: Map<string, FileSignature>;
 };
 
+const BUILTIN_ALWAYS_ASK_RULES = [
+  "Bash(letta memory token-limit set:*)",
+  "Bash(letta memfs token-limit set:*)",
+];
+
 const permissionCache = new Map<string, PermissionCacheEntry>();
 const watchers = new Map<string, FSWatcher>();
 
@@ -241,7 +246,7 @@ export async function loadPermissions(
     allow: [],
     deny: [],
     ask: [],
-    alwaysAsk: [],
+    alwaysAsk: [...BUILTIN_ALWAYS_ASK_RULES],
     additionalDirectories: [],
   };
 

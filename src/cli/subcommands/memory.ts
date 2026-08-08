@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getMemoryGitStatus, isGitRepo, pullMemory } from "@/agent/memory-git";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import { runMemoryTokenLimitAction } from "./memory-token-limit";
 import { runMemoryTokensAction } from "./memory-tokens";
 
 function printUsage(): void {
@@ -20,12 +21,15 @@ Usage:
   letta memory pull [--agent <id>]
   letta memory tokens [--memory-dir <path>] [--agent <id>] [--top <N>]
                      [--format text|json] [--quiet]
+  letta memory token-limit get [--memory-dir <path>] [--agent <id>]
+  letta memory token-limit set <tokens> [--memory-dir <path>] [--agent <id>]
 
 Notes:
   - Most actions require agent id via --agent or LETTA_AGENT_ID and output JSON.
   - \`tokens\` additionally accepts --memory-dir or $MEMORY_DIR; reports the
-    estimated token size of system/. Policy (whether a size is concerning) is
-    up to the caller.
+    estimated token size of system/.
+  - \`token-limit get\` reads memory policy. \`token-limit set\` is approval-gated and
+    commits the protected policy change.
   - Memory is git-backed. Use git commands for commit/push.
 
 Examples:
@@ -35,6 +39,8 @@ Examples:
   letta memory export --agent agent-123 --out /tmp/letta-memory-agent-123
   letta memory tokens
   letta memory tokens --memory-dir ~/.letta/agents/agent-123/memory --format json
+  letta memory token-limit get
+  letta memory token-limit set 30000
 `.trim(),
   );
 }
@@ -150,6 +156,20 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
       top: parsed.values.top,
       format: parsed.values.format,
       quiet: Boolean(parsed.values.quiet),
+    });
+  }
+
+  if (action === "token-limit") {
+    if (parsed.positionals.length > 3) {
+      console.error("Too many arguments for memory token-limit.");
+      return 64;
+    }
+    const [, operation, value] = parsed.positionals;
+    return runMemoryTokenLimitAction({
+      operation,
+      value,
+      memoryDir: parsed.values["memory-dir"],
+      agentMemoryDir: agentId ? getMemoryRoot(agentId) : undefined,
     });
   }
 
