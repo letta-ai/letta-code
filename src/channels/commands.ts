@@ -7,6 +7,16 @@ import {
   canRunChannelCommand,
 } from "./access-control";
 import {
+  buildChannelCancelAcceptedMessage as buildChannelCancelAcceptedMessageWith,
+  buildChannelCancelNoActiveTurnMessage as buildChannelCancelNoActiveTurnMessageWith,
+  buildChannelCurrentModelMessage as buildChannelCurrentModelMessageWith,
+  buildChannelCurrentModelUnavailableMessage as buildChannelCurrentModelUnavailableMessageWith,
+  buildChannelModelListMessage as buildChannelModelListMessageWith,
+  buildChannelModelListUnavailableMessage as buildChannelModelListUnavailableMessageWith,
+  buildChannelModelUpdatedMessage as buildChannelModelUpdatedMessageWith,
+  buildChannelModelUpdateFailedMessage as buildChannelModelUpdateFailedMessageWith,
+} from "./command-runtime-executor";
+import {
   buildChannelHelpMessage as buildChannelHelpMessageWith,
   buildUnsupportedChannelCommandMessage as buildUnsupportedChannelCommandMessageWith,
   type ChannelSlashCommandHandlerResult,
@@ -26,6 +36,13 @@ import type {
   InboundChannelMessage,
 } from "./types";
 
+export type { ChannelModelListEntry } from "./command-runtime-executor";
+export {
+  buildChannelModelNotFoundText,
+  buildModelEntriesByHandle,
+  getFallbackModelEntries,
+  resolveModelHandles,
+} from "./command-runtime-executor";
 export type {
   ChannelSlashCommandDefinition,
   ChannelSlashCommandHandlerResult,
@@ -197,13 +214,14 @@ export function buildChannelCancelUnavailableMessage(
 export function buildChannelCancelNoActiveTurnMessage(
   channelId: string,
 ): string {
-  const displayName = channelDisplayName(channelId);
-  return `${displayName} received /cancel, but there is no in-progress agent turn to cancel for this chat.`;
+  return buildChannelCancelNoActiveTurnMessageWith(
+    channelId,
+    channelDisplayName,
+  );
 }
 
 export function buildChannelCancelAcceptedMessage(channelId: string): string {
-  const displayName = channelDisplayName(channelId);
-  return `${displayName} cancelled the in-progress agent turn for this chat.`;
+  return buildChannelCancelAcceptedMessageWith(channelId, channelDisplayName);
 }
 
 export function buildChannelChatLinkMessage(
@@ -259,96 +277,6 @@ export function buildChannelNewConversationUnavailableMessage(
   return `${displayName} cannot start a new conversation for this chat because no agent is configured.`;
 }
 
-export type ChannelModelListEntry = Pick<
-  ListModelsResponseModelEntry,
-  | "id"
-  | "handle"
-  | "label"
-  | "description"
-  | "isDefault"
-  | "isFeatured"
-  | "updateArgs"
->;
-
-const DEFAULT_CHANNEL_MODEL_LIST_LIMIT = 8;
-
-function getModelEntryRank(entry: ChannelModelListEntry): number {
-  if (entry.isDefault) return 0;
-  if (entry.isFeatured) return 1;
-  const effort = (
-    entry.updateArgs as { reasoning_effort?: unknown } | undefined
-  )?.reasoning_effort;
-  if (effort === "medium") return 2;
-  if (effort === "high") return 3;
-  return 4;
-}
-
-function preferModelEntry(
-  current: ChannelModelListEntry,
-  candidate: ChannelModelListEntry,
-): ChannelModelListEntry {
-  return getModelEntryRank(candidate) < getModelEntryRank(current)
-    ? candidate
-    : current;
-}
-
-export function buildModelEntriesByHandle(
-  entries: ChannelModelListEntry[],
-): Map<string, ChannelModelListEntry> {
-  const byHandle = new Map<string, ChannelModelListEntry>();
-  for (const entry of entries) {
-    const current = byHandle.get(entry.handle);
-    byHandle.set(
-      entry.handle,
-      current ? preferModelEntry(current, entry) : entry,
-    );
-  }
-  return byHandle;
-}
-
-function makeUnknownModelEntry(handle: string): ChannelModelListEntry {
-  return {
-    id: handle,
-    handle,
-    label: handle,
-    description: "",
-  };
-}
-
-export function resolveModelHandles(params: {
-  handles: string[];
-  byHandle: Map<string, ChannelModelListEntry>;
-  availableHandles?: Set<string> | null;
-}): ChannelModelListEntry[] {
-  const { handles, byHandle, availableHandles } = params;
-  const seen = new Set<string>();
-  const resolved: ChannelModelListEntry[] = [];
-  for (const handle of handles) {
-    if (!handle || seen.has(handle)) continue;
-    seen.add(handle);
-    if (availableHandles && !availableHandles.has(handle)) continue;
-    resolved.push(byHandle.get(handle) ?? makeUnknownModelEntry(handle));
-  }
-  return resolved;
-}
-
-export function getFallbackModelEntries(
-  byHandle: Map<string, ChannelModelListEntry>,
-): ChannelModelListEntry[] {
-  const preferred = Array.from(byHandle.values()).filter(
-    (entry) => entry.isDefault || entry.isFeatured,
-  );
-  return preferred.length > 0 ? preferred : Array.from(byHandle.values());
-}
-
-function modelCommandPrefix(channelId: string): "/model" | "@agent /model" {
-  return channelId === "slack" ? "@agent /model" : "/model";
-}
-
-export function buildChannelModelNotFoundText(channelId: string): string {
-  return `Model not found. Use ${modelCommandPrefix(channelId)} list to see available models.`;
-}
-
 export function buildChannelCurrentModelMessage(
   channelId: string,
   params: {
@@ -357,44 +285,11 @@ export function buildChannelCurrentModelMessage(
     scope?: "agent" | "conversation";
   },
 ): string {
-  const displayName = channelDisplayName(channelId);
-  const scope = params.scope === "agent" ? "agent" : "conversation";
-  const handleText =
-    params.modelHandle && params.modelHandle !== params.modelLabel
-      ? ` (${params.modelHandle})`
-      : "";
-  const switchCommand = modelCommandPrefix(channelId);
-  return [
-    `${displayName} current ${scope} model: ${params.modelLabel}${handleText}.`,
-    `Use ${switchCommand} list to see available models, or ${switchCommand} <handle-or-id> to switch.`,
-  ].join("\n");
-}
-
-function formatChannelModelEntry(
-  channelId: string,
-  entry: ChannelModelListEntry,
-): string {
-  const selector = entry.id || entry.handle;
-  const handleText = entry.handle === entry.label ? "" : ` — ${entry.handle}`;
-  return `• ${entry.label}${handleText} (${modelCommandPrefix(channelId)} ${selector})`;
-}
-
-function appendModelEntrySection(
-  lines: string[],
-  channelId: string,
-  title: string,
-  entries: ChannelModelListEntry[],
-  limit: number,
-): void {
-  if (entries.length === 0) return;
-  lines.push("", `${title}:`);
-  for (const entry of entries.slice(0, limit)) {
-    lines.push(formatChannelModelEntry(channelId, entry));
-  }
-  const remaining = entries.length - limit;
-  if (remaining > 0) {
-    lines.push(`…and ${remaining} more.`);
-  }
+  return buildChannelCurrentModelMessageWith(
+    channelId,
+    params,
+    channelDisplayName,
+  );
 }
 
 export function buildChannelModelListMessage(
@@ -406,85 +301,33 @@ export function buildChannelModelListMessage(
     limit?: number;
   },
 ): string {
-  const displayName = channelDisplayName(channelId);
-  const limit = params.limit ?? DEFAULT_CHANNEL_MODEL_LIST_LIMIT;
-  const entries = params.entries as ChannelModelListEntry[];
-  const byHandle = buildModelEntriesByHandle(entries);
-  const availableHandleList = Array.isArray(params.availableHandles)
-    ? params.availableHandles
-    : null;
-  const availableSet = availableHandleList
-    ? new Set(availableHandleList)
-    : null;
-  const recentEntries = resolveModelHandles({
-    handles: params.recentHandles ?? [],
-    byHandle,
-    availableHandles: availableSet,
-  });
-  const availableEntries = availableHandleList
-    ? resolveModelHandles({ handles: availableHandleList, byHandle })
-    : getFallbackModelEntries(byHandle);
-
-  const lines = [`${displayName} model selector`];
-  if (params.availableHandles === null) {
-    lines.push(
-      "Availability lookup failed; showing built-in recommended models.",
-    );
-  } else if (params.availableHandles === undefined) {
-    lines.push(
-      "Available model data was not returned; showing built-in recommended models.",
-    );
-  }
-
-  appendModelEntrySection(
-    lines,
+  return buildChannelModelListMessageWith(
     channelId,
-    "Recent models",
-    recentEntries,
-    limit,
+    params,
+    channelDisplayName,
   );
-  appendModelEntrySection(
-    lines,
-    channelId,
-    "Available models",
-    availableEntries,
-    limit,
-  );
-
-  if (availableEntries.length === 0) {
-    lines.push(
-      "",
-      "No available models were reported. Use /connect in Letta Code to configure a provider, then try again.",
-    );
-  }
-
-  lines.push("");
-  if (channelId === "slack") {
-    lines.push(
-      "Mention the app with @agent /model <handle-or-id> to switch this thread's routed model. Use @agent /model to show the current model. Legacy !model still works after a mention.",
-    );
-  } else {
-    lines.push(
-      "Use /model <handle-or-id> to switch this chat's routed model, or /model to show the current model.",
-    );
-  }
-  return lines.join("\n");
 }
 
 export function buildChannelModelListUnavailableMessage(
   channelId: string,
   error: string,
 ): string {
-  const displayName = channelDisplayName(channelId);
-  return `${displayName} could not load the model list: ${error}`;
+  return buildChannelModelListUnavailableMessageWith(
+    channelId,
+    error,
+    channelDisplayName,
+  );
 }
 
 export function buildChannelCurrentModelUnavailableMessage(
   channelId: string,
   error: string,
 ): string {
-  const displayName = channelDisplayName(channelId);
-  return `${displayName} could not load the current model: ${error}`;
+  return buildChannelCurrentModelUnavailableMessageWith(
+    channelId,
+    error,
+    channelDisplayName,
+  );
 }
 
 export function buildChannelModelUpdatedMessage(
@@ -495,11 +338,11 @@ export function buildChannelModelUpdatedMessage(
     appliedTo?: "agent" | "conversation";
   },
 ): string {
-  const displayName = channelDisplayName(channelId);
-  const scope = params.appliedTo === "agent" ? "agent" : "conversation";
-  const handleText =
-    params.modelHandle === params.modelLabel ? "" : ` (${params.modelHandle})`;
-  return `${displayName} updated this ${scope}'s model to ${params.modelLabel}${handleText}.`;
+  return buildChannelModelUpdatedMessageWith(
+    channelId,
+    params,
+    channelDisplayName,
+  );
 }
 
 export function buildChannelModelUpdateFailedMessage(
@@ -507,8 +350,12 @@ export function buildChannelModelUpdateFailedMessage(
   identifier: string,
   error: string,
 ): string {
-  const displayName = channelDisplayName(channelId);
-  return `${displayName} could not switch this chat's routed model to ${identifier}: ${error}`;
+  return buildChannelModelUpdateFailedMessageWith(
+    channelId,
+    identifier,
+    error,
+    channelDisplayName,
+  );
 }
 
 export function buildChannelModelUnavailableMessage(channelId: string): string {
