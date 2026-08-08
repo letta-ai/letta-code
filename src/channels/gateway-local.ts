@@ -236,22 +236,26 @@ export async function startLocalChannelGateway(
         ),
       );
     },
-    executeExternalTool: async (request, sources) => {
+    executeExternalTool: async (request, sources, idempotencyScope) => {
       if (request.tool_name !== "MessageChannel" || !request.runtime) {
         throw new Error(`Unsupported gateway tool: ${request.tool_name}`);
       }
-      const text = await message_channel({
-        ...request.input,
-        channel: String(request.input.channel ?? ""),
-        action: String(request.input.action ?? ""),
-        parentScope: {
-          agentId: request.runtime.agent_id,
-          conversationId: request.runtime.conversation_id,
+      const text = await message_channel(
+        {
+          ...request.input,
+          channel: String(request.input.channel ?? ""),
+          action: String(request.input.action ?? ""),
+          parentScope: {
+            agentId: request.runtime.agent_id,
+            conversationId: request.runtime.conversation_id,
+          },
+          channelTurnSources: sources,
         },
-        channelTurnSources: sources,
-      });
+        idempotencyScope,
+      );
       return {
         content: [{ type: "text", text }],
+        is_error: text.startsWith("Error:"),
       };
     },
     onLifecycle: (event) => registry.dispatchTurnLifecycleEvent(event),

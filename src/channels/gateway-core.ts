@@ -18,6 +18,10 @@ import type {
   StreamDeltaMessage,
   WsProtocolMessage,
 } from "@/types/app-server-protocol";
+import {
+  createMessageChannelIdempotencyScope,
+  type MessageChannelIdempotencyScope,
+} from "./message-channel-idempotency";
 import { createChannelTurnProgressBuilder } from "./progress-builder";
 import type {
   ChannelControlRequestEvent,
@@ -66,6 +70,7 @@ export interface ChannelGatewayHooks {
   executeExternalTool(
     request: ExternalToolCallRequestMessage,
     sources: ChannelTurnSource[],
+    idempotencyScope?: MessageChannelIdempotencyScope | null,
   ): Promise<ExternalToolCallResult> | ExternalToolCallResult;
   onLifecycle(event: ChannelTurnLifecycleEvent): void | Promise<void>;
   onProgress(event: ChannelTurnProgressEvent): void | Promise<void>;
@@ -93,6 +98,7 @@ type ActiveGatewayTurn = {
   progress: ReturnType<typeof createChannelTurnProgressBuilder>;
   richDraft: ChannelGatewayRichDraft | null;
   runId?: string;
+  idempotencyScope: MessageChannelIdempotencyScope;
 };
 
 type GatewayRuntimeState = {
@@ -188,8 +194,15 @@ export class ChannelGateway {
         const state = request.runtime
           ? this.states.get(runtimeKey(request.runtime))
           : undefined;
-        const sources = state?.active?.sources ?? state?.routedSources ?? [];
-        return hooks.executeExternalTool(request, sources);
+        const active = state?.active;
+        const sources = active?.sources ?? state?.routedSources ?? [];
+        // Pass the per-turn idempotency scope only when a turn is active;
+        // process-owned calls (no active batch) are not deduped.
+        return hooks.executeExternalTool(
+          request,
+          sources,
+          active?.idempotencyScope ?? null,
+        );
       }),
     );
   }
@@ -296,6 +309,7 @@ export class ChannelGateway {
         sources: uniqueSources(sources),
         progress: createChannelTurnProgressBuilder(),
         richDraft: null,
+        idempotencyScope: createMessageChannelIdempotencyScope(),
       };
       state.active = recoveredTurn;
     }
@@ -597,6 +611,7 @@ export class ChannelGateway {
           batchId: `channel-${clientMessageId}`,
           sources,
         }) ?? null,
+      idempotencyScope: createMessageChannelIdempotencyScope(),
     };
     const processingEvent: ChannelTurnLifecycleEvent = {
       type: "processing",
