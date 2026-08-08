@@ -28,6 +28,11 @@ import {
 } from "@/websocket/listener/cwd-change";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
 import { restartWorktreeWatcher } from "@/websocket/listener/worktree-watcher";
+import {
+  buildCreatedWorktreeMessage,
+  buildEnteredWorktreeMessage,
+  readProjectInstructions,
+} from "./enter-worktree-messages.js";
 import { getShellEnv } from "./shell-env.js";
 
 interface EnterWorktreeArgs {
@@ -405,52 +410,6 @@ async function chooseUniqueBranchName(
   }
 
   throw new Error("Could not generate a unique worktree branch name");
-}
-
-function buildSuccessMessage(params: {
-  worktreePath: string;
-  branchName: string;
-  baseRef: string;
-  switchedCwd: boolean;
-  provisionNotes: string[];
-  linkedDependencies: boolean;
-}): string {
-  const provisioning =
-    params.provisionNotes.length > 0
-      ? [
-          "",
-          "Provisioning:",
-          ...params.provisionNotes.map((note) => `- ${note}`),
-        ]
-      : ["", "Provisioning: nothing to copy, symlink, or link."];
-
-  // The dependency directories are SYMLINKED to the primary checkout, so a
-  // package install in this worktree writes through to the primary checkout's
-  // node_modules. Tell the agent how to opt out when it needs its own deps.
-  const dependencyStep = params.linkedDependencies
-    ? "- Dependencies (e.g. node_modules) are symlinked from the primary checkout and ready to use. Do NOT run a package install here — it would modify the primary checkout's dependencies. If this worktree needs different or isolated packages, recreate it with `symlink_dependencies: false` and install fresh."
-    : "- Dependencies were not symlinked. If the project has dependencies, install them with the repo's package manager (check whether it uses bun, pnpm, yarn, or npm) before building or testing.";
-
-  const lines = [
-    "Created worktree.",
-    "",
-    `Path: ${params.worktreePath}`,
-    `Branch: ${params.branchName}`,
-    `Base: ${params.baseRef}`,
-    ...provisioning,
-    "",
-    params.switchedCwd
-      ? "This conversation's working directory is now the new worktree."
-      : "The conversation working directory was left unchanged.",
-    "",
-    "Next steps:",
-    "- Confirm you are in the new worktree with `git status` before editing.",
-    "- Read README, AGENTS.md, or other project setup docs before running commands.",
-    dependencyStep,
-    "- Git hooks and ignored files listed in .worktreeinclude are provisioned automatically.",
-    "- Then make changes, test, commit, and push from this worktree.",
-  ];
-  return lines.join("\n");
 }
 
 const DEFAULT_SYMLINK_DIRECTORIES = ["node_modules"];
@@ -968,34 +927,6 @@ async function listRegisteredWorktrees(
   return entries;
 }
 
-function buildEnteredMessage(params: {
-  worktreePath: string;
-  branchName?: string;
-  switchedCwd: boolean;
-  lockNote?: string;
-}): string {
-  const lines = [
-    "Switched to existing worktree.",
-    "",
-    `Path: ${params.worktreePath}`,
-    `Branch: ${params.branchName ?? "(detached)"}`,
-  ];
-  if (params.lockNote) {
-    lines.push(`Lock: ${params.lockNote}`);
-  }
-  lines.push(
-    "",
-    params.switchedCwd
-      ? "This conversation's working directory is now this worktree."
-      : "The conversation working directory was left unchanged.",
-    "",
-    "Next steps:",
-    "- Confirm you are in the worktree with `git status` before editing.",
-    "- This worktree already existed, so it was not re-provisioned; its dependencies, hooks, and ignored files are whatever it already had.",
-  );
-  return lines.join("\n");
-}
-
 /**
  * Switches the session into an existing worktree. Validation-only: the target
  * must be a registered, non-prunable linked worktree of this repository, living
@@ -1078,12 +1009,14 @@ async function enterExistingWorktree(params: {
     runtimeContext,
     executionContextId: getStringArg(args, "_executionContextId"),
   });
+  const projectInstructions = await readProjectInstructions(resolvedTarget);
 
-  const message = buildEnteredMessage({
+  const message = buildEnteredWorktreeMessage({
     worktreePath: resolvedTarget,
     branchName: match.branch,
     switchedCwd,
     lockNote,
+    projectInstructions,
   });
 
   return {
@@ -1233,14 +1166,18 @@ export async function enter_worktree(
       runtimeContext,
       executionContextId: getStringArg(args, "_executionContextId"),
     });
+    const projectInstructions = await readProjectInstructions(
+      normalizedWorktreePath,
+    );
 
-    const message = buildSuccessMessage({
+    const message = buildCreatedWorktreeMessage({
       worktreePath: normalizedWorktreePath,
       branchName,
       baseRef,
       switchedCwd,
       provisionNotes,
       linkedDependencies,
+      projectInstructions,
     });
 
     return {

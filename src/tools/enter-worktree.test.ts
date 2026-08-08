@@ -160,6 +160,35 @@ describe("EnterWorktree tool", () => {
     ).toBe(result.worktree_path);
   });
 
+  test("loads root AGENTS.md into a new worktree result", async () => {
+    const repo = await trackRepo();
+    await writeFile(
+      path.join(repo, "AGENTS.md"),
+      "# Agent setup\n\nRun `just install-agent` before validation.\n",
+    );
+    git(["add", "AGENTS.md"], repo);
+    git(["commit", "-m", "add agent instructions"], repo);
+
+    const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
+      enter_worktree({
+        name: "Instruction Loading",
+        refresh_base: false,
+        switch_cwd: false,
+      }),
+    );
+
+    expect(result.status).toBe("success");
+    expect(result.content[0]?.text).toContain(
+      "Root project instructions loaded automatically from AGENTS.md",
+    );
+    expect(result.content[0]?.text).toContain(
+      "Run `just install-agent` before validation.",
+    );
+    expect(result.content[0]?.text).toContain(
+      "Follow the loaded project instructions for dependency setup.",
+    );
+  });
+
   test("switches only the active conversation cwd", async () => {
     const repo = await trackRepo();
     const fakeHome = await mkdtemp(
@@ -590,6 +619,12 @@ describe("EnterWorktree tool", () => {
   test("switches into an existing managed worktree via path", async () => {
     const repo = await trackRepo();
     setActiveRuntime(null);
+    await writeFile(
+      path.join(repo, "AGENTS.md"),
+      "# Existing worktree instructions\n",
+    );
+    git(["add", "AGENTS.md"], repo);
+    git(["commit", "-m", "add existing worktree instructions"], repo);
 
     const created = await runWithRuntimeContext(
       { workingDirectory: repo },
@@ -616,6 +651,9 @@ describe("EnterWorktree tool", () => {
     expect(entered.branch_name).toBe(created.branch_name);
     expect(process.cwd()).toBe(created.worktree_path);
     expect(entered.content[0]?.text).toContain("Switched to existing worktree");
+    expect(entered.content[0]?.text).toContain(
+      "# Existing worktree instructions",
+    );
   });
 
   test("refuses to enter a worktree outside .letta/worktrees", async () => {

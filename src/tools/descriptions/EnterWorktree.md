@@ -37,5 +37,5 @@ Cross-agent lock:
 After success:
 - Continue using the returned worktree path as the current workspace.
 - Confirm you are in the new worktree with `git status` before editing.
-- Read README, AGENTS.md, or other project setup docs before running commands.
-- Dependencies are not shared by default. If the project has dependencies, install them in the worktree with the repo's package manager — check the repo first: if it uses Bun, run `bun install`; if pnpm, yarn, or npm, use that manager instead. (If you created the worktree with `symlink_dependencies: true`, they are already present via a symlink to the primary checkout — do NOT run an install, as it would mutate the primary checkout's `node_modules`.)
+- Root `AGENTS.md` instructions are loaded into the successful tool result when present. Follow them before running setup, build, or validation commands; read README or other setup docs for anything they do not cover.
+- Dependencies are not shared by default. Follow the loaded project instructions for setup. If they define no setup command, use the repository's package manager. (If you created the worktree with `symlink_dependencies: true`, dependencies are already present via a symlink to the primary checkout — do NOT run an install, as it would mutate the primary checkout's `node_modules`.)
