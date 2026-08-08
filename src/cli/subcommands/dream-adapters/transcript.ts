@@ -1,15 +1,15 @@
 import { readFile } from "node:fs/promises";
 import type { ExternalTranscriptEntry } from "@/cli/helpers/reflection-transcript";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
-import type { SourceAdapter } from "./types";
+import type { DreamAdapter } from "./types";
 
 /**
  * Reference adapter: a passthrough of transcript-entry JSONL (one
  * ExternalTranscriptEntry object per line). This is the simplest adapter and
- * the template to copy when adding a new source type — a new adapter only has
+ * the template to copy when adding a new dream source type — a new adapter only has
  * to map its own format into `ExternalTranscriptEntry[]`.
  */
-export const transcriptAdapter: SourceAdapter = {
+export const transcriptAdapter: DreamAdapter = {
   type: "transcript",
   async convert(locator: string): Promise<ExternalTranscriptEntry[]> {
     const raw = await readFile(locator, "utf-8");
