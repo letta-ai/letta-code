@@ -120,7 +120,7 @@ export function WelcomeScreen({
       ? "Local"
       : authMethod === "url"
         ? process.env.LETTA_BASE_URL || "Custom URL"
-        : "Constellation";
+        : "Cloud";
 
   // Check if memfs (context repositories) is enabled for this agent
   const memfsEnabled = agentState?.id

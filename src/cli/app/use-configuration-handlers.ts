@@ -8,8 +8,11 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
+import { getCachedModelReasoningCapabilities } from "@/agent/available-models";
 import {
   type ModelReasoningEffort,
+  type ModelReasoningSelection,
+  preservableContextWindow,
   shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
 import { applyPersonalityToMemory } from "@/agent/personality";
@@ -38,6 +41,7 @@ import { settingsManager } from "@/settings-manager";
 import { getToolNames } from "@/tools/manager";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import { formatToolsetName } from "@/tools/toolset-labels";
+import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 
 import {
   deriveReasoningEffort,
@@ -56,9 +60,9 @@ import type {
 type ModelReasoningPrompt = {
   modelLabel: string;
   initialModelId: string;
-  initialEffort?: ModelReasoningEffort;
+  initialEffort?: ModelReasoningSelection;
   options: Array<{
-    effort: ModelReasoningEffort;
+    effort: ModelReasoningSelection;
     modelId: string;
     selection?: ModelSelectorSelection;
   }>;
@@ -83,6 +87,7 @@ type ConfigurationHandlersContext = {
   conversationIdRef: MutableRefObject<string>;
   currentModelHandle: string | null;
   currentModelId: string | null;
+  currentReasoningEffort: ModelReasoningSelection;
   currentToolset: ToolsetName | null;
   isAgentBusy: () => boolean;
   llmConfig: LlmConfig | null;
@@ -128,6 +133,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     conversationIdRef,
     currentModelHandle,
     currentModelId,
+    currentReasoningEffort,
     currentToolset,
     isAgentBusy,
     llmConfig,
@@ -161,7 +167,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
       opts?: {
         promptReasoning?: boolean;
         skipReasoningPrompt?: boolean;
-        reasoningEffort?: ModelReasoningEffort;
+        reasoningEffort?: ModelReasoningSelection;
       },
     ) => {
       const inputSelection = typeof model === "string" ? null : model;
@@ -188,7 +194,9 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
 
       try {
         const {
+          getByokOpenAIReasoningTierOptions,
           getChatGptFastRegistryHandleForModelHandle,
+          getPreferredReasoningOption: pref,
           getReasoningTierOptionsForHandle,
           normalizeModelHandleForRegistry,
           models,
@@ -229,10 +237,16 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           handle: string,
           providerType?: string,
         ) => {
-          if (providerType !== "chatgpt_oauth") return handle;
+          if (providerType !== "chatgpt_oauth" && providerType !== "openai") {
+            return handle;
+          }
           const slashIndex = handle.indexOf("/");
           if (slashIndex === -1) return handle;
-          return `${OPENAI_CODEX_PROVIDER_NAME}/${handle.slice(slashIndex + 1)}`;
+          const registryProvider =
+            providerType === "chatgpt_oauth"
+              ? OPENAI_CODEX_PROVIDER_NAME
+              : "openai";
+          return `${registryProvider}/${handle.slice(slashIndex + 1)}`;
         };
         selectedModel = inputSelection
           ? {
@@ -284,7 +298,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           const updateArgs: Record<string, unknown> = {
             ...(apiContextWindow ? { context_window: apiContextWindow } : {}),
             ...(providerType ? { provider_type: providerType } : {}),
-            ...(opts?.reasoningEffort
+            ...(opts && "reasoningEffort" in opts
               ? { reasoning_effort: opts.reasoningEffort }
               : {}),
           };
@@ -299,7 +313,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           } as unknown as (typeof models)[number];
         }
 
-        if (selectedModel && opts?.reasoningEffort) {
+        if (selectedModel && opts && "reasoningEffort" in opts) {
           selectedModel = {
             ...selectedModel,
             updateArgs: {
@@ -327,42 +341,67 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               reasoning_effort?: unknown;
               enable_reasoner?: unknown;
               service_tier?: unknown;
+              provider_category?: unknown;
+              openai_compatible_proxy?: unknown;
             }
           | undefined;
         const rawReasoningEffort = modelUpdateArgs?.reasoning_effort;
-        const usesDistinctXHighLabel = /Fable 5|Opus 4\.[78]|GPT-5\.6/.test(
-          model.label,
-        );
+        const providerType = providerTypeFromUpdateArgs(modelUpdateArgs);
+        const isOpenAICompatibleProxy =
+          modelUpdateArgs?.[OPENAI_COMPATIBLE_PROXY_UPDATE_ARG] === true &&
+          providerType === "openai";
+        // Keep picker labels aligned with models that preserve xhigh separately from max.
+        const usesDistinctXHighLabel =
+          /Fable 5|Opus 4\.[78]|Opus 5|Sonnet 5|GPT-5\.6/.test(model.label);
         const reasoningLevel =
-          typeof rawReasoningEffort === "string"
-            ? rawReasoningEffort === "none"
-              ? "no"
-              : rawReasoningEffort === "xhigh"
-                ? usesDistinctXHighLabel
-                  ? "extra-high"
-                  : "max"
-                : rawReasoningEffort
-            : modelUpdateArgs?.enable_reasoner === false
-              ? "no"
-              : null;
-        const selectedContextWindow = (
-          model.updateArgs as { context_window?: number } | undefined
-        )?.context_window;
-        const reasoningTierOptions = getReasoningTierOptionsForHandle(
-          registryHandle,
-          selectedContextWindow,
-        ).map((option) => {
+          isOpenAICompatibleProxy && rawReasoningEffort === null
+            ? "default"
+            : typeof rawReasoningEffort === "string"
+              ? rawReasoningEffort === "none"
+                ? "no"
+                : rawReasoningEffort === "xhigh"
+                  ? usesDistinctXHighLabel
+                    ? "extra-high"
+                    : "max"
+                  : rawReasoningEffort
+              : modelUpdateArgs?.enable_reasoner === false
+                ? "no"
+                : null;
+        const selectedContextWindow =
+          Number(model.updateArgs?.context_window) || undefined;
+        const capabilitiesMap = getCachedModelReasoningCapabilities();
+        const reasoningCapabilities =
+          capabilitiesMap?.get(modelHandle) ??
+          capabilitiesMap?.get(registryHandle);
+        const baseReasoningTierOptions = isOpenAICompatibleProxy
+          ? getByokOpenAIReasoningTierOptions(modelHandle, {
+              registryHandle,
+              contextWindow: selectedContextWindow,
+              reasoningCapabilities,
+            })
+          : getReasoningTierOptionsForHandle(
+              registryHandle,
+              selectedContextWindow,
+              reasoningCapabilities,
+            );
+        const reasoningTierOptions = baseReasoningTierOptions.map((option) => {
           const optionModel = models.find(
             (entry) => entry.id === option.modelId,
           );
           const serviceTier = modelUpdateArgs?.service_tier;
-          const providerType = providerTypeFromUpdateArgs(modelUpdateArgs);
           const optionUpdateArgs = {
             ...((optionModel?.updateArgs as
               | Record<string, unknown>
               | undefined) ?? {}),
+            reasoning_effort: option.effort,
             ...(serviceTier !== undefined ? { service_tier: serviceTier } : {}),
             ...(providerType ? { provider_type: providerType } : {}),
+            ...(isOpenAICompatibleProxy
+              ? {
+                  provider_category: "byok",
+                  [OPENAI_COMPATIBLE_PROXY_UPDATE_ARG]: true,
+                }
+              : {}),
           };
           return {
             ...option,
@@ -376,22 +415,17 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             },
           };
         });
-
         if (
           !opts?.skipReasoningPrompt &&
           (opts?.promptReasoning || activeOverlay === "model") &&
           reasoningTierOptions.length > 1
         ) {
-          const selectedEffort = (
-            model.updateArgs as { reasoning_effort?: unknown } | undefined
-          )?.reasoning_effort;
-          const preferredOption =
-            (typeof selectedEffort === "string" &&
-              reasoningTierOptions.find(
-                (option) => option.effort === selectedEffort,
-              )) ??
-            reasoningTierOptions.find((option) => option.effort === "medium") ??
-            reasoningTierOptions[0];
+          const selectedEffort = isOpenAICompatibleProxy
+            ? modelHandle === currentModelHandle
+              ? currentReasoningEffort
+              : (rawReasoningEffort ?? null)
+            : rawReasoningEffort;
+          const preferredOption = pref(reasoningTierOptions, selectedEffort);
 
           if (preferredOption) {
             setModelReasoningPrompt({
@@ -428,6 +462,16 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           return;
         }
 
+        // Switching to a different model (or a different context-window
+        // variant of the same model, e.g. base <-> 1M dual listings) resets
+        // the context window to the selected catalog entry's preset. Only a
+        // tier change within the same variant preserves the current window —
+        // and it preserves by RE-SENDING the current value explicitly, never
+        // by omitting the field: the server treats an omitted
+        // context_window_limit as "re-derive from the handle" and clamps it
+        // to a legacy global default (128k). A current value that looks like
+        // that clamp is not preservable, so poisoned agents heal to the
+        // preset even on same-variant tier changes. See LET-9786.
         const currentLlmConfig = llmConfigRef.current;
         const shouldPreserveContextWindow =
           shouldPreserveContextWindowForModelSelection({
@@ -437,12 +481,19 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             selectedModelHandle: modelHandle,
             selectedContextWindow,
           });
+        const preservedContextWindow = shouldPreserveContextWindow
+          ? preservableContextWindow(
+              currentLlmConfig?.context_window,
+              modelHandle,
+            )
+          : undefined;
         const modelUpdateArgsForRequest = model.updateArgs
           ? { ...(model.updateArgs as Record<string, unknown>) }
           : undefined;
-        if (shouldPreserveContextWindow && modelUpdateArgsForRequest) {
-          delete modelUpdateArgsForRequest.context_window;
-        }
+        const updateOptions =
+          preservedContextWindow !== undefined
+            ? { contextWindowOverride: preservedContextWindow }
+            : undefined;
 
         await withCommandLock(async () => {
           const cmd =
@@ -472,10 +523,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               agentIdRef.current,
               modelHandle,
               modelUpdateArgsForRequest,
-              {
-                avoidOverwritingExistingContextWindow:
-                  shouldPreserveContextWindow,
-              },
+              updateOptions,
             );
             conversationModelSettings = updatedAgent?.model_settings;
           } else {
@@ -486,10 +534,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               conversationIdRef.current,
               modelHandle,
               modelUpdateArgsForRequest,
-              {
-                avoidOverwritingExistingContextWindow:
-                  shouldPreserveContextWindow,
-              },
+              updateOptions,
             );
             conversationModelSettings = (
               updatedConversation as {
@@ -504,15 +549,20 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           }
 
           // The API may not echo reasoning_effort back, so populate it from
-          // model.updateArgs as a reliable fallback.
+          // model.updateArgs as a reliable fallback. An explicit null is the
+          // custom provider's Default selection and must clear stale flat state.
+          const hasExplicitReasoningEffort =
+            modelUpdateArgs !== undefined &&
+            "reasoning_effort" in modelUpdateArgs;
           const rawEffort = modelUpdateArgs?.reasoning_effort;
-          const resolvedReasoningEffort =
-            typeof rawEffort === "string"
+          const resolvedReasoningEffort = hasExplicitReasoningEffort
+            ? typeof rawEffort === "string"
               ? rawEffort
-              : (deriveReasoningEffort(
-                  conversationModelSettings,
-                  llmConfigRef.current,
-                ) ?? null);
+              : null
+            : (deriveReasoningEffort(
+                conversationModelSettings,
+                llmConfigRef.current,
+              ) ?? null);
 
           if (isDefaultConversation) {
             setHasConversationModelOverride(false);
@@ -529,16 +579,13 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           }
 
           const presetContextWindow = modelUpdateArgsForRequest?.context_window;
-          const preservedContextWindow = llmConfigRef.current?.context_window;
           const resolvedContextWindow =
             typeof conversationContextWindowLimit === "number"
               ? conversationContextWindowLimit
-              : shouldPreserveContextWindow &&
-                  typeof preservedContextWindow === "number"
-                ? preservedContextWindow
-                : typeof presetContextWindow === "number"
+              : (preservedContextWindow ??
+                (typeof presetContextWindow === "number"
                   ? presetContextWindow
-                  : undefined;
+                  : undefined));
           const resolvedProviderType =
             providerTypeFromModelSettings(conversationModelSettings) ??
             providerTypeFromUpdateArgs(modelUpdateArgsForRequest) ??
@@ -556,12 +603,14 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               llmConfigRef.current ??
               ({} as LlmConfig)),
             ...mapHandleToLlmConfigPatch(modelHandle, resolvedProviderType),
-            ...(typeof resolvedReasoningEffort === "string"
-              ? {
-                  reasoning_effort:
-                    resolvedReasoningEffort as ModelReasoningEffort,
-                }
-              : {}),
+            ...(hasExplicitReasoningEffort
+              ? { reasoning_effort: resolvedReasoningEffort }
+              : typeof resolvedReasoningEffort === "string"
+                ? {
+                    reasoning_effort:
+                      resolvedReasoningEffort as ModelReasoningEffort,
+                  }
+                : {}),
             ...(typeof resolvedContextWindow === "number"
               ? { context_window: resolvedContextWindow }
               : {}),
@@ -664,6 +713,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
       consumeOverlayCommand,
       currentModelHandle,
       currentModelId,
+      currentReasoningEffort,
       currentToolset,
       isAgentBusy,
       maybeRecordToolsetChangeReminder,

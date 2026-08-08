@@ -58,6 +58,7 @@ export interface SlackChannelAdapter extends ChannelAdapter {
     chatId: string;
     threadId?: string | null;
     messageId: string;
+    signal?: AbortSignal;
   }): Promise<ChannelMessageAttachment>;
 }
 
@@ -69,6 +70,7 @@ export function createSlackAdapter(
   let writeClientPromise: Promise<SlackWriteClient> | null = null;
   let running = false;
   let botUserId: string | null = null;
+  let botId: string | null = null;
   let adapter: SlackChannelAdapter;
 
   const agentThreadTracker: AgentThreadTracker = createAgentThreadTracker();
@@ -81,6 +83,7 @@ export function createSlackAdapter(
     config,
     getAdapter: () => adapter,
     getBotUserId: () => botUserId,
+    getBotId: () => botId,
     agentThreadTracker,
     debounce,
   });
@@ -135,6 +138,7 @@ export function createSlackAdapter(
     chatId: string;
     threadId?: string | null;
     messageId: string;
+    signal?: AbortSignal;
   }): Promise<ChannelMessageAttachment> {
     const slackApp = await ensureApp();
     return await downloadSlackAttachmentById({
@@ -145,6 +149,7 @@ export function createSlackAdapter(
       threadTs: params.threadId,
       messageTs: params.messageId,
       client: slackApp.client as unknown as SlackAttachmentReadClient,
+      signal: params.signal,
     });
   }
 
@@ -384,7 +389,11 @@ export function createSlackAdapter(
       if (running) return;
       const slackApp = await ensureApp();
       const auth = await slackApp.client.auth.test();
-      botUserId = isNonEmptyString(auth.user_id) ? auth.user_id : null;
+      const authRecord = auth as unknown as Record<string, unknown>;
+      botUserId = isNonEmptyString(authRecord.user_id)
+        ? authRecord.user_id
+        : null;
+      botId = isNonEmptyString(authRecord.bot_id) ? authRecord.bot_id : null;
       await slackApp.start();
       running = true;
       console.log(
@@ -402,6 +411,7 @@ export function createSlackAdapter(
       writeClient = null;
       writeClientPromise = null;
       botUserId = null;
+      botId = null;
       status.clear();
       approvals.clear();
       debounce.clear();
@@ -437,6 +447,8 @@ export function createSlackAdapter(
         ensureApp,
         resolveUserName: ingress.resolveUserName,
         getKnownUserDisplayName: ingress.getKnownUserDisplayName,
+        getBotUserId: () => botUserId,
+        getBotId: () => botId,
       }),
     onMessage: undefined,
     onControlResponse: undefined,

@@ -4,7 +4,7 @@ const LOCAL_NO_MODEL_WITHOUT_CLOUD_AUTH = [
   "to get set up, you can either:",
   "- run `/connect` to add a provider from inside letta code",
   "- export a provider key in your env and restart `letta`, for example `export OPENAI_API_KEY=...`",
-  "- or run `/login` if you'd rather use models hosted on Constellation",
+  "- or run `/login` if you'd rather use models available through Letta Cloud",
   "",
   "once one of those is set up, send your message again and we can get started.",
 ].join("\n");
@@ -16,7 +16,7 @@ const LOCAL_NO_MODEL_WITH_CLOUD_AUTH = [
   "- run `/connect` to add a provider from inside letta code",
   "- export a provider key in your env and restart `letta`, for example `export OPENAI_API_KEY=...`",
   "",
-  "if you'd rather use models hosted on Constellation instead, switch back to OAuth mode and try again.",
+  "if you'd rather use models available through Letta Cloud instead, switch back to OAuth mode and try again.",
   "",
   "once a model is available, send your message again and we can get started.",
 ].join("\n");

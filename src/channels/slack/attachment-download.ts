@@ -73,6 +73,7 @@ export async function downloadSlackAttachmentById(params: {
   threadTs?: string | null;
   messageTs: string;
   client: SlackAttachmentReadClient;
+  signal?: AbortSignal;
 }): Promise<ChannelMessageAttachment> {
   const message = await resolveCanonicalSlackMessage(params);
   if (!message) {
@@ -96,5 +97,6 @@ export async function downloadSlackAttachmentById(params: {
     file,
     sourceMessageId: params.messageTs,
     sourceThreadId: params.threadTs ?? null,
+    signal: params.signal,
   });
 }

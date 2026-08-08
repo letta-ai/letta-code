@@ -125,7 +125,7 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
   test("forwards parentScope as explicit positional args to spawnSubagent", async () => {
     const spawnSubagentImpl = makeSpawnStub();
 
-    spawnBackgroundSubagentTask({
+    const launched = spawnBackgroundSubagentTask({
       subagentType: "reflection",
       prompt: "Reflect",
       description: "Test",
@@ -150,6 +150,10 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
     expect(call).toBeDefined();
     expect(call?.[PARENT_ID_ARG_INDEX]).toBe(PARENT_AGENT_ID);
     expect(call?.[PARENT_CONVERSATION_ID_ARG_INDEX]).toBe("conv-xyz");
+    expect(backgroundTasks.get(launched.taskId)?.runtimeScope).toEqual({
+      agentId: PARENT_AGENT_ID,
+      conversationId: "conv-xyz",
+    });
   });
 
   test("forwards undefined parentAgentId when parentScope is omitted", async () => {

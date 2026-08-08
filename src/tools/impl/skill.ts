@@ -8,7 +8,6 @@ import {
   getAgentSkillsDir,
   getBundledSkills,
   getFrontmatterBoolean,
-  getFrontmatterStringList,
   isSkillAvailableForAgent,
   PROJECT_SKILLS_DIR,
   SKILLS_DIR,
@@ -20,7 +19,6 @@ import { validateRequiredParams } from "./validation.js";
 
 interface SkillArgs {
   skill: string;
-  args?: string;
   /** Injected by executeTool - the tool_call_id for this invocation */
   toolCallId?: string;
   /** Injected by executeTool in listener mode for scoped agent resolution. */
@@ -185,63 +183,7 @@ function getResolvedAgentId(args: SkillArgs): string | undefined {
   }
 }
 
-function splitSkillArguments(args: string): string[] {
-  const parts: string[] = [];
-  const pattern = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|\S+/g;
-  for (const match of args.matchAll(pattern)) {
-    const raw = match[1] ?? match[2] ?? match[0];
-    parts.push(raw.replace(/\\(["'\\])/g, "$1"));
-  }
-  return parts;
-}
-
-function substituteSkillArguments(
-  content: string,
-  args: string | undefined,
-  argumentNames: string[] | undefined,
-): string {
-  const rawArgs = args?.trim() ?? "";
-  if (!rawArgs) {
-    return content;
-  }
-
-  const argParts = splitSkillArguments(rawArgs);
-  let result = content;
-  let substituted = false;
-
-  result = result.replace(/\$ARGUMENTS\[(\d+)\]/g, (_match, index) => {
-    substituted = true;
-    return argParts[Number(index)] ?? "";
-  });
-
-  result = result.replace(/\$ARGUMENTS/g, () => {
-    substituted = true;
-    return rawArgs;
-  });
-
-  result = result.replace(/\$(\d+)\b/g, (_match, index) => {
-    substituted = true;
-    return argParts[Number(index)] ?? "";
-  });
-
-  for (const [index, name] of (argumentNames ?? []).entries()) {
-    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const namePattern = new RegExp(`\\$${escapedName}\\b`, "g");
-    result = result.replace(namePattern, () => {
-      substituted = true;
-      return argParts[index] ?? "";
-    });
-  }
-
-  if (!substituted) {
-    result = `${result.trimEnd()}\n\nARGUMENTS: ${rawArgs}`;
-  }
-
-  return result;
-}
-
 export interface RenderSkillContentOptions {
-  args?: string;
   allowDisabledModelInvocation?: boolean;
 }
 
@@ -263,17 +205,11 @@ export function renderSkillContent(
 
   const skillDir = dirname(skillPath);
   const hasExtras = hasAdditionalFiles(skillPath);
-  const argumentNames = getFrontmatterStringList(frontmatter, "arguments");
   const withSkillDir = skillContent
     .replace(/<SKILL_DIR>/g, skillDir)
     .replace(/\$\{CLAUDE_SKILL_DIR\}/g, skillDir);
-  const withArguments = substituteSkillArguments(
-    withSkillDir,
-    options.args,
-    argumentNames,
-  );
   const dirHeader = hasExtras ? `# Skill Directory: ${skillDir}\n\n` : "";
-  return `${dirHeader}${withArguments}`;
+  return `${dirHeader}${withSkillDir}`;
 }
 
 export async function loadRenderedSkillContent(
@@ -307,6 +243,15 @@ export function wrapSkillContent(skillName: string, content: string): string {
   return `<skill name="${escapeXmlAttribute(skillName)}">\n${content}\n</skill>`;
 }
 
+export function wrapSkillPrompt(
+  skillName: string,
+  content: string,
+  userRequest: string,
+): string {
+  const wrappedSkill = wrapSkillContent(skillName, content);
+  return userRequest ? `${wrappedSkill}\n\n${userRequest}` : wrappedSkill;
+}
+
 export async function skill(args: SkillArgs): Promise<SkillResult> {
   validateRequiredParams(args, ["skill"], "Skill");
   const { skill: skillName, toolCallId } = args;
@@ -324,7 +269,6 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     const fullContent = await loadRenderedSkillContent(skillName, {
       agentId,
       skillsDir,
-      args: args.args,
     });
 
     // Queue the skill content for harness-level injection as a user message part

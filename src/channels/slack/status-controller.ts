@@ -2,16 +2,28 @@ import type {
   ChannelTurnSource,
   OutboundChannelMessage,
 } from "@/channels/types";
-import type { SlackWriteClient } from "./internal-types";
 import {
   firstNonEmptyString,
   isNonEmptyString,
   resolveSlackChatType,
   resolveSlackProgressThreadTs,
   resolveSlackSourceThreadTs,
-} from "./utils";
+} from "./public-utils";
 
 const SLACK_ASSISTANT_STATUS_KEEPALIVE_MS = 90_000;
+
+export interface SlackStatusWriteClient {
+  assistant?: {
+    threads?: {
+      setStatus?: (args: {
+        channel_id: string;
+        thread_ts: string;
+        status: string;
+        loading_messages?: string[];
+      }) => Promise<unknown>;
+    };
+  };
+}
 
 export type AgentConvSlackState = {
   isThinkingActive: boolean;
@@ -42,7 +54,7 @@ export type SlackStatusController = {
 
 export function createSlackStatusController(params: {
   ensureApp: () => Promise<unknown>;
-  ensureWriteClient: () => Promise<SlackWriteClient>;
+  ensureWriteClient: () => Promise<SlackStatusWriteClient>;
   resolveKnownThreadRoot: (messageId: string) => string;
 }): SlackStatusController {
   const stateByConversation = new Map<string, AgentConvSlackState>();

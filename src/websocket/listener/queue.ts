@@ -1,7 +1,4 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { buildClientSkillsPayload } from "@/agent/client-skills";
-import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
-import type { ChannelTurnSource } from "@/channels/types";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -11,11 +8,6 @@ import { isCoalescable } from "@/queue/queue-runtime";
 import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
-import {
-  activateChannelTurn,
-  dispatchChannelTurnLifecycleEvent,
-  finishActiveChannelTurn,
-} from "./channel-turn-session";
 import { getInboundImageFailureMode } from "./image-policy";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
 import {
@@ -26,7 +18,7 @@ import {
   getPendingControlRequestCount,
 } from "./runtime";
 import { resolveRuntimeScope } from "./scope";
-import type { ListenerTransport } from "./transport";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -120,62 +112,6 @@ function mergeDequeuedBatchContent(
   });
 }
 
-function getChannelTurnSourceKey(source: ChannelTurnSource): string {
-  return [
-    source.channel,
-    source.accountId ?? "",
-    source.chatId,
-    source.messageId ?? "",
-    source.threadId ?? "",
-    source.agentId,
-    source.conversationId,
-  ].join(":");
-}
-
-function collectBatchChannelTurnSources(
-  runtime: ConversationRuntime,
-  batch: DequeuedBatch,
-): ChannelTurnSource[] | undefined {
-  const seen = new Set<string>();
-  const sources: ChannelTurnSource[] = [];
-
-  for (const item of batch.items) {
-    const template = runtime.queuedMessagesByItemId.get(item.id);
-    for (const source of template?.channelTurnSources ?? []) {
-      const key = getChannelTurnSourceKey(source);
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      sources.push(source);
-    }
-  }
-
-  return sources.length > 0 ? sources : undefined;
-}
-
-async function buildChannelTurnProgressBuilder(agentId?: string | null) {
-  try {
-    const { clientSkills } = await buildClientSkillsPayload({
-      agentId: agentId ?? undefined,
-    });
-    const skillDescriptionsByName = new Map<string, string>();
-    for (const skill of clientSkills) {
-      if (skill.name && skill.description) {
-        skillDescriptionsByName.set(skill.name, skill.description);
-      }
-    }
-    return createChannelTurnProgressBuilder({ skillDescriptionsByName });
-  } catch (error) {
-    trackBoundaryError({
-      context: "websocket-listener channel progress skill descriptions",
-      errorType: "channel_progress_skill_description_discovery_failed",
-      error,
-    });
-    return createChannelTurnProgressBuilder();
-  }
-}
-
 function getPrimaryQueueMessageItem(items: QueueItem[]): QueueItem | null {
   for (const item of items) {
     if (item.kind === "message") {
@@ -207,7 +143,6 @@ function buildQueuedTurnMessage(
   runtime: ConversationRuntime,
   batch: DequeuedBatch,
 ): IncomingMessage | null {
-  const channelTurnSources = collectBatchChannelTurnSources(runtime, batch);
   const actingUserId = pickBatchActingUserId(batch.items);
   const primaryItem = getPrimaryQueueMessageItem(batch.items);
   if (!primaryItem) {
@@ -228,12 +163,12 @@ function buildQueuedTurnMessage(
       type: "message",
       agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
       conversationId: scopeItem?.conversationId ?? runtime.conversationId,
-      ...(channelTurnSources ? { channelTurnSources } : {}),
       ...(actingUserId ? { actingUserId } : {}),
       messages: [
         {
           role: "user",
           content: mergedContent,
+          otid: crypto.randomUUID(),
         } satisfies MessageCreate,
       ],
     };
@@ -272,7 +207,6 @@ function buildQueuedTurnMessage(
 
   return {
     ...template,
-    ...(channelTurnSources ? { channelTurnSources } : {}),
     ...(actingUserId ? { actingUserId } : {}),
     messages,
   };
@@ -336,7 +270,10 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasTaskNotification = false;
   let hasCronPrompt = false;
   let hasModContinue = false;
+  let batchConnectionId: string | undefined;
   let batchImageFailureMode: "strict" | "drop" | null = null;
+  const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
+    candidate.kind === "message" && candidate.noCoalesce === true;
   for (const item of queuedItems) {
     if (
       !isCoalescable(item.kind) ||
@@ -344,8 +281,24 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     ) {
       break;
     }
+    // noCoalesce items run as single-item batches: one never joins an
+    // existing batch, and nothing joins a batch it started.
+    if (queueLen > 0 && (isNoCoalesce(item) || isNoCoalesce(firstQueuedItem))) {
+      break;
+    }
 
     if (item.kind === "message") {
+      const itemConnectionId = runtime.queuedMessagesByItemId.get(
+        item.id,
+      )?.connectionId;
+      if (
+        batchConnectionId !== undefined &&
+        itemConnectionId !== undefined &&
+        itemConnectionId !== batchConnectionId
+      ) {
+        break;
+      }
+      batchConnectionId ??= itemConnectionId;
       const itemImageFailureMode = getInboundImageFailureMode(
         runtime.queuedMessagesByItemId.get(item.id),
       );
@@ -449,8 +402,6 @@ async function drainQueuedMessages(
       }
 
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-      const channelTurnSources = queuedTurn.channelTurnSources ?? [];
-
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
 
       const preTurnStatus =
@@ -464,39 +415,7 @@ async function drainQueuedMessages(
         runtime.listener.lastEmittedStatus = preTurnStatus;
         opts.onStatusChange?.(preTurnStatus, opts.connectionId);
       }
-      if (channelTurnSources.length > 0) {
-        await dispatchChannelTurnLifecycleEvent({
-          type: "processing",
-          batchId: dequeuedBatch.batchId,
-          sources: channelTurnSources,
-        });
-      }
-
-      let turnError: string | undefined;
-      let didThrow = false;
-      activateChannelTurn(runtime, {
-        sources: channelTurnSources,
-        batchId: dequeuedBatch.batchId,
-        contextRecovered: false,
-        progress:
-          channelTurnSources.length > 0
-            ? await buildChannelTurnProgressBuilder(queuedTurn.agentId)
-            : null,
-      });
-      try {
-        await processQueuedTurn(queuedTurn, dequeuedBatch);
-      } catch (error) {
-        didThrow = true;
-        turnError = error instanceof Error ? error.message : String(error);
-        throw error;
-      } finally {
-        await finishActiveChannelTurn(runtime, {
-          lastStopReason: runtime.lastStopReason,
-          didThrow,
-          error: turnError ?? runtime.lastTerminalLoopErrorMessage ?? undefined,
-          runId: runtime.lastTerminalLoopErrorRunId ?? undefined,
-        });
-      }
+      await processQueuedTurn(queuedTurn, dequeuedBatch);
       emitListenerStatus(
         runtime.listener,
         opts.onStatusChange,
@@ -528,7 +447,8 @@ export function scheduleQueuePump(
       runtime.queuePumpScheduled = false;
       if (
         runtime.listener !== getActiveRuntime() ||
-        runtime.listener.intentionallyClosed
+        runtime.listener.intentionallyClosed ||
+        !isListenerTransportOpen(socket)
       ) {
         return;
       }

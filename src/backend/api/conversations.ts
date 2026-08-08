@@ -3,6 +3,7 @@ import { apiRequest } from "./request";
 export interface ForkConversationOptions {
   agentId?: string;
   hidden?: boolean;
+  messageId?: string;
   /** Extra headers forwarded on the request (e.g. acting-user echo). */
   headers?: Record<string, string>;
 }
@@ -27,6 +28,7 @@ export async function forkConversation(
   const query = {
     ...(options.agentId ? { agent_id: options.agentId } : {}),
     ...(options.hidden !== undefined ? { hidden: options.hidden } : {}),
+    ...(options.messageId ? { message_id: options.messageId } : {}),
   };
 
   return apiRequest<{ id: string }>(

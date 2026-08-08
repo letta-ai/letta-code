@@ -11,6 +11,7 @@ import TextInput from "ink-text-input";
 import type React from "react";
 import { useState } from "react";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import type { ChannelGatewaySupervisor } from "@/channels/gateway-supervisor";
 import {
   type ChannelRestoreAgentScope,
   parseChannelRestoreAgentScope,
@@ -21,6 +22,8 @@ import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
 import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
+import { CHANNEL_SERVICE_COMMAND_TYPES } from "@/types/service-protocol";
+import type { AppServerHandle } from "@/websocket/app-server";
 import { RemoteSessionLog } from "@/websocket/listen-log";
 import {
   type RegisterOptions,
@@ -32,6 +35,15 @@ import {
   MissingListenerApiKeyError,
   resolveListenerRegistrationOptions,
 } from "@/websocket/listener/auth";
+import { getSpawnerListenerInstanceId } from "@/websocket/listener/identity";
+import {
+  acquireManualListenerLock,
+  ManualListenerAlreadyRunningError,
+  type ManualListenerLockHandle,
+  ManualListenerLockUnavailableError,
+  shouldAcquireManualListenerLock,
+} from "@/websocket/listener/manual-instance-lock";
+import { flushRemoteSettingsWrites } from "@/websocket/listener/remote-settings";
 
 type ListenerProcessAnchor = {
   close: () => void;
@@ -124,6 +136,7 @@ type ListenerStartupMode =
 
 async function resolveListenerStartupMode(
   channelNames: string[],
+  channelsRequested: boolean = channelNames.length > 0,
 ): Promise<ListenerStartupMode> {
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
@@ -136,7 +149,7 @@ async function resolveListenerStartupMode(
     return { kind: "remote", serverUrl };
   }
 
-  if (isLocalBackendEnvEnabled() && channelNames.length > 0) {
+  if (isLocalBackendEnvEnabled() && channelsRequested) {
     return {
       kind: "local-channels",
       serverUrl: "local-backend",
@@ -148,8 +161,12 @@ async function resolveListenerStartupMode(
     return { kind: "remote", serverUrl };
   }
 
-  if (channelNames.length > 0) {
+  if (channelsRequested) {
     return { kind: "local-channels", serverUrl, backend: "self-hosted" };
+  }
+
+  if (process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR === "1") {
+    return { kind: "remote", serverUrl };
   }
 
   return { kind: "unsupported-self-hosted", serverUrl };
@@ -173,12 +190,20 @@ function resolveChannelRestoreAgentScope(
   );
 }
 
+function shouldAcquireStandaloneListenerLock(): boolean {
+  return shouldAcquireManualListenerLock(
+    getSpawnerListenerInstanceId(),
+    process.env.LETTA_DESKTOP_MODE === "1",
+  );
+}
+
 export const __listenSubcommandTestUtils = {
   createListenerProcessAnchorPromise,
   flushListenerTelemetryEnd,
   getListenerServerUrl,
   resolveListenerStartupMode,
   resolveListenerRegistrationOptions,
+  shouldAcquireStandaloneListenerLock,
 };
 
 const LISTEN_OPTIONS = {
@@ -269,49 +294,78 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   await settingsManager.initialize();
   await applyStartupPermissionMode({});
   telemetry.setSurface(getListenerTelemetrySurface());
-  telemetry.init();
+  telemetry.init({ handleSigint: false });
 
   // Register signal handlers so the listener can clean up child processes
   // (subagents, bash commands, PTY sessions) before exiting. Without these,
   // SIGTERM from the desktop app only kills the listener process itself,
   // orphaning its descendants which accumulate over time.
-  const handleShutdownSignal = async (): Promise<void> => {
+  let isShuttingDown = false;
+  let manualListenerLock: ManualListenerLockHandle | null = null;
+  let channelGatewaySupervisor: ChannelGatewaySupervisor | null = null;
+  let channelAppServer: AppServerHandle | null = null;
+  let clearChannelServiceHandler: (() => void) | null = null;
+  const closeChannelGateway = async (): Promise<void> => {
+    const supervisor = channelGatewaySupervisor;
+    const appServer = channelAppServer;
+    channelGatewaySupervisor = null;
+    channelAppServer = null;
+    clearChannelServiceHandler?.();
+    clearChannelServiceHandler = null;
+    await supervisor?.close();
+    await appServer?.close();
+  };
+  const releaseManualListenerLock = async (): Promise<void> => {
+    const lock = manualListenerLock;
+    manualListenerLock = null;
+    if (!lock) return;
     try {
+      await lock.release();
+    } catch (error) {
+      console.error(
+        `Failed to release listener lock ${lock.lockPath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  };
+  const handleShutdownSignal = async (
+    signal: "SIGINT" | "SIGHUP" | "SIGTERM",
+  ): Promise<void> => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    try {
+      await closeChannelGateway();
       const { stopListenerClient, isListenerActive } = await import(
         "@/websocket/listen-client"
       );
       if (isListenerActive()) {
         stopListenerClient();
       }
-      // Stop channel adapters
-      const { getChannelRegistry } = await import("@/channels/registry");
-      const registry = getChannelRegistry();
-      if (registry) {
-        await registry.stopAll();
-      }
     } catch {
       // Best-effort cleanup — don't block exit
     }
+    await flushRemoteSettingsWrites();
+    await releaseManualListenerLock();
+    await flushListenerTelemetryEnd(`listener_${signal.toLowerCase()}`);
     process.exit(0);
   };
 
-  process.once("SIGTERM", handleShutdownSignal);
-  process.once("SIGINT", handleShutdownSignal);
+  process.once("SIGTERM", () => void handleShutdownSignal("SIGTERM"));
+  process.once("SIGINT", () => void handleShutdownSignal("SIGINT"));
+  process.once("SIGHUP", () => void handleShutdownSignal("SIGHUP"));
 
   const exitWithTelemetry = async (
     code: number,
     exitReason: string,
   ): Promise<never> => {
-    // Stop channel adapters on actual process exit
     try {
-      const { getChannelRegistry } = await import("@/channels/registry");
-      const registry = getChannelRegistry();
-      if (registry) {
-        await registry.stopAll();
-      }
+      await closeChannelGateway();
     } catch {
       // Best effort — don't block exit on channel cleanup failure
     }
+    await flushRemoteSettingsWrites();
+    await releaseManualListenerLock();
     await flushListenerTelemetryEnd(exitReason);
     process.exit(code);
   };
@@ -334,47 +388,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
-    : restoreEnabledChannels
-      ? (await import("@/channels/service")).listEnabledChannelIds({
-          restoreAgentScope,
-        })
-      : [];
-
-  if (channelNames.length > 0) {
-    if (values.channels && values["install-channel-runtimes"]) {
-      const { ensureChannelRuntimeInstalled } = await import(
-        "@/channels/runtime-deps"
-      );
-      const { isSupportedChannelId } = await import(
-        "@/channels/plugin-registry"
-      );
-
-      for (const channelName of channelNames) {
-        if (!isSupportedChannelId(channelName)) {
-          console.error(
-            `Unknown channel "${channelName}" passed to --channels.`,
-          );
-          return 1;
-        }
-        await ensureChannelRuntimeInstalled(channelName);
-      }
-    }
-
-    const { initializeChannels } = await import("@/channels/registry");
-    try {
-      await initializeChannels(channelNames, {
-        failOnStartupError: Boolean(values.channels),
-        restoreAgentScope,
-        logger: debugMode
-          ? (message) => console.log(`[${formatTimestamp()}] ${message}`)
-          : undefined,
-      });
-    } catch (error) {
-      console.error(error instanceof Error ? error.message : String(error));
-      await flushListenerTelemetryEnd("listener_channel_start_failed");
-      return 1;
-    }
-  }
+    : [];
 
   // Determine connection name
   let connectionName: string;
@@ -420,12 +434,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   try {
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
-    const startupMode = await resolveListenerStartupMode(channelNames);
+    const startupMode = await resolveListenerStartupMode(
+      channelNames,
+      channelNames.length > 0 || restoreEnabledChannels,
+    );
 
-    if (
-      startupMode.kind === "unsupported-self-hosted" &&
-      process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR !== "1"
-    ) {
+    if (startupMode.kind === "unsupported-self-hosted") {
       console.error(
         `Self-hosted listener registration is not available for ${startupMode.serverUrl}.`,
       );
@@ -436,6 +450,144 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       return 1;
     }
 
+    let registerOptions: RegisterOptions | null = null;
+    if (startupMode.kind === "remote") {
+      try {
+        registerOptions = await resolveListenerRegistrationOptions(
+          deviceId,
+          connectionName,
+        );
+      } catch (authErr) {
+        if (authErr instanceof MissingListenerApiKeyError) {
+          console.error("Error: LETTA_API_KEY not found");
+          console.error(
+            "Set your API key with: export LETTA_API_KEY=<your-key>",
+          );
+          await flushListenerTelemetryEnd("listener_missing_api_key");
+          return 1;
+        }
+
+        console.error(
+          "OAuth login failed:",
+          authErr instanceof Error ? authErr.message : String(authErr),
+        );
+        await flushListenerTelemetryEnd("listener_oauth_failed");
+        return 1;
+      }
+
+      // A spawner owns Desktop child lifecycle. Standalone `letta server`
+      // and its `letta remote` alias instead claim their exact local
+      // registration slot before starting channel adapters or registering.
+      if (shouldAcquireStandaloneListenerLock()) {
+        const listenerInstanceId = registerOptions.listenerInstanceId;
+        if (!listenerInstanceId) {
+          throw new Error("Listener registration identity was not resolved.");
+        }
+        try {
+          manualListenerLock = await acquireManualListenerLock({
+            serverUrl: registerOptions.serverUrl,
+            deviceId,
+            listenerInstanceId,
+          });
+        } catch (lockError) {
+          if (lockError instanceof ManualListenerAlreadyRunningError) {
+            console.error(
+              `A letta server for environment "${connectionName}" is already running on this machine (pid ${lockError.holderPid}).`,
+            );
+            console.error(
+              "Stop that process, or choose a different logical listener with --env-name.",
+            );
+            console.error(`Lock: ${lockError.lockPath}`);
+            await flushListenerTelemetryEnd("listener_already_running");
+            return 1;
+          }
+          if (lockError instanceof ManualListenerLockUnavailableError) {
+            console.error(
+              `Could not establish listener ownership: ${lockError.message}`,
+            );
+            console.error(
+              "No listener was started. Resolve the lock-file error and retry.",
+            );
+            await flushListenerTelemetryEnd("listener_lock_unavailable");
+            return 1;
+          }
+          throw lockError;
+        }
+      }
+    }
+
+    let channelGatewayStart: Promise<void> | null = null;
+    const startChannelGateway = (): Promise<void> => {
+      if (channelGatewayStart) return channelGatewayStart;
+      channelGatewayStart = (async () => {
+        if (channelNames.length === 0 && !restoreEnabledChannels) return;
+        const { getActiveRuntime } = await import(
+          "@/websocket/listener/runtime"
+        );
+        const runtime = getActiveRuntime();
+        if (!runtime) {
+          throw new Error("Listener runtime is not active for ChannelGateway");
+        }
+        const { startAppServer } = await import("@/websocket/app-server");
+        channelAppServer = await startAppServer({
+          runtime,
+          connectionName,
+          startProcessServices: false,
+          onLog: (message) => sessionLog.log(`[ChannelGateway] ${message}`),
+        });
+        const { startChannelGatewaySupervisor } = await import(
+          "@/channels/gateway-supervisor"
+        );
+        const { broadcastServiceProtocolMessage } = await import(
+          "@/websocket/listener/protocol-outbound"
+        );
+        channelGatewaySupervisor = await startChannelGatewaySupervisor({
+          appServerUrl: channelAppServer.controlUrl,
+          channelNames,
+          restoreEnabledChannels,
+          restoreAgentScope,
+          failOnStartupError: Boolean(values.channels),
+          installChannelRuntimes: Boolean(
+            values.channels && values["install-channel-runtimes"],
+          ),
+          onLog: (message) => {
+            sessionLog.log(message);
+            if (debugMode) console.log(`[${formatTimestamp()}] ${message}`);
+          },
+          onUnexpectedExit: (error) => {
+            console.error(`[${formatTimestamp()}] ${error.message}`);
+            void exitWithTelemetry(1, "listener_channel_gateway_exited");
+          },
+          onServiceEvent: (event) => {
+            if (event.kind === "protocol") {
+              broadcastServiceProtocolMessage(runtime, event.message);
+            }
+          },
+        });
+        runtime.serviceCommandHandler = (request) => {
+          const supervisor = channelGatewaySupervisor;
+          if (!supervisor) {
+            throw new Error("ChannelGateway supervisor is not available");
+          }
+          return supervisor.request(request);
+        };
+        runtime.serviceCommandTypes = new Set(CHANNEL_SERVICE_COMMAND_TYPES);
+        clearChannelServiceHandler = () => {
+          runtime.serviceCommandHandler = null;
+          runtime.serviceCommandTypes.clear();
+        };
+      })();
+      void channelGatewayStart.catch(async () => {
+        try {
+          await closeChannelGateway();
+        } catch {
+          // Preserve the startup error; cleanup is best effort.
+        } finally {
+          channelGatewayStart = null;
+        }
+      });
+      return channelGatewayStart;
+    };
     sessionLog.log(`Session started (debug=${debugMode})`);
     sessionLog.log(`deviceId: ${deviceId}`);
     sessionLog.log(`connectionName: ${connectionName}`);
@@ -471,7 +623,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             console.log(`[${formatTimestamp()}] status: ${status}`);
           }
         },
-        onConnected: () => {
+        onConnected: async () => {
+          await startChannelGateway();
           sessionLog.log("Local channel listener ready.");
           if (debugMode) {
             console.log(`[${formatTimestamp()}] Local channel listener ready.`);
@@ -488,27 +641,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       return createListenerProcessAnchorPromise();
     }
 
-    let registerOptions: RegisterOptions;
-
-    try {
-      registerOptions = await resolveListenerRegistrationOptions(
-        deviceId,
-        connectionName,
+    if (!registerOptions) {
+      throw new Error(
+        "Remote listener registration options were not resolved.",
       );
-    } catch (authErr) {
-      if (authErr instanceof MissingListenerApiKeyError) {
-        console.error("Error: LETTA_API_KEY not found");
-        console.error("Set your API key with: export LETTA_API_KEY=<your-key>");
-        await flushListenerTelemetryEnd("listener_missing_api_key");
-        return 1;
-      }
-
-      console.error(
-        "OAuth login failed:",
-        authErr instanceof Error ? authErr.message : String(authErr),
-      );
-      await flushListenerTelemetryEnd("listener_oauth_failed");
-      return 1;
     }
 
     if (debugMode) {
@@ -623,8 +759,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log(message);
             console.log(`[${formatTimestamp()}] ${message}`);
           },
-          onConnected: () => {
+          onConnected: async () => {
             sessionLog.log("Connected. Awaiting instructions.");
+            await startChannelGateway();
             console.log(
               `[${formatTimestamp()}] Connected. Awaiting instructions.`,
             );
@@ -717,8 +854,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log(message);
             console.log(`[${formatTimestamp()}] ${message}`);
           },
-          onConnected: () => {
+          onConnected: async () => {
             sessionLog.log("Connected. Awaiting instructions.");
+            await startChannelGateway();
             clearRetryStatusCallback?.();
             updateStatusCallback?.("idle");
           },
@@ -772,6 +910,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     const msg = error instanceof Error ? error.message : String(error);
     sessionLog.log(`FATAL: ${msg}`);
     console.error(`Failed to start listener: ${msg}`);
+    await flushRemoteSettingsWrites();
+    await releaseManualListenerLock();
     await flushListenerTelemetryEnd("listener_start_failed");
     return 1;
   }

@@ -261,17 +261,21 @@ export class ChannelRegistry {
     agentId: string,
     conversationId: string,
   ): ChannelTurnSource[] {
+    return this.resolveRoutedTurnSources().filter(
+      (source) =>
+        source.agentId === agentId && source.conversationId === conversationId,
+    );
+  }
+
+  resolveRoutedTurnSources(): ChannelTurnSource[] {
     const sources: ChannelTurnSource[] = [];
     const seen = new Set<string>();
     for (const adapter of this.adapters.values()) {
+      if (!adapter.isRunning()) continue;
       const channel = adapter.channelId ?? adapter.id;
       const accountId = adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
       for (const route of getRoutesForChannel(channel, accountId)) {
-        if (
-          route.enabled === false ||
-          route.agentId !== agentId ||
-          route.conversationId !== conversationId
-        ) {
+        if (route.enabled === false || route.outboundEnabled === false) {
           continue;
         }
         const key = `${channel}:${accountId}:${route.chatId}:${route.threadId ?? ""}`;
@@ -285,8 +289,8 @@ export class ChannelRegistry {
           chatId: route.chatId,
           chatType: route.chatType,
           threadId: route.threadId ?? null,
-          agentId,
-          conversationId,
+          agentId: route.agentId,
+          conversationId: route.conversationId,
         });
       }
     }
@@ -415,7 +419,7 @@ export class ChannelRegistry {
 
   /**
    * Set the message handler and mark the registry as ready.
-   * Called from inside startListenerClient() with closure-scoped state.
+   * Called by the owning gateway after its App Server client is connected.
    */
   setMessageHandler(handler: ChannelMessageHandler): void {
     this.messageHandler = handler;

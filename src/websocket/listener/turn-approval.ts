@@ -1,30 +1,19 @@
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type {
-  ApprovalCreate,
-  LettaStreamingResponse,
-} from "@letta-ai/letta-client/resources/agents/messages";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import {
   type ApprovalResult,
   executeApprovalBatch,
 } from "@/agent/approval-execution";
-import { getChannelRegistry } from "@/channels/registry";
-import type { ChannelTurnSource } from "@/channels/types";
 import { computeDiffPreviews } from "@/helpers/diff-preview";
 import { formatPermissionDenial } from "@/permissions/format-denial";
-import {
-  getInteractiveApprovalKind,
-  isInteractiveApprovalTool,
-} from "@/tools/interactive-policy";
+import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
+import type { PermissionModeState } from "@/tools/permission-mode-state";
 import type {
   ApprovalResponseBody,
   ApprovalResponseDecision,
   ControlRequest,
 } from "@/types/protocol_v2";
-import {
-  type ImageFailureModesByMessageOtid,
-  mergeImageFailureModesByMessageOtid,
-} from "@/utils/message-image-normalization";
+import { mergeImageFailureModesByMessageOtid } from "@/utils/message-image-normalization";
 import {
   clearPendingApprovalBatchIds,
   collectApprovalResultToolCallIds,
@@ -38,6 +27,7 @@ import {
   buildApprovalSuggestionPayload,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
+import { TO_SUBSCRIBERS } from "./connection";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import {
   createToolExecutionOutputEmitter,
@@ -49,6 +39,7 @@ import {
 } from "./interrupts";
 import {
   emitDequeuedUserMessage,
+  emitProtocolV2Message,
   emitRuntimeStateUpdates,
 } from "./protocol-outbound";
 import type { ProviderFallbackState } from "./provider-fallback";
@@ -62,9 +53,21 @@ import {
 } from "./send";
 import { injectQueuedSkillContent } from "./skill-injection";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
+import {
+  createTurnInputState,
+  type TurnInputState,
+  updateTurnInputMessagesPreservingOtids,
+} from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
 import type { ConversationRuntime } from "./types";
+
+type ApprovalTransportOpenResult = "open" | "interrupted";
+
+type WaitForApprovalTransportOpen = (
+  socket: ListenerTransport,
+  shouldInterrupt: () => boolean,
+) => Promise<ApprovalTransportOpenResult>;
 
 type Decision =
   | {
@@ -87,7 +90,7 @@ type Decision =
     };
 
 type ApprovalBranchProgress = {
-  currentInput: Array<MessageCreate | ApprovalCreate>;
+  turnInput: TurnInputState;
   dequeuedBatchId: string;
   pendingNormalizationInterruptedToolCallIds: string[];
   turnToolContextId: string | null;
@@ -112,33 +115,27 @@ export type ApprovalBranchResult =
     } & ApprovalBranchProgress)
   | { kind: "error"; message: string };
 
-function getChannelApprovalSourceScopeKey(source: ChannelTurnSource): string {
-  return [
-    source.channel,
-    source.accountId ?? "",
-    source.chatId,
-    source.threadId ?? "",
-  ].join(":");
-}
+const APPROVAL_TRANSPORT_REOPEN_POLL_MS = 50;
 
-export function resolveChannelApprovalSource(
-  runtime: ConversationRuntime,
-): ChannelTurnSource | null {
-  const sources = runtime.activeChannelTurn?.sources ?? [];
-  if (sources.length === 0) {
-    return null;
+async function waitForApprovalTransportOpen(
+  socket: ListenerTransport,
+  shouldInterrupt: () => boolean,
+): Promise<ApprovalTransportOpenResult> {
+  if (isListenerTransportOpen(socket)) {
+    return "open";
   }
 
-  const sourcesByScope = new Map<string, ChannelTurnSource>();
-  for (const source of sources) {
-    sourcesByScope.set(getChannelApprovalSourceScopeKey(source), source);
+  while (!shouldInterrupt()) {
+    await new Promise((resolve) =>
+      setTimeout(resolve, APPROVAL_TRANSPORT_REOPEN_POLL_MS),
+    );
+
+    if (isListenerTransportOpen(socket)) {
+      return "open";
+    }
   }
 
-  if (sourcesByScope.size !== 1) {
-    return null;
-  }
-
-  return [...sourcesByScope.values()].at(-1) ?? null;
+  return "interrupted";
 }
 
 export async function handleApprovalStop(params: {
@@ -152,14 +149,16 @@ export async function handleApprovalStop(params: {
   agentId: string;
   conversationId: string;
   turnWorkingDirectory: string;
-  turnPermissionModeState: import("@/tools/manager").PermissionModeState;
+  turnPermissionModeState: PermissionModeState;
   dequeuedBatchId: string;
   runId?: string;
   msgRunIds: string[];
-  currentInput: Array<MessageCreate | ApprovalCreate>;
+  turnInput: TurnInputState;
   pendingNormalizationInterruptedToolCallIds: string[];
   turnToolContextId: string | null;
   turnLease: TurnLease;
+  /** This turn's output is owned by an in-process caller, not a relay client. */
+  processOwnedTurn?: boolean;
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
@@ -168,6 +167,8 @@ export async function handleApprovalStop(params: {
     classifyApprovals?: typeof classifyApprovalsWithSuggestions;
     executeApprovalBatch?: typeof executeApprovalBatch;
     ensureSecretsHydrated?: typeof ensureSecretsHydratedForAgent;
+    sendApprovalContinuation?: typeof sendApprovalContinuationWithRetry;
+    waitForApprovalTransportOpen?: WaitForApprovalTransportOpen;
   };
 }): Promise<ApprovalBranchResult> {
   const {
@@ -181,9 +182,10 @@ export async function handleApprovalStop(params: {
     dequeuedBatchId,
     runId,
     msgRunIds,
-    currentInput,
+    turnInput,
     turnToolContextId,
     turnLease,
+    processOwnedTurn = false,
     buildSendOptions,
     providerFallback,
     dependencies,
@@ -195,6 +197,10 @@ export async function handleApprovalStop(params: {
     dependencies?.executeApprovalBatch ?? executeApprovalBatch;
   const ensureSecretsHydrated =
     dependencies?.ensureSecretsHydrated ?? ensureSecretsHydratedForAgent;
+  const sendApprovalContinuation =
+    dependencies?.sendApprovalContinuation ?? sendApprovalContinuationWithRetry;
+  const waitForTransportOpen =
+    dependencies?.waitForApprovalTransportOpen ?? waitForApprovalTransportOpen;
 
   if (approvals.length === 0) {
     return {
@@ -232,12 +238,12 @@ export async function handleApprovalStop(params: {
     abortSignal.aborted || !runtime.turnLifecycle.isCurrent(turnLease);
 
   const interruptTermination = (
-    interruptedInput: Array<MessageCreate | ApprovalCreate> = currentInput,
+    interruptedTurnInput: TurnInputState = turnInput,
     interruptedBatchId: string = dequeuedBatchId,
   ): ApprovalBranchResult => {
     return {
       kind: "interrupted",
-      currentInput: interruptedInput,
+      turnInput: interruptedTurnInput,
       dequeuedBatchId: interruptedBatchId,
       pendingNormalizationInterruptedToolCallIds: [],
       turnToolContextId,
@@ -304,24 +310,6 @@ export async function handleApprovalStop(params: {
         conversation_id: conversationId,
       };
 
-      const registry = getChannelRegistry();
-      const channelSource = resolveChannelApprovalSource(runtime);
-      if (registry && channelSource) {
-        await registry.registerPendingControlRequest({
-          requestId,
-          kind:
-            getInteractiveApprovalKind(ac.approval.toolName) ??
-            "generic_tool_approval",
-          source: channelSource,
-          toolName: ac.approval.toolName,
-          input: ac.parsedArgs,
-        });
-        if (shouldInterrupt()) {
-          registry.clearPendingControlRequest(requestId);
-          return interruptTermination();
-        }
-      }
-
       let responseBody: ApprovalResponseBody;
       try {
         responseBody = await requestApprovalOverWS(
@@ -336,8 +324,6 @@ export async function handleApprovalStop(params: {
           return interruptTermination();
         }
         throw error;
-      } finally {
-        registry?.clearPendingControlRequest(requestId);
       }
 
       if (shouldInterrupt()) {
@@ -423,6 +409,29 @@ export async function handleApprovalStop(params: {
     (decision): decision is Extract<Decision, { type: "approve" }> =>
       decision.type === "approve",
   );
+  const executionRunId =
+    runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
+
+  // A process-owned turn's results are consumed in-process, so there is no
+  // client whose reconnect is worth waiting for. Relay-originated turns still
+  // wait through transient disconnects so their output is not lost (#3522).
+  if (
+    approvedDecisions.length > 0 &&
+    !processOwnedTurn &&
+    !isListenerTransportOpen(socket)
+  ) {
+    const transportOpenResult = await waitForTransportOpen(
+      socket,
+      shouldInterrupt,
+    );
+    if (transportOpenResult === "interrupted") {
+      return interruptTermination();
+    }
+  }
+
+  if (shouldInterrupt()) {
+    return interruptTermination();
+  }
   lastExecutingToolCallIds = approvedDecisions.map(
     (decision) => decision.approval.toolCallId,
   );
@@ -438,8 +447,6 @@ export async function handleApprovalStop(params: {
     agent_id: agentId,
     conversation_id: conversationId,
   });
-  const executionRunId =
-    runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
   emitToolExecutionStartedEvents(socket, runtime, {
     toolCalls: approvedDecisions.map((decision) => ({
       toolCallId: decision.approval.toolCallId,
@@ -468,21 +475,24 @@ export async function handleApprovalStop(params: {
   // Broadcast new file content to web clients when a file-mutating tool
   // (Edit, Write, MultiEdit) writes to disk, so all windows update immediately.
   const onFileWrite = (filePath: string, content: string) => {
-    if (
-      runtime.turnLifecycle.isCurrent(turnLease) &&
-      isListenerTransportOpen(socket)
-    ) {
-      socket.send(
-        JSON.stringify({
-          type: "file_ops",
-          path: filePath,
-          cg_entries: [],
-          ops: [],
-          source: "agent",
-          document_content: content,
-        }),
-      );
-    }
+    if (!runtime.turnLifecycle.isCurrent(turnLease)) return;
+    emitProtocolV2Message(
+      socket,
+      runtime,
+      {
+        type: "file_ops",
+        path: filePath,
+        cg_entries: [],
+        ops: [],
+        source: "agent",
+        document_content: content,
+      } as never,
+      {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      },
+      TO_SUBSCRIBERS,
+    );
   };
 
   let executionResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
@@ -500,7 +510,6 @@ export async function handleApprovalStop(params: {
       workingDirectory: turnWorkingDirectory,
       parentScope:
         agentId && conversationId ? { agentId, conversationId } : undefined,
-      channelTurnSources: runtime.activeChannelTurn?.sources,
       onFileWrite,
     });
   } catch (error) {
@@ -560,29 +569,32 @@ export async function handleApprovalStop(params: {
     return interruptTermination();
   }
 
-  let nextInput: Array<MessageCreate | ApprovalCreate> = [
+  let nextTurnInput = createTurnInputState([
     {
       type: "approval",
       approvals: persistedExecutionResults,
       otid: crypto.randomUUID(),
     },
-  ];
+  ]);
   let continuationBatchId = dequeuedBatchId;
-  let queuedImageFailureModes: ImageFailureModesByMessageOtid | undefined;
   const consumedQueuedTurn = consumeQueuedTurn(runtime);
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
     continuationBatchId = dequeuedBatch.batchId;
-    const appended = appendQueuedTurnToInput(nextInput, queuedTurn);
-    nextInput = appended.input;
-    queuedImageFailureModes = appended.imageFailureModesByMessageOtid;
+    nextTurnInput = appendQueuedTurnToInput(nextTurnInput, queuedTurn);
     emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
   }
 
-  const nextInputWithSkillContent = injectQueuedSkillContent(nextInput);
+  const nextInputWithSkillContent = injectQueuedSkillContent(
+    nextTurnInput.messages,
+  );
+  nextTurnInput = updateTurnInputMessagesPreservingOtids(
+    nextTurnInput,
+    nextInputWithSkillContent,
+  );
 
   if (shouldInterrupt()) {
-    return interruptTermination(nextInputWithSkillContent, continuationBatchId);
+    return interruptTermination(nextTurnInput, continuationBatchId);
   }
 
   setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
@@ -594,9 +606,9 @@ export async function handleApprovalStop(params: {
     const sendOptions = buildSendOptions() ?? {};
     const imageFailureModesByMessageOtid = mergeImageFailureModesByMessageOtid(
       sendOptions.imageFailureModesByMessageOtid,
-      queuedImageFailureModes,
+      nextTurnInput.imageFailureModesByMessageOtid,
     );
-    sendResult = await sendApprovalContinuationWithRetry(
+    sendResult = await sendApprovalContinuation(
       conversationId,
       nextInputWithSkillContent,
       {
@@ -615,10 +627,7 @@ export async function handleApprovalStop(params: {
     );
   } catch (error) {
     if (shouldInterrupt()) {
-      return interruptTermination(
-        nextInputWithSkillContent,
-        continuationBatchId,
-      );
+      return interruptTermination(nextTurnInput, continuationBatchId);
     }
     throw error;
   }
@@ -626,7 +635,7 @@ export async function handleApprovalStop(params: {
     return {
       kind: "terminal",
       drainResult: sendResult.drainResult,
-      currentInput: nextInputWithSkillContent,
+      turnInput: nextTurnInput,
       dequeuedBatchId: continuationBatchId,
       pendingNormalizationInterruptedToolCallIds: [],
       turnToolContextId,
@@ -656,7 +665,11 @@ export async function handleApprovalStop(params: {
       persistedExecutionResults,
     ),
   });
-  markAwaitingAcceptedApprovalContinuationRunId(runtime, turnLease, nextInput);
+  markAwaitingAcceptedApprovalContinuationRunId(
+    runtime,
+    turnLease,
+    nextTurnInput.messages,
+  );
   setTurnLoopStatus(runtime, turnLease, "PROCESSING_API_RESPONSE", {
     agent_id: agentId,
     conversation_id: conversationId,
@@ -671,7 +684,7 @@ export async function handleApprovalStop(params: {
   return {
     kind: "continue",
     stream,
-    currentInput: nextInputWithSkillContent,
+    turnInput: nextTurnInput,
     dequeuedBatchId: continuationBatchId,
     pendingNormalizationInterruptedToolCallIds: [],
     turnToolContextId: null,

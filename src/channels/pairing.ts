@@ -10,6 +10,7 @@
  * Reference: earlier pairing-store implementation
  */
 
+import { randomInt } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { getChannelDir, getChannelPairingPath } from "./config";
@@ -105,7 +106,9 @@ function savePairingStore(channelId: string): void {
 function generateCode(length = 6): string {
   let code = "";
   for (let i = 0; i < length; i++) {
-    code += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
+    // Cryptographic randomness: pairing codes are an authorization
+    // credential, so they must not be predictable.
+    code += CODE_CHARS[randomInt(CODE_CHARS.length)];
   }
   return code;
 }
@@ -143,7 +146,21 @@ export function createPairingCode(
   const store = getStore(channelId);
   const normalizedAccountId = normalizeAccountId(accountId);
 
-  // Remove any existing pending code for this user
+  // Rate limit: reuse the sender's existing unexpired code instead of
+  // minting a new one per inbound message. One live code per sender per
+  // TTL window also keeps the operator-visible code stable.
+  const nowMs = Date.now();
+  const existing = store.pending.find(
+    (p) =>
+      p.senderId === userId &&
+      normalizeAccountId(p.accountId) === normalizedAccountId &&
+      new Date(p.expiresAt).getTime() > nowMs,
+  );
+  if (existing) {
+    return existing.code;
+  }
+
+  // Remove any existing (expired) code for this user
   store.pending = store.pending.filter(
     (p) =>
       !(

@@ -63,6 +63,53 @@ describe("TurnLifecycle", () => {
     expect(lifecycle.lastStopReason).toBe("cancelled");
   });
 
+  test("cancellation waits for both its owner and external cleanup", () => {
+    const lifecycle = new TurnLifecycle(() => "lease-1");
+    const lease = lifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/worktree",
+    });
+
+    lifecycle.requestCancellation({ waitForExternalSettlement: true });
+    expect(lifecycle.finish(lease, "cancelled")).toEqual({
+      finished: true,
+      previousKind: "cancelling",
+      runId: null,
+    });
+    expect(lifecycle.kind).toBe("cancelling");
+    expect(lifecycle.isCurrent(lease)).toBe(false);
+    expect(lifecycle.currentLease).toBeNull();
+    expect(lifecycle.finish(lease, "cancelled").finished).toBe(false);
+
+    expect(lifecycle.settleCancellation(lease)).toEqual({
+      settled: true,
+      released: true,
+    });
+    expect(lifecycle.kind).toBe("idle");
+    expect(lifecycle.settleCancellation(lease)).toEqual({
+      settled: false,
+      released: false,
+    });
+  });
+
+  test("external cleanup may settle before the cancelling owner finishes", () => {
+    const lifecycle = new TurnLifecycle(() => "lease-1");
+    const lease = lifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/worktree",
+    });
+
+    lifecycle.requestCancellation({ waitForExternalSettlement: true });
+    expect(lifecycle.settleCancellation(lease)).toEqual({
+      settled: true,
+      released: false,
+    });
+    expect(lifecycle.kind).toBe("cancelling");
+
+    expect(lifecycle.finish(lease, "cancelled").finished).toBe(true);
+    expect(lifecycle.kind).toBe("idle");
+  });
+
   test("reset invalidates stale async owners before a replacement turn", () => {
     let nextId = 0;
     const lifecycle = new TurnLifecycle(() => `lease-${++nextId}`);

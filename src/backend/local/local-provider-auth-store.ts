@@ -6,14 +6,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import {
-  getOAuthApiKey,
-  type OAuthCredentials,
-} from "@earendil-works/pi-ai/oauth";
+import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 import type { ProviderResponse } from "@/backend/api/providers";
+import { getProviderOAuthAuth } from "@/backend/dev/pi-oauth";
 import { getRegisteredPiProvider } from "@/backend/dev/pi-provider-mod-registry";
 import {
   LOCAL_CHATGPT_PROVIDER_NAME,
+  OPENAI_COMPATIBLE_PI_PROVIDER_ID,
   SUPPORTED_LOCAL_PROVIDER_TYPES,
 } from "@/backend/dev/pi-provider-registry";
 import type { LocalProviderTimeout } from "./local-provider-timeout";
@@ -31,6 +30,7 @@ export {
   LOCAL_MOONSHOT_PROVIDER_NAME,
   LOCAL_OLLAMA_CLOUD_PROVIDER_NAME,
   LOCAL_OLLAMA_PROVIDER_NAME,
+  LOCAL_OPENAI_COMPATIBLE_PROVIDER_NAME,
   LOCAL_OPENAI_PROVIDER_NAME,
   LOCAL_OPENROUTER_PROVIDER_NAME,
   LOCAL_ZAI_CODING_PROVIDER_NAME,
@@ -204,6 +204,13 @@ export async function createOrUpdateLocalProvider(input: {
 
   const file = readAuthFile(input.storageDir);
   const existing = file.providers[input.providerName];
+  const baseURL = input.baseURL ?? existing?.base_url;
+  if (
+    input.providerType === OPENAI_COMPATIBLE_PI_PROVIDER_ID &&
+    !baseURL?.trim()
+  ) {
+    throw new Error("OpenAI-compatible API requires a base URL.");
+  }
   const now = new Date().toISOString();
   const auth: LocalProviderAuth =
     input.providerType === "chatgpt_oauth"
@@ -218,9 +225,7 @@ export async function createOrUpdateLocalProvider(input: {
     ...(input.accessKey ? { access_key: input.accessKey } : {}),
     ...(input.region ? { region: input.region } : {}),
     ...(input.profile ? { profile: input.profile } : {}),
-    ...((input.baseURL ?? existing?.base_url)
-      ? { base_url: input.baseURL ?? existing?.base_url }
-      : {}),
+    ...(baseURL ? { base_url: baseURL } : {}),
     ...(input.timeout !== undefined
       ? { timeout: input.timeout }
       : existing?.timeout !== undefined
@@ -328,6 +333,8 @@ export function setLocalOAuthProvider(input: {
   providerType: string;
   auth: LocalProviderOAuthAuth;
   storageDir?: string;
+  baseURL?: string;
+  timeout?: LocalProviderTimeout;
 }): void {
   if (!isLocalProviderTypeSupported(input.providerType)) {
     throw new Error(
@@ -344,6 +351,14 @@ export function setLocalOAuthProvider(input: {
     provider_type: input.providerType,
     provider_category: "byok",
     auth: input.auth,
+    ...((input.baseURL ?? existing?.base_url)
+      ? { base_url: input.baseURL ?? existing?.base_url }
+      : {}),
+    ...(input.timeout !== undefined
+      ? { timeout: input.timeout }
+      : existing?.timeout !== undefined
+        ? { timeout: existing.timeout }
+        : {}),
     created_at: existing?.created_at ?? now,
     updated_at: now,
   };
@@ -422,18 +437,28 @@ export async function getLocalOAuthApiKey(input: {
   | {
       apiKey: string;
       credentials: OAuthCredentials;
+      baseUrl?: string;
+      headers?: Record<string, string>;
     }
   | undefined
 > {
   const record = localOAuthRecord(input.providerNames, input.storageDir);
   if (!record || record.auth.type !== "oauth") return undefined;
 
-  const result = await getOAuthApiKey(input.providerId, {
-    [input.providerId]: toPiOAuthCredentials(record.auth),
-  });
-  if (!result) return undefined;
+  // pi-ai 0.81: OAuth lives on the provider (Provider.auth.oauth). Refresh
+  // expired tokens through the provider's own flow, then derive request auth
+  // (apiKey plus per-credential baseUrl/headers, e.g. GitHub Copilot).
+  const oauth = getProviderOAuthAuth(input.providerId);
+  if (!oauth) return undefined;
 
-  const nextAuth = toLocalOAuthAuth(result.newCredentials, record.auth);
+  let credentials = toPiOAuthCredentials(record.auth);
+  if (Date.now() >= credentials.expires) {
+    credentials = await oauth.refresh({ type: "oauth", ...credentials });
+  }
+  const modelAuth = await oauth.toAuth({ type: "oauth", ...credentials });
+  if (!modelAuth.apiKey) return undefined;
+
+  const nextAuth = toLocalOAuthAuth(credentials, record.auth);
   if (!localOAuthAuthEquals(nextAuth, record.auth)) {
     setLocalOAuthProvider({
       providerName: record.name,
@@ -442,9 +467,18 @@ export async function getLocalOAuthApiKey(input: {
       storageDir: input.storageDir,
     });
   }
+  const headers = modelAuth.headers
+    ? Object.fromEntries(
+        Object.entries(modelAuth.headers).filter(
+          (entry): entry is [string, string] => entry[1] !== null,
+        ),
+      )
+    : undefined;
   return {
-    apiKey: result.apiKey,
-    credentials: result.newCredentials,
+    apiKey: modelAuth.apiKey,
+    credentials,
+    ...(modelAuth.baseUrl ? { baseUrl: modelAuth.baseUrl } : {}),
+    ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
   };
 }
 

@@ -18,6 +18,7 @@ import {
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
 import {
   formatSkillNameFrontmatterRepairReport,
   repairMissingSkillNameFrontmatter,
@@ -41,20 +42,27 @@ import type {
 import { debugLog } from "@/utils/debug";
 import { markSecretsReminderRefreshPending } from "./commands/secrets";
 import { getConversationWorkingDirectory } from "./cwd";
-import { reloadListenerModAdapter } from "./mod-adapter";
+import {
+  ensureListenerAgentModAdapter,
+  reloadListenerModAdapter,
+} from "./mod-adapter";
 import { getListenerModCommand, runListenerModCommand } from "./mod-commands";
 import {
   createLifecycleMessageBase,
   emitCanonicalMessageDelta,
   emitDeviceStatusUpdate,
 } from "./protocol-outbound";
+import { flushRemoteSettingsWrites } from "./remote-settings";
 import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
 import {
   ensureSecretsHydratedForAgent,
   invalidateSecretsCacheForAgent,
 } from "./secrets-sync";
 import { handleIncomingMessage } from "./turn";
-import { buildMaybeLaunchReflectionSubagent } from "./turn-events";
+import {
+  buildMaybeLaunchReflectionSubagent,
+  escapeTaskNotificationSummary,
+} from "./turn-events";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
@@ -142,6 +150,10 @@ export async function handleExecuteCommand(
         emitDeviceStatusUpdate(socket, conversationRuntime, scope);
         break;
 
+      case "reflect":
+        output = await handleReflectCommand(socket, conversationRuntime);
+        break;
+
       case "context-limit":
       case "set-max-context":
         output = await handleSetMaxContextCommand(
@@ -164,9 +176,16 @@ export async function handleExecuteCommand(
         break;
 
       default: {
+        if (conversationRuntime.agentId) {
+          await ensureListenerAgentModAdapter(
+            conversationRuntime.listener,
+            conversationRuntime.agentId,
+          );
+        }
         const modCommand = getListenerModCommand(
           conversationRuntime.listener,
           command.command_id,
+          conversationRuntime.agentId,
         );
         if (!modCommand) {
           emitSlashCommandEnd(socket, conversationRuntime, scope, {
@@ -174,6 +193,10 @@ export async function handleExecuteCommand(
             input,
             output: `Unknown command: ${command.command_id}`,
             success: false,
+          });
+          emitExecuteCommandResponse(socket, command, {
+            success: false,
+            output: `Unknown command: ${command.command_id}`,
           });
           return;
         }
@@ -197,6 +220,7 @@ export async function handleExecuteCommand(
       output,
       success: true,
     });
+    emitExecuteCommandResponse(socket, command, { success: true, output });
   } catch (error) {
     trackBoundaryError({
       errorType: "listener_execute_command_failed",
@@ -209,6 +233,10 @@ export async function handleExecuteCommand(
       input,
       output: `Failed: ${errorMessage}`,
       success: false,
+    });
+    emitExecuteCommandResponse(socket, command, {
+      success: false,
+      output: `Failed: ${errorMessage}`,
     });
   }
 }
@@ -313,7 +341,7 @@ export async function handleReloadCommand(
     );
   }
 
-  await reloadListenerModAdapter(listener);
+  await reloadListenerModAdapter(listener, conversationRuntime.agentId);
 
   if (conversationRuntime.agentId) {
     invalidateSecretsCacheForAgent(listener, conversationRuntime.agentId);
@@ -374,7 +402,8 @@ function scheduleRemoteRestart(
   }
 
   log(`scheduling remote listener restart for env ${connectionName}`);
-  setTimeout(() => {
+  setTimeout(async () => {
+    await flushRemoteSettingsWrites();
     log(
       `spawning replacement listener: ${process.execPath} ${entrypoint} remote --env-name ${connectionName}`,
     );
@@ -410,6 +439,20 @@ function emitSlashCommandEnd(
     ...fields,
   };
   emitCanonicalMessageDelta(socket, runtime, endDelta as StreamDelta, scope);
+}
+
+function emitExecuteCommandResponse(
+  socket: WebSocket,
+  command: ExecuteCommandCommand,
+  result: { success: boolean; output: string },
+): void {
+  socket.send(
+    JSON.stringify({
+      type: "execute_command_response",
+      request_id: command.request_id,
+      ...result,
+    }),
+  );
 }
 
 type CompactMode =
@@ -825,149 +868,81 @@ async function handleChannelsCommand(
     connectionId?: string;
   },
 ): Promise<string> {
-  const parts = (args ?? "").trim().split(/\s+/);
-  const [subCmd, action, ...rest] = parts;
-
   const agentId = conversationRuntime.agentId;
   const conversationId = conversationRuntime.conversationId;
-
   if (!agentId) {
     return "Error: No agent ID in current context.";
   }
-
-  if (subCmd === "status") {
-    const { listChannelAccountSnapshots } = await import("@/channels/service");
-    const { getRoutesForChannel, loadRoutes } = await import(
-      "@/channels/routing"
-    );
-    const { getPendingPairings, getApprovedUsers, loadPairingStore } =
-      await import("@/channels/pairing");
-
-    const { getSupportedChannelIds } = await import(
-      "@/channels/plugin-registry"
-    );
-    const lines: string[] = [];
-
-    for (const ch of getSupportedChannelIds()) {
-      const accounts = listChannelAccountSnapshots(ch);
-      if (accounts.length === 0) {
-        lines.push(`${ch}: not configured`);
-        continue;
-      }
-      loadRoutes(ch);
-      loadPairingStore(ch);
-      const routes = getRoutesForChannel(ch);
-      const pending = getPendingPairings(ch);
-      const approved = getApprovedUsers(ch);
-      lines.push(
-        `${ch}: accounts=${accounts.length}, enabled=${accounts.some((account) => account.enabled)}, ` +
-          `policy=${accounts[0]?.dmPolicy ?? "unknown"}, routes=${routes.length}, pending=${pending.length}, approved=${approved.length}`,
-      );
-    }
-
-    return lines.join("\n") || "No channels configured.";
+  const serviceCommandHandler =
+    conversationRuntime.listener.serviceCommandHandler;
+  if (!serviceCommandHandler) {
+    return "Error: ChannelGateway service is not ready.";
   }
+  const response = await serviceCommandHandler({
+    kind: "slash_command",
+    command: "channels",
+    args,
+    runtime: { agent_id: agentId, conversation_id: conversationId },
+  });
+  return response.kind === "text"
+    ? response.text
+    : "Error: ChannelGateway returned an invalid slash-command response.";
+}
 
-  const {
-    getSupportedChannelIds,
-    isSupportedChannelId,
-    getChannelDisplayName,
-  } = await import("@/channels/plugin-registry");
-
-  if (subCmd && isSupportedChannelId(subCmd)) {
-    const ch = subCmd;
-    const displayName = getChannelDisplayName(ch);
-    const accountIdFlag = rest.indexOf("--account-id");
-    const accountId =
-      accountIdFlag >= 0 ? (rest[accountIdFlag + 1] ?? undefined) : undefined;
-
-    if (action === "pair") {
-      const code = rest[0];
-      if (!code) {
-        return `Usage: /channels ${ch} pair <code>`;
-      }
-
-      const { completePairing } = await import("@/channels/registry");
-      const { loadRoutes } = await import("@/channels/routing");
-      const { loadPairingStore } = await import("@/channels/pairing");
-
-      loadRoutes(ch);
-      loadPairingStore(ch);
-
-      const result = completePairing(
-        ch,
-        code,
-        agentId,
-        conversationId,
-        accountId,
+async function handleReflectCommand(
+  socket: WebSocket,
+  conversationRuntime: ConversationRuntime,
+): Promise<string> {
+  const agentId = conversationRuntime.agentId;
+  if (!agentId) return "No agent ID available for reflection.";
+  const conversationId = conversationRuntime.conversationId;
+  const listener = conversationRuntime.listener;
+  const result = await launchReflectionSubagent({
+    agentId,
+    conversationId,
+    memfsEnabled: settingsManager.isMemfsEnabled(agentId),
+    triggerSource: "manual",
+    description: "Reflecting on conversation",
+    recompileByConversation: listener.systemPromptRecompileByConversation,
+    recompileQueuedByConversation:
+      listener.queuedSystemPromptRecompileByConversation,
+    onCompletionMessage: async (completionMessage, reflectionResult) => {
+      const reflectionAgentIdTag = reflectionResult.reflectionAgentId
+        ? `<reflection-agent-id>${escapeTaskNotificationSummary(reflectionResult.reflectionAgentId)}</reflection-agent-id>`
+        : "";
+      emitCanonicalMessageDelta(
+        socket,
+        conversationRuntime,
+        {
+          type: "message",
+          id: `user-msg-${crypto.randomUUID()}`,
+          date: new Date().toISOString(),
+          message_type: "user_message",
+          content: [
+            {
+              type: "text",
+              text: `<task-notification><summary>${escapeTaskNotificationSummary(completionMessage)}</summary>${reflectionAgentIdTag}</task-notification>`,
+            },
+          ],
+        } as StreamDelta,
+        { agent_id: agentId, conversation_id: conversationId },
       );
-
-      if (result.success) {
-        return `Pairing approved! Chat ${result.chatId} is now bound to this agent/conversation.`;
-      }
-      return `Pairing failed: ${result.error}`;
-    }
-
-    if (action === "enable") {
-      const chatIdFlag = rest.indexOf("--chat-id");
-      const chatId = chatIdFlag >= 0 ? rest[chatIdFlag + 1] : undefined;
-
-      if (!chatId) {
-        return `Usage: /channels ${ch} enable --chat-id <id> [--account-id <id>]`;
-      }
-
-      const { getChannelAccount, listChannelAccounts } = await import(
-        "@/channels/accounts"
-      );
-      const { addRoute, loadRoutes } = await import("@/channels/routing");
-
-      let resolvedAccountId = accountId?.trim();
-      if (resolvedAccountId) {
-        if (!getChannelAccount(ch, resolvedAccountId)) {
-          return `Unknown ${displayName} account: ${resolvedAccountId}`;
-        }
-      } else {
-        const accounts = listChannelAccounts(ch);
-        if (accounts.length === 0) {
-          return `${displayName} is not configured yet.`;
-        }
-        if (accounts.length > 1) {
-          return `${displayName} has multiple accounts. Re-run with --account-id <id>.`;
-        }
-        resolvedAccountId = accounts[0]?.accountId;
-      }
-
-      if (!resolvedAccountId) {
-        return `Could not resolve a ${displayName} account for this route.`;
-      }
-
-      loadRoutes(ch);
-      addRoute(ch, {
-        accountId: resolvedAccountId,
-        chatId,
-        agentId,
-        conversationId,
-        enabled: true,
-        createdAt: new Date().toISOString(),
-      });
-
-      return `Route created: ${ch}:${chatId} → ${agentId}/${conversationId}`;
-    }
-
-    if (action === "disable") {
-      const { removeRoutesForScope, loadRoutes } = await import(
-        "@/channels/routing"
-      );
-
-      loadRoutes(ch);
-      const removed = removeRoutesForScope(ch, agentId, conversationId);
-      return removed > 0
-        ? `Removed ${removed} route(s) for this agent/conversation.`
-        : "No routes found for this agent/conversation.";
-    }
-
-    return `Usage: /channels ${ch} <pair|enable|disable>`;
+    },
+  });
+  if (result.launched)
+    return "Started a reflection pass for this conversation.";
+  if (result.reason === "memfs_disabled") {
+    return "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead.";
   }
-
-  return `Usage: /channels <status|${getSupportedChannelIds().join("|")}> ...`;
+  if (result.reason === "already_active") {
+    return "A reflection agent is already running for this conversation.";
+  }
+  if (result.reason === "no_payload") {
+    return "No new transcript content to reflect on for this conversation.";
+  }
+  return `Failed to start reflection: ${
+    result.error instanceof Error
+      ? result.error.message
+      : String(result.error ?? "Unknown error")
+  }`;
 }

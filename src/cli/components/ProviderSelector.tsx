@@ -1,6 +1,17 @@
 import { Box, useInput } from "ink";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { clearAvailableModelsCache } from "@/agent/available-models";
+import {
+  getPiProviderRegistryRevision,
+  subscribePiProviderRegistry,
+} from "@/backend/dev/pi-provider-mod-registry";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   type AuthMethod,
@@ -75,7 +86,7 @@ export function providerApiKeyFromInput(
   return input.trim() || defaultProviderApiKey(provider);
 }
 
-export function hasConstellationProviderStoreCredentials(
+export function hasCloudProviderStoreCredentials(
   settings: Pick<Settings, "env" | "refreshToken">,
   env: { LETTA_API_KEY?: string } = {
     LETTA_API_KEY: process.env.LETTA_API_KEY,
@@ -87,9 +98,9 @@ export function hasConstellationProviderStoreCredentials(
 }
 
 export function shouldShowProviderStoreTabs(
-  hasConstellationCredentials: boolean | null,
+  hasCloudCredentials: boolean | null,
 ): boolean {
-  return hasConstellationCredentials === true;
+  return hasCloudCredentials === true;
 }
 
 export function filterProviderConfigs(
@@ -172,9 +183,14 @@ export function fieldValuesFromProviderPlaceholders(
 ): Record<string, string> {
   if (!fields) return {};
 
+  // Optional fields stay empty so an untouched value is not persisted:
+  // e.g. leaving the Ollama base URL blank keeps env/default resolution.
   return Object.fromEntries(
     fields
-      .filter((field) => !field.secret && field.placeholder)
+      .filter(
+        (field) =>
+          !field.secret && field.placeholder && field.required !== false,
+      )
       .map((field) => [field.key, field.placeholder as string]),
   );
 }
@@ -216,8 +232,9 @@ export function ProviderSelector({
   const [selectedTarget, setSelectedTarget] = useState<ProviderStorageTarget>(
     defaultProviderStorageTarget(),
   );
-  const [hasConstellationCredentials, setHasConstellationCredentials] =
-    useState<boolean | null>(null);
+  const [hasCloudCredentials, setHasCloudCredentials] = useState<
+    boolean | null
+  >(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [connectedProvidersByTarget, setConnectedProvidersByTarget] =
     useState<ConnectedProvidersByTarget>({});
@@ -247,17 +264,15 @@ export function ProviderSelector({
   const [awsProfiles, setAwsProfiles] = useState<AwsProfile[]>([]);
   const [profileIndex, setProfileIndex] = useState(0);
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
-  const providers = useMemo(
-    () => getProviderConfigs(selectedTarget),
-    [selectedTarget],
+  useSyncExternalStore(
+    subscribePiProviderRegistry,
+    getPiProviderRegistryRevision,
+    getPiProviderRegistryRevision,
   );
-  const filteredProviders = useMemo(
-    () => filterProviderConfigs(providers, searchQuery),
-    [providers, searchQuery],
-  );
-  const showProviderStoreTabs = shouldShowProviderStoreTabs(
-    hasConstellationCredentials,
-  );
+  const providers = getProviderConfigs(selectedTarget);
+  const filteredProviders = filterProviderConfigs(providers, searchQuery);
+  const showProviderStoreTabs =
+    shouldShowProviderStoreTabs(hasCloudCredentials);
   const connectedProviders = useMemo(
     () => connectedProvidersByTarget[selectedTarget] ?? new Map(),
     [connectedProvidersByTarget, selectedTarget],
@@ -302,13 +317,11 @@ export function ProviderSelector({
       .getSettingsWithSecureTokens()
       .then((settings) => {
         if (cancelled || !mountedRef.current) return;
-        setHasConstellationCredentials(
-          hasConstellationProviderStoreCredentials(settings),
-        );
+        setHasCloudCredentials(hasCloudProviderStoreCredentials(settings));
       })
       .catch(() => {
         if (cancelled || !mountedRef.current) return;
-        setHasConstellationCredentials(Boolean(process.env.LETTA_API_KEY));
+        setHasCloudCredentials(Boolean(process.env.LETTA_API_KEY));
       });
 
     return () => {
@@ -684,10 +697,13 @@ export function ProviderSelector({
     if (!fields) return;
 
     // Check all required fields are filled
-    const allFilled = fields.every((field) => fieldValues[field.key]?.trim());
+    const allFilled = fields.every(
+      (field) => field.required === false || fieldValues[field.key]?.trim(),
+    );
     if (!allFilled) return;
 
-    const apiKey = fieldValues.apiKey?.trim() || "";
+    const apiKey =
+      fieldValues.apiKey?.trim() || defaultProviderApiKey(provider) || "";
     const accessKey = fieldValues.accessKey?.trim();
     const region = fieldValues.region?.trim();
     const profile = fieldValues.profile?.trim();
@@ -1102,9 +1118,7 @@ export function ProviderSelector({
                   : colors.command.running
               }
             >
-              {selectedTarget === "api"
-                ? "[ Constellation ]"
-                : "  Constellation  "}
+              {selectedTarget === "api" ? "[ Cloud ]" : "  Cloud  "}
             </Text>
           </Box>
         )}
@@ -1423,9 +1437,10 @@ export function ProviderSelector({
       ("fields" in provider ? (provider.fields as ProviderField[]) : undefined);
     if (!fields) return null;
 
-    // Check if all fields are filled
-    const allFilled = fields.every((field: ProviderField) =>
-      fieldValues[field.key]?.trim(),
+    // Check if all required fields are filled
+    const allFilled = fields.every(
+      (field: ProviderField) =>
+        field.required === false || fieldValues[field.key]?.trim(),
     );
 
     const statusText =
@@ -1486,7 +1501,8 @@ export function ProviderSelector({
                   {isFocused ? "> " : "  "}
                 </Text>
                 <Text dimColor={!isFocused} bold={isFocused}>
-                  {field.label}:
+                  {field.label}
+                  {field.required === false ? " (optional)" : ""}:
                 </Text>
                 <Text> </Text>
                 <Text

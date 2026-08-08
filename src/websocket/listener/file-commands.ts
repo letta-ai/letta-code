@@ -88,6 +88,13 @@ const MAX_SEARCH_VISITED_ENTRIES = 50_000;
 const MAX_TREE_ENTRIES = 5_000;
 const MAX_SEARCH_RESULTS = 200;
 
+/**
+ * Size cap for base64-encoded read_file responses (raw bytes, pre-encoding).
+ * Mirrors the desktop app's fs-read-image-as-data-url IPC cap so web image
+ * previews and desktop previews share the same ceiling.
+ */
+const MAX_BASE64_READ_BYTES = 25 * 1024 * 1024;
+
 interface IgnoreConfig {
   nameMatchers: picomatch.Matcher[];
   pathMatchers: picomatch.Matcher[];
@@ -703,14 +710,28 @@ export function createFileCommandSession(params: {
 
     // File reading (no runtime scope required)
     if (isReadFileCommand(parsed)) {
+      const encoding = parsed.encoding ?? "utf8";
       console.log(
-        `[Listen] Received read_file command: path=${parsed.path}, request_id=${parsed.request_id}`,
+        `[Listen] Received read_file command: path=${parsed.path}, encoding=${encoding}, request_id=${parsed.request_id}`,
       );
       runDetachedListenerTask("read_file", async () => {
         try {
-          const content = await readUtf8TextStrict(parsed.path);
+          let content: string;
+          if (encoding === "base64") {
+            const { stat } = await import("node:fs/promises");
+            const stats = await stat(parsed.path);
+            if (stats.size > MAX_BASE64_READ_BYTES) {
+              throw new Error(
+                `File too large for base64 read (max ${Math.floor(MAX_BASE64_READ_BYTES / (1024 * 1024))}MB)`,
+              );
+            }
+            const bytes = await readFile(parsed.path);
+            content = bytes.toString("base64");
+          } else {
+            content = await readUtf8TextStrict(parsed.path);
+          }
           console.log(
-            `[Listen] read_file success: ${parsed.path} (${content.length} bytes)`,
+            `[Listen] read_file success: ${parsed.path} (${content.length} bytes, ${encoding})`,
           );
           safeSocketSend(
             socket,
@@ -719,6 +740,7 @@ export function createFileCommandSession(params: {
               request_id: parsed.request_id,
               path: parsed.path,
               content,
+              encoding,
               success: true,
             },
             "listener_read_file_send_failed",
@@ -740,6 +762,7 @@ export function createFileCommandSession(params: {
               request_id: parsed.request_id,
               path: parsed.path,
               content: null,
+              encoding,
               success: false,
               error: err instanceof Error ? err.message : "Failed to read file",
             },

@@ -8,18 +8,30 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { getChannelDir, getChannelRoutingPath } from "./config";
-import type { ChannelRoute } from "./types";
+import type { ChannelRoute, InboundChannelMessage } from "./types";
 
 // ── In-memory store ───────────────────────────────────────────────
 
 /** Key: "channel:chatId" */
 const routesByKey = new Map<string, ChannelRoute>();
+const routeChangeListeners = new Set<(channelId: string) => void>();
 
 let loadRoutesOverride: ((channelId: string) => ChannelRoute[] | null) | null =
   null;
 
 function normalizeAccountId(accountId?: string): string {
   return accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+}
+
+export function subscribeChannelRoutesChanged(
+  listener: (channelId: string) => void,
+): () => void {
+  routeChangeListeners.add(listener);
+  return () => routeChangeListeners.delete(listener);
+}
+
+function notifyChannelRoutesChanged(channelId: string): void {
+  for (const listener of routeChangeListeners) listener(channelId);
 }
 
 function normalizeThreadId(threadId?: string | null): string {
@@ -181,6 +193,56 @@ export function getRouteRaw(
   return routesByKey.get(routeKey(channel, chatId, accountId, threadId));
 }
 
+type InboundRouteMessage = Pick<
+  InboundChannelMessage,
+  "channel" | "chatId" | "chatType" | "threadId"
+>;
+
+function selectRoute(
+  route: ChannelRoute | undefined,
+  includeDisabled: boolean,
+): ChannelRoute | null {
+  if (!route || (!includeDisabled && route.enabled === false)) return null;
+  return route;
+}
+
+export function getRouteForInboundMessage(
+  msg: InboundRouteMessage,
+  accountId?: string,
+  options: { includeDisabled?: boolean } = {},
+): ChannelRoute | null {
+  const includeDisabled = options.includeDisabled === true;
+  const exactRoute = getRouteRaw(
+    msg.channel,
+    msg.chatId,
+    accountId,
+    msg.threadId,
+  );
+  if (exactRoute) return selectRoute(exactRoute, includeDisabled);
+  if (
+    msg.channel !== "telegram" ||
+    msg.chatType !== "direct" ||
+    !msg.threadId?.trim()
+  ) {
+    return null;
+  }
+  return selectRoute(
+    getRouteRaw(msg.channel, msg.chatId, accountId, null),
+    includeDisabled,
+  );
+}
+
+export function loadRouteForInboundMessage(
+  msg: InboundRouteMessage,
+  accountId?: string,
+  options?: { includeDisabled?: boolean },
+): ChannelRoute | null {
+  const route = getRouteForInboundMessage(msg, accountId, options);
+  if (route) return route;
+  loadRoutes(msg.channel);
+  return getRouteForInboundMessage(msg, accountId, options);
+}
+
 /**
  * Get all routes for a channel.
  */
@@ -224,6 +286,7 @@ export function addRoute(channelId: string, route: ChannelRoute): void {
     },
   );
   saveRoutes(channelId);
+  notifyChannelRoutesChanged(channelId);
 }
 
 /**
@@ -239,6 +302,7 @@ export function removeRoute(
   const existed = routesByKey.delete(key);
   if (existed) {
     saveRoutes(channelId);
+    notifyChannelRoutesChanged(channelId);
   }
   return existed;
 }
@@ -299,6 +363,7 @@ export function removeRoutesForScope(
   }
   if (removed > 0) {
     saveRoutes(channelId);
+    notifyChannelRoutesChanged(channelId);
   }
   return removed;
 }
@@ -317,6 +382,7 @@ export function removeRoutesForAccount(
   }
   if (removed > 0) {
     saveRoutes(channelId);
+    notifyChannelRoutesChanged(channelId);
   }
   return removed;
 }

@@ -33,6 +33,7 @@ import { debugLog, debugWarn } from "@/utils/debug";
 import { getUtf16Bom } from "@/utils/text-files";
 import { GIT_MEMORY_ENABLED_TAG } from "./agent-tags";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
+import { withSerializedGitConfigMutation } from "./memory-git-config-lock";
 import {
   installPostCommitHook,
   installPreCommitHook,
@@ -454,12 +455,8 @@ async function clearOriginPushUrl(
     return;
   }
 
-  await runGit(repoDir, [
-    "config",
-    "--local",
-    "--unset-all",
-    "remote.origin.pushurl",
-  ]);
+  const pushUrlKey = "remote.origin.pushurl";
+  await gitConfig(repoDir, ["config", "--local", "--unset-all", pushUrlKey]);
 
   debugLog(
     "memfs-git",
@@ -651,6 +648,10 @@ export function isMissingCwdGitError(error: unknown): boolean {
   return MISSING_CWD_GIT_ERROR_RE.test(message);
 }
 
+/** `git config` write, serialized per repo. See memory-git-config-lock. */
+const gitConfig = (dir: string, args: string[]) =>
+  withSerializedGitConfigMutation(dir, () => runGit(dir, args));
+
 async function runGitWithRetry(
   cwd: string,
   args: string[],
@@ -749,18 +750,18 @@ echo password=${token}
     helper = `!f() { echo "username=letta"; echo "password=${token}"; }; f`;
   }
 
+  // Reset inherited helpers (for example, a stale macOS osxkeychain entry)
+  // for this host before installing Letta's repo-local helper.
+  const writeHelperWithReset = async (key: string) => {
+    await gitConfig(dir, ["config", "--local", "--replace-all", key, ""]);
+    await gitConfig(dir, ["config", "--local", "--add", key, helper]);
+  };
   // Primary config: normalized origin key (most robust for git's credential lookup)
-  await runGit(dir, [
-    "config",
-    `credential.${normalizedBaseUrl}.helper`,
-    helper,
-  ]);
-
+  await writeHelperWithReset(`credential.${normalizedBaseUrl}.helper`);
   // Backcompat: also set raw configured URL key if it differs (older repos/configs)
   if (rawBaseUrl !== normalizedBaseUrl) {
-    await runGit(dir, ["config", `credential.${rawBaseUrl}.helper`, helper]);
+    await writeHelperWithReset(`credential.${rawBaseUrl}.helper`);
   }
-
   debugLog(
     "memfs-git",
     `Configured local credential helper for ${normalizedBaseUrl}${rawBaseUrl !== normalizedBaseUrl ? ` (and raw ${rawBaseUrl})` : ""}`,
@@ -779,17 +780,15 @@ async function clearLocalCredentialHelper(
 
   for (const key of keys) {
     try {
-      await runGit(dir, ["config", "--local", "--unset-all", key]);
+      await gitConfig(dir, ["config", "--local", "--unset-all", key]);
     } catch {
       // Already unset — ignore.
     }
   }
 }
 
-/**
- * Read a local-scoped git config value. Returns null when the key is unset.
- */
-async function getLocalGitConfig(
+/** Read a local-scoped git config value. Null when unset; reads take no lock. */
+export async function getLocalGitConfig(
   dir: string,
   key: string,
 ): Promise<string | null> {
@@ -803,19 +802,19 @@ async function getLocalGitConfig(
   }
 }
 
-/** Set a local-scoped git config value. */
-async function setLocalGitConfig(
+/** Set a local-scoped git config value. Serialized per repo. */
+export async function setLocalGitConfig(
   dir: string,
   key: string,
   value: string,
 ): Promise<void> {
-  await runGit(dir, ["config", "--local", key, value]);
+  await gitConfig(dir, ["config", "--local", key, value]);
 }
 
 /** Unset a local-scoped git config value. Ignores "not set" errors. */
 async function unsetLocalGitConfig(dir: string, key: string): Promise<void> {
   try {
-    await runGit(dir, ["config", "--local", "--unset", key]);
+    await gitConfig(dir, ["config", "--local", "--unset", key]);
   } catch {
     // Already unset — ignore.
   }

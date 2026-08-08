@@ -87,7 +87,16 @@ test("slack status event table: concrete descriptions replace in place and gener
     type: "progress",
     kind: "tool",
     state: "started",
-    message: "Preparing tool call",
+    message: "Preparing tool: exec_command",
+    toolName: "exec_command",
+    sources: [source],
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    kind: "tool",
+    state: "started",
+    message: "Preparing tool: Read",
+    toolName: "Read",
     sources: [source],
   });
   await adapter.handleTurnProgressEvent?.({
@@ -115,6 +124,40 @@ test("slack status event table: concrete descriptions replace in place and gener
     expect.objectContaining({
       loading_messages: ["Running focused tests"],
     }),
+  );
+});
+
+test("slack loading messages respect the API's 50-character limit", async () => {
+  const adapter = await createStartedSlackAdapter();
+  const source = createSlackTurnSource();
+
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    kind: "tool",
+    state: "started",
+    message: "Running tool",
+    toolName: "Bash",
+    toolDetails: "a".repeat(50),
+    sources: [source],
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    kind: "tool",
+    state: "started",
+    message: "Running tool",
+    toolName: "Bash",
+    toolDetails: "b".repeat(51),
+    sources: [source],
+  });
+
+  const client = getSlackWriteClient();
+  expect(client.assistant.threads.setStatus).toHaveBeenNthCalledWith(
+    1,
+    expect.objectContaining({ loading_messages: ["a".repeat(50)] }),
+  );
+  expect(client.assistant.threads.setStatus).toHaveBeenNthCalledWith(
+    2,
+    expect.objectContaining({ loading_messages: [`${"b".repeat(47)}...`] }),
   );
 });
 
@@ -349,12 +392,10 @@ test("slack terminal table: fatal stops post one quiet error with a web footnote
       elements?: Array<{ text: string }>;
     }>;
   };
-  expect(call.text).toBe("Provider request failed.");
-  expect(call.text).not.toContain("Turn failed");
-  expect(call.text).not.toContain("```");
+  expect(call.text).toBe("Turn failed:\n```\nProvider request failed.\n```");
   expect(call.blocks?.[0]).toEqual({
     type: "markdown",
-    text: "Provider request failed.",
+    text: "Turn failed:\n```\nProvider request failed.\n```",
   });
   expect(call.blocks?.at(-1)?.elements?.[0]?.text).toBe(
     "<https://chat.letta.com/chat/agent-1?conversation=conv-1|View on web>",
@@ -388,7 +429,7 @@ test("slack terminal table: tool_rule is quiet, no_tool_call is fatal, and appro
     Array<{ text: string }>
   >;
   expect(postCalls[0]?.[0]?.text).toBe(
-    "Something went wrong while processing that message. Please try again.",
+    "Turn failed:\n```\nSomething went wrong while processing that message. Please try again.\n```",
   );
 
   client.assistant.threads.setStatus.mockClear();

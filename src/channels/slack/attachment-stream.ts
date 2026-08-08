@@ -23,11 +23,67 @@ function sanitizeFileName(name: string): string {
   return normalized.length > 0 ? normalized : "attachment";
 }
 
+/**
+ * Slack file downloads must never wedge a turn on a dead TCP stream: a read
+ * that produces no data within this window fails the download instead of
+ * waiting forever. Mirrors OpenClaw's Slack media read-idle timeout.
+ */
+export const SLACK_ATTACHMENT_READ_IDLE_TIMEOUT_MS = 60_000;
+
+async function readWithIdleTimeout(
+  reader: { read(): Promise<{ done: boolean; value?: Uint8Array }> },
+  idleTimeoutMs: number,
+  signal?: AbortSignal,
+): Promise<{ done: boolean; value?: Uint8Array }> {
+  if (signal?.aborted) {
+    throw new SlackAttachmentDownloadError(
+      "download_failed",
+      "Slack attachment download was aborted.",
+    );
+  }
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    return await new Promise<{ done: boolean; value?: Uint8Array }>(
+      (resolve, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(
+            new SlackAttachmentDownloadError(
+              "download_failed",
+              `Slack attachment download stalled (no data received for ${idleTimeoutMs}ms).`,
+            ),
+          );
+        }, idleTimeoutMs);
+        if (signal) {
+          onAbort = () =>
+            reject(
+              new SlackAttachmentDownloadError(
+                "download_failed",
+                "Slack attachment download was aborted.",
+              ),
+            );
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+        reader.read().then(resolve, reject);
+      },
+    );
+  } finally {
+    if (timeoutHandle !== undefined) {
+      clearTimeout(timeoutHandle);
+    }
+    if (signal && onAbort) {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+}
+
 export async function saveSlackAttachmentStream(params: {
   accountId: string;
   fileName: string;
   body: ReadableStream<Uint8Array>;
   maxBytes?: number;
+  signal?: AbortSignal;
+  readIdleTimeoutMs?: number;
 }): Promise<{ localPath: string; sizeBytes: number }> {
   const inboundDir = join(
     getChannelDir("slack"),
@@ -43,12 +99,18 @@ export async function saveSlackAttachmentStream(params: {
   const temporaryPath = `${filePath}.partial`;
   const fileHandle = await open(temporaryPath, "wx");
   const reader = params.body.getReader();
+  const readIdleTimeoutMs =
+    params.readIdleTimeoutMs ?? SLACK_ATTACHMENT_READ_IDLE_TIMEOUT_MS;
   let sizeBytes = 0;
   let completed = false;
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithIdleTimeout(
+        reader,
+        readIdleTimeoutMs,
+        params.signal,
+      );
       if (done) {
         break;
       }

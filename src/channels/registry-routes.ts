@@ -11,7 +11,6 @@ import {
   buildWhatsAppConversationSummary,
 } from "./registry-presentation";
 import { addRoute, getRoute as getRouteFromStore, loadRoutes } from "./routing";
-import { signalAllowedUsersIncludes } from "./signal/target";
 import { loadTargetStore, upsertChannelTarget } from "./targets";
 import type {
   ChannelAdapter,
@@ -23,7 +22,6 @@ import type {
   TelegramChannelAccount,
   WhatsAppChannelAccount,
 } from "./types";
-import { allowedUsersIncludes } from "./whatsapp/jid";
 
 export function createChannelRouteProvisioner(deps: {
   emitEvent: (event: ChannelRegistryEvent) => void;
@@ -102,19 +100,8 @@ export function createChannelRouteProvisioner(deps: {
       return null;
     }
 
-    if (msg.chatType === "direct") {
-      if (
-        config.dmPolicy === "allowlist" &&
-        !config.allowedUsers.includes(msg.senderId)
-      ) {
-        await adapter.sendDirectReply(
-          msg.chatId,
-          "You are not on the allowed users list for this Slack app.",
-          buildDirectReplyOptions(msg),
-        );
-        return null;
-      }
-    }
+    // Sender access (dmPolicy/allowedUsers, admin and env grants, pairing)
+    // is enforced centrally in registry-inbound before provisioning runs.
 
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
     const routeThreadId =
@@ -345,17 +332,7 @@ export function createChannelRouteProvisioner(deps: {
       return null;
     }
 
-    if (
-      msg.chatType === "direct" &&
-      config.dmPolicy === "allowlist" &&
-      !config.allowedUsers.includes(msg.senderId)
-    ) {
-      await adapter.sendDirectReply(
-        msg.chatId,
-        "You are not on the allowed users list for this Discord bot.",
-      );
-      return null;
-    }
+    // Sender access is enforced centrally in registry-inbound.
 
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
     const routeThreadId = msg.threadId ?? null;
@@ -440,17 +417,7 @@ export function createChannelRouteProvisioner(deps: {
       return null;
     }
 
-    if (
-      msg.chatType === "direct" &&
-      config.dmPolicy === "allowlist" &&
-      !allowedUsersIncludes(config.allowedUsers, msg.senderId)
-    ) {
-      await adapter.sendDirectReply(
-        msg.chatId,
-        "You are not on the allowed users list for this WhatsApp account.",
-      );
-      return null;
-    }
+    // Sender access is enforced centrally in registry-inbound.
 
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
     let route = getRouteFromStore(msg.channel, msg.chatId, accountId, null);
@@ -536,19 +503,7 @@ export function createChannelRouteProvisioner(deps: {
       return null;
     }
 
-    if (
-      msg.chatType === "direct" &&
-      config.dmPolicy === "allowlist" &&
-      !signalAllowedUsersIncludes(config.allowedUsers, msg.senderId)
-    ) {
-      if (!msg.reaction) {
-        await adapter.sendDirectReply(
-          msg.chatId,
-          "You are not on the allowed users list for this Signal account.",
-        );
-      }
-      return null;
-    }
+    // Sender access is enforced centrally in registry-inbound.
 
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
     let route = getRouteFromStore(msg.channel, msg.chatId, accountId, null);

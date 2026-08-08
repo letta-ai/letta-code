@@ -137,6 +137,8 @@ describe("pendingApprovalBatchByToolCallId survives rejectPendingApprovalResolve
     const runtime = createRuntime();
     runtime.pendingApprovalBatchByToolCallId.set("call-1", "batch-1");
     runtime.pendingApprovalResolvers.set("perm-1", {
+      requestId: "perm-1",
+      connectionIds: new Set(["legacy"]),
       resolve: () => {},
       reject: () => {},
     });

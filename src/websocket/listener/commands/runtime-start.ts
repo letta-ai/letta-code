@@ -1,13 +1,20 @@
-import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  AgentCreateParams,
+  AgentState,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   Conversation,
   ConversationCreateParams,
 } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type WebSocket from "ws";
+import { createAgentWithBaseToolsRecovery } from "@/agent/create";
+import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
 import { getBackend } from "@/backend";
 import { migratePermissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
+import { subscribeListenerConnection } from "@/websocket/listener/connection";
+import { getBootWorkingDirectory } from "@/websocket/listener/cwd";
 import { switchConversationWorkingDirectory } from "@/websocket/listener/cwd-change";
 import { registerRuntimeExternalTools } from "@/websocket/listener/external-tools";
 import {
@@ -17,6 +24,7 @@ import {
 import { isRuntimeStartCommand } from "@/websocket/listener/protocol-inbound";
 import type {
   ConversationRuntime,
+  ListenerConnectionId,
   ListenerRuntime,
 } from "@/websocket/listener/types";
 import type {
@@ -34,6 +42,7 @@ type ReplaySyncStateForRuntime = (
 
 type RuntimeStartCommandContext = {
   socket: WebSocket;
+  connectionId: ListenerConnectionId;
   runtime: ListenerRuntime;
   safeSocketSend: SafeSocketSend;
   runDetachedListenerTask: RunDetachedListenerTask;
@@ -128,6 +137,29 @@ function validateRuntimeStartShape(parsed: RuntimeStartCommand): void {
   }
 }
 
+/**
+ * Match the CLI's own created-agent defaults: when the client does not
+ * specify server-side tools, attach the harness default set and disable the
+ * Letta agent type's base tools/rules so server defaults never leak in.
+ */
+export function applyCreatedAgentServerToolDefaults(
+  body: AgentCreateParams,
+): AgentCreateParams {
+  if (
+    body.tools !== undefined ||
+    body.include_base_tools !== undefined ||
+    body.include_base_tool_rules !== undefined
+  ) {
+    return body;
+  }
+  return {
+    ...body,
+    tools: [...DEFAULT_CREATED_AGENT_BASE_TOOLS],
+    include_base_tools: false,
+    include_base_tool_rules: false,
+  };
+}
+
 async function resolveRuntimeStartAgent(
   parsed: RuntimeStartCommand,
   created: CreatedResources,
@@ -137,10 +169,20 @@ async function resolveRuntimeStartAgent(
     const withMemfs = parsed.create_agent.memfs !== false;
     const { prepareRawCreateAgentBodyForMemfs, enableMemfsIfCloud } =
       await import("@/agent/memory-filesystem");
+    const requestedBody = applyCreatedAgentServerToolDefaults(
+      parsed.create_agent.body,
+    );
+    const appliedHarnessToolDefaults =
+      requestedBody !== parsed.create_agent.body;
     const body = withMemfs
-      ? await prepareRawCreateAgentBodyForMemfs(parsed.create_agent.body)
-      : parsed.create_agent.body;
-    const agent = await backend.createAgent(body);
+      ? await prepareRawCreateAgentBodyForMemfs(requestedBody)
+      : requestedBody;
+    const agent = appliedHarnessToolDefaults
+      ? await createAgentWithBaseToolsRecovery(
+          (tools) => backend.createAgent({ ...body, tools }),
+          [...DEFAULT_CREATED_AGENT_BASE_TOOLS],
+        )
+      : await backend.createAgent(body);
     if (withMemfs) {
       // Finish memfs setup (settings, repo clone, legacy tool detach) without
       // blocking runtime start. The tag is already stamped at creation, so
@@ -197,6 +239,21 @@ async function applyRuntimeStartState(
   scope: RuntimeScope,
   scopedRuntime: ConversationRuntime,
 ): Promise<void> {
+  if (
+    parsed.skill_sources === undefined &&
+    parsed.preserve_skill_sources !== true
+  ) {
+    scopedRuntime.skillSources = undefined;
+    context.runtime.skillSourcesByConversation.delete(scopedRuntime.key);
+  } else if (parsed.skill_sources !== undefined) {
+    const skillSources = [...new Set(parsed.skill_sources)];
+    scopedRuntime.skillSources = skillSources;
+    context.runtime.skillSourcesByConversation.set(
+      scopedRuntime.key,
+      skillSources,
+    );
+  }
+
   if (parsed.mode) {
     const mode = migratePermissionMode(parsed.mode);
     if (!mode) {
@@ -216,7 +273,7 @@ async function applyRuntimeStartState(
       runtime: context.runtime,
       agentId: scope.agent_id,
       conversationId: scope.conversation_id,
-      workingDirectory: parsed.cwd ?? context.runtime.bootWorkingDirectory,
+      workingDirectory: parsed.cwd ?? getBootWorkingDirectory(context.runtime),
       emitStatus: false,
       statusRuntime: scopedRuntime,
       statusSocket: context.socket,
@@ -243,18 +300,44 @@ export async function handleRuntimeStartCommand(
       created,
     );
     runtimeScope = buildRuntimeScope(agent, conversation);
+    const { connectionId } = context;
+    const assertConnectionOpen = () => {
+      if (
+        context.runtime.connections.size > 0 &&
+        (!context.runtime.connections.has(connectionId) ||
+          context.runtime.connections.get(connectionId)?.cancellation.signal
+            .aborted)
+      ) {
+        throw new Error("App-server connection closed during runtime start");
+      }
+    };
+    assertConnectionOpen();
     const scopedRuntime = context.getOrCreateScopedRuntime(
       context.runtime,
       runtimeScope.agent_id,
       runtimeScope.conversation_id,
     );
     await applyRuntimeStartState(parsed, context, runtimeScope, scopedRuntime);
+    assertConnectionOpen();
+    subscribeListenerConnection(context.runtime, connectionId, runtimeScope);
     registerRuntimeExternalTools(
       context.runtime,
+      connectionId,
       runtimeScope,
       parsed.external_tools ?? [],
     );
 
+    if (parsed.wait_for_replay) {
+      await context.replaySyncStateForRuntime(
+        context.runtime,
+        context.socket,
+        runtimeScope,
+        {
+          recoverApprovals: parsed.recover_approvals !== false,
+          forceDeviceStatus: parsed.force_device_status !== false,
+        },
+      );
+    }
     const sent = sendRuntimeStartResponse(context, parsed, {
       success: true,
       runtime: runtimeScope,
@@ -262,7 +345,7 @@ export async function handleRuntimeStartCommand(
       conversation,
       created,
     });
-    shouldReplayState = sent;
+    shouldReplayState = sent && !parsed.wait_for_replay;
   } catch (error) {
     sendRuntimeStartResponse(context, parsed, {
       success: false,

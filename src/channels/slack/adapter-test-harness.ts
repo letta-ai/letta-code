@@ -31,6 +31,8 @@ type SlackEventHandler = (args: {
     item_user?: string;
     reaction?: string;
     event_ts?: string;
+    bot_id?: string;
+    subtype?: string;
   };
 }) => Promise<void>;
 
@@ -62,6 +64,7 @@ export class FakeSlackApp {
         team: "Test Workspace",
         user: "letta_code_charles_le",
         user_id: "U0AS42PTEAX",
+        bot_id: "B0AS42PTEAX",
       })),
     },
     users: {
@@ -205,6 +208,17 @@ export class FakeSlackWriteClient {
   readonly assistant = {
     threads: {
       setStatus: mock(async (args: Record<string, unknown>) => {
+        const loadingMessages = args.loading_messages;
+        if (
+          Array.isArray(loadingMessages) &&
+          loadingMessages.some(
+            (message) => typeof message === "string" && message.length > 50,
+          )
+        ) {
+          throw new Error(
+            "invalid_arguments: loading_messages entries must be 50 characters or fewer",
+          );
+        }
         return FakeSlackWriteClient.setStatusHandler
           ? FakeSlackWriteClient.setStatusHandler(args)
           : { ok: true };

@@ -5,13 +5,20 @@
     "emitDeclarationOnly": true,
     "declaration": true,
     "declarationMap": true,
-    "outDir": "./dist/types"
+    "outDir": "./dist/types",
+    "rootDir": "./src"
   },
   "include": [
     "src/types/protocol.ts",
     "src/types/app-server-protocol.ts",
     "src/app-server-client.ts",
+    "src/memory-confinement.ts",
+    "src/mcp-client.ts",
     "src/agent-presets.ts",
+    "src/schedules.ts",
+    "src/channels-public.ts",
+    "src/gateway-core.ts",
+    "src/channels-slack.ts",
     "src/types/md.d.ts",
     "src/types/mdx.d.ts",
     "src/types/txt.d.ts"

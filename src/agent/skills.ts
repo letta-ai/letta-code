@@ -50,8 +50,6 @@ export interface Skill {
   whenToUse?: string;
   /** Hint shown in slash-command autocomplete */
   argumentHint?: string;
-  /** Named positional arguments for skill content substitution */
-  arguments?: string[];
   /** If true, hide from model auto-invocation / Skill tool listings */
   disableModelInvocation?: boolean;
   /** If false, hide from slash-command user invocation */
@@ -155,7 +153,10 @@ export function isUserInvocableSkill(skill: Skill): boolean {
   return skill.userInvocable !== false;
 }
 
-const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set(["image-generation"]);
+const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set([
+  "image-generation",
+  "managing-shared-memory",
+]);
 
 export function isSkillAvailableForAgent(
   skill: Skill,
@@ -467,7 +468,6 @@ async function parseSkillFile(
     description: modelDescription,
     whenToUse,
     argumentHint: getFrontmatterString(frontmatter, "argument-hint"),
-    arguments: getFrontmatterStringList(frontmatter, "arguments"),
     disableModelInvocation:
       getFrontmatterBoolean(frontmatter, "disable-model-invocation") ?? false,
     userInvocable: getFrontmatterBoolean(frontmatter, "user-invocable") ?? true,

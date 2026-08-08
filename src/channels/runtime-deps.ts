@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -8,13 +7,17 @@ import {
   detectPackageManager,
   type PackageManager,
 } from "@/updater/auto-update";
+import {
+  getPackageManagerProcessFactory,
+  type PackageManagerProcessFactory,
+} from "@/utils/package-manager-spawn";
 import { getChannelDir } from "./config";
 import { getChannelPluginMetadata } from "./plugin-registry";
 import type { SupportedChannelId } from "./types";
 
 export const CHANNEL_RUNTIME_ROOT_ENV = "LETTA_CHANNEL_RUNTIME_ROOT";
 
-type InstallProcessFactory = typeof spawn;
+type InstallProcessFactory = PackageManagerProcessFactory;
 type RuntimePackageManager = PackageManager;
 
 type RuntimeResolver = {
@@ -22,7 +25,7 @@ type RuntimeResolver = {
   resolve: (moduleName: string) => string;
 };
 
-let spawnInstallProcess: InstallProcessFactory = spawn;
+let spawnInstallProcessOverride: InstallProcessFactory | null = null;
 let userRuntimeRootOverride: string | null = null;
 let bundledRuntimeRootOverride: string | null | undefined;
 let packageManagerOverride: RuntimePackageManager | null = null;
@@ -238,6 +241,9 @@ export async function installChannelRuntime(
   const packageManager = resolveInstallPackageManager();
   const command = getPackageManagerExecutable(packageManager);
   const args = getInstallArgs(packageManager, spec.runtimePackages);
+  const spawnInstallProcess =
+    spawnInstallProcessOverride ??
+    getPackageManagerProcessFactory({ platform: resolveInstallPlatform() });
 
   await new Promise<void>((resolve, reject) => {
     const proc = spawnInstallProcess(command, args, {
@@ -314,7 +320,7 @@ export function __testOverrideChannelRuntimeDeps(
   bundledRuntimeRootOverride = overrides
     ? (overrides.bundledRuntimeRoot ?? null)
     : undefined;
-  spawnInstallProcess = overrides?.spawnImpl ?? spawn;
+  spawnInstallProcessOverride = overrides?.spawnImpl ?? null;
   packageManagerOverride = overrides?.packageManager ?? null;
   platformOverride = overrides?.platform ?? null;
 }

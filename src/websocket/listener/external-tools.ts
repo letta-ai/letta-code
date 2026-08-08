@@ -1,4 +1,3 @@
-import type WebSocket from "ws";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -9,25 +8,28 @@ import type {
   ExternalToolCallRequestMessage,
   ExternalToolCallResponseCommand,
   ExternalToolDefinitionPayload,
+  RuntimeExternalToolsUpdateGroup,
   RuntimeScope,
   RuntimeStartExternalToolsGroup,
 } from "@/types/protocol_v2";
-import type { ListenerRuntime } from "@/websocket/listener/types";
+import { createConnectionRequestKey } from "@/websocket/listener/connection";
+import { isListenerTransportOpen } from "@/websocket/listener/transport";
+import type {
+  ListenerConnectionId,
+  ListenerRuntime,
+} from "@/websocket/listener/types";
 
 const EXTERNAL_TOOL_CALL_TIMEOUT_MS = 5 * 60 * 1000;
-const WEBSOCKET_OPEN = 1;
-
 const registeredToolsByRuntime = new WeakMap<
   ListenerRuntime,
   Map<string, ExternalToolDefinition[]>
 >();
-
-function isSocketOpen(socket: WebSocket | null): socket is WebSocket {
-  return socket?.readyState === WEBSOCKET_OPEN;
-}
+const connectionIdByRegistrationKey = new WeakMap<
+  ListenerRuntime,
+  Map<string, ListenerConnectionId>
+>();
 
 function getPendingExternalToolCalls(runtime: ListenerRuntime) {
-  runtime.pendingExternalToolCalls ??= new Map();
   return runtime.pendingExternalToolCalls;
 }
 
@@ -40,17 +42,28 @@ function getRegisteredTools(runtime: ListenerRuntime) {
   return registeredTools;
 }
 
+function getConnectionIdsByRegistrationKey(runtime: ListenerRuntime) {
+  let controllers = connectionIdByRegistrationKey.get(runtime);
+  if (!controllers) {
+    controllers = new Map();
+    connectionIdByRegistrationKey.set(runtime, controllers);
+  }
+  return controllers;
+}
+
 function getRuntimeKey(runtime: RuntimeScope): string {
   return `${runtime.agent_id}:${runtime.conversation_id}`;
 }
 
 function getToolRegistrationKey(
+  connectionId: ListenerConnectionId,
   runtime: RuntimeScope,
   scopeId: string | undefined,
   toolName: string,
 ): string {
   return JSON.stringify([
     "runtime",
+    connectionId,
     runtime.agent_id,
     runtime.conversation_id,
     scopeId ?? null,
@@ -60,15 +73,22 @@ function getToolRegistrationKey(
 
 function toExternalToolDefinition(
   tool: ExternalToolDefinitionPayload,
+  connectionId: ListenerConnectionId,
   runtime: RuntimeScope,
   scopeId?: string,
 ): ExternalToolDefinition {
   return {
     name: tool.name,
+    connectionId,
     ...(tool.label !== undefined ? { label: tool.label } : {}),
     description: tool.description,
     parameters: tool.parameters,
-    registrationKey: getToolRegistrationKey(runtime, scopeId, tool.name),
+    registrationKey: getToolRegistrationKey(
+      connectionId,
+      runtime,
+      scopeId,
+      tool.name,
+    ),
     ...(scopeId !== undefined ? { scopeId } : {}),
     runtime: {
       agentId: runtime.agent_id,
@@ -77,18 +97,26 @@ function toExternalToolDefinition(
   };
 }
 
-function sendJson(socket: WebSocket, payload: unknown): void {
-  socket.send(JSON.stringify(payload));
-}
-
 export function installExternalToolBridge(runtime: ListenerRuntime): void {
   setExternalToolExecutor(async (toolCallId, toolName, input, context) => {
-    const socket = runtime.socket;
-    if (!isSocketOpen(socket) || runtime.intentionallyClosed) {
+    const registrationKey = context?.tool.registrationKey;
+    const connectionId = registrationKey
+      ? getConnectionIdsByRegistrationKey(runtime).get(registrationKey)
+      : undefined;
+    const connection = connectionId
+      ? runtime.connections.get(connectionId)
+      : undefined;
+    if (
+      !connection ||
+      !isListenerTransportOpen(connection.writer) ||
+      runtime.intentionallyClosed
+    ) {
       throw new Error("External tool controller is not connected");
     }
+    const writer = connection.writer;
 
     const requestId = `external-tool-${crypto.randomUUID()}`;
+    const requestKey = createConnectionRequestKey(connection.id, requestId);
     const toolRuntime = context?.tool.runtime;
     const requestRuntime =
       toolRuntime?.agentId && toolRuntime.conversationId
@@ -119,11 +147,12 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
       isError: boolean;
     }>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        getPendingExternalToolCalls(runtime).delete(requestId);
+        getPendingExternalToolCalls(runtime).delete(requestKey);
         reject(new Error(`External tool call timed out: ${toolName}`));
       }, EXTERNAL_TOOL_CALL_TIMEOUT_MS);
 
-      getPendingExternalToolCalls(runtime).set(requestId, {
+      getPendingExternalToolCalls(runtime).set(requestKey, {
+        connectionId: connection.id,
         resolve: (response) => {
           resolve({
             content: [...response.content],
@@ -135,10 +164,10 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
       });
 
       try {
-        sendJson(socket, request);
+        writer.send(JSON.stringify(request));
       } catch (error) {
         clearTimeout(timeout);
-        getPendingExternalToolCalls(runtime).delete(requestId);
+        getPendingExternalToolCalls(runtime).delete(requestKey);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
@@ -149,38 +178,81 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
 
 export function registerRuntimeExternalTools(
   runtime: ListenerRuntime,
+  connectionId: ListenerConnectionId,
   runtimeScope: RuntimeScope,
-  groups: readonly RuntimeStartExternalToolsGroup[] = [],
+  groups?: readonly RuntimeStartExternalToolsGroup[],
 ): void {
+  const resolvedGroups = groups ?? [];
   const registeredTools = getRegisteredTools(runtime);
-  const runtimeKey = getRuntimeKey(runtimeScope);
+  const runtimeKey = createConnectionRequestKey(
+    connectionId,
+    getRuntimeKey(runtimeScope),
+  );
   const previousTools = registeredTools.get(runtimeKey) ?? [];
   unregisterExternalTools(previousTools);
 
-  const tools = groups.flatMap((group) =>
+  const tools = resolvedGroups.flatMap((group) =>
     group.tools.map((tool) =>
-      toExternalToolDefinition(tool, runtimeScope, group.scope_id),
+      toExternalToolDefinition(
+        tool,
+        connectionId,
+        runtimeScope,
+        group.scope_id,
+      ),
     ),
   );
+  const controllers = getConnectionIdsByRegistrationKey(runtime);
+  for (const tool of previousTools) {
+    if (tool.registrationKey) {
+      controllers.delete(tool.registrationKey);
+    }
+  }
   if (tools.length > 0) {
     registerExternalTools(tools);
+    for (const tool of tools) {
+      if (tool.registrationKey) {
+        controllers.set(tool.registrationKey, connectionId);
+      }
+    }
     registeredTools.set(runtimeKey, tools);
   } else {
     registeredTools.delete(runtimeKey);
   }
 }
 
+export function updateRuntimeExternalTools(
+  runtime: ListenerRuntime,
+  connectionId: ListenerConnectionId,
+  updates: readonly RuntimeExternalToolsUpdateGroup[],
+): void {
+  for (const update of updates) {
+    for (const runtimeScope of update.runtimes) {
+      registerRuntimeExternalTools(
+        runtime,
+        connectionId,
+        runtimeScope,
+        update.external_tools,
+      );
+    }
+  }
+}
+
 export function handleExternalToolCallResponseCommand(
   runtime: ListenerRuntime,
+  connectionId: ListenerConnectionId,
   command: ExternalToolCallResponseCommand,
 ): boolean {
-  const pending = getPendingExternalToolCalls(runtime).get(command.request_id);
+  const requestKey = createConnectionRequestKey(
+    connectionId,
+    command.request_id,
+  );
+  const pending = getPendingExternalToolCalls(runtime).get(requestKey);
   if (!pending) {
     return false;
   }
 
   clearTimeout(pending.timeout);
-  getPendingExternalToolCalls(runtime).delete(command.request_id);
+  getPendingExternalToolCalls(runtime).delete(requestKey);
 
   if (command.error !== undefined) {
     pending.reject(new Error(command.error));
@@ -194,6 +266,45 @@ export function handleExternalToolCallResponseCommand(
 
   pending.resolve(command.result);
   return true;
+}
+
+export function rejectPendingExternalToolCallsForConnection(
+  runtime: ListenerRuntime,
+  connectionId: ListenerConnectionId,
+  reason: string,
+): void {
+  const pendingExternalToolCalls = getPendingExternalToolCalls(runtime);
+  for (const [requestKey, pending] of pendingExternalToolCalls) {
+    if (pending.connectionId !== connectionId) {
+      continue;
+    }
+    clearTimeout(pending.timeout);
+    pendingExternalToolCalls.delete(requestKey);
+    pending.reject(new Error(reason));
+  }
+
+  const registeredTools = registeredToolsByRuntime.get(runtime);
+  if (!registeredTools) {
+    return;
+  }
+  const controllers = getConnectionIdsByRegistrationKey(runtime);
+  for (const [registrationScope, tools] of registeredTools) {
+    const ownedByConnection = tools.some(
+      (tool) =>
+        tool.registrationKey !== undefined &&
+        controllers.get(tool.registrationKey) === connectionId,
+    );
+    if (!ownedByConnection) {
+      continue;
+    }
+    unregisterExternalTools(tools);
+    registeredTools.delete(registrationScope);
+    for (const tool of tools) {
+      if (tool.registrationKey) {
+        controllers.delete(tool.registrationKey);
+      }
+    }
+  }
 }
 
 export function rejectPendingExternalToolCalls(
@@ -214,4 +325,5 @@ export function rejectPendingExternalToolCalls(
     }
     registeredToolsByRuntime.delete(runtime);
   }
+  connectionIdByRegistrationKey.delete(runtime);
 }

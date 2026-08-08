@@ -182,6 +182,7 @@ interface BashArgs {
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
+  parentScope?: { agentId: string; conversationId: string };
 }
 
 interface BashResult {
@@ -202,6 +203,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     signal,
     onOutput,
     secretEnv,
+    parentScope,
   } = args;
   const userCwd = getCurrentWorkingDirectory();
 
@@ -285,6 +287,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       outputFile,
       totalStdoutLines: 0,
       totalStderrLines: 0,
+      runtimeScope: parentScope,
     });
     const bgProcess = backgroundProcesses.get(bashId);
     if (!bgProcess) {

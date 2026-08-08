@@ -1,14 +1,11 @@
 // src/cli/commands/mcp.ts
 // MCP server command handlers
 
-import type {
-  CreateSseMcpServer,
-  CreateStdioMcpServer,
-  CreateStreamableHTTPMcpServer,
-} from "@letta-ai/letta-client/resources/mcp-servers/mcp-servers";
-import { getClient } from "@/backend/api/client";
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
+import type { McpServerConfig } from "@/mcp-client";
+import { replaceClientMcpServers } from "@/mcp-runtime";
+import { settingsManager } from "@/settings-manager";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
@@ -26,6 +23,7 @@ export function setActiveCommandId(id: string | null): void {
 
 // Context passed to MCP handlers
 export interface McpCommandContext {
+  agentId: string;
   buffersRef: { current: Buffers };
   refreshDerived: () => void;
   setCommandRunning: (running: boolean) => void;
@@ -131,8 +129,10 @@ interface McpAddArgs {
   url: string | null;
   command: string | null;
   args: string[];
+  cwd: string | null;
+  env: Record<string, string>;
   headers: Record<string, string>;
-  authToken: string | null;
+  authTokenEnv: string | null;
 }
 
 function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
@@ -142,8 +142,10 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
   let url: string | null = null;
   let command: string | null = null;
   const args: string[] = [];
+  let cwd: string | null = null;
+  const env: Record<string, string> = {};
   const headers: Record<string, string> = {};
-  let authToken: string | null = null;
+  let authTokenEnv: string | null = null;
 
   let i = 0;
   while (i < parts.length) {
@@ -160,6 +162,18 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
         transport = "stdio";
       }
       i++;
+    } else if (part === "--cwd") {
+      i++;
+      cwd = parts[i] || null;
+      i++;
+    } else if (part === "--env" || part === "-e") {
+      i++;
+      const envValue = parts[i];
+      const separator = envValue?.indexOf("=") ?? -1;
+      if (envValue && separator > 0) {
+        env[envValue.slice(0, separator)] = envValue.slice(separator + 1);
+      }
+      i++;
     } else if (part === "--header" || part === "-h") {
       i++;
       const headerValue = parts[i];
@@ -174,9 +188,9 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
         }
       }
       i++;
-    } else if (part === "--auth" || part === "-a") {
+    } else if (part === "--auth-env") {
       i++;
-      authToken = parts[i] || null;
+      authTokenEnv = parts[i] || null;
       i++;
     } else if (!name) {
       name = part || null;
@@ -214,8 +228,10 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
     url: url || null,
     command: command || null,
     args,
+    cwd,
+    env,
     headers,
-    authToken: authToken || null,
+    authTokenEnv: authTokenEnv || null,
   };
 }
 
@@ -234,7 +250,7 @@ export async function handleMcpAdd(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      'Usage: /mcp add --transport <http|sse|stdio> <name> <url|command> [--header "key: value"] [--auth token]\n\nExamples:\n  /mcp add --transport http notion https://mcp.notion.com/mcp\n  /mcp add --transport http secure-api https://api.example.com/mcp --header "Authorization: Bearer token"',
+      'Usage: /mcp add --transport <http|sse|stdio> <name> <url|command> [--header "key: value"] [--auth-env TOKEN_ENV_VAR]\n\nExamples:\n  /mcp add --transport http notion https://mcp.notion.com/mcp\n  /mcp add --transport http secure-api https://api.example.com/mcp --auth-env MCP_API_TOKEN',
       false,
     );
     return;
@@ -252,102 +268,74 @@ export async function handleMcpAdd(
   ctx.setCommandRunning(true);
 
   try {
-    const client = await getClient();
+    const existing = settingsManager.getMcpServers(ctx.agentId);
+    if (existing.some((server) => server.name === args.name)) {
+      throw new Error(`MCP server "${args.name}" already exists`);
+    }
 
-    let config:
-      | CreateStreamableHTTPMcpServer
-      | CreateSseMcpServer
-      | CreateStdioMcpServer;
-
-    if (args.transport === "http") {
-      if (!args.url) {
-        throw new Error("URL is required for HTTP transport");
-      }
+    if (args.authTokenEnv && !/^[A-Z_][A-Z0-9_]*$/.test(args.authTokenEnv)) {
+      throw new Error(
+        `Invalid token environment variable name: ${args.authTokenEnv}`,
+      );
+    }
+    const headers = {
+      ...args.headers,
+      ...(args.authTokenEnv
+        ? { Authorization: `Bearer \${${args.authTokenEnv}}` }
+        : {}),
+    };
+    let config: McpServerConfig;
+    if (args.transport === "stdio") {
+      if (!args.command) throw new Error("Command is required for stdio");
       config = {
-        mcp_server_type: "streamable_http",
-        server_url: args.url,
-        auth_token: args.authToken,
-        custom_headers:
-          Object.keys(args.headers).length > 0 ? args.headers : null,
-      };
-    } else if (args.transport === "sse") {
-      if (!args.url) {
-        throw new Error("URL is required for SSE transport");
-      }
-      config = {
-        mcp_server_type: "sse",
-        server_url: args.url,
-        auth_token: args.authToken,
-        custom_headers:
-          Object.keys(args.headers).length > 0 ? args.headers : null,
-      };
-    } else {
-      // stdio
-      if (!args.command) {
-        throw new Error("Command is required for stdio transport");
-      }
-      config = {
-        mcp_server_type: "stdio",
+        name: args.name,
+        transport: "stdio",
         command: args.command,
         args: args.args,
+        cwd: args.cwd ?? process.cwd(),
+        ...(Object.keys(args.env).length > 0 ? { env: args.env } : {}),
+      };
+    } else {
+      if (!args.url) throw new Error("URL is required for HTTP/SSE");
+      config = {
+        name: args.name,
+        transport: args.transport,
+        url: args.url,
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
       };
     }
 
-    const server = await client.mcpServers.create({
-      server_name: args.name,
-      config,
+    const configs = [...existing, config];
+    settingsManager.setMcpServers(ctx.agentId, configs);
+    await settingsManager.flush();
+    const states = await replaceClientMcpServers(ctx.agentId, configs, {
+      interactiveOAuth: true,
+      onStatus: (status) =>
+        updateCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          cmdId,
+          msg,
+          status,
+          false,
+          "running",
+        ),
     });
-
-    if (!server.id) {
-      updateCommandResult(
-        ctx.buffersRef,
-        ctx.refreshDerived,
-        cmdId,
-        msg,
-        `Created MCP server "${args.name}" but server ID not available`,
-        false,
-      );
-      return;
+    const state = states.find(
+      (candidate) => candidate.config.name === args.name,
+    );
+    if (!state || state.status === "failed") {
+      throw new Error(state?.error ?? "MCP server failed to connect");
     }
 
-    // Auto-refresh to fetch tools from the MCP server
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `Created MCP server "${args.name}" (${server.mcp_server_type})\nID: ${server.id}\nFetching tools from server...`,
-      false,
-      "running",
+      `Added MCP server "${args.name}" to this agent (${args.transport})\nLoaded ${state.tools.length} tool${state.tools.length === 1 ? "" : "s"}`,
+      true,
     );
-
-    try {
-      await client.mcpServers.refresh(server.id);
-
-      // Get tool count
-      const tools = await client.mcpServers.tools.list(server.id);
-
-      updateCommandResult(
-        ctx.buffersRef,
-        ctx.refreshDerived,
-        cmdId,
-        msg,
-        `Created MCP server "${args.name}" (${server.mcp_server_type})\nID: ${server.id}\nLoaded ${tools.length} tool${tools.length === 1 ? "" : "s"} from server`,
-        true,
-      );
-    } catch (refreshErr) {
-      // If refresh fails, still show success but warn about tools
-      const errorMsg =
-        refreshErr instanceof Error ? refreshErr.message : "Unknown error";
-      updateCommandResult(
-        ctx.buffersRef,
-        ctx.refreshDerived,
-        cmdId,
-        msg,
-        `Created MCP server "${args.name}" (${server.mcp_server_type})\nID: ${server.id}\nWarning: Could not fetch tools - ${errorMsg}\nUse /mcp and press R to refresh manually.`,
-        true,
-      );
-    }
   } catch (error) {
     const errorDetails = formatErrorDetails(error, "");
     updateCommandResult(
@@ -363,18 +351,39 @@ export async function handleMcpAdd(
   }
 }
 
-// Show usage help
+export function mcpHelpText(): string {
+  return [
+    "/mcp help",
+    "",
+    "Manage MCP servers for the current agent. OAuth-protected remote servers open a browser automatically.",
+    "",
+    "The /mcp manager lists both client-local servers (run on this machine) and server-side servers registered on the Letta server. Server-side servers are configured via the ADE or API; use /mcp to enable or disable their tools for this agent — enabled tools execute on the Letta server.",
+    "",
+    "USAGE",
+    "  /mcp              — open the MCP manager (local + server-side)",
+    "  /mcp add ...      — add a client-local server",
+    "  /mcp help         — show this help",
+    "",
+    "OPTIONS FOR /mcp add",
+    "  --transport <stdio|http|sse>",
+    '  --header "Name: value"       repeatable HTTP/SSE header',
+    "  --auth-env TOKEN_ENV_VAR     bearer token from the environment",
+    "  --cwd PATH                   stdio working directory",
+    "  --env KEY=VALUE              repeatable stdio environment variable",
+    "",
+    "EXAMPLES",
+    "  /mcp add --transport stdio filesystem npx -y @modelcontextprotocol/server-filesystem .",
+    "  /mcp add --transport http notion https://mcp.notion.com/mcp",
+    "  /mcp add --transport http private https://mcp.example.com/mcp --auth-env MCP_API_TOKEN",
+  ].join("\n");
+}
+
 export function handleMcpUsage(ctx: McpCommandContext, msg: string): void {
   addCommandResult(
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    "Usage: /mcp [subcommand ...]\n" +
-      "  /mcp                  - Open MCP server manager\n" +
-      "  /mcp add ...          - Add a new server (without OAuth)\n" +
-      "  /mcp connect          - Interactive wizard with OAuth support\n\n" +
-      "Examples:\n" +
-      "  /mcp add --transport http notion https://mcp.notion.com/mcp",
+    mcpHelpText(),
     false,
   );
 }

@@ -4,13 +4,14 @@ import { parseAppServerWebsocketAuthSettings } from "@/websocket/app-server-auth
 
 function printAppServerHelp(): void {
   console.log(
-    `Usage: letta app-server [--listen <url>]
+    `Usage: letta server --listen [url]
 
-Run a local Letta Code app-server using native v2 websocket frames.
+Run the local App Server using native v2 WebSocket frames.
 
 Options:
-  --listen <url>  WebSocket listen URL. Defaults to ws://127.0.0.1:0
-  --ws-auth <mode>  WebSocket auth mode for non-loopback listeners. Supported: capability-token, signed-bearer-token
+  --listen [url]  WebSocket listen URL. Defaults to an available loopback port
+  --openai-api  Serve OpenAI-compatible /v1/models, /v1/chat/completions, and /v1/responses routes (each agent is a model)
+  --ws-auth <mode>  WebSocket auth for non-loopback listeners and Origin-bearing native clients. Supported: capability-token, signed-bearer-token
   --ws-token-file <path>  Absolute path to the capability-token file
   --ws-token-sha256 <hex>  Hex-encoded SHA-256 digest of the capability token
   --ws-shared-secret-file <path>  Absolute path to the shared secret file for signed JWT bearer tokens
@@ -20,10 +21,11 @@ Options:
   -h, --help      Show this help message
 
 Examples:
-  letta app-server
-  letta app-server --listen ws://127.0.0.1:4500
-  letta app-server --listen ws://0.0.0.0:4500 --ws-auth capability-token --ws-token-file /path/to/token
-  letta app-server --listen ws://0.0.0.0:4500 --ws-auth signed-bearer-token --ws-shared-secret-file /path/to/secret`,
+  letta server --listen
+  letta server --listen ws://127.0.0.1:4500
+  letta server --listen ws://0.0.0.0:4500 --ws-auth capability-token --ws-token-file /path/to/token
+  letta server --listen ws://0.0.0.0:4500 --ws-auth signed-bearer-token --ws-shared-secret-file /path/to/secret
+  letta server --listen ws://127.0.0.1:4500 --openai-api`,
   );
 }
 
@@ -35,7 +37,7 @@ async function waitForShutdown(close: () => Promise<void>): Promise<number> {
       shuttingDown = true;
       void close()
         .then(() => {
-          console.log(`\nStopped app-server (${signal}).`);
+          console.log(`\nStopped App Server (${signal}).`);
           resolve(0);
         })
         .catch((error) => {
@@ -60,6 +62,7 @@ export async function runAppServerSubcommand(argv: string[]): Promise<number> {
       options: {
         help: { type: "boolean", short: "h" },
         listen: { type: "string" },
+        "openai-api": { type: "boolean" },
         "ws-auth": { type: "string" },
         "ws-token-file": { type: "string" },
         "ws-token-sha256": { type: "string" },
@@ -111,16 +114,22 @@ export async function runAppServerSubcommand(argv: string[]): Promise<number> {
           : undefined,
     });
 
+    const openaiApi = parsed.values["openai-api"] === true;
     const handle = await startAppServer({
       listen:
         typeof parsed.values.listen === "string"
           ? parsed.values.listen
           : undefined,
       websocketAuth,
+      openaiApi,
       onListening: (info) => {
         console.log(`Listening on ${info.url}`);
-        console.log(`Control: ${info.controlUrl}`);
-        console.log(`Stream:  ${info.streamUrl}`);
+        console.log(`WebSocket: ${info.controlUrl}`);
+        if (openaiApi) {
+          const openaiBase = new URL(info.url);
+          openaiBase.protocol = "http:";
+          console.log(`OpenAI:  ${openaiBase.origin}/v1`);
+        }
       },
       onLog: (message) => {
         console.error(message);

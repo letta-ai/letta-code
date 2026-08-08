@@ -10,13 +10,16 @@ import type {
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
 } from "@/types/protocol_v2";
-import { isDebugEnabled } from "@/utils/debug";
+import { debugLog, isDebugEnabled } from "@/utils/debug";
 import {
+  hasPendingApprovalRequestId,
   rejectPendingApprovalResolvers,
   resolvePendingApprovalResolver,
 } from "./approval";
+import { createConnectionRequestKey } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
+  bumpWorkingDirectoryRevision,
   getConversationWorkingDirectory,
   setConversationWorkingDirectory,
 } from "./cwd";
@@ -35,6 +38,7 @@ import { emitLoopErrorNotice } from "./recoverable-notices";
 import { resolveRecoveredApprovalResponse } from "./recovery";
 import {
   getActiveRuntime,
+  getConversationRuntime,
   getPendingControlRequestCount,
   getPendingControlRequests,
   getRecoveredApprovalStateForScope,
@@ -46,6 +50,7 @@ import { setCommandLoopStatus } from "./turn-status";
 import type {
   ChangeCwdMessage,
   ConversationRuntime,
+  ListenerConnectionId,
   ListenerRuntime,
   ModeChangePayload,
   ProcessQueuedTurn,
@@ -63,6 +68,11 @@ function trackListenerError(
     error,
     context,
   });
+}
+
+function isMissingWorkingDirectoryError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 /**
@@ -134,16 +144,29 @@ export function handleModeChange(
 
 function resolveRuntimeForApprovalRequest(
   listener: ListenerRuntime,
+  scope: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
   requestId?: string | null,
+  connectionId?: ListenerConnectionId,
 ): ConversationRuntime | null {
   if (!requestId) {
     return null;
   }
-  const runtimeKey = listener.approvalRuntimeKeyByRequestId.get(requestId);
-  if (!runtimeKey) {
+  const runtime = getConversationRuntime(
+    listener,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  if (!runtime) {
     return null;
   }
-  return listener.conversationRuntimes.get(runtimeKey) ?? null;
+  if (connectionId) {
+    const requestKey = createConnectionRequestKey(connectionId, requestId);
+    return runtime.pendingApprovalResolvers.has(requestKey) ? runtime : null;
+  }
+  return hasPendingApprovalRequestId(runtime, requestId) ? runtime : null;
 }
 
 export async function handleApprovalResponseInput(
@@ -154,6 +177,7 @@ export async function handleApprovalResponseInput(
       conversation_id?: string | null;
     };
     response: ApprovalResponseBody;
+    connectionId?: ListenerConnectionId;
     socket: ListenerTransport;
     opts: {
       onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -164,11 +188,17 @@ export async function handleApprovalResponseInput(
   deps: {
     resolveRuntimeForApprovalRequest: (
       listener: ListenerRuntime,
+      scope: {
+        agent_id?: string | null;
+        conversation_id?: string | null;
+      },
       requestId?: string | null,
+      connectionId?: ListenerConnectionId,
     ) => ConversationRuntime | null;
     resolvePendingApprovalResolver: (
       runtime: ConversationRuntime,
       response: ApprovalResponseBody,
+      connectionId?: ListenerConnectionId,
     ) => boolean;
     getOrCreateScopedRuntime: (
       listener: ListenerRuntime,
@@ -201,11 +231,17 @@ export async function handleApprovalResponseInput(
 ): Promise<boolean> {
   const approvalRuntime = deps.resolveRuntimeForApprovalRequest(
     listener,
+    params.runtime,
     params.response.request_id,
+    params.connectionId,
   );
   if (
     approvalRuntime &&
-    deps.resolvePendingApprovalResolver(approvalRuntime, params.response)
+    deps.resolvePendingApprovalResolver(
+      approvalRuntime,
+      params.response,
+      params.connectionId,
+    )
   ) {
     deps.scheduleQueuePump(
       approvalRuntime,
@@ -254,6 +290,7 @@ export async function handleChangeDeviceStateInput(
   listener: ListenerRuntime,
   params: {
     command: ChangeDeviceStateCommand;
+    connectionId?: ListenerConnectionId;
     socket: WebSocket;
     opts: {
       onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -364,6 +401,7 @@ export async function handleAbortMessageInput(
   listener: ListenerRuntime,
   params: {
     command: AbortMessageCommand;
+    connectionId?: ListenerConnectionId;
     socket: ListenerTransport;
     opts: {
       onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -386,6 +424,7 @@ export async function handleAbortMessageInput(
       agentId: string,
       conversationId: string,
     ) => Promise<void>;
+    cancelRun: (agentId: string, runId: string) => Promise<void>;
   }> = {},
 ): Promise<boolean> {
   const resolvedDeps = {
@@ -405,6 +444,12 @@ export async function handleAbortMessageInput(
           ? agentId
           : conversationId;
       await getBackend().cancelConversation(cancelId);
+    },
+    cancelRun: async (agentId: string, runId: string) => {
+      const result = await getBackend().cancelRun(agentId, runId);
+      if (result[runId] !== "cancelled") {
+        throw new Error(`Backend did not cancel run ${runId}`);
+      }
     },
     ...deps,
   };
@@ -433,7 +478,9 @@ export async function handleAbortMessageInput(
     return false;
   }
 
-  const cancellation = scopedRuntime.turnLifecycle.requestCancellation();
+  const cancellation = scopedRuntime.turnLifecycle.requestCancellation({
+    waitForExternalSettlement: hasActiveTurn && Boolean(scopedRuntime.agentId),
+  });
   const interruptedRunId = cancellation.runId;
   const pendingRequestsSnapshot = hasPendingApprovals
     ? resolvedDeps.getPendingControlRequests(listener, scope)
@@ -533,10 +580,39 @@ export async function handleAbortMessageInput(
   const cancelConversationId = scopedRuntime.conversationId;
   const cancelAgentId = scopedRuntime.agentId;
   if (cancelAgentId) {
-    void resolvedDeps
-      .cancelConversation(cancelAgentId, cancelConversationId)
+    const cancelRunId = interruptedRunId ?? params.command.run_id ?? null;
+    // Target the interrupted run when possible so this abort can never select
+    // a replacement turn. Older backends may reject run-scoped cancellation;
+    // the lifecycle fence also makes the conversation-wide fallback safe.
+    const backendCancellation = cancelRunId
+      ? resolvedDeps
+          .cancelRun(cancelAgentId, cancelRunId)
+          .catch(() =>
+            resolvedDeps.cancelConversation(
+              cancelAgentId,
+              cancelConversationId,
+            ),
+          )
+      : resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId);
+    void backendCancellation
       .catch(() => {
         // Fire-and-forget
+      })
+      .finally(() => {
+        if (!cancellation.lease) {
+          return;
+        }
+        const settlement = scopedRuntime.turnLifecycle.settleCancellation(
+          cancellation.lease,
+        );
+        if (settlement.released) {
+          resolvedDeps.scheduleQueuePump(
+            scopedRuntime,
+            params.socket,
+            params.opts as StartListenerOptions,
+            params.processQueuedTurn,
+          );
+        }
       });
   }
 
@@ -602,6 +678,27 @@ export async function handleCwdChange(
       conversationId,
     });
   } catch (error) {
+    if (isMissingWorkingDirectoryError(error)) {
+      bumpWorkingDirectoryRevision(runtime.listener);
+      runtime.reminderState.hasSentSessionContext = false;
+      runtime.reminderState.pendingSessionContextReason = "cwd_changed";
+
+      debugLog(
+        "listener",
+        `Rejected stale working directory change to ${msg.cwd}; restoring ${currentWorkingDirectory}`,
+      );
+      emitDeviceStatusUpdate(socket, runtime, {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      });
+      restartWorktreeWatcher({
+        runtime: runtime.listener,
+        agentId,
+        conversationId,
+      });
+      return;
+    }
+
     emitLoopErrorNotice(socket, runtime, {
       message:
         error instanceof Error

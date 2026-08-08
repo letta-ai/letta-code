@@ -3,6 +3,7 @@ import {
   type AppServerSocketLike,
   type AppServerSocketOptions,
   createAppServerClient,
+  isAppServerInfoResponseMessage,
   resolveAppServerChannelUrl,
 } from "./app-server-client";
 
@@ -63,9 +64,9 @@ function createFakeClient() {
     WebSocket: FakeSocket,
     requestTimeoutMs: 25,
   });
-  const [control, stream] = FakeSocket.instances;
-  if (!control || !stream) throw new Error("expected two sockets");
-  return { client, control, stream };
+  const [socket] = FakeSocket.instances;
+  if (!socket) throw new Error("expected one socket");
+  return { client, control: socket, stream: socket };
 }
 
 describe("app-server client", () => {
@@ -73,16 +74,16 @@ describe("app-server client", () => {
     FakeSocket.instances = [];
   });
 
-  test("resolves control and stream websocket URLs", () => {
+  test("resolves historical channel names to the same websocket URL", () => {
     expect(resolveAppServerChannelUrl("http://127.0.0.1:4500", "control")).toBe(
-      "ws://127.0.0.1:4500/ws?channel=control",
+      "ws://127.0.0.1:4500/ws",
     );
     expect(
       resolveAppServerChannelUrl(
         "wss://example.test/ws?channel=control&token=abc",
         "stream",
       ),
-    ).toBe("wss://example.test/ws?channel=stream&token=abc");
+    ).toBe("wss://example.test/ws?token=abc");
   });
 
   test("passes capability token as websocket authorization header", () => {
@@ -91,13 +92,11 @@ describe("app-server client", () => {
       authToken: " super-secret-token\n",
       WebSocket: FakeSocket,
     });
-    const [control, stream] = FakeSocket.instances;
-    expect(control?.options).toEqual({
+    const [socket] = FakeSocket.instances;
+    expect(socket?.options).toEqual({
       headers: { Authorization: "Bearer super-secret-token" },
     });
-    expect(stream?.options).toEqual({
-      headers: { Authorization: "Bearer super-secret-token" },
-    });
+    expect(FakeSocket.instances).toHaveLength(1);
 
     expect(() =>
       createAppServerClient({
@@ -108,11 +107,92 @@ describe("app-server client", () => {
     ).toThrow(/auth token must not be empty/);
   });
 
-  test("connects both sockets and resolves request_id responses", async () => {
+  test("requests App Server capabilities before starting a runtime", async () => {
+    const { client, control } = createFakeClient();
+    const opened = client.connect();
+    control.open();
+    await opened;
+
+    const responsePromise = client.info();
+    expect(JSON.parse(control.sent[0] ?? "{}")).toEqual({
+      type: "app_server_info",
+      request_id: "app-server-info-1",
+    });
+
+    control.receive({
+      type: "app_server_info_response",
+      request_id: "app-server-info-1",
+      success: true,
+      backend: "local",
+      letta_code_version: "0.29.1",
+      protocol_version: 1,
+      capabilities: {
+        agent_management: true,
+        conversation_management: true,
+        memory_management: true,
+        runtime_start: true,
+        runtime_external_tools_update: true,
+        split_channels: false,
+      },
+    });
+
+    await expect(responsePromise).resolves.toMatchObject({
+      backend: "local",
+      protocol_version: 1,
+    });
+  });
+
+  test("validates the complete App Server capability response", () => {
+    const response = {
+      type: "app_server_info_response",
+      request_id: "info-1",
+      success: true,
+      backend: "local",
+      letta_code_version: "0.29.2",
+      protocol_version: 2,
+      capabilities: {
+        agent_management: true,
+        conversation_management: true,
+        memory_management: true,
+        runtime_start: true,
+        split_channels: false,
+      },
+    };
+
+    expect(isAppServerInfoResponseMessage(response)).toBe(true);
+    expect(
+      isAppServerInfoResponseMessage({
+        ...response,
+        capabilities: {
+          agent_management: true,
+          conversation_management: true,
+          memory_management: true,
+          runtime_start: true,
+          split_channels: false,
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isAppServerInfoResponseMessage({
+        ...response,
+        capabilities: {
+          ...response.capabilities,
+          split_channels: "yes",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isAppServerInfoResponseMessage({
+        ...response,
+        protocol_version: "2",
+      }),
+    ).toBe(false);
+  });
+
+  test("connects one socket and resolves request_id responses", async () => {
     const { client, control, stream } = createFakeClient();
     const opened = client.connect();
     control.open();
-    stream.open();
     await opened;
 
     const seen: string[] = [];
@@ -157,29 +237,25 @@ describe("app-server client", () => {
     });
     expect(seen).toEqual([
       "control:runtime_start_response",
-      "stream:update_loop_status",
+      "control:update_loop_status",
     ]);
   });
 
-  test("notifies once when either websocket disconnects unexpectedly", async () => {
-    const { client, control, stream } = createFakeClient();
+  test("notifies once when the websocket disconnects unexpectedly", async () => {
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const disconnects: string[] = [];
     client.onDisconnect(({ channel }) => disconnects.push(channel));
 
     control.close();
-    stream.close();
-
     expect(disconnects).toEqual(["control"]);
   });
 
   test("does not report explicit client shutdown as a disconnect", async () => {
-    const { client, control, stream } = createFakeClient();
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const disconnects: string[] = [];
@@ -191,9 +267,8 @@ describe("app-server client", () => {
   });
 
   test("wraps sync, abort, and input commands", async () => {
-    const { client, control, stream } = createFakeClient();
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const sent: string[] = [];
@@ -220,15 +295,45 @@ describe("app-server client", () => {
     });
     expect((await syncPromise).success).toBe(true);
 
-    const abortPromise = client.abort({ runtime });
+    const toolUpdatePromise = client.runtimeExternalToolsUpdate({
+      updates: [
+        {
+          runtimes: [runtime],
+          external_tools: [
+            {
+              tools: [
+                {
+                  name: "MessageChannel",
+                  description: "Deliver a channel message",
+                  parameters: { type: "object", properties: {} },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
     expect(JSON.parse(control.sent[1] ?? "{}")).toMatchObject({
+      type: "runtime_external_tools_update",
+      request_id: "runtime-external-tools-2",
+      updates: [{ runtimes: [runtime] }],
+    });
+    control.receive({
+      type: "runtime_external_tools_update_response",
+      request_id: "runtime-external-tools-2",
+      success: true,
+    });
+    expect((await toolUpdatePromise).success).toBe(true);
+
+    const abortPromise = client.abort({ runtime });
+    expect(JSON.parse(control.sent[2] ?? "{}")).toMatchObject({
       type: "abort_message",
-      request_id: "abort-2",
+      request_id: "abort-3",
       runtime,
     });
     control.receive({
       type: "abort_message_response",
-      request_id: "abort-2",
+      request_id: "abort-3",
       runtime,
       aborted: false,
       success: true,
@@ -242,18 +347,22 @@ describe("app-server client", () => {
         messages: [{ role: "user", content: "hello" }],
       },
     });
-    expect(JSON.parse(control.sent[2] ?? "{}")).toMatchObject({
+    expect(JSON.parse(control.sent[3] ?? "{}")).toMatchObject({
       type: "input",
       runtime,
       payload: { kind: "create_message" },
     });
-    expect(sent).toEqual(["sync", "abort_message", "input"]);
+    expect(sent).toEqual([
+      "sync",
+      "runtime_external_tools_update",
+      "abort_message",
+      "input",
+    ]);
   });
 
   test("wraps conversation list requests", async () => {
-    const { client, control, stream } = createFakeClient();
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const responsePromise = client.conversationList({
@@ -281,9 +390,8 @@ describe("app-server client", () => {
   });
 
   test("starts runtimes with external tools and responds to external tool calls", async () => {
-    const { client, control, stream } = createFakeClient();
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const runtimeStart = client.runtimeStart({
@@ -344,425 +452,9 @@ describe("app-server client", () => {
     });
   });
 
-  test("runTurn injects client message ids and resolves on stop_reason", async () => {
-    const { client, control, stream } = createFakeClient();
-    control.open();
-    stream.open();
-    await client.connect();
-
-    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
-    const turn = client.runTurn({
-      runtime,
-      payload: {
-        kind: "create_message",
-        messages: [{ role: "user", content: "hello" }],
-      },
-    });
-
-    const sent = JSON.parse(control.sent[0] ?? "{}");
-    expect(sent).toMatchObject({
-      type: "input",
-      runtime,
-      payload: { kind: "create_message" },
-    });
-    expect(sent.payload.messages[0].client_message_id).toStartWith(
-      "client-message-",
-    );
-
-    stream.receive({
-      type: "stream_delta",
-      runtime,
-      event_seq: 1,
-      emitted_at: "2026-06-11T00:00:00.000Z",
-      idempotency_key: "stream-1",
-      delta: {
-        type: "message",
-        message_type: "assistant_message",
-        run_id: "run-1",
-        content: [{ type: "text", text: "pong" }],
-      },
-    });
-    stream.receive({
-      type: "stream_delta",
-      runtime,
-      event_seq: 2,
-      emitted_at: "2026-06-11T00:00:00.001Z",
-      idempotency_key: "stream-2",
-      delta: {
-        type: "message",
-        message_type: "stop_reason",
-        run_id: "run-1",
-        stop_reason: "end_turn",
-      },
-    });
-
-    expect(await turn).toMatchObject({
-      runtime,
-      stopReason: "end_turn",
-      runIds: ["run-1"],
-      completedBy: "stop_reason",
-    });
-  });
-
-  test("runTurn waits through intermediate requires_approval stop_reason", async () => {
-    const { client, control, stream } = createFakeClient();
-    control.open();
-    stream.open();
-    await client.connect();
-
-    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
-    const turn = client.runTurn({
-      runtime,
-      payload: {
-        kind: "create_message",
-        messages: [{ role: "user", content: "use a tool" }],
-      },
-    });
-
-    stream.receive({
-      type: "stream_delta",
-      runtime,
-      event_seq: 1,
-      emitted_at: "2026-06-11T00:00:00.000Z",
-      idempotency_key: "stream-1",
-      delta: {
-        type: "message",
-        message_type: "approval_request_message",
-        run_id: "run-approval",
-        tool_calls: [
-          {
-            tool_call_id: "call-1",
-            name: "Bash",
-            arguments: '{"command":"pwd"}',
-          },
-        ],
-      },
-    });
-    stream.receive({
-      type: "stream_delta",
-      runtime,
-      event_seq: 2,
-      emitted_at: "2026-06-11T00:00:00.001Z",
-      idempotency_key: "stream-2",
-      delta: {
-        type: "message",
-        message_type: "stop_reason",
-        run_id: "run-approval",
-        stop_reason: "requires_approval",
-      },
-    });
-    stream.receive({
-      type: "update_loop_status",
-      runtime,
-      event_seq: 3,
-      emitted_at: "2026-06-11T00:00:00.002Z",
-      idempotency_key: "loop-1",
-      loop_status: {
-        status: "EXECUTING_CLIENT_SIDE_TOOL",
-        active_run_ids: ["run-approval"],
-      },
-    });
-    stream.receive({
-      type: "stream_delta",
-      runtime,
-      event_seq: 4,
-      emitted_at: "2026-06-11T00:00:00.003Z",
-      idempotency_key: "stream-3",
-      delta: {
-        type: "message",
-        message_type: "stop_reason",
-        run_id: "run-final",
-        stop_reason: "end_turn",
-      },
-    });
-
-    expect(await turn).toMatchObject({
-      runtime,
-      stopReason: "end_turn",
-      runIds: ["run-approval", "run-final"],
-      completedBy: "stop_reason",
-    });
-  });
-
-  test("runTurn resolves requires_approval only when listener is waiting on approval", async () => {
-    const { client, control, stream } = createFakeClient();
-    control.open();
-    stream.open();
-    await client.connect();
-
-    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
-    const turn = client.runTurn({
-      runtime,
-      payload: {
-        kind: "create_message",
-        messages: [{ role: "user", content: "use a tool" }],
-      },
-    });
-
-    stream.receive({
-      type: "stream_delta",
-      runtime,
-      event_seq: 1,
-      emitted_at: "2026-06-11T00:00:00.000Z",
-      idempotency_key: "stream-1",
-      delta: {
-        type: "message",
-        message_type: "approval_request_message",
-        run_id: "run-approval",
-        tool_calls: [
-          {
-            tool_call_id: "call-1",
-            name: "Bash",
-            arguments: '{"command":"rm -rf tmp"}',
-          },
-        ],
-      },
-    });
-    stream.receive({
-      type: "stream_delta",
-      runtime,
-      event_seq: 2,
-      emitted_at: "2026-06-11T00:00:00.001Z",
-      idempotency_key: "stream-2",
-      delta: {
-        type: "message",
-        message_type: "stop_reason",
-        run_id: "run-approval",
-        stop_reason: "requires_approval",
-      },
-    });
-    stream.receive({
-      type: "update_loop_status",
-      runtime,
-      event_seq: 3,
-      emitted_at: "2026-06-11T00:00:00.002Z",
-      idempotency_key: "loop-1",
-      loop_status: {
-        status: "WAITING_ON_APPROVAL",
-        active_run_ids: ["run-approval"],
-      },
-    });
-
-    expect(await turn).toMatchObject({
-      runtime,
-      stopReason: "requires_approval",
-      runIds: ["run-approval"],
-      completedBy: "loop_status_waiting_on_approval",
-    });
-  });
-
-  test("runTurn does not treat idle status alone as terminal", async () => {
-    const { client, control, stream } = createFakeClient();
-    control.open();
-    stream.open();
-    await client.connect();
-
-    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
-    const turn = client.runTurn(
-      {
-        runtime,
-        payload: {
-          kind: "create_message",
-          messages: [{ role: "user", content: "hello" }],
-        },
-      },
-      { timeoutMs: 25, allowLoopStatusFallback: true },
-    );
-
-    stream.receive({
-      type: "update_loop_status",
-      runtime,
-      event_seq: 1,
-      emitted_at: "2026-06-11T00:00:00.000Z",
-      idempotency_key: "loop-1",
-      loop_status: { status: "WAITING_ON_INPUT", active_run_ids: [] },
-    });
-
-    await expect(turn).rejects.toThrow("Timed out waiting for app-server turn");
-  });
-
-  test("runTurn ignores waiting-on-approval status before turn evidence", async () => {
-    const { client, control, stream } = createFakeClient();
-    control.open();
-    stream.open();
-    await client.connect();
-
-    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
-    const turn = client.runTurn(
-      {
-        runtime,
-        payload: {
-          kind: "create_message",
-          messages: [{ role: "user", content: "hello" }],
-        },
-      },
-      { allowLoopStatusFallback: true },
-    );
-
-    stream.receive({
-      type: "update_loop_status",
-      runtime,
-      event_seq: 1,
-      emitted_at: "2026-06-11T00:00:00.000Z",
-      idempotency_key: "loop-1",
-      loop_status: {
-        status: "WAITING_ON_APPROVAL",
-        active_run_ids: ["stale-run"],
-      },
-    });
-    stream.receive({
-      type: "stream_delta",
-      runtime,
-      event_seq: 2,
-      emitted_at: "2026-06-11T00:00:00.001Z",
-      idempotency_key: "stream-1",
-      delta: {
-        type: "message",
-        message_type: "assistant_message",
-        run_id: "run-1",
-        content: "done",
-      },
-    });
-    stream.receive({
-      type: "stream_delta",
-      runtime,
-      event_seq: 3,
-      emitted_at: "2026-06-11T00:00:00.002Z",
-      idempotency_key: "stream-2",
-      delta: {
-        type: "message",
-        message_type: "stop_reason",
-        run_id: "run-1",
-        stop_reason: "end_turn",
-      },
-    });
-
-    expect(await turn).toMatchObject({
-      runtime,
-      stopReason: "end_turn",
-      runIds: ["run-1"],
-      completedBy: "stop_reason",
-    });
-  });
-
-  test("runTurn rejects concurrent turns for the same runtime", async () => {
-    const { client, control, stream } = createFakeClient();
-    control.open();
-    stream.open();
-    await client.connect();
-
-    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
-    const first = client.runTurn(
-      {
-        runtime,
-        payload: {
-          kind: "create_message",
-          messages: [{ role: "user", content: "hello" }],
-        },
-      },
-      { timeoutMs: 25 },
-    );
-
-    await expect(
-      client.runTurn({
-        runtime,
-        payload: {
-          kind: "create_message",
-          messages: [{ role: "user", content: "again" }],
-        },
-      }),
-    ).rejects.toThrow("A turn is already in flight for agent-1/conv-1");
-
-    await expect(first).rejects.toThrow(
-      "Timed out waiting for app-server turn",
-    );
-  });
-
-  test("runTurn can use guarded loop-status fallback after run evidence", async () => {
-    const { client, control, stream } = createFakeClient();
-    control.open();
-    stream.open();
-    await client.connect();
-
-    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
-    const turn = client.runTurn(
-      {
-        runtime,
-        payload: {
-          kind: "create_message",
-          messages: [{ role: "user", content: "hello" }],
-        },
-      },
-      { allowLoopStatusFallback: true },
-    );
-
-    stream.receive({
-      type: "update_loop_status",
-      runtime,
-      event_seq: 1,
-      emitted_at: "2026-06-11T00:00:00.000Z",
-      idempotency_key: "loop-1",
-      loop_status: {
-        status: "PROCESSING_API_RESPONSE",
-        active_run_ids: ["run-1"],
-      },
-    });
-    stream.receive({
-      type: "update_loop_status",
-      runtime,
-      event_seq: 2,
-      emitted_at: "2026-06-11T00:00:00.001Z",
-      idempotency_key: "loop-2",
-      loop_status: { status: "WAITING_ON_INPUT", active_run_ids: [] },
-    });
-
-    expect(await turn).toMatchObject({
-      runtime,
-      stopReason: null,
-      runIds: ["run-1"],
-      completedBy: "loop_status_waiting_fallback",
-    });
-  });
-
-  test("runTurn rejects on loop_error stream delta", async () => {
-    const { client, control, stream } = createFakeClient();
-    control.open();
-    stream.open();
-    await client.connect();
-
-    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
-    const turn = client.runTurn({
-      runtime,
-      payload: {
-        kind: "create_message",
-        messages: [{ role: "user", content: "hello" }],
-      },
-    });
-
-    stream.receive({
-      type: "stream_delta",
-      runtime,
-      event_seq: 1,
-      emitted_at: "2026-06-11T00:00:00.000Z",
-      idempotency_key: "stream-1",
-      delta: {
-        id: "message-1",
-        date: "2026-06-11T00:00:00.000Z",
-        message_type: "loop_error",
-        run_id: "run-1",
-        message: "No API key for provider",
-        stop_reason: "llm_api_error",
-        is_terminal: false,
-      },
-    });
-
-    await expect(turn).rejects.toThrow("No API key for provider");
-  });
-
   test("supports ergonomic request construction", async () => {
-    const { client, control, stream } = createFakeClient();
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const responsePromise = client.request("agent_list", {
@@ -787,10 +479,48 @@ describe("app-server client", () => {
     });
   });
 
+  test("supports forward-compatible compatibility adapter requests", async () => {
+    const client = createAppServerClient({
+      url: "ws://127.0.0.1:4500",
+      WebSocket: FakeSocket,
+    });
+    const sent: string[] = [];
+    client.onSend((command) => sent.push(command.type));
+
+    const pending = client.requestRaw<{ type: string; request_id: string }>(
+      {
+        type: "future_command",
+        request_id: "future-1",
+      },
+      {
+        predicate: (
+          message,
+        ): message is {
+          type: string;
+          request_id: string;
+        } =>
+          typeof message === "object" &&
+          message !== null &&
+          "type" in message &&
+          message.type === "future_response",
+      },
+    );
+    expect(sent).toEqual(["future_command"]);
+
+    FakeSocket.instances[0]?.receive({
+      type: "future_response",
+      request_id: "future-1",
+    });
+
+    await expect(pending).resolves.toEqual({
+      type: "future_response",
+      request_id: "future-1",
+    });
+  });
+
   test("times out unanswered requests", async () => {
-    const { client, control, stream } = createFakeClient();
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     await expect(

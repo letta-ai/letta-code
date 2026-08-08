@@ -1,15 +1,3 @@
-import { basename } from "node:path";
-import {
-  isFileEditTool,
-  isFileReadTool,
-  isFileWriteTool,
-  isGlobTool,
-  isSearchTool,
-  isShellTool,
-  isTaskTool,
-  isWebSearchTool,
-} from "@/cli/helpers/tool-name-mapping";
-
 const MAX_PROGRESS_TEXT_LENGTH = 140;
 export const MAX_PROGRESS_DETAILS_LENGTH = 180;
 const MAX_SHELL_PROGRESS_DETAILS_LENGTH = 64;
@@ -20,6 +8,82 @@ const SECRET_ASSIGNMENT_RE =
   /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|ACCESS[_-]?KEY)[A-Z0-9_]*)\s*=\s*("[^"]*"|'[^']*'|\S+)/gi;
 const SECRET_JSON_RE =
   /(["']?(?:token|secret|password|api[_-]?key|access[_-]?key)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|\S+)/gi;
+
+function isTaskTool(name: string): boolean {
+  return (
+    name === "Task" || name === "task" || name === "Agent" || name === "agent"
+  );
+}
+
+function isShellTool(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return (
+    normalized === "bash" ||
+    normalized === "exec_command" ||
+    normalized === "shell_command" ||
+    normalized === "shell" ||
+    normalized === "runshellcommand"
+  );
+}
+
+function isWebSearchTool(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return normalized === "web_search" || normalized === "websearch";
+}
+
+function isSearchTool(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return (
+    normalized === "grep" ||
+    normalized === "grep_files" ||
+    normalized === "grepfiles" ||
+    normalized === "search_file_content" ||
+    normalized === "searchfilecontent"
+  );
+}
+
+function isGlobTool(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return normalized === "glob" || normalized === "glob_gemini";
+}
+
+function isFileReadTool(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return (
+    normalized === "read" ||
+    normalized === "read_file" ||
+    normalized === "readfile" ||
+    normalized === "read_file_gemini" ||
+    normalized === "readfilegemini"
+  );
+}
+
+function isFileWriteTool(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return (
+    normalized === "write" ||
+    normalized === "write_file" ||
+    normalized === "writefile" ||
+    normalized === "write_file_gemini" ||
+    normalized === "writefilegemini"
+  );
+}
+
+function isFileEditTool(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return (
+    normalized === "edit" ||
+    normalized === "multi_edit" ||
+    normalized === "multiedit" ||
+    normalized === "replace" ||
+    normalized === "apply_patch" ||
+    normalized === "applypatch"
+  );
+}
+
+function getPathBaseName(filePath: string): string {
+  return filePath.split(/[\\/]/).filter(Boolean).pop() ?? filePath;
+}
 
 export function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"
@@ -351,7 +415,7 @@ function formatProgressFileName(
   if (!filePath) {
     return undefined;
   }
-  const fileName = basename(filePath) || filePath;
+  const fileName = getPathBaseName(filePath) || filePath;
   return (
     sanitizeChannelProgressText(fileName, MAX_PROGRESS_DETAILS_LENGTH) ||
     undefined

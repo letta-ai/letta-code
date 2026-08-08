@@ -353,7 +353,10 @@ export function emitInterruptToolReturnMessage(
       {
         type: "message",
         message_type: "tool_return_message",
-        id: `message-${uuidPrefix}-${crypto.randomUUID()}`,
+        // No persisted tool_return_message exists yet. Use a synthetic id
+        // outside Core's `message-*` namespace; the real approval message id
+        // identifies the request, not this return row (LET-10608).
+        id: `synthetic-${uuidPrefix}-${crypto.randomUUID()}`,
         date: new Date().toISOString(),
         run_id: resolvedRunId,
         status: toolReturn.status,
@@ -392,8 +395,12 @@ export function emitToolExecutionStartedEvents(
     params.toolCalls ??
     (params.toolCallIds ?? []).map((toolCallId) => ({ toolCallId }));
   for (const toolCall of toolCalls) {
+    const messageId = runtime.approvalMessageIdByToolCallId.get(
+      toolCall.toolCallId,
+    );
     const delta: ClientToolStartMessage = {
       ...createLifecycleMessageBase("client_tool_start", params.runId),
+      ...(messageId ? { id: messageId } : {}),
       tool_call_id: toolCall.toolCallId,
       ...(toolCall.toolName ? { tool_name: toolCall.toolName } : {}),
       ...(toolCall.toolArgs ? { tool_args: toolCall.toolArgs } : {}),
@@ -417,8 +424,12 @@ export function emitToolExecutionFinishedEvents(
 ): void {
   const toolReturns = extractInterruptToolReturns(params.approvals);
   for (const toolReturn of toolReturns) {
+    const messageId = runtime.approvalMessageIdByToolCallId.get(
+      toolReturn.tool_call_id,
+    );
     const delta: ClientToolEndMessage = {
       ...createLifecycleMessageBase("client_tool_end", params.runId),
+      ...(messageId ? { id: messageId } : {}),
       tool_call_id: toolReturn.tool_call_id,
       status: toolReturn.status,
     };
@@ -445,8 +456,10 @@ export function emitToolExecutionAbortedEvents(
   },
 ): void {
   for (const toolCallId of params.toolCallIds) {
+    const messageId = runtime.approvalMessageIdByToolCallId.get(toolCallId);
     const delta: ClientToolEndMessage = {
       ...createLifecycleMessageBase("client_tool_end", params.runId),
+      ...(messageId ? { id: messageId } : {}),
       tool_call_id: toolCallId,
       status: "error",
     };
@@ -539,7 +552,9 @@ export function createToolExecutionOutputEmitter(
 
     const existing = outputByToolCallId.get(toolCallId);
     const outputState = existing ?? {
-      messageId: `message-tool-return-stream-${toolCallId}`,
+      // Stable across snapshots for this tool call, but outside Core's
+      // `message-*` namespace because no persisted return row exists yet.
+      messageId: `synthetic-tool-return-stream-${toolCallId}`,
       stdout: "",
       stderr: "",
       dirty: false,

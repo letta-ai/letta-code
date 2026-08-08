@@ -11,6 +11,10 @@ import {
   resolveListenerReconnectAuth,
   resolveListenerRegistrationOptions,
 } from "@/websocket/listener/auth";
+import {
+  __listenerIdentityTestUtils,
+  LISTENER_INSTANCE_ID_ENV,
+} from "@/websocket/listener/identity";
 
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
@@ -35,6 +39,7 @@ describe("listener auth", () => {
   const originalConsoleWarn = console.warn;
   const originalApiKey = process.env.LETTA_API_KEY;
   const originalBaseUrl = process.env.LETTA_BASE_URL;
+  const originalListenerInstanceId = process.env[LISTENER_INSTANCE_ID_ENV];
 
   let settings: ListenerSettings;
   const updateSettingsMock = mock(() => {});
@@ -62,6 +67,8 @@ describe("listener auth", () => {
 
     delete process.env.LETTA_API_KEY;
     delete process.env.LETTA_BASE_URL;
+    delete process.env[LISTENER_INSTANCE_ID_ENV];
+    __listenerIdentityTestUtils.resetCachedSpawnerIdentity();
     console.log = mock(() => {}) as typeof console.log;
     console.warn = mock(() => {}) as typeof console.warn;
   });
@@ -84,6 +91,12 @@ describe("listener auth", () => {
       delete process.env.LETTA_BASE_URL;
     } else {
       process.env.LETTA_BASE_URL = originalBaseUrl;
+    }
+    __listenerIdentityTestUtils.resetCachedSpawnerIdentity();
+    if (originalListenerInstanceId === undefined) {
+      delete process.env[LISTENER_INSTANCE_ID_ENV];
+    } else {
+      process.env[LISTENER_INSTANCE_ID_ENV] = originalListenerInstanceId;
     }
   });
 
@@ -206,5 +219,34 @@ describe("listener auth", () => {
     expect(first.apiKey).toBe("first-access-token");
     expect(second.apiKey).toBe("refreshed-access-token");
     expect(second.listenerInstanceId).toStartWith("listen-");
+  });
+
+  test("caches a spawner identity across registrations without exposing it to descendants", async () => {
+    settings = {
+      ...settings,
+      env: { LETTA_API_KEY: "spawner-access-token" },
+    };
+    process.env[LISTENER_INSTANCE_ID_ENV] = "desktop-primary:install-42";
+
+    const firstRegistration = resolveListenerRegistrationOptions(
+      "device-id",
+      "listener-name",
+      { allowInteractiveOAuth: false, surface: "server" },
+    );
+    // Consumption is synchronous—before authentication reaches its first
+    // await—so no concurrent hook/descendant can inherit the transport env.
+    expect(process.env[LISTENER_INSTANCE_ID_ENV]).toBeUndefined();
+    const first = await firstRegistration;
+    expect(first.listenerInstanceId).toBe("desktop-primary:install-42");
+
+    const second = await resolveListenerRegistrationOptions(
+      "device-id",
+      "different-display-name",
+      { allowInteractiveOAuth: false, surface: "server" },
+    );
+    // Re-registration retains the owner identity from process-local cache;
+    // it does not fall back to the new display-name-derived identity.
+    expect(second.listenerInstanceId).toBe("desktop-primary:install-42");
+    expect(process.env[LISTENER_INSTANCE_ID_ENV]).toBeUndefined();
   });
 });

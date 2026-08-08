@@ -1,13 +1,19 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import type { SkillSource } from "./agent/skills";
-import type { MessageChannelToolDiscoveryScope } from "./channels/message-tool";
-import type { ChannelTurnSource } from "./channels/types";
 import { isUsableDirectory } from "./helpers/usable-directory";
 
-export type RuntimePermissionMode = "standard" | "acceptEdits" | "unrestricted";
+export type RuntimePermissionMode =
+  | "standard"
+  | "acceptEdits"
+  | "unrestricted"
+  | "strict";
 
 export interface RuntimeContextSnapshot {
+  /** Listener transport connection that owns the current turn, when present. */
+  connectionId?: string | null;
+  /** Registered listener device that owns the current turn, when present. */
+  environmentDeviceId?: string | null;
   agentId?: string | null;
   agentName?: string | null;
   conversationId?: string | null;
@@ -22,17 +28,7 @@ export interface RuntimeContextSnapshot {
   workingDirectoryRecoveredFrom?: string | null;
   toolContextId?: string | null;
   permissionMode?: RuntimePermissionMode;
-  channelToolScope?: MessageChannelToolDiscoveryScope | null;
-  channelTurnSources?: ChannelTurnSource[];
 }
-
-export interface InheritedChannelContextPayload {
-  channelToolScope?: MessageChannelToolDiscoveryScope | null;
-  channelTurnSources?: ChannelTurnSource[];
-}
-
-export const LETTA_INHERITED_CHANNEL_CONTEXT_ENV =
-  "LETTA_INHERITED_CHANNEL_CONTEXT";
 
 const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();
 
@@ -51,9 +47,6 @@ export function runWithRuntimeContext<T>(
       ...snapshot,
       ...(snapshot.skillSources
         ? { skillSources: [...snapshot.skillSources] }
-        : {}),
-      ...(snapshot.channelTurnSources
-        ? { channelTurnSources: [...snapshot.channelTurnSources] }
         : {}),
     },
     fn,
@@ -78,9 +71,6 @@ export function updateRuntimeContext(
     update.skillSources && {
       skillSources: [...update.skillSources],
     },
-    update.channelTurnSources && {
-      channelTurnSources: [...update.channelTurnSources],
-    },
   );
 }
 
@@ -92,11 +82,12 @@ function getProcessWorkingDirectory(): string | null {
   }
 }
 
-function getFallbackWorkingDirectory(): string {
+export function getFallbackWorkingDirectory(): string {
   const fallback = [
     process.env.USER_CWD,
     getProcessWorkingDirectory(),
     homedir(),
+    tmpdir(),
     process.platform === "win32" ? undefined : "/",
   ].find(isUsableDirectory);
 

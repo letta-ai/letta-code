@@ -11,6 +11,15 @@ import {
   type ResolveLocalModSourcesOptions,
   resolveLocalModSources,
 } from "@/mods/mod-engine";
+import {
+  filterAvailableModPermissionsRegistry,
+  type ModPermissionDefinition,
+} from "@/mods/permission-registry";
+import {
+  filterAvailableModToolsRegistry,
+  type ModToolDefinition,
+} from "@/mods/tool-registry";
+import type { ModContext } from "@/mods/types";
 import { debugLog } from "@/utils/debug";
 
 const RUNTIME_DIAGNOSTICS_WRITE_DELAY_MS = 30_000;
@@ -34,6 +43,12 @@ export interface CreateModAdapterOptions extends CreateModEngineOptions {
 export interface ModAdapter {
   dispose: () => void;
   events: ModEvents;
+  getAvailablePermissions: (
+    context?: ModContext | null,
+  ) => Map<string, ModPermissionDefinition>;
+  getAvailableTools: (
+    context?: ModContext | null,
+  ) => Map<string, ModToolDefinition>;
   getBackend: () => Backend | undefined;
   getSnapshot: () => ModAdapterSnapshot;
   engine: ModEngine;
@@ -217,6 +232,18 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
       listeners.clear();
     },
     events,
+    getAvailablePermissions(context) {
+      return filterAvailableModPermissionsRegistry(
+        new Map(Object.entries(engine.getSnapshot().permissions)),
+        context,
+      );
+    },
+    getAvailableTools(context) {
+      return filterAvailableModToolsRegistry(
+        new Map(Object.entries(engine.getSnapshot().tools)),
+        context,
+      );
+    },
     getBackend,
     getSnapshot,
     engine,

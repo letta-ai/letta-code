@@ -10,6 +10,7 @@ import type {
   SlackAttachmentReadClient,
   SlackFileLike,
 } from "./attachment-types";
+import { hasSlackMention } from "./utils";
 
 const MAX_SLACK_ATTACHMENTS = 8;
 const MAX_SLACK_ATTACHMENT_BYTES = 20 * 1024 * 1024;
@@ -64,7 +65,7 @@ export type SlackThreadMessage = {
   attachments?: ChannelMessageAttachment[];
 };
 
-type SlackThreadHistoryEntryKind = "all" | "bot";
+type SlackThreadHistoryEntryKind = "all" | "bot" | "unrouted-bot";
 
 async function mapSlackThreadMessage(
   message: SlackRepliesPageMessage,
@@ -327,6 +328,7 @@ function resolveAttachmentKind(
 async function fetchWithSlackAuth(
   url: string,
   token: string,
+  signal?: AbortSignal,
 ): Promise<Response> {
   const parsed = assertSlackFileUrl(url);
   const authHeaders = { Authorization: `Bearer ${token}` };
@@ -334,6 +336,7 @@ async function fetchWithSlackAuth(
   const initial = await fetch(parsed.href, {
     headers: authHeaders,
     redirect: "manual",
+    ...(signal ? { signal } : {}),
   });
 
   if (initial.status < 300 || initial.status >= 400) {
@@ -350,10 +353,14 @@ async function fetchWithSlackAuth(
     return fetch(resolved.href, {
       headers: authHeaders,
       redirect: "follow",
+      ...(signal ? { signal } : {}),
     });
   }
 
-  return fetch(resolved.href, { redirect: "follow" });
+  return fetch(resolved.href, {
+    redirect: "follow",
+    ...(signal ? { signal } : {}),
+  });
 }
 
 function resolveSlackAttachmentFileName(params: {
@@ -418,6 +425,7 @@ export async function materializeSlackAttachment(params: {
   sourceThreadId?: string | null;
   maxBytes?: number;
   transcribeVoice?: boolean;
+  signal?: AbortSignal;
 }): Promise<ChannelMessageAttachment> {
   if (
     params.maxBytes !== undefined &&
@@ -438,16 +446,16 @@ export async function materializeSlackAttachment(params: {
     );
   }
 
-  const response = await fetchWithSlackAuth(url, params.token).catch(
-    (error) => {
-      throw new SlackAttachmentDownloadError(
-        "download_failed",
-        error instanceof Error
-          ? error.message
-          : "Slack attachment fetch failed.",
-      );
-    },
-  );
+  const response = await fetchWithSlackAuth(
+    url,
+    params.token,
+    params.signal,
+  ).catch((error) => {
+    throw new SlackAttachmentDownloadError(
+      "download_failed",
+      error instanceof Error ? error.message : "Slack attachment fetch failed.",
+    );
+  });
   if (!response.ok) {
     throw new SlackAttachmentDownloadError(
       "download_failed",
@@ -499,6 +507,7 @@ export async function materializeSlackAttachment(params: {
     fileName,
     body: response.body,
     maxBytes: params.maxBytes,
+    signal: params.signal,
   });
 
   const kind = resolveAttachmentKind(mimeType);
@@ -804,6 +813,9 @@ export async function resolveSlackThreadHistory(
     currentMessageTs?: string;
     limit?: number;
     include?: SlackThreadHistoryEntryKind;
+    excludeBotId?: string | null;
+    routedBotUserId?: string | null;
+    acceptMentionedBots?: boolean;
   } & SlackThreadAttachmentParams,
 ): Promise<SlackThreadMessage[]> {
   const maxMessages = params.limit ?? 20;
@@ -827,16 +839,37 @@ export async function resolveSlackThreadHistory(
       })) as SlackRepliesPage;
 
       for (const message of response.messages ?? []) {
-        if (params.include === "bot" && !isNonEmptyString(message.bot_id)) {
-          continue;
-        }
-        if (!hasSlackThreadMessageContent(message, attachmentOptions)) {
-          continue;
-        }
         if (params.currentMessageTs && message.ts === params.currentMessageTs) {
           continue;
         }
         if (message.ts === params.threadTs) {
+          continue;
+        }
+
+        const isBotMessage = isNonEmptyString(message.bot_id);
+        if (params.include === "unrouted-bot") {
+          if (!isBotMessage) {
+            retained.length = 0;
+            continue;
+          }
+          if (
+            isNonEmptyString(params.excludeBotId) &&
+            message.bot_id === params.excludeBotId
+          ) {
+            continue;
+          }
+          if (
+            params.acceptMentionedBots === true &&
+            hasSlackMention(message.text ?? "", params.routedBotUserId ?? null)
+          ) {
+            retained.length = 0;
+            continue;
+          }
+        }
+        if (params.include === "bot" && !isNonEmptyString(message.bot_id)) {
+          continue;
+        }
+        if (!hasSlackThreadMessageContent(message, attachmentOptions)) {
           continue;
         }
 

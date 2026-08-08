@@ -1,11 +1,24 @@
 // Interactive tool capability policy shared across UI/headless/SDK-compatible paths.
 // This avoids scattering name-based checks throughout approval handling.
 
+import type { ToolName } from "./tool-definitions";
+
 const INTERACTIVE_APPROVAL_TOOLS = new Set(["AskUserQuestion"]);
 
 export type InteractiveApprovalKind = "ask_user_question";
 
-const RUNTIME_USER_INPUT_TOOLS = new Set(["AskUserQuestion"]);
+/**
+ * Tools that prompt the human for input mid-turn, as toolset names. Headless
+ * clients (SDK sessions, automation) can exclude these from the turn's
+ * toolset via `exclude_interactive_tools` on create_message payloads.
+ */
+export const INTERACTIVE_USER_INPUT_TOOL_NAMES = [
+  "AskUserQuestion",
+] as const satisfies readonly ToolName[];
+
+const RUNTIME_USER_INPUT_TOOLS = new Set<string>(
+  INTERACTIVE_USER_INPUT_TOOL_NAMES,
+);
 
 const HEADLESS_AUTO_ALLOW_TOOLS = new Set<string>();
 

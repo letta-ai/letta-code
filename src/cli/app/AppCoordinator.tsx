@@ -1,5 +1,4 @@
 // src/cli/app/AppCoordinator.tsx
-
 import { join } from "node:path";
 import type {
   AgentState,
@@ -30,10 +29,12 @@ import {
   getModelInfoForLlmConfig,
   getModelShortName,
   type ModelReasoningEffort,
+  type ModelReasoningSelection,
 } from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality-presets";
 import { shouldRecommendDefaultPrompt } from "@/agent/prompt-assets";
 import { reconcileExistingAgentState } from "@/agent/reconcile-existing-agent-state";
+import { prefetchModelCatalog } from "@/agent/remote-model-catalog";
 import { recordSessionEnd } from "@/agent/session-history";
 import { SessionStats } from "@/agent/stats";
 import {
@@ -106,7 +107,6 @@ import {
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
-  queuePendingReflectionWorktreeReminders,
 } from "@/cli/helpers/reflection-launcher";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
@@ -141,13 +141,15 @@ import {
   useLocalModAdapter,
 } from "@/cli/mods/use-local-mod-adapter";
 import {
+  getIntendedCronOccurrence,
   getTask,
-  handleMissedOneShot,
+  handleTaskPreflight,
   isProcessAlive,
   readCronFile,
   safeAppendCronRunLogForTask,
   shouldFireTask,
   updateTask,
+  wrapCronPrompt,
 } from "@/cron";
 import { experimentManager } from "@/experiments/manager";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
@@ -226,6 +228,7 @@ import {
   inferReasoningEffortFromModelPreset,
   mapHandleToLlmConfigPatch,
   providerTypeFromModelSettings,
+  reasoningEffortLlmConfigPatch,
 } from "./model-config";
 import { saveLastSessionBeforeExit } from "./session";
 import type {
@@ -234,6 +237,7 @@ import type {
   QueuedOverlayAction,
   StaticItem,
 } from "./types";
+import { closeMcp, useAgentMcpServers } from "./use-agent-mcp-servers";
 import { useApprovalFlow } from "./use-approval-flow";
 import { useBashHandlers } from "./use-bash-handlers";
 import { useConfigurationHandlers } from "./use-configuration-handlers";
@@ -303,7 +307,7 @@ function buildStartupCommandHints(options: {
   }
 
   if (!hasCloudCredentials) {
-    onboardingHints.push("→ **/login**     sign in to Constellation");
+    onboardingHints.push("→ **/login**     sign in with Letta");
   }
 
   const dedupedHints: string[] = [];
@@ -350,6 +354,7 @@ export function App({
   startupApprovals = [],
   messageHistory = [],
   resumedExistingConversation = false,
+  startupConversationTitleEligible = false,
   tokenStreaming = false,
   reasoningTabCycleEnabled: initialReasoningTabCycleEnabled = false,
   showCompactions = false,
@@ -362,9 +367,12 @@ export function App({
   systemInfoReminderEnabled = true,
   modsDisabled = false,
 }: AppProps) {
-  // Warm the model-access cache in the background so /model is fast on first open.
+  // Warm the model-access cache in the background so /model is fast on first
+  // open, and refresh the curated catalog from the cloud endpoint (bundled
+  // models.json stays as the offline/failure fallback).
   useEffect(() => {
     prefetchAvailableModelHandles();
+    prefetchModelCatalog();
   }, []);
 
   const [hasAvailableLocalModels, setHasAvailableLocalModels] = useState(
@@ -395,7 +403,6 @@ export function App({
 
   const projectDirectory = process.cwd();
 
-  // Track current conversation (always created fresh on startup)
   const [conversationId, setConversationId] = useState(initialConversationId);
   const [conversationSummary, setConversationSummary] = useState<string | null>(
     null,
@@ -408,7 +415,6 @@ export function App({
     telemetry.setCurrentAgentId(agentId);
   }, [agentId]);
 
-  // Keep a ref to the current conversationId for use in callbacks
   const conversationIdRef = useRef(conversationId);
   useEffect(() => {
     conversationIdRef.current = conversationId;
@@ -767,9 +773,9 @@ export function App({
   const [modelReasoningPrompt, setModelReasoningPrompt] = useState<{
     modelLabel: string;
     initialModelId: string;
-    initialEffort?: ModelReasoningEffort;
+    initialEffort?: ModelReasoningSelection;
     options: Array<{
-      effort: ModelReasoningEffort;
+      effort: ModelReasoningSelection;
       modelId: string;
       selection?: ModelSelectorSelection;
     }>;
@@ -1193,7 +1199,6 @@ export function App({
     [],
   );
 
-  // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
 
   const sharedReminderStateRef = useRef<SharedReminderState>(
@@ -1210,9 +1215,8 @@ export function App({
     new Set<string>(),
   );
 
-  // Only brand-new conversations without an explicit title should auto-generate one.
   const shouldAutoGenerateConversationTitleRef = useRef(
-    !resumedExistingConversation,
+    !resumedExistingConversation || startupConversationTitleEligible,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
   const shouldAutoGenerateConversationDescriptionRef = useRef(
@@ -1535,11 +1539,11 @@ export function App({
       for (const task of activeTasks) {
         if (firedThisMinute.has(task.id)) continue;
 
-        // Handle missed one-shots
-        if (handleMissedOneShot(task, now)) continue;
+        if (handleTaskPreflight(task, now)) continue;
 
         if (shouldFireTask(task, now)) {
           firedThisMinute.add(task.id);
+          const intendedOccurrence = getIntendedCronOccurrence(task, now);
 
           // Apply jitter delay for recurring tasks (same as WS scheduler)
           const jitterMs = task.recurring ? task.jitter_offset_ms : 0;
@@ -1549,17 +1553,12 @@ export function App({
             const freshTask = getTask(taskId);
             if (!freshTask || freshTask.status !== "active") return;
 
-            // Format as plain text for the TUI — no <system-reminder> wrapper
-            // (the WS scheduler uses wrapCronPrompt with XML, but the TUI
-            // renders user messages as-is, so XML shows up raw)
-            const text = [
-              `Scheduled task "${freshTask.name}" is firing.`,
-              freshTask.recurring
-                ? `This is fire #${freshTask.fire_count + 1} (cron: ${freshTask.cron}).`
-                : `This is a one-off scheduled task.`,
-              "",
-              freshTask.prompt,
-            ].join("\n");
+            const schedulerNow = new Date();
+            // Use the same user-visible prompt formatter as the WS scheduler.
+            const text = wrapCronPrompt(freshTask, {
+              intendedOccurrence,
+              schedulerNow,
+            });
             addToMessageQueue({
               kind: "user",
               text,
@@ -1568,7 +1567,7 @@ export function App({
             });
 
             // Update task state
-            const nowIso = new Date().toISOString();
+            const nowIso = schedulerNow.toISOString();
             if (freshTask.recurring) {
               updateTask(freshTask.id, (t) => {
                 t.last_fired_at = nowIso;
@@ -1585,7 +1584,7 @@ export function App({
 
             safeAppendCronRunLogForTask(freshTask, {
               status: "ok",
-              runAtMs: now.getTime(),
+              runAtMs: schedulerNow.getTime(),
               scheduledFor: freshTask.scheduled_for,
               firedAt: nowIso,
             });
@@ -1718,9 +1717,6 @@ export function App({
     );
   }, [isExecutingTool]);
 
-  // Ref indirection: refreshDerived is declared later in the component but
-  // appendTaskNotificationEvents needs to call it. Using a ref avoids a
-  // forward-declaration error while keeping the deps array empty.
   const refreshDerivedRef = useRef<(() => void) | null>(null);
 
   const appendTaskNotificationEvents = useCallback(
@@ -1733,8 +1729,11 @@ export function App({
       ),
     [],
   );
+  const appendModNotification = useCallback(
+    (message: string) => appendTaskNotificationEvents([message]),
+    [appendTaskNotificationEvents],
+  );
 
-  // Consume queued messages for appending to tool results (clears queue).
   // consumeItems fires onDequeued → setQueueDisplay(prev => prev.slice(n))
   // so no direct setQueueDisplay call is needed here.
   const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
@@ -2348,6 +2347,7 @@ export function App({
   const modAdapter = useLocalModAdapter(modContext, {
     agentModsDirectory,
     disabled: modsDisabled,
+    onNotification: appendModNotification,
   });
 
   useEffect(() => {
@@ -2381,11 +2381,10 @@ export function App({
     );
   }, [agentId, agentName, modAdapter]);
 
-  // Keep buffers in sync with agentId for server-side tool hooks
   useEffect(() => {
     buffersRef.current.agentId = agentState?.id;
   }, [agentState?.id]);
-
+  useAgentMcpServers(agentState?.id);
   // Cache precomputed diffs from approval dialogs for tool return rendering
   // Key: toolCallId or "toolCallId:filePath" for Patch operations
   const precomputedDiffsRef = useRef<Map<string, AdvancedDiffSuccess>>(
@@ -3021,9 +3020,11 @@ export function App({
                 return withoutMemfs.replace(/\r\n/g, "\n").trim();
               };
               const sysNorm = normalize(agentSystem);
-              const { SYSTEM_PROMPTS, SYSTEM_PROMPT } = await import(
-                "@/agent/prompt-assets"
-              );
+              const {
+                getSystemPromptVariantContents,
+                SYSTEM_PROMPTS,
+                SYSTEM_PROMPT,
+              } = await import("@/agent/prompt-assets");
 
               // Best-effort preset detection.
               // Exact match is ideal, but allow prefix-matches because the stored
@@ -3039,14 +3040,10 @@ export function App({
                 );
               };
 
-              const promptMatches = (prompt: {
-                content: string;
-                memfsContent?: string;
-              }): boolean =>
-                contentMatches(prompt.content) ||
-                (prompt.memfsContent
-                  ? contentMatches(prompt.memfsContent)
-                  : false);
+              const promptMatches = (
+                prompt: (typeof SYSTEM_PROMPTS)[number],
+              ): boolean =>
+                getSystemPromptVariantContents(prompt).some(contentMatches);
 
               const defaultPrompt = SYSTEM_PROMPTS.find(
                 (p) => p.id === "default",
@@ -3411,9 +3408,10 @@ export function App({
             effectiveModelHandle,
             providerTypeFromModelSettings(resolvedConversationModelSettings),
           ),
-          ...(typeof reasoningEffort === "string"
-            ? { reasoning_effort: reasoningEffort }
-            : {}),
+          ...reasoningEffortLlmConfigPatch(
+            resolvedConversationModelSettings,
+            agentState.llm_config,
+          ),
           ...(typeof resolvedConversationContextWindowLimit === "number"
             ? { context_window: resolvedConversationContextWindowLimit }
             : {}),
@@ -3471,11 +3469,16 @@ export function App({
 
       try {
         const { updateConversationLLMConfig } = await import("@/agent/modify");
+        // The preserved window rides as contextWindowOverride so it survives
+        // on local backends too (local catalog resolution ignores
+        // updateArgs.context_window); presets stay in updateArgs. LET-9786.
         await updateConversationLLMConfig(
           targetConversationId,
           carryover.modelHandle,
           carryover.updateArgs,
-          { avoidOverwritingExistingContextWindow: true },
+          carryover.contextWindowOverride !== undefined
+            ? { contextWindowOverride: carryover.contextWindowOverride }
+            : undefined,
         );
       } catch (error) {
         debugWarn(
@@ -3692,11 +3695,6 @@ export function App({
         reflectionSettings,
         reminderState: sharedReminderStateRef.current,
         contextTracker: contextTrackerRef.current,
-        onCompaction: () =>
-          queuePendingReflectionWorktreeReminders({
-            agentId: reflectionAgentId,
-            conversationId: conversationIdRef.current ?? "default",
-          }),
         launch: async (triggerSource) => {
           if (experimentManager.isEnabled("reflection_arena")) {
             const arenaResult = await launchReflectionArena({
@@ -3711,7 +3709,6 @@ export function App({
                 parentAgentName: agentName,
                 parentAgentDescription: agentDescription,
                 surface: "letta_code_tui",
-                model: currentModelId,
               },
               onReady: (message, readyRun) => {
                 appendTaskNotificationEvents([message]);
@@ -3731,8 +3728,6 @@ export function App({
             conversationId: conversationIdRef.current ?? "default",
             memfsEnabled: isActiveMemfsEnabled(reflectionAgentId),
             triggerSource,
-            skipPendingWorktreeReminderScan:
-              triggerSource === "compaction-event",
             reflectionSettings,
             description: AUTO_REFLECTION_DESCRIPTION,
             completionConversationId: () => conversationIdRef.current,
@@ -3747,7 +3742,6 @@ export function App({
               parentAgentName: agentName,
               parentAgentDescription: agentDescription,
               surface: "letta_code_tui",
-              model: currentModelId,
             },
           });
           return result.launched;
@@ -3761,12 +3755,7 @@ export function App({
         }`,
       );
     }
-  }, [
-    agentName,
-    agentDescription,
-    currentModelId,
-    appendTaskNotificationEvents,
-  ]);
+  }, [agentName, agentDescription, appendTaskNotificationEvents]);
 
   const processConversation = useConversationLoop({
     abortControllerRef,
@@ -3953,7 +3942,7 @@ export function App({
       // Non-critical, don't fail the exit
     }
 
-    // Flush telemetry before exit
+    await closeMcp();
     await telemetry.flush();
 
     setShowExitStats(true);
@@ -4067,7 +4056,7 @@ export function App({
   const reasoningCycleInFlightRef = useRef(false);
   const reasoningCycleDesiredRef = useRef<{
     modelHandle: string;
-    effort: string;
+    effort: ModelReasoningSelection;
     modelId: string;
     providerType?: string | null;
     serviceTier?: string | null;
@@ -4457,6 +4446,7 @@ export function App({
     conversationIdRef,
     currentModelHandle,
     currentModelId,
+    currentReasoningEffort,
     currentToolset,
     isAgentBusy,
     llmConfig,

@@ -9,14 +9,23 @@ import {
   useCallback,
 } from "react";
 import {
+  getCachedAvailableModels,
+  getCachedModelReasoningCapabilities,
+  type ReasoningCapabilities,
+} from "@/agent/available-models";
+import {
   CHATGPT_FAST_SERVICE_TIER,
+  getByokOpenAIReasoningTierOptions,
   getChatGptFastRegistryHandleForModelHandle,
+  getReasoningTierOptionsForHandle,
   isLocalModelHandle,
-  type ModelReasoningEffort,
+  type ModelReasoningSelection,
   normalizeModelHandleForRegistry,
+  preservableContextWindow,
 } from "@/agent/model";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import { isOpenAICompatibleProxyEndpoint } from "@/utils/openai-endpoint";
 
 import {
   deriveReasoningEffort,
@@ -27,7 +36,7 @@ import type { CommandStarter } from "./types";
 
 type ReasoningCycleDesired = {
   modelHandle: string;
-  effort: string;
+  effort: ModelReasoningSelection;
   modelId: string;
   providerType?: string | null;
   serviceTier?: string | null;
@@ -36,6 +45,8 @@ type ReasoningCycleDesired = {
 function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   return (
     modelHandle.includes("claude-fable-5") ||
+    modelHandle.includes("claude-opus-5") ||
+    modelHandle.includes("claude-sonnet-5") ||
     modelHandle.includes("claude-opus-4-7") ||
     modelHandle.includes("claude-opus-4-8")
   );
@@ -169,6 +180,30 @@ export function resolveReasoningCycleTierLookupHandle(
   return `${registryProvider}/${modelName}`;
 }
 
+export function getReasoningCycleTierOptions(params: {
+  modelHandle: string;
+  tierLookupHandle: string;
+  contextWindow?: number;
+  openAICompatibleProxy: boolean;
+  reasoningCapabilities?: ReasoningCapabilities | null;
+}): Array<{ id: string; effort: ModelReasoningSelection }> {
+  const options = params.openAICompatibleProxy
+    ? getByokOpenAIReasoningTierOptions(params.modelHandle, {
+        registryHandle: params.tierLookupHandle,
+        contextWindow: params.contextWindow,
+        reasoningCapabilities: params.reasoningCapabilities,
+      })
+    : getReasoningTierOptionsForHandle(
+        params.tierLookupHandle,
+        params.contextWindow,
+        params.reasoningCapabilities,
+      );
+  return options.map((option) => ({
+    id: option.modelId,
+    effort: option.effort,
+  }));
+}
+
 export function useReasoningCycle(ctx: ReasoningCycleContext) {
   const {
     agentId,
@@ -240,6 +275,21 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           // active, reasoning tier changes must update the agent itself so the next
           // agent sync doesn't snap back.
           const isDefaultConversation = conversationIdRef.current === "default";
+          // Reasoning changes preserve the current context window (keeps 1M
+          // dual-listing variants and custom /context-limit values intact) by
+          // RE-SENDING it explicitly via contextWindowOverride — omitting the
+          // field would make the server re-derive it from the handle and
+          // clamp it to a legacy global default (128k). A current value that
+          // looks like that server clamp is NOT preserved, so poisoned agents
+          // heal instead of re-poisoning themselves. See LET-9786.
+          const preservedContextWindow = preservableContextWindow(
+            llmConfigRef.current?.context_window,
+            desired.modelHandle,
+          );
+          const preserveOptions =
+            preservedContextWindow !== undefined
+              ? { contextWindowOverride: preservedContextWindow }
+              : undefined;
           let conversationModelSettings:
             | AgentState["model_settings"]
             | null
@@ -260,7 +310,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
                   ? { service_tier: desired.serviceTier }
                   : {}),
               },
-              { avoidOverwritingExistingContextWindow: true },
+              preserveOptions,
             );
           } else {
             const { updateConversationLLMConfig } = await import(
@@ -278,7 +328,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
                   ? { service_tier: desired.serviceTier }
                   : {}),
               },
-              { avoidOverwritingExistingContextWindow: true },
+              preserveOptions,
             );
             conversationModelSettings = (
               updatedConversation as {
@@ -335,7 +385,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
                   : conversationModelSettings,
               ),
             ),
-            reasoning_effort: resolvedReasoningEffort as ModelReasoningEffort,
+            reasoning_effort: resolvedReasoningEffort,
             ...(typeof resolvedConversationContextWindowLimit === "number"
               ? { context_window: resolvedConversationContextWindowLimit }
               : {}),
@@ -350,11 +400,13 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           reasoningCyclePatchedAgentStateRef.current = false;
 
           const display =
-            desired.effort === "medium"
-              ? "med"
-              : desired.effort === "minimal"
-                ? "low"
-                : desired.effort;
+            desired.effort === null
+              ? "default"
+              : desired.effort === "medium"
+                ? "med"
+                : desired.effort === "minimal"
+                  ? "low"
+                  : desired.effort;
           cmd.finish(`Reasoning set to ${display}`, true);
         } catch (error) {
           const errorDetails = formatErrorDetails(error, agentId);
@@ -437,22 +489,32 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       if (!modelHandle) return;
 
       // Derive current effort from effective model settings (conversation override aware)
-      const currentEffort =
-        deriveReasoningEffort(modelSettingsForEffort, current) ?? "none";
+      const currentEffort = deriveReasoningEffort(
+        modelSettingsForEffort,
+        current,
+      );
       const tierLookupHandle = resolveReasoningCycleTierLookupHandle(
         modelHandle,
         modelSettingsForEffort,
       );
 
-      const { getReasoningTierOptionsForHandle } = await import(
-        "@/agent/model"
+      const availableModel = getCachedAvailableModels()?.find(
+        (model) => model.handle === modelHandle,
       );
-      const tiers = getReasoningTierOptionsForHandle(tierLookupHandle).map(
-        (option) => ({
-          id: option.modelId,
-          effort: option.effort,
-        }),
-      );
+      const openAICompatibleProxy =
+        availableModel?.openAICompatibleProxy === true ||
+        (current?.provider_category === "byok" &&
+          providerType === "openai" &&
+          isOpenAICompatibleProxyEndpoint(current.model_endpoint));
+      const capabilities = getCachedModelReasoningCapabilities();
+      const tiers = getReasoningCycleTierOptions({
+        modelHandle,
+        tierLookupHandle,
+        contextWindow: current?.context_window ?? undefined,
+        openAICompatibleProxy,
+        reasoningCapabilities:
+          capabilities?.get(modelHandle) ?? capabilities?.get(tierLookupHandle),
+      });
 
       // Only enable cycling when there are multiple tiers for the same handle.
       if (tiers.length < 2) return;
@@ -463,7 +525,8 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
         ? "xhigh"
         : "max";
 
-      const order = [
+      const order: ModelReasoningSelection[] = [
+        null,
         "none",
         "minimal",
         "low",
@@ -472,7 +535,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
         "xhigh",
         "max",
       ];
-      const rank = (effort: string): number => {
+      const rank = (effort: ModelReasoningSelection): number => {
         const idx = order.indexOf(effort);
         return idx >= 0 ? idx : 999;
       };
@@ -515,17 +578,14 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
               ...prev,
               model_settings: {
                 ...ms,
-                reasoning: {
-                  ...(ms as { reasoning?: Record<string, unknown> }).reasoning,
-                  reasoning_effort: next.effort as
-                    | "none"
-                    | "minimal"
-                    | "low"
-                    | "medium"
-                    | "high"
-                    | "xhigh"
-                    | "max",
-                },
+                reasoning:
+                  next.effort === null
+                    ? null
+                    : {
+                        ...(ms as { reasoning?: Record<string, unknown> })
+                          .reasoning,
+                        reasoning_effort: next.effort,
+                      },
               },
             } as AgentState;
           }
@@ -533,7 +593,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
             ms.provider_type === "anthropic" ||
             ms.provider_type === "bedrock"
           ) {
-            // "xhigh" is distinct on Fable and Opus 4.7+; older Anthropic models map it to backend "max".
+            // Preserve distinct xhigh on supported newer Anthropic models; legacy models map it to backend max.
             return {
               ...prev,
               model_settings: {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,6 +73,26 @@ describe("resizeImageIfNeeded", () => {
     expect(metadata.width).toBe(120);
     expect(metadata.height).toBe(200);
     expect(metadata.orientation).toBeUndefined();
+  });
+
+  test("captures image worker stderr instead of writing it to the terminal", () => {
+    const imageResizeUrl = new URL("../utils/image-resize.ts", import.meta.url)
+      .href;
+    const script = `
+      import { resizeImageIfNeeded } from ${JSON.stringify(imageResizeUrl)};
+      try {
+        await resizeImageIfNeeded(Buffer.from("not an image"), "image/png");
+      } catch (error) {
+        process.stdout.write(error instanceof Error ? error.message : String(error));
+      }
+    `;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("unsupported image format");
   });
 
   test("rejects images whose input pixel count exceeds the safety limit", async () => {

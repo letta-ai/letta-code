@@ -5,7 +5,7 @@ import type {
   ApprovalDecision,
   ApprovalResult,
 } from "@/agent/approval-execution";
-import type { ChannelTurnSource } from "@/channels/types";
+import type { SkillSource } from "@/agent/skill-sources";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { ModAdapter } from "@/mods/mod-adapter";
@@ -20,6 +20,7 @@ import type { SharedReminderState } from "@/reminders/state";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
+  ClientToolsetConfig,
   ControlRequest,
   ExternalToolCallResult,
   LoopStatus,
@@ -27,7 +28,10 @@ import type {
   StopReasonType,
   WsProtocolCommand,
 } from "@/types/protocol_v2";
-import type { ActiveChannelTurn } from "./channel-turn-session";
+import type {
+  ServiceCommandRequest,
+  ServiceCommandResponse,
+} from "@/types/service-protocol";
 import type { ListenerTransport } from "./transport";
 import type { TurnLifecycle } from "./turn-lifecycle";
 
@@ -37,7 +41,7 @@ export interface StartListenerOptions {
   supportsSplitStatusChannels?: boolean;
   deviceId: string;
   connectionName: string;
-  onConnected: (connectionId: string) => void;
+  onConnected: (connectionId: string) => void | Promise<void>;
   onDisconnected: () => void;
   onNeedsReregister?: () => void;
   onError: (error: Error) => void;
@@ -61,11 +65,33 @@ export interface StartListenerOptions {
 
 export interface IncomingMessage {
   type: "message";
+  /**
+   * Transport connection that delivered this message. Queueing carries this
+   * identity through to the turn so approvals and other interactive requests
+   * return to the correct client even when multiple clients share a runtime.
+   */
+  connectionId?: ListenerConnectionId;
   agentId?: string;
   conversationId?: string;
-  channelTurnSources?: ChannelTurnSource[];
+  /** Queue this message as its own turn; never merge with other messages. */
+  noCoalesce?: boolean;
+  /**
+   * This turn's output is owned by an in-process caller (the OpenAI-compatible
+   * HTTP bridge), not by a relay WebSocket client. Such turns are consumed by
+   * in-process stream observers and returned in the HTTP response, so they must
+   * not block on a listener connection that may never attach.
+   *
+   * Ownership varies per turn, not per runtime: one app-server runtime serves
+   * both HTTP requests and real WebSocket clients, and relay-originated turns
+   * still need the reconnect wait that preserves their output.
+   */
+  processOwnedTurn?: boolean;
+  imageFailureMode?: "strict" | "drop";
   clientToolAllowlist?: string[];
+  clientToolset?: ClientToolsetConfig;
   externalToolScopeIds?: string[];
+  /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
+  excludeInteractiveTools?: boolean;
   messages: Array<
     (MessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;
@@ -85,14 +111,31 @@ export type ProcessQueuedTurn = (
   dequeuedBatch: DequeuedBatch,
 ) => Promise<void>;
 
+/**
+ * An outbound v2 protocol message as delivered to in-process stream
+ * observers: the pre-envelope message payload plus its resolved runtime
+ * scope (agent/conversation) and optional subagent attribution.
+ */
+export interface ObservedProtocolV2Message {
+  type: string;
+  runtime: { agent_id?: string | null; conversation_id?: string | null };
+  subagent_id?: string;
+  [key: string]: unknown;
+}
+
+export type ListenerStreamObserver = (
+  message: ObservedProtocolV2Message,
+) => void;
+
 export interface PendingExternalToolCall {
+  connectionId: ListenerConnectionId;
   resolve: (result: ExternalToolCallResult) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
 }
 
 export interface ModeChangePayload {
-  mode: "standard" | "acceptEdits" | "unrestricted";
+  mode: "standard" | "acceptEdits" | "unrestricted" | "strict";
 }
 
 export interface ChangeCwdMessage {
@@ -116,6 +159,8 @@ export type InvalidInputCommand = {
 export type ParsedServerMessage = ServerMessage | InvalidInputCommand;
 
 export type PendingApprovalResolver = {
+  requestId: string;
+  connectionIds: Set<ListenerConnectionId>;
   resolve: (response: ApprovalResponseBody) => void;
   reject: (reason: Error) => void;
   controlRequest?: ControlRequest;
@@ -142,9 +187,14 @@ export type ConversationRuntime = {
   key: string;
   agentId: string | null;
   conversationId: string;
-  activeChannelTurn: ActiveChannelTurn | null;
+  /** Runtime-scoped SDK override. Undefined uses the process defaults. */
+  skillSources: SkillSource[] | undefined;
+  /** Connection currently executing this conversation's turn, if client-owned. */
+  activeConnectionId: ListenerConnectionId | null;
   turnLifecycle: TurnLifecycle;
   messageQueue: Promise<void>;
+  /** Recently accepted ingress IDs, retained for idempotent client retries. */
+  acceptedInputDispositions: Map<string, "started" | "queued">;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
   readonly lastStopReason: StopReasonType | null;
@@ -166,6 +216,13 @@ export type ConversationRuntime = {
   currentToolsetPreference: ToolsetPreference;
   currentLoadedTools: string[];
   pendingApprovalBatchByToolCallId: Map<string, string>;
+  /**
+   * tool_call_id -> server-assigned id of the approval_request_message that
+   * carried the tool call. client_tool_start/end reuse this id instead of
+   * minting a phantom `message-*` id (LET-10608). Populated and cleared
+   * alongside pendingApprovalBatchByToolCallId.
+   */
+  approvalMessageIdByToolCallId: Map<string, string>;
   pendingInterruptedResults: Array<ApprovalResult> | null;
   pendingInterruptedContext: {
     agentId: string;
@@ -178,6 +235,46 @@ export type ConversationRuntime = {
   reminderState: SharedReminderState;
   /** Per-conversation tracker for compaction/reflection cadence. */
   contextTracker: ContextTracker;
+};
+
+export type ListenerConnectionId = string;
+
+/**
+ * Explicit destination for one outbound listener message.
+ *
+ * This mirrors Codex's OutgoingEnvelope split. Scoped notifications never
+ * fall back to every connected client: ToSubscribers with an empty subscriber
+ * set is intentionally a no-op.
+ */
+export type ListenerMessageRouting =
+  | {
+      type: "ToConnection";
+      connectionId: ListenerConnectionId;
+    }
+  | {
+      type: "ToSubscribers";
+    }
+  | {
+      type: "Broadcast";
+    };
+
+/**
+ * State owned by one transport connection.
+ *
+ * This mirrors Codex's ConnectionState: the process runtime owns services and
+ * conversations, while each client owns its writer, cancellation handle,
+ * initialization state, subscriptions, request resources, and event sequence.
+ */
+export type ListenerConnectionState = {
+  id: ListenerConnectionId;
+  ordinal: number;
+  writer: ListenerTransport;
+  streamWriter: ListenerTransport | null;
+  cancellation: AbortController;
+  initialized: boolean;
+  subscriptions: Set<string>;
+  eventSeqCounter: number;
+  options: StartListenerOptions;
 };
 
 export type ListenerRuntime = {
@@ -197,9 +294,33 @@ export type ListenerRuntime = {
   hasSuccessfulConnection: boolean;
   /** True once the WS has connected at least once. Never reset to false. */
   everConnected: boolean;
-  /** Provider-only local mod adapter for desktop/listener surfaces. */
+  /** Global local mod adapter for desktop/listener surfaces. */
   modAdapter?: ModAdapter | undefined;
+  /** Isolated agent-scoped adapters loaded from each agent's MemFS. */
+  agentModAdapters?: Map<string, ModAdapter>;
+  /** Coalesces concurrent first-loads for one agent's scoped adapter. */
+  agentModAdapterLoads?: Map<string, Promise<ModAdapter | null>>;
   sessionId: string;
+  /** Monotonic allocator used for deterministic connection ordering. */
+  nextConnectionOrdinal: number;
+  /** All currently open listener transports, keyed by explicit identity. */
+  connections: Map<ListenerConnectionId, ListenerConnectionState>;
+  /** Reverse index for Codex-style conversation subscriptions. */
+  connectionIdsByRuntimeKey: Map<string, Set<ListenerConnectionId>>;
+  /** Process-scoped transport used by scheduler/channel/background services. */
+  processTransport: ListenerTransport | null;
+  /** Process-wide services are installed once, regardless of client count. */
+  processServicesStarted: boolean;
+  /** Invalidates process-service attempts that outlive an outbound connection. */
+  processServicesGeneration: number;
+  /** Coalesces concurrent connection attempts while process services initialize. */
+  processServicesReady: Promise<void> | null;
+  /** Generation owned by processServicesReady, or null when no attempt is active. */
+  processServicesReadyGeneration: number | null;
+  serviceCommandHandler:
+    | ((command: ServiceCommandRequest) => Promise<ServiceCommandResponse>)
+    | null;
+  serviceCommandTypes: Set<WsProtocolCommand["type"]>;
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {
@@ -210,11 +331,15 @@ export type ListenerRuntime = {
   reminderState: SharedReminderState;
   bootWorkingDirectory: string;
   workingDirectoryByConversation: Map<string, string>;
+  /** Monotonic signal for cwd changes and rejected stale cwd requests. */
+  workingDirectoryRevision?: number;
   /** Per-conversation permission mode state. Mirrors workingDirectoryByConversation. */
   permissionModeByConversation: Map<
     string,
     import("@/websocket/listener/permission-mode").ConversationPermissionModeState
   >;
+  /** Per-conversation skill overrides survive idle ConversationRuntime eviction. */
+  skillSourcesByConversation: Map<string, SkillSource[]>;
   /** Per-conversation reminder state survives ConversationRuntime eviction. */
   reminderStateByConversation: Map<string, SharedReminderState>;
   /** Per-conversation context tracker survives ConversationRuntime eviction. */
@@ -225,21 +350,20 @@ export type ListenerRuntime = {
   connectionId: string | null;
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
-  approvalRuntimeKeyByRequestId: Map<string, string>;
   /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */
   worktreeWatcherByConversation: Map<
     string,
     import("@/websocket/listener/worktree-watcher").WorktreeWatcherState
   >;
   /** Agent IDs whose memfs repo has been cloned/pulled this session. Concurrent callers coalesce on the same promise. */
-  memfsSyncedAgents: Map<string, Promise<void>>;
+  memfsSyncedAgents: Map<string, Promise<boolean>>;
   /** Agent IDs with an in-flight secrets refresh. Concurrent callers coalesce on the same promise. */
   secretsHydrationByAgent: Map<string, Promise<void>>;
   /** Per-agent timestamp of the last successful secrets hydration. Used for freshness-based caching. */
   secretsHydrationFreshnessByAgent: Map<string, number>;
   /** Agent IDs whose cached secrets are stale and must re-fetch on the next hydration call. */
   secretsDirtyAgents: Set<string>;
-  pendingExternalToolCalls?: Map<string, PendingExternalToolCall>;
+  pendingExternalToolCalls: Map<string, PendingExternalToolCall>;
   /**
    * Agent metadata warmups for listen-mode reminders. The cached promise is
    * reused while the listener stays connected so first-turn reminders can join
@@ -254,6 +378,13 @@ export type ListenerRuntime = {
     } | null>
   >;
   lastEmittedStatus: "idle" | "receiving" | "processing" | null;
+  /**
+   * In-process observers of outbound v2 protocol messages (e.g. the
+   * OpenAI-compat HTTP bridge). Each observer receives every emitted message
+   * with its resolved runtime scope, independent of socket routing, so
+   * protocol consumers can exist without owning a WebSocket.
+   */
+  streamObservers?: Set<ListenerStreamObserver>;
   /** Unsubscribe from subagent state store (set on socket open, cleared on close). */
   _unsubscribeSubagentState?: (() => void) | undefined;
   /** Unsubscribe from subagent stream events (set on socket open, cleared on close). */

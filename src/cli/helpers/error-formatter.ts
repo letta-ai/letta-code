@@ -19,7 +19,10 @@ export type ErrorDisplaySurface = "plain" | "terminal";
 export interface FormatErrorDetailsOptions {
   automaticRetry?: boolean;
   surface?: ErrorDisplaySurface;
+  unclassifiedFallback?: "generic";
 }
+
+const GENERIC_ERROR_MESSAGE = "The request failed. Please try again.";
 
 function formatConversationBusyErrorForDisplay(
   errorText: string,
@@ -696,6 +699,8 @@ export function formatErrorDetails(
 ): string {
   let runId: string | undefined;
   const surface = options.surface ?? "terminal";
+  const fallback = (raw: string): string =>
+    options.unclassifiedFallback === "generic" ? GENERIC_ERROR_MESSAGE : raw;
 
   // Check for OpenAI encrypted content org mismatch before anything else
   const encryptedContentMsg = checkEncryptedContentError(e);
@@ -823,6 +828,8 @@ export function formatErrorDetails(
           options,
         );
         if (conversationBusyMessage) return conversationBusyMessage;
+        if (options.unclassifiedFallback === "generic")
+          return fallback(baseError);
         return runId && agentId
           ? `${baseError}\n${createAgentLink(runId, agentId, conversationId, surface)}`
           : baseError;
@@ -846,18 +853,20 @@ export function formatErrorDetails(
         options,
       );
       if (conversationBusyMessage) return conversationBusyMessage;
+      if (options.unclassifiedFallback === "generic")
+        return fallback(baseError);
       return runId && agentId
         ? `${baseError}\n${createAgentLink(runId, agentId, conversationId, surface)}`
         : baseError;
     }
 
     // Fallback for APIError with just message
-    return e.message;
+    return fallback(e.message);
   }
 
   // Handle regular Error objects
   if (e instanceof Error) {
-    return e.message;
+    return fallback(e.message);
   }
 
   // Fallback for any other type (e.g., plain objects thrown by SDK or other code)
@@ -866,24 +875,24 @@ export function formatErrorDetails(
 
     // Check common error-like properties
     if (typeof obj.message === "string") {
-      return obj.message;
+      return fallback(obj.message);
     }
     if (typeof obj.error === "string") {
-      return obj.error;
+      return fallback(obj.error);
     }
     if (typeof obj.detail === "string") {
-      return obj.detail;
+      return fallback(obj.detail);
     }
 
     // Last resort: JSON stringify
     try {
-      return JSON.stringify(e, null, 2);
+      return fallback(JSON.stringify(e, null, 2));
     } catch {
-      return "[Error: Unable to serialize error object]";
+      return fallback("[Error: Unable to serialize error object]");
     }
   }
 
-  return String(e);
+  return fallback(String(e));
 }
 
 const DEFAULT_RETRY_MESSAGE =

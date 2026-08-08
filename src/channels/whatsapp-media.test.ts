@@ -58,13 +58,56 @@ describe("WhatsApp media helpers", () => {
     });
   });
 
-  test("rejects non-Ogg/Opus audio for outbound voice memos", () => {
-    expect(() =>
+  test("sends non-Ogg audio as document attachments", () => {
+    expect(
       buildWhatsAppOutboundPayload({
-        text: "",
+        text: "listen",
         mediaPath: "/tmp/voice.mp3",
       }),
-    ).toThrow(/Ogg\/Opus/);
+    ).toEqual({
+      document: { url: "/tmp/voice.mp3" },
+      fileName: "voice.mp3",
+      mimetype: "audio/mpeg",
+      caption: "listen",
+    });
+  });
+
+  test("uses policy-resolved canonical path, basename, and MIME", () => {
+    expect(
+      buildWhatsAppOutboundPayload(
+        {
+          text: "caption",
+          mediaPath: "/tmp/link.bin",
+          fileName: "fake.bin",
+        },
+        {
+          mediaPath: "/tmp/real/photo.png",
+          mimeType: "image/png",
+        },
+      ),
+    ).toEqual({
+      image: { url: "/tmp/real/photo.png" },
+      caption: "caption",
+    });
+
+    expect(
+      buildWhatsAppOutboundPayload(
+        {
+          text: "doc",
+          mediaPath: "/tmp/link.bin",
+          fileName: "fake.bin",
+        },
+        {
+          mediaPath: "/tmp/real/report.pdf",
+          mimeType: "application/pdf",
+        },
+      ),
+    ).toEqual({
+      document: { url: "/tmp/real/report.pdf" },
+      fileName: "report.pdf",
+      mimetype: "application/pdf",
+      caption: "doc",
+    });
   });
 
   test("returns attachment metadata without downloading when media is disabled", async () => {

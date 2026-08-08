@@ -1,0 +1,560 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { __testSetBackend } from "@/backend";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
+import { clearRegisteredPiProviders } from "@/backend/dev/pi-provider-mod-registry";
+import { clearModTools, getModToolDefinition } from "@/mods/tool-registry";
+import {
+  clearCapturedToolExecutionContexts,
+  executeTool,
+} from "@/tools/manager";
+import { prepareToolExecutionContextForScope } from "@/tools/toolset";
+import {
+  __listenerModAdapterTestUtils,
+  createListenerModAdapter,
+  disposeListenerModAdapter,
+  ensureListenerAgentModAdapter,
+} from "./mod-adapter";
+import { listListenerModCommands } from "./mod-commands";
+import type { ListenerRuntime } from "./types";
+
+const tempRoots: string[] = [];
+
+function createTempDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "letta-listener-agent-mod-"));
+  tempRoots.push(dir);
+  return dir;
+}
+
+function useFakeAgent(agentId: string): void {
+  __testSetBackend(
+    new FakeHeadlessBackend(
+      agentId,
+      undefined,
+      {},
+      {
+        modelHandle: "anthropic/claude-sonnet-4-6",
+      },
+    ),
+  );
+}
+
+beforeEach(() => {
+  __listenerModAdapterTestUtils.setEnsureMemfsSyncedForAgentForTests(
+    async () => true,
+  );
+});
+
+afterEach(() => {
+  __listenerModAdapterTestUtils.resetForTests();
+  clearModTools();
+  clearRegisteredPiProviders();
+  clearCapturedToolExecutionContexts();
+  __testSetBackend(null);
+  for (const dir of tempRoots.splice(0)) {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+describe("listener agent-scoped mods", () => {
+  test("isolates MemFS mods in turn snapshots and reloads them cleanly", async () => {
+    const root = createTempDir();
+    const globalModsDir = join(root, "global-mods");
+    const agentARoot = join(root, "agent-a-memory");
+    const agentBRoot = join(root, "agent-b-memory");
+    const agentAModsDir = join(agentARoot, "mods");
+    const agentBModsDir = join(agentBRoot, "mods");
+    mkdirSync(globalModsDir, { recursive: true });
+    mkdirSync(agentAModsDir, { recursive: true });
+    mkdirSync(agentBModsDir, { recursive: true });
+
+    writeFileSync(
+      join(globalModsDir, "shared.ts"),
+      `export default function activate(letta) {
+        letta.tools.register({
+          name: "shared_listener_tool",
+          description: "Available to every listener agent",
+          parameters: { type: "object", properties: {} },
+          requiresApproval: false,
+          run() { return "shared"; },
+        });
+      }`,
+    );
+    const writeAgentMod = (
+      directory: string,
+      toolName: string,
+      result: string,
+    ) => {
+      writeFileSync(
+        join(directory, "agent-tool.ts"),
+        `export default function activate(letta) {
+          letta.tools.register({
+            name: "${toolName}",
+            description: "Agent-scoped listener tool",
+            parameters: { type: "object", properties: {} },
+            requiresApproval: false,
+            run() { return "${result}"; },
+          });
+        }`,
+      );
+    };
+    writeAgentMod(agentAModsDir, "agent_a_only", "agent-a");
+    writeAgentMod(agentBModsDir, "agent_b_only", "agent-b");
+
+    execFileSync("git", ["init", "-q"], { cwd: agentARoot });
+    execFileSync("git", ["add", "mods/agent-tool.ts"], { cwd: agentARoot });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Listener Test",
+        "-c",
+        "user.email=listener@example.com",
+        "commit",
+        "-qm",
+        "initial mod",
+      ],
+      { cwd: agentARoot },
+    );
+
+    const globalAdapter = createListenerModAdapter({
+      cacheDirectory: join(root, "global-cache"),
+      globalModsDirectory: globalModsDir,
+    });
+    const agentAAdapter = createListenerModAdapter({
+      agentModsDirectory: agentAModsDir,
+      cacheDirectory: join(root, "agent-a-cache"),
+      includeGlobalMods: false,
+      registerCapabilitiesGlobally: false,
+    });
+    const agentBAdapter = createListenerModAdapter({
+      agentModsDirectory: agentBModsDir,
+      cacheDirectory: join(root, "agent-b-cache"),
+      includeGlobalMods: false,
+      registerCapabilitiesGlobally: false,
+    });
+    await Promise.all([
+      globalAdapter.reload(),
+      agentAAdapter.reload(),
+      agentBAdapter.reload(),
+    ]);
+
+    expect(getModToolDefinition("agent_a_only")).toBeUndefined();
+    expect(getModToolDefinition("agent_b_only")).toBeUndefined();
+    expect(
+      execFileSync("git", ["status", "--porcelain"], {
+        cwd: agentARoot,
+        encoding: "utf8",
+      }),
+    ).toBe("");
+
+    useFakeAgent("agent-a");
+    const preparedA = await prepareToolExecutionContextForScope({
+      agentId: "agent-a",
+      conversationId: "default",
+      clientToolAllowlist: [
+        "shared_listener_tool",
+        "agent_a_only",
+        "agent_b_only",
+      ],
+      modAdapters: [globalAdapter, agentAAdapter],
+    });
+    expect(preparedA.preparedToolContext.loadedToolNames).toEqual([
+      "shared_listener_tool",
+      "agent_a_only",
+    ]);
+    expect(
+      await executeTool(
+        "agent_a_only",
+        {},
+        {
+          toolContextId: preparedA.preparedToolContext.contextId,
+        },
+      ),
+    ).toMatchObject({ status: "success", toolReturn: "agent-a" });
+
+    useFakeAgent("agent-b");
+    const preparedB = await prepareToolExecutionContextForScope({
+      agentId: "agent-b",
+      conversationId: "default",
+      clientToolAllowlist: [
+        "shared_listener_tool",
+        "agent_a_only",
+        "agent_b_only",
+      ],
+      modAdapters: [globalAdapter, agentBAdapter],
+    });
+    expect(preparedB.preparedToolContext.loadedToolNames).toEqual([
+      "shared_listener_tool",
+      "agent_b_only",
+    ]);
+
+    writeAgentMod(agentAModsDir, "agent_a_reloaded", "agent-a-reloaded");
+    execFileSync("git", ["add", "mods/agent-tool.ts"], { cwd: agentARoot });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Listener Test",
+        "-c",
+        "user.email=listener@example.com",
+        "commit",
+        "-qm",
+        "reload mod",
+      ],
+      { cwd: agentARoot },
+    );
+    await agentAAdapter.reload();
+
+    useFakeAgent("agent-a");
+    const reloadedA = await prepareToolExecutionContextForScope({
+      agentId: "agent-a",
+      conversationId: "default",
+      clientToolAllowlist: ["agent_a_only", "agent_a_reloaded"],
+      modAdapters: [globalAdapter, agentAAdapter],
+    });
+    expect(reloadedA.preparedToolContext.loadedToolNames).toEqual([
+      "agent_a_reloaded",
+    ]);
+    expect(
+      execFileSync("git", ["status", "--porcelain"], {
+        cwd: agentARoot,
+        encoding: "utf8",
+      }),
+    ).toBe("");
+
+    globalAdapter.dispose();
+    agentAAdapter.dispose();
+    agentBAdapter.dispose();
+  });
+
+  test("waits for MemFS sync before caching the agent adapter", async () => {
+    const root = createTempDir();
+    const memoryRoot = join(root, "agent-memory");
+    const modsDirectory = join(memoryRoot, "mods");
+    mkdirSync(modsDirectory, { recursive: true });
+    const modPath = join(modsDirectory, "sync-state.js");
+    const writeTool = (toolName: string): void => {
+      writeFileSync(
+        modPath,
+        `export default function activate(letta) {
+          letta.tools.register({
+            name: "${toolName}",
+            description: "MemFS sync state",
+            parameters: { type: "object", properties: {} },
+            run() { return "${toolName}"; },
+          });
+        }`,
+      );
+    };
+    writeTool("stale_before_sync");
+    execFileSync("git", ["init", "-q"], { cwd: memoryRoot });
+    execFileSync("git", ["add", "mods/sync-state.js"], { cwd: memoryRoot });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Listener Test",
+        "-c",
+        "user.email=listener@example.com",
+        "commit",
+        "-qm",
+        "stale mod",
+      ],
+      { cwd: memoryRoot },
+    );
+
+    let resolveSync: ((succeeded: boolean) => void) | undefined;
+    let syncCalls = 0;
+    __listenerModAdapterTestUtils.setEnsureMemfsSyncedForAgentForTests(
+      async () => {
+        syncCalls += 1;
+        return new Promise<boolean>((resolve) => {
+          resolveSync = resolve;
+        });
+      },
+    );
+    __listenerModAdapterTestUtils.setAgentModsDirectoryResolverForTests(
+      () => modsDirectory,
+    );
+    __listenerModAdapterTestUtils.setAgentModCacheDirectoryResolverForTests(
+      () => join(root, "listener-cache"),
+    );
+    const listener = {
+      agentModAdapters: new Map(),
+      agentModAdapterLoads: new Map(),
+      bootWorkingDirectory: root,
+      sessionId: "listener-sync-order-test",
+    } as unknown as ListenerRuntime;
+
+    const firstLoad = ensureListenerAgentModAdapter(listener, "agent-a");
+    const joinedLoad = ensureListenerAgentModAdapter(listener, "agent-a");
+    expect(syncCalls).toBe(1);
+    expect(listener.agentModAdapters?.has("agent-a")).toBe(false);
+
+    writeTool("fresh_after_sync");
+    execFileSync("git", ["add", "mods/sync-state.js"], { cwd: memoryRoot });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Listener Test",
+        "-c",
+        "user.email=listener@example.com",
+        "commit",
+        "-qm",
+        "synced mod",
+      ],
+      { cwd: memoryRoot },
+    );
+    resolveSync?.(true);
+
+    const [firstAdapter, joinedAdapter] = await Promise.all([
+      firstLoad,
+      joinedLoad,
+    ]);
+    expect(firstAdapter).not.toBeNull();
+    expect(joinedAdapter).toBe(firstAdapter);
+    expect(
+      Object.keys(firstAdapter?.getSnapshot().registry.tools ?? {}),
+    ).toEqual(["fresh_after_sync"]);
+    expect(
+      execFileSync("git", ["status", "--porcelain"], {
+        cwd: memoryRoot,
+        encoding: "utf8",
+      }),
+    ).toBe("");
+
+    disposeListenerModAdapter(listener);
+  });
+
+  test("does not cache an adapter when shutdown cancels an in-flight sync", async () => {
+    const root = createTempDir();
+    const modsDirectory = join(root, "agent-memory", "mods");
+    mkdirSync(modsDirectory, { recursive: true });
+    writeFileSync(
+      join(modsDirectory, "cancelled.js"),
+      "export default function activate() {}",
+    );
+    let resolveSync: ((succeeded: boolean) => void) | undefined;
+    __listenerModAdapterTestUtils.setEnsureMemfsSyncedForAgentForTests(
+      async () =>
+        new Promise<boolean>((resolve) => {
+          resolveSync = resolve;
+        }),
+    );
+    __listenerModAdapterTestUtils.setAgentModsDirectoryResolverForTests(
+      () => modsDirectory,
+    );
+    const listener = {
+      agentModAdapters: new Map(),
+      agentModAdapterLoads: new Map(),
+      bootWorkingDirectory: root,
+      sessionId: "listener-sync-cancel-test",
+    } as unknown as ListenerRuntime;
+
+    const load = ensureListenerAgentModAdapter(listener, "agent-a");
+    disposeListenerModAdapter(listener);
+    resolveSync?.(true);
+
+    await expect(load).resolves.toBeNull();
+    expect(listener.agentModAdapters?.has("agent-a")).toBe(false);
+  });
+
+  test("uses distinct module identity for identical stateful agent mods", async () => {
+    const root = createTempDir();
+    const agentARoot = join(root, "agent-a-memory");
+    const agentBRoot = join(root, "agent-b-memory");
+    const agentADir = join(agentARoot, "mods");
+    const agentBDir = join(agentBRoot, "mods");
+    const cacheRoot = join(root, "listener-cache");
+    const source = `let activationCount = 0;
+      export default function activate(letta) {
+        activationCount += 1;
+        letta.tools.register({
+          name: "stateful_counter",
+          description: "Returns this module instance activation count",
+          parameters: { type: "object", properties: {} },
+          requiresApproval: false,
+          run() { return String(activationCount); },
+        });
+      }`;
+    const sourceTimestamp = new Date("2025-01-01T00:00:00.000Z");
+
+    for (const memoryRoot of [agentARoot, agentBRoot]) {
+      const modsDirectory = join(memoryRoot, "mods");
+      mkdirSync(modsDirectory, { recursive: true });
+      const modPath = join(modsDirectory, "stateful.js");
+      writeFileSync(modPath, source);
+      utimesSync(modPath, sourceTimestamp, sourceTimestamp);
+      execFileSync("git", ["init", "-q"], { cwd: memoryRoot });
+      execFileSync("git", ["add", "mods/stateful.js"], { cwd: memoryRoot });
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=Listener Test",
+          "-c",
+          "user.email=listener@example.com",
+          "commit",
+          "-qm",
+          "stateful mod",
+        ],
+        { cwd: memoryRoot },
+      );
+    }
+
+    __listenerModAdapterTestUtils.setAgentModsDirectoryResolverForTests(
+      (agentId) =>
+        agentId === "agent-a"
+          ? agentADir
+          : agentId === "agent-b"
+            ? agentBDir
+            : null,
+    );
+    __listenerModAdapterTestUtils.setAgentModCacheDirectoryResolverForTests(
+      (agentId) => join(cacheRoot, agentId),
+    );
+    const listener = {
+      agentModAdapters: new Map(),
+      agentModAdapterLoads: new Map(),
+      bootWorkingDirectory: root,
+      sessionId: "listener-module-isolation-test",
+    } as unknown as ListenerRuntime;
+
+    const [agentAAdapter, agentBAdapter] = await Promise.all([
+      ensureListenerAgentModAdapter(listener, "agent-a"),
+      ensureListenerAgentModAdapter(listener, "agent-b"),
+    ]);
+    expect(agentAAdapter).not.toBeNull();
+    expect(agentBAdapter).not.toBeNull();
+
+    useFakeAgent("agent-a");
+    const preparedA = await prepareToolExecutionContextForScope({
+      agentId: "agent-a",
+      conversationId: "default",
+      clientToolAllowlist: ["stateful_counter"],
+      modAdapters: agentAAdapter ? [agentAAdapter] : [],
+    });
+    useFakeAgent("agent-b");
+    const preparedB = await prepareToolExecutionContextForScope({
+      agentId: "agent-b",
+      conversationId: "default",
+      clientToolAllowlist: ["stateful_counter"],
+      modAdapters: agentBAdapter ? [agentBAdapter] : [],
+    });
+
+    expect(
+      await executeTool(
+        "stateful_counter",
+        {},
+        {
+          toolContextId: preparedA.preparedToolContext.contextId,
+        },
+      ),
+    ).toMatchObject({ status: "success", toolReturn: "1" });
+    expect(
+      await executeTool(
+        "stateful_counter",
+        {},
+        {
+          toolContextId: preparedB.preparedToolContext.contextId,
+        },
+      ),
+    ).toMatchObject({ status: "success", toolReturn: "1" });
+    expect(
+      execFileSync("git", ["status", "--porcelain"], {
+        cwd: agentARoot,
+        encoding: "utf8",
+      }),
+    ).toBe("");
+    expect(
+      execFileSync("git", ["status", "--porcelain"], {
+        cwd: agentBRoot,
+        encoding: "utf8",
+      }),
+    ).toBe("");
+
+    disposeListenerModAdapter(listener);
+  });
+
+  test("producer caches a separate adapter and command set per agent", async () => {
+    const root = createTempDir();
+    const agentADir = join(root, "agent-a", "mods");
+    const agentBDir = join(root, "agent-b", "mods");
+    mkdirSync(agentADir, { recursive: true });
+    mkdirSync(agentBDir, { recursive: true });
+    const writeIdentityMod = (directory: string, agent: "a" | "b"): void => {
+      writeFileSync(
+        join(directory, "identity.js"),
+        `export default function activate(letta) {
+          letta.tools.register({
+            name: "agent_${agent}_identity",
+            description: "Agent ${agent.toUpperCase()} identity",
+            parameters: { type: "object", properties: {} },
+            run() { return "${agent}"; },
+          });
+          letta.commands.register({
+            id: "agent-${agent}-command",
+            description: "Agent ${agent.toUpperCase()} command",
+            run() { return "${agent}"; },
+          });
+        }`,
+      );
+    };
+    writeIdentityMod(agentADir, "a");
+    writeIdentityMod(agentBDir, "b");
+    __listenerModAdapterTestUtils.setAgentModsDirectoryResolverForTests(
+      (agentId) =>
+        agentId === "agent-a"
+          ? agentADir
+          : agentId === "agent-b"
+            ? agentBDir
+            : null,
+    );
+    const listener = {
+      agentModAdapters: new Map(),
+      agentModAdapterLoads: new Map(),
+      bootWorkingDirectory: root,
+      sessionId: "listener-isolation-test",
+    } as unknown as ListenerRuntime;
+
+    const [agentAAdapter, duplicateAgentAAdapter, agentBAdapter] =
+      await Promise.all([
+        ensureListenerAgentModAdapter(listener, "agent-a"),
+        ensureListenerAgentModAdapter(listener, "agent-a"),
+        ensureListenerAgentModAdapter(listener, "agent-b"),
+      ]);
+
+    expect(agentAAdapter).not.toBeNull();
+    expect(duplicateAgentAAdapter).toBe(agentAAdapter);
+    expect(agentBAdapter).not.toBeNull();
+    expect(agentBAdapter).not.toBe(agentAAdapter);
+    expect(
+      Object.keys(agentAAdapter?.getSnapshot().registry.tools ?? {}),
+    ).toEqual(["agent_a_identity"]);
+    expect(
+      Object.keys(agentBAdapter?.getSnapshot().registry.tools ?? {}),
+    ).toEqual(["agent_b_identity"]);
+    expect(getModToolDefinition("agent_a_identity")).toBeUndefined();
+    expect(getModToolDefinition("agent_b_identity")).toBeUndefined();
+    expect(listListenerModCommands(listener, "agent-a")).toEqual([
+      { id: "agent-a-command", description: "Agent A command" },
+    ]);
+    expect(listListenerModCommands(listener, "agent-b")).toEqual([
+      { id: "agent-b-command", description: "Agent B command" },
+    ]);
+
+    disposeListenerModAdapter(listener);
+    expect(listener.agentModAdapters?.size).toBe(0);
+  });
+});

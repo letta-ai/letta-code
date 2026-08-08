@@ -14,6 +14,12 @@ import {
   policyFromSettings,
 } from "@/websocket/app-server-auth";
 import {
+  handleOpenAiCompatRequest,
+  isOpenAiCompatPath,
+} from "@/websocket/app-server-openai";
+import { closeOpenAiBridgeRuntime } from "@/websocket/app-server-openai-turn";
+import { getAppServerInfoResponse } from "@/websocket/listener/commands/app-server-info";
+import {
   attachOpenListenerSocket,
   createRuntime,
   stopRuntime,
@@ -27,38 +33,45 @@ import type { ListenerRuntime } from "@/websocket/listener/types";
 
 const DEFAULT_LISTEN_URL = "ws://127.0.0.1:0";
 const DEFAULT_WS_PATH = "/ws";
-const PENDING_STREAM_TIMEOUT_MS = 5000;
 // App-server liveness watchdog. Here letta-code is the WS *server* (the client
 // is the Desktop/relay), so we use protocol-level ws.ping()/pong rather than
 // the app-level ping/pong the outbound listener uses. Ping every 30s and reap
 // any client that has not ponged within 90s (3 missed pings). A half-open
 // client connection (Desktop sleep, network switch, NAT idle timeout) never
-// emits a `close` event, which would otherwise wedge the single-occupancy
-// control channel: new control connections are rejected with 1008 while the
-// zombie session still holds `activeSession`. Terminating the dead socket
-// fires its `close` handler, clears `activeSession`, and frees the channel for
-// a reconnecting client.
+// emits a `close` event. Terminating the dead socket fires its connection-
+// scoped cleanup without disturbing healthy peers.
 const APP_SERVER_HEARTBEAT_INTERVAL_MS = 30000;
 const APP_SERVER_PONG_TIMEOUT_MS = 90000;
 
-type AppServerChannel = "control" | "stream";
-
 export interface StartAppServerOptions {
   listen?: string;
+  /**
+   * Attach the server to an already-running listener runtime. The caller
+   * retains ownership of that runtime; closing the server only detaches its
+   * client sockets.
+   */
+  runtime?: ListenerRuntime;
   websocketAuth?: AppServerWebsocketAuthSettings;
   connectionName?: string;
+  /** Serve OpenAI-compatible models, Chat Completions, and Responses routes. */
+  openaiApi?: boolean;
   onListening?: (info: AppServerListeningInfo) => void;
   onLog?: (message: string) => void;
   /** @internal Test override for the liveness ping cadence (ms). */
   heartbeatIntervalMs?: number;
   /** @internal Test override for the pong timeout before a socket is reaped (ms). */
   pongTimeoutMs?: number;
+  /** @internal Test hook for simulating one half-open client. */
+  shouldRecordPong?: (connectionId: string) => boolean;
+  /** @internal Test override for listener runtime initialization. */
+  initializeRuntime?: (runtime: ListenerRuntime) => Promise<void>;
+  /** Whether attached clients may start process-owned services. Defaults true. */
+  startProcessServices?: boolean;
 }
 
 export interface AppServerListeningInfo {
   url: string;
   controlUrl: string;
-  streamUrl: string;
 }
 
 export interface AppServerHandle extends AppServerListeningInfo {
@@ -71,12 +84,6 @@ export interface ParsedAppServerListenUrl {
   path: string;
 }
 
-type ActiveAppServerSession = {
-  runtime: ListenerRuntime;
-  controlSocket: WebSocket;
-  streamSocket: WebSocket | null;
-};
-
 function getRequiredAddressInfo(server: Server): AddressInfo {
   const address = server.address();
   if (!address || typeof address === "string") {
@@ -85,14 +92,9 @@ function getRequiredAddressInfo(server: Server): AddressInfo {
   return address;
 }
 
-function getChannelUrl(
-  baseUrl: string,
-  path: string,
-  channel: AppServerChannel,
-): string {
+function getWebSocketUrl(baseUrl: string, path: string): string {
   const url = new URL(baseUrl);
   url.pathname = path;
-  url.searchParams.set("channel", channel);
   return url.toString();
 }
 
@@ -129,39 +131,6 @@ function getRequestUrl(request: IncomingMessage, host: string): URL {
   return new URL(request.url ?? "/", `http://${request.headers.host ?? host}`);
 }
 
-function getRequestChannel(url: URL): AppServerChannel | null {
-  const channel = url.searchParams.get("channel");
-  if (channel === null || channel === "" || channel === "control") {
-    return "control";
-  }
-  if (channel === "stream") {
-    return "stream";
-  }
-  return null;
-}
-
-function attachStreamSocket(
-  activeSession: ActiveAppServerSession,
-  socket: WebSocket,
-): void {
-  if (activeSession.streamSocket) {
-    closeSocket(socket, 1008, "stream channel already connected");
-    return;
-  }
-  activeSession.streamSocket = socket;
-  activeSession.runtime.streamSocket = socket;
-  activeSession.runtime.streamTransport = socket;
-  socket.on("close", () => {
-    if (activeSession.streamSocket === socket) {
-      activeSession.streamSocket = null;
-    }
-    if (activeSession.runtime.streamSocket === socket) {
-      activeSession.runtime.streamSocket = null;
-      activeSession.runtime.streamTransport = null;
-    }
-  });
-}
-
 export function parseAppServerListenUrl(
   listen: string = DEFAULT_LISTEN_URL,
 ): ParsedAppServerListenUrl {
@@ -190,64 +159,6 @@ export function parseAppServerListenUrl(
   return { host: normalizeListenHost(url.hostname), port, path };
 }
 
-async function startControlSession(params: {
-  socket: WebSocket;
-  streamSocket: WebSocket | null;
-  connectionName: string;
-  serverUrl: string;
-  onSessionCreated: (session: ActiveAppServerSession) => void;
-  onSessionClosed: () => void;
-}): Promise<ActiveAppServerSession> {
-  const existingRuntime = getActiveRuntime();
-  if (existingRuntime) {
-    stopRuntime(existingRuntime, true);
-    setActiveRuntime(null);
-  }
-
-  const runtime = createRuntime();
-  runtime.onWsEvent = undefined;
-  runtime.connectionId = `app-server-${crypto.randomUUID()}`;
-  runtime.connectionName = params.connectionName;
-  setActiveRuntime(runtime);
-  telemetry.setSurface(getListenerTelemetrySurface());
-  telemetry.init();
-
-  const startupReady = (async () => {
-    await reloadListenerModAdapter(runtime);
-    await loadTools();
-  })();
-
-  const activeSession: ActiveAppServerSession = {
-    runtime,
-    controlSocket: params.socket,
-    streamSocket: params.streamSocket,
-  };
-  params.onSessionCreated(activeSession);
-
-  await attachOpenListenerSocket(
-    runtime,
-    params.socket,
-    {
-      connectionId: runtime.connectionId ?? "app-server",
-      wsUrl: params.serverUrl,
-      supportsSplitStatusChannels: true,
-      deviceId: settingsManager.getOrCreateDeviceId(),
-      connectionName: params.connectionName,
-      onConnected: () => {},
-      onDisconnected: params.onSessionClosed,
-      onError: () => {},
-    },
-    {
-      streamSocket: params.streamSocket,
-      startHeartbeat: false,
-      startCronScheduler: true,
-      startupReady,
-    },
-  );
-
-  return activeSession;
-}
-
 export async function startAppServer(
   options: StartAppServerOptions = {},
 ): Promise<AppServerHandle> {
@@ -261,88 +172,83 @@ export async function startAppServer(
     );
   }
   const wss = new WebSocketServer({ noServer: true });
-  let activeSession: ActiveAppServerSession | null = null;
-  let pendingStreamSocket: WebSocket | null = null;
-  let pendingStreamTimeout: ReturnType<typeof setTimeout> | null = null;
   let resolvedInfo: AppServerListeningInfo | null = null;
+  let nextConnectionOrdinal = 0;
+  const runtime = options.runtime ?? createRuntime();
+  const ownsRuntime = options.runtime === undefined;
+  if (ownsRuntime) {
+    runtime.onWsEvent = undefined;
+    runtime.connectionId = "app-server";
+    runtime.connectionName = options.connectionName ?? hostname();
+  }
+  let startupReady: Promise<void> | null = null;
+  const getStartupReady = (): Promise<void> => {
+    if (!ownsRuntime) {
+      return Promise.resolve();
+    }
+    if (startupReady) {
+      return startupReady;
+    }
+    const attempt = (async () => {
+      if (options.initializeRuntime) {
+        await options.initializeRuntime(runtime);
+        return;
+      }
+      await reloadListenerModAdapter(runtime);
+      await loadTools();
+    })();
+    startupReady = attempt;
+    void attempt.catch(() => {
+      if (startupReady === attempt) {
+        startupReady = null;
+      }
+    });
+    return startupReady;
+  };
   // Tracks the last time each connected client responded to a ping. Seeded on
   // connection so a freshly-accepted socket gets a full grace window before the
   // watchdog can reap it. WeakMap so entries are GC'd with their sockets.
   const lastPongAtBySocket = new WeakMap<WebSocket, number>();
 
-  const clearPendingStream = (): WebSocket | null => {
-    if (pendingStreamTimeout) {
-      clearTimeout(pendingStreamTimeout);
-      pendingStreamTimeout = null;
-    }
-    const socket = pendingStreamSocket;
-    pendingStreamSocket = null;
-    return socket;
-  };
-
-  const handleWebSocketConnection = (
-    socket: WebSocket,
-    channel: AppServerChannel,
-  ): void => {
-    // Liveness tracking for the heartbeat watchdog. Applies to both control
-    // and stream sockets. The `ws` library auto-replies to ping frames with a
-    // pong, so any client whose TCP is still alive refreshes this timestamp.
+  const handleWebSocketConnection = (socket: WebSocket): void => {
+    const connectionId = `app-server-${nextConnectionOrdinal}`;
+    nextConnectionOrdinal += 1;
+    // The `ws` library auto-replies to ping frames with a pong, so any client
+    // whose TCP is still alive refreshes this connection-scoped timestamp.
     lastPongAtBySocket.set(socket, Date.now());
     socket.on("pong", () => {
-      lastPongAtBySocket.set(socket, Date.now());
+      if (options.shouldRecordPong?.(connectionId) !== false) {
+        lastPongAtBySocket.set(socket, Date.now());
+      }
     });
 
-    if (channel === "stream") {
-      if (activeSession) {
-        attachStreamSocket(activeSession, socket);
-        return;
-      }
-      if (pendingStreamSocket) {
-        closeSocket(socket, 1008, "stream channel already pending");
-        return;
-      }
-      pendingStreamSocket = socket;
-      pendingStreamTimeout = setTimeout(() => {
-        const staleSocket = clearPendingStream();
-        closeSocket(staleSocket, 1008, "control channel did not connect");
-      }, PENDING_STREAM_TIMEOUT_MS);
-      socket.on("close", () => {
-        if (pendingStreamSocket === socket) {
-          clearPendingStream();
-        }
-      });
-      socket.on("error", (error) => {
-        options.onLog?.(`App-server stream socket error: ${error.message}`);
-      });
-      return;
-    }
-
-    if (activeSession) {
-      closeSocket(socket, 1008, "control channel already connected");
-      return;
-    }
-
-    const streamSocket = clearPendingStream();
-    void startControlSession({
+    void attachOpenListenerSocket(
+      runtime,
       socket,
-      streamSocket,
-      connectionName: options.connectionName ?? hostname(),
-      serverUrl: resolvedInfo?.url ?? options.listen ?? DEFAULT_LISTEN_URL,
-      onSessionCreated: (session) => {
-        activeSession = session;
+      {
+        connectionId,
+        wsUrl: resolvedInfo?.url ?? options.listen ?? DEFAULT_LISTEN_URL,
+        deviceId: settingsManager.getOrCreateDeviceId(),
+        connectionName: options.connectionName ?? hostname(),
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: (error) => {
+          options.onLog?.(
+            `App-server connection ${connectionId} failed: ${error.message}`,
+          );
+        },
       },
-      onSessionClosed: () => {
-        activeSession = null;
+      {
+        startHeartbeat: false,
+        startCronScheduler: true,
+        startProcessServices: options.startProcessServices ?? true,
+        startupReady: getStartupReady(),
       },
-    }).catch((error) => {
-      if (activeSession?.controlSocket === socket) {
-        activeSession = null;
-      }
+    ).catch((error) => {
       options.onLog?.(
-        `Failed to start app-server session: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to start app-server connection: ${error instanceof Error ? error.message : String(error)}`,
       );
-      closeSocket(socket, 1011, "failed to start session");
-      closeSocket(streamSocket, 1011, "failed to start session");
+      closeSocket(socket, 1011, "failed to start connection");
     });
   };
 
@@ -367,28 +273,44 @@ export async function startAppServer(
       response.end("ok\n");
       return;
     }
+    if (requestUrl.pathname === "/app-server-info") {
+      const authError = authorizeUpgrade(request.headers, authPolicy);
+      if (authError) {
+        response.writeHead(authError.statusCode, {
+          "content-type": "application/json",
+        });
+        response.end(JSON.stringify({ error: authError.message }));
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      // Keep capability discovery identical across HTTP and WebSocket; HTTP
+      // transport owns correlation, so this request id is only a shape marker.
+      response.end(JSON.stringify(getAppServerInfoResponse("http-info")));
+      return;
+    }
+    if (options.openaiApi && isOpenAiCompatPath(requestUrl.pathname)) {
+      void handleOpenAiCompatRequest(request, response, {
+        authPolicy,
+        onLog: options.onLog,
+      });
+      return;
+    }
     response.writeHead(404);
     response.end();
   });
 
   server.on("upgrade", (request, socket, head) => {
     const requestUrl = getRequestUrl(request, listen.host);
-    if (request.headers.origin) {
-      options.onLog?.(
-        `Rejecting app-server websocket request with Origin header: ${request.url ?? "/"}`,
-      );
-      rejectUpgrade(socket, 403, "Forbidden");
-      return;
-    }
-
     if (requestUrl.pathname !== listen.path && requestUrl.pathname !== "/") {
       rejectUpgrade(socket, 404, "Not Found");
       return;
     }
 
-    const channel = getRequestChannel(requestUrl);
-    if (!channel) {
-      rejectUpgrade(socket, 400, "Bad Request");
+    if (requestUrl.searchParams.has("channel")) {
+      options.onLog?.(
+        "Rejecting legacy split-channel app-server client; upgrade to a one-socket client",
+      );
+      rejectUpgrade(socket, 426, "Upgrade Required");
       return;
     }
 
@@ -401,8 +323,20 @@ export async function startAppServer(
       return;
     }
 
+    // Browser WebSocket APIs cannot set Authorization headers, while native
+    // clients such as React Native may send both Authorization and Origin.
+    // authorizeUpgrade() also returns null when auth is disabled, so require
+    // an actual configured policy before treating the request as authenticated.
+    if (request.headers.origin !== undefined && authPolicy.mode === undefined) {
+      options.onLog?.(
+        `Rejecting unauthenticated app-server websocket request with Origin header: ${request.url ?? "/"}; native clients such as React Native must configure --ws-auth capability-token or --ws-auth signed-bearer-token`,
+      );
+      rejectUpgrade(socket, 403, "Forbidden");
+      return;
+    }
+
     wss.handleUpgrade(request, socket, head, (websocket) => {
-      handleWebSocketConnection(websocket, channel);
+      handleWebSocketConnection(websocket);
     });
   });
 
@@ -434,26 +368,50 @@ export async function startAppServer(
     clearInterval(heartbeatInterval);
   });
 
-  await new Promise<void>((resolve, reject) => {
-    const onError = (error: Error) => {
-      server.off("listening", onListening);
-      reject(error);
-    };
-    const onListening = () => {
-      server.off("error", onError);
-      resolve();
-    };
-    server.once("error", onError);
-    server.once("listening", onListening);
-    server.listen(listen.port, listen.host);
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        server.off("listening", onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        server.off("error", onError);
+        resolve();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(listen.port, listen.host);
+    });
+  } catch (error) {
+    clearInterval(heartbeatInterval);
+    if (ownsRuntime) runtime.intentionallyClosed = true;
+    throw error;
+  }
+
+  if (ownsRuntime) {
+    const existingRuntime = getActiveRuntime();
+    if (existingRuntime) {
+      stopRuntime(existingRuntime, true);
+      setActiveRuntime(null);
+    }
+    setActiveRuntime(runtime);
+  } else if (getActiveRuntime() !== runtime) {
+    clearInterval(heartbeatInterval);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    throw new Error(
+      "Shared app-server runtime must be the active listener runtime",
+    );
+  }
+  if (ownsRuntime) {
+    telemetry.setSurface(getListenerTelemetrySurface());
+    telemetry.init();
+  }
 
   const address = getRequiredAddressInfo(server);
   const baseUrl = `ws://${listen.host}:${address.port}`;
   resolvedInfo = {
     url: baseUrl,
-    controlUrl: getChannelUrl(baseUrl, listen.path, "control"),
-    streamUrl: getChannelUrl(baseUrl, listen.path, "stream"),
+    controlUrl: getWebSocketUrl(baseUrl, listen.path),
   };
   options.onListening?.(resolvedInfo);
 
@@ -461,20 +419,15 @@ export async function startAppServer(
     ...resolvedInfo,
     close: async () => {
       clearInterval(heartbeatInterval);
-      const streamSocket = clearPendingStream();
-      terminateSocket(streamSocket);
-      if (activeSession) {
-        const session = activeSession;
-        activeSession = null;
-        terminateSocket(session.streamSocket);
-        terminateSocket(session.controlSocket);
-        stopRuntime(session.runtime, true);
-        if (getActiveRuntime() === session.runtime) {
-          setActiveRuntime(null);
-        }
+      if (options.openaiApi) {
+        closeOpenAiBridgeRuntime();
       }
       for (const client of wss.clients) {
         terminateSocket(client);
+      }
+      if (ownsRuntime && getActiveRuntime() === runtime) {
+        stopRuntime(runtime, true);
+        setActiveRuntime(null);
       }
       await new Promise<void>((resolve, reject) => {
         wss.close();

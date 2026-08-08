@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { LETTA_CHAT_API_KEYS_URL } from "@/cli/helpers/app-urls";
 import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 
@@ -20,51 +23,60 @@ async function runCli(
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   const { timeoutMs = 30000, expectExit } = options;
+  const homeDir = await mkdtemp(join(tmpdir(), "letta-startup-flow-home-"));
 
-  return new Promise((resolve, reject) => {
-    const proc = spawn("bun", ["run", "dev", ...args], {
-      cwd: projectRoot,
-      env: createIsolatedCliTestEnv(),
-    });
+  try {
+    return await new Promise((resolve, reject) => {
+      const proc = spawn("bun", ["run", "dev", ...args], {
+        cwd: projectRoot,
+        env: createIsolatedCliTestEnv({
+          HOME: homeDir,
+          LETTA_DISABLE_MODS: "1",
+        }),
+      });
+      proc.stdin?.end();
 
-    let stdout = "";
-    let stderr = "";
+      let stdout = "";
+      let stderr = "";
 
-    proc.stdout?.on("data", (data) => {
-      stdout += data.toString();
-    });
+      proc.stdout?.on("data", (data) => {
+        stdout += data.toString();
+      });
 
-    proc.stderr?.on("data", (data) => {
-      stderr += data.toString();
-    });
+      proc.stderr?.on("data", (data) => {
+        stderr += data.toString();
+      });
 
-    const timeout = setTimeout(() => {
-      proc.kill();
-      reject(
-        new Error(
-          `Timeout after ${timeoutMs}ms. stdout: ${stdout}, stderr: ${stderr}`,
-        ),
-      );
-    }, timeoutMs);
-
-    proc.on("close", (code) => {
-      clearTimeout(timeout);
-      if (expectExit !== undefined && code !== expectExit) {
+      const timeout = setTimeout(() => {
+        proc.kill();
         reject(
           new Error(
-            `Expected exit code ${expectExit}, got ${code}. stdout: ${stdout}, stderr: ${stderr}`,
+            `Timeout after ${timeoutMs}ms. stdout: ${stdout}, stderr: ${stderr}`,
           ),
         );
-      } else {
-        resolve({ stdout, stderr, exitCode: code });
-      }
-    });
+      }, timeoutMs);
 
-    proc.on("error", (err) => {
-      clearTimeout(timeout);
-      reject(err);
+      proc.on("close", (code) => {
+        clearTimeout(timeout);
+        if (expectExit !== undefined && code !== expectExit) {
+          reject(
+            new Error(
+              `Expected exit code ${expectExit}, got ${code}. stdout: ${stdout}, stderr: ${stderr}`,
+            ),
+          );
+        } else {
+          resolve({ stdout, stderr, exitCode: code });
+        }
+      });
+
+      proc.on("error", (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
     });
-  });
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
 }
 
 describe("Startup Flow - Flag Conflicts", () => {
@@ -181,6 +193,23 @@ describe("Startup Flow - Smoke", () => {
     expect(result.stderr).not.toContain("No recent session found");
   });
 
+  test("unknown positional with non-TTY stdin rejects before headless credential path", async () => {
+    const result = await runCli(["whoami"], { expectExit: 1 });
+    expect(result.stderr).toContain(
+      'Error: Unknown command or argument "whoami"',
+    );
+    expect(result.stderr).toContain(
+      "Run 'letta --help' for usage information.",
+    );
+    expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
+  });
+
+  test("stdin-only non-TTY startup still uses the headless path", async () => {
+    const result = await runCli([], { expectExit: 1 });
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Unknown command or argument");
+  });
+
   test("--toolset auto is accepted", async () => {
     const result = await runCli(
       ["--new-agent", "--toolset", "auto", "-p", "Say OK"],
@@ -201,6 +230,39 @@ describe("Startup Flow - Smoke", () => {
     );
     expect(result.stderr).toContain("Missing LETTA_API_KEY");
     expect(result.stderr).not.toContain("Unknown option '--memfs-startup'");
+  });
+
+  test("--stateless accepts an existing agent in headless mode", async () => {
+    const result = await runCli(
+      ["--agent", "agent-123", "--new", "--stateless", "-p", "Say OK"],
+      { expectExit: 1 },
+    );
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Unknown option '--stateless'");
+    expect(result.stderr).not.toContain("--stateless requires");
+  });
+
+  test("--stateless rejects MemFS and new-agent combinations", async () => {
+    const withMemfs = await runCli(
+      ["--agent", "agent-123", "--stateless", "--memfs", "-p", "Say OK"],
+      { expectExit: 1 },
+    );
+    expect(withMemfs.stderr).toContain(
+      "--stateless cannot be used with --memfs",
+    );
+
+    const withNewAgent = await runCli(
+      ["--new-agent", "--stateless", "-p", "Say OK"],
+      { expectExit: 1 },
+    );
+    expect(withNewAgent.stderr).toContain("--stateless is for existing agents");
+  });
+
+  test("--stateless requires an explicit existing-agent selector", async () => {
+    const result = await runCli(["--stateless", "-p", "Say OK"], {
+      expectExit: 1,
+    });
+    expect(result.stderr).toContain("--stateless requires --agent");
   });
 
   test("-C alias for --conversation is accepted", async () => {

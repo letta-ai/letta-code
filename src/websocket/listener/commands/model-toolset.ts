@@ -6,15 +6,18 @@ import {
 import {
   getModelInfo,
   models,
+  preservableContextWindow,
   shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
 import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "@/agent/modify";
+import { refreshModelCatalog } from "@/agent/remote-model-catalog";
 import { getBackend } from "@/backend";
 import {
   buildByokProviderAliases,
+  buildOpenAICompatibleProxyProviderNames,
   listProviders,
 } from "@/providers/byok-providers";
 import { settingsManager } from "@/settings-manager";
@@ -27,10 +30,16 @@ import {
 import { formatToolsetName } from "@/tools/toolset-labels";
 import type {
   ListModelsResponseMessage,
+  UpdateModelPayload,
   UpdateModelResponseMessage,
   UpdateToolsetResponseMessage,
 } from "@/types/protocol_v2";
-import { ensureListenerModAdapter } from "@/websocket/listener/mod-adapter";
+import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
+import {
+  createListenerAgentModContext,
+  createListenerModEvents,
+  ensureListenerModAdaptersForAgent,
+} from "@/websocket/listener/mod-adapter";
 import {
   isListModelsCommand,
   isUpdateModelCommand,
@@ -125,6 +134,25 @@ function providerTypeFromModelSettings(
   return typeof providerType === "string" ? providerType : null;
 }
 
+function updateArgsFromAvailableModel(
+  model:
+    | {
+        openAICompatibleProxy?: boolean;
+        providerType?: string;
+      }
+    | null
+    | undefined,
+): Record<string, unknown> | undefined {
+  if (model?.providerType === "chatgpt_oauth") {
+    return { provider_type: model.providerType };
+  }
+  if (!model?.openAICompatibleProxy) return undefined;
+  return {
+    provider_type: "openai",
+    [OPENAI_COMPATIBLE_PROXY_UPDATE_ARG]: true,
+  };
+}
+
 function withContextWindow(
   baseConfig: ModelScopeSnapshot["llmConfig"],
   contextWindow?: number,
@@ -204,10 +232,9 @@ export async function getCurrentModelStatusForRuntime(params: {
   };
 }
 
-export function resolveModelForUpdate(payload: {
-  model_id?: string;
-  model_handle?: string;
-}): ResolvedModelForUpdate | null {
+function resolveModelForUpdateBase(
+  payload: UpdateModelPayload,
+): ResolvedModelForUpdate | null {
   const availableModels = getCachedAvailableModels() ?? [];
   if (typeof payload.model_id === "string" && payload.model_id.length > 0) {
     const byId = getModelInfo(payload.model_id);
@@ -221,15 +248,19 @@ export function resolveModelForUpdate(payload: {
         payload.model_handle.length > 0
           ? payload.model_handle
           : null;
-      const updateArgs =
-        byId.updateArgs && typeof byId.updateArgs === "object"
-          ? ({ ...byId.updateArgs } as Record<string, unknown>)
-          : undefined;
       const providerType = inferProviderTypeFromRegistryHandle(byId.handle);
-      const availableModel = findAvailableModelForPreset(
-        byId.handle,
-        availableModels,
-      );
+      const availableModel = explicitHandle
+        ? availableModels.find((model) => model.handle === explicitHandle)
+        : findAvailableModelForPreset(byId.handle, availableModels);
+      const availableUpdateArgs = updateArgsFromAvailableModel(availableModel);
+      const updateArgs =
+        byId.updateArgs || availableUpdateArgs
+          ? {
+              ...((byId.updateArgs as Record<string, unknown> | undefined) ??
+                {}),
+              ...(availableUpdateArgs ?? {}),
+            }
+          : undefined;
       if (
         (explicitHandle || availableModel) &&
         updateArgs &&
@@ -260,7 +291,7 @@ export function resolveModelForUpdate(payload: {
         id: payload.model_id,
         handle: explicitHandle ?? payload.model_id,
         label: nativeModel?.label ?? payload.model_id,
-        updateArgs: undefined,
+        updateArgs: updateArgsFromAvailableModel(nativeModel),
       };
     }
   }
@@ -290,11 +321,31 @@ export function resolveModelForUpdate(payload: {
       id: payload.model_handle,
       handle: payload.model_handle,
       label: nativeModel?.label ?? payload.model_handle,
-      updateArgs: undefined,
+      updateArgs: updateArgsFromAvailableModel(nativeModel),
     };
   }
 
   return null;
+}
+
+export function resolveModelForUpdate(
+  payload: UpdateModelPayload,
+): ResolvedModelForUpdate | null {
+  const resolved = resolveModelForUpdateBase(payload);
+  if (
+    !resolved ||
+    payload.reasoning_effort === undefined ||
+    resolved.updateArgs?.[OPENAI_COMPATIBLE_PROXY_UPDATE_ARG] !== true
+  ) {
+    return resolved;
+  }
+  return {
+    ...resolved,
+    updateArgs: {
+      ...resolved.updateArgs,
+      reasoning_effort: payload.reasoning_effort,
+    },
+  };
 }
 
 function formatToolsetStatusMessageForModelUpdate(params: {
@@ -406,6 +457,15 @@ export async function applyModelUpdateForRuntime(params: {
     agentId,
     conversationId,
   });
+  // Switching to a different model (or a different context-window variant of
+  // the same model, e.g. base <-> 1M dual listings) resets the context window
+  // to the selected catalog entry's preset. Only a tier change within the
+  // same variant preserves the current window — and it preserves by
+  // RE-SENDING the current value explicitly, never by omitting the field:
+  // the server treats an omitted context_window_limit as "re-derive from the
+  // handle" and clamps it to a legacy global default (128k). A current value
+  // that looks like that clamp is not preservable, so poisoned agents heal
+  // to the preset even on same-variant tier changes. See LET-9786.
   const shouldPreserveContextWindow =
     shouldPreserveContextWindowForModelSelection({
       currentModelHandle: currentModelScope.modelHandle,
@@ -413,10 +473,17 @@ export async function applyModelUpdateForRuntime(params: {
       selectedModelHandle: model.handle,
       selectedContextWindow,
     });
+  const preservedContextWindow = shouldPreserveContextWindow
+    ? preservableContextWindow(
+        currentModelScope.llmConfig?.context_window,
+        model.handle,
+      )
+    : undefined;
+  const updateOptions =
+    preservedContextWindow !== undefined
+      ? { contextWindowOverride: preservedContextWindow }
+      : undefined;
   const updateArgsForRequest = { ...updateArgs };
-  if (shouldPreserveContextWindow) {
-    delete updateArgsForRequest.context_window;
-  }
 
   let modelSettings: Record<string, unknown> | null = null;
   let appliedTo: "agent" | "conversation";
@@ -426,7 +493,7 @@ export async function applyModelUpdateForRuntime(params: {
       agentId,
       model.handle,
       updateArgsForRequest,
-      { avoidOverwritingExistingContextWindow: shouldPreserveContextWindow },
+      updateOptions,
     );
     modelSettings =
       (updatedAgent.model_settings as
@@ -439,7 +506,7 @@ export async function applyModelUpdateForRuntime(params: {
       conversationId,
       model.handle,
       updateArgsForRequest,
-      { avoidOverwritingExistingContextWindow: shouldPreserveContextWindow },
+      updateOptions,
     );
     modelSettings =
       ((
@@ -458,6 +525,10 @@ export async function applyModelUpdateForRuntime(params: {
 
   try {
     await ensureCorrectMemoryTool(agentId, model.handle);
+    const modAdapters = await ensureListenerModAdaptersForAgent(
+      listener,
+      agentId,
+    );
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
@@ -466,7 +537,9 @@ export async function applyModelUpdateForRuntime(params: {
         providerTypeFromModelSettings(modelSettings) ??
         inferProviderTypeFromRegistryHandle(model.handle) ??
         null,
-      modEvents: ensureListenerModAdapter(listener).events,
+      modContext: createListenerAgentModContext(agentId),
+      modAdapters,
+      modEvents: createListenerModEvents(modAdapters),
     });
     nextToolset = preparedToolContext.toolset;
     nextLoadedTools = preparedToolContext.preparedToolContext.loadedToolNames;
@@ -553,10 +626,16 @@ export async function applyToolsetUpdateForRuntime(params: {
 
   try {
     settingsManager.setToolsetPreference(agentId, toolsetPreference);
+    const modAdapters = await ensureListenerModAdaptersForAgent(
+      listener,
+      agentId,
+    );
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
-      modEvents: ensureListenerModAdapter(listener).events,
+      modContext: createListenerAgentModContext(agentId),
+      modAdapters,
+      modEvents: createListenerModEvents(modAdapters),
     });
     nextToolset = preparedToolContext.toolset;
     scopedRuntime.currentToolset = preparedToolContext.toolset;
@@ -619,20 +698,42 @@ export async function buildListModelsResponse(
       options.forceRefresh === true ? { forceRefresh: true } : undefined,
     ),
     listProviders(),
+    // Refresh the curated catalog alongside availability so preset entries
+    // reflect cloud-canon data (best-effort; bundled snapshot on failure).
+    refreshModelCatalog(
+      options.forceRefresh === true ? { force: true } : undefined,
+    ),
   ]);
 
   const availableHandles: string[] | null =
     handlesResult.status === "fulfilled"
       ? [...handlesResult.value.handles]
       : null;
-  const entries = buildListModelsEntries(
-    handlesResult.status === "fulfilled" ? handlesResult.value.models : [],
-  );
-
   // listProviders already degrades to [] on failure, but handle rejection too
   const providers =
     providersResult.status === "fulfilled" ? providersResult.value : [];
   const byokProviderAliases = buildByokProviderAliases(providers);
+  const openAICompatibleProxyProviders =
+    buildOpenAICompatibleProxyProviderNames(providers);
+  const entries = buildListModelsEntries(
+    handlesResult.status === "fulfilled" ? handlesResult.value.models : [],
+  ).map((entry) => {
+    const providerName = entry.handle.split("/")[0];
+    if (
+      providerName === undefined ||
+      !openAICompatibleProxyProviders.has(providerName)
+    ) {
+      return entry;
+    }
+    return {
+      ...entry,
+      updateArgs: {
+        ...(entry.updateArgs ?? {}),
+        provider_type: "openai",
+        [OPENAI_COMPATIBLE_PROXY_UPDATE_ARG]: true,
+      },
+    };
+  });
 
   return {
     type: "list_models_response",

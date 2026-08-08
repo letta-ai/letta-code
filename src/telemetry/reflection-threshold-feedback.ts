@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { submitFeedbackMetadata } from "@/backend/api/metadata";
 import { settingsManager } from "@/settings-manager";
 import { type ReflectionTriggerSource, telemetry } from "@/telemetry";
+import { getVersion } from "@/version";
 
 const REFLECTION_DURATION_THRESHOLD_MS = 10 * 60 * 1000;
 const REFLECTION_STEP_COUNT_THRESHOLD = 100;
@@ -36,6 +37,19 @@ function getFeedbackDeviceId(): string {
     // Fall back below.
   }
   return randomUUID();
+}
+
+function getAlertDeviceType(): string {
+  switch (process.platform) {
+    case "darwin":
+      return "macOS";
+    case "win32":
+      return "Windows";
+    case "linux":
+      return "Linux";
+    default:
+      return process.platform;
+  }
 }
 
 function getAlertReasonDescriptions(alertReasons: string[]): string[] {
@@ -102,6 +116,10 @@ export function maybeSendReflectionThresholdFeedback(
       feature: "letta-code",
       agent_id: agentId,
       session_id: telemetry.getSessionId(),
+      version: getVersion(),
+      platform: process.platform,
+      device_type: getAlertDeviceType(),
+      node_version: process.version,
       total_wall_ms: options.durationMs,
       step_count: options.stepCount,
       agent_name: options.parentAgentName ?? undefined,

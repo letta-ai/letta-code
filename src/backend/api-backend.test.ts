@@ -70,6 +70,11 @@ const streamConversationMessagesMock = mock(
 const cancelConversationMock = mock(async (_conversationId: string) => ({
   status: "cancelled",
 }));
+const cancelRunMock = mock(
+  async (_agentId: string, _body: { run_ids: string[] }) => ({
+    "run-1": "cancelled",
+  }),
+);
 const retrieveRunMock = mock(async (_runId: string) => ({
   id: "run-1",
   metadata: {},
@@ -89,6 +94,7 @@ const getClientMock = mock(async () => ({
     update: updateAgentMock,
     messages: {
       list: listAgentMessagesMock,
+      cancel: cancelRunMock,
     },
   },
   conversations: {
@@ -142,6 +148,7 @@ describe("APIBackend", () => {
     createMessageStreamMock.mockClear();
     streamConversationMessagesMock.mockClear();
     cancelConversationMock.mockClear();
+    cancelRunMock.mockClear();
     retrieveRunMock.mockClear();
     streamRunMessagesMock.mockClear();
     forkConversationMock.mockClear();
@@ -225,11 +232,12 @@ describe("APIBackend", () => {
     });
     await backend.streamConversationMessages("conv-1", streamBody);
     await backend.cancelConversation("conv-1");
+    await backend.cancelRun("agent-1", "run-1");
     await backend.retrieveRun("run-1");
     await backend.streamRunMessages("run-1", runStreamBody);
     await backend.forkConversation("conv-1", { agentId: "agent-1" });
 
-    expect(getClientMock).toHaveBeenCalledTimes(16);
+    expect(getClientMock).toHaveBeenCalledTimes(17);
     expect(retrieveAgentMock).toHaveBeenCalledWith("agent-1", {
       include: ["agent.tools"],
     });
@@ -275,6 +283,9 @@ describe("APIBackend", () => {
       undefined,
     );
     expect(cancelConversationMock).toHaveBeenCalledWith("conv-1");
+    expect(cancelRunMock).toHaveBeenCalledWith("agent-1", {
+      run_ids: ["run-1"],
+    });
     expect(retrieveRunMock).toHaveBeenCalledWith("run-1");
     expect(streamRunMessagesMock).toHaveBeenCalledWith(
       "run-1",
@@ -284,5 +295,73 @@ describe("APIBackend", () => {
     expect(forkConversationMock).toHaveBeenCalledWith("conv-1", {
       agentId: "agent-1",
     });
+  });
+
+  test("normalizes descending message cursors to chronological before and after", async () => {
+    const backend = new APIBackend({
+      getClient: getClientMock as unknown as () => Promise<APIClient>,
+      forkConversation: forkConversationMock,
+    });
+
+    await backend.listConversationMessages("conv-1", {
+      before: "message-older-page",
+      order: "desc",
+      limit: 10,
+    });
+    expect(listConversationMessagesMock).toHaveBeenLastCalledWith(
+      "conv-1",
+      {
+        after: "message-older-page",
+        before: undefined,
+        order: "desc",
+        limit: 10,
+      },
+      undefined,
+    );
+
+    await backend.listConversationMessages("conv-1", {
+      before: "message-default-order-page",
+      limit: 10,
+    });
+    expect(listConversationMessagesMock).toHaveBeenLastCalledWith(
+      "conv-1",
+      {
+        after: "message-default-order-page",
+        before: undefined,
+        limit: 10,
+      },
+      undefined,
+    );
+
+    await backend.listConversationMessages("conv-1", {
+      before: "message-older-page",
+      order: "asc",
+      limit: 10,
+    });
+    expect(listConversationMessagesMock).toHaveBeenLastCalledWith(
+      "conv-1",
+      {
+        before: "message-older-page",
+        order: "asc",
+        limit: 10,
+      },
+      undefined,
+    );
+
+    await backend.listConversationMessages("conv-1", {
+      after: "message-newer-page",
+      order: "desc",
+      limit: 10,
+    });
+    expect(listConversationMessagesMock).toHaveBeenLastCalledWith(
+      "conv-1",
+      {
+        after: undefined,
+        before: "message-newer-page",
+        order: "desc",
+        limit: 10,
+      },
+      undefined,
+    );
   });
 });

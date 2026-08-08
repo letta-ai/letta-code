@@ -1,4 +1,3 @@
-import type { StreamDelta } from "@/types/protocol_v2";
 import {
   asRecord,
   type ChannelTurnProgressBuilderOptions,
@@ -95,7 +94,7 @@ function toolNameForMessage(summary: ToolCallSummary | undefined): string {
  * drop it when the turn finishes) rather than shared across conversations.
  */
 export type ChannelTurnProgressBuilder = {
-  buildUpdates(delta: StreamDelta): ChannelTurnProgressUpdate[];
+  buildUpdates(delta: unknown): ChannelTurnProgressUpdate[];
 };
 
 export function createChannelTurnProgressBuilder(
@@ -299,7 +298,7 @@ export function createChannelTurnProgressBuilder(
     return updates;
   }
 
-  function buildUpdates(delta: StreamDelta): ChannelTurnProgressUpdate[] {
+  function buildUpdates(delta: unknown): ChannelTurnProgressUpdate[] {
     const record = asRecord(delta);
     if (!record) {
       return [];

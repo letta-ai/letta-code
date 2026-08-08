@@ -193,7 +193,7 @@ describe("skills frontmatter metadata", () => {
     }
   });
 
-  test("parses invocation controls and appends when_to_use to description", async () => {
+  test("parses invocation controls, ignores legacy arguments frontmatter, and appends when_to_use to description", async () => {
     const skillDir = join(projectSkillsDir, "deploy");
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(
@@ -227,7 +227,7 @@ describe("skills frontmatter metadata", () => {
       "When to use: When the user asks to ship a release",
     );
     expect(skill?.argumentHint).toBe("[environment]");
-    expect(skill?.arguments).toEqual(["environment", "version"]);
+    expect(skill).not.toHaveProperty("arguments");
     expect(skill?.disableModelInvocation).toBe(true);
     expect(skill?.userInvocable).toBe(false);
   });

@@ -20,6 +20,7 @@ function createDisabledModRegistry(): LocalModRegistry {
     ownerAbortControllers: {},
     owners: {},
     permissions: {},
+    registerCapabilitiesGlobally: false,
     sources: [],
     tools: {},
     ui: {
@@ -68,6 +69,12 @@ export function createDisabledModAdapter() {
   return {
     dispose() {},
     events,
+    getAvailablePermissions() {
+      return new Map();
+    },
+    getAvailableTools() {
+      return new Map();
+    },
     getBackend() {
       return undefined;
     },

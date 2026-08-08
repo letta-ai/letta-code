@@ -126,6 +126,7 @@ export {
 } from "./memfs-git-proxy";
 
 const NODE_HEADER_ENABLED_VALUES = new Set(["1", "true", "yes"]);
+const RUNTIME_ENVIRONMENT_DEVICE_ID_ENV = "LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID";
 
 /**
  * Resolve the `x-letta-node` runtime routing header from the LETTA_NODE env
@@ -144,6 +145,16 @@ function getNodeRoutingHeader(): Record<string, string> {
   return { "x-letta-node": enabled ? "1" : "0" };
 }
 
+export function getRuntimeEnvironmentDeviceId(): string {
+  // A managed runtime may have an orchestrator-assigned execution identity
+  // distinct from this installation's persisted device id. Keep the override
+  // scoped to runtime attribution; registration and auth still use settings.
+  return (
+    process.env[RUNTIME_ENVIRONMENT_DEVICE_ID_ENV]?.trim() ||
+    settingsManager.getOrCreateDeviceId()
+  );
+}
+
 export function getClientDefaultHeaders(): Record<string, string> {
   return {
     "X-Letta-Source": "letta-code",
@@ -152,7 +163,7 @@ export function getClientDefaultHeaders(): Record<string, string> {
     // persist the (agent, conversation) → device association and
     // restore it on other browsers/sessions. The cloud middleware
     // ignores this header on non-message routes.
-    "X-Letta-Environment-Device-Id": settingsManager.getOrCreateDeviceId(),
+    "X-Letta-Environment-Device-Id": getRuntimeEnvironmentDeviceId(),
     ...getNodeRoutingHeader(),
     ...(process.env.LETTA_MEMFS_BACKEND === "hosted"
       ? { "x-letta-memfs-backend": "hosted" }

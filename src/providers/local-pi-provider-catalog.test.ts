@@ -2,11 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import {
-  getOAuthProvider,
-  getOAuthProviders,
-} from "@earendil-works/pi-ai/oauth";
+  getBuiltinModels as getModels,
+  getBuiltinProviders as getProviders,
+} from "@earendil-works/pi-ai/providers/all";
+import {
+  getProviderOAuthAuth,
+  listBuiltinOAuthProviders,
+} from "@/backend/dev/pi-oauth";
 import {
   clearRegisteredPiProviders,
   registerPiProvider,
@@ -30,7 +33,7 @@ describe("local pi provider catalog", () => {
     clearRegisteredPiProviders();
   });
 
-  test("Constellation /connect configs exclude local-only providers", () => {
+  test("Cloud /connect configs exclude local-only providers", () => {
     const apiProviderIds = new Set(
       getProviderConfigs("api").map((provider) => provider.id),
     );
@@ -39,6 +42,29 @@ describe("local pi provider catalog", () => {
     expect(apiProviderIds.has("ollama-cloud")).toBe(false);
     expect(apiProviderIds.has("lmstudio")).toBe(false);
     expect(apiProviderIds.has("llama-cpp")).toBe(false);
+  });
+
+  test("local OpenAI-compatible config is distinct and requires only its base URL", () => {
+    const provider = getProviderConfigs("local").find(
+      (candidate) => candidate.id === "openai-compatible",
+    );
+
+    expect(provider).toMatchObject({
+      id: "openai-compatible",
+      displayName: "OpenAI-compatible API",
+      providerType: "openai-compatible",
+      providerName: "openai-compatible",
+      providerNames: ["openai-compatible", "lc-openai-compatible"],
+      requiresApiKey: false,
+      defaultApiKey: "not-needed",
+      fields: [
+        { key: "apiKey", secret: true, required: false },
+        { key: "baseUrl", label: "Base URL" },
+      ],
+    });
+    expect(provider?.providerType).not.toBe("openai");
+    expect(provider?.providerType).not.toBe("lmstudio_openai");
+    expect(provider?.providerType).not.toBe("llama_cpp");
   });
 
   test("local /connect configs cover every upstream pi-ai provider", () => {
@@ -62,7 +88,7 @@ describe("local pi provider catalog", () => {
         .map((provider) => provider.oauthProviderId),
     );
 
-    for (const provider of getOAuthProviders()) {
+    for (const provider of listBuiltinOAuthProviders()) {
       expect(localOAuthProviderIds.has(provider.id)).toBe(true);
     }
   });
@@ -73,9 +99,15 @@ describe("local pi provider catalog", () => {
       expect(spec.defaultModel).toBeDefined();
       if (!spec.defaultModel) continue;
       const modelId = spec.defaultModel.split("/").slice(1).join("/");
-      expect(
-        getModels(spec.piProvider).some((model) => model.id === modelId),
-      ).toBe(true);
+      // Providers with purely dynamic catalogs (e.g. "radius") have no
+      // generated models; their TUI default cannot be catalog-checked.
+      if (getModels(spec.piProvider as never)?.length) {
+        expect(
+          getModels(spec.piProvider as never).some(
+            (model) => model.id === modelId,
+          ),
+        ).toBe(true);
+      }
     }
   });
 
@@ -86,11 +118,13 @@ describe("local pi provider catalog", () => {
       const spec = PI_PROVIDER_SPECS.find((entry) => entry.id === provider);
       expect(spec).toBeDefined();
       expect(spec?.defaultModel).toBe(`${spec?.handlePrefixes[0]}${modelId}`);
-      expect(
-        getModels(provider as Parameters<typeof getModels>[0]).some(
-          (model) => model.id === modelId,
-        ),
-      ).toBe(true);
+      // Purely dynamic providers (e.g. "radius") have no generated catalog;
+      // their TUI default cannot be catalog-checked.
+      const catalog =
+        getModels(provider as Parameters<typeof getModels>[0]) ?? [];
+      if (catalog.length > 0) {
+        expect(catalog.some((model) => model.id === modelId)).toBe(true);
+      }
     }
   });
 
@@ -109,6 +143,7 @@ describe("local pi provider catalog", () => {
     const endpointProviders = new Set([
       "ollama",
       "ollama-cloud",
+      "openai-compatible",
       "lmstudio",
       "llama-cpp",
     ]);
@@ -119,7 +154,7 @@ describe("local pi provider catalog", () => {
     }
   });
 
-  test("local Anthropic catalog includes upstream Opus 4.8", async () => {
+  test("local Anthropic catalog includes upstream Opus 5", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-anthropic-opus-"));
     try {
       await createOrUpdateLocalProvider({
@@ -131,14 +166,14 @@ describe("local pi provider catalog", () => {
 
       const models = await listLocalModels(storageDir);
       expect(
-        models.some((model) => model.handle === "anthropic/claude-opus-4-8"),
+        models.some((model) => model.handle === "anthropic/claude-opus-5"),
       ).toBe(true);
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
   });
 
-  test("local ChatGPT OAuth catalog includes supported GPT-5.6 variants", async () => {
+  test("local ChatGPT OAuth catalog includes GPT-5.6 named variants", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-chatgpt-56-"));
     try {
       setLocalOAuthProvider({
@@ -153,18 +188,15 @@ describe("local pi provider catalog", () => {
       });
 
       const models = await listLocalModels(storageDir);
-      for (const variant of ["sol", "terra"]) {
+      for (const variant of ["sol", "terra", "luna"]) {
         expect(models).toContainEqual(
           expect.objectContaining({
             handle: `openai-codex/gpt-5.6-${variant}`,
-            max_context_window: 372000,
+            max_context_window: 272000,
             model_endpoint_type: "chatgpt_oauth",
           }),
         );
       }
-      expect(
-        models.some((model) => model.handle === "openai-codex/gpt-5.6-luna"),
-      ).toBe(false);
       expect(
         models.some((model) => model.handle === "openai-codex/gpt-5.6"),
       ).toBe(false);
@@ -286,7 +318,7 @@ describe("local pi provider catalog", () => {
       ],
     });
 
-    expect(getOAuthProvider("kilo")?.name).toBe("Kilo");
+    expect(getProviderOAuthAuth("kilo")?.name).toBe("Kilo");
 
     const provider = getProviderConfigs("local").find(
       (candidate) => candidate.id === "kilo",
@@ -335,7 +367,7 @@ describe("local pi provider catalog", () => {
       ],
     });
 
-    expect(getOAuthProvider("kilo")?.name).toBe("Kilo");
+    expect(getProviderOAuthAuth("kilo")?.name).toBe("Kilo");
     expect(
       getProviderConfigs("local").some((provider) => provider.id === "kilo"),
     ).toBe(false);

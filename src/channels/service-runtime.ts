@@ -16,7 +16,6 @@ import {
 import {
   assertSupportedChannelId,
   getSelectedChannelAccountWithSecrets,
-  refreshLoadedMessageChannelTool,
 } from "./service-shared";
 import {
   getChannelConfigSnapshotWithSecrets,
@@ -59,6 +58,8 @@ export async function setChannelConfigLive(
       threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
       acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
       listenMode: normalizedPatch.listenMode,
+      mentionOnlyChannels: normalizedPatch.mentionOnlyChannels,
+      allowBots: normalizedPatch.allowBots,
       removeStaleRoutes: normalizedPatch.removeStaleRoutes,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       selfChatMode: normalizedPatch.selfChatMode,
@@ -73,6 +74,8 @@ export async function setChannelConfigLive(
       richDraftStreaming: normalizedPatch.richDraftStreaming,
       downloadMedia: normalizedPatch.downloadMedia,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes,
+      waitingBehavior: normalizedPatch.waitingBehavior,
+      messagePrefix: normalizedPatch.messagePrefix,
       config: normalizedPatch.config,
       displayName: existing.displayName,
     });
@@ -98,6 +101,8 @@ export async function setChannelConfigLive(
         threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
         acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
         listenMode: normalizedPatch.listenMode,
+        mentionOnlyChannels: normalizedPatch.mentionOnlyChannels,
+        allowBots: normalizedPatch.allowBots,
         removeStaleRoutes: normalizedPatch.removeStaleRoutes,
         inboundDebounceMs: normalizedPatch.inboundDebounceMs,
         selfChatMode: normalizedPatch.selfChatMode,
@@ -112,6 +117,8 @@ export async function setChannelConfigLive(
         richDraftStreaming: normalizedPatch.richDraftStreaming,
         downloadMedia: normalizedPatch.downloadMedia,
         mediaMaxBytes: normalizedPatch.mediaMaxBytes,
+        waitingBehavior: normalizedPatch.waitingBehavior,
+        messagePrefix: normalizedPatch.messagePrefix,
         config: normalizedPatch.config,
       },
       accountId ? { accountId } : undefined,
@@ -151,7 +158,6 @@ export async function setChannelConfigLive(
   if (!snapshot) {
     throw new Error(`Failed to write ${channelId} channel config`);
   }
-  await refreshLoadedMessageChannelTool();
   return snapshot;
 }
 
@@ -213,7 +219,6 @@ export async function startChannelLive(
   if (!summary) {
     throw new Error(`Channel "${channelId}" summary not found after start`);
   }
-  await refreshLoadedMessageChannelTool();
   return summary;
 }
 
@@ -247,6 +252,5 @@ export async function stopChannelLive(
   if (!summary) {
     throw new Error(`Channel "${channelId}" summary not found after stop`);
   }
-  await refreshLoadedMessageChannelTool();
   return summary;
 }

@@ -11,6 +11,7 @@ import {
   deriveListenerInstanceId,
   type RegisterOptions,
 } from "@/websocket/listen-register";
+import { getSpawnerListenerInstanceId } from "@/websocket/listener/identity";
 import type { StartListenerOptions } from "@/websocket/listener/types";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
@@ -254,15 +255,20 @@ export async function resolveListenerRegistrationOptions(
   connectionName: string,
   options: ListenerRegistrationOptions = {},
 ): Promise<RegisterOptions> {
+  // Consume the startup transport variable before the first await so no
+  // authentication hook or concurrently-spawned descendant can inherit it.
+  // Re-registration reads the same process-local cache.
+  const spawnerListenerInstanceId = getSpawnerListenerInstanceId();
   const auth = await resolveListenerAuth(deviceId, connectionName, options);
   return {
     ...auth,
     deviceId,
     connectionName,
-    listenerInstanceId: deriveListenerInstanceId(
-      options.surface ?? "server",
-      connectionName,
-    ),
+    // A spawner-assigned identity (Desktop slots, LET-10085) wins; manual
+    // listeners keep their legacy name-derived identity unchanged.
+    listenerInstanceId:
+      spawnerListenerInstanceId ??
+      deriveListenerInstanceId(options.surface ?? "server", connectionName),
   };
 }
 

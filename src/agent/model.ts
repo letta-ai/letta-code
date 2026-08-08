@@ -32,6 +32,14 @@ export type ModelReasoningEffort =
   | "xhigh"
   | "max";
 
+/** Null means use the upstream provider's default and omit reasoning_effort. */
+export type ModelReasoningSelection = ModelReasoningEffort | null;
+
+type ReasoningCapabilities = {
+  supported_efforts?: ModelReasoningEffort[] | null;
+  mandatory?: boolean;
+};
+
 const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "none",
   "minimal",
@@ -113,10 +121,17 @@ function displayRegistryHandleForServiceTier(
 export function getReasoningTierOptionsForHandle(
   modelHandle: string,
   contextWindow?: number,
+  reasoningCapabilities?: ReasoningCapabilities | null,
 ): Array<{
   effort: ModelReasoningEffort;
   modelId: string;
 }> {
+  const providerOptions = getReasoningTierOptionsFromCapabilities(
+    modelHandle,
+    reasoningCapabilities,
+  );
+  if (providerOptions.length > 0) return providerOptions;
+
   const byEffort = new Map<ModelReasoningEffort, string>();
   const registryHandle =
     normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
@@ -163,6 +178,78 @@ export function getReasoningTierOptionsForHandle(
     const modelId = byEffort.get(effort);
     return modelId ? [{ effort, modelId }] : [];
   });
+}
+
+export function getReasoningTierOptionsFromCapabilities(
+  modelHandle: string,
+  capabilities?: ReasoningCapabilities | null,
+): Array<{
+  effort: ModelReasoningEffort;
+  modelId: string;
+}> {
+  if (!capabilities) return [];
+  const supportedEfforts = new Set<ModelReasoningEffort>(
+    capabilities.supported_efforts === null
+      ? REASONING_EFFORT_ORDER
+      : (capabilities.supported_efforts ?? []),
+  );
+  return REASONING_EFFORT_ORDER.filter(
+    (effort) =>
+      supportedEfforts.has(effort) &&
+      !(capabilities.mandatory === true && effort === "none"),
+  ).map((effort) => ({ effort, modelId: modelHandle }));
+}
+
+export function withReasoningEffortUpdateArg(
+  updateArgs: Record<string, unknown> | undefined,
+  reasoningEffort: ModelReasoningSelection | undefined,
+): Record<string, unknown> | undefined {
+  if (reasoningEffort === undefined) return updateArgs;
+  return {
+    ...(updateArgs ?? {}),
+    reasoning_effort: reasoningEffort,
+  };
+}
+
+export function getByokOpenAIReasoningTierOptions(
+  modelHandle: string,
+  options?: {
+    registryHandle?: string;
+    contextWindow?: number;
+    reasoningCapabilities?: ReasoningCapabilities | null;
+  },
+): Array<{
+  effort: ModelReasoningSelection;
+  modelId: string;
+}> {
+  const registryHandle = options?.registryHandle ?? modelHandle;
+  const hasReportedCapabilities = options?.reasoningCapabilities != null;
+  const knownOptions = hasReportedCapabilities
+    ? getReasoningTierOptionsFromCapabilities(
+        registryHandle,
+        options.reasoningCapabilities,
+      )
+    : getReasoningTierOptionsForHandle(registryHandle, options?.contextWindow);
+  const efforts =
+    hasReportedCapabilities || knownOptions.length > 0
+      ? knownOptions.map((option) => option.effort)
+      : REASONING_EFFORT_ORDER;
+  return [null, ...efforts].map((effort) => ({
+    effort,
+    modelId: modelHandle,
+  }));
+}
+
+export function getPreferredReasoningOption<
+  T extends { effort: ModelReasoningSelection },
+>(options: T[], selectedEffort: unknown): T | undefined {
+  return (
+    (selectedEffort === null || typeof selectedEffort === "string"
+      ? options.find((option) => option.effort === selectedEffort)
+      : undefined) ??
+    options.find((option) => option.effort === "medium") ??
+    options[0]
+  );
 }
 
 /**
@@ -292,6 +379,44 @@ function buildModelHandleFromConfig(
     return `${config.model_endpoint_type}/${config.model}`;
   }
   return config.model ?? null;
+}
+
+/**
+ * The server's legacy global context-window clamp
+ * (`model_settings.global_max_context_window_limit`, default 128000). Any
+ * model-bearing update that omitted `context_window_limit` historically got
+ * its window clamped to this value regardless of the model's real window
+ * (LET-9786).
+ */
+export const LEGACY_SERVER_CONTEXT_WINDOW_CLAMP = 128000;
+
+/**
+ * Return the current context window if it is safe to preserve across a
+ * model-settings update, or undefined when it looks like the server's legacy
+ * 128k clamp rather than a deliberate value.
+ *
+ * A value of exactly 128000 that matches no registry preset for the handle is
+ * indistinguishable from server-clamp poisoning (LET-9786) — and poisoned
+ * values are self-perpetuating if preserved. Callers should fall back to the
+ * selected preset / catalog value when this returns undefined. Models whose
+ * presets legitimately include 128000 (e.g. Codex Spark tiers) are preserved
+ * normally.
+ */
+export function preservableContextWindow(
+  current: number | null | undefined,
+  modelHandle: string,
+): number | undefined {
+  if (typeof current !== "number" || current <= 0) return undefined;
+  if (current !== LEGACY_SERVER_CONTEXT_WINDOW_CLAMP) return current;
+  const registryHandle =
+    normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
+  const matchesPreset = models.some(
+    (m) =>
+      m.handle === registryHandle &&
+      (m.updateArgs as { context_window?: number } | null)?.context_window ===
+        LEGACY_SERVER_CONTEXT_WINDOW_CLAMP,
+  );
+  return matchesPreset ? current : undefined;
 }
 
 export function shouldPreserveContextWindowForModelSelection(input: {

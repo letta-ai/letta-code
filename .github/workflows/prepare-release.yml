@@ -12,6 +12,10 @@ on:
         required: false
         default: ""
 
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
 jobs:
   preflight:
     runs-on: ubuntu-latest
@@ -122,10 +126,44 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           BRANCH="chore/bump-v${{ steps.version.outputs.new_version }}"
-          git checkout -b "$BRANCH"
-          git push origin "$BRANCH"
-          gh pr create \
-            --title "chore: bump version to ${{ steps.version.outputs.new_version }}" \
-            --body "Merge this PR to publish v${{ steps.version.outputs.new_version }}." \
-            --base main \
-            --head "$BRANCH"
+          VERSION="${{ steps.version.outputs.new_version }}"
+
+          if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null; then
+            git fetch --depth=1 origin "$BRANCH"
+            REMOTE_VERSION=$(git show FETCH_HEAD:package.json | jq -r '.version')
+            if [ "$REMOTE_VERSION" != "$VERSION" ]; then
+              echo "Remote branch $BRANCH contains version $REMOTE_VERSION, expected $VERSION."
+              exit 1
+            fi
+            echo "Reusing existing remote branch $BRANCH."
+          else
+            git checkout -b "$BRANCH"
+            git push origin "$BRANCH"
+          fi
+
+          for ATTEMPT in 1 2 3 4 5; do
+            PR_URL=$(gh api \
+              "repos/$GITHUB_REPOSITORY/pulls?state=open&head=${GITHUB_REPOSITORY_OWNER}:$BRANCH" \
+              --jq '.[0].html_url // empty' || true)
+            if [ -n "$PR_URL" ]; then
+              echo "Release PR already exists: $PR_URL"
+              exit 0
+            fi
+
+            if PR_URL=$(gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" \
+              --raw-field title="chore: bump version to $VERSION" \
+              --raw-field body="Merge this PR to publish v$VERSION." \
+              --raw-field base="main" \
+              --raw-field head="$BRANCH" \
+              --jq '.html_url'); then
+              echo "$PR_URL"
+              exit 0
+            fi
+
+            if [ "$ATTEMPT" -eq 5 ]; then
+              echo "Failed to create the release PR after $ATTEMPT attempts."
+              exit 1
+            fi
+
+            sleep $((ATTEMPT * 5))
+          done

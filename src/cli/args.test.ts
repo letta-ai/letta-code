@@ -44,9 +44,11 @@ describe("shared CLI arg schema", () => {
     const interactiveFlags = getFlagsForMode("interactive");
 
     expect(headlessFlags).toContain("memfs-startup");
+    expect(headlessFlags).toContain("stateless");
     expect(headlessFlags).not.toContain("resume");
     expect(interactiveFlags).toContain("resume");
     expect(interactiveFlags).not.toContain("memfs-startup");
+    expect(interactiveFlags).not.toContain("stateless");
     expect(headlessFlags).toContain("agent");
     expect(interactiveFlags).toContain("agent");
     expect(headlessFlags).toContain("no-mods");
@@ -60,6 +62,7 @@ describe("shared CLI arg schema", () => {
     expect(help).toContain("--no-mods");
     expect(help).toContain("LETTA_DISABLE_MODS=1 letta");
     expect(help).toContain("--memfs-startup <m>");
+    expect(help).toContain("--stateless");
     expect(help).toContain("Default: text");
     expect(help).not.toContain("--run");
     expect(help).not.toContain("--dev-backend");
@@ -150,8 +153,9 @@ describe("shared CLI arg schema", () => {
     expect(parsed.values["no-mods"]).toBe(true);
   });
 
-  test("validates backend mode values", () => {
+  test("normalizes cloud backend mode and preserves the api compatibility alias", () => {
     expect(parseBackendModeFlag(undefined)).toBeUndefined();
+    expect(parseBackendModeFlag("cloud")).toBe("api");
     expect(parseBackendModeFlag("api")).toBe("api");
     expect(parseBackendModeFlag("local")).toBe("local");
     expect(() => parseBackendModeFlag("server")).toThrow(
@@ -159,10 +163,14 @@ describe("shared CLI arg schema", () => {
     );
   });
 
-  test("extracts backend flag before routing subcommands", () => {
+  test("extracts and normalizes backend flags before routing subcommands", () => {
     expect(
       extractBackendFlag(["--backend", "local", "connect", "help"]),
     ).toEqual({ backend: "local", args: ["connect", "help"] });
+    expect(extractBackendFlag(["connect", "help", "--backend=cloud"])).toEqual({
+      backend: "api",
+      args: ["connect", "help"],
+    });
     expect(extractBackendFlag(["connect", "help", "--backend=api"])).toEqual({
       backend: "api",
       args: ["connect", "help"],
@@ -182,6 +190,22 @@ describe("shared CLI arg schema", () => {
     );
     expect(parsed.values["no-memfs"]).toBe(true);
     expect(renderCliOptionsHelp()).not.toContain("--no-memfs");
+  });
+
+  test("accepts --stateless for headless existing-agent sessions", () => {
+    const parsed = parseCliArgs(
+      preprocessCliArgs([
+        "node",
+        "script",
+        "--agent",
+        "agent-123",
+        "--stateless",
+        "-p",
+        "hello",
+      ]),
+      true,
+    );
+    expect(parsed.values.stateless).toBe(true);
   });
 
   test("rejects removed system-append flag in strict mode", () => {

@@ -1,0 +1,49 @@
+---
+label: onboarding
+description: Onboarding tasklist for new local users. Delete this block as soon as all tasks are completed, or if the user asks you to.
+---
+The person you are working with is new to Letta Code. You should guide them through different aspects of Letta Code's features. The goal is for *you* and the user to collaboratively try out the features in Letta Code through you taking actions demonstrating your capabilities.
+
+The goal of this is to help the user understand that *you* have the power to evolve yourself and Letta Code to their needs. For most things they want to achieve, they can simply ask you.
+
+This agent is running locally. Do not offer or attempt to create, generate, or set a profile picture or other image in local mode.
+
+Track each action and whether you have done it yet. Mark an item `[x]` once it is completed or the user has declined it (add "(skipped)" after the item when they declined). When every item is `[x]`, delete this memory block to conserve space. Treat any decline — "skip", "pass", "next", "no thanks", "rather not", "later", or anything similar — as a request to move on: mark the item `[x]`, do not write memory for the declined information.
+
+Explain each of these concepts to the user: if you are unsure of how they work, reference your own prompting, implementation, or constitution.
+
+The user has been active since: <TODO: fill this out>
+
+Memory
+- [ ] Make a `human` memory edit: ask the user if there is something they want you to know about them.
+- [ ] Make a `persona` memory edit: ask the user if there's a way they want you to behave, or to adapt your identity in some way.
+- [ ] Memory initialization: let the user know that they can ask you to initialize your memory in a given working directory to build up your memory.
+- [ ] Memory doctor: if you notice your system prompt becoming very large, recommend to the user that they run the "doctor" (you can also just run it).
+- [ ] Memory push/pull: you should be able to push and pull from remote. Check this off once you have verified it is properly working. Repair your configurations if needed.
+
+Subagents
+- [ ] Forked subagents: let the user know what you can fork off of the current conversation, for example, self-review with multiple different models running extensions of your current context.
+- [ ] Parallel subagents: let the user know you can run multiple concurrent subagents, such as to explore different parts of the codebase.
+- [ ] Claude Code / Codex: let the user know that you can run other coding agents, and also review past sessions to learn from them.
+
+Skills
+- [ ] Discovering skills: tell the user that you can find and install new skills yourself. Ask the user what kind of things they want you to be good at doing. Recommend skills that may be best for the type of work they want to do with you.
+- [ ] Creating a skill: ask the user to walk you through a complex process that they would like you to do independently. Learn a skill from it.
+- [ ] Adding an MCP: ask the user if there are any MCP tools they would like to connect, and connect them.
+
+Search
+- [ ] Searching agents: let the user know that you can search for other agents, or message other agents.
+- [ ] Searching messages: let the user know that they can ask you to search past conversations.
+
+Schedules
+- [ ] Create a schedule: create a scheduled task in the future to check in with the user about their onboarding process.
+- [ ] Create a cron: you can set up repeated scheduled tasks. Ask the user if there is something they want you to do on a regular cadence, e.g. check their email, check skills, etc.
+
+Channels
+- [ ] Connect to a channel: Connect Slack, Telegram, Discord, or custom channels so you can talk from anywhere.
+
+Other
+- [ ] Make a permissions edit: let the user know that you can modify permissions (what commands are automatically approved/denied). Ask them if there are certain actions they would like you to avoid.
+- [ ] Create a local mod: let the user know you can customize Letta Code with trusted local mods for new tools, slash commands, provider integrations, UI panels/status, events, or permission overlays. Explain that mods are for executable harness behavior, while memory and skills are for durable knowledge and reusable procedures.
+- [ ] Worktrees: let the user know that you can help them orchestrate many agents in parallel, and also work in parallel to other agents. Offer to create a worktree that you work in (if they are not interested in worktrees or software, you may skip this and auto-check this off).
+- [ ] Moving machines: ask the user to add another remote environment (they can either run another desktop instance or run `letta server` on another machine) and run you there instead.

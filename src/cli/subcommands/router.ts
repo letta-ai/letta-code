@@ -1,5 +1,4 @@
 import { runAgentsSubcommand } from "./agents";
-import { runAppServerSubcommand } from "./app-server";
 import { runBackendSubcommand } from "./backend";
 import { runChannelsSubcommand } from "./channels";
 import { runConnectSubcommand } from "./connect";
@@ -11,8 +10,11 @@ import { runLocalBackendSubcommand } from "./local-backend";
 import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
 import { runModsSubcommand } from "./mods";
+import { asLegacyAppServerCommand, runServerSubcommand } from "./server";
 import { runSetupSubcommand } from "./setup";
+import { runSharedMemorySubcommand } from "./shared-memory";
 import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
+import { runTrajectoriesSubcommand } from "./trajectories";
 
 async function runUpdateSubcommand(): Promise<number> {
   const { manualUpdate } = await import("@/updater/auto-update");
@@ -32,6 +34,7 @@ export function subcommandNeedsEarlyBackendMode(
 ): boolean {
   switch (command) {
     case "app-server":
+    case "channel-gateway":
     case "agents":
     case "connect":
     case "dream":
@@ -44,6 +47,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "mods":
     case "remote":
     case "server":
+    case "shared-memory":
     case "skills":
       return true;
     default:
@@ -70,7 +74,10 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
     case "agents":
       return runAgentsSubcommand(rest);
     case "app-server":
-      return runAppServerSubcommand(rest);
+      console.error(
+        "Warning: `letta app-server` is deprecated. Use `letta server --listen` instead.",
+      );
+      return runServerSubcommand(asLegacyAppServerCommand(rest));
     case "messages":
       return runMessagesSubcommand(rest);
     case "environments":
@@ -79,6 +86,7 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
     case "mods":
       return runModsSubcommand(rest);
     case "server":
+      return runServerSubcommand(rest);
     case "remote": // alias
       return runListenSubcommand(rest);
     case "connect":
@@ -89,6 +97,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runSetupSubcommand(rest);
     case "install":
       return runInstallSubcommand(rest);
+    case "shared-memory":
+      return runSharedMemorySubcommand(rest);
     case "skills":
       return runSkillsSubcommand(rest);
     case "cron":
@@ -97,8 +107,15 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runDreamSubcommand(rest);
     case "channels":
       return runChannelsSubcommand(rest);
+    case "channel-gateway": {
+      const { runChannelGatewaySubcommand } = await import("./channel-gateway");
+      return runChannelGatewaySubcommand(rest);
+    }
     case "local-backend":
       return runLocalBackendSubcommand(rest);
+    case "trajectories":
+    case "trajectory": // alias
+      return runTrajectoriesSubcommand(rest);
     default:
       return null;
   }

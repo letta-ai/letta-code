@@ -155,7 +155,7 @@ describe("max context command helpers", () => {
     }
   });
 
-  test("fails reset when no model.json default exists", async () => {
+  test("explains reset fallback for custom models without model.json defaults", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "max-context-custom-"));
     try {
       const backend = new LocalBackend({
@@ -174,10 +174,28 @@ describe("max context command helpers", () => {
           conversationId: "default",
           args: "",
           currentModelHandle: "custom/model",
+          currentContextWindow: 131_072,
         }),
       ).rejects.toThrow(
-        "No default value for max context window found in model.json",
+        "No catalog default for model custom/model, so reset is unavailable. Pass an explicit value: /context-limit 131072.",
       );
+
+      const explicitResult = await applySetMaxContext({
+        agentId: agent.id,
+        conversationId: "default",
+        args: "131072",
+        currentModelHandle: "custom/model",
+      });
+      expect(explicitResult.contextWindow).toBe(131_072);
+      expect(explicitResult.reset).toBe(false);
+      expect(explicitResult.appliedTo).toBe("agent");
+      expect(
+        (
+          (await backend.retrieveAgent(agent.id)) as {
+            llm_config?: { context_window?: number };
+          }
+        ).llm_config?.context_window,
+      ).toBe(131_072);
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

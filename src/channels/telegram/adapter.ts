@@ -550,7 +550,7 @@ export function createTelegramAdapter(
 
     const telegramBot = await ensureBot();
     const threadId = resolveTelegramOutboundThreadId(source);
-    const replyToMessageId = threadId ?? source.messageId;
+    const replyToMessageId = source.messageId;
     let reply_parameters: { message_id: number } | undefined;
     if (replyToMessageId) {
       const numericReplyToMessageId = Number(replyToMessageId);
@@ -835,19 +835,21 @@ export function createTelegramAdapter(
     async sendDirectReply(
       chatId: string,
       text: string,
-      options?: { replyToMessageId?: string },
+      options?: { replyToMessageId?: string; threadId?: string | null },
     ): Promise<void> {
       const telegramBot = await ensureBot();
+      const threadId = resolveTelegramOutboundThreadId({
+        threadId: options?.threadId,
+      });
       const reply_parameters = options?.replyToMessageId
         ? {
             message_id: Number(options.replyToMessageId),
           }
         : undefined;
-      await telegramBot.api.sendMessage(
-        chatId,
-        text,
-        reply_parameters ? { reply_parameters } : {},
-      );
+      await telegramBot.api.sendMessage(chatId, text, {
+        ...(threadId ? { message_thread_id: Number(threadId) } : {}),
+        ...(reply_parameters ? { reply_parameters } : {}),
+      });
     },
 
     async handleTurnLifecycleEvent(
@@ -906,7 +908,7 @@ export function createTelegramAdapter(
     ): Promise<void> {
       const telegramBot = await ensureBot();
       const threadId = resolveTelegramOutboundThreadId(event.source);
-      const replyToMessageId = threadId ?? event.source.messageId;
+      const replyToMessageId = event.source.messageId;
       const reply_parameters = replyToMessageId
         ? { message_id: Number(replyToMessageId) }
         : undefined;

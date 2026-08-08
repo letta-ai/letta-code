@@ -1,5 +1,14 @@
 import type { ListModelsResponseModelEntry } from "@/types/protocol_v2";
+import {
+  buildChannelCommandDeniedMessage,
+  buildChannelWhoamiMessage,
+  type ChannelCommandGate,
+  canonicalizeChannelCommandName,
+  canRunChannelCommand,
+} from "./access-control";
+import { handleChannelFeedbackCommand } from "./feedback";
 import { getChannelDisplayName } from "./plugin-registry";
+import { buildDirectReplyOptions } from "./registry-presentation";
 import type {
   ChannelAdapter,
   ChannelModelPickerData,
@@ -83,6 +92,8 @@ export type ChannelSlashCommandOptions = {
   statusContext?: ChannelStatusContext;
   handlers?: ChannelSlashCommandHandlers;
   enableBangCommands?: boolean;
+  /** Admin/user tier gate for this sender; undefined disables gating. */
+  commandGate?: ChannelCommandGate;
 };
 
 const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
@@ -95,6 +106,11 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     name: "status",
     kind: "direct",
     summary: "Show this chat's channel connection status.",
+  },
+  {
+    name: "whoami",
+    kind: "direct",
+    summary: "Show your access tier and runnable commands here.",
   },
   {
     name: "pause",
@@ -117,6 +133,11 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     summary: "Show the Letta web chat link for this channel route.",
   },
   {
+    name: "feedback",
+    kind: "direct",
+    summary: "Send feedback about Letta Code from this routed chat.",
+  },
+  {
     name: "model",
     kind: "agent-scoped",
     summary:
@@ -127,6 +148,11 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     aliases: ["reflect"],
     kind: "agent-scoped",
     summary: "Start a memory reflection pass for this conversation.",
+  },
+  {
+    name: "reload",
+    kind: "agent-scoped",
+    summary: "Reload settings, local mods, and agent secrets.",
   },
 ];
 
@@ -251,11 +277,13 @@ function supportedCommandsText(prefix: "/" | "!" = "/"): string {
 const SLACK_MENTION_SLASH_COMMAND_EXAMPLES = [
   "@agent /help",
   "@agent /status",
+  "@agent /whoami",
   "@agent /model",
   "@agent /model list",
   "@agent /model <handle-or-id>",
   "@agent /cancel",
   "@agent /chat",
+  "@agent /feedback <message>",
   "@agent /reflection",
   "@agent /detach",
   "@agent /new",
@@ -310,10 +338,11 @@ export function buildChannelHelpMessage(channelId: string): string {
       "@agent /status - show route and listener status",
       "@agent /cancel - cancel the current turn",
       "@agent /chat - show the web chat link",
+      "@agent /feedback <message> - send feedback to the Letta team from this routed thread",
       "@agent /reflection - start a memory reflection pass",
       "@agent /detach - stop replying in this thread until mentioned again",
       "@agent /new - start a fresh conversation for this thread",
-      "@agent /reload - reload channel/listener settings",
+      "@agent /reload - reload settings, local mods, and agent secrets",
       `Legacy bang aliases still work after a mention: ${supportedBangCommandsText()}.`,
       "If this chat is not connected yet, send a normal message and follow the pairing instructions.",
     ].join("\n");
@@ -776,7 +805,7 @@ export function buildChannelReloadUnavailableMessage(
   channelId: string,
 ): string {
   const displayName = channelDisplayName(channelId);
-  return `${displayName} cannot reload listener settings for this chat because the listener is not ready yet. Try again in a moment.`;
+  return `${displayName} cannot reload settings, local mods, and agent secrets for this chat because the listener is not ready yet. Try again in a moment.`;
 }
 
 async function handleScopedCommand(params: {
@@ -834,7 +863,24 @@ export async function tryHandleChannelSlashCommand(
     await adapter.sendDirectReply(
       msg.chatId,
       buildUnsupportedChannelCommandMessage(msg.channel, command),
-      msg.threadId ? { replyToMessageId: msg.threadId } : undefined,
+      buildDirectReplyOptions(msg),
+    );
+    return true;
+  }
+
+  const canonicalName = canonicalizeChannelCommandName(command.name);
+  if (
+    options.commandGate &&
+    !canRunChannelCommand(options.commandGate, canonicalName)
+  ) {
+    await adapter.sendDirectReply(
+      msg.chatId,
+      buildChannelCommandDeniedMessage(
+        msg.channel,
+        canonicalName,
+        options.commandGate,
+      ),
+      buildDirectReplyOptions(msg),
     );
     return true;
   }
@@ -844,6 +890,8 @@ export async function tryHandleChannelSlashCommand(
       switch (command.name) {
         case "help":
           return buildChannelHelpMessage(msg.channel);
+        case "whoami":
+          return buildChannelWhoamiMessage(msg, options.commandGate);
         case "status":
           return buildChannelStatusMessage(
             msg,
@@ -878,6 +926,12 @@ export async function tryHandleChannelSlashCommand(
             command,
             handler: options.handlers?.chat,
           });
+        case "feedback":
+          return handleChannelFeedbackCommand({
+            msg,
+            command,
+            route: options.statusContext?.route,
+          });
         case "detach":
           if (!isSlackMentionControl) {
             return buildUnsupportedChannelCommandMessage(msg.channel, command);
@@ -910,9 +964,6 @@ export async function tryHandleChannelSlashCommand(
             handler: options.handlers?.reflection,
           });
         case "reload":
-          if (!isSlackMentionControl) {
-            return buildUnsupportedChannelCommandMessage(msg.channel, command);
-          }
           return handleScopedCommand({
             msg,
             command,

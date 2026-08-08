@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { HeadlessTurnExecutorInput } from "@/backend/dev/headless-turn-executor";
 import {
+  contextCompactionThreshold,
   type ProviderStreamAdapter,
   ProviderTurnExecutor,
   providerLocalMessage,
   providerStreamPart,
+  shouldCompactForContextPressure,
 } from "@/backend/dev/provider-turn-executor";
 import {
   emptyLocalUsage,
@@ -63,6 +65,29 @@ function assistantMessage(usage = emptyLocalUsage()): LocalMessage {
 }
 
 describe("ProviderTurnExecutor", () => {
+  test("reserves Pi's output headroom before the context window is full", () => {
+    expect(contextCompactionThreshold(100_000)).toBe(83_616);
+    expect(
+      shouldCompactForContextPressure({
+        contextTokens: 86_045,
+        contextWindow: 100_000,
+      }),
+    ).toBe(true);
+    expect(
+      shouldCompactForContextPressure({
+        contextTokens: 83_616,
+        contextWindow: 100_000,
+      }),
+    ).toBe(false);
+  });
+
+  test("caps the reserve for small local context windows", () => {
+    expect(contextCompactionThreshold(10_000)).toBe(8_000);
+    expect(contextCompactionThreshold(1_000)).toBe(800);
+    expect(contextCompactionThreshold(0)).toBeUndefined();
+    expect(contextCompactionThreshold(Number.NaN)).toBeUndefined();
+  });
+
   test("maps pi text, thinking, tool call, usage, and done events", async () => {
     const adapter: ProviderStreamAdapter = {
       async *stream() {
@@ -223,6 +248,31 @@ describe("ProviderTurnExecutor", () => {
     expect(
       (chunks.at(-1) as { stop_reason?: string } | undefined)?.stop_reason,
     ).toBe("end_turn");
+  });
+
+  test("includes provider reasoning tokens in usage statistics", async () => {
+    const finalMessage = assistantMessage({
+      ...emptyLocalUsage(),
+      input: 100,
+      output: 40,
+      totalTokens: 140,
+      reasoning: 24,
+    });
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield providerStreamPart(
+          part({ type: "done", reason: "stop", message: finalMessage }),
+        );
+      },
+    };
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    const usage = chunks.find(
+      (chunk) => chunk.message_type === "usage_statistics",
+    ) as { reasoning_tokens?: number } | undefined;
+    expect(usage?.reasoning_tokens).toBe(24);
   });
 
   test("maps pi length completions to max_tokens_exceeded", async () => {

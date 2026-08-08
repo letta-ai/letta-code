@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import { getBuiltinModel as getModel } from "@earendil-works/pi-ai/providers/all";
 import { configureBackendMode, getBackend } from "@/backend/backend";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LOCAL_BACKEND_DIR_ENV } from "@/backend/local/paths";
@@ -48,6 +48,18 @@ describe("local model updates", () => {
     });
   });
 
+  test("builds direct Moonshot K3 settings without client reasoning controls", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("moonshot/kimi-k3", {
+        max_output_tokens: 131072,
+      }),
+    ).toMatchObject({
+      provider_type: "moonshot",
+      parallel_tool_calls: true,
+      max_output_tokens: 131072,
+    });
+  });
+
   test("stores GPT-5.6 max separately from xhigh for local providers", () => {
     expect(
       __modifyTestUtils.buildModelSettings("openai-codex/gpt-5.6-sol", {
@@ -57,6 +69,48 @@ describe("local model updates", () => {
     ).toMatchObject({
       provider_type: "chatgpt_oauth",
       reasoning: { reasoning_effort: "max" },
+    });
+  });
+
+  test.each(["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"])(
+    "preserves distinct xhigh for %s",
+    (modelHandle) => {
+      expect(
+        __modifyTestUtils.buildModelSettings(modelHandle, {
+          reasoning_effort: "xhigh",
+        }),
+      ).toMatchObject({
+        provider_type: "anthropic",
+        effort: "xhigh",
+      });
+    },
+  );
+
+  test("stores provider-default reasoning explicitly for custom OpenAI providers", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("custom/claude-opus-4-6", {
+        provider_type: "openai",
+        reasoning_effort: null,
+      }),
+    ).toMatchObject({
+      provider_type: "openai",
+      reasoning: null,
+    });
+  });
+
+  test("strips internal proxy classification before building public settings", () => {
+    expect(
+      __modifyTestUtils.updateArgsForModelSettings(
+        {
+          provider_type: "openai",
+          reasoning_effort: null,
+          openai_compatible_proxy: true,
+        },
+        { useBackendModelCatalog: false },
+      ),
+    ).toEqual({
+      provider_type: "openai",
+      reasoning_effort: null,
     });
   });
 

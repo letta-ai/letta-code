@@ -5,12 +5,18 @@ import { join } from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { consumeQueuedSkillContent } from "@/tools/impl/skill-content-registry";
 import { clearTools, executeTool, loadSpecificTools } from "@/tools/manager";
+import SkillSchema from "@/tools/schemas/Skill.json";
 
 const TEST_AGENT_ID = "agent-skill-memfs-test";
 let currentSkillsDirectory: string | null = null;
 
-const { readSkillContent, renderSkillContent, skill, wrapSkillContent } =
-  await import("@/tools/impl/skill");
+const {
+  readSkillContent,
+  renderSkillContent,
+  skill,
+  wrapSkillContent,
+  wrapSkillPrompt,
+} = await import("@/tools/impl/skill");
 
 function withSkillContext<T>(fn: () => Promise<T>) {
   return runWithRuntimeContext(
@@ -27,6 +33,10 @@ function runScopedSkill(args: Parameters<typeof skill>[0]) {
 }
 
 describe("Skill tool memory filesystem lookup", () => {
+  test("exposes only the skill name to the model", () => {
+    expect("args" in SkillSchema.properties).toBe(false);
+  });
+
   let tempRoot: string;
   const originalMemoryDir = process.env.MEMORY_DIR;
   const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
@@ -366,40 +376,22 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(queued[0]?.content).not.toContain("Loaded from .skills.");
   });
 
-  test("renders skill arguments and skill directory substitutions", () => {
+  test("renders skill directory substitutions", () => {
     const rendered = renderSkillContent(
       "deploy",
       [
         "---",
         "name: deploy",
         "description: deploy",
-        "arguments: environment version",
         "---",
         "",
-        "Deploy $environment at $version from $" +
-          "{CLAUDE_SKILL_DIR}; all=$ARGUMENTS first=$0 second=$ARGUMENTS[1].",
+        "Deploy from $" + "{CLAUDE_SKILL_DIR} and <SKILL_DIR>.",
       ].join("\n"),
       join(tempRoot, "deploy", "SKILL.md"),
-      { args: "prod v1" },
     );
 
-    expect(rendered).toContain("Deploy prod at v1");
-    expect(rendered).toContain("all=prod v1");
-    expect(rendered).toContain("first=prod");
-    expect(rendered).toContain("second=v1");
-    expect(rendered).toContain(join(tempRoot, "deploy"));
-  });
-
-  test("appends arguments when no placeholder is present", () => {
-    const rendered = renderSkillContent(
-      "review",
-      "---\nname: review\ndescription: review\n---\n\nReview the code.",
-      join(tempRoot, "review", "SKILL.md"),
-      { args: "src/index.ts" },
-    );
-
-    expect(rendered).toContain("Review the code.");
-    expect(rendered).toContain("ARGUMENTS: src/index.ts");
+    const skillDir = join(tempRoot, "deploy");
+    expect(rendered).toContain(`Deploy from ${skillDir} and ${skillDir}.`);
   });
 
   test("blocks model invocation for manual-only skills unless explicitly allowed", () => {
@@ -433,6 +425,18 @@ describe("Skill tool memory filesystem lookup", () => {
 
     expect(wrapped).toContain('<skill name="integrations/oauth/letta-oauth">');
     expect(wrapped).toContain("Use OAuth.");
+  });
+
+  test("keeps direct invocation context outside the skill instructions", () => {
+    const wrapped = wrapSkillPrompt(
+      "review",
+      "Review the code.",
+      "src/index.ts",
+    );
+
+    expect(wrapped).toBe(
+      "<review>\nReview the code.\n</review>\n\nsrc/index.ts",
+    );
   });
 
   test("executeTool forwards parentScope to Skill for listener-scoped memfs lookup", async () => {

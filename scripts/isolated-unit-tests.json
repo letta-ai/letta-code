@@ -1,7 +1,22 @@
 {
   "tests": [
     {
+      "path": "src/channels/discord-reconcile.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mocks the backend client module in beforeAll; the mock leaks into later files in the same process."
+    },
+    {
       "path": "src/channels/discord-registry.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for the backend client."
+    },
+    {
+      "path": "src/channels/slack-registry.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for the backend client."
+    },
+    {
+      "path": "src/channels/telegram-registry.test.ts",
       "timeoutMs": 15000,
       "reason": "Uses a top-level Bun module mock for the backend client."
     },
@@ -16,6 +31,11 @@
       "reason": "Imports the real media module while Slack adapter tests replace it."
     },
     {
+      "path": "src/cli/components/provider-mod-selector-refresh.test.tsx",
+      "timeoutMs": 15000,
+      "reason": "Renders Ink while mutating the backend mode, backend instance, provider registry, settings singleton, and model cache."
+    },
+    {
       "path": "src/cli/message-search-cache-warm.test.ts",
       "timeoutMs": 15000,
       "reason": "Uses a top-level Bun module mock for backend search."
@@ -26,9 +46,52 @@
       "reason": "Uses a top-level Bun module mock for backend generation."
     },
     {
+      "path": "src/mcp-client.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Spawns real stdio MCP server processes."
+    },
+    {
+      "path": "src/mcp-oauth.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Runs real OAuth and MCP servers while changing the secrets service name."
+    },
+    {
+      "path": "src/mcp-runtime.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Spawns real MCP servers and mutates the global external-tools registry."
+    },
+    {
+      "path": "src/mcp-settings.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates the settings singleton, HOME, and the secrets service name."
+    },
+    {
       "path": "src/settings-manager-auth-cache.test.ts",
       "timeoutMs": 15000,
       "reason": "Mutates the settings singleton, keychain test overrides, HOME, and the secrets service name."
+    },
+    {
+      "path": "src/cli/reflection-worktree-completion.test.ts",
+      "timeoutMs": 15000,
+      "env": { "LETTA_CODE_TELEM": "1" },
+      "reason": "Exercises reflection worktree cleanup telemetry with real Git processes and the shared telemetry singleton."
+    },
+    {
+      "path": "src/cli/helpers/reflection-launcher.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Exercises reflection launch preflight with real Git processes and temporary local-backend environment overrides."
+    },
+    {
+      "path": "src/telemetry/flush-auth.test.ts",
+      "timeoutMs": 15000,
+      "env": { "LETTA_CODE_TELEM": "1" },
+      "reason": "Explicitly exercises telemetry emission with mocked network requests."
+    },
+    {
+      "path": "src/telemetry/flush-batching.test.ts",
+      "timeoutMs": 15000,
+      "env": { "LETTA_CODE_TELEM": "1" },
+      "reason": "Explicitly exercises telemetry batching with mocked network requests."
     },
     {
       "path": "src/tools/bash.test.ts",
@@ -69,6 +132,21 @@
       "path": "src/websocket/listener/auth-lifecycle.test.ts",
       "timeoutMs": 30000,
       "reason": "Exercises real WebSockets while mutating listener, settings, HOME, and process environment state."
+    },
+    {
+      "path": "src/websocket/listener/control-inputs.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates HOME and the remote-settings singleton while exercising cwd recovery persistence."
+    },
+    {
+      "path": "src/websocket/listener/protocol-ergonomics.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates HOME and the remote-settings singleton while verifying durable cwd-map pruning."
+    },
+    {
+      "path": "src/websocket/listener/remote-settings.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates HOME and the remote-settings singleton to verify startup cwd-map repair."
     }
   ]
 }

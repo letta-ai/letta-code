@@ -81,6 +81,9 @@ export function normalizeModelHandleForRegistry(
   if (provider === "lc-anthropic" && model.length > 0) {
     return `anthropic/${model}`;
   }
+  if (provider === "moonshotai" && model.length > 0) {
+    return `moonshot/${model}`;
+  }
   return modelHandle;
 }
 

@@ -7,12 +7,15 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
+import type { WhatsAppMessagePrefixConfig } from "@/channels/whatsapp/message-prefix-config-types";
 import type { PermissionMode } from "@/permissions/mode";
 import type {
   ApprovalResponseBody,
   ListModelsResponseModelEntry,
   StopReasonType,
 } from "@/types/protocol_v2";
+import type { WhatsAppAttachmentPolicyConfig } from "./whatsapp/attachment-policy-types";
+import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
 
 /**
  * Vendor-neutral model-picker payload produced by the generic channel
@@ -293,6 +296,7 @@ export interface ChannelAdapter {
     chatId: string;
     threadId?: string | null;
     messageId: string;
+    signal?: AbortSignal;
   }): Promise<ChannelMessageAttachment>;
 
   /**
@@ -317,6 +321,8 @@ export interface ChannelAdapter {
        * example Slack Block Kit) may render it; others fall back to text.
        */
       modelPicker?: ChannelModelPickerData;
+      /** Channel-specific opt-in for direct replies that should be treated as ordinary outbound agent text. */
+      applyMessagePrefix?: boolean;
     },
   ): Promise<void>;
 
@@ -501,7 +507,17 @@ export interface ChannelRoute {
 // ── Config ────────────────────────────────────────────────────────
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
+/**
+ * Group/channel-scope sender policy. "open" preserves the historical
+ * behavior (any participant of an allowed group/channel can talk to the
+ * agent). "allowlist" restricts group senders to allowedUsers/adminUsers,
+ * paired users, and env-var allowlists.
+ */
+export type ChannelGroupSenderPolicy = "open" | "allowlist";
 export type SlackChannelMode = "socket";
+export type ChannelAllowBotsMode = false | "mentions";
+export type SlackAllowBotsMode = ChannelAllowBotsMode;
+export type DiscordAllowBotsMode = ChannelAllowBotsMode;
 export type TelegramGroupMode = "open" | "mention-only";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
 export type SignalGroupMode = "disabled" | "mention" | "open";
@@ -517,6 +533,24 @@ interface ChannelAccountBase {
   enabled: boolean;
   dmPolicy: DmPolicy;
   allowedUsers: string[];
+  /**
+   * Sender policy for group/channel-scope messages. Default "open"
+   * (historical behavior). "allowlist" restricts group senders to
+   * allowedUsers/adminUsers, paired users, and env allowlists.
+   * Slack note: dmPolicy "pairing" is a legacy unenforced default and
+   * behaves as "open" for Slack DMs; use "allowlist" to restrict.
+   */
+  groupPolicy?: ChannelGroupSenderPolicy;
+  /**
+   * Admin user IDs for slash-command tiers. When set (non-empty),
+   * command gating activates: non-admins may only run the read-only
+   * floor (/help, /status, /whoami) plus userAllowedCommands. When
+   * unset, every allowed user has full command access (historical
+   * behavior).
+   */
+  adminUsers?: string[];
+  /** Extra slash commands (no leading slash) non-admins may run. */
+  userAllowedCommands?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -558,6 +592,13 @@ export interface SlackChannelConfig {
   transcribeVoice?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;
+  mentionOnlyChannels?: string[];
+  /**
+   * Bot-authored inbound policy. Default false drops bot messages. "mentions"
+   * accepts only explicit foreign bot mentions. There is intentionally no
+   * accept-all mode until Letta has a shared pair-loop guard.
+   */
+  allowBots?: SlackAllowBotsMode;
 }
 
 export interface DiscordChannelConfig {
@@ -618,9 +659,17 @@ export interface DiscordChannelConfig {
    * Clamped to `0..10000`.
    */
   inboundDebounceMs?: number;
+  /**
+   * Bot-authored inbound policy. Default false drops bot messages. "mentions"
+   * accepts only explicit foreign bot mentions. There is intentionally no
+   * accept-all mode until Letta has a shared pair-loop guard.
+   */
+  allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelConfig {
+export interface WhatsAppChannelConfig
+  extends WhatsAppAttachmentPolicyConfig,
+    WhatsAppMessagePrefixConfig {
   channel: "whatsapp";
   enabled: boolean;
   dmPolicy: DmPolicy;
@@ -628,18 +677,15 @@ export interface WhatsAppChannelConfig {
   agentId: string | null;
   /** Default true. When true, only the user's own Message Yourself chat routes. */
   selfChatMode: boolean;
-  /** Default disabled. Controls group-message ingestion. */
   groupMode: WhatsAppGroupMode;
   /** Optional allowlist of WhatsApp group JIDs. Empty/undefined allows any group when groupMode is not disabled. */
   allowedGroups?: string[];
-  /** Optional textual aliases for group mention detection. */
   mentionPatterns?: string[];
-  /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
-  /** When true, supported inbound media is downloaded to local channel storage. */
   downloadMedia?: boolean;
-  /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  inboundDebounceMs?: number;
+  waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
 export interface SignalChannelConfig {
@@ -724,6 +770,13 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   transcribeVoice?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;
+  mentionOnlyChannels?: string[];
+  /**
+   * Bot-authored inbound policy. Default false drops bot messages. "mentions"
+   * accepts only explicit foreign bot mentions. There is intentionally no
+   * accept-all mode until Letta has a shared pair-loop guard.
+   */
+  allowBots?: SlackAllowBotsMode;
   /**
    * Optional debounce window (ms) for inbound messages. When greater than
    * `0`, short back-to-back messages from the same sender in the same
@@ -733,7 +786,6 @@ export interface SlackChannelAccount extends ChannelAccountBase {
    */
   inboundDebounceMs?: number;
 }
-
 export interface DiscordChannelAccount extends ChannelAccountBase {
   channel: "discord";
   token: string;
@@ -793,26 +845,32 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
    * Clamped to `0..10000`.
    */
   inboundDebounceMs?: number;
+  /**
+   * Bot-authored inbound policy. Default false drops bot messages. "mentions"
+   * accepts only explicit foreign bot mentions. There is intentionally no
+   * accept-all mode until Letta has a shared pair-loop guard.
+   */
+  allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelAccount extends ChannelAccountBase {
+export interface WhatsAppChannelAccount
+  extends ChannelAccountBase,
+    WhatsAppAttachmentPolicyConfig,
+    WhatsAppMessagePrefixConfig {
   channel: "whatsapp";
   /** Agent ID used for account-bound DM and group auto-routing. */
   agentId: string | null;
   /** Default true. Explicitly set false before replying under the linked user's identity. */
   selfChatMode: boolean;
-  /** Default disabled. Controls group-message ingestion. */
   groupMode: WhatsAppGroupMode;
   /** Optional allowlist of WhatsApp group JIDs. */
   allowedGroups?: string[];
-  /** Optional textual aliases for group mention detection. */
   mentionPatterns?: string[];
-  /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
-  /** When true, supported inbound media is downloaded to local channel storage. */
   downloadMedia?: boolean;
-  /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  inboundDebounceMs?: number;
+  waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
 export interface SignalChannelAccount extends ChannelAccountBase {

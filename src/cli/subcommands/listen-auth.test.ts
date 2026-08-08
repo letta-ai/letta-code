@@ -32,6 +32,8 @@ describe("listen subcommand auth resolution", () => {
   const originalBaseUrl = process.env.LETTA_BASE_URL;
   const originalDesktopDebugPanel = process.env.LETTA_DESKTOP_MODE;
   const originalLocalBackend = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+  const originalSelfHostedListenerOverride =
+    process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;
 
   beforeEach(() => {
     refreshAccessTokenMock.mockReset();
@@ -48,6 +50,7 @@ describe("listen subcommand auth resolution", () => {
     delete process.env.LETTA_BASE_URL;
     delete process.env.LETTA_DESKTOP_MODE;
     delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+    delete process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;
 
     settingsManager.getSettingsWithSecureTokens = mock(async () => ({
       env: {},
@@ -92,6 +95,12 @@ describe("listen subcommand auth resolution", () => {
       delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
     } else {
       process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = originalLocalBackend;
+    }
+    if (originalSelfHostedListenerOverride === undefined) {
+      delete process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;
+    } else {
+      process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR =
+        originalSelfHostedListenerOverride;
     }
     __listenerAuthTestUtils.setOAuthDepsForTests(null);
   });
@@ -356,6 +365,24 @@ describe("listen subcommand auth resolution", () => {
     });
     expect(requestDeviceCodeMock).not.toHaveBeenCalled();
     expect(pollForTokenMock).not.toHaveBeenCalled();
+  });
+
+  test("uses remote registration for explicitly allowed self-hosted listeners", async () => {
+    process.env.LETTA_BASE_URL = "http://localhost:8283";
+    process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR = "1";
+
+    settingsManager.getSettingsWithSecureTokens = mock(async () => ({
+      env: {},
+    })) as unknown as typeof settingsManager.getSettingsWithSecureTokens;
+
+    const result = await __listenSubcommandTestUtils.resolveListenerStartupMode(
+      [],
+    );
+
+    expect(result).toEqual({
+      kind: "remote",
+      serverUrl: "http://localhost:8283",
+    });
   });
 
   test("uses remote registration mode for Cloud listeners with channels", async () => {

@@ -67,15 +67,18 @@ describe("pairing", () => {
     expect(result).not.toBeNull();
   });
 
-  test("replaces existing pending code for same user", () => {
+  test("reuses the unexpired pending code for the same user", () => {
     const code1 = createPairingCode("telegram", "user-1", "chat-1");
     const code2 = createPairingCode("telegram", "user-1", "chat-1");
 
-    expect(code1).not.toBe(code2);
+    // Rate limit: repeated messages do not mint new codes while the
+    // sender's existing code is still valid.
+    expect(code1).toBe(code2);
+    expect(consumePairingCode("telegram", code1)).not.toBeNull();
 
-    // Only the new code should work
-    expect(consumePairingCode("telegram", code1)).toBeNull();
-    expect(consumePairingCode("telegram", code2)).not.toBeNull();
+    // Once consumed, a fresh request mints a new code.
+    const code3 = createPairingCode("telegram", "user-1", "chat-1");
+    expect(code3).not.toBe(code1);
   });
 
   test("isUserApproved returns false for unknown users", () => {

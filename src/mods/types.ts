@@ -125,7 +125,7 @@ export interface ModUpdateLlmConfigOptions {
   /** Model handle, e.g. "anthropic/claude-opus-4-8". Omit to keep the current model. */
   model?: string;
   /** Reasoning effort tier. Omit to leave reasoning settings untouched. */
-  reasoningEffort?: ModelReasoningEffort;
+  reasoningEffort?: ModelReasoningEffort | null;
   /** Context window limit. Omit to leave the current limit untouched. */
   contextWindow?: number;
   /**
@@ -149,7 +149,7 @@ export interface ModConversationHandle {
   /**
    * Update the model, reasoning effort, and/or context window for this
    * conversation (or the agent default with scope: "agent"). Only the fields you
-   * pass change; others are preserved. Works for local and constellation agents.
+   * pass change; others are preserved. Works for local and cloud agents.
    */
   updateLlmConfig: (options: ModUpdateLlmConfigOptions) => Promise<void>;
 }

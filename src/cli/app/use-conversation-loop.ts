@@ -27,6 +27,7 @@ import {
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
 } from "@/agent/approval-recovery";
 import { getAvailableModelHandles } from "@/agent/available-models";
@@ -848,7 +849,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 currentInput = rebuildInputWithFreshDenials(
                   currentInput,
                   existingApprovals ?? [],
-                  "Auto-denied: stale approval from interrupted session",
+                  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
                 );
               } catch {
                 // Fetch failed — strip stale payload and retry plain message
@@ -2382,7 +2383,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               currentInput = rebuildInputWithFreshDenials(
                 currentInput,
                 existingApprovals ?? [],
-                "Auto-denied: stale approval from interrupted session",
+                STALE_APPROVAL_RECOVERY_DENIAL_REASON,
               );
             } catch {
               // Fetch failed — strip stale payload and retry plain message

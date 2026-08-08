@@ -132,7 +132,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/sleeptime": {
-    desc: "Configure sleep-time reflection trigger settings",
+    desc: "Configure sleep-time reflection trigger and merge settings",
     order: 15.5,
     noArgs: true,
     handler: () => {
@@ -552,7 +552,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/login": {
-    desc: "Sign in to Letta Constellation",
+    desc: "Sign in with Letta",
     order: 43,
     noArgs: true,
     handler: () => {

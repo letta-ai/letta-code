@@ -5,12 +5,61 @@
  * Bundles TypeScript source into a single JavaScript file
  */
 
-import { cpSync, existsSync, readFileSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  cpSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+function walkFiles(root) {
+  const entries = readdirSync(root);
+  const files = [];
+  for (const entry of entries) {
+    const path = join(root, entry);
+    const stat = statSync(path);
+    if (stat.isDirectory()) {
+      files.push(...walkFiles(path));
+      continue;
+    }
+    files.push(path);
+  }
+  return files;
+}
+
+function toDeclarationSpecifier(fromFile, targetRoot, aliasPath) {
+  const targetPath = join(targetRoot, aliasPath);
+  const relativePath = relative(dirname(fromFile), targetPath).replaceAll(
+    "\\",
+    "/",
+  );
+  return relativePath.startsWith(".") ? relativePath : `./${relativePath}`;
+}
+
+function rewriteDeclarationAliases(typesRoot) {
+  for (const file of walkFiles(typesRoot)) {
+    if (!file.endsWith(".d.ts")) {
+      continue;
+    }
+    const source = readFileSync(file, "utf-8");
+    const rewritten = source.replace(
+      /(["'])@\/([^"']+)\1/g,
+      (_match, quote, aliasPath) =>
+        `${quote}${toDeclarationSpecifier(file, typesRoot, aliasPath)}${quote}`,
+    );
+    if (rewritten !== source) {
+      writeFileSync(file, rewritten);
+    }
+  }
+}
 
 // Read version from package.json
 const pkg = JSON.parse(readFileSync(join(__dirname, "package.json"), "utf-8"));
@@ -25,7 +74,7 @@ if (useMagick) {
 }
 
 await Bun.build({
-  entrypoints: ["./src/index.ts"],
+  entrypoints: ["./src/standalone-entry.ts"],
   outdir: ".",
   target: "node",
   format: "esm",
@@ -53,6 +102,18 @@ await Bun.build({
   // ref: #745, #1200
   external: ["ws", "@vscode/ripgrep", "node-pty", "grammy"],
   features: features,
+});
+
+await Bun.build({
+  entrypoints: ["./src/utils/image-resize-worker.ts"],
+  outdir: ".",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "image-resize-worker.js",
+  },
 });
 
 // Add shebang to output file
@@ -91,6 +152,45 @@ await Bun.build({
   },
 });
 
+await Bun.build({
+  entrypoints: ["./src/mcp-client.ts"],
+  outdir: "./dist",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "mcp-client.js",
+  },
+  define: {
+    LETTA_VERSION: JSON.stringify(version),
+  },
+});
+
+await Bun.build({
+  entrypoints: ["./src/memory-confinement.ts"],
+  outdir: "./dist",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "memory-confinement.js",
+  },
+});
+
+await Bun.build({
+  entrypoints: ["./src/app-server-client.ts"],
+  outdir: "./dist",
+  target: "node",
+  format: "cjs",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "app-server-client.cjs",
+  },
+});
+
 // Browser-safe agent creation presets (personalities, prompts, tags) for
 // surfaces that create Letta Code agents through Core (e.g. the chat web app).
 await Bun.build({
@@ -110,6 +210,59 @@ await Bun.build({
   },
 });
 
+// Pure scheduled-turn envelope contract shared by scheduler producers and
+// transcript consumers.
+await Bun.build({
+  entrypoints: ["./src/schedules.ts"],
+  outdir: "./dist",
+  target: "browser",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "schedules.js",
+  },
+});
+
+await Bun.build({
+  entrypoints: ["./src/channels-public.ts"],
+  outdir: "./dist",
+  target: "browser",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "channels-public.js",
+  },
+});
+
+await Bun.build({
+  entrypoints: ["./src/gateway-core.ts"],
+  outdir: "./dist",
+  target: "browser",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "gateway-core.js",
+  },
+  loader: {
+    ".md": "text",
+  },
+});
+
+await Bun.build({
+  entrypoints: ["./src/channels-slack.ts"],
+  outdir: "./dist",
+  target: "browser",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "channels-slack.js",
+  },
+});
+
 // Copy bundled skills to skills/ directory for shipping
 const bundledSkillsSrc = join(__dirname, "src/skills/builtin");
 const bundledSkillsDst = join(__dirname, "skills");
@@ -126,9 +279,10 @@ if (existsSync(bundledSkillsSrc)) {
 // Generate type declarations for wire types export
 console.log("📝 Generating type declarations...");
 await Bun.$`bunx tsc -p tsconfig.types.json`;
+rewriteDeclarationAliases(join(__dirname, "dist/types"));
 console.log("   Output: dist/types/protocol.d.ts");
 
 console.log("✅ Build complete!");
 console.log(`   Output: letta.js`);
-console.log("   Output: dist/app-server-client.js");
+console.log("   Output: dist/app-server-client.js and .cjs");
 console.log(`   Size: ${(Bun.file(outputPath).size / 1024).toFixed(0)}KB`);

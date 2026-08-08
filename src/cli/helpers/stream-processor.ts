@@ -9,6 +9,12 @@ export interface ApprovalRequest {
   toolCallId: string;
   toolName: string;
   toolArgs: string;
+  /**
+   * Server-assigned id of the approval_request_message this tool call arrived
+   * on. Client tool lifecycle emissions reuse this id instead of minting one
+   * (LET-10608).
+   */
+  messageId?: string;
 }
 
 export interface ErrorInfo {
@@ -155,6 +161,12 @@ export class StreamProcessor {
           toolArgs: "",
         };
 
+        // The chunk carries the approval_request_message's server-assigned
+        // id; keep it so later emissions about this tool call reuse it.
+        if ("id" in chunk && typeof chunk.id === "string" && chunk.id) {
+          existing.messageId = chunk.id;
+        }
+
         // Update name if provided
         if (toolCall.name) {
           existing.toolName = toolCall.name;
@@ -187,6 +199,7 @@ export class StreamProcessor {
       toolCallId: a.toolCallId,
       toolName: a.toolName,
       toolArgs: a.toolArgs,
+      ...(a.messageId ? { messageId: a.messageId } : {}),
     }));
   }
 }

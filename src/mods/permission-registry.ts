@@ -47,35 +47,43 @@ function getMutableModPermissionsRegistry(): Map<
   return global[MOD_PERMISSIONS_KEY];
 }
 
-export function getAvailableModPermissionsRegistry(
+export function filterAvailableModPermissionsRegistry(
+  registry: Map<string, ModPermissionDefinition>,
   context?: ModContext | null,
 ): Map<string, ModPermissionDefinition> {
   if (areModsDisabled()) return new Map();
 
   return new Map(
-    Array.from(getMutableModPermissionsRegistry().entries()).filter(
-      ([, permission]) => {
-        if (permission.activationSignal.aborted) return false;
-        try {
-          return context
-            ? (permission.isEnabled?.(
-                attachDeprecatedGetContextTrap(
-                  { ...context },
-                  permission.recordDiagnostic,
-                  "ctx.getContext",
-                ),
-              ) ?? true)
-            : true;
-        } catch (error) {
-          permission.recordDiagnostic?.({
-            capability: { id: permission.id, kind: "permission" },
-            error: toError(error),
-            phase: "permission.isEnabled",
-          });
-          return false;
-        }
-      },
-    ),
+    Array.from(registry.entries()).filter(([, permission]) => {
+      if (permission.activationSignal.aborted) return false;
+      try {
+        return context
+          ? (permission.isEnabled?.(
+              attachDeprecatedGetContextTrap(
+                { ...context },
+                permission.recordDiagnostic,
+                "ctx.getContext",
+              ),
+            ) ?? true)
+          : true;
+      } catch (error) {
+        permission.recordDiagnostic?.({
+          capability: { id: permission.id, kind: "permission" },
+          error: toError(error),
+          phase: "permission.isEnabled",
+        });
+        return false;
+      }
+    }),
+  );
+}
+
+export function getAvailableModPermissionsRegistry(
+  context?: ModContext | null,
+): Map<string, ModPermissionDefinition> {
+  return filterAvailableModPermissionsRegistry(
+    getMutableModPermissionsRegistry(),
+    context,
   );
 }
 

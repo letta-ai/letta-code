@@ -169,6 +169,7 @@ export function toAccountSnapshot(
       autoThreadOnMention: account.autoThreadOnMention ?? false,
       threadPolicyByChannel: account.threadPolicyByChannel ?? {},
       acknowledgeMessageReaction: account.acknowledgeMessageReaction ?? false,
+      allowBots: account.allowBots ?? false,
       removeStaleRoutes: account.removeStaleRoutes ?? false,
       inboundDebounceMs: account.inboundDebounceMs,
       createdAt: account.createdAt,
@@ -195,6 +196,16 @@ export function toAccountSnapshot(
       transcribeVoice: account.transcribeVoice === true,
       downloadMedia: account.downloadMedia === true,
       mediaMaxBytes: account.mediaMaxBytes,
+      attachmentFilter: account.attachmentFilter === true,
+      attachmentMimeTypes: [...(account.attachmentMimeTypes ?? [])],
+      attachmentAllowedRecipients: [
+        ...(account.attachmentAllowedRecipients ?? []),
+      ],
+      attachmentAllowedPaths: [...(account.attachmentAllowedPaths ?? [])],
+      attachmentPathRecursive: account.attachmentPathRecursive === true,
+      inboundDebounceMs: account.inboundDebounceMs,
+      waitingBehavior: account.waitingBehavior ?? "off",
+      messagePrefix: account.messagePrefix,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };
@@ -259,6 +270,8 @@ export function toAccountSnapshot(
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: account.transcribeVoice === true,
     listenMode: account.listenMode === true,
+    mentionOnlyChannels: [...(account.mentionOnlyChannels ?? [])],
+    allowBots: account.allowBots ?? false,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
@@ -362,6 +375,7 @@ export function getChannelConfigSnapshot(
       autoThreadOnMention: account.autoThreadOnMention ?? false,
       threadPolicyByChannel: account.threadPolicyByChannel ?? {},
       acknowledgeMessageReaction: account.acknowledgeMessageReaction ?? false,
+      allowBots: account.allowBots ?? false,
       removeStaleRoutes: account.removeStaleRoutes ?? false,
       inboundDebounceMs: account.inboundDebounceMs,
     };
@@ -384,6 +398,16 @@ export function getChannelConfigSnapshot(
       transcribeVoice: account.transcribeVoice === true,
       downloadMedia: account.downloadMedia === true,
       mediaMaxBytes: account.mediaMaxBytes,
+      attachmentFilter: account.attachmentFilter === true,
+      attachmentMimeTypes: [...(account.attachmentMimeTypes ?? [])],
+      attachmentAllowedRecipients: [
+        ...(account.attachmentAllowedRecipients ?? []),
+      ],
+      attachmentAllowedPaths: [...(account.attachmentAllowedPaths ?? [])],
+      attachmentPathRecursive: account.attachmentPathRecursive === true,
+      inboundDebounceMs: account.inboundDebounceMs,
+      waitingBehavior: account.waitingBehavior ?? "off",
+      messagePrefix: account.messagePrefix,
     };
   }
 
@@ -436,6 +460,8 @@ export function getChannelConfigSnapshot(
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: account.transcribeVoice === true,
     listenMode: account.listenMode === true,
+    mentionOnlyChannels: [...(account.mentionOnlyChannels ?? [])],
+    allowBots: account.allowBots ?? false,
   };
 }
 

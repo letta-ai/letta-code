@@ -24,6 +24,10 @@ export interface SubagentState {
   status: "pending" | "running" | "completed" | "error";
   agentId?: string | null;
   agentURL: string | null;
+  // The subagent's own conversation id (from its init event). Needed by
+  // desktop dual-view routing: local agents have a bare-id agentURL with no
+  // ?conversation= param to parse, so this is the only conversation source.
+  conversationId?: string | null;
   toolCalls: ToolCall[];
   // Monotonic counter to avoid transient regressions in rendered tool usage.
   maxToolCallsSeen: number;

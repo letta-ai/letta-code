@@ -10,7 +10,17 @@ For UI that belongs to a larger command/event mod, also read `architecture.md` f
 letta.capabilities.ui.panels
 ```
 
-- `panels`: text blocks placed around the input bar (the only mod UI surface). Desktop/listener disables panel UI.
+- `panels`: TUI-only local UI, including text panels around the input bar and persistent transcript notifications. Desktop/listener disables this capability.
+
+## Persistent transcript notifications
+
+Use `letta.ui.notify(message)` for a durable TUI-only event line such as a model auto-swap or background-work completion. It uses the same transcript visual as `Dreamed; no durable memory changes were needed.` and is not sent to the model or added to agent context. Guard calls with `letta.capabilities.ui.panels`; Desktop/listener cannot render them.
+
+```ts
+if (letta.capabilities.ui.panels) {
+  letta.ui.notify("The fallback model is now active.");
+}
+```
 
 ## Panels
 

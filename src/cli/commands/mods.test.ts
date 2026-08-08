@@ -59,7 +59,7 @@ describe("/mods command", () => {
 
   test("parses built-in learn target with model options", () => {
     const parsed = parseModsCommand(
-      "/mods learn memory-citations --model current --backend api --candidate-file-name learned.ts",
+      "/mods learn memory-citations --model current --backend cloud --candidate-file-name learned.ts",
       "anthropic/claude-sonnet-4",
     );
 
@@ -67,7 +67,7 @@ describe("/mods command", () => {
     if (parsed?.command !== "learn") return;
     expect(parsed.learn.targetLabel).toBe("memory-citations");
     expect(parsed.learn.options.model).toBe("anthropic/claude-sonnet-4");
-    expect(parsed.learn.options.backend).toBe("api");
+    expect(parsed.learn.options.backend).toBe("cloud");
     expect(parsed.learn.options.candidateFileName).toBe("learned.ts");
     expect(parsed.learn.env?.name).toContain("Memory citation");
   });

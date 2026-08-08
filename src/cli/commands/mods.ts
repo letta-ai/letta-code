@@ -101,7 +101,7 @@ function formatModsUsage(error?: string): string {
     "  --model <handle>              Model for generation and eval (default: auto)",
     "  --generation-model <handle>   Model for candidate generation",
     "  --eval-model <handle>         Model for headless eval",
-    "  --backend <api|local>          Backend flag forwarded to headless runs",
+    "  --backend <cloud|local>        Backend flag forwarded to headless runs",
     "  --candidate <path>            Evaluate an existing candidate instead of generating",
     "  --candidates <n>              Run N optimization iterations for one learned mod (default: 5)",
     "  --scenario-limit <n>          Evaluate only the first N scenarios (fast smoke testing)",

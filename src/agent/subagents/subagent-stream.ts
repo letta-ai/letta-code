@@ -61,10 +61,17 @@ function handleInitEvent(
     const agentURL = buildAgentReference(event.agent_id, {
       conversationId: event.conversation_id,
     });
-    updateSubagent(subagentId, { agentId: event.agent_id, agentURL });
+    updateSubagent(subagentId, {
+      agentId: event.agent_id,
+      agentURL,
+      conversationId: event.conversation_id ?? null,
+    });
   }
   if (event.conversation_id) {
     state.conversationId = event.conversation_id;
+    if (!event.agent_id) {
+      updateSubagent(subagentId, { conversationId: event.conversation_id });
+    }
   }
 }
 
@@ -180,6 +187,27 @@ export function processStreamEvent(
     }
   } catch {
     // Not valid JSON, ignore
+  }
+}
+
+/**
+ * Whether a subagent's stream-json stdout ends mid-line: the final segment has
+ * no line terminator and is non-empty but not valid JSON. A healthy stream ends
+ * with a complete result envelope, so a partial trailing line is unambiguous
+ * evidence the tail was truncated in transit (#3257). Complete-but-unexpected
+ * output (the final line parses, has a terminator, or stdout is empty) is NOT
+ * treated as truncation — the child may have already performed side effects,
+ * so callers only retry the clear case.
+ */
+export function looksLikeTruncatedStreamJson(stdout: string): boolean {
+  const lines = stdout.split(/\r?\n/);
+  const lastLine = (lines[lines.length - 1] ?? "").trim();
+  if (lastLine.length === 0) return false;
+  try {
+    JSON.parse(lastLine);
+    return false;
+  } catch {
+    return true;
   }
 }
 

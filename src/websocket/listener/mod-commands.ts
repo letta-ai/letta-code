@@ -12,7 +12,10 @@ import type {
 } from "@/mods/types";
 import type { ModCommandInfo } from "@/types/protocol_v2";
 import { getConversationWorkingDirectory } from "./cwd";
-import { createListenerModContext } from "./mod-adapter";
+import {
+  createListenerModContext,
+  getLoadedListenerModAdapters,
+} from "./mod-adapter";
 import { getConversationPermissionModeState } from "./permission-mode";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
@@ -23,10 +26,17 @@ import type { ConversationRuntime, ListenerRuntime } from "./types";
  */
 export function listListenerModCommands(
   runtime: ListenerRuntime,
+  agentId?: string | null,
 ): ModCommandInfo[] {
-  const registry = runtime.modAdapter?.getSnapshot().registry;
-  if (!registry) return [];
-  return Object.values(registry.commands).map((command) => ({
+  const commands = new Map<string, ModCommand>();
+  for (const adapter of getLoadedListenerModAdapters(runtime, agentId)) {
+    for (const command of Object.values(
+      adapter.getSnapshot().registry.commands,
+    )) {
+      commands.set(command.id, command);
+    }
+  }
+  return Array.from(commands.values()).map((command) => ({
     id: command.id,
     description: command.description,
     ...(command.args ? { args: command.args } : {}),
@@ -37,15 +47,20 @@ export function listListenerModCommands(
 export function getListenerModCommand(
   runtime: ListenerRuntime,
   commandId: string,
+  agentId?: string | null,
 ): ModCommand | undefined {
-  return runtime.modAdapter?.getSnapshot().registry.commands[commandId];
+  let result: ModCommand | undefined;
+  for (const adapter of getLoadedListenerModAdapters(runtime, agentId)) {
+    result = adapter.getSnapshot().registry.commands[commandId] ?? result;
+  }
+  return result;
 }
 
 /**
  * Run a mod command in the listener and return its result. Builds a
  * ModCommandContext that mirrors the TUI command path (createModConversationHandle
  * with the shared sendMessageStreamWithBackend so fork/send/updateLlmConfig work
- * across local and Constellation backends).
+ * across local and Letta Cloud backends).
  */
 export async function runListenerModCommand(
   conversationRuntime: ConversationRuntime,

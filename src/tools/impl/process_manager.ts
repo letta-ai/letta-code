@@ -14,6 +14,11 @@ export interface BackgroundProcessHandle {
   kill(signal?: string | number): unknown;
 }
 
+export interface BackgroundRuntimeScope {
+  agentId: string;
+  conversationId: string;
+}
+
 export interface BackgroundProcess {
   process: BackgroundProcessHandle;
   command: string;
@@ -27,11 +32,13 @@ export interface BackgroundProcess {
   totalStdoutLines?: number;
   totalStderrLines?: number;
   cleanupTimer?: TimerHandle;
+  runtimeScope?: BackgroundRuntimeScope;
 }
 
 export interface BackgroundTask {
   description: string;
   subagentType: string;
+  displayType?: string;
   subagentId: string;
   status: "running" | "completed" | "failed";
   output: string[];
@@ -40,6 +47,7 @@ export interface BackgroundTask {
   outputFile: string;
   abortController?: AbortController;
   cleanupTimer?: TimerHandle;
+  runtimeScope?: BackgroundRuntimeScope;
 }
 
 export const backgroundProcesses = new Map<string, BackgroundProcess>();
@@ -58,6 +66,11 @@ export function getNextExecSessionId() {
 let taskIdCounter = 1;
 export function getNextTaskId() {
   return `task_${taskIdCounter++}`;
+}
+
+let downloadIdCounter = 1;
+export function getNextDownloadId() {
+  return `download_${downloadIdCounter++}`;
 }
 
 interface BackgroundRetentionConfig {

@@ -108,7 +108,11 @@ async function buildSecretsInfoReminder(
       isRefresh || namesChanged
         ? "The agent secrets were updated. The following secrets are now available for use."
         : "The following secrets are set on your agent and available for use.";
-    return `${SYSTEM_REMINDER_OPEN}\n${intro}\nReference them with \`$SECRET_NAME\` in shell commands — substitution happens automatically at exec time:\n${list}\n\nYou cannot read the raw values. If a value would appear in tool output, you will see \`NAME=<REDACTED>\` instead. This means the secret IS set and working — the bytes are just hidden from your context. Keep using \`$NAME\`; it will resolve correctly.\n${SYSTEM_REMINDER_CLOSE}`;
+    const launchExamples =
+      process.platform === "win32"
+        ? "`$env:API_KEY = $API_KEY; python script.py`\n`$env:API_KEY = $API_KEY; bun run script.ts`"
+        : '`API_KEY="$API_KEY" python3 script.py`\n`API_KEY="$API_KEY" bun run script.ts`';
+    return `${SYSTEM_REMINDER_OPEN}\n${intro}\nThe Letta Code harness secret manager injects only secrets referenced as \`$NAME\` in a shell command:\n${list}\n\nWhen launching Python, TypeScript, or another program that reads a secret from its environment, include each required secret in the launch command. For example, for a secret named \`API_KEY\`:\n${launchExamples}\n\nInside the program, read it normally with \`os.environ["API_KEY"]\` or \`process.env.API_KEY\`.\n\nYou cannot read the raw values. If a value would appear in tool output, you will see \`NAME=<REDACTED>\` instead. This means the secret IS set and working — the bytes are just hidden from your context. Keep using \`$NAME\`; it will resolve correctly.\n${SYSTEM_REMINDER_CLOSE}`;
   } catch (error) {
     debugLog(
       "secrets",
