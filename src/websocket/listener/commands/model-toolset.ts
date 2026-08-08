@@ -569,14 +569,18 @@ export async function applyToolsetUpdateForRuntime(params: {
   let nextToolset: ToolsetName;
   const previousToolsetPreference = (() => {
     try {
-      return settingsManager.getToolsetPreference(agentId);
+      return settingsManager.getToolsetPreference(agentId, conversationId);
     } catch {
       return scopedRuntime.currentToolsetPreference;
     }
   })();
 
   try {
-    settingsManager.setToolsetPreference(agentId, toolsetPreference);
+    settingsManager.setToolsetPreference(
+      agentId,
+      toolsetPreference,
+      conversationId,
+    );
     const modAdapters = await ensureListenerModAdaptersForAgent(
       listener,
       agentId,
@@ -595,7 +599,11 @@ export async function applyToolsetUpdateForRuntime(params: {
     scopedRuntime.currentLoadedTools =
       preparedToolContext.preparedToolContext.loadedToolNames;
   } catch (error) {
-    settingsManager.setToolsetPreference(agentId, previousToolsetPreference);
+    settingsManager.setToolsetPreference(
+      agentId,
+      previousToolsetPreference,
+      conversationId,
+    );
     throw error;
   }
 

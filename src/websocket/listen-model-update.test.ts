@@ -18,7 +18,9 @@ import {
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import { LocalBackend } from "@/backend/local";
 import { settingsManager } from "@/settings-manager";
+import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
+import { applyToolsetUpdateForRuntime } from "@/websocket/listener/commands/model-toolset";
 
 /**
  * Tests for the model update command logic.
@@ -483,6 +485,155 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
         (response.model_settings as Record<string, unknown> | null)?.reasoning,
       ).toBeUndefined();
     } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps manual toolsets scoped to one conversation", async () => {
+    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-toolset-scope-"));
+    const previousHome = process.env.HOME;
+    try {
+      process.env.HOME = storageDir;
+      await settingsManager.reset();
+      await settingsManager.initialize();
+
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Fable Toolset Agent",
+        model: "anthropic/claude-fable-5",
+        model_settings: { provider_type: "anthropic" },
+      } as AgentCreateBody);
+      const conversationA = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      const conversationB = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      settingsManager.setToolsetPreference(agent.id, "codex");
+
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        agent.id,
+        conversationA.id,
+      );
+      await applyToolsetUpdateForRuntime({
+        socket: new MockSocket() as unknown as WebSocket,
+        listener,
+        scopedRuntime: runtimeA,
+        requestId: "toolset-conv-a",
+        toolsetPreference: "codex",
+      });
+
+      expect(runtimeA.currentToolset).toBe("codex");
+      expect(
+        settingsManager.getToolsetPreference(agent.id, conversationA.id),
+      ).toBe("codex");
+      expect(
+        settingsManager.getToolsetPreference(agent.id, conversationB.id),
+      ).toBe("auto");
+      expect(
+        __listenClientTestUtils.buildDeviceStatus(listener, {
+          agent_id: agent.id,
+          conversation_id: conversationB.id,
+        }).current_toolset_preference,
+      ).toBe("auto");
+
+      const preparedB = await prepareToolExecutionContextForScope({
+        agentId: agent.id,
+        conversationId: conversationB.id,
+      });
+      expect(preparedB.toolsetPreference).toBe("auto");
+      expect(preparedB.toolset).toBe("default");
+      expect(preparedB.preparedToolContext.loadedToolNames).toContain("Edit");
+      expect(preparedB.preparedToolContext.loadedToolNames).not.toContain(
+        "ApplyPatch",
+      );
+
+      settingsManager.setToolsetPreference(
+        agent.id,
+        "gemini",
+        conversationB.id,
+      );
+      const originalModAdapter = listener.modAdapter;
+      listener.modAdapter = {
+        getAvailablePermissions: () => {
+          throw new Error("toolset preparation failed");
+        },
+      } as never;
+      try {
+        await expect(
+          applyToolsetUpdateForRuntime({
+            socket: new MockSocket() as unknown as WebSocket,
+            listener,
+            scopedRuntime: runtimeA,
+            requestId: "toolset-conv-a-failure",
+            toolsetPreference: "default",
+          }),
+        ).rejects.toThrow("toolset preparation failed");
+      } finally {
+        listener.modAdapter = originalModAdapter;
+      }
+      expect(
+        settingsManager.getToolsetPreference(agent.id, conversationA.id),
+      ).toBe("codex");
+      expect(
+        settingsManager.getToolsetPreference(agent.id, conversationB.id),
+      ).toBe("gemini");
+      expect(runtimeA.currentToolset).toBe("codex");
+
+      settingsManager.setToolsetPreference(
+        agent.id,
+        "default",
+        conversationB.id,
+      );
+      const manualDefaultB = await prepareToolExecutionContextForScope({
+        agentId: agent.id,
+        conversationId: conversationB.id,
+        overrideModel: "openai/gpt-5.4",
+        overrideProviderType: "openai",
+      });
+      expect(manualDefaultB.toolsetPreference).toBe("default");
+      expect(manualDefaultB.toolset).toBe("default");
+      settingsManager.setToolsetPreference(agent.id, "auto", conversationB.id);
+
+      await applyToolsetUpdateForRuntime({
+        socket: new MockSocket() as unknown as WebSocket,
+        listener,
+        scopedRuntime: runtimeA,
+        requestId: "toolset-conv-a-auto",
+        toolsetPreference: "auto",
+      });
+      expect(runtimeA.currentToolset).toBe("default");
+      expect(
+        settingsManager.getToolsetPreference(agent.id, conversationA.id),
+      ).toBe("auto");
+      expect(settingsManager.getToolsetPreference(agent.id)).toBe("codex");
+
+      settingsManager.setToolsetPreference(agent.id, "codex", conversationB.id);
+      const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        agent.id,
+        conversationB.id,
+      );
+      expect(runtimeB.currentToolset).toBeNull();
+      expect(
+        __listenClientTestUtils.buildDeviceStatus(listener, {
+          agent_id: agent.id,
+          conversation_id: conversationB.id,
+        }).current_toolset_preference,
+      ).toBe("codex");
+    } finally {
+      await settingsManager.reset();
       if (previousHome === undefined) {
         delete process.env.HOME;
       } else {
