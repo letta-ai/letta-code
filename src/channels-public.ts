@@ -12,6 +12,20 @@ export {
   LettaStreamNoAssistantMessageError,
 } from "./channels/core-stream";
 export type {
+  ChannelLifecycleErrorDisplay,
+  ChannelLifecycleErrorDisplayOptions,
+  ChannelLifecycleErrorFormatOptions,
+  ChannelLifecycleErrorKind,
+} from "./channels/lifecycle-error";
+export {
+  CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE,
+  extractChannelLifecycleRunId,
+  formatChannelLifecycleErrorMessage,
+  getChannelLifecycleErrorDisplay,
+  normalizeChannelLifecycleErrorMessage,
+  sanitizeChannelLifecycleErrorText,
+} from "./channels/lifecycle-error";
+export type {
   ChannelMessageActionAdapter,
   ChannelMessageActionContext,
   ChannelMessageActionRequest,
