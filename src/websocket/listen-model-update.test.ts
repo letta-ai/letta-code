@@ -36,6 +36,13 @@ function readModelToolsetCommandSource(): string {
   return readFileSync(commandPath, "utf-8");
 }
 
+function readCliConfigurationHandlerSource(): string {
+  const handlerPath = fileURLToPath(
+    new URL("../cli/app/use-configuration-handlers.ts", import.meta.url),
+  );
+  return readFileSync(handlerPath, "utf-8");
+}
+
 function readLocalChannelGatewaySource(): string {
   const gatewayPath = fileURLToPath(
     new URL("../channels/gateway-local.ts", import.meta.url),
@@ -72,54 +79,27 @@ afterEach(async () => {
 });
 
 describe("listen-client model update status message", () => {
-  test("emits only model name when toolset did not change", () => {
+  test("does not add toolset details to the model update", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
       modelLabel: "Claude Sonnet 4",
-      toolsetChanged: false,
       toolsetError: null,
-      nextToolset: "default",
-      toolsetPreference: "auto",
     });
 
     expect(result.message).toBe("Model updated to Claude Sonnet 4.");
     expect(result.level).toBe("info");
   });
 
-  test("includes toolset notice when toolset changed (auto preference)", () => {
-    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
-      modelLabel: "GPT-5",
-      toolsetChanged: true,
-      toolsetError: null,
-      nextToolset: "codex",
-      toolsetPreference: "auto",
-    });
+  test("does not add toolset details to the CLI model update", () => {
+    const source = readCliConfigurationHandlerSource();
 
-    expect(result.message).toContain("Model updated to GPT-5.");
-    expect(result.message).toContain("auto");
-    expect(result.level).toBe("info");
-  });
-
-  test("includes toolset notice when toolset changed (manual override)", () => {
-    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
-      modelLabel: "GPT-5",
-      toolsetChanged: true,
-      toolsetError: null,
-      nextToolset: "codex",
-      toolsetPreference: "codex",
-    });
-
-    expect(result.message).toContain("Model updated to GPT-5.");
-    expect(result.message).toContain("Manual toolset override");
-    expect(result.level).toBe("info");
+    expect(source).not.toContain("Auto toolset selected: switched to");
+    expect(source).not.toContain("Manual toolset override remains active");
   });
 
   test("includes reasoning effort when updateArgs has reasoning_effort", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
       modelLabel: "Opus 4.6",
-      toolsetChanged: false,
       toolsetError: null,
-      nextToolset: "default",
-      toolsetPreference: "auto",
       updateArgs: { reasoning_effort: "medium" },
     });
 
@@ -130,10 +110,7 @@ describe("listen-client model update status message", () => {
   test("shows No Reasoning for reasoning_effort none", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
       modelLabel: "Opus 4.6",
-      toolsetChanged: false,
       toolsetError: null,
-      nextToolset: "default",
-      toolsetPreference: "auto",
       updateArgs: { reasoning_effort: "none" },
     });
 
@@ -143,10 +120,7 @@ describe("listen-client model update status message", () => {
   test("shows Max for reasoning_effort xhigh on older Anthropic models", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
       modelLabel: "Opus 4.6",
-      toolsetChanged: false,
       toolsetError: null,
-      nextToolset: "default",
-      toolsetPreference: "auto",
       updateArgs: { reasoning_effort: "xhigh" },
     });
 
@@ -157,10 +131,7 @@ describe("listen-client model update status message", () => {
     for (const modelLabel of ["Fable 5", "Opus 4.7", "Opus 4.8"]) {
       const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
         modelLabel,
-        toolsetChanged: false,
         toolsetError: null,
-        nextToolset: "default",
-        toolsetPreference: "auto",
         updateArgs: { reasoning_effort: "xhigh" },
       });
 
@@ -173,10 +144,7 @@ describe("listen-client model update status message", () => {
   test("omits effort when updateArgs has no reasoning_effort", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
       modelLabel: "GLM-5",
-      toolsetChanged: false,
       toolsetError: null,
-      nextToolset: "default",
-      toolsetPreference: "auto",
       updateArgs: { context_window: 180000 },
     });
 
@@ -186,10 +154,7 @@ describe("listen-client model update status message", () => {
   test("reports warning level when toolset switch failed", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
       modelLabel: "Claude Sonnet 4",
-      toolsetChanged: false,
       toolsetError: "Network timeout",
-      nextToolset: "default",
-      toolsetPreference: "auto",
     });
 
     expect(result.message).toContain("Model updated to Claude Sonnet 4.");
@@ -197,42 +162,19 @@ describe("listen-client model update status message", () => {
     expect(result.message).toContain("Network timeout");
     expect(result.level).toBe("warning");
   });
-
-  test("toolset error takes precedence over toolset change flag", () => {
-    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
-      modelLabel: "GPT-5",
-      toolsetChanged: true,
-      toolsetError: "API unreachable",
-      nextToolset: "codex",
-      toolsetPreference: "auto",
-    });
-
-    // Should show warning, not the toolset change notice
-    expect(result.message).toContain("Warning: toolset switch failed");
-    expect(result.message).not.toContain("auto");
-    expect(result.level).toBe("warning");
-  });
 });
 
 describe("listen-client applyModelUpdateForRuntime wiring", () => {
-  test("uses scoped runtime tool snapshots for change detection and wraps toolset refresh in try/catch", () => {
+  test("updates scoped runtime tools and wraps toolset refresh in try/catch", () => {
     const source = readModelToolsetCommandSource();
 
-    // Toolset change detection should compare scoped loaded-tool snapshots,
-    // not the mutable process-global registry.
-    expect(source).toContain(
-      "const previousToolNames = scopedRuntime.currentLoadedTools;",
-    );
     expect(source).toContain(
       "await ensureCorrectMemoryTool(agentId, model.handle)",
     );
     expect(source).toContain("await prepareToolExecutionContextForScope({");
     expect(source).toContain("overrideModel: model.handle");
     expect(source).toContain(
-      "scopedRuntime.currentLoadedTools = nextLoadedTools;",
-    );
-    expect(source).toContain(
-      "JSON.stringify(previousToolNames) !== JSON.stringify(nextLoadedTools)",
+      "preparedToolContext.preparedToolContext.loadedToolNames;",
     );
 
     // Tool refresh failures should still degrade cleanly to a warning.
