@@ -1,4 +1,5 @@
-import { getBackend } from "@/backend";
+import { type ConversationCreateBody, getBackend } from "@/backend";
+import { debugWarn } from "@/utils/debug";
 import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import type { ChannelRegistryEvent } from "./registry-events";
 import {
@@ -23,6 +24,38 @@ import type {
   WhatsAppChannelAccount,
 } from "./types";
 
+type ConversationModelPin = Pick<
+  ConversationCreateBody,
+  "model" | "model_settings"
+>;
+
+/**
+ * Resolve the agent's current model (and model settings) so channel-created
+ * conversations pin it at creation time. A conversation created without an
+ * explicit model live-inherits the agent's model, so a later agent-level
+ * model change would silently switch active channel threads. If the agent
+ * lookup fails, return an empty pin so thread handling never breaks — the
+ * conversation is then created modelless, matching the previous behavior.
+ */
+export async function resolveConversationModelPin(
+  agentId: string,
+): Promise<ConversationModelPin> {
+  try {
+    const agent = await getBackend().retrieveAgent(agentId);
+    return {
+      ...(agent.model ? { model: agent.model } : {}),
+      ...(agent.model_settings ? { model_settings: agent.model_settings } : {}),
+    };
+  } catch (error) {
+    debugWarn(
+      "channels",
+      `Failed to resolve model for agent ${agentId}; creating channel conversation without a pinned model`,
+      error,
+    );
+    return {};
+  }
+}
+
 export function createChannelRouteProvisioner(deps: {
   emitEvent: (event: ChannelRegistryEvent) => void;
 }) {
@@ -30,8 +63,10 @@ export function createChannelRouteProvisioner(deps: {
     agentId: string,
     summary?: string,
   ): Promise<string> {
+    const modelPin = await resolveConversationModelPin(agentId);
     const conversation = await getBackend().createConversation({
       agent_id: agentId,
+      ...modelPin,
       ...(summary ? { summary } : {}),
     });
     return conversation.id;
