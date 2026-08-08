@@ -3,7 +3,7 @@ import {
   type ChannelModelListEntry,
   getFallbackModelEntries,
   resolveModelHandles,
-} from "@/channels/commands";
+} from "@/channels/command-runtime-executor";
 import type { ChannelModelPickerData } from "@/channels/types";
 
 const SLACK_MODEL_PICKER_OPTION_LIMIT = 100;
