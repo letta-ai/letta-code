@@ -33,6 +33,7 @@ export type {
   ChannelSlashCommandHandlerResult,
   ChannelSlashCommandHandlers,
   ChannelSlashCommandKind,
+  ChannelSlashCommandSurfaceOptions,
   ParsedChannelSlashCommand,
 } from "./channels/command-surface";
 export {
