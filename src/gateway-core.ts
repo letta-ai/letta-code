@@ -13,7 +13,10 @@ export type {
   ResolvedMessageChannelContext,
   ResolvedProactiveMessageChannelContext,
 } from "./channels/message-channel-executor";
-export { executeMessageChannel } from "./channels/message-channel-executor";
+export {
+  executeMessageChannel,
+  executeMessageChannelExternalTool,
+} from "./channels/message-channel-executor";
 export type {
   BuildMessageChannelToolOptions,
   MessageChannelToolChannel,

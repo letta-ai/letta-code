@@ -7,7 +7,10 @@
  */
 
 import {
+  createMessageChannelExternalToolResult,
+  type ExecuteMessageChannelOptions,
   executeMessageChannel,
+  executeMessageChannelExternalTool,
   type MessageChannelExecutionResolver,
 } from "@/channels/message-channel-executor";
 import type { MessageChannelIdempotencyScope } from "@/channels/message-channel-idempotency";
@@ -18,6 +21,7 @@ import {
 } from "@/channels/plugin-registry";
 import { getChannelRegistry } from "@/channels/registry";
 import { resolveEligibleProactiveSlackAccount } from "@/channels/slack/proactive-accounts";
+import type { ExternalToolCallResult } from "@/types/app-server-protocol";
 
 function createLocalMessageChannelResolver(): MessageChannelExecutionResolver {
   return {
@@ -85,20 +89,40 @@ function createLocalMessageChannelResolver(): MessageChannelExecutionResolver {
   };
 }
 
-export async function message_channel(
+function resolveLocalMessageChannelExecution(
   args: MessageChannelArgs,
   idempotencyScope?: MessageChannelIdempotencyScope | null,
-): Promise<string> {
+): ExecuteMessageChannelOptions | string {
   if (!getChannelRegistry()) {
     return "Error: Channel system is not initialized. Start with --channels flag.";
   }
   if (!args.parentScope) {
     return "Error: MessageChannel requires execution scope (agentId + conversationId).";
   }
-  return await executeMessageChannel(args, {
+  return {
     scope: args.parentScope,
     resolver: createLocalMessageChannelResolver(),
     channelTurnSources: args.channelTurnSources,
     idempotencyScope,
-  });
+  };
+}
+
+export async function message_channel(
+  args: MessageChannelArgs,
+  idempotencyScope?: MessageChannelIdempotencyScope | null,
+): Promise<string> {
+  const execution = resolveLocalMessageChannelExecution(args, idempotencyScope);
+  return typeof execution === "string"
+    ? execution
+    : await executeMessageChannel(args, execution);
+}
+
+export async function executeLocalMessageChannelExternalTool(
+  args: MessageChannelArgs,
+  idempotencyScope?: MessageChannelIdempotencyScope | null,
+): Promise<ExternalToolCallResult> {
+  const execution = resolveLocalMessageChannelExecution(args, idempotencyScope);
+  return typeof execution === "string"
+    ? createMessageChannelExternalToolResult(execution)
+    : await executeMessageChannelExternalTool(args, execution);
 }

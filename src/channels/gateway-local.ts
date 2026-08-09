@@ -3,7 +3,7 @@ import WebSocket from "ws";
 import { getModelInfo } from "@/agent/model";
 import { createAppServerClient } from "@/app-server-client";
 import { settingsManager } from "@/settings-manager";
-import { message_channel } from "@/tools/impl/message-channel";
+import { executeLocalMessageChannelExternalTool } from "@/tools/impl/message-channel";
 import type {
   ExecuteCommandResponseMessage,
   ListModelsResponseMessage,
@@ -253,7 +253,7 @@ export async function startLocalChannelGateway(
       if (request.tool_name !== "MessageChannel" || !request.runtime) {
         throw new Error(`Unsupported gateway tool: ${request.tool_name}`);
       }
-      const text = await message_channel(
+      return await executeLocalMessageChannelExternalTool(
         {
           ...request.input,
           channel: String(request.input.channel ?? ""),
@@ -266,10 +266,6 @@ export async function startLocalChannelGateway(
         },
         idempotencyScope,
       );
-      return {
-        content: [{ type: "text", text }],
-        is_error: text.startsWith("Error:"),
-      };
     },
     onLifecycle: (event) => registry.dispatchTurnLifecycleEvent(event),
     onProgress: (event) => registry.dispatchTurnProgressEvent(event),

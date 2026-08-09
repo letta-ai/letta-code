@@ -1,3 +1,4 @@
+import type { ExternalToolCallResult } from "@/types/app-server-protocol";
 import { formatOutboundChannelMessage } from "./message-channel-formatting";
 import {
   MessageChannelDuplicateActionError,
@@ -62,6 +63,15 @@ export interface ExecuteMessageChannelOptions {
   resolver: MessageChannelExecutionResolver;
   channelTurnSources?: ChannelTurnSource[];
   idempotencyScope?: MessageChannelIdempotencyScope | null;
+}
+
+export function createMessageChannelExternalToolResult(
+  text: string,
+): ExternalToolCallResult {
+  return {
+    content: [{ type: "text", text }],
+    is_error: text.startsWith("Error:"),
+  };
 }
 
 function firstNonEmptyString(...values: unknown[]): string | undefined {
@@ -454,8 +464,18 @@ export async function executeMessageChannel(
   } catch (error) {
     if (error instanceof MessageChannelDuplicateActionError) throw error;
     const message = error instanceof Error ? error.message : "unknown error";
-    return `Error sending message to ${normalized.channel}: ${message}`;
+    return `Error: Sending message to ${normalized.channel} failed: ${message}`;
   }
+}
+
+/** Execute MessageChannel and return the canonical external-tool result. */
+export async function executeMessageChannelExternalTool(
+  input: MessageChannelInput | Record<string, unknown>,
+  options: ExecuteMessageChannelOptions,
+): Promise<ExternalToolCallResult> {
+  return createMessageChannelExternalToolResult(
+    await executeMessageChannel(input, options),
+  );
 }
 
 function dispatchWithIdempotency(
