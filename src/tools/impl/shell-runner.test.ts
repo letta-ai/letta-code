@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   __testSetBackend,
   type Backend,
@@ -27,9 +28,30 @@ function stubbornProcessTreeLauncher(): string[] {
   return [process.execPath, "-e", launcherScript, descendantScript];
 }
 
+function isProcessStillRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+
+  if (process.platform !== "linux") return true;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const endCommand = stat.lastIndexOf(")");
+    const state =
+      endCommand === -1 ? "" : stat.slice(endCommand + 2, endCommand + 3);
+    // kill(pid, 0) succeeds for a zombie until it is reaped, but the
+    // process has exited and can no longer keep inherited stdio open.
+    return state !== "Z" && state !== "X";
+  } catch {
+    return false;
+  }
+}
+
 function expectProcessExited(pid: number): void {
   expect(pid).toBeGreaterThan(0);
-  expect(() => process.kill(pid, 0)).toThrow();
+  expect(isProcessStillRunning(pid)).toBe(false);
 }
 
 describe("shared shell process", () => {
