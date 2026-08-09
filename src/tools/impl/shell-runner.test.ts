@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { spawnWithLauncher } from "@/tools/impl/shell-runner";
+import {
+  spawnWithLauncher,
+  startShellProcess,
+} from "@/tools/impl/shell-runner";
 
 function stubbornProcessTreeLauncher(): string[] {
   const descendantScript = [
@@ -23,7 +26,86 @@ function expectProcessExited(pid: number): void {
   expect(() => process.kill(pid, 0)).toThrow();
 }
 
-describe("spawnWithLauncher", () => {
+describe("shared shell process", () => {
+  test("returns the process handle separately from completion", async () => {
+    const running = startShellProcess(
+      [process.execPath, "-e", 'process.stdout.write("shared")'],
+      {
+        cwd: process.cwd(),
+        env: process.env,
+        timeoutMs: 0,
+      },
+    );
+
+    expect(typeof running.process.kill).toBe("function");
+    expect(await running.completion).toEqual({
+      stdout: "shared",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "supports writable PTY processes",
+    async () => {
+      const running = startShellProcess(
+        ["bash", "-c", 'read value; printf "read:%s" "$value"'],
+        {
+          cwd: process.cwd(),
+          env: process.env,
+          timeoutMs: 2000,
+          tty: true,
+        },
+      );
+
+      running.process.write("hello\n");
+      const result = await running.completion;
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("read:hello");
+    },
+  );
+
+  test("can stream output without retaining a second copy", async () => {
+    let streamed = "";
+    const running = startShellProcess(
+      [process.execPath, "-e", 'process.stdout.write("streamed")'],
+      {
+        cwd: process.cwd(),
+        env: process.env,
+        timeoutMs: 0,
+        captureOutput: false,
+        onOutput: (chunk) => {
+          streamed += chunk;
+        },
+      },
+    );
+
+    expect(await running.completion).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(streamed).toBe("streamed");
+  });
+
+  test("decodes buffered output after joining split UTF-8 bytes", async () => {
+    const result = await spawnWithLauncher(
+      [
+        process.execPath,
+        "-e",
+        "process.stdout.write(Buffer.from([0xf0, 0x9f])); setTimeout(() => process.stdout.write(Buffer.from([0x98, 0x80])), 25)",
+      ],
+      {
+        cwd: process.cwd(),
+        env: process.env,
+        timeoutMs: 1000,
+      },
+    );
+
+    expect(result.stdout).toBe("😀");
+  });
+
   test("force-kills a timed-out process tree that ignores graceful termination", async () => {
     let output = "";
     const startedAt = Date.now();
