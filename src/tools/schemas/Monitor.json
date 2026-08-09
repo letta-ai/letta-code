@@ -18,7 +18,7 @@
     },
     "command": {
       "type": "string",
-      "description": "Shell command or script. Each stdout line is an event; exit ends the watch."
+      "description": "Shell command or script. Each stdout line is an event; exit ends the watch. Set to an empty string when ws is used."
     },
     "ws": {
       "type": "object",
@@ -36,7 +36,7 @@
       },
       "required": ["url"],
       "additionalProperties": false,
-      "description": "WebSocket to open. Each text frame is an event; binary frames are reported as a placeholder line. Socket close ends the watch. Cannot be combined with command."
+      "description": "WebSocket to open. Each text frame is an event; binary frames are reported as a placeholder line. Socket close ends the watch. Cannot be combined with command. Set url to an empty string and protocols to [] when command is used."
     }
   },
   "required": ["description"],

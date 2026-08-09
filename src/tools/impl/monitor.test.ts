@@ -100,6 +100,12 @@ describe("Monitor", () => {
       description:
         "Run for the lifetime of the session (no timeout). Use for session-length watches like PR monitoring or log tails. Stop with TaskStop.",
     });
+    expect(MonitorSchema.properties.command.description).toContain(
+      "Set to an empty string when ws is used.",
+    );
+    expect(MonitorSchema.properties.ws.description).toContain(
+      "Set url to an empty string and protocols to [] when command is used.",
+    );
     expect(MonitorSchema.properties.ws.properties.protocols).not.toHaveProperty(
       "uniqueItems",
     );
@@ -158,10 +164,11 @@ describe("Monitor", () => {
     ).rejects.toThrow("control characters");
   });
 
-  test("uses the reference timeout and persistence defaults", async () => {
+  test("accepts an empty ws placeholder and uses the reference defaults", async () => {
     const result = await monitor({
       description: "defaults",
       command: nodeCommand('process.stdout.write("done\\n")'),
+      ws: { url: "", protocols: [] },
     });
 
     expect(result).toMatchObject({ timeoutMs: 300000, persistent: false });
@@ -285,7 +292,7 @@ describe("Monitor", () => {
     ).toBe(true);
   });
 
-  test("streams WebSocket text and binary frames and reports close", async () => {
+  test("accepts an empty command placeholder and streams WebSocket frames", async () => {
     const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
     await new Promise<void>((resolve) => server.once("listening", resolve));
     const address = server.address();
@@ -303,6 +310,7 @@ describe("Monitor", () => {
         description: "socket events",
         timeout_ms: 5000,
         persistent: false,
+        command: "",
         ws: {
           url: `ws://127.0.0.1:${address.port}/events?token=secret`,
         },

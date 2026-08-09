@@ -6,6 +6,9 @@ Pick by how many notifications you need:
 - **One per occurrence, until a known end** ("emit each CI step result, stop when the run completes") → Monitor with a command that emits lines and then exits.
 
 Your script's stdout is the event stream. Each line becomes a notification. Exit ends the watch.
+
+The tool schema may require both source fields. For a command monitor, set `ws` to `{ "url": "", "protocols": [] }`. For a WebSocket monitor, set `command` to an empty string.
+
   # Each matching log line is an event
   tail -f /var/log/app.log | grep --line-buffered "ERROR"
   # Each file change is an event
