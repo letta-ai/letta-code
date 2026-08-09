@@ -255,12 +255,15 @@ describe("listener message router ownership handoff", () => {
     );
   });
 
-  test("acknowledges a directly-owned input as started and deduplicates retries", async () => {
+  test("preserves the acting user on a directly-owned input and deduplicates retries", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
     const sent: unknown[] = [];
-    const processIncomingMessage = mock(async () => {});
+    let receivedActingUserId: string | undefined;
+    const processIncomingMessage = mock(async (incoming: IncomingMessage) => {
+      receivedActingUserId = incoming.actingUserId;
+    });
     setActiveRuntime(listener);
     const handleMessage = createListenerMessageHandler({
       runtime: listener,
@@ -289,7 +292,11 @@ describe("listener message router ownership handoff", () => {
         JSON.stringify({
           type: "input",
           request_id: "input-direct",
-          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          runtime: {
+            agent_id: "agent-1",
+            conversation_id: "conv-1",
+            acting_user_id: "cloud-user-1",
+          },
           payload: {
             kind: "create_message",
             messages: [
@@ -310,7 +317,11 @@ describe("listener message router ownership handoff", () => {
         JSON.stringify({
           type: "input",
           request_id: "input-direct-retry",
-          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          runtime: {
+            agent_id: "agent-1",
+            conversation_id: "conv-1",
+            acting_user_id: "cloud-user-1",
+          },
           payload: {
             kind: "create_message",
             messages: [
@@ -327,6 +338,7 @@ describe("listener message router ownership handoff", () => {
     await runtime.messageQueue;
 
     expect(processIncomingMessage).toHaveBeenCalledTimes(1);
+    expect(receivedActingUserId).toBe("cloud-user-1");
     expect(sent).toContainEqual(
       expect.objectContaining({
         type: "input_accepted",

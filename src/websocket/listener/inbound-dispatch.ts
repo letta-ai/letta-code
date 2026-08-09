@@ -134,8 +134,14 @@ export function dispatchInboundMessageWhenReady(params: {
       );
       rememberAcceptedInputDisposition(runtime, clientMessageId, "started");
       acknowledgeInput({ accepted: true, disposition: "started" });
+      // Queued turns store the actor on the queue item. Direct turns skip that
+      // item, so carry the actor on the message consumed by turn.ts instead.
+      const attributedIncoming =
+        actingUserId && incoming.actingUserId !== actingUserId
+          ? { ...incoming, actingUserId }
+          : incoming;
       await processIncomingMessage(
-        incoming,
+        attributedIncoming,
         getOrCreateProcessTransport(listener),
         runtime,
         options.onStatusChange,
