@@ -7,9 +7,9 @@
  * the other.
  */
 
-import { spawn } from "node:child_process";
 import path from "node:path";
 import { getShellEnv } from "./shell-env.js";
+import { spawnWithLauncher } from "./shell-runner.js";
 
 const DEFAULT_GIT_TIMEOUT_MS = 120_000;
 
@@ -61,76 +61,70 @@ export function addWindowsPathLengthHint(
   return `${message}\n\nThis looks like a Windows path-length issue. Try:\n- git config --global core.longpaths true\n- move the repo to a shorter path, like C:\\src\\<repo>, and retry.`;
 }
 
+export function buildNonInteractiveGitEnv(
+  base: NodeJS.ProcessEnv = getShellEnv(),
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...base,
+    GIT_TERMINAL_PROMPT: "0",
+    GCM_INTERACTIVE: "never",
+    GIT_ASKPASS: "",
+    SSH_ASKPASS: "",
+    SSH_ASKPASS_REQUIRE: "never",
+  };
+  // OpenSSH can bypass closed stdin and read a passphrase from /dev/tty.
+  const sshCommand = env.GIT_SSH_COMMAND?.trim() || "ssh";
+  env.GIT_SSH_COMMAND = `${sshCommand} -o BatchMode=yes`;
+  return env;
+}
+
 export async function runGit(
   args: string[],
   cwd: string,
-  options: { timeoutMs?: number; allowFailure?: boolean } = {},
+  options: {
+    timeoutMs?: number;
+    allowFailure?: boolean;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<GitResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
-
-  return await new Promise<GitResult>((resolve, reject) => {
-    const child = spawn("git", args, {
+  let result: GitResult;
+  try {
+    result = await spawnWithLauncher(["git", ...args], {
       cwd,
-      env: getShellEnv(),
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
+      env: buildNonInteractiveGitEnv(),
+      signal: options.signal,
+      timeoutMs,
     });
+  } catch (error) {
+    const failure = error as Error & {
+      killed?: boolean;
+      stdout?: string;
+      stderr?: string;
+      code?: number | null;
+    };
+    throw new GitCommandError(
+      failure.killed
+        ? `Timed out running git ${args.join(" ")}`
+        : `Failed to run git ${args.join(" ")}: ${failure.message}`,
+      args,
+      {
+        stdout: failure.stdout ?? "",
+        stderr: failure.stderr ?? "",
+        exitCode: typeof failure.code === "number" ? failure.code : null,
+      },
+    );
+  }
 
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let timedOut = false;
+  if (result.exitCode !== 0 && !options.allowFailure) {
+    throw new GitCommandError(
+      `Failed to run git ${args.join(" ")}`,
+      args,
+      result,
+    );
+  }
 
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-    }, timeoutMs);
-
-    child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
-
-    child.on("error", (error) => {
-      clearTimeout(timeout);
-      reject(
-        new GitCommandError(
-          `Failed to run git ${args.join(" ")}: ${error.message}`,
-          args,
-        ),
-      );
-    });
-
-    child.on("close", (exitCode) => {
-      clearTimeout(timeout);
-      const result = {
-        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-        stderr: Buffer.concat(stderrChunks).toString("utf8"),
-        exitCode,
-      };
-
-      if (timedOut) {
-        reject(
-          new GitCommandError(
-            `Timed out running git ${args.join(" ")}`,
-            args,
-            result,
-          ),
-        );
-        return;
-      }
-
-      if (exitCode !== 0 && !options.allowFailure) {
-        reject(
-          new GitCommandError(
-            `Failed to run git ${args.join(" ")}`,
-            args,
-            result,
-          ),
-        );
-        return;
-      }
-
-      resolve(result);
-    });
-  });
+  return result;
 }
 
 export async function gitStdout(args: string[], cwd: string): Promise<string> {

@@ -53,6 +53,7 @@ interface EnterWorktreeArgs {
   switch_cwd?: boolean;
   symlink_dependencies?: boolean;
   force?: boolean;
+  signal?: AbortSignal;
   _executionContextId?: string;
 }
 
@@ -175,6 +176,7 @@ async function resolveWorktreeContext(params: {
 async function refreshBaseRef(
   repoRoot: string,
   baseRef: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const slashIndex = baseRef.indexOf("/");
   if (slashIndex <= 0) {
@@ -195,9 +197,7 @@ async function refreshBaseRef(
   await runGit(
     ["fetch", remote, `${branch}:refs/remotes/${remote}/${branch}`],
     repoRoot,
-    {
-      timeoutMs: FETCH_GIT_TIMEOUT_MS,
-    },
+    { signal, timeoutMs: FETCH_GIT_TIMEOUT_MS },
   );
 }
 
@@ -912,7 +912,7 @@ export async function enter_worktree(
       getStringArg(args, "base_ref") ?? (await resolveDefaultBaseRef(repoRoot));
 
     if (args.refresh_base !== false) {
-      await refreshBaseRef(repoRoot, baseRef);
+      await refreshBaseRef(repoRoot, baseRef, args.signal);
     }
 
     if (!(await gitRefExists(repoRoot, baseRef))) {
