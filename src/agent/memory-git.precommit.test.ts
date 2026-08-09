@@ -141,6 +141,36 @@ describe("pre-commit hook: field validation", () => {
 });
 
 describe("pre-commit hook: read_only protection", () => {
+  test("rejects deleting or renaming a read_only file", () => {
+    const hookPath = join(tempDir, ".git", "hooks", "pre-commit");
+    rmSync(hookPath);
+    writeAndStage(
+      "system/locked.md",
+      "---\ndescription: Locked\nread_only: true\n---\n\nContent.\n",
+    );
+    tryCommit();
+    writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, { mode: 0o755 });
+
+    git("rm system/locked.md");
+    expect(tryCommit().success).toBe(false);
+    git("reset --hard HEAD");
+    git("mv system/locked.md system/renamed.md");
+    expect(tryCommit().success).toBe(false);
+  });
+
+  test("allows an approved read_only change", () => {
+    writeAndStage(
+      "system/locked.md",
+      "---\ndescription: Locked\nread_only: true\n---\n",
+    );
+    expect(() =>
+      execSync('git commit -m "approved"', {
+        cwd: tempDir,
+        env: { ...GIT_ENV, LETTA_APPROVED_READ_ONLY_CHANGE: "1" },
+      }),
+    ).not.toThrow();
+  });
+
   test("rejects modifying a read_only file", () => {
     // First commit: create a read_only file (bypass hook for setup)
     const hookPath = join(tempDir, ".git", "hooks", "pre-commit");
