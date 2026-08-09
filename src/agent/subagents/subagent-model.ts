@@ -161,6 +161,13 @@ export async function resolveSubagentModel(options: {
     return "letta/auto-memory";
   }
 
+  // An inheriting subagent should use the parent's exact active handle even on
+  // the free tier. Tier defaults are fallbacks for auto/default selection, not
+  // overrides for an explicit inheritance policy.
+  if (isInheritModel(effectiveRecommendedModel) && parentModelHandle) {
+    return parentModelHandle;
+  }
+
   let recommendedHandle: string | null = null;
   if (effectiveRecommendedModel && !isInheritModel(effectiveRecommendedModel)) {
     recommendedHandle = resolveModel(effectiveRecommendedModel);
