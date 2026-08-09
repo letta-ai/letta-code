@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocketServer } from "ws";
@@ -25,10 +31,6 @@ import { backgroundProcesses } from "./process_manager";
 import { task_output } from "./task-output";
 import { task_stop } from "./task-stop";
 
-function nodeCommand(script: string): string {
-  return `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`;
-}
-
 async function waitFor(
   predicate: () => boolean,
   timeoutMs = 4000,
@@ -46,12 +48,27 @@ describe("Monitor", () => {
   let scratchpad: string;
   let previousScratchpad: string | undefined;
   let queuedMessages: QueuedMessage[];
+  let childScriptIndex: number;
+
+  function quoteCommandArgument(value: string): string {
+    return process.platform === "win32"
+      ? `"${value.replaceAll('"', '""')}"`
+      : JSON.stringify(value);
+  }
+
+  function nodeCommand(script: string): string {
+    const scriptPath = join(scratchpad, `monitor-child-${childScriptIndex}.js`);
+    childScriptIndex += 1;
+    writeFileSync(scriptPath, script);
+    return `${quoteCommandArgument(process.execPath)} ${quoteCommandArgument(scriptPath)}`;
+  }
 
   beforeEach(() => {
     previousScratchpad = process.env.LETTA_SCRATCHPAD;
     scratchpad = mkdtempSync(join(tmpdir(), "monitor-test-"));
     process.env.LETTA_SCRATCHPAD = scratchpad;
     queuedMessages = [];
+    childScriptIndex = 0;
     clearPendingMessages();
     setMessageQueueAdder((message) => queuedMessages.push(message));
   });
