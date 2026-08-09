@@ -369,7 +369,7 @@ function checkPermissionForEngine(
 
   if (sessionRules.alwaysAsk) {
     for (const pattern of sessionRules.alwaysAsk) {
-      const matched = matchesRule(pattern);
+      const matched = matchesRule(pattern, true);
       traceEvent(trace, "session-always-ask-rule", undefined, pattern, matched);
       if (matched) {
         return {
@@ -386,7 +386,7 @@ function checkPermissionForEngine(
 
   if (permissions.alwaysAsk) {
     for (const pattern of permissions.alwaysAsk) {
-      const matched = matchesRule(pattern);
+      const matched = matchesRule(pattern, true);
       traceEvent(trace, "always-ask-rule", undefined, pattern, matched);
       if (matched) {
         return {
@@ -568,7 +568,7 @@ function checkPermissionForEngine(
 
   if (permissions.ask) {
     for (const pattern of permissions.ask) {
-      const matched = matchesRule(pattern);
+      const matched = matchesRule(pattern, true);
       traceEvent(trace, "ask-rule", undefined, pattern, matched);
       if (matched) {
         return {
