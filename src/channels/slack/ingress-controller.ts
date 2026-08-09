@@ -9,15 +9,16 @@ import type {
 import type { AgentThreadTracker } from "./agent-thread-tracker";
 import { shouldAcceptSlackInboundBotMessage } from "./bot-policy";
 import type { SlackInboundDebounceController } from "./inbound-debounce";
+import type { SlackReactionEventLike } from "./ingress-policy";
 import {
   isSlackMentionOnlyChannel,
   resolveSlackAppMentionIngressPolicy,
   resolveSlackMessageIngressPolicy,
+  resolveSlackReactionIngressPolicy,
 } from "./ingress-policy";
 import type {
   SlackCommandPayload,
   SlackDebounceRawInput,
-  SlackReactionEvent,
 } from "./internal-types";
 import { resolveSlackInboundAttachments } from "./media";
 import {
@@ -435,63 +436,39 @@ export function createSlackIngressController(params: {
     );
 
     const handleReaction = async (
-      event: SlackReactionEvent,
+      event: SlackReactionEventLike,
       action: "added" | "removed",
     ) => {
-      const adapter = params.getAdapter();
       const item = asRecord(event.item);
-      const chatId = item?.channel;
       const targetMessageId = item?.ts;
-      if (
-        !adapter.onMessage ||
-        item?.type !== "message" ||
-        !isNonEmptyString(chatId) ||
-        !isNonEmptyString(targetMessageId) ||
-        !isNonEmptyString(event.user) ||
-        !isNonEmptyString(event.reaction) ||
-        event.user === params.getBotUserId()
-      ) {
-        return;
-      }
-      const chatType = resolveSlackChatType(chatId);
-      // Reactions are ambient thread events, not explicit addresses. Letting them
-      // through would wake every mention-only bot attached to the same thread.
-      if (
-        chatType === "channel" &&
-        isSlackMentionOnlyChannel(chatId, config.mentionOnlyChannels)
-      ) {
-        return;
-      }
-      const threadId =
-        chatType === "channel"
-          ? (knownThreadIdsByMessageId.get(targetMessageId) ?? targetMessageId)
-          : (knownThreadIdsByMessageId.get(targetMessageId) ?? null);
+      const policy = resolveSlackReactionIngressPolicy({
+        event,
+        action,
+        botUserId: params.getBotUserId(),
+        mentionOnlyChannels: config.mentionOnlyChannels,
+        ...(isNonEmptyString(targetMessageId) &&
+        knownThreadIdsByMessageId.has(targetMessageId)
+          ? { threadId: knownThreadIdsByMessageId.get(targetMessageId) ?? null }
+          : {}),
+      });
+      const adapter = params.getAdapter();
+      if (!adapter.onMessage || !policy.shouldRoute) return;
       try {
         await adapter.onMessage({
           channel: "slack",
           accountId: config.accountId,
-          chatId,
-          senderId: event.user,
+          chatId: policy.channelId,
+          senderId: policy.senderId,
           senderTeamId: resolveSlackSenderTeamId(event),
-          senderName: await resolveUserName(app, event.user),
-          chatLabel: chatId,
-          text: `Slack reaction ${action}: :${event.reaction}:`,
-          timestamp: slackTimestampToMillis(
-            firstNonEmptyString(event.event_ts, targetMessageId) ??
-              targetMessageId,
-          ),
-          messageId: firstNonEmptyString(event.event_ts, targetMessageId),
-          threadId,
-          chatType,
+          senderName: await resolveUserName(app, policy.senderId),
+          chatLabel: policy.channelId,
+          text: policy.text,
+          timestamp: slackTimestampToMillis(policy.messageId),
+          messageId: policy.messageId,
+          threadId: policy.threadId,
+          chatType: policy.chatType,
           isMention: false,
-          reaction: {
-            action,
-            emoji: event.reaction,
-            targetMessageId,
-            targetSenderId: isNonEmptyString(event.item_user)
-              ? event.item_user
-              : undefined,
-          },
+          reaction: policy.reaction,
           raw: event,
         });
       } catch (error) {
@@ -499,10 +476,10 @@ export function createSlackIngressController(params: {
       }
     };
     app.event("reaction_added", async ({ event }) => {
-      await handleReaction(event as SlackReactionEvent, "added");
+      await handleReaction(event, "added");
     });
     app.event("reaction_removed", async ({ event }) => {
-      await handleReaction(event as SlackReactionEvent, "removed");
+      await handleReaction(event, "removed");
     });
   }
 

@@ -1,6 +1,12 @@
+export {
+  isOwnSlackBotInboundMessage,
+  isSlackBotAuthoredInboundMessage,
+  shouldAcceptSlackInboundBotMessage,
+} from "./channels/slack/bot-policy";
 export type {
   ResolveSlackAppMentionIngressPolicyParams,
   ResolveSlackMessageIngressPolicyParams,
+  ResolveSlackReactionIngressPolicyParams,
   SlackAppMentionEventLike,
   SlackAppMentionIngressAccepted,
   SlackAppMentionIngressPolicy,
@@ -9,11 +15,15 @@ export type {
   SlackIngressIgnoreReason,
   SlackMessageIngressAccepted,
   SlackMessageIngressPolicy,
+  SlackReactionEventLike,
+  SlackReactionIngressAccepted,
+  SlackReactionIngressPolicy,
 } from "./channels/slack/ingress-policy";
 export {
   isProcessableSlackInboundMessage,
   resolveSlackAppMentionIngressPolicy,
   resolveSlackMessageIngressPolicy,
+  resolveSlackReactionIngressPolicy,
   shouldSkipSlackMessageByLastSeen,
 } from "./channels/slack/ingress-policy";
 export type { CreateSlackMessageActionAdapterOptions } from "./channels/slack/message-action-contract";
