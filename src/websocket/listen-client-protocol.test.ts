@@ -13,6 +13,7 @@ import {
 } from "@/agent/memory-filesystem";
 import { buildConversationMessagesCreateRequestBody } from "@/agent/message";
 import { models } from "@/agent/model";
+import * as personalityModule from "@/agent/personality";
 import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   getPersonalityOption,
@@ -205,7 +206,6 @@ describe("listen-client parseServerMessage", () => {
         "linus",
         "kawaii",
       ]);
-
       for (const personality of [...DEFAULT_CREATE_AGENT_PERSONALITIES]) {
         const socket = new MockSocket(WebSocket.OPEN);
         const personalityOption = getPersonalityOption(personality);
@@ -218,13 +218,16 @@ describe("listen-client parseServerMessage", () => {
           provenance: "created",
         }));
         mock.module("../agent/personality", () => ({
+          ...personalityModule,
           createAgentForPersonality: createAgentForPersonalityMock,
         }));
-
+        const mockedPersonality = await import("../agent/personality");
+        expect(mockedPersonality.buildCreateAgentOptionsForPersonality).toBe(
+          personalityModule.buildCreateAgentOptionsForPersonality,
+        );
         const originalPinAgent = settingsManager.pinAgent;
         const pinAgentMock = mock(() => {});
         settingsManager.pinAgent = pinAgentMock;
-
         await __listenClientTestUtils.handleCreateAgentCommand(
           {
             type: "create_agent",
@@ -242,7 +245,6 @@ describe("listen-client parseServerMessage", () => {
           tags: ["origin:onboarding"],
         });
         expect(pinAgentMock).toHaveBeenCalledWith(`agent-${personality}`);
-
         const messages = socket.sentPayloads.map((payload) =>
           JSON.parse(payload),
         );
@@ -270,13 +272,12 @@ describe("listen-client parseServerMessage", () => {
         provenance: "created",
       }));
       mock.module("../agent/personality", () => ({
+        ...personalityModule,
         createAgentForPersonality: createAgentForPersonalityMock,
       }));
-
       const originalPinAgent = settingsManager.pinAgent;
       const pinAgentMock = mock(() => {});
       settingsManager.pinAgent = pinAgentMock;
-
       await __listenClientTestUtils.handleCreateAgentCommand(
         {
           type: "create_agent",
@@ -286,7 +287,6 @@ describe("listen-client parseServerMessage", () => {
         },
         socket as unknown as WebSocket,
       );
-
       settingsManager.pinAgent = originalPinAgent;
       expect(pinAgentMock).not.toHaveBeenCalled();
     });

@@ -729,7 +729,6 @@ export function emitDequeuedUserMessage(
       ? content.length > 0
       : Array.isArray(content) && content.length > 0;
   if (!hasContent) return;
-
   const otid =
     firstUserPayload.otid ??
     firstUserPayload.client_message_id ??
@@ -745,6 +744,7 @@ export function emitDequeuedUserMessage(
       message_type: "user_message",
       content,
       otid,
+      created_by_id: incoming.actingUserId,
     } as StreamDelta,
     {
       agent_id: incoming.agentId,
