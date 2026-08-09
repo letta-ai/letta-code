@@ -61,7 +61,7 @@ function rebuildCachedLauncher(
  * For background processes, we can't easily do async fallback, so we rely on cached launcher
  * from previous foreground commands or the default launcher order.
  */
-function getBackgroundLauncher(
+export function getBackgroundLauncher(
   command: string,
   env: NodeJS.ProcessEnv,
   secretEnv?: Record<string, string>,

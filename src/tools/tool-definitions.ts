@@ -18,6 +18,7 @@ import ListDirectoryGeminiDescription from "./descriptions/ListDirectoryGemini.m
 import LSDescription from "./descriptions/LS.md";
 import MemoryDescription from "./descriptions/Memory.md";
 import MemoryApplyPatchDescription from "./descriptions/MemoryApplyPatch.md";
+import MonitorDescription from "./descriptions/Monitor.md";
 import MultiEditDescription from "./descriptions/MultiEdit.md";
 import ReadDescription from "./descriptions/Read.md";
 import ReadArtifactFileDescription from "./descriptions/ReadArtifactFile.md";
@@ -66,6 +67,7 @@ import { list_directory } from "./impl/list-directory-gemini";
 import { ls } from "./impl/ls";
 import { memory } from "./impl/memory";
 import { memory_apply_patch } from "./impl/memory-apply-patch";
+import { monitor } from "./impl/monitor";
 import { multi_edit } from "./impl/multi-edit";
 import { read } from "./impl/read";
 import { read_file } from "./impl/read-file-codex";
@@ -111,6 +113,7 @@ import ListDirectoryGeminiSchema from "./schemas/ListDirectoryGemini.json";
 import LSSchema from "./schemas/LS.json";
 import MemorySchema from "./schemas/Memory.json";
 import MemoryApplyPatchSchema from "./schemas/MemoryApplyPatch.json";
+import MonitorSchema from "./schemas/Monitor.json";
 import MultiEditSchema from "./schemas/MultiEdit.json";
 import ReadSchema from "./schemas/Read.json";
 import ReadArtifactFileSchema from "./schemas/ReadArtifactFile.json";
@@ -237,6 +240,11 @@ const toolDefinitions = {
     schema: MemoryApplyPatchSchema,
     description: MemoryApplyPatchDescription.trim(),
     impl: memory_apply_patch,
+  }),
+  Monitor: defineTool({
+    schema: MonitorSchema,
+    description: MonitorDescription.trim(),
+    impl: monitor,
   }),
   MultiEdit: defineTool({
     schema: MultiEditSchema,

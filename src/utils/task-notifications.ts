@@ -110,6 +110,20 @@ export function formatTaskNotification(notification: TaskNotification): string {
 Full transcript available at: ${notification.outputFile}`;
 }
 
+export function formatMonitorEventNotification(notification: {
+  taskId: string;
+  description: string;
+  event: string;
+}): string {
+  return `<task-notification>
+<task-id>${escapeXml(notification.taskId)}</task-id>
+<summary>${escapeXml(`Monitor event: "${notification.description}"`)}</summary>
+<result>
+<event>${escapeXml(notification.event)}</event>
+</result>
+</task-notification>`;
+}
+
 export function extractTaskNotificationsForDisplay(message: string): {
   notifications: string[];
   cleanedText: string;

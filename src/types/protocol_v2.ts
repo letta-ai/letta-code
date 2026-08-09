@@ -34,6 +34,7 @@ import type {
   AppServerInfoCommand,
   AppServerInfoResponseMessage,
 } from "./app-server-info";
+import type { BackgroundProcessSummary } from "./background-process-protocol";
 import type { ConversationForkBody } from "./conversation-fork-protocol";
 import type {
   ExternalToolCallRequestMessage,
@@ -45,6 +46,7 @@ import type {
 import type { RuntimeScope } from "./runtime-scope";
 import type { CronRunLogPage, CronTask } from "./schedule-protocol";
 
+export type * from "./background-process-protocol";
 export type * from "./external-tool-protocol";
 export type * from "./runtime-scope";
 export type * from "./schedule-protocol";
@@ -111,30 +113,6 @@ export interface AvailableSkillSummary {
   path: string;
   source: "bundled" | "global" | "agent" | "project";
 }
-
-export interface BashBackgroundProcessSummary {
-  process_id: string;
-  kind: "bash";
-  command: string;
-  started_at_ms: number | null;
-  status: string;
-  exit_code: number | null;
-}
-
-export interface AgentTaskBackgroundProcessSummary {
-  process_id: string;
-  kind: "agent_task";
-  task_type: string;
-  description: string;
-  started_at_ms: number;
-  status: string;
-  subagent_id: string | null;
-  error?: string;
-}
-
-export type BackgroundProcessSummary =
-  | BashBackgroundProcessSummary
-  | AgentTaskBackgroundProcessSummary;
 
 export interface DiffHunkLine {
   type: "context" | "add" | "remove";

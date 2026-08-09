@@ -16,7 +16,11 @@ import {
 } from "@/mods/tool-registry";
 import type { ModContext } from "@/mods/types";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
-import { canonicalToolName, isShellToolName } from "./canonical";
+import {
+  canonicalToolName,
+  isShellToolName,
+  toolNameForPermissionCheck,
+} from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
 import { evaluateCrossAgentGuard, extractFilePath } from "./cross-agent-guard";
 import {
@@ -62,17 +66,6 @@ const WORKING_DIRECTORY_TOOLS_V1 = [
   "read_many_files",
   "ReadManyFiles",
 ];
-const READ_ONLY_SHELL_TOOLS = new Set([
-  "Bash",
-  "shell",
-  "Shell",
-  "shell_command",
-  "ShellCommand",
-  "exec_command",
-  "write_stdin",
-  "run_shell_command",
-  "RunShellCommand",
-]);
 const FILE_TOOLS_V2 = ["Read", "Write", "Edit", "Glob", "Grep", "ListDir"];
 const FILE_TOOLS_V1 = [
   "Read",
@@ -288,8 +281,9 @@ function checkPermissionForEngine(
   agentId?: string,
   modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
 ): { result: PermissionCheckResult; trace: PermissionCheckTrace } {
-  const canonicalTool = canonicalToolName(toolName);
-  const queryTool = engine === "v2" ? canonicalTool : toolName;
+  const permissionToolName = toolNameForPermissionCheck(toolName, toolArgs);
+  const canonicalTool = canonicalToolName(permissionToolName);
+  const queryTool = engine === "v2" ? canonicalTool : permissionToolName;
   const query = buildPermissionQuery(queryTool, toolArgs, engine);
   const trace = createTrace(engine, toolName, canonicalTool, query);
   const sessionRules = sessionPermissions.getRules();
@@ -300,7 +294,7 @@ function checkPermissionForEngine(
   // agent's memory unless that agent is in the allowed set. Unbypassable by
   // any mode, rule, or flag.
   const guardResult = evaluateCrossAgentGuard(
-    toolName,
+    permissionToolName,
     toolArgs,
     workingDirectory,
     { currentAgentId: agentId },
@@ -320,7 +314,7 @@ function checkPermissionForEngine(
   if (permissions.deny) {
     for (const pattern of permissions.deny) {
       const matched = matchesPattern(
-        toolName,
+        permissionToolName,
         query,
         pattern,
         workingDirectory,
@@ -343,7 +337,7 @@ function checkPermissionForEngine(
   const disallowedTools = cliPermissions.getDisallowedTools();
   for (const pattern of disallowedTools) {
     const matched = matchesPattern(
-      toolName,
+      permissionToolName,
       query,
       pattern,
       workingDirectory,
@@ -365,7 +359,7 @@ function checkPermissionForEngine(
   if (sessionRules.alwaysAsk) {
     for (const pattern of sessionRules.alwaysAsk) {
       const matched = matchesPattern(
-        toolName,
+        permissionToolName,
         query,
         pattern,
         workingDirectory,
@@ -388,7 +382,7 @@ function checkPermissionForEngine(
   if (permissions.alwaysAsk) {
     for (const pattern of permissions.alwaysAsk) {
       const matched = matchesPattern(
-        toolName,
+        permissionToolName,
         query,
         pattern,
         workingDirectory,
@@ -428,7 +422,7 @@ function checkPermissionForEngine(
   // otherwise fall back to the global singleton (local/CLI mode).
   const effectiveMode = modeState?.mode ?? permissionMode.getMode();
   const modeOverride = permissionMode.checkModeOverride(
-    toolName,
+    permissionToolName,
     effectiveMode,
   );
   if (modeOverride) {
@@ -447,7 +441,7 @@ function checkPermissionForEngine(
   const allowedTools = cliPermissions.getAllowedTools();
   for (const pattern of allowedTools) {
     const matched = matchesPattern(
-      toolName,
+      permissionToolName,
       query,
       pattern,
       workingDirectory,
@@ -481,10 +475,7 @@ function checkPermissionForEngine(
     };
   }
 
-  if (
-    !isStrictMode &&
-    (READ_ONLY_SHELL_TOOLS.has(toolName) || isShellToolName(canonicalTool))
-  ) {
+  if (!isStrictMode && isShellToolName(canonicalTool)) {
     const shellCommand = extractShellCommand(toolArgs);
     if (
       shellCommand &&
@@ -551,7 +542,7 @@ function checkPermissionForEngine(
   if (sessionRules.allow) {
     for (const pattern of sessionRules.allow) {
       const matched = matchesPattern(
-        toolName,
+        permissionToolName,
         query,
         pattern,
         workingDirectory,
@@ -574,7 +565,7 @@ function checkPermissionForEngine(
   if (permissions.allow) {
     for (const pattern of permissions.allow) {
       const matched = matchesPattern(
-        toolName,
+        permissionToolName,
         query,
         pattern,
         workingDirectory,
@@ -597,7 +588,7 @@ function checkPermissionForEngine(
   if (permissions.ask) {
     for (const pattern of permissions.ask) {
       const matched = matchesPattern(
-        toolName,
+        permissionToolName,
         query,
         pattern,
         workingDirectory,
@@ -618,7 +609,7 @@ function checkPermissionForEngine(
   }
 
   const defaultDecision = getDefaultDecision(
-    toolName,
+    permissionToolName,
     toolArgs,
     modTools,
     effectiveMode,

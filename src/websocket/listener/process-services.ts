@@ -4,9 +4,14 @@ import {
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "@/agent/subagent-state";
 import { stopScheduler as stopCronScheduler } from "@/cron/scheduler";
+import { subscribeToBackgroundProcessState } from "@/tools/impl/process_manager";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
-import { emitStreamDelta, emitSubagentStateIfOpen } from "./protocol-outbound";
+import {
+  emitDeviceStatusIfOpen,
+  emitStreamDelta,
+  emitSubagentStateIfOpen,
+} from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
 import { clearRuntimeTimers, getActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
@@ -60,6 +65,28 @@ export function installProcessEventRouting(params: {
     },
   );
 
+  runtime._unsubscribeBackgroundProcessState?.();
+  runtime._unsubscribeBackgroundProcessState =
+    subscribeToBackgroundProcessState((scope) => {
+      if (scope) {
+        emitDeviceStatusIfOpen(runtime, {
+          agent_id: scope.agentId,
+          conversation_id: scope.conversationId,
+        });
+        return;
+      }
+      if (runtime.conversationRuntimes.size === 0) {
+        emitDeviceStatusIfOpen(runtime);
+        return;
+      }
+      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+        emitDeviceStatusIfOpen(runtime, {
+          agent_id: conversationRuntime.agentId,
+          conversation_id: conversationRuntime.conversationId,
+        });
+      }
+    });
+
   setMessageQueueAdder((queuedMessage) => {
     if (!queuedMessage.agentId || !queuedMessage.conversationId) return;
     const targetRuntime = getOrCreateScopedRuntime(
@@ -89,6 +116,8 @@ export function clearProcessServices(runtime: ListenerRuntime): void {
   runtime._unsubscribeSubagentState = undefined;
   runtime._unsubscribeSubagentStreamEvents?.();
   runtime._unsubscribeSubagentStreamEvents = undefined;
+  runtime._unsubscribeBackgroundProcessState?.();
+  runtime._unsubscribeBackgroundProcessState = undefined;
   setMessageQueueAdder(null);
   stopCronScheduler();
   clearRuntimeTimers(runtime);

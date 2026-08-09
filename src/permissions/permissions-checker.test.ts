@@ -95,6 +95,37 @@ test("Long bash commands should use wildcard patterns, not exact match", () => {
   expect(result2.decision).toBe("allow");
 });
 
+test("Monitor command sources use Bash permission rules", () => {
+  const result = checkPermission(
+    "Monitor",
+    { command: "node watch-build.js" },
+    {
+      allow: ["Bash(node:*)"],
+      deny: [],
+      ask: [],
+    },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("Bash(node:*)");
+});
+
+test("Monitor WebSocket sources do not use Bash permission rules", () => {
+  const result = checkPermission(
+    "Monitor",
+    { ws: { url: "wss://events.example.com" } },
+    {
+      allow: ["Bash(:*)"],
+      deny: [],
+      ask: [],
+    },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("ask");
+});
+
 test("npx tsc wildcard permissions match compound TypeScript check commands", () => {
   const permissions: PermissionRules = {
     allow: ["Bash(npx tsc:*)"],
