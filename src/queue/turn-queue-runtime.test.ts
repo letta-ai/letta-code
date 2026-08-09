@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import {
+  composeModTurnInput,
   mergeQueuedTurnInput,
   type QueuedTurnInput,
 } from "@/queue/turn-queue-runtime";
@@ -84,5 +86,95 @@ describe("turnQueueRuntime", () => {
         normalizeUserContent: (content: string) => content,
       }),
     ).toBeNull();
+  });
+
+  test("keeps approvals first when a legacy mod prepends context", () => {
+    const approval = {
+      type: "approval",
+      approvals: [{ tool_call_id: "tool-1", approve: true }],
+    } as unknown as ApprovalCreate;
+    const notification = {
+      role: "user",
+      content: "<task-notification>done</task-notification>",
+    } as MessageCreate;
+    const reminder = {
+      role: "user",
+      content: "<goal-reminder>stay focused</goal-reminder>",
+    } as MessageCreate;
+
+    const composed = composeModTurnInput({
+      originalInput: [approval, notification],
+      transformedInput: [reminder, approval, notification],
+      queueItems: [],
+    });
+
+    expect(composed).toEqual([approval, reminder, notification]);
+  });
+
+  test("composes passive mod context after approvals and before queued input", () => {
+    const approval = {
+      type: "approval",
+      approvals: [{ tool_call_id: "tool-1", approve: true }],
+    } as unknown as ApprovalCreate;
+    const notification = {
+      role: "user",
+      content: "<task-notification>done</task-notification>",
+    } as MessageCreate;
+
+    const composed = composeModTurnInput({
+      originalInput: [approval, notification],
+      transformedInput: [approval, notification],
+      queueItems: [
+        {
+          kind: "context",
+          content: "<goal-reminder>stay focused</goal-reminder>",
+        },
+      ],
+    });
+
+    expect(composed[0]).toBe(approval);
+    expect(composed[2]).toBe(notification);
+    expect(composed[1]).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "<goal-reminder>stay focused</goal-reminder>",
+        },
+      ],
+    });
+  });
+
+  test("does not let mods replace approval continuation objects", () => {
+    const approval = {
+      type: "approval",
+      approvals: [{ tool_call_id: "tool-1", approve: true }],
+    } as unknown as ApprovalCreate;
+    const replacement = {
+      type: "approval",
+      approvals: [{ tool_call_id: "tool-2", approve: false }],
+    } as unknown as ApprovalCreate;
+
+    const composed = composeModTurnInput({
+      originalInput: [approval],
+      transformedInput: [replacement],
+      queueItems: [],
+    });
+
+    expect(composed).toEqual([approval]);
+  });
+
+  test("preserves approval objects whose optional discriminator is absent", () => {
+    const approval = {
+      approvals: [{ tool_call_id: "tool-1", approve: true }],
+    } as unknown as ApprovalCreate;
+
+    const composed = composeModTurnInput({
+      originalInput: [approval],
+      transformedInput: [],
+      queueItems: [{ kind: "context", content: "context" }],
+    });
+
+    expect(composed[0]).toBe(approval);
   });
 });

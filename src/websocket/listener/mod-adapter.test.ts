@@ -161,6 +161,7 @@ describe("listener mod adapter", () => {
         agentId: "agent-123",
         conversationId: "conversation-456",
         input: [],
+        queueItems: [],
       },
       context,
     );
@@ -449,6 +450,7 @@ describe("listener mod adapter", () => {
       agentId: "agent-turn",
       conversationId: "conv-turn-test",
       input: originalInput,
+      queueItems: [],
     };
 
     await adapter.events.emit("turn_start", event, context);
@@ -507,6 +509,7 @@ describe("listener mod adapter", () => {
       agentId: "agent-throw",
       conversationId: "conv-throw-test",
       input: originalInput,
+      queueItems: [],
     };
 
     // Should not throw, emission continues despite handler error

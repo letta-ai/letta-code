@@ -20,7 +20,12 @@ import {
   getAvailableModToolsRegistry,
   getModToolDefinition,
 } from "@/mods/tool-registry";
-import type { ModCapabilities, ModContext, ModPanelHandle } from "@/mods/types";
+import type {
+  ModCapabilities,
+  ModContext,
+  ModPanelHandle,
+  ModTurnStartEvent,
+} from "@/mods/types";
 
 type ModTestGlobal = typeof globalThis & {
   __lettaModBackend?: unknown;
@@ -1078,10 +1083,11 @@ describe("mod engine", () => {
 
       const engine = createEngine(root);
       await engine.reload();
-      const event = {
+      const event: ModTurnStartEvent = {
         agentId: "agent-1",
         conversationId: "conversation-1",
         input: [{ role: "user" as const, content: "hello ??" }],
+        queueItems: [],
       };
 
       const result = await engine.emitEvent(
@@ -1130,15 +1136,11 @@ describe("mod engine", () => {
 
       const engine = createEngine(root);
       await engine.reload();
-      const event: {
-        agentId: string;
-        cancel?: { reason: string };
-        conversationId: string;
-        input: Array<{ role: "user"; content: string }>;
-      } = {
+      const event: ModTurnStartEvent & { cancel?: { reason: string } } = {
         agentId: "agent-1",
         conversationId: "conversation-1",
         input: [{ role: "user", content: "hello" }],
+        queueItems: [],
       };
 
       const result = await engine.emitEvent(
@@ -1176,15 +1178,11 @@ describe("mod engine", () => {
 
       const engine = createEngine(root);
       await engine.reload();
-      const event: {
-        agentId: string;
-        cancel?: { reason: string };
-        conversationId: string;
-        input: Array<{ role: "user"; content: string }>;
-      } = {
+      const event: ModTurnStartEvent & { cancel?: { reason: string } } = {
         agentId: "agent-1",
         conversationId: "conversation-1",
         input: [{ role: "user", content: "hello" }],
+        queueItems: [],
       };
 
       await engine.emitEvent("turn_start", event, createModContext());

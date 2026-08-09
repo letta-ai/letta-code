@@ -1,4 +1,5 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 
 type MessageContentParts = Exclude<MessageCreate["content"], string>;
 
@@ -15,6 +16,17 @@ export type QueuedTurnInput<TUserContent> =
       kind: "cron_prompt";
       text: string;
     };
+
+/** Passive context contributed by a mod to the next turn already in flight. */
+export interface ModTurnQueueItem {
+  kind: "context";
+  content: MessageCreate["content"];
+}
+
+type ModTurnStartInputState = {
+  input: unknown;
+  queueItems: ModTurnQueueItem[];
+};
 
 type MergeQueuedTurnInputOptions<TUserContent> = {
   normalizeUserContent: (content: TUserContent) => MessageCreate["content"];
@@ -77,4 +89,60 @@ export function mergeQueuedTurnInput<TUserContent>(
   return mergedParts.length > 0
     ? (mergedParts as MessageCreate["content"])
     : null;
+}
+
+function isApprovalCreate(
+  item: MessageCreate | ApprovalCreate,
+): item is ApprovalCreate {
+  return item.type === "approval" || !("role" in item);
+}
+
+function isTurnInputArray(
+  value: unknown,
+): value is Array<MessageCreate | ApprovalCreate> {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "object" && item !== null)
+  );
+}
+
+/**
+ * Compose mod turn effects without giving content mods control of the approval
+ * envelope. Approval continuations come from the original input and always
+ * remain first. Passive mod context follows them, then ordinary turn messages.
+ */
+export function composeModTurnInput(options: {
+  originalInput: Array<MessageCreate | ApprovalCreate>;
+  transformedInput: Array<MessageCreate | ApprovalCreate>;
+  queueItems: ModTurnQueueItem[];
+}): Array<MessageCreate | ApprovalCreate> {
+  const approvals = options.originalInput.filter(isApprovalCreate);
+  const messages = options.transformedInput.filter(
+    (item): item is MessageCreate => !isApprovalCreate(item),
+  );
+  const contextContent = mergeQueuedTurnInput(
+    options.queueItems.map((item) => ({
+      kind: "user" as const,
+      content: item.content,
+    })),
+    { normalizeUserContent: (content) => content },
+  );
+  const contextMessages: MessageCreate[] = contextContent
+    ? [{ role: "user", content: contextContent }]
+    : [];
+
+  return [...approvals, ...contextMessages, ...messages];
+}
+
+export function composeModTurnStartEventInput(
+  originalInput: Array<MessageCreate | ApprovalCreate>,
+  event: ModTurnStartInputState,
+): Array<MessageCreate | ApprovalCreate> {
+  return composeModTurnInput({
+    originalInput,
+    transformedInput: isTurnInputArray(event.input)
+      ? event.input
+      : originalInput,
+    queueItems: event.queueItems,
+  });
 }

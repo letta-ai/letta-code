@@ -29,7 +29,10 @@ import {
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
-import { emitListenerTurnStart } from "./turn-events";
+import {
+  emitListenerTurnStart,
+  type ListenerTurnStartEmission,
+} from "./turn-events";
 import {
   createTurnInputState,
   ensureTurnInputMessageOtids,
@@ -222,20 +225,22 @@ export async function prepareListenerTurn(params: {
     return { kind: "interrupted" };
   }
 
-  const hasUserMessage = messagesToSend.some(
-    (message) => "role" in message && message.role === "user",
-  );
-  const turnStartEmission = hasUserMessage
-    ? await emitListenerTurnStart({
-        agentId,
-        conversationId,
-        input: messagesToSend,
-        runtime: runtime.listener,
-        workingDirectory,
-        permissionMode: permissionModeState.mode,
-        cachedAgent,
-      })
-    : ({ cancelled: false, handlerCount: 0, input: messagesToSend } as const);
+  const turnStartEmission: ListenerTurnStartEmission =
+    messagesToSend.length > 0
+      ? await emitListenerTurnStart({
+          agentId,
+          conversationId,
+          input: messagesToSend,
+          runtime: runtime.listener,
+          workingDirectory,
+          permissionMode: permissionModeState.mode,
+          cachedAgent,
+        })
+      : {
+          cancelled: false,
+          handlerCount: 0,
+          input: messagesToSend,
+        };
   if (isInterrupted()) {
     return { kind: "interrupted" };
   }

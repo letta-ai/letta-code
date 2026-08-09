@@ -64,6 +64,14 @@ import {
   unregisterModToolsForOwner,
 } from "@/mods/tool-registry";
 import { normalizeTurnStartCancelReason } from "@/mods/turn-start-cancel";
+import {
+  cloneTurnStartInput,
+  isTurnStartInput,
+  isTurnStartQueueItems,
+  isTurnStartResultWithCancel,
+  isTurnStartResultWithInput,
+  isTurnStartResultWithQueueItems,
+} from "@/mods/turn-start-state";
 import type {
   ModCapabilities,
   ModCommand,
@@ -598,47 +606,6 @@ function isModEventCapabilityEnabled(
     case "llm_end":
       return capabilities.events.llm;
   }
-}
-
-function isTurnStartResultWithInput(
-  name: ModEventName,
-  result: unknown,
-): result is { input: ModTurnStartEvent["input"] } {
-  return (
-    name === "turn_start" &&
-    typeof result === "object" &&
-    result !== null &&
-    isTurnStartInput((result as { input?: unknown }).input)
-  );
-}
-
-function isTurnStartResultWithCancel(
-  name: ModEventName,
-  result: unknown,
-): result is { cancel: ModTurnStartCancelResult } {
-  if (name !== "turn_start" || typeof result !== "object" || !result) {
-    return false;
-  }
-  const cancel = (result as { cancel?: unknown }).cancel;
-  return (
-    typeof cancel === "object" &&
-    cancel !== null &&
-    normalizeTurnStartCancelReason((cancel as { reason?: unknown }).reason) !==
-      null
-  );
-}
-
-function isTurnStartInput(value: unknown): value is ModTurnStartEvent["input"] {
-  return (
-    Array.isArray(value) &&
-    value.every((item) => typeof item === "object" && item !== null)
-  );
-}
-
-function cloneTurnStartInput(
-  input: ModTurnStartEvent["input"],
-): ModTurnStartEvent["input"] {
-  return input.map((item) => structuredClone(item));
 }
 
 function isToolStartResultWithArgs(
@@ -1539,6 +1506,10 @@ export async function emitLocalModEvent<TName extends ModEventName>(
       turnStartEvent && isTurnStartInput(turnStartEvent.input)
         ? cloneTurnStartInput(turnStartEvent.input)
         : null;
+    const turnStartQueueItemsBeforeHandler =
+      turnStartEvent && isTurnStartQueueItems(turnStartEvent.queueItems)
+        ? structuredClone(turnStartEvent.queueItems)
+        : null;
     const toolStartEvent =
       name === "tool_start" ? (event as ModToolStartEvent) : null;
     const toolStartArgsBeforeHandler =
@@ -1591,6 +1562,9 @@ export async function emitLocalModEvent<TName extends ModEventName>(
       if (isTurnStartResultWithInput(name, result)) {
         (event as ModTurnStartEvent).input = result.input;
       }
+      if (isTurnStartResultWithQueueItems(name, result)) {
+        (event as ModTurnStartEvent).queueItems = result.queueItems;
+      }
       if (!turnStartCancel && isTurnStartResultWithCancel(name, result)) {
         const reason = normalizeTurnStartCancelReason(result.cancel.reason);
         if (reason) turnStartCancel = { reason };
@@ -1636,6 +1610,13 @@ export async function emitLocalModEvent<TName extends ModEventName>(
         turnStartEvent.input = turnStartInputBeforeHandler;
       }
       if (
+        turnStartEvent &&
+        turnStartQueueItemsBeforeHandler &&
+        !isTurnStartQueueItems(turnStartEvent.queueItems)
+      ) {
+        turnStartEvent.queueItems = turnStartQueueItemsBeforeHandler;
+      }
+      if (
         toolStartEvent &&
         toolStartArgsBeforeHandler &&
         !isToolStartArgs(toolStartEvent.args)
@@ -1645,6 +1626,9 @@ export async function emitLocalModEvent<TName extends ModEventName>(
     } catch (error) {
       if (turnStartEvent && turnStartInputBeforeHandler) {
         turnStartEvent.input = turnStartInputBeforeHandler;
+      }
+      if (turnStartEvent && turnStartQueueItemsBeforeHandler) {
+        turnStartEvent.queueItems = turnStartQueueItemsBeforeHandler;
       }
       if (toolStartEvent && toolStartArgsBeforeHandler) {
         toolStartEvent.args = toolStartArgsBeforeHandler;

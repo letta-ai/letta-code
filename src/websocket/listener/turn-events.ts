@@ -12,6 +12,7 @@ import {
   launchReflectionSubagent,
 } from "@/cli/helpers/reflection-launcher";
 import { getTurnStartCancel } from "@/mods/turn-start-cancel";
+import { composeModTurnStartEventInput } from "@/queue/turn-queue-runtime";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface } from "@/telemetry";
 import type { StreamDelta } from "@/types/protocol_v2";
@@ -29,15 +30,6 @@ export function escapeTaskNotificationSummary(summary: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-}
-
-function isTurnInputArray(
-  value: unknown,
-): value is Array<MessageCreate | ApprovalCreate> {
-  return (
-    Array.isArray(value) &&
-    value.every((item) => typeof item === "object" && item !== null)
-  );
 }
 
 export type ListenerTurnStartEmission =
@@ -72,6 +64,7 @@ export async function emitListenerTurnStart(options: {
       agentId: options.agentId,
       conversationId: options.conversationId,
       input: options.input,
+      queueItems: [],
     };
     const emission = await createListenerModEvents(modAdapters).emit(
       "turn_start",
@@ -85,11 +78,15 @@ export async function emitListenerTurnStart(options: {
     return {
       cancelled: false,
       handlerCount: emission.handlerCount,
-      input: isTurnInputArray(event.input) ? event.input : options.input,
+      input: composeModTurnStartEventInput(options.input, event),
     };
   } catch {
     // Mod turn_start handlers should not block sending the turn.
-    return { cancelled: false, handlerCount: 0, input: options.input };
+    return {
+      cancelled: false,
+      handlerCount: 0,
+      input: options.input,
+    };
   }
 }
 

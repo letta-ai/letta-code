@@ -129,6 +129,7 @@ describe("memory citations example mod", () => {
         agentId: "agent-1",
         conversationId: "conversation-1",
         input,
+        queueItems: [],
       };
       await engine.emitEvent("turn_start", turnEvent, context);
       expect(turnEvent.input).toHaveLength(2);
