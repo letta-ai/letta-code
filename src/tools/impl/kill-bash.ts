@@ -17,6 +17,9 @@ export async function kill_bash(args: KillBashArgs): Promise<KillBashResult> {
   const proc = backgroundProcesses.get(shell_id);
   if (!proc) return { killed: false };
   try {
+    // The kill below still fires the child's "exit" event; suppress the
+    // completion notification so a deliberate stop does not wake the agent.
+    proc.completionNotificationSuppressed = true;
     proc.process.kill("SIGTERM");
     clearBackgroundProcessCleanup(shell_id);
     backgroundProcesses.delete(shell_id);

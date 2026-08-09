@@ -33,6 +33,12 @@ export interface BackgroundProcess {
   totalStderrLines?: number;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
+  /**
+   * Set when the agent deliberately stops the shell (KillBash/TaskStop) so the
+   * resulting "exit" event does not wake it with a failure notification for a
+   * process it just killed on purpose.
+   */
+  completionNotificationSuppressed?: boolean;
 }
 
 export interface BackgroundTask {

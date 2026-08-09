@@ -3,6 +3,11 @@ import {
   consumeWorkingDirectoryRecovery,
   getCurrentWorkingDirectory,
 } from "@/runtime-context";
+import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
+import {
+  formatTaskNotification,
+  resolveNotificationScope,
+} from "@/utils/task-notifications.js";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
   appendBackgroundProcessOutput,
@@ -177,6 +182,98 @@ export async function spawnCommand(
   throw new Error(suffix ? `${reason} (tried: ${suffix})` : reason);
 }
 
+/** Lines of each stream to replay in a completion notification. */
+const NOTIFICATION_TAIL_LINES = 50;
+
+function formatStreamTail(
+  label: "stdout" | "stderr",
+  retainedLines: string[],
+  totalLines: number,
+): string | undefined {
+  if (retainedLines.length === 0) {
+    return undefined;
+  }
+  const tail = retainedLines.slice(-NOTIFICATION_TAIL_LINES);
+  const header =
+    tail.length < totalLines
+      ? `[${label} - last ${tail.length} of ${totalLines} lines]`
+      : `[${label}]`;
+  return `${header}\n${tail.join("\n")}`;
+}
+
+function formatBackgroundOutputTail(bgProcess: BackgroundProcess): string {
+  const sections = [
+    formatStreamTail(
+      "stdout",
+      bgProcess.stdout,
+      bgProcess.totalStdoutLines ?? bgProcess.stdout.length,
+    ),
+    formatStreamTail(
+      "stderr",
+      bgProcess.stderr,
+      bgProcess.totalStderrLines ?? bgProcess.stderr.length,
+    ),
+  ].filter(Boolean);
+
+  return sections.length > 0 ? sections.join("\n\n") : "(no output)";
+}
+
+/**
+ * Queue the completion notification for a background shell.
+ *
+ * Mirrors the subagent path in task.ts: format the same `<task-notification>`
+ * XML and hand it to the message-queue bridge, which wakes the parent turn.
+ * Bash.md promises the agent it will be notified when a `run_in_background`
+ * command finishes, so without this the agent plans around a wake-up that
+ * never arrives (letta-ai/letta-code#3226).
+ *
+ * Called from the shell runner's single completion promise, which settles
+ * exactly once, so the agent is woken exactly once per background shell.
+ */
+function notifyBackgroundCompletion(params: {
+  bashId: string;
+  description?: string;
+  outputFile: string;
+  bgProcess: BackgroundProcess;
+  scope: ReturnType<typeof resolveNotificationScope>;
+  status: "completed" | "failed";
+  detail: string;
+}): void {
+  const { bashId, description, outputFile, bgProcess, scope, status, detail } =
+    params;
+  if (bgProcess.completionNotificationSuppressed) {
+    return;
+  }
+
+  const label = description?.trim() || bgProcess.command;
+  const durationMs = bgProcess.startTime
+    ? Math.max(0, Date.now() - bgProcess.startTime.getTime())
+    : undefined;
+
+  const { content: result } = truncateByChars(
+    [`$ ${bgProcess.command}`, detail, formatBackgroundOutputTail(bgProcess)]
+      .filter(Boolean)
+      .join("\n\n"),
+    LIMITS.BASH_NOTIFICATION_CHARS,
+    "Bash",
+    { useMiddleTruncation: true },
+  );
+
+  addToMessageQueue({
+    kind: "task_notification",
+    text: formatTaskNotification({
+      taskId: bashId,
+      status,
+      summary: `Background command "${label}" ${status}`,
+      result,
+      outputFile,
+      usage: durationMs === undefined ? undefined : { durationMs },
+    }),
+    agentId: scope?.agentId,
+    conversationId: scope?.conversationId,
+  });
+}
+
 interface BashArgs {
   command: string;
   timeout?: number;
@@ -201,7 +298,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   const {
     command,
     timeout = 120000,
-    description: _description,
+    description,
     run_in_background = false,
     signal,
     onOutput,
@@ -302,11 +399,28 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     };
     backgroundProcesses.set(bashId, bgProcess);
 
+    // Resolve the routing scope now rather than on completion: by the time the
+    // shell exits the turn that launched it is gone, so the process-global
+    // agent context may already point at a different conversation.
+    const notificationScope = resolveNotificationScope(parentScope);
+
     void runningProcess.completion.then(
       ({ exitCode }) => {
         bgProcess.status = exitCode === 0 ? "completed" : "failed";
         bgProcess.exitCode = exitCode;
         appendToOutputFile(outputFile, `\n[exit code: ${exitCode}]\n`);
+        notifyBackgroundCompletion({
+          bashId,
+          description,
+          outputFile,
+          bgProcess,
+          scope: notificationScope,
+          status: exitCode === 0 ? "completed" : "failed",
+          detail:
+            exitCode === null
+              ? "Terminated by signal before exiting"
+              : `Exit code: ${exitCode}`,
+        });
         scheduleBackgroundProcessCleanup(bashId);
       },
       (error: unknown) => {
@@ -322,6 +436,15 @@ export async function bash(args: BashArgs): Promise<BashResult> {
             ? `\n[timeout after ${timeout}ms]\n`
             : `\n[error] ${message}\n`,
         );
+        notifyBackgroundCompletion({
+          bashId,
+          description,
+          outputFile,
+          bgProcess,
+          scope: notificationScope,
+          status: "failed",
+          detail: err.killed ? message : `Error: ${message}`,
+        });
         scheduleBackgroundProcessCleanup(bashId);
       },
     );
