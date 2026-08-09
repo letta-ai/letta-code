@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import {
   consumeWorkingDirectoryRecovery,
@@ -9,11 +8,11 @@ import {
   appendBackgroundProcessOutput,
   appendToOutputFile,
   assertBackgroundProcessCapacity,
+  type BackgroundProcess,
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextBashId,
   scheduleBackgroundProcessCleanup,
-  unrefTimer,
 } from "./process_manager.js";
 import { getShellEnv } from "./shell-env.js";
 import {
@@ -21,7 +20,11 @@ import {
   selectAvailableShellLauncher,
   withStrictShellPrelude,
 } from "./shell-launchers.js";
-import { type ShellExecutionError, spawnWithLauncher } from "./shell-runner.js";
+import {
+  type ShellExecutionError,
+  spawnWithLauncher,
+  startShellProcess,
+} from "./shell-runner.js";
 import { applyShellSandbox } from "./shell-sandbox.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
@@ -269,14 +272,22 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     // inner shell from launcher inspection.
     noteExpectedWorktreeForLauncher(launcher, userCwd);
     const sandboxed = applyShellSandbox(launcher, userCwd, bgEnv);
-    const [bgExecutable, ...bgLauncherArgs] = sandboxed.launcher;
-    const childProcess = spawn(bgExecutable ?? executable, bgLauncherArgs, {
-      shell: false,
+    let bgProcess: BackgroundProcess;
+    const runningProcess = startShellProcess(sandboxed.launcher, {
       cwd: userCwd,
       env: sandboxed.env,
+      timeoutMs: timeout > 0 ? timeout : 0,
+      captureOutput: false,
+      onOutput(text, stream) {
+        appendBackgroundProcessOutput(bgProcess, stream, text);
+        appendToOutputFile(
+          outputFile,
+          stream === "stderr" ? `[stderr] ${text}` : text,
+        );
+      },
     });
-    backgroundProcesses.set(bashId, {
-      process: childProcess,
+    bgProcess = {
+      process: runningProcess.process,
       command,
       stdout: [],
       stderr: [],
@@ -288,51 +299,32 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       totalStdoutLines: 0,
       totalStderrLines: 0,
       runtimeScope: parentScope,
-    });
-    const bgProcess = backgroundProcesses.get(bashId);
-    if (!bgProcess) {
-      throw new Error("Failed to track background process state");
-    }
-    childProcess.stdout?.on("data", (data: Buffer) => {
-      const text = data.toString();
-      appendBackgroundProcessOutput(bgProcess, "stdout", text);
-      // Also write to output file
-      appendToOutputFile(outputFile, text);
-    });
-    childProcess.stderr?.on("data", (data: Buffer) => {
-      const text = data.toString();
-      appendBackgroundProcessOutput(bgProcess, "stderr", text);
-      // Also write to output file (prefixed with [stderr])
-      appendToOutputFile(outputFile, `[stderr] ${text}`);
-    });
-    childProcess.on("exit", (code: number | null) => {
-      bgProcess.status = code === 0 ? "completed" : "failed";
-      bgProcess.exitCode = code;
-      appendToOutputFile(outputFile, `\n[exit code: ${code}]\n`);
-      scheduleBackgroundProcessCleanup(bashId);
-    });
-    childProcess.on("error", (err: Error) => {
-      bgProcess.status = "failed";
-      appendBackgroundProcessOutput(bgProcess, "stderr", err.message);
-      appendToOutputFile(outputFile, `\n[error] ${err.message}\n`);
-      scheduleBackgroundProcessCleanup(bashId);
-    });
-    if (timeout && timeout > 0) {
-      const timeoutHandle = setTimeout(() => {
-        if (bgProcess.status === "running") {
-          childProcess.kill("SIGTERM");
-          bgProcess.status = "failed";
-          appendBackgroundProcessOutput(
-            bgProcess,
-            "stderr",
-            `Command timed out after ${timeout}ms`,
-          );
-          appendToOutputFile(outputFile, `\n[timeout after ${timeout}ms]\n`);
-          scheduleBackgroundProcessCleanup(bashId);
-        }
-      }, timeout);
-      unrefTimer(timeoutHandle);
-    }
+    };
+    backgroundProcesses.set(bashId, bgProcess);
+
+    void runningProcess.completion.then(
+      ({ exitCode }) => {
+        bgProcess.status = exitCode === 0 ? "completed" : "failed";
+        bgProcess.exitCode = exitCode;
+        appendToOutputFile(outputFile, `\n[exit code: ${exitCode}]\n`);
+        scheduleBackgroundProcessCleanup(bashId);
+      },
+      (error: unknown) => {
+        const err = error as Error & { killed?: boolean };
+        const message = err.killed
+          ? `Command timed out after ${timeout}ms`
+          : err.message;
+        bgProcess.status = "failed";
+        appendBackgroundProcessOutput(bgProcess, "stderr", message);
+        appendToOutputFile(
+          outputFile,
+          err.killed
+            ? `\n[timeout after ${timeout}ms]\n`
+            : `\n[error] ${message}\n`,
+        );
+        scheduleBackgroundProcessCleanup(bashId);
+      },
+    );
     return {
       content: [
         {

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { isUsableDirectory } from "@/helpers/usable-directory";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 
@@ -10,13 +10,82 @@ export class ShellExecutionError extends Error {
   reason?: "executable_missing" | "cwd_missing";
 }
 
+export type ShellOutputStream = "stdout" | "stderr";
+
 export type ShellSpawnOptions = {
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
   signal?: AbortSignal;
-  onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
+  onOutput?: (chunk: string, stream: ShellOutputStream) => void;
+  tty?: boolean;
+  /** Disable when the caller already keeps its own bounded output buffer. */
+  captureOutput?: boolean;
 };
+
+export interface ShellProcessHandle {
+  kill(signal?: string | number): unknown;
+  write(input: string): void;
+}
+
+export interface ShellProcessResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+}
+
+export interface RunningShellProcess {
+  process: ShellProcessHandle;
+  completion: Promise<ShellProcessResult>;
+}
+
+type NodePtyExitEvent = { exitCode?: number; signal?: number };
+
+type NodePtyProcess = {
+  pid: number;
+  write: (data: string) => void;
+  kill: (signal?: string) => void;
+  onData: (listener: (data: string) => void) => void;
+  onExit: (listener: (event: NodePtyExitEvent) => void) => void;
+};
+
+type NodePtyModule = {
+  spawn: (
+    file: string,
+    args: string[],
+    options: {
+      name: string;
+      cols: number;
+      rows: number;
+      cwd: string;
+      env: Record<string, string>;
+    },
+  ) => NodePtyProcess;
+};
+
+type ProcessEvents = {
+  output(data: Buffer | string, stream: ShellOutputStream): void;
+  error(error: NodeJS.ErrnoException): void;
+  close(code: number | null): void;
+};
+
+const NODE_PTY_BRIDGE_SCRIPT = `
+const pty = require("node-pty");
+const config = JSON.parse(process.argv[1]);
+const child = pty.spawn(config.executable, config.args, {
+  name: "xterm-256color",
+  cols: 80,
+  rows: 24,
+  cwd: config.cwd,
+  env: process.env,
+});
+child.onData((data) => process.stdout.write(data));
+child.onExit(({ exitCode }) => process.exit(typeof exitCode === "number" ? exitCode : 1));
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (data) => child.write(data));
+process.on("SIGTERM", () => child.kill("SIGTERM"));
+process.on("SIGINT", () => child.kill("SIGINT"));
+`;
 
 const FORCE_KILL_GRACE_MS = 2000;
 
@@ -45,192 +114,357 @@ function buildSpawnError(
   return execError;
 }
 
-/**
- * Spawn a command with a specific launcher.
- * Returns a promise that resolves with the output or rejects with an error.
- */
-export function spawnWithLauncher(
+function buildTimeoutError(
+  stdout: string,
+  stderr: string,
+  code: number | null,
+): Error {
+  return Object.assign(new Error("Command timed out"), {
+    killed: true,
+    signal: "SIGTERM",
+    stdout,
+    stderr,
+    code,
+  });
+}
+
+function buildAbortError(stdout: string, stderr: string): Error {
+  return Object.assign(new Error("The operation was aborted"), {
+    name: "AbortError",
+    code: "ABORT_ERR",
+    stdout,
+    stderr,
+  });
+}
+
+function buildPtyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const ptyEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined) {
+      ptyEnv[key] = value;
+    }
+  }
+  ptyEnv.TERM = ptyEnv.TERM || "xterm-256color";
+  ptyEnv.COLORTERM = ptyEnv.COLORTERM || "truecolor";
+  return ptyEnv;
+}
+
+function killChildProcessTree(
+  childProcess: ChildProcess,
+  signal: string | number = "SIGTERM",
+): void {
+  if (!childProcess.pid) {
+    return;
+  }
+
+  if (process.platform === "win32") {
+    const taskkill = spawn(
+      "taskkill.exe",
+      ["/pid", String(childProcess.pid), "/t", "/f"],
+      {
+        stdio: "ignore",
+        windowsHide: true,
+      },
+    );
+    taskkill.once("error", () => {
+      try {
+        childProcess.kill("SIGKILL");
+      } catch {
+        // Already dead, ignore.
+      }
+    });
+    taskkill.once("close", (code) => {
+      if (code === 0) return;
+      try {
+        childProcess.kill("SIGKILL");
+      } catch {
+        // Already dead, ignore.
+      }
+    });
+    return;
+  }
+
+  try {
+    process.kill(-childProcess.pid, signal as NodeJS.Signals);
+  } catch {
+    try {
+      childProcess.kill(signal as NodeJS.Signals);
+    } catch {
+      // Already dead, ignore.
+    }
+  }
+}
+
+function spawnPipeProcess(
   launcher: string[],
   options: ShellSpawnOptions,
-): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
-  return new Promise((resolve, reject) => {
-    const [executable, ...args] = launcher;
-    if (!executable) {
-      reject(new ShellExecutionError("Executable is required"));
-      return;
-    }
+  events: ProcessEvents,
+): ShellProcessHandle {
+  const [executable, ...args] = launcher;
+  if (!executable) {
+    throw new ShellExecutionError("Executable is required");
+  }
 
-    if (!isUsableDirectory(options.cwd)) {
-      reject(
-        buildSpawnError(
-          { code: "ENOENT" } as NodeJS.ErrnoException,
-          executable,
-          options.cwd,
-        ),
-      );
-      return;
-    }
+  const childProcess: ChildProcess = spawn(executable, args, {
+    cwd: options.cwd,
+    env: options.env,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: process.platform !== "win32",
+  });
 
-    noteExpectedWorktreeForLauncher(launcher, options.cwd);
+  childProcess.stdout?.on("data", (chunk: Buffer) => {
+    events.output(chunk, "stdout");
+  });
+  childProcess.stderr?.on("data", (chunk: Buffer) => {
+    events.output(chunk, "stderr");
+  });
+  childProcess.on("error", events.error);
+  childProcess.on("close", events.close);
 
-    const childProcess = spawn(executable, args, {
+  return {
+    kill(signal?: string | number) {
+      killChildProcessTree(childProcess, signal);
+    },
+    write(_input: string) {
+      // Pipe-mode shell processes deliberately keep stdin closed.
+    },
+  };
+}
+
+function spawnPtyBridgeProcess(
+  launcher: string[],
+  options: ShellSpawnOptions,
+  events: ProcessEvents,
+): ShellProcessHandle {
+  const [executable, ...args] = launcher;
+  if (!executable) {
+    throw new ShellExecutionError("Executable is required");
+  }
+
+  const childProcess: ChildProcess = spawn(
+    "node",
+    [
+      "-e",
+      NODE_PTY_BRIDGE_SCRIPT,
+      JSON.stringify({ executable, args, cwd: options.cwd }),
+    ],
+    {
       cwd: options.cwd,
-      env: options.env,
+      env: buildPtyEnv(options.env),
       shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
-      // On Unix, detached creates a new process group for clean termination
-      // On Windows, detached creates a new console window which we don't want
+      stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
-    });
+    },
+  );
 
-    // Helper to kill the entire process tree.
-    const killProcessTree = (signal: "SIGTERM" | "SIGKILL") => {
-      if (childProcess.pid) {
-        if (process.platform === "win32") {
-          // Windows has no Unix-style process groups or graceful SIGTERM.
-          // taskkill is required so descendants cannot keep stdio open after
-          // the launcher exits.
-          const taskkill = spawn(
-            "taskkill.exe",
-            ["/pid", String(childProcess.pid), "/t", "/f"],
-            {
-              stdio: "ignore",
-              windowsHide: true,
-            },
-          );
-          taskkill.once("error", () => {
-            try {
-              childProcess.kill("SIGKILL");
-            } catch {
-              // Already dead, ignore.
-            }
-          });
-          taskkill.once("close", (code) => {
-            if (code === 0) return;
-            try {
-              childProcess.kill("SIGKILL");
-            } catch {
-              // Already dead, ignore.
-            }
-          });
-          return;
-        }
+  childProcess.stdout?.on("data", (chunk: Buffer) => {
+    events.output(chunk, "stdout");
+  });
+  childProcess.stderr?.on("data", (chunk: Buffer) => {
+    events.output(chunk, "stderr");
+  });
+  childProcess.on("error", events.error);
+  childProcess.on("close", events.close);
 
-        try {
-          // Unix: kill the process group using negative PID.
-          process.kill(-childProcess.pid, signal);
-        } catch {
-          // Process may already be dead, try killing just the child
-          try {
-            childProcess.kill(signal);
-          } catch {
-            // Already dead, ignore
-          }
-        }
-      }
-    };
+  return {
+    kill(signal?: string | number) {
+      killChildProcessTree(childProcess, signal);
+    },
+    write(input: string) {
+      childProcess.stdin?.write(input);
+    },
+  };
+}
 
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let timedOut = false;
-    let killTimer: ReturnType<typeof setTimeout> | null = null;
-    let completed = false;
+function spawnNativePtyProcess(
+  launcher: string[],
+  options: ShellSpawnOptions,
+  events: ProcessEvents,
+): ShellProcessHandle {
+  const [executable, ...args] = launcher;
+  if (!executable) {
+    throw new ShellExecutionError("Executable is required");
+  }
 
-    const terminateProcess = () => {
-      if (process.platform === "win32") {
-        killProcessTree("SIGKILL");
-        return;
-      }
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const pty = require("node-pty") as NodePtyModule;
+  const ptyProcess = pty.spawn(executable, args, {
+    name: "xterm-256color",
+    cols: 80,
+    rows: 24,
+    cwd: options.cwd,
+    env: buildPtyEnv(options.env),
+  });
 
-      killProcessTree("SIGTERM");
-      if (!killTimer) {
-        killTimer = setTimeout(() => {
-          if (!completed) {
-            killProcessTree("SIGKILL");
-          }
-        }, FORCE_KILL_GRACE_MS);
-      }
-    };
+  ptyProcess.onData((data) => events.output(data, "stdout"));
+  ptyProcess.onExit(({ exitCode }) => {
+    events.close(typeof exitCode === "number" ? exitCode : null);
+  });
 
-    // Only set timeout if timeoutMs > 0 (0 means no timeout)
-    const timeoutId = options.timeoutMs
-      ? setTimeout(() => {
-          timedOut = true;
-          terminateProcess();
-        }, options.timeoutMs)
-      : null;
+  return {
+    kill(signal?: string | number) {
+      ptyProcess.kill(typeof signal === "string" ? signal : undefined);
+    },
+    write(input: string) {
+      ptyProcess.write(input);
+    },
+  };
+}
 
-    const abortHandler = () => {
-      terminateProcess();
-    };
-    if (options.signal) {
-      options.signal.addEventListener("abort", abortHandler, { once: true });
+function spawnPtyProcess(
+  launcher: string[],
+  options: ShellSpawnOptions,
+  events: ProcessEvents,
+): ShellProcessHandle {
+  // node-pty's native handles do not integrate reliably when loaded into
+  // Bun's event loop. Local Bun dev/tests use a tiny Node bridge; the
+  // distributed CLI runs under Node and uses node-pty directly.
+  return typeof Bun !== "undefined"
+    ? spawnPtyBridgeProcess(launcher, options, events)
+    : spawnNativePtyProcess(launcher, options, events);
+}
+
+/**
+ * Starts one shell process. Every built-in shell surface uses this function,
+ * while its adapter decides whether to await completion or expose a session.
+ */
+export function startShellProcess(
+  launcher: string[],
+  options: ShellSpawnOptions,
+): RunningShellProcess {
+  const [executable] = launcher;
+  if (!executable) {
+    throw new ShellExecutionError("Executable is required");
+  }
+  if (!isUsableDirectory(options.cwd)) {
+    throw buildSpawnError(
+      { code: "ENOENT" } as NodeJS.ErrnoException,
+      executable,
+      options.cwd,
+    );
+  }
+
+  noteExpectedWorktreeForLauncher(launcher, options.cwd);
+
+  const stdoutChunks: Buffer[] = [];
+  const stderrChunks: Buffer[] = [];
+  let completed = false;
+  let timedOut = false;
+  let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+  let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  let resolveCompletion!: (result: ShellProcessResult) => void;
+  let rejectCompletion!: (error: Error) => void;
+  const completion = new Promise<ShellProcessResult>((resolve, reject) => {
+    resolveCompletion = resolve;
+    rejectCompletion = reject;
+  });
+
+  const cleanup = () => {
+    if (timeoutTimer) {
+      clearTimeout(timeoutTimer);
+      timeoutTimer = undefined;
+    }
+    if (forceKillTimer) {
+      clearTimeout(forceKillTimer);
+      forceKillTimer = undefined;
+    }
+    options.signal?.removeEventListener("abort", abortHandler);
+  };
+
+  let processHandle: ShellProcessHandle;
+  const terminateProcess = () => {
+    if (process.platform === "win32") {
+      processHandle.kill("SIGKILL");
+      return;
     }
 
-    childProcess.stdout?.on("data", (chunk: Buffer) => {
-      stdoutChunks.push(chunk);
-      options.onOutput?.(chunk.toString("utf8"), "stdout");
-    });
+    processHandle.kill("SIGTERM");
+    if (!forceKillTimer) {
+      forceKillTimer = setTimeout(() => {
+        if (!completed) {
+          processHandle.kill("SIGKILL");
+        }
+      }, FORCE_KILL_GRACE_MS);
+    }
+  };
 
-    childProcess.stderr?.on("data", (chunk: Buffer) => {
-      stderrChunks.push(chunk);
-      options.onOutput?.(chunk.toString("utf8"), "stderr");
-    });
+  const abortHandler = () => {
+    terminateProcess();
+  };
 
-    childProcess.on("error", (err: NodeJS.ErrnoException) => {
+  const events: ProcessEvents = {
+    output(data, stream) {
+      if (options.captureOutput !== false) {
+        if (stream === "stdout") {
+          stdoutChunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
+        } else {
+          stderrChunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
+        }
+      }
+      const text = Buffer.isBuffer(data) ? data.toString("utf8") : data;
+      options.onOutput?.(text, stream);
+    },
+    error(error) {
+      if (completed) return;
       completed = true;
-      if (timeoutId) clearTimeout(timeoutId);
-      if (killTimer) {
-        clearTimeout(killTimer);
-        killTimer = null;
-      }
-      if (options.signal) {
-        options.signal.removeEventListener("abort", abortHandler);
-      }
-
-      reject(buildSpawnError(err, executable, options.cwd));
-    });
-
-    childProcess.on("close", (code) => {
+      cleanup();
+      rejectCompletion(buildSpawnError(error, executable, options.cwd));
+    },
+    close(code) {
+      if (completed) return;
       completed = true;
-      if (timeoutId) clearTimeout(timeoutId);
-      if (killTimer) {
-        clearTimeout(killTimer);
-        killTimer = null;
-      }
-      if (options.signal) {
-        options.signal.removeEventListener("abort", abortHandler);
-      }
-
+      cleanup();
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
-
       if (timedOut) {
-        reject(
-          Object.assign(new Error("Command timed out"), {
-            killed: true,
-            signal: "SIGTERM",
-            stdout,
-            stderr,
-            code,
-          }),
-        );
+        rejectCompletion(buildTimeoutError(stdout, stderr, code));
         return;
       }
-
       if (options.signal?.aborted) {
-        reject(
-          Object.assign(new Error("The operation was aborted"), {
-            name: "AbortError",
-            code: "ABORT_ERR",
-            stdout,
-            stderr,
-          }),
-        );
+        rejectCompletion(buildAbortError(stdout, stderr));
         return;
       }
+      resolveCompletion({ stdout, stderr, exitCode: code });
+    },
+  };
 
-      resolve({ stdout, stderr, exitCode: code });
-    });
-  });
+  try {
+    processHandle = options.tty
+      ? spawnPtyProcess(launcher, options, events)
+      : spawnPipeProcess(launcher, options, events);
+  } catch (error) {
+    completed = true;
+    cleanup();
+    const failure = error instanceof Error ? error : new Error(String(error));
+    rejectCompletion(failure);
+    // Preserve synchronous startup errors without leaving the deferred
+    // completion promise unhandled.
+    void completion.catch(() => {});
+    throw failure;
+  }
+
+  if (options.timeoutMs) {
+    timeoutTimer = setTimeout(() => {
+      if (completed) return;
+      timedOut = true;
+      terminateProcess();
+    }, options.timeoutMs);
+  }
+  options.signal?.addEventListener("abort", abortHandler, { once: true });
+  if (options.signal?.aborted) {
+    abortHandler();
+  }
+
+  return { process: processHandle, completion };
+}
+
+/**
+ * Compatibility helper for callers that wait for the process to finish.
+ */
+export async function spawnWithLauncher(
+  launcher: string[],
+  options: ShellSpawnOptions,
+): Promise<ShellProcessResult> {
+  return startShellProcess(launcher, options).completion;
 }
