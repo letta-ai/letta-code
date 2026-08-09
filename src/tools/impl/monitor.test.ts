@@ -253,7 +253,9 @@ describe("Monitor", () => {
       description: "large output",
       timeout_ms: 5000,
       persistent: false,
-      command: nodeCommand('process.stdout.write("x".repeat(1100000))'),
+      command: nodeCommand(
+        `process.stdout.write("x".repeat(${MONITOR_OUTPUT_FILE_BYTES}), () => setTimeout(() => process.stdout.write("y"), 250))`,
+      ),
     });
 
     await waitFor(

@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import stripAnsi from "strip-ansi";
 import { type RawData, WebSocket } from "ws";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -118,14 +118,13 @@ class MonitorOutputWriter {
       `\n[output truncated at ${MONITOR_OUTPUT_FILE_BYTES} bytes]\n`,
       "utf8",
     );
-    const contentBudget = Math.max(0, remaining - marker.length);
-    const content = validUtf8Prefix(chunk, contentBudget);
-    const markerBudget = remaining - content.length;
-    appendFileSync(
-      this.path,
-      Buffer.concat([content, marker.subarray(0, markerBudget)]),
+    const content = validUtf8Prefix(
+      Buffer.concat([readFileSync(this.path), chunk]),
+      MONITOR_OUTPUT_FILE_BYTES - marker.length,
     );
-    this.bytesWritten = MONITOR_OUTPUT_FILE_BYTES;
+    const truncatedOutput = Buffer.concat([content, marker]);
+    writeFileSync(this.path, truncatedOutput);
+    this.bytesWritten = truncatedOutput.length;
     this.truncated = true;
   }
 }
