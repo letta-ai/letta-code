@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -29,10 +30,34 @@ async function installHangingGit(
   return binDir;
 }
 
-function expectGitDescendantExited(failure: string): void {
+function isProcessStillRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+
+  if (process.platform !== "linux") return true;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const endCommand = stat.lastIndexOf(")");
+    const state =
+      endCommand === -1 ? "" : stat.slice(endCommand + 2, endCommand + 3);
+    // kill(pid, 0) still succeeds after exit while Linux waits to reap a zombie.
+    return state !== "Z" && state !== "X";
+  } catch {
+    return false;
+  }
+}
+
+async function expectGitDescendantExited(failure: string): Promise<void> {
   const descendantPid = Number(failure.match(/descendant:(\d+)/)?.[1]);
   expect(descendantPid).toBeGreaterThan(0);
-  expect(() => process.kill(descendantPid, 0)).toThrow();
+  const deadline = Date.now() + 1000;
+  while (isProcessStillRunning(descendantPid) && Date.now() < deadline) {
+    await Bun.sleep(10);
+  }
+  expect(isProcessStillRunning(descendantPid)).toBe(false);
 }
 
 describe("worktree Git runner", () => {
@@ -85,7 +110,7 @@ describe("worktree Git runner", () => {
 
       expect(failure).toContain("Timed out running git fetch");
       expect(Date.now() - startedAt).toBeLessThan(2000);
-      expectGitDescendantExited(failure);
+      await expectGitDescendantExited(failure);
     },
   );
 
@@ -112,7 +137,7 @@ describe("worktree Git runner", () => {
         "Failed to run git fetch: The operation was aborted",
       );
       expect(Date.now() - startedAt).toBeLessThan(2000);
-      expectGitDescendantExited(failure);
+      await expectGitDescendantExited(failure);
     },
   );
 });
