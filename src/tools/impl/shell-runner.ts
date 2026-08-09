@@ -1,6 +1,10 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { isUsableDirectory } from "@/helpers/usable-directory";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
+import {
+  createGitHubPullRequestOutputTracker,
+  type ShellSourceCommand,
+} from "./github-pull-request-tracker.js";
 
 export class ShellExecutionError extends Error {
   code?: string;
@@ -16,6 +20,8 @@ export type ShellSpawnOptions = {
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
+  /** Command before launcher and sandbox wrapping, used for completion metadata. */
+  sourceCommand?: ShellSourceCommand;
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: ShellOutputStream) => void;
   tty?: boolean;
@@ -347,6 +353,10 @@ export function startShellProcess(
 
   noteExpectedWorktreeForLauncher(launcher, options.cwd);
 
+  const pullRequestTracker = createGitHubPullRequestOutputTracker(
+    options.sourceCommand ?? launcher,
+  );
+
   const stdoutChunks: Buffer[] = [];
   const stderrChunks: Buffer[] = [];
   let completed = false;
@@ -395,6 +405,8 @@ export function startShellProcess(
 
   const events: ProcessEvents = {
     output(data, stream) {
+      const text = Buffer.isBuffer(data) ? data.toString("utf8") : data;
+      pullRequestTracker?.append(text, stream);
       if (options.captureOutput !== false) {
         if (stream === "stdout") {
           stdoutChunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
@@ -402,19 +414,20 @@ export function startShellProcess(
           stderrChunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
         }
       }
-      const text = Buffer.isBuffer(data) ? data.toString("utf8") : data;
       options.onOutput?.(text, stream);
     },
     error(error) {
       if (completed) return;
       completed = true;
       cleanup();
+      void pullRequestTracker?.finish();
       rejectCompletion(buildSpawnError(error, executable, options.cwd));
     },
     close(code) {
       if (completed) return;
       completed = true;
       cleanup();
+      void pullRequestTracker?.finish();
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
       if (timedOut) {

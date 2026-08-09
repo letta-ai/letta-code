@@ -108,6 +108,7 @@ export async function spawnCommand(
       cwd: options.cwd,
       env: sandboxed.env,
       timeoutMs: options.timeout,
+      sourceCommand: command,
       signal: options.signal,
       onOutput: options.onOutput,
     });
@@ -122,6 +123,7 @@ export async function spawnCommand(
           cwd: options.cwd,
           env,
           timeoutMs: options.timeout,
+          sourceCommand: command,
           signal: options.signal,
           onOutput: options.onOutput,
         });
@@ -156,6 +158,7 @@ export async function spawnCommand(
         cwd: options.cwd,
         env,
         timeoutMs: options.timeout,
+        sourceCommand: command,
         signal: options.signal,
         onOutput: options.onOutput,
       });
@@ -277,6 +280,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       cwd: userCwd,
       env: sandboxed.env,
       timeoutMs: timeout > 0 ? timeout : 0,
+      sourceCommand: command,
       captureOutput: false,
       onOutput(text, stream) {
         appendBackgroundProcessOutput(bgProcess, stream, text);
