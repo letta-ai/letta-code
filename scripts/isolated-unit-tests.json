@@ -36,6 +36,12 @@
       "reason": "Mutates shared channel account, route, credential-store, service-loader, and listener runtime state."
     },
     {
+      "path": "src/channels/service.test.ts",
+      "timeoutMs": 15000,
+      "env": { "LETTA_SKIP_KEYCHAIN_CHECK": "1" },
+      "reason": "Mutates shared channel stores and credential mode; local fixtures must not use the macOS keychain."
+    },
+    {
       "path": "src/channels/slack/media.test.ts",
       "timeoutMs": 15000,
       "reason": "Imports the real media module while Slack adapter tests replace it."
