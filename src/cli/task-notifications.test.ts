@@ -8,6 +8,7 @@ import {
 } from "@/utils/message-queue-bridge";
 import {
   extractTaskNotificationsForDisplay,
+  formatMonitorEventNotification,
   formatTaskNotification,
   type TaskNotification,
 } from "@/utils/task-notifications";
@@ -132,6 +133,26 @@ ACTION REQUIRED: Resolve pending reflection memory merge.
 
       expect(extractTaskNotificationsForDisplay(message)).toEqual({
         notifications: [],
+        cleanedText: "",
+      });
+    });
+
+    test("formats monitor events as task notifications and escapes output", () => {
+      const formatted = formatMonitorEventNotification({
+        taskId: "monitor_1",
+        description: "deploy <status>",
+        event: "failed & needs <attention>",
+      });
+
+      expect(formatted).toContain("<task-id>monitor_1</task-id>");
+      expect(formatted).toContain(
+        '<summary>Monitor event: "deploy &lt;status&gt;"</summary>',
+      );
+      expect(formatted).toContain(
+        "<event>failed &amp; needs &lt;attention&gt;</event>",
+      );
+      expect(extractTaskNotificationsForDisplay(formatted)).toEqual({
+        notifications: ['Monitor event: "deploy <status>"'],
         cleanedText: "",
       });
     });

@@ -33,6 +33,10 @@ export interface BackgroundProcess {
   totalStderrLines?: number;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
+  kind?: "monitor";
+  description?: string;
+  monitorSource?: "command" | "websocket";
+  persistent?: boolean;
   /**
    * Set when the agent deliberately stops the shell (KillBash/TaskStop) so the
    * resulting "exit" event does not wake it with a failure notification for a
@@ -58,10 +62,36 @@ export interface BackgroundTask {
 
 export const backgroundProcesses = new Map<string, BackgroundProcess>();
 export const backgroundTasks = new Map<string, BackgroundTask>();
+
+type BackgroundProcessStateListener = (scope?: BackgroundRuntimeScope) => void;
+
+const backgroundProcessStateListeners =
+  new Set<BackgroundProcessStateListener>();
+
+export function subscribeToBackgroundProcessState(
+  listener: BackgroundProcessStateListener,
+): () => void {
+  backgroundProcessStateListeners.add(listener);
+  return () => backgroundProcessStateListeners.delete(listener);
+}
+
+export function notifyBackgroundProcessStateChanged(
+  scope?: BackgroundRuntimeScope,
+): void {
+  for (const listener of backgroundProcessStateListeners) {
+    listener(scope);
+  }
+}
+
 let backgroundOutputDir: string | undefined;
 let bashIdCounter = 1;
 export function getNextBashId() {
   return `bash_${bashIdCounter++}`;
+}
+
+let monitorIdCounter = 1;
+export function getNextMonitorId() {
+  return `monitor_${monitorIdCounter++}`;
 }
 
 let execSessionIdCounter = 1;

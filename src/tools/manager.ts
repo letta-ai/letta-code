@@ -77,6 +77,7 @@ import {
   scrubSecretsFromString,
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
+import { TOOL_PERMISSIONS } from "./tool-permissions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 
@@ -144,6 +145,7 @@ const STREAMING_SHELL_TOOLS = new Set([
   "Shell",
   "run_shell_command",
   "RunShellCommand",
+  "Monitor",
 ]);
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
@@ -368,6 +370,7 @@ function filterModToolsByClientAllowlist(
 export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "Bash",
+  "Monitor",
   "TaskOutput",
   "EnterWorktree",
   "ExitWorktree",
@@ -422,6 +425,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "ExitWorktree",
   "memory_apply_patch",
   "Task",
+  "Monitor",
   "TaskOutput",
   "TaskStop",
   "Skill",
@@ -452,79 +456,6 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   "WriteTodos",
   "ReadManyFiles",
 ];
-
-// Tool permissions configuration
-const TOOL_PERMISSIONS: Record<
-  ToolName,
-  { requiresApproval: boolean; approvalPolicy?: ToolApprovalPolicy }
-> = {
-  AskUserQuestion: { requiresApproval: true },
-  Bash: { requiresApproval: true },
-  BashOutput: { requiresApproval: false },
-  TaskOutput: { requiresApproval: false },
-  EnterWorktree: { requiresApproval: true },
-  ExitWorktree: { requiresApproval: true },
-  Edit: { requiresApproval: true },
-  Glob: { requiresApproval: false },
-  Grep: { requiresApproval: false },
-  KillBash: { requiresApproval: true },
-  TaskStop: { requiresApproval: true },
-  LS: { requiresApproval: false },
-  memory: { requiresApproval: false },
-  memory_apply_patch: { requiresApproval: false },
-  MultiEdit: { requiresApproval: true },
-  Read: { requiresApproval: false },
-  read_artifact_file: { requiresApproval: false },
-  view_image: { requiresApproval: false },
-  ViewImage: { requiresApproval: false },
-  ReadLSP: { requiresApproval: false },
-  Skill: { requiresApproval: false },
-  Task: { requiresApproval: true },
-  TaskCreate: { requiresApproval: false },
-  TaskGet: { requiresApproval: false },
-  TaskList: { requiresApproval: false },
-  TaskUpdate: { requiresApproval: false },
-  TodoWrite: { requiresApproval: false },
-  Write: { requiresApproval: true },
-  write_artifact_file: { requiresApproval: false },
-  shell_command: { requiresApproval: true },
-  exec_command: { requiresApproval: true },
-  write_stdin: { requiresApproval: false },
-  shell: { requiresApproval: true },
-  read_file: { requiresApproval: false },
-  list_dir: { requiresApproval: false },
-  grep_files: { requiresApproval: false },
-  apply_patch: { requiresApproval: true },
-  update_plan: { requiresApproval: false },
-  // Gemini toolset
-  glob_gemini: { requiresApproval: false },
-  list_directory: { requiresApproval: false },
-  read_file_gemini: { requiresApproval: false },
-  read_many_files: { requiresApproval: false },
-  replace: { requiresApproval: true },
-  run_shell_command: { requiresApproval: true },
-  search_file_content: { requiresApproval: false },
-  write_todos: { requiresApproval: false },
-  write_file_gemini: { requiresApproval: true },
-  // Codex-2 toolset (PascalCase)
-  ShellCommand: { requiresApproval: true },
-  Shell: { requiresApproval: true },
-  ReadFile: { requiresApproval: false },
-  ListDir: { requiresApproval: false },
-  GrepFiles: { requiresApproval: false },
-  ApplyPatch: { requiresApproval: true },
-  UpdatePlan: { requiresApproval: false },
-  // Gemini-2 toolset (PascalCase)
-  RunShellCommand: { requiresApproval: true },
-  ReadFileGemini: { requiresApproval: false },
-  ListDirectory: { requiresApproval: false },
-  GlobGemini: { requiresApproval: false },
-  SearchFileContent: { requiresApproval: false },
-  Replace: { requiresApproval: true },
-  WriteFileGemini: { requiresApproval: true },
-  WriteTodos: { requiresApproval: false },
-  ReadManyFiles: { requiresApproval: false },
-};
 
 type ToolArgs = Record<string, unknown>;
 

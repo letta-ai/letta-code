@@ -107,6 +107,29 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     expect(result.killed).toBe(false);
   });
 
+  test("KillBash preserves completed-process cleanup behavior", async () => {
+    let killed = false;
+    backgroundProcesses.set("bash_completed", {
+      process: {
+        kill() {
+          killed = true;
+        },
+      },
+      command: "echo done",
+      stdout: [],
+      stderr: [],
+      status: "completed",
+      exitCode: 0,
+      lastReadIndex: { stdout: 0, stderr: 0 },
+    });
+
+    expect(await kill_bash({ shell_id: "bash_completed" })).toEqual({
+      killed: true,
+    });
+    expect(killed).toBe(true);
+    expect(backgroundProcesses.has("bash_completed")).toBe(false);
+  });
+
   test("background process returns output file path", async () => {
     const result = await bash({
       command: "echo 'test'",

@@ -48,6 +48,7 @@ describe("shared shell process", () => {
     );
 
     expect(typeof running.process.kill).toBe("function");
+    expect(typeof running.terminate).toBe("function");
     expect(await running.completion).toEqual({
       stdout: "shared",
       stderr: "",
@@ -160,6 +161,29 @@ describe("shared shell process", () => {
     );
 
     expect(result.stdout).toBe("😀");
+  });
+
+  test("decodes split UTF-8 bytes before streaming output", async () => {
+    let streamed = "";
+    const running = startShellProcess(
+      [
+        process.execPath,
+        "-e",
+        "process.stdout.write(Buffer.from([0xf0, 0x9f])); setTimeout(() => process.stdout.write(Buffer.from([0x98, 0x80])), 25)",
+      ],
+      {
+        cwd: process.cwd(),
+        env: process.env,
+        timeoutMs: 1000,
+        captureOutput: false,
+        onOutput: (chunk) => {
+          streamed += chunk;
+        },
+      },
+    );
+
+    await running.completion;
+    expect(streamed).toBe("😀");
   });
 
   test("force-kills a timed-out process tree that ignores graceful termination", async () => {

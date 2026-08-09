@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { isUsableDirectory } from "@/helpers/usable-directory";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
@@ -43,6 +44,7 @@ export interface ShellProcessResult {
 export interface RunningShellProcess {
   process: ShellProcessHandle;
   completion: Promise<ShellProcessResult>;
+  terminate(): void;
 }
 
 type NodePtyExitEvent = { exitCode?: number; signal?: number };
@@ -359,6 +361,10 @@ export function startShellProcess(
 
   const stdoutChunks: Buffer[] = [];
   const stderrChunks: Buffer[] = [];
+  const outputDecoders = {
+    stdout: new StringDecoder("utf8"),
+    stderr: new StringDecoder("utf8"),
+  };
   let completed = false;
   let timedOut = false;
   let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
@@ -403,23 +409,34 @@ export function startShellProcess(
     terminateProcess();
   };
 
+  const emitDecodedOutput = (text: string, stream: ShellOutputStream): void => {
+    if (!text) return;
+    pullRequestTracker?.append(text, stream);
+    options.onOutput?.(text, stream);
+  };
+
+  const flushOutputDecoders = (): void => {
+    emitDecodedOutput(outputDecoders.stdout.end(), "stdout");
+    emitDecodedOutput(outputDecoders.stderr.end(), "stderr");
+  };
+
   const events: ProcessEvents = {
     output(data, stream) {
-      const text = Buffer.isBuffer(data) ? data.toString("utf8") : data;
-      pullRequestTracker?.append(text, stream);
+      const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
       if (options.captureOutput !== false) {
         if (stream === "stdout") {
-          stdoutChunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
+          stdoutChunks.push(buffer);
         } else {
-          stderrChunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
+          stderrChunks.push(buffer);
         }
       }
-      options.onOutput?.(text, stream);
+      emitDecodedOutput(outputDecoders[stream].write(buffer), stream);
     },
     error(error) {
       if (completed) return;
       completed = true;
       cleanup();
+      flushOutputDecoders();
       void pullRequestTracker?.finish();
       rejectCompletion(buildSpawnError(error, executable, options.cwd));
     },
@@ -427,6 +444,7 @@ export function startShellProcess(
       if (completed) return;
       completed = true;
       cleanup();
+      flushOutputDecoders();
       void pullRequestTracker?.finish();
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
@@ -469,7 +487,7 @@ export function startShellProcess(
     abortHandler();
   }
 
-  return { process: processHandle, completion };
+  return { process: processHandle, completion, terminate: terminateProcess };
 }
 
 /**

@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "properties": {
+    "description": {
+      "type": "string",
+      "description": "Short human-readable description of what you are monitoring (shown in notifications)."
+    },
+    "timeout_ms": {
+      "type": "number",
+      "minimum": 1000,
+      "default": 300000,
+      "description": "Kill the monitor after this deadline. Default 300000ms, max 3600000ms. Ignored when persistent is true."
+    },
+    "persistent": {
+      "type": "boolean",
+      "default": false,
+      "description": "Run for the lifetime of the session (no timeout). Use for session-length watches like PR monitoring or log tails. Stop with TaskStop."
+    },
+    "command": {
+      "type": "string",
+      "description": "Shell command or script. Each stdout line is an event; exit ends the watch."
+    },
+    "ws": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "protocols": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+          }
+        }
+      },
+      "required": ["url"],
+      "additionalProperties": false,
+      "description": "WebSocket to open. Each text frame is an event; binary frames are reported as a placeholder line. Socket close ends the watch. Cannot be combined with command."
+    }
+  },
+  "required": ["description"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

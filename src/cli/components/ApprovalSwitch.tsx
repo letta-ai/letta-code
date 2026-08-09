@@ -136,6 +136,16 @@ function getBashInfo(approval: ApprovalRequest): BashInfo | null {
   }
 }
 
+function isCommandMonitorApproval(approval: ApprovalRequest): boolean {
+  if (approval.toolName !== "Monitor") return false;
+  try {
+    const args = JSON.parse(approval.toolArgs || "{}");
+    return typeof args.command === "string";
+  } catch {
+    return false;
+  }
+}
+
 // Parse file edit info from approval args
 function getFileEditInfo(approval: ApprovalRequest): FileEditInfo | null {
   try {
@@ -390,7 +400,7 @@ export const ApprovalSwitch = memo(
     }
 
     // Shell/Bash tools → InlineBashApproval
-    if (isShellTool(toolName)) {
+    if (isShellTool(toolName) || isCommandMonitorApproval(approval)) {
       const bashInfo = getBashInfo(approval);
       if (bashInfo) {
         return (

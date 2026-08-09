@@ -392,6 +392,8 @@ export type ListenerRuntime = {
   _unsubscribeSubagentState?: (() => void) | undefined;
   /** Unsubscribe from subagent stream events (set on socket open, cleared on close). */
   _unsubscribeSubagentStreamEvents?: (() => void) | undefined;
+  /** Unsubscribe from background process state (set on socket open, cleared on close). */
+  _unsubscribeBackgroundProcessState?: (() => void) | undefined;
 };
 
 export interface InterruptPopulateInput {
