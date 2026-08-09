@@ -64,6 +64,48 @@ afterEach(() => {
   setActiveRuntime(null);
 });
 
+test("direct idle turn preserves acting-user attribution", async () => {
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  const socket = new MockSocket();
+  const scope = { agent_id: "agent-1", conversation_id: "conversation-1" };
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  let receivedActingUserId: string | undefined;
+  let acceptedDisposition: "started" | "queued" | undefined;
+
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime,
+    incoming: {
+      type: "message",
+      connectionId: "relay",
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+      messages: [{ role: "user", content: "Hello" }],
+    },
+    socket: socket as never,
+    options: makeOptions("relay"),
+    processQueuedTurn: mock(async () => {}),
+    processIncomingMessage: mock(async (incoming) => {
+      receivedActingUserId = incoming.actingUserId;
+    }),
+    actingUserId: "cloud-user-1",
+    trackListenerError: mock(() => {}),
+    onInputAccepted: ({ disposition }) => {
+      acceptedDisposition = disposition;
+    },
+  });
+
+  await runtime.messageQueue;
+
+  expect(acceptedDisposition).toBe("started");
+  expect(receivedActingUserId).toBe("cloud-user-1");
+});
+
 test("direct App Server turn follows a subscribed client after origin disconnect", async () => {
   const listener = createRuntime();
   setActiveRuntime(listener);
