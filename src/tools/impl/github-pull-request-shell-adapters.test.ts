@@ -75,8 +75,14 @@ const pathEnvKey =
   Object.keys(process.env).find((key) => key.toLowerCase() === "path") ??
   "PATH";
 const originalPath = process.env[pathEnvKey];
-const originalShell = process.env.SHELL;
 let fakeGhDir = "";
+
+function fakeGhPrCreateCommand(): string {
+  if (process.platform === "win32") {
+    return "gh pr create --fill";
+  }
+  return `PATH=${JSON.stringify(fakeGhDir)}${delimiter}$PATH gh pr create --fill`;
+}
 
 beforeAll(() => {
   fakeGhDir = mkdtempSync(join(tmpdir(), "letta-fake-gh-"));
@@ -92,22 +98,18 @@ beforeAll(() => {
     join(fakeGhDir, "gh.cmd"),
     `@echo off\r\necho ${TEST_PR_URL}\r\n`,
   );
-  process.env[pathEnvKey] = `${fakeGhDir}${delimiter}${originalPath ?? ""}`;
-  if (process.platform !== "win32") {
-    process.env.SHELL = "/bin/sh";
+  if (process.platform === "win32") {
+    process.env[pathEnvKey] = `${fakeGhDir}${delimiter}${originalPath ?? ""}`;
   }
 });
 
 afterAll(() => {
-  if (originalPath === undefined) {
-    delete process.env[pathEnvKey];
-  } else {
-    process.env[pathEnvKey] = originalPath;
-  }
-  if (originalShell === undefined) {
-    delete process.env.SHELL;
-  } else {
-    process.env.SHELL = originalShell;
+  if (process.platform === "win32") {
+    if (originalPath === undefined) {
+      delete process.env[pathEnvKey];
+    } else {
+      process.env[pathEnvKey] = originalPath;
+    }
   }
   rmSync(fakeGhDir, { recursive: true, force: true });
 });
@@ -184,7 +186,7 @@ describe("GitHub PR tracking across shell adapters", () => {
           agentId: "agent-shell-adapters",
           conversationId: `conv-shell-adapter-${index}`,
         },
-        () => adapter.run("gh pr create --fill"),
+        () => adapter.run(fakeGhPrCreateCommand()),
       );
       await tagObserved;
 
