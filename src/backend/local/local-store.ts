@@ -2934,11 +2934,13 @@ export class LocalStore {
     if (existsSync(agentsDir)) {
       for (const file of readdirSync(agentsDir)) {
         if (!file.endsWith(".json") || file.startsWith("._")) continue;
-        const raw = readJsonFile<unknown>(join(agentsDir, file));
+        const filePath = join(agentsDir, file);
+        const mtimeMs = statSync(filePath).mtimeMs;
+        const raw = readJsonFile<unknown>(filePath);
         const agent = normalizeAgentRecord(raw, this.defaultAgentModel);
         if (agent?.id) {
           this.agents.set(agent.id, agent);
-          this.recordAgentRecordMtime(agent.id);
+          this.recordAgentRecordMtime(agent.id, mtimeMs);
           if (shouldPersistSubagentHiddenBackfill(raw, agent)) {
             this.persistAgent(agent.id);
           }
@@ -2971,16 +2973,13 @@ export class LocalStore {
     }
   }
 
-  private recordAgentRecordMtime(
-    agentId: string,
-    options: { mtimeMs?: number } = {},
-  ): void {
-    const mtimeMs = options.mtimeMs ?? this.agentRecordFileMtimeMs(agentId);
-    if (mtimeMs === undefined) {
+  private recordAgentRecordMtime(agentId: string, mtimeMs?: number): void {
+    const recordedMtimeMs = mtimeMs ?? this.agentRecordFileMtimeMs(agentId);
+    if (recordedMtimeMs === undefined) {
       this.agentRecordMtimeMsById.delete(agentId);
       return;
     }
-    this.agentRecordMtimeMsById.set(agentId, mtimeMs);
+    this.agentRecordMtimeMsById.set(agentId, recordedMtimeMs);
   }
 
   private refreshAgentRecordFromStorage(
@@ -2999,7 +2998,7 @@ export class LocalStore {
       const agent = normalizeAgentRecord(raw, this.defaultAgentModel);
       if (!agent || agent.id !== agentId) return existing;
       this.agents.set(agentId, agent);
-      this.recordAgentRecordMtime(agentId, { mtimeMs });
+      this.recordAgentRecordMtime(agentId, mtimeMs);
       return agent;
     } catch {
       return existing;
