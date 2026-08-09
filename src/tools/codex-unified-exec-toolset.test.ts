@@ -21,6 +21,7 @@ describe("Codex unified exec toolset", () => {
 
     expect(OPENAI_PASCAL_TOOLS).toContain("exec_command");
     expect(OPENAI_PASCAL_TOOLS).toContain("write_stdin");
+    expect(OPENAI_PASCAL_TOOLS).toContain("Monitor");
     expect(OPENAI_PASCAL_TOOLS).not.toContain("ShellCommand");
   });
 

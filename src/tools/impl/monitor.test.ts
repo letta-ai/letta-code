@@ -7,6 +7,7 @@ import {
   ANTHROPIC_DEFAULT_TOOLS,
   GEMINI_DEFAULT_TOOLS,
   OPENAI_DEFAULT_TOOLS,
+  OPENAI_PASCAL_TOOLS,
 } from "@/tools/manager";
 import MonitorSchema from "@/tools/schemas/Monitor.json";
 import {
@@ -75,8 +76,9 @@ describe("Monitor", () => {
     rmSync(scratchpad, { recursive: true, force: true });
   });
 
-  test("is exposed only in the default toolset", () => {
+  test("is exposed in the Anthropic and Codex toolsets", () => {
     expect(ANTHROPIC_DEFAULT_TOOLS).toContain("Monitor");
+    expect(OPENAI_PASCAL_TOOLS).toContain("Monitor");
     expect(OPENAI_DEFAULT_TOOLS).not.toContain("Monitor");
     expect(GEMINI_DEFAULT_TOOLS).not.toContain("Monitor");
   });

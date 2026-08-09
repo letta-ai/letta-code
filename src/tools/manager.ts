@@ -425,6 +425,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "ExitWorktree",
   "memory_apply_patch",
   "Task",
+  "Monitor",
   "TaskOutput",
   "TaskStop",
   "Skill",
