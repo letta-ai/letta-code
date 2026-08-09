@@ -285,6 +285,29 @@ function checkPermissionForEngine(
   const canonicalTool = canonicalToolName(permissionToolName);
   const queryTool = engine === "v2" ? canonicalTool : permissionToolName;
   const query = buildPermissionQuery(queryTool, toolArgs, engine);
+  const originalQueryTool =
+    engine === "v2" ? canonicalToolName(toolName) : toolName;
+  const originalQuery =
+    permissionToolName === toolName
+      ? query
+      : buildPermissionQuery(originalQueryTool, toolArgs, engine);
+  const matchesRule = (pattern: string, includeOriginal = false): boolean =>
+    matchesPattern(
+      permissionToolName,
+      query,
+      pattern,
+      workingDirectory,
+      engine,
+    ) ||
+    (includeOriginal &&
+      permissionToolName !== toolName &&
+      matchesPattern(
+        toolName,
+        originalQuery,
+        pattern,
+        workingDirectory,
+        engine,
+      ));
   const trace = createTrace(engine, toolName, canonicalTool, query);
   const sessionRules = sessionPermissions.getRules();
   const workingDirectoryTools =
@@ -313,13 +336,7 @@ function checkPermissionForEngine(
 
   if (permissions.deny) {
     for (const pattern of permissions.deny) {
-      const matched = matchesPattern(
-        permissionToolName,
-        query,
-        pattern,
-        workingDirectory,
-        engine,
-      );
+      const matched = matchesRule(pattern, true);
       traceEvent(trace, "deny-rule", undefined, pattern, matched);
       if (matched) {
         return {
@@ -336,13 +353,7 @@ function checkPermissionForEngine(
 
   const disallowedTools = cliPermissions.getDisallowedTools();
   for (const pattern of disallowedTools) {
-    const matched = matchesPattern(
-      permissionToolName,
-      query,
-      pattern,
-      workingDirectory,
-      engine,
-    );
+    const matched = matchesRule(pattern, true);
     traceEvent(trace, "cli-disallow-rule", undefined, pattern, matched);
     if (matched) {
       return {
@@ -358,13 +369,7 @@ function checkPermissionForEngine(
 
   if (sessionRules.alwaysAsk) {
     for (const pattern of sessionRules.alwaysAsk) {
-      const matched = matchesPattern(
-        permissionToolName,
-        query,
-        pattern,
-        workingDirectory,
-        engine,
-      );
+      const matched = matchesRule(pattern);
       traceEvent(trace, "session-always-ask-rule", undefined, pattern, matched);
       if (matched) {
         return {
@@ -381,13 +386,7 @@ function checkPermissionForEngine(
 
   if (permissions.alwaysAsk) {
     for (const pattern of permissions.alwaysAsk) {
-      const matched = matchesPattern(
-        permissionToolName,
-        query,
-        pattern,
-        workingDirectory,
-        engine,
-      );
+      const matched = matchesRule(pattern);
       traceEvent(trace, "always-ask-rule", undefined, pattern, matched);
       if (matched) {
         return {
@@ -440,13 +439,7 @@ function checkPermissionForEngine(
 
   const allowedTools = cliPermissions.getAllowedTools();
   for (const pattern of allowedTools) {
-    const matched = matchesPattern(
-      permissionToolName,
-      query,
-      pattern,
-      workingDirectory,
-      engine,
-    );
+    const matched = matchesRule(pattern);
     traceEvent(trace, "cli-allow-rule", undefined, pattern, matched);
     if (matched) {
       return {
@@ -541,13 +534,7 @@ function checkPermissionForEngine(
 
   if (sessionRules.allow) {
     for (const pattern of sessionRules.allow) {
-      const matched = matchesPattern(
-        permissionToolName,
-        query,
-        pattern,
-        workingDirectory,
-        engine,
-      );
+      const matched = matchesRule(pattern);
       traceEvent(trace, "session-allow-rule", undefined, pattern, matched);
       if (matched) {
         return {
@@ -564,13 +551,7 @@ function checkPermissionForEngine(
 
   if (permissions.allow) {
     for (const pattern of permissions.allow) {
-      const matched = matchesPattern(
-        permissionToolName,
-        query,
-        pattern,
-        workingDirectory,
-        engine,
-      );
+      const matched = matchesRule(pattern);
       traceEvent(trace, "allow-rule", undefined, pattern, matched);
       if (matched) {
         return {
@@ -587,13 +568,7 @@ function checkPermissionForEngine(
 
   if (permissions.ask) {
     for (const pattern of permissions.ask) {
-      const matched = matchesPattern(
-        permissionToolName,
-        query,
-        pattern,
-        workingDirectory,
-        engine,
-      );
+      const matched = matchesRule(pattern);
       traceEvent(trace, "ask-rule", undefined, pattern, matched);
       if (matched) {
         return {

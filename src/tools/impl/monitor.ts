@@ -33,7 +33,9 @@ import { applyShellSandbox } from "./shell-sandbox.js";
 
 const MIN_TIMEOUT_MS = 1000;
 const MAX_TIMEOUT_MS = 3_600_000;
+const DEFAULT_TIMEOUT_MS = 300_000;
 export const MONITOR_OUTPUT_FILE_BYTES = 1024 * 1024;
+const WEBSOCKET_MAX_PAYLOAD_BYTES = MONITOR_EVENT_BUFFER_CHARS * 2;
 const WEBSOCKET_PROTOCOL_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
 interface MonitorWebSocketSource {
@@ -43,13 +45,18 @@ interface MonitorWebSocketSource {
 
 interface MonitorArgs {
   description: string;
-  timeout_ms: number;
-  persistent: boolean;
+  timeout_ms?: number;
+  persistent?: boolean;
   command?: string;
   ws?: MonitorWebSocketSource;
   secretEnv?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
 }
+
+type NormalizedMonitorArgs = MonitorArgs & {
+  timeout_ms: number;
+  persistent: boolean;
+};
 
 interface MonitorResult {
   content: Array<{ type: "text"; text: string }>;
@@ -64,13 +71,13 @@ function buildMonitorResult(
   persistent: boolean,
 ): MonitorResult {
   const lifetime = persistent
-    ? "persistent; runs until TaskStop or session end"
+    ? "persistent — runs until TaskStop or session end"
     : `timeout ${timeoutMs}ms`;
   return {
     content: [
       {
         type: "text",
-        text: `Monitor started (task ${taskId}, ${lifetime}). You will be notified on each event. Keep working; no need to poll or sleep. An event may arrive while you are waiting for the user, and it is not their reply.`,
+        text: `Monitor started (task ${taskId}, ${lifetime}). You will be notified on each event. Keep working — do not poll or sleep. Events may arrive while you are waiting for the user — an event is not their reply.`,
       },
     ],
     taskId,
@@ -123,6 +130,20 @@ class MonitorOutputWriter {
   }
 }
 
+function containsHiddenControlCharacter(text: string): boolean {
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (
+      code !== 9 &&
+      code !== 10 &&
+      (code < 32 || (code >= 127 && code <= 159))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function validateWebSocketSource(source: MonitorWebSocketSource): void {
   if (typeof source.url !== "string") {
     throw new Error("Monitor ws.url must be a string");
@@ -164,38 +185,66 @@ function validateWebSocketSource(source: MonitorWebSocketSource): void {
   }
 }
 
-function validateMonitorArgs(args: MonitorArgs): void {
-  if (typeof args.description !== "string" || !args.description.trim()) {
+function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
+  const normalized: NormalizedMonitorArgs = {
+    ...args,
+    timeout_ms: args.timeout_ms ?? DEFAULT_TIMEOUT_MS,
+    persistent: args.persistent ?? false,
+  };
+
+  if (typeof normalized.description !== "string") {
     throw new Error("Monitor description is required");
   }
   if (
-    typeof args.timeout_ms !== "number" ||
-    !Number.isFinite(args.timeout_ms) ||
-    args.timeout_ms < MIN_TIMEOUT_MS ||
-    args.timeout_ms > MAX_TIMEOUT_MS
+    typeof normalized.timeout_ms !== "number" ||
+    !Number.isFinite(normalized.timeout_ms) ||
+    normalized.timeout_ms < MIN_TIMEOUT_MS ||
+    (!normalized.persistent && normalized.timeout_ms > MAX_TIMEOUT_MS)
   ) {
     throw new Error(
       `Monitor timeout_ms must be between ${MIN_TIMEOUT_MS} and ${MAX_TIMEOUT_MS}`,
     );
   }
-  if (typeof args.persistent !== "boolean") {
+  if (typeof normalized.persistent !== "boolean") {
     throw new Error("Monitor persistent must be a boolean");
   }
+  if (
+    normalized.command !== undefined &&
+    typeof normalized.command !== "string"
+  ) {
+    throw new Error("Monitor command must be a string");
+  }
 
-  const hasCommand = typeof args.command === "string";
-  const hasWebSocket = args.ws !== undefined;
+  const hasCommand = typeof normalized.command === "string";
+  const hasWebSocket = normalized.ws !== undefined;
   if (Number(hasCommand) + Number(hasWebSocket) !== 1) {
     throw new Error("Monitor requires exactly one of command or ws");
   }
-  if (hasCommand && !args.command?.trim()) {
-    throw new Error("Monitor command must not be empty");
+  if (hasCommand && !normalized.command) {
+    throw new Error("Monitor requires exactly one of command or ws");
+  }
+  if (
+    hasCommand &&
+    containsHiddenControlCharacter(normalized.command as string)
+  ) {
+    throw new Error(
+      "Monitor command contains control characters that would be hidden in the approval dialog",
+    );
   }
   if (hasWebSocket) {
-    if (typeof args.ws !== "object" || args.ws === null) {
+    if (typeof normalized.ws !== "object" || normalized.ws === null) {
       throw new Error("Monitor ws must be an object");
     }
-    validateWebSocketSource(args.ws);
+    validateWebSocketSource(normalized.ws);
   }
+  return normalized;
+}
+
+function webSocketDisplayUrl(sourceUrl: string): string {
+  const url = new URL(sourceUrl);
+  url.search = "";
+  url.hash = "";
+  return url.toString();
 }
 
 function getRawDataBytes(data: RawData): number {
@@ -297,7 +346,7 @@ function markMonitorFinished(
   scheduleBackgroundProcessCleanup(taskId);
 }
 
-function startCommandMonitor(args: MonitorArgs): MonitorResult {
+function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   assertBackgroundProcessCapacity();
   const command = args.command as string;
   const cwd = getCurrentWorkingDirectory();
@@ -342,6 +391,7 @@ function startCommandMonitor(args: MonitorArgs): MonitorResult {
     sourceCommand: command,
     captureOutput: false,
     onOutput(text, stream) {
+      if (!processState) return;
       const sanitizedText = sanitizeMonitorText(text, scope?.agentId);
       appendBackgroundProcessOutput(processState, stream, sanitizedText);
       output.append(
@@ -414,7 +464,7 @@ function startCommandMonitor(args: MonitorArgs): MonitorResult {
         queueMonitorEvent({
           taskId,
           description: args.description,
-          event: "[Monitor timed out - re-arm if needed.]",
+          event: "[Monitor timed out — re-arm if needed.]",
           scope,
         });
         processState.completionNotificationSuppressed = true;
@@ -447,7 +497,7 @@ function startCommandMonitor(args: MonitorArgs): MonitorResult {
   );
 }
 
-function startWebSocketMonitor(args: MonitorArgs): MonitorResult {
+function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
   assertBackgroundProcessCapacity();
   const source = args.ws as MonitorWebSocketSource;
   const taskId = getNextMonitorId();
@@ -455,7 +505,7 @@ function startWebSocketMonitor(args: MonitorArgs): MonitorResult {
   const output = new MonitorOutputWriter(outputFile);
   const scope = resolveNotificationScope(args.parentScope);
   const socket = new WebSocket(source.url, source.protocols, {
-    maxPayload: MONITOR_EVENT_BUFFER_CHARS,
+    maxPayload: WEBSOCKET_MAX_PAYLOAD_BYTES,
   });
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let sawSocketError = false;
@@ -498,7 +548,7 @@ function startWebSocketMonitor(args: MonitorArgs): MonitorResult {
         closeSocket();
       },
     },
-    command: source.url,
+    command: webSocketDisplayUrl(source.url),
     stdout: [],
     stderr: [],
     status: "running",
@@ -569,6 +619,7 @@ function startWebSocketMonitor(args: MonitorArgs): MonitorResult {
       event,
       scope,
     });
+    closeSocket();
   });
 
   socket.on("close", (code, reason) => {
@@ -613,7 +664,7 @@ function startWebSocketMonitor(args: MonitorArgs): MonitorResult {
       queueMonitorEvent({
         taskId,
         description: args.description,
-        event: "[Monitor timed out - re-arm if needed.]",
+        event: "[Monitor timed out — re-arm if needed.]",
         scope,
       });
       output.append(`\n[timeout after ${args.timeout_ms}ms]\n`);
@@ -632,10 +683,11 @@ function startWebSocketMonitor(args: MonitorArgs): MonitorResult {
 }
 
 export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
-  validateMonitorArgs(args);
-  return args.command !== undefined
-    ? startCommandMonitor(args)
-    : startWebSocketMonitor(args);
+  const normalized = normalizeMonitorArgs(args);
+  installMonitorProcessExitCleanup();
+  return normalized.command !== undefined
+    ? startCommandMonitor(normalized)
+    : startWebSocketMonitor(normalized);
 }
 
 export function stopMonitorsForProcessExit(): void {
@@ -653,4 +705,10 @@ export function stopMonitorsForProcessExit(): void {
   }
 }
 
-process.once("exit", stopMonitorsForProcessExit);
+let monitorProcessExitCleanupInstalled = false;
+
+function installMonitorProcessExitCleanup(): void {
+  if (monitorProcessExitCleanupInstalled) return;
+  monitorProcessExitCleanupInstalled = true;
+  process.once("exit", stopMonitorsForProcessExit);
+}

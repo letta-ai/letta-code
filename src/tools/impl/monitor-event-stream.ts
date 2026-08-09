@@ -99,7 +99,7 @@ export function createMonitorEventStream(
     if (bucket.tryConsume()) {
       if (suppressedCount > 0) {
         options.emit(
-          `[${suppressedCount} events suppressed - output rate too high. Consider using TaskStop to restart this monitor with a more selective filter.]`,
+          `[${suppressedCount} events suppressed — output rate too high. Consider using TaskStop to restart this monitor with a more selective filter.]`,
         );
         suppressedCount = 0;
         if (
@@ -122,7 +122,7 @@ export function createMonitorEventStream(
     ) {
       stopped = true;
       options.emit(
-        `[Monitor stopped - too much output (${suppressedCount} events suppressed over ${Math.round((lastSuppressedAt - suppressionStartedAt) / 1000)}s). Restart with a more selective source.]`,
+        `[Monitor stopped — too much output (${suppressedCount} events suppressed over ${Math.round((lastSuppressedAt - suppressionStartedAt) / 1000)}s). Restart with a more selective source.]`,
       );
       options.stopSource();
     }

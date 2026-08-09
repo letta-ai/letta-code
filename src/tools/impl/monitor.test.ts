@@ -8,6 +8,7 @@ import {
   GEMINI_DEFAULT_TOOLS,
   OPENAI_DEFAULT_TOOLS,
 } from "@/tools/manager";
+import MonitorSchema from "@/tools/schemas/Monitor.json";
 import {
   clearPendingMessages,
   type QueuedMessage,
@@ -18,6 +19,7 @@ import {
   monitor,
   stopMonitorsForProcessExit,
 } from "./monitor";
+import { MONITOR_EVENT_BUFFER_CHARS } from "./monitor-event-stream";
 import { backgroundProcesses } from "./process_manager";
 import { task_output } from "./task-output";
 import { task_stop } from "./task-stop";
@@ -73,10 +75,32 @@ describe("Monitor", () => {
     rmSync(scratchpad, { recursive: true, force: true });
   });
 
-  test("is exposed only in the default Claude toolset", () => {
+  test("is exposed only in the default toolset", () => {
     expect(ANTHROPIC_DEFAULT_TOOLS).toContain("Monitor");
     expect(OPENAI_DEFAULT_TOOLS).not.toContain("Monitor");
     expect(GEMINI_DEFAULT_TOOLS).not.toContain("Monitor");
+  });
+
+  test("matches the reference schema defaults and descriptions", () => {
+    expect(MonitorSchema.required).toEqual(["description"]);
+    expect(MonitorSchema).not.toHaveProperty("oneOf");
+    expect(MonitorSchema.properties.description.description).toBe(
+      "Short human-readable description of what you are monitoring (shown in notifications).",
+    );
+    expect(MonitorSchema.properties.timeout_ms).toMatchObject({
+      minimum: 1000,
+      default: 300000,
+      description:
+        "Kill the monitor after this deadline. Default 300000ms, max 3600000ms. Ignored when persistent is true.",
+    });
+    expect(MonitorSchema.properties.persistent).toMatchObject({
+      default: false,
+      description:
+        "Run for the lifetime of the session (no timeout). Use for session-length watches like PR monitoring or log tails. Stop with TaskStop.",
+    });
+    expect(MonitorSchema.properties.ws.properties.protocols).not.toHaveProperty(
+      "uniqueItems",
+    );
   });
 
   test("validates source, timeout, and WebSocket inputs", async () => {
@@ -124,6 +148,24 @@ describe("Monitor", () => {
         },
       }),
     ).rejects.toThrow("unique");
+    await expect(
+      monitor({
+        description: "invalid",
+        command: "printf 'ok'\rprintf 'hidden'",
+      }),
+    ).rejects.toThrow("control characters");
+  });
+
+  test("uses the reference timeout and persistence defaults", async () => {
+    const result = await monitor({
+      description: "defaults",
+      command: nodeCommand('process.stdout.write("done\\n")'),
+    });
+
+    expect(result).toMatchObject({ timeoutMs: 300000, persistent: false });
+    await waitFor(
+      () => backgroundProcesses.get(result.taskId)?.status === "completed",
+    );
   });
 
   test("streams command stdout as scoped notifications and records stderr", async () => {
@@ -236,7 +278,7 @@ describe("Monitor", () => {
     );
     expect(
       queuedMessages.some((message) =>
-        message.text.includes("Monitor timed out - re-arm if needed."),
+        message.text.includes("Monitor timed out — re-arm if needed."),
       ),
     ).toBe(true);
   });
@@ -259,7 +301,9 @@ describe("Monitor", () => {
         description: "socket events",
         timeout_ms: 5000,
         persistent: false,
-        ws: { url: `ws://127.0.0.1:${address.port}` },
+        ws: {
+          url: `ws://127.0.0.1:${address.port}/events?token=secret`,
+        },
       });
       await waitFor(
         () => backgroundProcesses.get(result.taskId)?.status === "completed",
@@ -271,6 +315,9 @@ describe("Monitor", () => {
       expect(eventText).toContain("first\nsecond");
       expect(eventText).toContain("[binary frame, 3 bytes]");
       expect(eventText).toContain("[WebSocket closed: 1000 done]");
+      expect(backgroundProcesses.get(result.taskId)?.command).toBe(
+        `ws://127.0.0.1:${address.port}/events`,
+      );
 
       const output = await task_output({
         task_id: result.taskId,
@@ -281,6 +328,40 @@ describe("Monitor", () => {
       expect(output.message).toContain("binary frame, 3 bytes");
       expect(output.message).toContain("[WebSocket closed: 1000 done]");
       expect(output.message).not.toContain("\u001b[31m");
+    } finally {
+      for (const client of server.clients) {
+        client.terminate();
+      }
+      server.close();
+    }
+  });
+
+  test("drops oversized WebSocket frames before closing", async () => {
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("WebSocket test server did not expose a TCP port");
+    }
+    server.on("connection", (socket) => {
+      socket.send(Buffer.alloc(MONITOR_EVENT_BUFFER_CHARS + 1));
+    });
+
+    try {
+      const result = await monitor({
+        description: "large socket frame",
+        ws: { url: `ws://127.0.0.1:${address.port}` },
+      });
+      await waitFor(
+        () => backgroundProcesses.get(result.taskId)?.status === "failed",
+      );
+
+      const eventText = queuedMessages
+        .map((message) => message.text)
+        .join("\n");
+      expect(eventText).toContain(
+        `[Dropped ${MONITOR_EVENT_BUFFER_CHARS + 1}-byte frame (exceeds ${MONITOR_EVENT_BUFFER_CHARS}); closing]`,
+      );
     } finally {
       for (const client of server.clients) {
         client.terminate();

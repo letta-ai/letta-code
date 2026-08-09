@@ -239,6 +239,21 @@ test("disallowedTools denies tool", () => {
   expect(result.reason).toBe("Matched --disallowedTools flag");
 });
 
+test("disallowedTools denies Monitor command sources by tool name", () => {
+  cliPermissions.setDisallowedTools("Monitor");
+
+  const result = checkPermission(
+    "Monitor",
+    { command: "node watch-build.js" },
+    { allow: ["Bash(node:*)"], deny: [], ask: [] },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("deny");
+  expect(result.matchedRule).toBe("Monitor (CLI)");
+  expect(result.reason).toBe("Matched --disallowedTools flag");
+});
+
 test("disallowedTools with pattern denies specific command", () => {
   cliPermissions.setDisallowedTools("Bash(curl:*)");
 

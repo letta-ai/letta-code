@@ -97,7 +97,7 @@ describe("monitor event stream", () => {
     stream.onData("after refill\n");
     scheduler.flush();
     expect(emitted.slice(-2)).toEqual([
-      "[1 events suppressed - output rate too high. Consider using TaskStop to restart this monitor with a more selective filter.]",
+      "[1 events suppressed — output rate too high. Consider using TaskStop to restart this monitor with a more selective filter.]",
       "after refill",
     ]);
   });
@@ -124,6 +124,6 @@ describe("monitor event stream", () => {
 
     expect(stopCount).toBe(1);
     expect(stream.isStopped()).toBe(true);
-    expect(emitted.at(-1)).toContain("Monitor stopped - too much output");
+    expect(emitted.at(-1)).toContain("Monitor stopped — too much output");
   });
 });

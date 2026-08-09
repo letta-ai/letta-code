@@ -111,6 +111,34 @@ test("Monitor command sources use Bash permission rules", () => {
   expect(result.matchedRule).toBe("Bash(node:*)");
 });
 
+test("Monitor deny rules also block command sources", () => {
+  const result = checkPermission(
+    "Monitor",
+    { command: "node watch-build.js" },
+    {
+      allow: ["Bash(node:*)"],
+      deny: ["Monitor"],
+      ask: [],
+    },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("deny");
+  expect(result.matchedRule).toBe("Monitor");
+});
+
+test("read-only Monitor commands follow Bash auto-approval", () => {
+  const result = checkPermission(
+    "Monitor",
+    { command: "tail -f app.log | grep --line-buffered ERROR" },
+    { allow: [], deny: [], ask: [] },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Read-only shell command");
+});
+
 test("Monitor WebSocket sources do not use Bash permission rules", () => {
   const result = checkPermission(
     "Monitor",
