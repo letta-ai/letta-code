@@ -476,6 +476,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
       cwd,
       env: spawnEnv,
       timeoutMs: 0,
+      sourceCommand: args.cmd,
       signal: args.signal,
       tty: session.tty,
       captureOutput: false,

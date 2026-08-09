@@ -1,4 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+  __testSetBackend,
+  type Backend,
+  type ConversationUpdateBody,
+} from "@/backend";
+import { runWithRuntimeContext } from "@/runtime-context";
 import {
   spawnWithLauncher,
   startShellProcess,
@@ -27,6 +33,10 @@ function expectProcessExited(pid: number): void {
 }
 
 describe("shared shell process", () => {
+  afterEach(() => {
+    __testSetBackend(null);
+  });
+
   test("returns the process handle separately from completion", async () => {
     const running = startShellProcess(
       [process.execPath, "-e", 'process.stdout.write("shared")'],
@@ -87,6 +97,52 @@ describe("shared shell process", () => {
       exitCode: 0,
     });
     expect(streamed).toBe("streamed");
+  });
+
+  test("tracks PR output from the shared completion path", async () => {
+    let resolveUpdate!: (tags: string[]) => void;
+    const updateObserved = new Promise<string[]>((resolve) => {
+      resolveUpdate = resolve;
+    });
+    __testSetBackend({
+      retrieveConversation: async () => ({
+        id: "conv-shell",
+        tags: ["channel:slack"],
+      }),
+      updateConversation: async (
+        _conversationId: string,
+        body: ConversationUpdateBody,
+      ) => {
+        const tags = Reflect.get(body, "tags");
+        resolveUpdate(Array.isArray(tags) ? tags : []);
+        return { id: "conv-shell", tags };
+      },
+    } as unknown as Backend);
+
+    const running = runWithRuntimeContext(
+      { agentId: "agent-shell", conversationId: "conv-shell" },
+      () =>
+        startShellProcess(
+          [
+            process.execPath,
+            "-e",
+            'process.stdout.write("https://github.com/letta-ai/letta-code/pull/3744\\n")',
+          ],
+          {
+            cwd: process.cwd(),
+            env: process.env,
+            timeoutMs: 1000,
+            captureOutput: false,
+            sourceCommand: "gh pr create --fill",
+          },
+        ),
+    );
+
+    await running.completion;
+    await expect(updateObserved).resolves.toEqual([
+      "channel:slack",
+      "github:pull-request:letta-ai:letta-code:3744",
+    ]);
   });
 
   test("decodes buffered output after joining split UTF-8 bytes", async () => {
