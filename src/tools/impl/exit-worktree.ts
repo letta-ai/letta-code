@@ -105,6 +105,43 @@ async function resolveCurrentBranch(
 }
 
 /**
+ * Labeled-field result, matching the EnterWorktree message shape so the TUI
+ * can render a compact summary instead of the raw tool return.
+ */
+function buildExitWorktreeMessage(params: {
+  removed: boolean;
+  worktreePath: string;
+  branchNote: string;
+  lockNote?: string;
+  primaryRoot: string;
+  switchedCwd: boolean;
+}): string {
+  const lines = [
+    params.removed ? "Removed worktree." : "Left worktree.",
+    "",
+    `Path: ${params.worktreePath}`,
+    `Branch: ${params.branchNote}`,
+  ];
+  if (params.lockNote) {
+    lines.push(`Lock: ${params.lockNote}`);
+  }
+  lines.push(
+    `CWD: ${params.primaryRoot}`,
+    "",
+    params.switchedCwd
+      ? "This conversation's working directory is now the primary checkout."
+      : `⚠ The working directory could not be switched and may still point at ${params.worktreePath}.`,
+  );
+  if (!params.removed) {
+    lines.push(
+      "",
+      "The worktree and its branch were left on disk; re-enter it with EnterWorktree `path`.",
+    );
+  }
+  return lines.join("\n");
+}
+
+/**
  * Leave the worktree this conversation is in and return to the primary
  * checkout, optionally deleting the worktree and its branch.
  *
@@ -188,8 +225,7 @@ export async function exit_worktree(
       executionContextId: args._executionContextId,
     });
 
-    const notes: string[] = [];
-
+    let lockNote: string | undefined;
     const worktreeGitDir = await resolveWorktreeGitDir(worktreePath);
     if (worktreeGitDir) {
       const released = await releaseWorktreeLock({
@@ -197,11 +233,12 @@ export async function exit_worktree(
         owner: lockOwner(runtimeContext),
       });
       if (released) {
-        notes.push("released the cross-agent worktree lock");
+        lockNote = "released";
       }
     }
 
     let removed = false;
+    let branchNote = branchName ?? "(detached)";
     if (action === "remove") {
       const removeArgs = ["worktree", "remove", worktreePath];
       if (discardChanges) {
@@ -216,27 +253,23 @@ export async function exit_worktree(
             ["branch", discardChanges ? "-D" : "-d", branchName],
             primaryRoot,
           );
-          notes.push(`deleted branch ${branchName}`);
+          branchNote = `deleted ${branchName}`;
         } catch (error) {
           // The worktree is already gone; surface the branch as a leftover
           // rather than failing an otherwise completed removal.
-          notes.push(
-            `⚠ kept branch ${branchName} (${formatGitFailure(error)})`,
-          );
+          branchNote = `⚠ kept ${branchName} (${formatGitFailure(error)})`;
         }
       }
     }
 
-    const headline = removed
-      ? `Removed worktree ${worktreePath}`
-      : `Left worktree ${worktreePath} (kept on disk)`;
-    const message = [
-      headline,
-      switchedCwd
-        ? `Working directory is now ${primaryRoot}`
-        : `⚠ could not switch the working directory; it may still point at ${worktreePath}`,
-      ...notes.map((note) => `- ${note}`),
-    ].join("\n");
+    const message = buildExitWorktreeMessage({
+      removed,
+      worktreePath,
+      branchNote,
+      lockNote,
+      primaryRoot,
+      switchedCwd,
+    });
 
     return textResult(message, "success", {
       returned_to: primaryRoot,
