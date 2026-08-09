@@ -46,6 +46,12 @@ describe("built-in subagents", () => {
     expect(configs.reflection?.recommendedModel).toBe("inherit");
   });
 
+  test("general-purpose inherits the parent model by default", async () => {
+    const configs = await getAllSubagentConfigs();
+
+    expect(configs["general-purpose"]?.recommendedModel).toBe("inherit");
+  });
+
   test("memory-related built-ins use the memory-subagent launch profile", async () => {
     const configs = await getAllSubagentConfigs();
 
