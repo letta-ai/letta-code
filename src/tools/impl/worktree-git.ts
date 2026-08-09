@@ -150,9 +150,9 @@ export async function resolvePrimaryWorktreeRoot(
     ["rev-parse", "--path-format=absolute", "--git-common-dir"],
     repoRoot,
   );
-  return path.basename(commonDir) === ".git"
-    ? path.dirname(commonDir)
-    : repoRoot;
+  const primaryRoot =
+    path.basename(commonDir) === ".git" ? path.dirname(commonDir) : repoRoot;
+  return path.resolve(primaryRoot);
 }
 
 export async function resolveDefaultBaseRef(repoRoot: string): Promise<string> {
