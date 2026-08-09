@@ -59,6 +59,14 @@ export interface SlackAppMentionEventLike {
   thread_ts?: unknown;
 }
 
+export interface SlackReactionEventLike {
+  user?: unknown;
+  item_user?: unknown;
+  reaction?: unknown;
+  event_ts?: unknown;
+  item?: unknown;
+}
+
 export interface ResolveSlackMessageIngressPolicyParams {
   message: SlackInboundMessageEventLike;
   botUserId?: string | null;
@@ -67,6 +75,14 @@ export interface ResolveSlackMessageIngressPolicyParams {
 
 export interface ResolveSlackAppMentionIngressPolicyParams {
   event: SlackAppMentionEventLike;
+}
+
+export interface ResolveSlackReactionIngressPolicyParams {
+  event: SlackReactionEventLike;
+  action: "added" | "removed";
+  botUserId?: string | null;
+  mentionOnlyChannels?: readonly string[];
+  threadId?: string | null;
 }
 
 export interface SlackMessageIngressAccepted {
@@ -101,6 +117,22 @@ export interface SlackAppMentionIngressAccepted {
   isAgentThread: false;
 }
 
+export interface SlackReactionIngressAccepted {
+  shouldRoute: true;
+  channelId: string;
+  senderId: string;
+  messageId: string;
+  threadId: string | null;
+  chatType: "direct" | "channel";
+  text: string;
+  reaction: {
+    action: "added" | "removed";
+    emoji: string;
+    targetMessageId: string;
+    targetSenderId?: string;
+  };
+}
+
 export type SlackIngressIgnoreReason =
   | "missing_channel"
   | "missing_sender"
@@ -108,7 +140,11 @@ export type SlackIngressIgnoreReason =
   | "hidden_message"
   | "ignored_subtype"
   | "wrapper_message"
-  | "top_level_channel_message";
+  | "top_level_channel_message"
+  | "invalid_reaction_item"
+  | "missing_reaction"
+  | "own_bot_reaction"
+  | "mention_only_channel";
 
 export interface SlackIngressIgnored {
   shouldRoute: false;
@@ -121,6 +157,10 @@ export type SlackMessageIngressPolicy =
 
 export type SlackAppMentionIngressPolicy =
   | SlackAppMentionIngressAccepted
+  | SlackIngressIgnored;
+
+export type SlackReactionIngressPolicy =
+  | SlackReactionIngressAccepted
   | SlackIngressIgnored;
 
 export function isSlackMentionOnlyChannel(
@@ -272,5 +312,68 @@ export function resolveSlackAppMentionIngressPolicy(
     wasMentioned: true,
     effectiveMention: true,
     isAgentThread: false,
+  };
+}
+
+export function resolveSlackReactionIngressPolicy(
+  params: ResolveSlackReactionIngressPolicyParams,
+): SlackReactionIngressPolicy {
+  const item = hasRecordValue(params.event.item)
+    ? (params.event.item as Record<string, unknown>)
+    : null;
+  if (item?.type !== "message") {
+    return { shouldRoute: false, reason: "invalid_reaction_item" };
+  }
+  if (!isNonEmptyString(item.channel)) {
+    return { shouldRoute: false, reason: "missing_channel" };
+  }
+  if (!isNonEmptyString(params.event.user)) {
+    return { shouldRoute: false, reason: "missing_sender" };
+  }
+  if (!isNonEmptyString(item.ts)) {
+    return { shouldRoute: false, reason: "missing_timestamp" };
+  }
+  if (!isNonEmptyString(params.event.reaction)) {
+    return { shouldRoute: false, reason: "missing_reaction" };
+  }
+  if (params.event.user === params.botUserId) {
+    return { shouldRoute: false, reason: "own_bot_reaction" };
+  }
+
+  const chatType = resolveSlackChatType(item.channel);
+  if (
+    chatType === "channel" &&
+    isSlackMentionOnlyChannel(item.channel, params.mentionOnlyChannels)
+  ) {
+    return { shouldRoute: false, reason: "mention_only_channel" };
+  }
+
+  const targetMessageId = item.ts;
+  const threadId =
+    params.threadId !== undefined
+      ? params.threadId
+      : chatType === "channel"
+        ? targetMessageId
+        : null;
+  const eventTimestamp =
+    firstNonEmptyString(params.event.event_ts, targetMessageId) ??
+    targetMessageId;
+  const reaction = {
+    action: params.action,
+    emoji: params.event.reaction,
+    targetMessageId,
+    ...(isNonEmptyString(params.event.item_user)
+      ? { targetSenderId: params.event.item_user }
+      : {}),
+  };
+  return {
+    shouldRoute: true,
+    channelId: item.channel,
+    senderId: params.event.user,
+    messageId: eventTimestamp,
+    threadId,
+    chatType,
+    text: `Slack reaction ${params.action}: :${params.event.reaction}:`,
+    reaction,
   };
 }
