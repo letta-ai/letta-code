@@ -25,7 +25,10 @@ import { runSubagentStopHooks } from "@/hooks";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import { sleep } from "@/utils/sleep";
-import { formatTaskNotification } from "@/utils/task-notifications.js";
+import {
+  formatTaskNotification,
+  resolveNotificationScope,
+} from "@/utils/task-notifications.js";
 import {
   appendToOutputFile,
   assertBackgroundTaskCapacity,
@@ -228,27 +231,6 @@ function writeTaskTranscriptResult(
   );
 }
 
-function resolveParentScope(parentScope?: {
-  agentId: string;
-  conversationId: string;
-}): { agentId: string; conversationId: string } | undefined {
-  if (parentScope?.agentId) {
-    return {
-      agentId: parentScope.agentId,
-      conversationId: parentScope.conversationId || "default",
-    };
-  }
-
-  try {
-    return {
-      agentId: getCurrentAgentId(),
-      conversationId: getConversationId() ?? "default",
-    };
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Wait briefly for a background subagent to publish its agent URL.
  * This keeps Task mostly non-blocking while allowing static transcript rows
@@ -380,7 +362,7 @@ export function spawnBackgroundSubagentTask(
   const shouldEmitCompletionNotification =
     emitCompletionNotification ?? !silentCompletion;
 
-  const resolvedParentScope = resolveParentScope(parentScope);
+  const resolvedParentScope = resolveNotificationScope(parentScope);
 
   const spawnSubagentFn = deps?.spawnSubagentImpl ?? spawnSubagent;
   const addToMessageQueueFn = deps?.addToMessageQueueImpl ?? addToMessageQueue;
@@ -745,7 +727,7 @@ export async function task(args: TaskArgs): Promise<string> {
   const prompt = inputPrompt;
 
   const isBackground = args.run_in_background ?? config.background;
-  const resolvedParentScope = resolveParentScope(args.parentScope);
+  const resolvedParentScope = resolveNotificationScope(args.parentScope);
 
   // Handle background execution
   if (isBackground) {
