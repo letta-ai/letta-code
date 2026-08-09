@@ -2,6 +2,12 @@
 const { execFileSync } = require("node:child_process");
 const { readFileSync, readdirSync } = require("node:fs");
 const path = require("node:path");
+const {
+  buildFamilyImpactIndex,
+  getGitChangedFiles,
+  planUnitTests,
+  readPullRequestShas,
+} = require("./unit-test-impact.cjs");
 
 // Unit test directories — bun discovers *.test.ts / *.test.tsx within each.
 // Listed explicitly so we skip src/integration-tests (API-gated).
@@ -68,6 +74,7 @@ const allTestFiles = [
   ...dirs.flatMap((dir) => findTestFiles(dir)),
   ...findTestFiles("src/channels"),
   ...findRootTestFiles("src"),
+  "scripts/unit-test-impact.test.cjs",
 ].sort();
 const discoveredPaths = new Set(allTestFiles);
 
@@ -112,12 +119,86 @@ function chunkByCommandLength(files, maxChars = 20000) {
   return chunks;
 }
 
+function readSelectionShas() {
+  const baseIndex = process.argv.indexOf("--base");
+  const headIndex = process.argv.indexOf("--head");
+  if (baseIndex !== -1 || headIndex !== -1) {
+    if (baseIndex === -1 || headIndex === -1) {
+      throw new Error("Both --base and --head are required");
+    }
+    const baseSha = process.argv[baseIndex + 1];
+    const headSha = process.argv[headIndex + 1];
+    if (!baseSha || !headSha) {
+      throw new Error("Both --base and --head are required");
+    }
+    return { baseSha, headSha };
+  }
+
+  if (process.env.GITHUB_EVENT_NAME !== "pull_request") {
+    return null;
+  }
+  if (!process.env.GITHUB_EVENT_PATH) {
+    throw new Error("GITHUB_EVENT_PATH is required for pull request selection");
+  }
+  return readPullRequestShas(process.env.GITHUB_EVENT_PATH);
+}
+
+function selectTestFiles() {
+  let shas;
+  try {
+    shas = readSelectionShas();
+  } catch (error) {
+    console.warn(
+      `unit-test impact: running all tests because selection setup failed: ${error.message}`,
+    );
+    return allTestFiles;
+  }
+
+  if (!shas) {
+    console.log(
+      `unit-test impact: running all ${allTestFiles.length} tests outside a pull request`,
+    );
+    return allTestFiles;
+  }
+
+  try {
+    const plan = planUnitTests({
+      changedFiles: getGitChangedFiles(shas.baseSha, shas.headSha),
+      allTestFiles,
+      impactIndex: buildFamilyImpactIndex(),
+    });
+    console.log(
+      `unit-test impact: ${plan.selectedTests.length}/${allTestFiles.length} tests (${plan.reason})`,
+    );
+    for (const selection of plan.selectedFamilies) {
+      const shownReasons = selection.reasons.slice(0, 3);
+      const hiddenReasonCount = selection.reasons.length - shownReasons.length;
+      const suffix =
+        hiddenReasonCount > 0 ? `; +${hiddenReasonCount} more` : "";
+      console.log(`  ${selection.family}: ${shownReasons.join("; ")}${suffix}`);
+    }
+    if (plan.omittedTests.length > 0) {
+      console.log(`  omitted: ${plan.omittedTests.length} unrelated tests`);
+    }
+    return plan.selectedTests;
+  } catch (error) {
+    console.warn(
+      `unit-test impact: running all tests because planning failed: ${error.message}`,
+    );
+    return allTestFiles;
+  }
+}
+
 let exitCode = 0;
+const selectedTestFiles = selectTestFiles();
+const selectedTestPaths = new Set(selectedTestFiles);
 
 // Bun module mocks and process-global state are shared within one test process.
 // Keep the explicitly stateful suites in fresh processes so they cannot poison
 // the ordinary unit batch or inherit another suite's cwd/env/module registry.
-for (const entry of isolatedTests) {
+for (const entry of isolatedTests.filter((entry) =>
+  selectedTestPaths.has(entry.path),
+)) {
   try {
     runTests([entry.path], entry.timeoutMs, entry.env);
   } catch (error) {
@@ -125,7 +206,7 @@ for (const entry of isolatedTests) {
   }
 }
 
-const sharedProcessTests = allTestFiles.filter(
+const sharedProcessTests = selectedTestFiles.filter(
   (file) => !isolatedPaths.has(file),
 );
 
