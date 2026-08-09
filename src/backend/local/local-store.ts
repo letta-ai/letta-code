@@ -16,7 +16,6 @@ import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
-import { LETTA_CODE_SUBAGENT_TAG } from "@/agent/agent-tags";
 import type {
   AgentCreateBody,
   AgentListBody,
@@ -32,6 +31,15 @@ import type {
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { isRecord } from "@/utils/type-guards";
 import type { LocalCompactionStats } from "./compaction";
+import {
+  createDefaultAgentRecord,
+  createLocalAgentRecord,
+  isHiddenLocalAgentRecord,
+  normalizeAgentRecord,
+  projectLocalAgentState,
+  shouldPersistSubagentHiddenBackfill,
+  shouldUseDefaultLocalModel,
+} from "./local-agent-record";
 import { selectLocalMessagesForFork } from "./local-conversation-fork";
 import { listLocalConversations } from "./local-conversation-list";
 import {
@@ -56,8 +64,6 @@ import {
   withProjectedMessageDates,
 } from "./local-message-projection";
 import {
-  localLlmConfigModelPatch,
-  modelHandleFromLegacyLlmConfig,
   normalizeLocalModelHandle,
   normalizeStoredLocalModelRecord,
   supportedConversationModelSettingsFromBody,
@@ -92,96 +98,12 @@ function isStringArray(value: unknown): value is string[] {
   );
 }
 
-function normalizeAgentHiddenFlag(
-  hidden: unknown,
-  tags: string[],
-): boolean | null | undefined {
-  if (typeof hidden === "boolean") return hidden;
-  if ((hidden === undefined || hidden === null) && isSubagentTags(tags)) {
-    return true;
-  }
-  return hidden === null ? null : undefined;
-}
-
-function isSubagentTags(tags: string[]): boolean {
-  return tags.includes(LETTA_CODE_SUBAGENT_TAG);
-}
-
-export function isHiddenLocalAgentRecord(record: {
-  hidden?: boolean | null;
-  tags?: unknown;
-}): boolean {
-  const tags = isStringArray(record.tags) ? record.tags : [];
-  return (
-    record.hidden === true || (record.hidden == null && isSubagentTags(tags))
-  );
-}
-
-function shouldPersistSubagentHiddenBackfill(
-  raw: unknown,
-  record: LocalAgentRecord,
-): boolean {
-  return (
-    isRecord(raw) &&
-    (raw.hidden === undefined || raw.hidden === null) &&
-    record.hidden === true &&
-    isSubagentTags(record.tags)
-  );
-}
-
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
 function optionalStringOrNull(value: unknown): string | null | undefined {
   return typeof value === "string" || value === null ? value : undefined;
-}
-
-function createDefaultAgentRecord(
-  agentId: string,
-  defaultAgentName: string,
-  defaultAgentModel: string,
-): LocalAgentRecord {
-  return {
-    id: agentId,
-    name: defaultAgentName,
-    description: null,
-    system: "",
-    tags: [],
-    model: defaultAgentModel,
-    model_settings: {},
-  };
-}
-
-function createLocalAgentRecord(
-  body: AgentCreateBody,
-  defaultAgentName: string,
-  defaultAgentModel: string,
-): LocalAgentRecord {
-  const bodyRecord = body as Record<string, unknown>;
-  const tags = isStringArray(bodyRecord.tags) ? bodyRecord.tags : [];
-  const hidden = normalizeAgentHiddenFlag(bodyRecord.hidden, tags);
-  const modelSettings = supportedModelSettingsFromBody(bodyRecord);
-  const requestedModel = optionalString(bodyRecord.model) ?? defaultAgentModel;
-  return {
-    id: `agent-local-${randomUUID()}`,
-    name: optionalString(bodyRecord.name) ?? defaultAgentName,
-    description: optionalStringOrNull(bodyRecord.description) ?? null,
-    system: optionalString(bodyRecord.system) ?? "",
-    tags,
-    model: normalizeLocalModelHandle(requestedModel, modelSettings),
-    model_settings: modelSettings,
-    ...(hidden !== undefined ? { hidden } : {}),
-  };
-}
-
-function shouldUseDefaultLocalModel(model: unknown): boolean {
-  return (
-    typeof model !== "string" ||
-    model.length === 0 ||
-    model === "auto" ||
-    model.startsWith("letta/")
-  );
 }
 
 function currentIsoTimestamp(): string {
@@ -201,13 +123,6 @@ function isSyntheticLocalTimestamp(value: string | null | undefined): boolean {
     parsed >= Date.UTC(2026, 0, 1, 0, 0, 0, 0) &&
     parsed < Date.UTC(2026, 0, 2, 0, 0, 0, 0)
   );
-}
-
-function optionalRecordOrNull(
-  value: unknown,
-): Record<string, unknown> | null | undefined {
-  if (value === null) return null;
-  return isRecord(value) ? { ...value } : undefined;
 }
 
 function createLocalConversationRecord(
@@ -301,116 +216,6 @@ function updateLocalConversationRecord(
     next.tags = bodyRecord.tags;
   }
   return next;
-}
-
-function normalizeAgentRecord(
-  value: unknown,
-  defaultAgentModel: string,
-): LocalAgentRecord | undefined {
-  if (!isRecord(value) || typeof value.id !== "string") return undefined;
-  const modelSettings = isRecord(value.model_settings)
-    ? { ...value.model_settings }
-    : {};
-  const legacyLlmConfig = isRecord(value.llm_config) ? value.llm_config : {};
-  if (
-    modelSettings.context_window_limit === undefined &&
-    typeof legacyLlmConfig.context_window === "number"
-  ) {
-    modelSettings.context_window_limit = legacyLlmConfig.context_window;
-  }
-  if (
-    modelSettings.max_tokens === undefined &&
-    (typeof legacyLlmConfig.max_tokens === "number" ||
-      legacyLlmConfig.max_tokens === null)
-  ) {
-    modelSettings.max_tokens = legacyLlmConfig.max_tokens;
-  }
-
-  const compactionSettings = optionalRecordOrNull(value.compaction_settings);
-  const tags = isStringArray(value.tags) ? value.tags : [];
-  const hidden = normalizeAgentHiddenFlag(value.hidden, tags);
-  const storedModel = optionalString(value.model);
-  const legacyModel = modelHandleFromLegacyLlmConfig(legacyLlmConfig);
-  const model = storedModel
-    ? normalizeLocalModelHandle(storedModel, modelSettings, legacyLlmConfig)
-    : (legacyModel ?? defaultAgentModel);
-  return {
-    id: value.id,
-    name: optionalString(value.name) ?? "Letta Code",
-    description: optionalStringOrNull(value.description) ?? null,
-    system: optionalString(value.system) ?? "",
-    tags,
-    model,
-    model_settings: modelSettings,
-    ...(hidden !== undefined ? { hidden } : {}),
-    ...(compactionSettings !== undefined
-      ? { compaction_settings: compactionSettings }
-      : {}),
-  };
-}
-
-export function projectLocalAgentState(
-  record: LocalAgentRecord,
-  messageIds: string[] = [],
-  inContextMessageIds: string[] = messageIds,
-  lastRunCompletion?: string | null,
-): AgentState {
-  const hidden = normalizeAgentHiddenFlag(record.hidden, record.tags);
-  const nestedReasoning = isRecord(record.model_settings.reasoning)
-    ? record.model_settings.reasoning
-    : undefined;
-  const reasoningEffort =
-    typeof nestedReasoning?.reasoning_effort === "string"
-      ? nestedReasoning.reasoning_effort
-      : typeof record.model_settings.effort === "string"
-        ? record.model_settings.effort
-        : typeof record.model_settings.reasoning_effort === "string"
-          ? record.model_settings.reasoning_effort
-          : undefined;
-  const enableReasoner =
-    isRecord(record.model_settings.thinking) &&
-    record.model_settings.thinking.type === "disabled"
-      ? false
-      : typeof record.model_settings.enable_reasoner === "boolean"
-        ? record.model_settings.enable_reasoner
-        : undefined;
-  const llmConfigModelPatch = localLlmConfigModelPatch(
-    record.model,
-    record.model_settings,
-  );
-  return {
-    id: record.id,
-    name: record.name,
-    description: record.description,
-    system: record.system,
-    tools: [],
-    tags: record.tags,
-    model: record.model,
-    model_settings: record.model_settings,
-    ...(hidden !== undefined ? { hidden } : {}),
-    ...(record.compaction_settings !== undefined
-      ? { compaction_settings: record.compaction_settings }
-      : {}),
-    message_ids: messageIds,
-    in_context_message_ids: inContextMessageIds,
-    ...(lastRunCompletion ? { last_run_completion: lastRunCompletion } : {}),
-    // Temporary compatibility shim for older runtime call sites. Local storage
-    // keeps only `model` + `model_settings`.
-    llm_config: {
-      ...llmConfigModelPatch,
-      model_endpoint: "https://example.invalid/v1",
-      context_window:
-        typeof record.model_settings.context_window_limit === "number"
-          ? record.model_settings.context_window_limit
-          : 128000,
-      ...(reasoningEffort && { reasoning_effort: reasoningEffort }),
-      ...(enableReasoner !== undefined && { enable_reasoner: enableReasoner }),
-      ...((typeof record.model_settings.max_tokens === "number" ||
-        record.model_settings.max_tokens === null) && {
-        max_tokens: record.model_settings.max_tokens,
-      }),
-    },
-  } as unknown as AgentState;
 }
 
 function textContent(text: string) {
@@ -1141,6 +946,7 @@ export class LocalStore {
   private readonly storedMessageIdPrefix: string;
   private readonly localMessageIdPrefix: string;
   private readonly agents = new Map<string, LocalAgentRecord>();
+  private readonly agentRecordMtimeMsById = new Map<string, number>();
   private readonly conversations = new Map<string, StoredConversation>();
   private readonly localMessagesByConversationKey = new Map<
     string,
@@ -1212,10 +1018,8 @@ export class LocalStore {
   }
 
   retrieveAgent(agentId: string): AgentState {
-    if (!this.strictAgentAccess) {
-      return this.ensureAgent(agentId);
-    }
-    const existing = this.agents.get(agentId);
+    const existing = this.refreshAgentRecordFromStorage(agentId);
+    if (!existing && !this.strictAgentAccess) return this.ensureAgent(agentId);
     if (!existing) {
       throw new LocalBackendNotFoundError("Agent", agentId);
     }
@@ -1223,6 +1027,7 @@ export class LocalStore {
   }
 
   listAgents(body?: AgentListBody): { items: AgentState[] } {
+    this.refreshLoadedAgentRecordsFromStorage();
     const bodyRecord = (body ?? {}) as Record<string, unknown>;
     const queryText = optionalString(bodyRecord.query_text)?.toLowerCase();
     const tags = isStringArray(bodyRecord.tags) ? bodyRecord.tags : [];
@@ -1268,6 +1073,7 @@ export class LocalStore {
       throw new LocalBackendNotFoundError("Agent", agentId);
     }
     this.agents.delete(agentId);
+    this.agentRecordMtimeMsById.delete(agentId);
     this.loadConversationRecordsFromStorage();
     for (const [key, conversation] of [...this.conversations.entries()]) {
       if (conversation.agent_id === agentId) {
@@ -1301,10 +1107,11 @@ export class LocalStore {
   }
 
   retrieveAgentRecord(agentId: string): LocalAgentRecord {
-    if (!this.strictAgentAccess) {
+    let existing = this.refreshAgentRecordFromStorage(agentId);
+    if (!existing && !this.strictAgentAccess) {
       this.ensureAgent(agentId);
+      existing = this.agents.get(agentId);
     }
-    const existing = this.agents.get(agentId);
     if (!existing) {
       throw new LocalBackendNotFoundError("Agent", agentId);
     }
@@ -1312,7 +1119,7 @@ export class LocalStore {
   }
 
   ensureAgent(agentId: string): AgentState {
-    const existing = this.agents.get(agentId);
+    const existing = this.refreshAgentRecordFromStorage(agentId);
     if (existing) return this.projectAgent(existing);
     const agent = this.createDefaultAgentRecord(agentId);
     this.agents.set(agentId, agent);
@@ -1322,7 +1129,7 @@ export class LocalStore {
   }
 
   updateAgent(agentId: string, body: AgentUpdateBody): AgentState {
-    const currentRecord = this.agents.get(agentId);
+    const currentRecord = this.refreshAgentRecordFromStorage(agentId);
     if (!currentRecord) {
       if (this.strictAgentAccess) {
         throw new LocalBackendNotFoundError("Agent", agentId);
@@ -1386,7 +1193,7 @@ export class LocalStore {
     agentId: string,
     settings: Record<string, unknown> | null,
   ): AgentState {
-    const existing = this.agents.get(agentId);
+    const existing = this.refreshAgentRecordFromStorage(agentId);
     if (!existing) {
       throw new LocalBackendNotFoundError("Agent", agentId);
     }
@@ -3127,10 +2934,13 @@ export class LocalStore {
     if (existsSync(agentsDir)) {
       for (const file of readdirSync(agentsDir)) {
         if (!file.endsWith(".json") || file.startsWith("._")) continue;
-        const raw = readJsonFile<unknown>(join(agentsDir, file));
+        const filePath = join(agentsDir, file);
+        const mtimeMs = statSync(filePath).mtimeMs;
+        const raw = readJsonFile<unknown>(filePath);
         const agent = normalizeAgentRecord(raw, this.defaultAgentModel);
         if (agent?.id) {
           this.agents.set(agent.id, agent);
+          this.recordAgentRecordMtime(agent.id, mtimeMs);
           if (shouldPersistSubagentHiddenBackfill(raw, agent)) {
             this.persistAgent(agent.id);
           }
@@ -3149,6 +2959,56 @@ export class LocalStore {
       join(agentsDir, `${encodePathSegment(agentId)}.json`),
       `${JSON.stringify(agent, null, 2)}\n`,
     );
+    this.recordAgentRecordMtime(agentId);
+  }
+
+  private agentRecordFileMtimeMs(agentId: string): number | undefined {
+    if (!this.storageDir) return undefined;
+    try {
+      return statSync(
+        join(this.storageDir, "agents", `${encodePathSegment(agentId)}.json`),
+      ).mtimeMs;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private recordAgentRecordMtime(agentId: string, mtimeMs?: number): void {
+    const recordedMtimeMs = mtimeMs ?? this.agentRecordFileMtimeMs(agentId);
+    if (recordedMtimeMs === undefined) {
+      this.agentRecordMtimeMsById.delete(agentId);
+      return;
+    }
+    this.agentRecordMtimeMsById.set(agentId, recordedMtimeMs);
+  }
+
+  private refreshAgentRecordFromStorage(
+    agentId: string,
+  ): LocalAgentRecord | undefined {
+    const existing = this.agents.get(agentId);
+    if (!this.storageDir || !existing) return existing;
+    const mtimeMs = this.agentRecordFileMtimeMs(agentId);
+    if (mtimeMs === undefined) return existing;
+    if (this.agentRecordMtimeMsById.get(agentId) === mtimeMs) return existing;
+
+    try {
+      const raw = readJsonFile<unknown>(
+        join(this.storageDir, "agents", `${encodePathSegment(agentId)}.json`),
+      );
+      const agent = normalizeAgentRecord(raw, this.defaultAgentModel);
+      if (!agent || agent.id !== agentId) return existing;
+      this.agents.set(agentId, agent);
+      this.recordAgentRecordMtime(agentId, mtimeMs);
+      return agent;
+    } catch {
+      return existing;
+    }
+  }
+
+  private refreshLoadedAgentRecordsFromStorage(): void {
+    for (const agentId of this.agents.keys()) {
+      this.refreshAgentRecordFromStorage(agentId);
+    }
   }
 
   private projectAgent(record: LocalAgentRecord): AgentState {

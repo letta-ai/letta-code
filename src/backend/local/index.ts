@@ -11,6 +11,10 @@ export {
   LocalSlidingWindowCompactionPlanningError,
   planLocalSlidingWindowCompaction,
 } from "./compaction";
+export {
+  isHiddenLocalAgentRecord,
+  projectLocalAgentState,
+} from "./local-agent-record";
 export { LocalBackend, type LocalBackendOptions } from "./local-backend";
 export type {
   LocalMessage,
@@ -60,12 +64,10 @@ export {
   updateLocalProvider,
 } from "./local-provider-auth-store";
 export {
-  isHiddenLocalAgentRecord,
   type LocalAgentRecord,
   LocalBackendNotFoundError,
   LocalStore,
   type LocalStoreOptions,
-  projectLocalAgentState,
   type StoredMessage,
   type StoredTurnInput,
 } from "./local-store";
