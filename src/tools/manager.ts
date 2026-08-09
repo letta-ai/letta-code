@@ -2667,15 +2667,15 @@ async function executeToolInner(
         enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
       }
 
-      // Inject the execution context id for tools that need to mutate
-      // turn-scoped execution state without touching global singletons.
-      if (
-        WORKTREE_TOOL_NAMES.has(internalName as ToolName) &&
-        options?.toolContextId
-      ) {
+      // Inject worktree-only execution state and cancellation without exposing
+      // either internal field in the model-facing schema.
+      if (WORKTREE_TOOL_NAMES.has(internalName as ToolName)) {
         enhancedArgs = {
           ...enhancedArgs,
-          _executionContextId: options.toolContextId,
+          ...(options?.toolContextId && {
+            _executionContextId: options.toolContextId,
+          }),
+          ...(options?.signal && { signal: options.signal }),
         };
       }
 
