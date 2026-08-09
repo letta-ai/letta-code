@@ -224,7 +224,10 @@ export function filterBuiltInToolNamesByClientAllowlist(
   );
 }
 
-const WORKTREE_TOOL_NAMES = new Set<ToolName>(["EnterWorktree"]);
+const WORKTREE_TOOL_NAMES = new Set<ToolName>([
+  "EnterWorktree",
+  "ExitWorktree",
+]);
 const ARTIFACT_TOOL_NAMES: ToolName[] = [
   "read_artifact_file",
   "write_artifact_file",
@@ -367,6 +370,7 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "Bash",
   "TaskOutput",
   "EnterWorktree",
+  "ExitWorktree",
   "Edit",
   "TaskStop",
   // "MultiEdit",
@@ -401,6 +405,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "search_file_content",
   "memory",
   "EnterWorktree",
+  "ExitWorktree",
   "replace",
   "write_file_gemini",
   "write_todos",
@@ -414,6 +419,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
   "EnterWorktree",
+  "ExitWorktree",
   "memory_apply_patch",
   "Task",
   "TaskOutput",
@@ -431,6 +437,7 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
   "EnterWorktree",
+  "ExitWorktree",
   "memory",
   "Skill",
   "Task",
@@ -456,6 +463,7 @@ const TOOL_PERMISSIONS: Record<
   BashOutput: { requiresApproval: false },
   TaskOutput: { requiresApproval: false },
   EnterWorktree: { requiresApproval: true },
+  ExitWorktree: { requiresApproval: true },
   Edit: { requiresApproval: true },
   Glob: { requiresApproval: false },
   Grep: { requiresApproval: false },

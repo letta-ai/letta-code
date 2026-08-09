@@ -16,10 +16,8 @@ import {
   runWithRuntimeContext,
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-import {
-  addWindowsPathLengthHint,
-  enter_worktree,
-} from "@/tools/impl/enter-worktree";
+import { enter_worktree } from "@/tools/impl/enter-worktree";
+import { addWindowsPathLengthHint } from "@/tools/impl/worktree-git";
 import {
   clearToolsWithLock,
   executeTool,

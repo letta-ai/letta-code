@@ -6,6 +6,7 @@ import BashOutputDescription from "./descriptions/BashOutput.md";
 import EditDescription from "./descriptions/Edit.md";
 import EnterWorktreeDescription from "./descriptions/EnterWorktree.md";
 import ExecCommandDescription from "./descriptions/ExecCommand.md";
+import ExitWorktreeDescription from "./descriptions/ExitWorktree.md";
 import GlobDescription from "./descriptions/Glob.md";
 // Gemini toolset
 import GlobGeminiDescription from "./descriptions/GlobGemini.md";
@@ -53,6 +54,7 @@ import { bash_output } from "./impl/bash-output";
 import { edit } from "./impl/edit";
 import { enter_worktree } from "./impl/enter-worktree";
 import { exec_command, write_stdin } from "./impl/exec-command";
+import { exit_worktree } from "./impl/exit-worktree";
 import { glob } from "./impl/glob";
 // Gemini toolset
 import { glob_gemini } from "./impl/glob-gemini";
@@ -97,6 +99,7 @@ import BashOutputSchema from "./schemas/BashOutput.json";
 import EditSchema from "./schemas/Edit.json";
 import EnterWorktreeSchema from "./schemas/EnterWorktree.json";
 import ExecCommandSchema from "./schemas/ExecCommand.json";
+import ExitWorktreeSchema from "./schemas/ExitWorktree.json";
 import GlobSchema from "./schemas/Glob.json";
 // Gemini toolset
 import GlobGeminiSchema from "./schemas/GlobGemini.json";
@@ -184,6 +187,11 @@ const toolDefinitions = {
     schema: EnterWorktreeSchema,
     description: EnterWorktreeDescription.trim(),
     impl: enter_worktree,
+  }),
+  ExitWorktree: defineTool({
+    schema: ExitWorktreeSchema,
+    description: ExitWorktreeDescription.trim(),
+    impl: exit_worktree,
   }),
   Edit: defineTool({
     schema: EditSchema,
