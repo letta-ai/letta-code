@@ -1,5 +1,21 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, unlinkSync } from "node:fs";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+} from "bun:test";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import {
   __testSetBackend,
   type Backend,
@@ -40,15 +56,63 @@ class RecordingBackend {
     if (this.tags.includes(tag)) {
       return Promise.resolve();
     }
-    return new Promise((resolve) => {
-      this.tagWaiters.set(tag, resolve);
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.tagWaiters.delete(tag);
+        reject(new Error(`Timed out waiting for conversation tag ${tag}`));
+      }, 10_000);
+      this.tagWaiters.set(tag, () => {
+        clearTimeout(timeout);
+        resolve();
+      });
     });
   }
 }
 
-function fakeGhPrCreateCommand(prNumber: number): string {
-  return `gh() { printf '%s\\n' 'https://github.com/letta-ai/letta-code/pull/${prNumber}'; }; gh pr create --fill`;
+const TEST_PR_NUMBER = 4100;
+const TEST_PR_URL = `https://github.com/letta-ai/letta-code/pull/${TEST_PR_NUMBER}`;
+const pathEnvKey =
+  Object.keys(process.env).find((key) => key.toLowerCase() === "path") ??
+  "PATH";
+const originalPath = process.env[pathEnvKey];
+let fakeGhDir = "";
+
+function fakeGhPrCreateCommand(): string {
+  if (process.platform === "win32") {
+    return "gh pr create --fill";
+  }
+  return `PATH=${JSON.stringify(fakeGhDir)}${delimiter}$PATH gh pr create --fill`;
 }
+
+beforeAll(() => {
+  fakeGhDir = mkdtempSync(join(tmpdir(), "letta-fake-gh-"));
+  const unixShim = join(fakeGhDir, "gh");
+  writeFileSync(
+    unixShim,
+    `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(`${TEST_PR_URL}\n`)});\n`,
+  );
+  if (process.platform !== "win32") {
+    chmodSync(unixShim, 0o755);
+  }
+  writeFileSync(
+    join(fakeGhDir, "gh.cmd"),
+    `@echo off\r\necho ${TEST_PR_URL}\r\n`,
+  );
+  if (process.platform === "win32") {
+    process.env[pathEnvKey] = `${fakeGhDir}${delimiter}${originalPath ?? ""}`;
+  }
+});
+
+afterAll(() => {
+  if (process.platform === "win32") {
+    if (originalPath === undefined) {
+      delete process.env[pathEnvKey];
+    } else {
+      process.env[pathEnvKey] = originalPath;
+    }
+  }
+  rmSync(fakeGhDir, { recursive: true, force: true });
+});
 
 const adapters: Array<{
   name: string;
@@ -73,7 +137,13 @@ const adapters: Array<{
   },
   {
     name: "shell",
-    run: (command) => shell({ command: ["bash", "-c", command] }),
+    run: (command) =>
+      shell({
+        command:
+          process.platform === "win32"
+            ? ["cmd.exe", "/d", "/s", "/c", command]
+            : ["bash", "-c", command],
+      }),
   },
   {
     name: "shell_command",
@@ -106,8 +176,7 @@ describe("GitHub PR tracking across shell adapters", () => {
 
   adapters.forEach((adapter, index) => {
     test(`${adapter.name} forwards its original command`, async () => {
-      const prNumber = 4100 + index;
-      const tag = `github:pull-request:letta-ai:letta-code:${prNumber}`;
+      const tag = `github:pull-request:letta-ai:letta-code:${TEST_PR_NUMBER}`;
       const backend = new RecordingBackend();
       __testSetBackend(backend as unknown as Backend);
       const tagObserved = backend.waitForTag(tag);
@@ -117,7 +186,7 @@ describe("GitHub PR tracking across shell adapters", () => {
           agentId: "agent-shell-adapters",
           conversationId: `conv-shell-adapter-${index}`,
         },
-        () => adapter.run(fakeGhPrCreateCommand(prNumber)),
+        () => adapter.run(fakeGhPrCreateCommand()),
       );
       await tagObserved;
 

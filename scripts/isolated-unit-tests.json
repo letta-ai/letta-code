@@ -109,6 +109,11 @@
       "reason": "Spawns real shells and temporarily mutates process platform and PATH state."
     },
     {
+      "path": "src/tools/impl/github-pull-request-shell-adapters.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Spawns every shell adapter while mutating PATH, the backend singleton, and process registries."
+    },
+    {
       "path": "src/tools/enter-worktree.test.ts",
       "timeoutMs": 30000,
       "reason": "Spawns real Git processes and mutates HOME, USER_CWD, cwd, and runtime singletons."
