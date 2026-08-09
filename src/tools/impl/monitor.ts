@@ -215,8 +215,8 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
     throw new Error("Monitor command must be a string");
   }
 
-  // Some strict tool-schema consumers require both source fields. Empty
-  // values mean that source was not selected.
+  // Some tool calls include both source fields with an empty value for the
+  // unused one.
   const hasCommand =
     typeof normalized.command === "string" && normalized.command.length > 0;
   const hasWebSocket =

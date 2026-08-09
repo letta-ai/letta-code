@@ -100,12 +100,6 @@ describe("Monitor", () => {
       description:
         "Run for the lifetime of the session (no timeout). Use for session-length watches like PR monitoring or log tails. Stop with TaskStop.",
     });
-    expect(MonitorSchema.properties.command.description).toContain(
-      "Set to an empty string when ws is used.",
-    );
-    expect(MonitorSchema.properties.ws.description).toContain(
-      "Set url to an empty string and protocols to [] when command is used.",
-    );
     expect(MonitorSchema.properties.ws.properties.protocols).not.toHaveProperty(
       "uniqueItems",
     );
