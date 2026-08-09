@@ -140,7 +140,8 @@ export async function gitRefExists(cwd: string, ref: string): Promise<boolean> {
 }
 
 export async function resolveRepoRoot(cwd: string): Promise<string> {
-  return await gitStdout(["rev-parse", "--show-toplevel"], cwd);
+  const repoRoot = await gitStdout(["rev-parse", "--show-toplevel"], cwd);
+  return path.resolve(repoRoot);
 }
 
 export async function resolvePrimaryWorktreeRoot(
