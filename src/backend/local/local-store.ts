@@ -1146,6 +1146,7 @@ export class LocalStore {
     string,
     LocalMessage[]
   >();
+  private readonly agentRecordMtimeMsById = new Map<string, number>();
   private readonly loadedConversationKeys = new Set<string>();
   private readonly loadRepairedConversationKeys = new Set<string>();
   private readonly transcriptMetadataByConversationKey = new Map<
@@ -1301,6 +1302,7 @@ export class LocalStore {
   }
 
   retrieveAgentRecord(agentId: string): LocalAgentRecord {
+    this.refreshAgentRecordFromStorage(agentId);
     if (!this.strictAgentAccess) {
       this.ensureAgent(agentId);
     }
@@ -3131,6 +3133,7 @@ export class LocalStore {
         const agent = normalizeAgentRecord(raw, this.defaultAgentModel);
         if (agent?.id) {
           this.agents.set(agent.id, agent);
+          this.recordAgentRecordMtime(agent.id);
           if (shouldPersistSubagentHiddenBackfill(raw, agent)) {
             this.persistAgent(agent.id);
           }
@@ -3149,6 +3152,55 @@ export class LocalStore {
       join(agentsDir, `${encodePathSegment(agentId)}.json`),
       `${JSON.stringify(agent, null, 2)}\n`,
     );
+    this.recordAgentRecordMtime(agentId);
+  }
+
+  private agentRecordFileMtimeMs(agentId: string): number | undefined {
+    if (!this.storageDir) return undefined;
+    try {
+      return statSync(
+        join(this.storageDir, "agents", `${encodePathSegment(agentId)}.json`),
+      ).mtimeMs;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private recordAgentRecordMtime(
+    agentId: string,
+    options: { mtimeMs?: number } = {},
+  ): void {
+    if (!this.storageDir) return;
+    const mtimeMs =
+      options.mtimeMs ?? this.agentRecordFileMtimeMs(agentId);
+    if (mtimeMs === undefined) {
+      this.agentRecordMtimeMsById.delete(agentId);
+      return;
+    }
+    this.agentRecordMtimeMsById.set(agentId, mtimeMs);
+  }
+
+  private refreshAgentRecordFromStorage(agentId: string): void {
+    if (!this.storageDir) return;
+    if (!this.agents.has(agentId)) return;
+    const mtimeMs = this.agentRecordFileMtimeMs(agentId);
+    if (mtimeMs === undefined) return;
+    if (this.agentRecordMtimeMsById.get(agentId) === mtimeMs) return;
+
+    const filePath = join(
+      this.storageDir,
+      "agents",
+      `${encodePathSegment(agentId)}.json`,
+    );
+    try {
+      const raw = readJsonFile<unknown>(filePath);
+      const agent = normalizeAgentRecord(raw, this.defaultAgentModel);
+      if (!agent?.id || agent.id !== agentId) return;
+      this.agents.set(agentId, agent);
+      this.recordAgentRecordMtime(agentId, { mtimeMs });
+    } catch {
+      // Leave the cached record in place on parse/IO failure.
+    }
   }
 
   private projectAgent(record: LocalAgentRecord): AgentState {

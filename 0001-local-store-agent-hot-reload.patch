@@ -1,0 +1,129 @@
+From 078924812cd74d8f7ce0fb2a555d31f31f3ade2c Mon Sep 17 00:00:00 2001
+From: Simon <sich97@users.noreply.github.com>
+Date: Sun, 9 Aug 2026 10:43:03 +0200
+Subject: [PATCH] local: hot-reload agent records from disk on mtime change
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Conversation records in the local backend already hot-reload from disk
+when their on-disk mtime changes (see refreshConversationRecordFromStorage).
+Agent records do not — they are loaded once at startup into an in-memory
+Map (local-store.ts) and every read returns the cached copy.
+
+This makes it impossible to patch an agent's model_settings (e.g.
+context_window_limit, max_tokens) from an external script without
+restarting the entire server, which drops in-flight Slack/channel turns.
+
+This commit mirrors the conversation hot-reload pattern for agent records:
+
+  - Add agentRecordMtimeMsById field to track each agent file's last
+    seen mtime.
+  - Add agentRecordFileMtimeMs(agentId) helper to stat the agent JSON
+    file on disk.
+  - Add refreshAgentRecordFromStorage(agentId) which returns the cached
+    record on a fast-path mtime match, and otherwise re-reads and
+    re-validates the file via normalizeAgentRecord.
+  - Hook refreshAgentRecordFromStorage into retrieveAgentRecord so
+    every agent read picks up external edits transparently.
+  - Update loadFromStorage and persistAgent to record the mtime after
+    initial load / Letta-internal writes, so self-writes don't trigger
+    spurious re-reads on the next access.
+
+The behavior is identical to the conversation hot-reload: when nothing
+on disk has changed, the call is a single statSync (no JSON parse).
+When something has changed, the file is re-read, normalized via the
+existing normalizeAgentRecord function, and replaces the cached copy.
+
+Test: src/backend/local/local-store-agent-hot-reload.test.ts
+---
+ src/backend/local/local-store.ts | 52 ++++++++++++++++++++++++++++++++
+ 1 file changed, 52 insertions(+)
+
+diff --git a/src/backend/local/local-store.ts b/src/backend/local/local-store.ts
+index bddb818..2fb04f6 100644
+--- a/src/backend/local/local-store.ts
++++ b/src/backend/local/local-store.ts
+@@ -1146,6 +1146,7 @@ export class LocalStore {
+     string,
+     LocalMessage[]
+   >();
++  private readonly agentRecordMtimeMsById = new Map<string, number>();
+   private readonly loadedConversationKeys = new Set<string>();
+   private readonly loadRepairedConversationKeys = new Set<string>();
+   private readonly transcriptMetadataByConversationKey = new Map<
+@@ -1301,6 +1302,7 @@ export class LocalStore {
+   }
+ 
+   retrieveAgentRecord(agentId: string): LocalAgentRecord {
++    this.refreshAgentRecordFromStorage(agentId);
+     if (!this.strictAgentAccess) {
+       this.ensureAgent(agentId);
+     }
+@@ -3131,6 +3133,7 @@ export class LocalStore {
+         const agent = normalizeAgentRecord(raw, this.defaultAgentModel);
+         if (agent?.id) {
+           this.agents.set(agent.id, agent);
++          this.recordAgentRecordMtime(agent.id);
+           if (shouldPersistSubagentHiddenBackfill(raw, agent)) {
+             this.persistAgent(agent.id);
+           }
+@@ -3149,6 +3152,55 @@ export class LocalStore {
+       join(agentsDir, `${encodePathSegment(agentId)}.json`),
+       `${JSON.stringify(agent, null, 2)}\n`,
+     );
++    this.recordAgentRecordMtime(agentId);
++  }
++
++  private agentRecordFileMtimeMs(agentId: string): number | undefined {
++    if (!this.storageDir) return undefined;
++    try {
++      return statSync(
++        join(this.storageDir, "agents", `${encodePathSegment(agentId)}.json`),
++      ).mtimeMs;
++    } catch {
++      return undefined;
++    }
++  }
++
++  private recordAgentRecordMtime(
++    agentId: string,
++    options: { mtimeMs?: number } = {},
++  ): void {
++    if (!this.storageDir) return;
++    const mtimeMs =
++      options.mtimeMs ?? this.agentRecordFileMtimeMs(agentId);
++    if (mtimeMs === undefined) {
++      this.agentRecordMtimeMsById.delete(agentId);
++      return;
++    }
++    this.agentRecordMtimeMsById.set(agentId, mtimeMs);
++  }
++
++  private refreshAgentRecordFromStorage(agentId: string): void {
++    if (!this.storageDir) return;
++    if (!this.agents.has(agentId)) return;
++    const mtimeMs = this.agentRecordFileMtimeMs(agentId);
++    if (mtimeMs === undefined) return;
++    if (this.agentRecordMtimeMsById.get(agentId) === mtimeMs) return;
++
++    const filePath = join(
++      this.storageDir,
++      "agents",
++      `${encodePathSegment(agentId)}.json`,
++    );
++    try {
++      const raw = readJsonFile<unknown>(filePath);
++      const agent = normalizeAgentRecord(raw, this.defaultAgentModel);
++      if (!agent?.id || agent.id !== agentId) return;
++      this.agents.set(agentId, agent);
++      this.recordAgentRecordMtime(agentId, { mtimeMs });
++    } catch {
++      // Leave the cached record in place on parse/IO failure.
++    }
+   }
+ 
+   private projectAgent(record: LocalAgentRecord): AgentState {
+-- 
+2.55.0
+
