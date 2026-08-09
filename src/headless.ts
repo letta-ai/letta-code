@@ -10,6 +10,7 @@ import type {
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import { composeModTurnStartEventInput } from "@/queue/turn-queue-runtime";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import {
   trackBoundaryError,
@@ -492,15 +493,6 @@ async function prepareHeadlessToolExecutionContext(params: {
   };
 }
 
-function isTurnInputArray(
-  value: unknown,
-): value is Array<MessageCreate | ApprovalCreate> {
-  return (
-    Array.isArray(value) &&
-    value.every((item) => typeof item === "object" && item !== null)
-  );
-}
-
 type HeadlessTurnStartEmission =
   | { cancelled: false; input: Array<MessageCreate | ApprovalCreate> }
   | { cancelled: true; reason: string };
@@ -607,13 +599,14 @@ async function emitHeadlessTurnStart(options: {
       agentId: options.agent.id,
       conversationId: options.conversationId,
       input: options.input,
+      queueItems: [],
     };
     await options.adapter.events.emit("turn_start", event, options.context);
     const cancel = getTurnStartCancel(event);
     if (cancel) return { cancelled: true, reason: cancel.reason };
     return {
       cancelled: false,
-      input: isTurnInputArray(event.input) ? event.input : options.input,
+      input: composeModTurnStartEventInput(options.input, event),
     };
   } catch {
     // Mod turn_start handlers should not block sending the turn.

@@ -11,6 +11,7 @@ import {
 } from "@/agent/context";
 import { getBackend } from "@/backend";
 import type { Line } from "@/cli/helpers/accumulator";
+import { shouldEmitModTurnStart } from "@/queue/turn-queue-runtime";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
@@ -29,7 +30,10 @@ import {
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
-import { emitListenerTurnStart } from "./turn-events";
+import {
+  emitListenerTurnStart,
+  type ListenerTurnStartEmission,
+} from "./turn-events";
 import {
   createTurnInputState,
   ensureTurnInputMessageOtids,
@@ -222,10 +226,9 @@ export async function prepareListenerTurn(params: {
     return { kind: "interrupted" };
   }
 
-  const hasUserMessage = messagesToSend.some(
-    (message) => "role" in message && message.role === "user",
-  );
-  const turnStartEmission = hasUserMessage
+  const turnStartEmission: ListenerTurnStartEmission = shouldEmitModTurnStart(
+    messagesToSend,
+  )
     ? await emitListenerTurnStart({
         agentId,
         conversationId,
@@ -235,7 +238,11 @@ export async function prepareListenerTurn(params: {
         permissionMode: permissionModeState.mode,
         cachedAgent,
       })
-    : ({ cancelled: false, handlerCount: 0, input: messagesToSend } as const);
+    : {
+        cancelled: false,
+        handlerCount: 0,
+        input: messagesToSend,
+      };
   if (isInterrupted()) {
     return { kind: "interrupted" };
   }

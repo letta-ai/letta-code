@@ -7,6 +7,7 @@ import type {
 import type { ChalkInstance } from "chalk";
 import type { ModelReasoningEffort } from "@/agent/model";
 import type { SubagentLifecycleContext } from "@/agent/subagent-state";
+import type { ModTurnQueueItem } from "@/queue/turn-queue-runtime";
 
 export interface ModWorkspaceContext {
   cwd: string;
@@ -214,6 +215,16 @@ export interface ModConversationCloseEvent {
 export interface ModTurnStartEvent {
   agentId: string | null;
   conversationId: string | null;
+  /**
+   * Passive context to compose into this turn. Adding an item here never starts
+   * a turn by itself and cannot move approval continuations.
+   */
+  queueItems: ModTurnQueueItem[];
+  /**
+   * @deprecated Temporarily retained for transforms of existing ordinary
+   * messages. Do not use this field to inject, remove, or reorder messages.
+   * Use queueItems for passive additions.
+   */
   input: Array<MessageCreate | ApprovalCreate>;
 }
 
@@ -222,6 +233,12 @@ export interface ModTurnStartCancelResult {
 }
 
 export interface ModTurnStartResult {
+  queueItems?: ModTurnQueueItem[];
+  /**
+   * @deprecated Temporarily retained for transforms of existing ordinary
+   * messages. Do not use this field to inject, remove, or reorder messages.
+   * Use queueItems for passive additions.
+   */
   input?: Array<MessageCreate | ApprovalCreate>;
   cancel?: ModTurnStartCancelResult;
 }

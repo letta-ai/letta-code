@@ -1013,7 +1013,6 @@ async function evaluateModLearningAssertions(params: {
         );
         continue;
       }
-
       if (assertion.type === "turn_start_injects_message") {
         const input = structuredClone(
           (assertion.input as ModTurnStartEvent["input"] | undefined) ??
@@ -1024,6 +1023,7 @@ async function evaluateModLearningAssertions(params: {
           agentId: context.agent.id,
           conversationId: context.sessionId,
           input,
+          queueItems: [],
         };
         const emission = await engine.emitEvent("turn_start", event, context);
         const newMessages = event.input.slice(originalInput.length);

@@ -102,6 +102,10 @@ import { formatPermissionDenial } from "@/permissions/format-denial";
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
+import {
+  composeModTurnStartEventInput,
+  shouldEmitModTurnStart,
+} from "@/queue/turn-queue-runtime";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { analyzeToolApproval, type ToolExecutionResult } from "@/tools/manager";
@@ -154,28 +158,6 @@ function makeExecutionPhaseHook(
     else if (t === "assistant_message") setExecutionPhase("responding");
     return undefined;
   };
-}
-
-function hasUserMessageInput(
-  input: Array<MessageCreate | ApprovalCreate>,
-): boolean {
-  return input.some(
-    (item) =>
-      typeof item === "object" &&
-      item !== null &&
-      item.type !== "approval" &&
-      "role" in item &&
-      item.role === "user",
-  );
-}
-
-function isTurnInputArray(
-  value: unknown,
-): value is Array<MessageCreate | ApprovalCreate> {
-  return (
-    Array.isArray(value) &&
-    value.every((item) => typeof item === "object" && item !== null)
-  );
 }
 
 type ConversationLoopContext = {
@@ -552,23 +534,24 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       }
       processingConversationRef.current += 1;
       let turnStartCancelReason: string | null = null;
-
-      if (hasUserMessageInput(currentInput)) {
+      if (shouldEmitModTurnStart(currentInput)) {
         const originalInput = currentInput;
         try {
           const turnStartEvent = {
             agentId: agentIdRef.current ?? null,
             conversationId: conversationIdRef.current ?? null,
             input: currentInput,
+            queueItems: [],
           };
           await modAdapter.events.emit(
             "turn_start",
             turnStartEvent,
             modAdapter.context,
           );
-          currentInput = isTurnInputArray(turnStartEvent.input)
-            ? turnStartEvent.input
-            : originalInput;
+          currentInput = composeModTurnStartEventInput(
+            originalInput,
+            turnStartEvent,
+          );
           turnStartCancelReason =
             getTurnStartCancel(turnStartEvent)?.reason ?? null;
         } catch {
@@ -577,7 +560,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           turnStartCancelReason = null;
         }
       }
-
       const hasApprovalInput = currentInput.some(
         (item) => item.type === "approval",
       );
@@ -593,7 +575,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         hasExplicitTranscriptStart || hasApprovalInput
           ? pendingTranscriptStartLineIndexRef.current
           : null;
-
       // Reset retry counters for new conversation turns (fresh budget per user message)
       if (!allowReentry) {
         llmApiErrorRetriesRef.current = 0;
