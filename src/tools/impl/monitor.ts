@@ -215,13 +215,25 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
     throw new Error("Monitor command must be a string");
   }
 
-  const hasCommand = typeof normalized.command === "string";
-  const hasWebSocket = normalized.ws !== undefined;
+  // Some tool calls include both source fields with an empty value for the
+  // unused one.
+  const hasCommand =
+    typeof normalized.command === "string" && normalized.command.length > 0;
+  const hasWebSocket =
+    normalized.ws !== undefined &&
+    !(
+      typeof normalized.ws === "object" &&
+      normalized.ws !== null &&
+      normalized.ws.url === ""
+    );
   if (Number(hasCommand) + Number(hasWebSocket) !== 1) {
     throw new Error("Monitor requires exactly one of command or ws");
   }
-  if (hasCommand && !normalized.command) {
-    throw new Error("Monitor requires exactly one of command or ws");
+  if (!hasCommand) {
+    delete normalized.command;
+  }
+  if (!hasWebSocket) {
+    delete normalized.ws;
   }
   if (
     hasCommand &&
