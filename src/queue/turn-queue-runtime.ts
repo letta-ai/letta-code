@@ -97,6 +97,12 @@ function isApprovalCreate(
   return item.type === "approval" || !("role" in item);
 }
 
+export function shouldEmitModTurnStart(
+  input: Array<MessageCreate | ApprovalCreate>,
+): boolean {
+  return input.some((item) => !isApprovalCreate(item) && item.role === "user");
+}
+
 function isTurnInputArray(
   value: unknown,
 ): value is Array<MessageCreate | ApprovalCreate> {

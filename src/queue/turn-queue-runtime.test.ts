@@ -5,6 +5,7 @@ import {
   composeModTurnInput,
   mergeQueuedTurnInput,
   type QueuedTurnInput,
+  shouldEmitModTurnStart,
 } from "@/queue/turn-queue-runtime";
 
 describe("turnQueueRuntime", () => {
@@ -88,6 +89,15 @@ describe("turnQueueRuntime", () => {
     ).toBeNull();
   });
 
+  test("keeps approval-only input outside the mod turn-start trigger", () => {
+    const approval = {
+      type: "approval",
+      approvals: [{ tool_call_id: "tool-1", approve: true }],
+    } as unknown as ApprovalCreate;
+
+    expect(shouldEmitModTurnStart([approval])).toBe(false);
+  });
+
   test("keeps approvals first when a legacy mod prepends context", () => {
     const approval = {
       type: "approval",
@@ -120,6 +130,8 @@ describe("turnQueueRuntime", () => {
       role: "user",
       content: "<task-notification>done</task-notification>",
     } as MessageCreate;
+
+    expect(shouldEmitModTurnStart([approval, notification])).toBe(true);
 
     const composed = composeModTurnInput({
       originalInput: [approval, notification],

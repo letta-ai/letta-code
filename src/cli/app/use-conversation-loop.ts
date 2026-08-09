@@ -102,7 +102,10 @@ import { formatPermissionDenial } from "@/permissions/format-denial";
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
-import { composeModTurnStartEventInput } from "@/queue/turn-queue-runtime";
+import {
+  composeModTurnStartEventInput,
+  shouldEmitModTurnStart,
+} from "@/queue/turn-queue-runtime";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { analyzeToolApproval, type ToolExecutionResult } from "@/tools/manager";
@@ -531,8 +534,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       }
       processingConversationRef.current += 1;
       let turnStartCancelReason: string | null = null;
-
-      if (currentInput.length > 0) {
+      if (shouldEmitModTurnStart(currentInput)) {
         const originalInput = currentInput;
         try {
           const turnStartEvent = {
@@ -558,7 +560,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           turnStartCancelReason = null;
         }
       }
-
       const hasApprovalInput = currentInput.some(
         (item) => item.type === "approval",
       );
@@ -574,7 +575,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         hasExplicitTranscriptStart || hasApprovalInput
           ? pendingTranscriptStartLineIndexRef.current
           : null;
-
       // Reset retry counters for new conversation turns (fresh budget per user message)
       if (!allowReentry) {
         llmApiErrorRetriesRef.current = 0;
