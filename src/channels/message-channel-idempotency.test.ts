@@ -224,7 +224,7 @@ describe("MessageChannel idempotency (executor)", () => {
     const input = SEND("C123", "hi");
 
     const r1 = await executeMessageChannel(input, o);
-    expect(r1).toContain("Error sending message to slack");
+    expect(r1).toBe("Error: Sending message to slack failed: boom");
 
     const r2 = await executeMessageChannel(input, o);
     expect(r2).toBe("Message sent to slack (message_id: m3)");
