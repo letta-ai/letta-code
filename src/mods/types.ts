@@ -220,7 +220,11 @@ export interface ModTurnStartEvent {
    * a turn by itself and cannot move approval continuations.
    */
   queueItems: ModTurnQueueItem[];
-  /** Existing turn input. Use queueItems instead when adding passive context. */
+  /**
+   * @deprecated Temporarily retained for transforms of existing ordinary
+   * messages. Do not use this field to inject, remove, or reorder messages.
+   * Use queueItems for passive additions.
+   */
   input: Array<MessageCreate | ApprovalCreate>;
 }
 
@@ -230,7 +234,11 @@ export interface ModTurnStartCancelResult {
 
 export interface ModTurnStartResult {
   queueItems?: ModTurnQueueItem[];
-  /** Existing turn input. Use queueItems instead when adding passive context. */
+  /**
+   * @deprecated Temporarily retained for transforms of existing ordinary
+   * messages. Do not use this field to inject, remove, or reorder messages.
+   * Use queueItems for passive additions.
+   */
   input?: Array<MessageCreate | ApprovalCreate>;
   cancel?: ModTurnStartCancelResult;
 }
