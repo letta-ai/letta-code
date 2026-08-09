@@ -13,6 +13,7 @@ import {
 } from "@/agent/memory-filesystem";
 import { buildConversationMessagesCreateRequestBody } from "@/agent/message";
 import { models } from "@/agent/model";
+import * as personalityModule from "@/agent/personality";
 import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   getPersonalityOption,
@@ -205,7 +206,6 @@ describe("listen-client parseServerMessage", () => {
         "linus",
         "kawaii",
       ]);
-
       for (const personality of [...DEFAULT_CREATE_AGENT_PERSONALITIES]) {
         const socket = new MockSocket(WebSocket.OPEN);
         const personalityOption = getPersonalityOption(personality);
@@ -218,9 +218,9 @@ describe("listen-client parseServerMessage", () => {
           provenance: "created",
         }));
         mock.module("../agent/personality", () => ({
+          ...personalityModule,
           createAgentForPersonality: createAgentForPersonalityMock,
         }));
-
         const originalPinAgent = settingsManager.pinAgent;
         const pinAgentMock = mock(() => {});
         settingsManager.pinAgent = pinAgentMock;
@@ -270,9 +270,9 @@ describe("listen-client parseServerMessage", () => {
         provenance: "created",
       }));
       mock.module("../agent/personality", () => ({
+        ...personalityModule,
         createAgentForPersonality: createAgentForPersonalityMock,
       }));
-
       const originalPinAgent = settingsManager.pinAgent;
       const pinAgentMock = mock(() => {});
       settingsManager.pinAgent = pinAgentMock;
