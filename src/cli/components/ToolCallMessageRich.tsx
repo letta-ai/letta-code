@@ -98,10 +98,6 @@ import {
   MultiEditRenderer,
   WriteRenderer,
 } from "./DiffRenderer.js";
-import {
-  EnterWorktreeResultRenderer,
-  parseEnterWorktreeResult,
-} from "./EnterWorktreeResultRenderer.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { MemoryDiffRenderer } from "./MemoryDiffRenderer.js";
 import { PlanRenderer } from "./PlanRenderer.js";
@@ -112,6 +108,10 @@ import {
   type StyledSpan,
 } from "./SyntaxHighlightedCommand";
 import { TodoRenderer } from "./TodoRenderer.js";
+import {
+  hasWorktreeResultRenderer,
+  WorktreeToolResult,
+} from "./WorktreeResultRenderer.js";
 
 const LIVE_SHELL_ARGS_MAX_LINES = 2;
 
@@ -585,12 +585,12 @@ export const ToolCallMessage = memo(
           // Fall through to regular handling if parsing fails
         }
 
-        // Check if this is EnterWorktree - show a compact structured summary
-        // instead of the full instructional tool return.
-        if (rawName === "EnterWorktree" && line.resultOk !== false) {
-          if (parseEnterWorktreeResult(extractedText)) {
-            return <EnterWorktreeResultRenderer resultText={extractedText} />;
-          }
+        // Worktree tools show a compact structured summary instead of the
+        // full instructional tool return.
+        if (hasWorktreeResultRenderer(rawName, extractedText, line.resultOk)) {
+          return (
+            <WorktreeToolResult toolName={rawName} resultText={extractedText} />
+          );
         }
 
         // Check if this is a file edit tool - show diff instead of success message

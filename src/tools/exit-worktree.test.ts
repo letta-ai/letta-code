@@ -172,7 +172,12 @@ describe("ExitWorktree tool", () => {
     expect(result.status).toBe("success");
     expect(result.returned_to).toBe(repo);
     expect(result.removed).toBe(false);
-    expect(result.content[0]?.text).toContain("kept on disk");
+    // The TUI renderer parses these labeled fields; keep them in lockstep
+    // with src/cli/components/ExitWorktreeResultRenderer.tsx.
+    expect(result.content[0]?.text).toContain("Left worktree.");
+    expect(result.content[0]?.text).toContain(`Path: ${worktreePath}`);
+    expect(result.content[0]?.text).toContain(`Branch: ${branchName}`);
+    expect(result.content[0]?.text).toContain(`CWD: ${repo}`);
     expect(await exists(worktreePath)).toBe(true);
     expect(git(["branch", "--list", branchName], repo)).toContain(branchName);
   });
@@ -189,6 +194,8 @@ describe("ExitWorktree tool", () => {
     expect(result.status).toBe("success");
     expect(result.removed).toBe(true);
     expect(result.returned_to).toBe(repo);
+    expect(result.content[0]?.text).toContain("Removed worktree.");
+    expect(result.content[0]?.text).toContain(`Branch: deleted ${branchName}`);
     expect(await exists(worktreePath)).toBe(false);
     expect(git(["branch", "--list", branchName], repo)).toBe("");
   });
@@ -283,7 +290,7 @@ describe("ExitWorktree tool", () => {
     );
 
     expect(result.status).toBe("success");
-    expect(result.content[0]?.text).toContain("released the cross-agent");
+    expect(result.content[0]?.text).toContain("Lock: released");
     expect(await lockExists(worktreeGitDir)).toBe(false);
   });
 
@@ -309,7 +316,7 @@ describe("ExitWorktree tool", () => {
     );
 
     expect(result.status).toBe("success");
-    expect(result.content[0]?.text).not.toContain("released the cross-agent");
+    expect(result.content[0]?.text).not.toContain("Lock:");
     expect(await lockExists(worktreeGitDir)).toBe(true);
   });
 });
