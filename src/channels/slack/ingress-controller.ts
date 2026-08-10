@@ -1,6 +1,9 @@
 import type SlackApp from "@slack/bolt";
 import { listChannelSlashCommands } from "@/channels/commands";
-import { SLACK_MODEL_SELECT_ACTION_ID } from "@/channels/slack/model-picker-blocks";
+import {
+  resolveSlackSelectedModel,
+  SLACK_MODEL_SELECT_ACTION_ID,
+} from "@/channels/slack/model-picker-blocks";
 import type {
   ChannelAdapter,
   InboundChannelMessage,
@@ -31,7 +34,6 @@ import {
   resolveSlackActionThreadId,
   resolveSlackActionUser,
   resolveSlackChatType,
-  resolveSlackSelectedModel,
   resolveSlackSenderTeamId,
   resolveSlackUserDisplayName,
   slackTimestampToMillis,
