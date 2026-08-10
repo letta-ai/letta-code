@@ -40,6 +40,7 @@ function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
 function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
+  existingProviderType?: string,
 ): ModelSettings {
   const explicitProviderType =
     typeof updateArgs?.provider_type === "string"
@@ -68,7 +69,10 @@ function buildModelSettings(
     modelHandle.startsWith("moonshot/") ||
     modelHandle.startsWith("moonshotai/");
   const isZai =
-    explicitProviderType === "zai" || modelHandle.startsWith("zai/");
+    explicitProviderType === "zai" ||
+    explicitProviderType === "zai_coding" ||
+    existingProviderType === "zai_coding" ||
+    modelHandle.startsWith("zai/");
   const isXai =
     explicitProviderType === "xai" || modelHandle.startsWith("xai/");
   const isGoogleAI =
@@ -161,8 +165,11 @@ function buildModelSettings(
   } else if (isZai) {
     // Zai uses the same model_settings structure as other providers.
     // Ensure parallel_tool_calls is enabled.
+    // Preserve zai_coding provider type when switching between zai models
+    // so the BYOK Coding Plan connection is not lost on model switch.
     settings = {
-      provider_type: "zai",
+      provider_type:
+        existingProviderType === "zai_coding" ? "zai_coding" : "zai",
       parallel_tool_calls: true,
     };
   } else if (isXai) {
@@ -404,9 +411,16 @@ export async function updateAgentLLMConfig(
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
 
+  const currentAgent = await backend.retrieveAgent(agentId);
+  const currentProviderType =
+    typeof currentAgent.model_settings?.provider_type === "string"
+      ? currentAgent.model_settings.provider_type
+      : undefined;
+
   const modelSettings = buildModelSettings(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+    currentProviderType,
   );
   const contextWindow = await resolveContextWindowForUpdate({
     modelHandle,
@@ -454,9 +468,32 @@ export async function updateConversationLLMConfig(
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
 
+  const currentConversation = await backend.retrieveConversation(
+    conversationId,
+  );
+  const currentAgentId = isRecord(currentConversation)
+    ? (currentConversation.agent_id as string | undefined)
+    : undefined;
+  const currentAgentForConv = currentAgentId
+    ? await backend.retrieveAgent(currentAgentId)
+    : undefined;
+  const currentProviderType =
+    typeof (
+      currentConversation as { model_settings?: { provider_type?: unknown } }
+    ).model_settings?.provider_type === "string"
+      ? (
+          currentConversation as {
+            model_settings: { provider_type: string };
+          }
+        ).model_settings.provider_type
+      : typeof currentAgentForConv?.model_settings?.provider_type === "string"
+        ? currentAgentForConv.model_settings.provider_type
+        : undefined;
+
   const modelSettings = buildModelSettings(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+    currentProviderType,
   );
   const contextWindow = await resolveContextWindowForUpdate({
     modelHandle,
@@ -595,11 +632,44 @@ export async function updateModelConfig(
       ? { reasoning_effort: update.reasoningEffort }
       : undefined;
 
+  // Preserve the existing provider_type when switching models within the same
+  // provider family (e.g., zai_coding should survive a zai/* model switch).
+  let existingProviderType: string | undefined;
+  if (target.scope === "agent" && target.agentId) {
+    const existingAgent = await backend.retrieveAgent(target.agentId);
+    existingProviderType =
+      typeof existingAgent.model_settings?.provider_type === "string"
+        ? existingAgent.model_settings.provider_type
+        : undefined;
+  } else if (target.conversationId) {
+    const existingConv = await backend.retrieveConversation(
+      target.conversationId,
+    );
+    existingProviderType =
+      typeof (
+        existingConv as { model_settings?: { provider_type?: unknown } }
+      ).model_settings?.provider_type === "string"
+        ? (
+            existingConv as {
+              model_settings: { provider_type: string };
+            }
+          ).model_settings.provider_type
+        : undefined;
+    if (!existingProviderType && target.agentId) {
+      const existingAgent = await backend.retrieveAgent(target.agentId);
+      existingProviderType =
+        typeof existingAgent.model_settings?.provider_type === "string"
+          ? existingAgent.model_settings.provider_type
+          : undefined;
+    }
+  }
+
   const modelSettings =
     touchesModelSettings && modelHandle
       ? buildModelSettings(
           modelHandle,
           updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+          existingProviderType,
         )
       : undefined;
   const hasModelSettings =
