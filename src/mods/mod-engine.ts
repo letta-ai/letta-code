@@ -64,6 +64,11 @@ import {
   unregisterModToolsForOwner,
 } from "@/mods/tool-registry";
 import { normalizeTurnStartCancelReason } from "@/mods/turn-start-cancel";
+import {
+  cloneTurnStartInput,
+  isTurnStartInput,
+  preserveApprovalFirstOrdering,
+} from "@/mods/turn-start-input";
 import type {
   ModCapabilities,
   ModCommand,
@@ -626,19 +631,6 @@ function isTurnStartResultWithCancel(
     normalizeTurnStartCancelReason((cancel as { reason?: unknown }).reason) !==
       null
   );
-}
-
-function isTurnStartInput(value: unknown): value is ModTurnStartEvent["input"] {
-  return (
-    Array.isArray(value) &&
-    value.every((item) => typeof item === "object" && item !== null)
-  );
-}
-
-function cloneTurnStartInput(
-  input: ModTurnStartEvent["input"],
-): ModTurnStartEvent["input"] {
-  return input.map((item) => structuredClone(item));
 }
 
 function isToolStartResultWithArgs(
@@ -1527,7 +1519,9 @@ export async function emitLocalModEvent<TName extends ModEventName>(
   const diagnostics: ModDiagnostic[] = [];
   const results: Array<NonNullable<ModEventResultMap[TName]>> = [];
   let turnStartCancel: ModTurnStartCancelResult | undefined;
-
+  const turnStartHadApproval =
+    name === "turn_start" &&
+    (event as ModTurnStartEvent).input.some((item) => item.type === "approval");
   for (const registration of registrations) {
     const signal = registration.owner
       ? registry.ownerAbortControllers[registration.owner.id]?.signal
@@ -1667,6 +1661,10 @@ export async function emitLocalModEvent<TName extends ModEventName>(
     const turnStartEventWithCancel = event as ModTurnStartEvent & {
       cancel?: ModTurnStartCancelResult;
     };
+    turnStartEventWithCancel.input = preserveApprovalFirstOrdering(
+      turnStartHadApproval,
+      turnStartEventWithCancel.input,
+    );
     if (turnStartCancel) {
       turnStartEventWithCancel.cancel = { ...turnStartCancel };
     } else {
