@@ -577,7 +577,9 @@ export async function handleApprovalStop(params: {
     },
   ]);
   let continuationBatchId = dequeuedBatchId;
-  const consumedQueuedTurn = consumeQueuedTurn(runtime);
+  const consumedQueuedTurn = consumeQueuedTurn(runtime, {
+    matchActiveSuperRun: true,
+  });
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
     continuationBatchId = dequeuedBatch.batchId;

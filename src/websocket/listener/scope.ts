@@ -61,6 +61,7 @@ export function resolveRuntimeScope(
   params?: {
     agent_id?: string | null;
     conversation_id?: string | null;
+    super_run_id?: string | null;
   },
 ): RuntimeScope | null {
   const resolvedAgentId = resolveScopedAgentId(runtime, params);
@@ -71,5 +72,6 @@ export function resolveRuntimeScope(
   return {
     agent_id: resolvedAgentId,
     conversation_id: resolvedConversationId,
+    ...(params?.super_run_id ? { super_run_id: params.super_run_id } : {}),
   };
 }

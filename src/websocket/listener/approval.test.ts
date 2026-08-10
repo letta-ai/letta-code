@@ -56,11 +56,12 @@ function createScopedRuntime(
   return getOrCreateScopedRuntime(createRuntime(), agentId, conversationId);
 }
 
-function beginApprovalWait(runtime: ConversationRuntime) {
+function beginApprovalWait(runtime: ConversationRuntime, superRunId?: string) {
   return runtime.turnLifecycle.begin({
     origin: "message",
     workingDirectory: process.cwd(),
     initialStatus: "WAITING_ON_APPROVAL",
+    superRunId,
   });
 }
 
@@ -287,7 +288,9 @@ describe("listener approval lifecycle", () => {
   test("resolving an approval does not falsely finalize its enclosing turn", async () => {
     const runtime = createScopedRuntime();
     const socket = new MockSocket();
-    const turnLease = beginApprovalWait(runtime);
+    runtime.listener.socket = socket as unknown as WebSocket;
+    runtime.listener.transport = socket;
+    const turnLease = beginApprovalWait(runtime, "super-run-approval");
     const pending = requestApprovalOverWS(
       runtime,
       socket,
@@ -305,6 +308,11 @@ describe("listener approval lifecycle", () => {
     await expect(pending).resolves.toEqual(makeSuccessResponse("perm-status"));
     expect(runtime.loopStatus).toBe("WAITING_ON_APPROVAL");
     expect(runtime.isProcessing).toBe(true);
+    expect(socket.sentPayloads.length).toBeGreaterThan(1);
+    for (const payload of socket.sentPayloads) {
+      const message = JSON.parse(payload);
+      expect(message.runtime.super_run_id).toBe("super-run-approval");
+    }
   });
 
   test("approval routing and state stay isolated by conversation", async () => {

@@ -134,7 +134,6 @@ async function handleIncomingMessageInner(
   const agentId = msg.agentId;
   const requestedConversationId = msg.conversationId || undefined;
   const conversationId = requestedConversationId ?? "default";
-  runtime.superRunId = msg.superRunId ?? null;
   const normalizedAgentId = normalizeCwdAgentId(agentId);
   const turnWorkingDirectory = getConversationWorkingDirectory(
     runtime.listener,
@@ -164,6 +163,7 @@ async function handleIncomingMessageInner(
     runtime.turnLifecycle.begin({
       origin: "message",
       workingDirectory: turnWorkingDirectory,
+      superRunId: msg.superRunId,
     });
   if (connectionId) {
     runtime.activeConnectionId = connectionId;
@@ -993,7 +993,6 @@ async function handleIncomingMessageInner(
     if (runtime.activeConnectionId === connectionId) {
       runtime.activeConnectionId = null;
     }
-    runtime.superRunId = null;
 
     try {
       if (finalizedByThisInvocation) {
@@ -1006,6 +1005,7 @@ async function handleIncomingMessageInner(
       }
     } finally {
       releaseListenerTurnContext({ runtime, agentId, conversationId });
+      runtime.turnLifecycle.releaseSuperRunId(turnLease);
     }
 
     evictConversationRuntimeIfIdle(runtime);

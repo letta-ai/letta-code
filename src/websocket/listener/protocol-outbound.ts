@@ -441,7 +441,7 @@ export function emitProtocolV2Message(
       frameClass,
       ...(frameClass === "status"
         ? {
-            coalesceKey: `${message.type}:${runtimeScope.agent_id ?? ""}:${runtimeScope.conversation_id ?? ""}`,
+            coalesceKey: `${message.type}:${runtimeScope.agent_id ?? ""}:${runtimeScope.conversation_id ?? ""}:${runtimeScope.super_run_id ?? ""}`,
           }
         : {}),
       build: () => {
