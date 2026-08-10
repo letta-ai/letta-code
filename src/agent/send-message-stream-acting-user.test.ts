@@ -24,22 +24,27 @@ import { fileURLToPath } from "node:url";
  * actual behavior is exercised end-to-end by the queue and
  * listener integration tests.
  */
-describe("sendMessageStream acting-user header propagation (contract)", () => {
+describe("sendMessageStream listener metadata header propagation (contract)", () => {
   const source = readFileSync(
     fileURLToPath(new URL("../agent/message.ts", import.meta.url)),
     "utf-8",
   );
 
-  test("public option is declared on SendMessageStreamOptions", () => {
+  test("public options are declared on SendMessageStreamOptions", () => {
     expect(source).toContain("actingUserId?: string;");
+    expect(source).toContain("superRunId?: string;");
   });
 
-  test("header is set from opts.actingUserId when present", () => {
+  test("headers are set from listener metadata when present", () => {
     // Pin the precise injection so a refactor that drops the
-    // condition or renames the header is caught.
+    // condition or renames either header is caught.
     expect(source).toMatch(/if\s*\(\s*opts\.actingUserId\s*\)\s*\{/);
     expect(source).toContain(
       'extraHeaders["X-Letta-Acting-User-Id"] = opts.actingUserId',
+    );
+    expect(source).toMatch(/if\s*\(\s*opts\.superRunId\s*\)\s*\{/);
+    expect(source).toContain(
+      'extraHeaders["X-Letta-Super-Run-Id"] = opts.superRunId',
     );
   });
 

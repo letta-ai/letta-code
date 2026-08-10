@@ -79,6 +79,112 @@ function parseOnlyStreamDelta(socket: MockSocket): StreamDeltaMessage {
   return message as StreamDeltaMessage;
 }
 
+describe("emitProtocolV2Message runtime scope", () => {
+  test("includes the active super run on outbound frames", () => {
+    const listener = createListenerRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socket = new MockSocket();
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      superRunId: "super-run-1",
+    });
+
+    emitProtocolV2Message(
+      socket as never,
+      runtime,
+      {
+        type: "update_loop_status",
+        loop_status: { status: "WAITING_ON_INPUT", active_run_ids: [] },
+      } as never,
+      undefined,
+      TO_SUBSCRIBERS,
+    );
+
+    expect(socket.sentPayloads).toHaveLength(1);
+    const message = JSON.parse(socket.sentPayloads[0] ?? "{}");
+    expect(message.runtime).toEqual({
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+      super_run_id: "super-run-1",
+    });
+    runtime.turnLifecycle.finish(lease, "end_turn");
+    runtime.turnLifecycle.releaseSuperRunId(lease);
+  });
+
+  test("does not coalesce status frames from different super runs", async () => {
+    const listener = createListenerRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socket = new MockSocket();
+    socket.bufferedAmount = OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
+    const firstLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      superRunId: "super-run-1",
+    });
+
+    emitProtocolV2Message(
+      socket as never,
+      runtime,
+      {
+        type: "update_loop_status",
+        loop_status: { status: "WAITING_ON_INPUT", active_run_ids: [] },
+      } as never,
+      undefined,
+      TO_SUBSCRIBERS,
+    );
+    emitProtocolV2Message(
+      socket as never,
+      runtime,
+      {
+        type: "turn_finished",
+        turn_id: "turn-1",
+        stop_reason: "end_turn",
+      } as never,
+      undefined,
+      TO_SUBSCRIBERS,
+    );
+    runtime.turnLifecycle.finish(firstLease, "end_turn");
+    runtime.turnLifecycle.releaseSuperRunId(firstLease);
+
+    const secondLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      superRunId: "super-run-2",
+    });
+    emitProtocolV2Message(
+      socket as never,
+      runtime,
+      {
+        type: "update_loop_status",
+        loop_status: {
+          status: "SENDING_API_REQUEST",
+          active_run_ids: [],
+        },
+      } as never,
+      undefined,
+      TO_SUBSCRIBERS,
+    );
+
+    socket.bufferedAmount = 0;
+    await Bun.sleep(OUTBOUND_QUEUE_LIMITS.DRAIN_POLL_MS + 10);
+
+    const messages = socket.sentPayloads.map((payload) => JSON.parse(payload));
+    expect(messages.map((message) => message.type)).toEqual([
+      "update_loop_status",
+      "turn_finished",
+      "update_loop_status",
+    ]);
+    expect(messages.map((message) => message.runtime.super_run_id)).toEqual([
+      "super-run-1",
+      "super-run-1",
+      "super-run-2",
+    ]);
+    runtime.turnLifecycle.finish(secondLease, "end_turn");
+    runtime.turnLifecycle.releaseSuperRunId(secondLease);
+  });
+});
+
 describe("emitProtocolV2Message backpressure", () => {
   test("never sheds stream deltas that snapshots cannot replay", () => {
     const { runtime, socket } = createRuntime();

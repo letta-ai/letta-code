@@ -420,6 +420,8 @@ export function createListenerMessageHandler(
           connectionId,
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
+          superRunId: parsed.runtime.super_run_id,
+          noCoalesce: parsed.runtime.super_run_id !== undefined,
           clientToolAllowlist: inputPayload.client_tool_allowlist,
           clientToolset: inputPayload.client_toolset,
           externalToolScopeIds: inputPayload.external_tool_scope_ids,
