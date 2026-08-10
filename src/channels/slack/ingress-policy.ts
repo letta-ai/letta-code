@@ -71,6 +71,7 @@ export interface ResolveSlackMessageIngressPolicyParams {
   message: SlackInboundMessageEventLike;
   botUserId?: string | null;
   isAgentThread?: boolean;
+  appMentionEventWillHandleMentions?: boolean;
 }
 
 export interface ResolveSlackAppMentionIngressPolicyParams {
@@ -141,6 +142,7 @@ export type SlackIngressIgnoreReason =
   | "ignored_subtype"
   | "wrapper_message"
   | "top_level_channel_message"
+  | "handled_by_app_mention"
   | "invalid_reaction_item"
   | "missing_reaction"
   | "own_bot_reaction"
@@ -258,6 +260,13 @@ export function resolveSlackMessageIngressPolicy(
 
   const rawText = isNonEmptyString(message.text) ? message.text : "";
   const wasMentioned = hasSlackMention(rawText, params.botUserId);
+  if (
+    chatType === "channel" &&
+    wasMentioned &&
+    params.appMentionEventWillHandleMentions === true
+  ) {
+    return { shouldRoute: false, reason: "handled_by_app_mention" };
+  }
   const isAgentThread = params.isAgentThread === true;
   const effectiveMention = isBotAuthoredMessage(message)
     ? wasMentioned
