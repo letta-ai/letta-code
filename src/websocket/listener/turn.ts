@@ -134,6 +134,7 @@ async function handleIncomingMessageInner(
   const agentId = msg.agentId;
   const requestedConversationId = msg.conversationId || undefined;
   const conversationId = requestedConversationId ?? "default";
+  runtime.superRunId = msg.superRunId ?? null;
   const normalizedAgentId = normalizeCwdAgentId(agentId);
   const turnWorkingDirectory = getConversationWorkingDirectory(
     runtime.listener,
@@ -300,6 +301,7 @@ async function handleIncomingMessageInner(
         ? { overrideModel: providerFallback.overrideModel }
         : {}),
       ...(msg.actingUserId ? { actingUserId: msg.actingUserId } : {}),
+      ...(msg.superRunId ? { superRunId: msg.superRunId } : {}),
       ...(pendingNormalizationInterruptedToolCallIds.length > 0
         ? {
             approvalNormalization: {
@@ -991,6 +993,7 @@ async function handleIncomingMessageInner(
     if (runtime.activeConnectionId === connectionId) {
       runtime.activeConnectionId = null;
     }
+    runtime.superRunId = null;
 
     try {
       if (finalizedByThisInvocation) {

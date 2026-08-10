@@ -68,10 +68,7 @@ import type {
 } from "./types";
 
 type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
-type PartialRuntimeScope = {
-  agent_id?: string | null;
-  conversation_id?: string | null;
-};
+type PartialRuntimeScope = { [K in keyof RuntimeScope]?: RuntimeScope[K] | null };
 
 const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
 const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
@@ -153,6 +150,7 @@ function getScopeForRuntime(
     return {
       agent_id: scope?.agent_id ?? runtime.agentId,
       conversation_id: scope?.conversation_id ?? runtime.conversationId,
+      super_run_id: scope?.super_run_id ?? runtime.superRunId ?? undefined,
     };
   }
   return scope ?? {};
