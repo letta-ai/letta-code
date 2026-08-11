@@ -163,7 +163,6 @@ async function handleIncomingMessageInner(
     runtime.turnLifecycle.begin({
       origin: "message",
       workingDirectory: turnWorkingDirectory,
-      superRunId: msg.superRunId,
     });
   if (connectionId) {
     runtime.activeConnectionId = connectionId;
@@ -301,7 +300,6 @@ async function handleIncomingMessageInner(
         ? { overrideModel: providerFallback.overrideModel }
         : {}),
       ...(msg.actingUserId ? { actingUserId: msg.actingUserId } : {}),
-      ...(msg.superRunId ? { superRunId: msg.superRunId } : {}),
       ...(pendingNormalizationInterruptedToolCallIds.length > 0
         ? {
             approvalNormalization: {
@@ -1005,7 +1003,6 @@ async function handleIncomingMessageInner(
       }
     } finally {
       releaseListenerTurnContext({ runtime, agentId, conversationId });
-      runtime.turnLifecycle.releaseSuperRunId(turnLease);
     }
 
     evictConversationRuntimeIfIdle(runtime);

@@ -69,7 +69,8 @@ import type {
 
 type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
 type PartialRuntimeScope = {
-  [K in keyof RuntimeScope]?: RuntimeScope[K] | null;
+  agent_id?: string | null;
+  conversation_id?: string | null;
 };
 
 const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
@@ -152,7 +153,6 @@ function getScopeForRuntime(
     return {
       agent_id: scope?.agent_id ?? runtime.agentId,
       conversation_id: scope?.conversation_id ?? runtime.conversationId,
-      super_run_id: scope?.super_run_id ?? runtime.superRunId ?? undefined,
     };
   }
   return scope ?? {};
@@ -441,7 +441,7 @@ export function emitProtocolV2Message(
       frameClass,
       ...(frameClass === "status"
         ? {
-            coalesceKey: `${message.type}:${runtimeScope.agent_id ?? ""}:${runtimeScope.conversation_id ?? ""}:${runtimeScope.super_run_id ?? ""}`,
+            coalesceKey: `${message.type}:${runtimeScope.agent_id ?? ""}:${runtimeScope.conversation_id ?? ""}`,
           }
         : {}),
       build: () => {

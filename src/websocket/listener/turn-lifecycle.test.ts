@@ -116,19 +116,14 @@ describe("TurnLifecycle", () => {
     const staleLease = lifecycle.begin({
       origin: "message",
       workingDirectory: "/tmp/old",
-      superRunId: "super-run-old",
     });
 
     expect(lifecycle.reset("cancelled").finished).toBe(true);
-    expect(lifecycle.superRunId).toBeNull();
     const currentLease = lifecycle.begin({
       origin: "message",
       workingDirectory: "/tmp/new",
-      superRunId: "super-run-new",
     });
 
-    expect(lifecycle.releaseSuperRunId(staleLease)).toBe(false);
-    expect(lifecycle.superRunId).toBe("super-run-new");
     expect(lifecycle.setRunId(staleLease, "stale-run")).toBe(false);
     expect(lifecycle.setStatus(staleLease, "PROCESSING_API_RESPONSE")).toBe(
       false,
@@ -137,10 +132,6 @@ describe("TurnLifecycle", () => {
     expect(lifecycle.isCurrent(currentLease)).toBe(true);
     expect(lifecycle.activeWorkingDirectory).toBe("/tmp/new");
     expect(lifecycle.lastStopReason).toBeNull();
-    expect(lifecycle.finish(currentLease, "end_turn").finished).toBe(true);
-    expect(lifecycle.superRunId).toBe("super-run-new");
-    expect(lifecycle.releaseSuperRunId(currentLease)).toBe(true);
-    expect(lifecycle.superRunId).toBeNull();
   });
 
   test("finishes a lease exactly once", () => {

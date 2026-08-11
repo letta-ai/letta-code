@@ -169,11 +169,7 @@ describe("listener message router ownership handoff", () => {
         JSON.stringify({
           type: "input",
           request_id: "input-race",
-          runtime: {
-            agent_id: "agent-1",
-            conversation_id: "conv-1",
-            super_run_id: "super-run-queued",
-          },
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
           payload: {
             kind: "create_message",
             messages: [
@@ -192,11 +188,7 @@ describe("listener message router ownership handoff", () => {
         JSON.stringify({
           type: "input",
           request_id: "input-race-retry",
-          runtime: {
-            agent_id: "agent-1",
-            conversation_id: "conv-1",
-            super_run_id: "super-run-queued",
-          },
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
           payload: {
             kind: "create_message",
             messages: [
@@ -244,8 +236,6 @@ describe("listener message router ownership handoff", () => {
         client_message_id: "cm-input-race",
       },
     ]);
-    expect(processedTurns[0]?.superRunId).toBe("super-run-queued");
-    expect(processedTurns[0]?.noCoalesce).toBe(true);
     expect(runtime.queuedMessagesByItemId.size).toBe(0);
     expect(sent).toContainEqual(
       expect.objectContaining({
@@ -265,16 +255,14 @@ describe("listener message router ownership handoff", () => {
     );
   });
 
-  test("preserves turn metadata on a directly-owned input and deduplicates retries", async () => {
+  test("preserves the acting user on a directly-owned input and deduplicates retries", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
     const sent: unknown[] = [];
     let receivedActingUserId: string | undefined;
-    let receivedSuperRunId: string | undefined;
     const processIncomingMessage = mock(async (incoming: IncomingMessage) => {
       receivedActingUserId = incoming.actingUserId;
-      receivedSuperRunId = incoming.superRunId;
     });
     setActiveRuntime(listener);
     const handleMessage = createListenerMessageHandler({
@@ -308,7 +296,6 @@ describe("listener message router ownership handoff", () => {
             agent_id: "agent-1",
             conversation_id: "conv-1",
             acting_user_id: "cloud-user-1",
-            super_run_id: "super-run-direct",
           },
           payload: {
             kind: "create_message",
@@ -334,7 +321,6 @@ describe("listener message router ownership handoff", () => {
             agent_id: "agent-1",
             conversation_id: "conv-1",
             acting_user_id: "cloud-user-1",
-            super_run_id: "super-run-direct",
           },
           payload: {
             kind: "create_message",
@@ -353,7 +339,6 @@ describe("listener message router ownership handoff", () => {
 
     expect(processIncomingMessage).toHaveBeenCalledTimes(1);
     expect(receivedActingUserId).toBe("cloud-user-1");
-    expect(receivedSuperRunId).toBe("super-run-direct");
     expect(sent).toContainEqual(
       expect.objectContaining({
         type: "input_accepted",

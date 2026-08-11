@@ -252,9 +252,6 @@ export function createConversationRuntime(
     key: runtimeKey,
     agentId: normalizedAgentId,
     conversationId: normalizedConversationId,
-    get superRunId() {
-      return turnLifecycle.superRunId;
-    },
     skillSources: listener.skillSourcesByConversation.get(runtimeKey)?.slice(),
     activeConnectionId: null,
     turnLifecycle,
