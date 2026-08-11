@@ -134,7 +134,8 @@ export function rebuildReflectionTranscriptState(
 
   return {
     schema_version: REFLECTION_STATE_SCHEMA_VERSION,
-    reflected_through_message_id: reflectedThroughMessageId,
+    reflected_through_message_id:
+      anchorIndex < 0 ? undefined : reflectedThroughMessageId,
     total_completed_steps: totalCompletedSteps,
     reflected_completed_steps: reflectedCompletedSteps,
     steps_since_last_successful_reflection: Math.max(

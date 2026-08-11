@@ -147,6 +147,48 @@ describe("reflection canonical assistant steps", () => {
     });
   });
 
+  test("migration clears a missing anchor before its id appears again", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "old prompt", messageId: "message-u1" },
+      assistant("a1", "old unreflected answer", "message-a1"),
+    ]);
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    await writeFile(
+      paths.statePath,
+      `${JSON.stringify({
+        schema_version: "v3_assistant_steps",
+        reflected_through_message_id: "message-missing",
+        total_completed_steps: 1,
+        reflected_completed_steps: 1,
+        steps_since_last_successful_reflection: 0,
+      })}\n`,
+      "utf-8",
+    );
+
+    const migrated = await getReflectionTranscriptState(
+      agentId,
+      conversationId,
+    );
+    expect(migrated.reflected_through_message_id).toBeUndefined();
+    expect(migrated.reflected_completed_steps).toBe(0);
+
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      {
+        kind: "user",
+        id: "u2",
+        text: "new prompt",
+        messageId: "message-missing",
+      },
+      assistant("a2", "new answer", "message-a2"),
+    ]);
+    const payload = await buildAutoReflectionPayload(agentId, conversationId);
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+    const payloadText = await readFile(payload.payloadPath, "utf-8");
+    expect(payloadText).toContain("old unreflected answer");
+    expect(payloadText).toContain("new answer");
+  });
+
   test("a reflected anchor advances through every row sharing its canonical id", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "prompt", messageId: "message-u1" },
