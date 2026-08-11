@@ -798,7 +798,6 @@ async function connectWithRetry(
     return;
   }
   const apiKey = auth.apiKey;
-
   const url = new URL(opts.wsUrl);
   url.searchParams.set("deviceId", opts.deviceId);
   url.searchParams.set("connectionName", opts.connectionName);
@@ -891,6 +890,7 @@ async function connectWithRetry(
       runtime,
       socket,
       connectionId: opts.connectionId,
+      apiCredential: apiKey,
       opts,
       processQueuedTurn,
       fileCommandSession,

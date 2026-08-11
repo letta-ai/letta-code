@@ -4,6 +4,8 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
+import { clearAvailableModelsCache } from "@/agent/available-models";
+import { __testResetRemoteModelCatalog } from "@/agent/remote-model-catalog";
 import { OAuthRefreshError, type TokenResponse } from "@/auth/oauth";
 import { settingsManager } from "@/settings-manager";
 import type { ControlRequest } from "@/types/protocol_v2";
@@ -48,6 +50,7 @@ describe("listener auth lifecycle", () => {
   const originalDisableMods = process.env.LETTA_DISABLE_MODS;
   const originalApiKey = process.env.LETTA_API_KEY;
   const originalBaseUrl = process.env.LETTA_BASE_URL;
+  const originalFetch = globalThis.fetch;
   const originalGetSettingsWithSecureTokens =
     settingsManager.getSettingsWithSecureTokens;
   const originalUpdateSettings = settingsManager.updateSettings;
@@ -144,6 +147,9 @@ describe("listener auth lifecycle", () => {
     );
     server.close();
     __listenerAuthTestUtils.setOAuthDepsForTests(null);
+    clearAvailableModelsCache();
+    __testResetRemoteModelCatalog();
+    globalThis.fetch = originalFetch;
     settingsManager.getSettingsWithSecureTokens =
       originalGetSettingsWithSecureTokens;
     settingsManager.updateSettings = originalUpdateSettings;
@@ -301,6 +307,109 @@ describe("listener auth lifecycle", () => {
 
     expect(authorizations[1]).toBe("Bearer refreshed-access-token");
     expect(settings.refreshToken).toBe("rotated-refresh-token");
+  });
+
+  test("listener API commands keep using the credential that authenticated the socket", async () => {
+    await startClient();
+    await waitFor(
+      () => connections.length === 1,
+      "initial socket did not open",
+    );
+    expect(authorizations[0]).toBe("Bearer initial-access-token");
+
+    settings = {
+      ...settings,
+      env: {
+        ...settings.env,
+        LETTA_API_KEY: "replacement-access-token",
+      },
+    };
+    process.env.LETTA_BASE_URL = "https://api.test";
+    clearAvailableModelsCache();
+    __testResetRemoteModelCatalog();
+
+    const apiRequests: Array<{ url: string; authorization: string | null }> =
+      [];
+    globalThis.fetch = mock(async (input, init) => {
+      const request = input instanceof Request ? input : null;
+      const url = request?.url ?? String(input);
+      const headers = new Headers(request?.headers ?? init?.headers);
+      apiRequests.push({
+        url,
+        authorization: headers.get("authorization"),
+      });
+      return new Response("[]", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    connections[0]?.send(
+      JSON.stringify({
+        type: "list_models",
+        request_id: "models-session-credential",
+        force: true,
+      }),
+    );
+
+    await waitFor(
+      () =>
+        getConnectionMessages(0).some(
+          (message) =>
+            typeof message === "object" &&
+            message !== null &&
+            (message as { type?: string; request_id?: string }).type ===
+              "list_models_response" &&
+            (message as { type?: string; request_id?: string }).request_id ===
+              "models-session-credential",
+        ),
+      "listener did not answer list_models",
+    );
+
+    expect(apiRequests.length).toBeGreaterThan(0);
+    expect(
+      apiRequests.some(({ url }) => new URL(url).pathname === "/v1/providers"),
+    ).toBe(true);
+    expect(
+      apiRequests.some(
+        ({ url }) =>
+          new URL(url).pathname.startsWith("/v1/models") &&
+          new URL(url).pathname !== "/v1/models/catalog",
+      ),
+    ).toBe(true);
+    expect(
+      new Set(apiRequests.map(({ authorization }) => authorization)),
+    ).toEqual(new Set(["Bearer initial-access-token"]));
+
+    process.env.LETTA_API_KEY = "environment-access-token";
+    apiRequests.length = 0;
+    clearAvailableModelsCache();
+    __testResetRemoteModelCatalog();
+    connections[0]?.send(
+      JSON.stringify({
+        type: "list_models",
+        request_id: "models-environment-credential",
+        force: true,
+      }),
+    );
+
+    await waitFor(
+      () =>
+        getConnectionMessages(0).some(
+          (message) =>
+            typeof message === "object" &&
+            message !== null &&
+            (message as { type?: string; request_id?: string }).type ===
+              "list_models_response" &&
+            (message as { type?: string; request_id?: string }).request_id ===
+              "models-environment-credential",
+        ),
+      "listener did not answer list_models with an environment credential",
+    );
+    expect(apiRequests.length).toBeGreaterThan(0);
+    expect(
+      new Set(apiRequests.map(({ authorization }) => authorization)),
+    ).toEqual(new Set(["Bearer environment-access-token"]));
   });
 
   test("transient relay closes preserve turn state queues and approval resolvers", async () => {

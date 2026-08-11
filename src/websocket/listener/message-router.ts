@@ -4,6 +4,7 @@ import {
   estimateSystemPromptTokensFromMemoryDir,
   setSystemPromptDoctorState,
 } from "@/cli/helpers/system-prompt-warning";
+import { runWithApiCredential } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import type {
   AbortMessageCommand,
@@ -107,6 +108,7 @@ type MessageRouterParams = {
   runtime: ListenerRuntime;
   socket: WebSocket;
   connectionId?: ListenerConnectionId;
+  apiCredential?: string;
   opts: StartListenerOptions;
   processQueuedTurn: ProcessQueuedTurn;
   fileCommandSession: FileCommandSession;
@@ -179,6 +181,7 @@ export function createListenerMessageHandler(
     runtime,
     socket,
     connectionId: explicitConnectionId,
+    apiCredential,
     opts,
     processQueuedTurn,
     fileCommandSession,
@@ -196,7 +199,7 @@ export function createListenerMessageHandler(
   } = params;
   const connectionId = explicitConnectionId ?? opts.connectionId;
 
-  return async (data: WebSocket.RawData): Promise<void> => {
+  const handleMessage = async (data: WebSocket.RawData): Promise<void> => {
     const raw = data.toString();
     let parsedScope: ParsedRuntimeScope = null;
 
@@ -867,4 +870,10 @@ export function createListenerMessageHandler(
       });
     }
   };
+
+  if (!apiCredential) {
+    return handleMessage;
+  }
+  return (data) =>
+    runWithApiCredential(apiCredential, () => handleMessage(data));
 }
