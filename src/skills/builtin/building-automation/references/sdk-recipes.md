@@ -28,9 +28,9 @@ The SDK offers the following execution options:
 
 Sandbox files last until the sandbox expires. Agent memory, conversation history, or application storage can hold state that must outlive the sandbox. A `cwd` value refers to a path inside the sandbox. It does not mount a local path.
 
-## One-off program
+## Call yourself for a one-off task
 
-This example starts a new conversation on an existing agent, streams one turn, records the result, and exits.
+This example starts a new conversation on your existing agent, streams one turn, records the result, and exits. `AUTOMATION_AGENT_ID` can contain your agent ID.
 
 ```ts
 // release-audit.ts — invoked by a person or another program.
@@ -58,9 +58,49 @@ for await (const event of session.stream()) {
 
 Turn anatomy: one `send()` + one pass through `stream()`; the stream terminates after the turn's `result` event. `abort()` stops a turn without closing the session; `close()`/`await using` releases session-scoped resources (client tools, MCP connections, cwd/env). A session whose connection died cannot be reused — `resumeSession(conversationId)` and continue.
 
+## Ask temporary worker agents for help
+
+A temporary worker can use a separate context, model, and toolset for one part of your automation. This example creates a hidden worker without its own memory filesystem, runs one task, and deletes the worker.
+
+```ts
+const READ_TOOLS = ["Read", "Grep", "Glob", "LS"];
+
+async function askWorker(task: string): Promise<string | undefined> {
+  const workerId = await client.createAgent({
+    model: process.env.WORKER_MODEL ?? "haiku",
+    hidden: true,
+    memfs: false,
+    baseTools: [],
+  });
+
+  try {
+    const result = await client.prompt(task, workerId, {
+      toolset: { base: "none", include: READ_TOOLS },
+      allowedTools: READ_TOOLS,
+      permissionMode: "strict",
+      canUseTool: async () => ({ behavior: "allow" }),
+      cwd: process.cwd(),
+    });
+    return result.result;
+  } finally {
+    await client.agents.delete(workerId);
+  }
+}
+```
+
+Several workers can run in parallel while the script holds their results:
+
+```ts
+const reports = await Promise.all(
+  files.map((file) => askWorker(`Review ${file} and return only concrete findings.`)),
+);
+```
+
+The script can also pass each result through another worker, compare plans from different models, or collect patches from separate cloud sandboxes. [letta-agent-sdk#261](https://github.com/letta-ai/letta-agent-sdk/pull/261) contains complete examples for audits, fix loops, planning panels, research, and file migrations.
+
 ## Dedicated automation agent
 
-An automation can use an existing agent or create a dedicated agent. A dedicated agent keeps its memory and identity separate from other work.
+An automation can use your existing agent, temporary workers, or a dedicated agent. A dedicated agent keeps its own memory and identity across repeated work.
 
 ```ts
 const agentId = await client.createAgent({
