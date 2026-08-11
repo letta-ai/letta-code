@@ -34,6 +34,16 @@ describe("public Slack message ingress policy", () => {
     ).toBe(true);
   });
 
+  test("keeps ordinary thread follow-ups when app_mention handles mentions", () => {
+    expect(
+      resolveSlackMessageIngressPolicy({
+        message: { ...mentionedMessage, text: "keep going" },
+        botUserId: "U_BOT",
+        appMentionEventWillHandleMentions: true,
+      }).shouldRoute,
+    ).toBe(true);
+  });
+
   test("keeps direct messages when app_mention handles channel mentions", () => {
     expect(
       resolveSlackMessageIngressPolicy({
