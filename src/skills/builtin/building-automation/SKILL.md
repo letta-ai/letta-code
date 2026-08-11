@@ -79,6 +79,18 @@ An automation can use the following Agent SDK features:
 - Different models for different workers.
 - Structured results for script-controlled workflows.
 
+## Choose where tools run
+
+A [computer](https://docs.letta.com/platform/computers) is the environment where an agent runs commands, accesses files, and uses local tools. The agent's identity, memory, and conversations are separate from the computer. Moving the agent does not copy project files, software, or credentials. The agent can use what exists on the selected computer.
+
+An Agent SDK automation can choose among:
+
+- **Managed cloud sandbox:** use `backend: "cloud"` without a `computer`. Letta creates an isolated environment for the session. Provisioning adds cold-start time, which can make short tasks feel slow. Sandboxes fit automations that need isolation, clean environments, or many concurrent workers. Letta expects their startup time and usability to improve.
+- **Computer in your Letta organization:** use `backend: "cloud"` with a `computer` selector. The computer can be an online laptop, workstation, VM, or other connected machine. This option gives the agent access to a specific filesystem, credential, dependency, or long-running machine. A `deviceId` or computer `id` is stable across reconnects. A `connectionId` represents one live connection.
+- **Current computer:** use `backend: "local"` to keep agent state and tool execution on the machine running the program. This is useful for direct access to local files and tools or for a fully local deployment.
+
+The program can discover online organization computers with `client.computers.list({ onlineOnly: true })`. A Cloud session can use a selected `computer` or a managed `sandbox`, but not both. A separately operated App Server is available through `backend: "remote"`.
+
 ## Questions that can help
 
 The following questions can help describe the automation:
@@ -101,7 +113,7 @@ An automation can use several types of state:
 
 ## Execution and authority options
 
-Tools can run in a managed cloud sandbox, on a connected computer, or on the local machine. The surrounding program can run from a command, scheduled task, server, or another application.
+The surrounding program can run from a command, scheduled task, server, or another application. Its tools run on the computer selected for each session.
 
 The automation can read information, draft an action, ask for approval, or perform actions that the user has authorized. Session options can give each worker its own model, tool list, permission mode, working directory, and sandbox.
 

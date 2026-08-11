@@ -6,9 +6,9 @@ These examples show ways to use `@letta-ai/letta-agent-sdk` from TypeScript. The
 bun init -y && bun add @letta-ai/letta-agent-sdk  # pin the exact version in package.json
 ```
 
-## Cloud sandbox
+## Choose the execution computer
 
-With the cloud backend, agent state lives in Letta Cloud. The SDK can create a managed cloud sandbox where the agent runs its tools.
+With the cloud backend, agent state lives in Letta Cloud. If no `computer` is selected, the SDK creates a managed cloud sandbox where the agent runs its tools.
 
 ```ts
 import {
@@ -27,9 +27,29 @@ The SDK offers the following execution options:
 - `backend: "cloud"` — a managed cloud sandbox runs tools for the session.
 - `backend: "cloud"` with `computer: { name: "work-laptop" }` — a connected computer runs the tools. Stable selectors include `deviceId` and computer `id`. A `connectionId` identifies one live connection.
 - `backend: "local"` — agent state and tools stay on the current machine. The SDK owns the App Server subprocess.
+- `backend: "remote"` — tools run on a separately operated App Server computer; the App Server backend determines where agent state lives.
 - `computer` and `sandbox` are mutually exclusive.
 
-Sandbox files last until the sandbox expires. Agent memory, conversation history, or application storage can hold state that must outlive the sandbox. A `cwd` value refers to a path inside the sandbox. It does not mount a local path.
+Managed sandboxes provide clean isolation and support concurrent workers. Provisioning can add cold-start latency. A connected organization computer avoids sandbox provisioning and gives the agent access to its files, tools, and credentials.
+
+The SDK can list online computers before it selects one:
+
+```ts
+const { computers } = await client.computers.list({ onlineOnly: true });
+for (const computer of computers) {
+  console.log(computer.name, computer.deviceId, computer.status);
+}
+
+const computer = computers[0];
+if (!computer) throw new Error("No online computers are available");
+
+await using session = client.resumeSession(AGENT_ID, {
+  computer: { deviceId: computer.deviceId },
+  cwd: "/workspace/project",
+});
+```
+
+Sandbox files last until the sandbox expires. Agent memory, conversation history, or application storage can hold state that must outlive the sandbox. A sandbox `cwd` refers to a path inside the sandbox; it does not mount a local path. Changing computers never copies files or credentials between them. See the [Computers documentation](https://docs.letta.com/platform/computers) and [Agent SDK deployment guide](https://docs.letta.com/agent-sdk/deployment).
 
 ## Call yourself for a one-off task
 
