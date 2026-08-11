@@ -58,6 +58,30 @@ for await (const event of session.stream()) {
 
 Turn anatomy: one `send()` + one pass through `stream()`; the stream terminates after the turn's `result` event. `abort()` stops a turn without closing the session; `close()`/`await using` releases session-scoped resources (client tools, MCP connections, cwd/env). A session whose connection died cannot be reused — `resumeSession(conversationId)` and continue.
 
+## Select a model for an automation conversation
+
+`createSession()` and `resumeSession()` accept a `model` option. A non-default conversation can use a lower-cost model while it keeps the same agent memory and identity.
+
+```ts
+const AUTOMATION_MODEL = process.env.AUTOMATION_MODEL!;
+
+await using session = client.createSession(AGENT_ID, {
+  model: AUTOMATION_MODEL,
+});
+```
+
+The program can also apply the model when it continues a saved conversation:
+
+```ts
+await using session = client.resumeSession(CONVERSATION_ID, {
+  model: AUTOMATION_MODEL,
+});
+```
+
+This also allows different automation conversations to use different models. For example, collection and formatting conversations can use a lower-cost model, while a review conversation can use another model.
+
+`resumeSession(agentId, { model })` resumes the agent's default conversation, so the model update applies to the agent. `createSession(agentId, { model })` creates a non-default conversation, and `resumeSession(conversationId, { model })` updates that conversation.
+
 ## Ask temporary worker agents for help
 
 A temporary worker can use a separate context, model, and toolset for one part of your automation. This example creates a hidden worker without its own memory filesystem, runs one task, and deletes the worker.

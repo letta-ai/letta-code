@@ -41,6 +41,8 @@ Your agent ID gives an Agent SDK program access to your persistent memory and id
 
 This lets an automation reuse what you already know. The program can send fresh evidence with each turn and keep the conversation ID when it wants to continue the same thread later.
 
+A non-default conversation can select a different model when the program creates or resumes its session. This lets routine automation use a lower-cost model while the agent keeps the same memory and identity. Another conversation can use a different model for work that benefits from it.
+
 The [Agent SDK recipes](references/sdk-recipes.md) show TypeScript examples for calling an existing agent, saving conversation IDs, and reporting results back to a main conversation.
 
 ## Use other agents
@@ -73,6 +75,7 @@ An automation can use the following Agent SDK features:
 - Streaming reasoning, tool calls, tool results, and final responses.
 - Client-side and server-side tools.
 - Tool approval and permission callbacks.
+- Conversation-level model selection.
 - Different models for different workers.
 - Structured results for script-controlled workflows.
 
