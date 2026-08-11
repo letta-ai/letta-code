@@ -286,11 +286,11 @@ export function resolvePendingApprovalResolver(
     setCommandLoopStatus(runtime, "WAITING_ON_INPUT");
   }
   pending.resolve(response);
-  emitLoopStatusIfOpen(runtime.listener, {
+  emitLoopStatusIfOpen(runtime, {
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,
   });
-  emitDeviceStatusIfOpen(runtime.listener, {
+  emitDeviceStatusIfOpen(runtime, {
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,
   });
@@ -309,11 +309,11 @@ export function rejectPendingApprovalResolvers(
   if (!runtime.isProcessing && !runtime.cancelRequested) {
     setCommandLoopStatus(runtime, "WAITING_ON_INPUT");
   }
-  emitLoopStatusIfOpen(runtime.listener, {
+  emitLoopStatusIfOpen(runtime, {
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,
   });
-  emitDeviceStatusIfOpen(runtime.listener, {
+  emitDeviceStatusIfOpen(runtime, {
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,
   });
@@ -468,11 +468,11 @@ export function requestApprovalOverWS(
       scope,
       TO_SUBSCRIBERS,
     );
-    emitLoopStatusIfOpen(runtime.listener, {
+    emitLoopStatusIfOpen(runtime, {
       agent_id: runtime.agentId,
       conversation_id: runtime.conversationId,
     });
-    emitDeviceStatusIfOpen(runtime.listener, {
+    emitDeviceStatusIfOpen(runtime, {
       agent_id: runtime.agentId,
       conversation_id: runtime.conversationId,
     });

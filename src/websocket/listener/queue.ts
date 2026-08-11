@@ -255,7 +255,10 @@ export function shouldProcessInboundMessageDirectly(
   );
 }
 
-export function consumeQueuedTurn(runtime: ConversationRuntime): {
+export function consumeQueuedTurn(
+  runtime: ConversationRuntime,
+  options?: { matchActiveSuperRun?: boolean },
+): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;
 } | null {
@@ -334,6 +337,19 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     queueLen === 0
   ) {
     return null;
+  }
+
+  if (options?.matchActiveSuperRun) {
+    const activeSuperRunId = runtime.superRunId;
+    const crossesSuperRun = queuedItems.slice(0, queueLen).some((item) => {
+      if (item.kind !== "message") return false;
+      const queuedSuperRunId =
+        runtime.queuedMessagesByItemId.get(item.id)?.superRunId ?? null;
+      return queuedSuperRunId !== activeSuperRunId;
+    });
+    if (crossesSuperRun) {
+      return null;
+    }
   }
 
   const dequeuedBatch = runtime.queueRuntime.consumeItems(queueLen);

@@ -407,6 +407,7 @@ export async function resolveRecoveredApprovalResponse(
       connectionId: string,
     ) => void;
     connectionId?: string;
+    superRunId?: string;
     dependencies?: {
       applySuggestedPermissions?: typeof applySuggestedPermissionsForApproval;
       classifyApprovals?: typeof classifyApprovalsWithSuggestions;
@@ -447,6 +448,7 @@ export async function resolveRecoveredApprovalResponse(
   const scope = {
     agent_id: recovered.agentId,
     conversation_id: recovered.conversationId,
+    ...(opts?.superRunId ? { super_run_id: opts.superRunId } : {}),
   } as const;
   const respondedEntry = recovered.approvalsByRequestId.get(requestId);
   let autoDecisionsToAppend: ApprovalDecision[] = [];
@@ -543,6 +545,7 @@ export async function resolveRecoveredApprovalResponse(
           origin: "approval_recovery",
           workingDirectory,
           initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
+          superRunId: opts?.superRunId,
         })
       : null;
   let continuationFinalized = false;
@@ -751,7 +754,9 @@ export async function resolveRecoveredApprovalResponse(
       },
     ]);
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
-    const consumedQueuedTurn = consumeQueuedTurn(runtime);
+    const consumedQueuedTurn = consumeQueuedTurn(runtime, {
+      matchActiveSuperRun: true,
+    });
     if (consumedQueuedTurn) {
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
       continuationBatchId = dequeuedBatch.batchId;
@@ -771,6 +776,7 @@ export async function resolveRecoveredApprovalResponse(
         type: "message",
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
+        ...(opts?.superRunId ? { superRunId: opts.superRunId } : {}),
         messages: continuationInput.messages,
       },
       socket,
@@ -807,20 +813,24 @@ export async function resolveRecoveredApprovalResponse(
       recovered.responsesByRequestId.clear();
     }
     const stopReason = recoveryLease.signal.aborted ? "cancelled" : "error";
-    finishListenerTurn(runtime, recoveryLease, {
-      stopReason,
-      socket,
-      agentId: recovered.agentId,
-      conversationId: recovered.conversationId,
-      turnId: `batch-recovered-${requestId}`,
-      error:
-        stopReason === "error"
-          ? getTranscriptLoopErrorMessage({
-              error,
-              message: error instanceof Error ? error.message : String(error),
-            })
-          : undefined,
-    });
+    try {
+      finishListenerTurn(runtime, recoveryLease, {
+        stopReason,
+        socket,
+        agentId: recovered.agentId,
+        conversationId: recovered.conversationId,
+        turnId: `batch-recovered-${requestId}`,
+        error:
+          stopReason === "error"
+            ? getTranscriptLoopErrorMessage({
+                error,
+                message: error instanceof Error ? error.message : String(error),
+              })
+            : undefined,
+      });
+    } finally {
+      runtime.turnLifecycle.releaseSuperRunId(recoveryLease);
+    }
     throw error;
   }
 }

@@ -226,6 +226,8 @@ export type SendMessageStreamOptions = {
    * for self-hosted / single-user / pre-channel-split flows.
    */
   actingUserId?: string;
+  /** Cloud super-run correlation propagated into Node core run metadata. */
+  superRunId?: string;
 };
 
 export type SendMessageStreamRequestOptions = {
@@ -432,6 +434,9 @@ export async function sendMessageStreamWithBackend(
   // SendMessageStreamOptions.actingUserId for full context.
   if (opts.actingUserId) {
     extraHeaders["X-Letta-Acting-User-Id"] = opts.actingUserId;
+  }
+  if (opts.superRunId) {
+    extraHeaders["X-Letta-Super-Run-Id"] = opts.superRunId;
   }
 
   const messageSummary = normalizedMessages
