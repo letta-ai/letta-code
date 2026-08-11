@@ -1,4 +1,8 @@
 import type { ChannelTurnSource } from "@/channels/types";
+import {
+  SYSTEM_TYPING_CONTROLLER_TIMERS,
+  type TypingControllerTimers,
+} from "@/channels/typing-controller-timers";
 import type { TelegramTypingEntry } from "./internal-types";
 import { TELEGRAM_TYPING_MAX_MS, TELEGRAM_TYPING_REFRESH_MS } from "./utils";
 
@@ -6,7 +10,9 @@ const OUTBOUND_TYPING_SUPPRESSION_MS = 1_000;
 
 export function createTelegramTypingController(deps: {
   sendTypingAction: (chatId: string, threadId: string | null) => Promise<void>;
+  timers?: TypingControllerTimers;
 }) {
+  const timers = deps.timers ?? SYSTEM_TYPING_CONTROLLER_TIMERS;
   const typingByTarget = new Map<string, TelegramTypingEntry>();
   const lastOutboundAtByTarget = new Map<string, number>();
 
@@ -45,8 +51,8 @@ export function createTelegramTypingController(deps: {
   function clearTarget(targetKey: string): void {
     const entry = typingByTarget.get(targetKey);
     if (!entry) return;
-    clearInterval(entry.timer);
-    clearTimeout(entry.timeout);
+    timers.clearInterval(entry.timer);
+    timers.clearTimeout(entry.timeout);
     typingByTarget.delete(targetKey);
     lastOutboundAtByTarget.delete(targetKey);
   }
@@ -54,8 +60,8 @@ export function createTelegramTypingController(deps: {
   function touchWatchdog(targetKey: string): void {
     const entry = typingByTarget.get(targetKey);
     if (!entry) return;
-    clearTimeout(entry.timeout);
-    entry.timeout = setTimeout(
+    timers.clearTimeout(entry.timeout);
+    entry.timeout = timers.setTimeout(
       () => clearTarget(targetKey),
       TELEGRAM_TYPING_MAX_MS,
     );
@@ -76,13 +82,12 @@ export function createTelegramTypingController(deps: {
     }
 
     void deps.sendTypingAction(chatId, threadId);
-    const timer = setInterval(() => {
+    const timer = timers.setInterval(() => {
       const lastOutboundAt = lastOutboundAtByTarget.get(targetKey) ?? 0;
       if (Date.now() - lastOutboundAt < OUTBOUND_TYPING_SUPPRESSION_MS) return;
       void deps.sendTypingAction(chatId, threadId);
-      touchWatchdog(targetKey);
     }, TELEGRAM_TYPING_REFRESH_MS);
-    const timeout = setTimeout(
+    const timeout = timers.setTimeout(
       () => clearTarget(targetKey),
       TELEGRAM_TYPING_MAX_MS,
     );
@@ -117,8 +122,8 @@ export function createTelegramTypingController(deps: {
 
   function clearAll(): void {
     for (const entry of typingByTarget.values()) {
-      clearInterval(entry.timer);
-      clearTimeout(entry.timeout);
+      timers.clearInterval(entry.timer);
+      timers.clearTimeout(entry.timeout);
     }
     typingByTarget.clear();
     lastOutboundAtByTarget.clear();

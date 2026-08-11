@@ -855,6 +855,7 @@ export function createTelegramAdapter(
         ...(threadId ? { message_thread_id: Number(threadId) } : {}),
         ...(reply_parameters ? { reply_parameters } : {}),
       });
+      typing.markOutbound(chatId, threadId);
     },
 
     async handleTurnLifecycleEvent(

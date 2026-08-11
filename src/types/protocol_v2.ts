@@ -459,13 +459,13 @@ export interface LoopStatusUpdateMessage extends RuntimeEnvelope {
 }
 
 /**
- * Full snapshot of the turn queue.
- * Emitted on every queue mutation (enqueue, dequeue, clear, drop).
- * Queue is typically 0-5 items so full snapshot is cheap and idempotent.
+ * Full queue snapshot plus exact dequeue/cancellation transitions. Emitted on
+ * mutation; transitions are ordered and cannot be inferred from absence.
  */
 export interface QueueUpdateMessage extends RuntimeEnvelope {
   type: "update_queue";
   queue: QueueMessage[];
+  removed: import("./queue-update-protocol").QueueRemovalTransition[];
 }
 
 /**

@@ -94,7 +94,8 @@ export interface ChannelGatewayModelStatus {
 
 type ActiveGatewayTurn = {
   batchId: string;
-  sources: ChannelTurnSource[];
+  routingSources: ChannelTurnSource[];
+  lifecycleSources: ChannelTurnSource[];
   progress: ReturnType<typeof createChannelTurnProgressBuilder>;
   richDraft: ChannelGatewayRichDraft | null;
   runId?: string;
@@ -108,10 +109,9 @@ type GatewayRuntimeState = {
     {
       sources: ChannelTurnSource[];
       disposition: "submitting" | "queued";
-      acceptedAtQueueRevision?: number;
+      removalDisposition?: "dequeued" | "cancelled";
     }
   >;
-  queueRevision: number;
   active: ActiveGatewayTurn | null;
   registrationSignature: string | null;
   registration: Promise<void> | null;
@@ -127,7 +127,7 @@ function runtimeKey(runtime: RuntimeScope): string {
   return `${runtime.agent_id}:${runtime.conversation_id}`;
 }
 
-function sourceKey(source: ChannelTurnSource): string {
+function sourceRouteKey(source: ChannelTurnSource): string {
   return [
     source.channel,
     source.accountId ?? "",
@@ -136,10 +136,34 @@ function sourceKey(source: ChannelTurnSource): string {
   ].join(":");
 }
 
-function uniqueSources(sources: ChannelTurnSource[]): ChannelTurnSource[] {
+function sourceLifecycleKey(source: ChannelTurnSource): string {
+  return [
+    sourceRouteKey(source),
+    source.messageId ?? "",
+    source.agentId,
+    source.conversationId,
+  ].join(":");
+}
+
+function uniqueSourcesBy(
+  sources: ChannelTurnSource[],
+  getKey: (source: ChannelTurnSource) => string,
+): ChannelTurnSource[] {
   const byKey = new Map<string, ChannelTurnSource>();
-  for (const source of sources) byKey.set(sourceKey(source), source);
+  for (const source of sources) byKey.set(getKey(source), source);
   return [...byKey.values()];
+}
+
+function uniqueRoutedSources(
+  sources: ChannelTurnSource[],
+): ChannelTurnSource[] {
+  return uniqueSourcesBy(sources, sourceRouteKey);
+}
+
+function uniqueLifecycleSources(
+  sources: ChannelTurnSource[],
+): ChannelTurnSource[] {
+  return uniqueSourcesBy(sources, sourceLifecycleKey);
 }
 
 function channelTagsForSources(sources: ChannelTurnSource[]): string[] {
@@ -195,7 +219,7 @@ export class ChannelGateway {
           ? this.states.get(runtimeKey(request.runtime))
           : undefined;
         const active = state?.active;
-        const sources = active?.sources ?? state?.routedSources ?? [];
+        const sources = active?.routingSources ?? state?.routedSources ?? [];
         // Pass the per-turn idempotency scope only when a turn is active;
         // process-owned calls (no active batch) are not deduped.
         return hooks.executeExternalTool(
@@ -235,12 +259,12 @@ export class ChannelGateway {
       return true;
     }
     state.pendingSourcesByClientMessageId.set(delivery.clientMessageId, {
-      sources: uniqueSources(delivery.sources),
+      sources: uniqueLifecycleSources(delivery.sources),
       disposition: "submitting",
     });
     try {
       await this.enqueueRegistration(async () => {
-        state.routedSources = uniqueSources([
+        state.routedSources = uniqueRoutedSources([
           ...state.routedSources,
           ...delivery.sources,
         ]);
@@ -285,8 +309,8 @@ export class ChannelGateway {
         );
         if (pending) {
           pending.disposition = "queued";
-          pending.acceptedAtQueueRevision = state.queueRevision;
         }
+        this.reconcileExplicitQueueRemovals(state);
       }
       await Promise.all(queuedEvents);
       return true;
@@ -306,7 +330,8 @@ export class ChannelGateway {
     if (!state.active) {
       recoveredTurn = {
         batchId: `channel-recovered-${crypto.randomUUID()}`,
-        sources: uniqueSources(sources),
+        routingSources: uniqueRoutedSources(sources),
+        lifecycleSources: uniqueLifecycleSources(sources),
         progress: createChannelTurnProgressBuilder(),
         richDraft: null,
         idempotencyScope: createMessageChannelIdempotencyScope(),
@@ -356,7 +381,7 @@ export class ChannelGateway {
   }
 
   setRoutedSources(runtime: RuntimeScope, sources: ChannelTurnSource[]): void {
-    this.getState(runtime).routedSources = uniqueSources(sources);
+    this.getState(runtime).routedSources = uniqueRoutedSources(sources);
   }
 
   getKnownRuntimes(): RuntimeScope[] {
@@ -406,7 +431,6 @@ export class ChannelGateway {
       state = {
         runtime,
         pendingSourcesByClientMessageId: new Map(),
-        queueRevision: 0,
         active: null,
         registrationSignature: null,
         registration: null,
@@ -561,41 +585,49 @@ export class ChannelGateway {
 
   private handleQueueUpdate(message: QueueUpdateMessage): void {
     const state = this.getState(message.runtime);
-    state.queueRevision += 1;
-    const nextQueued = new Set(
-      message.queue.map((entry) => entry.client_message_id),
-    );
-    const removed: Array<{
+    for (const transition of message.removed) {
+      const pending = state.pendingSourcesByClientMessageId.get(
+        transition.client_message_id,
+      );
+      if (pending) {
+        pending.removalDisposition = transition.disposition;
+      }
+    }
+    this.reconcileExplicitQueueRemovals(state);
+  }
+
+  private reconcileExplicitQueueRemovals(state: GatewayRuntimeState): void {
+    const dequeued: Array<{
       clientMessageId: string;
       sources: ChannelTurnSource[];
     }> = [];
+    const cancelled: Array<{
+      clientMessageId: string;
+      sources: ChannelTurnSource[];
+    }> = [];
+
     for (const [
       clientMessageId,
       pending,
     ] of state.pendingSourcesByClientMessageId) {
-      if (
-        pending.disposition === "queued" &&
-        state.queueRevision > (pending.acceptedAtQueueRevision ?? -1) &&
-        !nextQueued.has(clientMessageId)
-      ) {
-        removed.push({ clientMessageId, sources: pending.sources });
-        state.pendingSourcesByClientMessageId.delete(clientMessageId);
+      if (pending.disposition !== "queued" || !pending.removalDisposition) {
+        continue;
       }
+      const target =
+        pending.removalDisposition === "dequeued" ? dequeued : cancelled;
+      target.push({ clientMessageId, sources: pending.sources });
+      state.pendingSourcesByClientMessageId.delete(clientMessageId);
     }
-    // Removal while another turn is active ⇒ cancel. This assumes turn_finished
-    // always precedes dequeue of the next item; a reverse race would false-cancel.
-    if (!state.active && removed.length > 0) {
-      const first = removed[0];
-      if (first) {
-        this.activateSources(
-          state,
-          first.clientMessageId,
-          removed.flatMap((entry) => entry.sources),
-        );
-      }
-      return;
+
+    const firstDequeued = dequeued[0];
+    if (firstDequeued) {
+      this.activateSources(
+        state,
+        firstDequeued.clientMessageId,
+        dequeued.flatMap((entry) => entry.sources),
+      );
     }
-    for (const entry of removed) {
+    for (const entry of cancelled) {
       void this.enqueueHook(state, () =>
         this.hooks.onLifecycle({
           type: "finished",
@@ -614,23 +646,49 @@ export class ChannelGateway {
     sources: ChannelTurnSource[],
   ): void {
     if (state.active) {
+      const knownLifecycleKeys = new Set(
+        state.active.lifecycleSources.map(sourceLifecycleKey),
+      );
+      const addedLifecycleSources = uniqueLifecycleSources(sources).filter(
+        (source) => !knownLifecycleKeys.has(sourceLifecycleKey(source)),
+      );
+      if (addedLifecycleSources.length === 0) return;
+      state.active.lifecycleSources = uniqueLifecycleSources([
+        ...state.active.lifecycleSources,
+        ...addedLifecycleSources,
+      ]);
+      state.active.routingSources = uniqueRoutedSources([
+        ...state.active.routingSources,
+        ...sources,
+      ]);
+      const processingEvent: ChannelTurnLifecycleEvent = {
+        type: "processing",
+        batchId: state.active.batchId,
+        sources: addedLifecycleSources,
+      };
+      void this.enqueueHook(state, () =>
+        this.hooks.onLifecycle(processingEvent),
+      );
       return;
     }
+    const routingSources = uniqueRoutedSources(sources);
+    const lifecycleSources = uniqueLifecycleSources(sources);
     state.active = {
       batchId: `channel-${clientMessageId}`,
-      sources: uniqueSources(sources),
+      routingSources,
+      lifecycleSources,
       progress: createChannelTurnProgressBuilder(),
       richDraft:
         this.hooks.createRichDraft?.({
           batchId: `channel-${clientMessageId}`,
-          sources,
+          sources: routingSources,
         }) ?? null,
       idempotencyScope: createMessageChannelIdempotencyScope(),
     };
     const processingEvent: ChannelTurnLifecycleEvent = {
       type: "processing",
       batchId: state.active.batchId,
-      sources: state.active.sources,
+      sources: state.active.lifecycleSources,
     };
     void this.enqueueHook(state, () => this.hooks.onLifecycle(processingEvent));
   }
@@ -649,7 +707,7 @@ export class ChannelGateway {
         this.hooks.onProgress({
           type: "progress",
           batchId: active.batchId,
-          sources: active.sources,
+          sources: active.routingSources,
           ...update,
         }),
       );
@@ -682,7 +740,7 @@ export class ChannelGateway {
       this.hooks.onLifecycle({
         type: "finished",
         batchId: active.batchId,
-        sources: active.sources,
+        sources: active.lifecycleSources,
         outcome: lifecycleOutcome(terminal.stopReason),
         stopReason: terminal.stopReason,
         ...((terminal.runId ?? active.runId)
@@ -702,10 +760,10 @@ export class ChannelGateway {
       }),
     );
     if (!state) return;
-    const sources = state.active?.sources ?? [];
+    const sources = state.active?.routingSources ?? [];
     state.replayedControlRequestIds.add(message.request_id);
     const sourceScopes = new Map(
-      sources.map((source) => [sourceKey(source), source]),
+      sources.map((source) => [sourceRouteKey(source), source]),
     );
     if (sourceScopes.size !== 1) return;
     const source = [...sourceScopes.values()][0];
