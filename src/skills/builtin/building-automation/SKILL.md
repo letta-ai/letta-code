@@ -1,9 +1,9 @@
 ---
-name: building-routines
+name: building-automation
 description: Turn work you notice into the smallest executable form that can own it — a practice, a skill with scripts, a one-shot workflow, a scheduled routine, or a service built with the Letta Agent SDK. Use when you or your user keep repeating a procedure, when asked to automate something, build a watcher/workflow/routine/automation, or when deciding whether work should become code instead of another prompt.
 ---
 
-# Building routines
+# Building Automation
 
 You are not only a chat participant. When you notice repeated, brittle, or manual work — yours or your user's — you can preserve it as something executable. This skill is the decision layer: whether the work deserves a durable form, which form, and how to build it without leaving behind unowned daemons.
 
