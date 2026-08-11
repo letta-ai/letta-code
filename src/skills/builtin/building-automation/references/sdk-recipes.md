@@ -11,7 +11,10 @@ bun init -y && bun add @letta-ai/letta-agent-sdk  # pin the exact version in pac
 With the cloud backend, agent state lives in Letta Cloud. The SDK can create a managed cloud sandbox where the agent runs its tools.
 
 ```ts
-import { LettaAgentClient } from "@letta-ai/letta-agent-sdk";
+import {
+  LettaAgentClient,
+  type LettaCodeCloudSandboxOptions,
+} from "@letta-ai/letta-agent-sdk";
 
 const client = new LettaAgentClient({
   backend: "cloud",
@@ -22,9 +25,9 @@ const client = new LettaAgentClient({
 The SDK offers the following execution options:
 
 - `backend: "cloud"` — a managed cloud sandbox runs tools for the session.
-- `backend: "cloud"` with `environment: { name: "work-laptop" }` — a connected computer runs the tools. Stable selectors include `deviceId` and environment `id`. A `connectionId` identifies one live connection.
+- `backend: "cloud"` with `computer: { name: "work-laptop" }` — a connected computer runs the tools. Stable selectors include `deviceId` and computer `id`. A `connectionId` identifies one live connection.
 - `backend: "local"` — agent state and tools stay on the current machine. The SDK owns the App Server subprocess.
-- `environment` and `sandbox` are mutually exclusive.
+- `computer` and `sandbox` are mutually exclusive.
 
 Sandbox files last until the sandbox expires. Agent memory, conversation history, or application storage can hold state that must outlive the sandbox. A `cwd` value refers to a path inside the sandbox. It does not mount a local path.
 
@@ -89,7 +92,10 @@ A temporary worker can use a separate context, model, and toolset for one part o
 ```ts
 const READ_TOOLS = ["Read", "Grep", "Glob", "LS"];
 
-async function askWorker(task: string): Promise<string | undefined> {
+async function askWorker(
+  task: string,
+  context: { sandbox?: LettaCodeCloudSandboxOptions; cwd?: string } = {},
+): Promise<string | undefined> {
   const workerId = await client.createAgent({
     model: process.env.WORKER_MODEL ?? "haiku",
     hidden: true,
@@ -103,7 +109,8 @@ async function askWorker(task: string): Promise<string | undefined> {
       allowedTools: READ_TOOLS,
       permissionMode: "strict",
       canUseTool: async () => ({ behavior: "allow" }),
-      cwd: process.cwd(),
+      sandbox: context.sandbox,
+      cwd: context.cwd,
     });
     return result.result;
   } finally {
@@ -112,15 +119,74 @@ async function askWorker(task: string): Promise<string | undefined> {
 }
 ```
 
-Several workers can run in parallel while the script holds their results:
+`toolset` selects the bundled client tools to load. `allowedTools` filters the session to the listed tools. `permissionMode: "strict"` routes each offered call through `canUseTool`; this callback allows the read-only list above.
+
+### Give each worker a cloud sandbox
+
+The cloud client creates a managed sandbox for each worker session. `githubRepositories` clones a repository into `/root/workspace`, and `cwd` selects the cloned repository:
 
 ```ts
-const reports = await Promise.all(
-  files.map((file) => askWorker(`Review ${file} and return only concrete findings.`)),
+const repository = { owner: "letta-ai", repo: "letta-code" };
+const workerContext = {
+  sandbox: {
+    githubRepositories: [repository],
+    terminateOnClose: true,
+  },
+  cwd: `/root/workspace/${repository.repo}`,
+};
+```
+
+Private repositories use the GitHub integration for the organization. `terminateOnClose` requests sandbox cleanup when the worker session closes.
+
+### Run workers with a concurrency limit
+
+The script can hold intermediate results and limit how many workers run at once:
+
+```ts
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+
+  async function takeNext(): Promise<void> {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await run(items[index]);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, takeNext),
+  );
+  return results;
+}
+
+const reports = await mapWithConcurrency(files, 4, (file) =>
+  askWorker(
+    `Review ${file} and return only concrete findings.`,
+    workerContext,
+  ),
 );
 ```
 
-The script can also pass each result through another worker, compare plans from different models, or collect patches from separate cloud sandboxes. [letta-agent-sdk#261](https://github.com/letta-ai/letta-agent-sdk/pull/261) contains complete examples for audits, fix loops, planning panels, research, and file migrations.
+The result from one worker can become the input to another worker. For example, a review stage can try to refute each report:
+
+```ts
+const reviewed = await mapWithConcurrency(
+  reports.filter((report): report is string => Boolean(report)),
+  4,
+  (report) =>
+    askWorker(
+      `Try to refute this finding. Return the finding only if it survives review:\n\n${report}`,
+      workerContext,
+    ),
+);
+```
+
+The script can also compare plans from different models or collect patches from separate cloud sandboxes. [letta-agent-sdk#261](https://github.com/letta-ai/letta-agent-sdk/pull/261) contains complete examples for audits, fix loops, planning panels, research, and file migrations.
 
 ## Dedicated automation agent
 
