@@ -51,7 +51,7 @@ const LIFECYCLE_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const LIFECYCLE_STATE_MAX = 2_000;
 const INITIAL_THREAD_HISTORY_LIMIT = 20;
 const DISCORD_TYPING_REFRESH_MS = 8_000;
-const DISCORD_TYPING_MAX_MS = 5 * 60 * 1000;
+const DISCORD_TYPING_MAX_MS = 6 * 60 * 60 * 1000;
 
 type LifecycleState = "queued" | "completed" | "error" | "cancelled";
 
@@ -75,6 +75,7 @@ export function createDiscordAdapter(
   const lifecycleOperationByMessageKey = new Map<string, Promise<void>>();
   const lifecycleErrorReplyKeys = new Map<string, number>();
   const typingByChannelId = new Map<string, DiscordTypingEntry>();
+  const lastTypingOutputAtByChannelId = new Map<string, number>();
 
   function pruneSeenIngressMessageKeys(now: number = Date.now()): void {
     for (const [key, expiresAt] of seenIngressMessageKeys) {
@@ -272,11 +273,12 @@ export function createDiscordAdapter(
       return;
     }
 
-    if (!(await sendTypingAction(channelId))) {
-      return;
-    }
-
     const timer = setInterval(() => {
+      if (
+        Date.now() - (lastTypingOutputAtByChannelId.get(channelId) ?? 0) <
+        1_000
+      )
+        return;
       void sendTypingAction(channelId).then((ok) => {
         if (!ok) {
           clearTypingForChannel(channelId);
@@ -286,17 +288,18 @@ export function createDiscordAdapter(
     const timeout = setTimeout(() => {
       clearTypingForChannel(channelId);
     }, DISCORD_TYPING_MAX_MS);
-    if (typeof (timer as { unref?: () => void }).unref === "function") {
-      (timer as { unref?: () => void }).unref?.();
-    }
-    if (typeof (timeout as { unref?: () => void }).unref === "function") {
-      (timeout as { unref?: () => void }).unref?.();
-    }
-    typingByChannelId.set(channelId, {
+    timer.unref?.();
+    timeout.unref?.();
+    const entry: DiscordTypingEntry = {
       sourceKeys: new Set([sourceKey]),
       timer,
       timeout,
-    });
+    };
+    typingByChannelId.set(channelId, entry);
+    if (!(await sendTypingAction(channelId))) {
+      if (typingByChannelId.get(channelId) === entry)
+        clearTypingForChannel(channelId);
+    }
   }
 
   function stopTypingForSource(source: ChannelTurnSource): void {
@@ -318,6 +321,11 @@ export function createDiscordAdapter(
     clearInterval(entry.timer);
     clearTimeout(entry.timeout);
     typingByChannelId.delete(channelId);
+    lastTypingOutputAtByChannelId.delete(channelId);
+  }
+  function markTypingOutput(channelId: string): void {
+    if (typingByChannelId.has(channelId))
+      lastTypingOutputAtByChannelId.set(channelId, Date.now());
   }
 
   function clearAllTyping(): void {
@@ -326,6 +334,7 @@ export function createDiscordAdapter(
       clearTimeout(entry.timeout);
     }
     typingByChannelId.clear();
+    lastTypingOutputAtByChannelId.clear();
   }
 
   function scheduleLifecycleTransition(
@@ -770,6 +779,7 @@ export function createDiscordAdapter(
     ): Promise<void> {
       if (!running) return;
       if (event.type === "queued") {
+        await startTypingForSource(event.source);
         if (config.acknowledgeMessageReaction) {
           await scheduleLifecycleTransition(event.source, "queued");
         }
@@ -829,7 +839,6 @@ export function createDiscordAdapter(
     ): Promise<{ messageId: string }> {
       if (!client) throw new Error("Discord not started");
 
-      // Handle reactions
       if (msg.reaction) {
         const targetMessageId = msg.targetMessageId ?? msg.replyToMessageId;
         if (!targetMessageId) {
@@ -852,11 +861,10 @@ export function createDiscordAdapter(
         } else {
           await message.react(emoji);
         }
-        clearTypingForChannel(targetChannelId);
+        markTypingOutput(targetChannelId);
         return { messageId: targetMessageId };
       }
 
-      // Handle file uploads
       if (msg.mediaPath) {
         const targetChannelId = msg.threadId ?? msg.chatId;
         const channel = await client.channels.fetch(targetChannelId);
@@ -879,7 +887,7 @@ export function createDiscordAdapter(
             },
           ],
         });
-        clearTypingForChannel(targetChannelId);
+        markTypingOutput(targetChannelId);
         return { messageId: result.id };
       }
 
@@ -904,7 +912,7 @@ export function createDiscordAdapter(
         });
         lastMessageId = result.id;
       }
-      clearTypingForChannel(targetChannelId);
+      markTypingOutput(targetChannelId);
       return { messageId: lastMessageId };
     },
 
@@ -923,7 +931,7 @@ export function createDiscordAdapter(
         content: text,
         ...(reply ?? {}),
       });
-      clearTypingForChannel(chatId);
+      markTypingOutput(chatId);
     },
 
     async prepareInboundMessage(

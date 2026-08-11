@@ -472,7 +472,7 @@ describe("Discord adapter auto-thread-on-mention gating", () => {
 });
 
 describe("Discord adapter lifecycle feedback", () => {
-  test("sends typing while a turn is processing and clears it on finish", async () => {
+  test("owns typing from queue acceptance through completion", async () => {
     const adapter = createDiscordAdapter({
       ...discordAccountDefaults,
       allowedChannels: {},
@@ -487,7 +487,7 @@ describe("Discord adapter lifecycle feedback", () => {
     const source = createTurnSource();
 
     await adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
-    expect(channel.sendTyping).not.toHaveBeenCalled();
+    expect(channel.sendTyping).toHaveBeenCalledTimes(1);
 
     await adapter.handleTurnLifecycleEvent?.({
       type: "processing",
@@ -521,7 +521,7 @@ describe("Discord adapter lifecycle feedback", () => {
     await adapter.stop();
   });
 
-  test("stops refreshing typing after sending a message", async () => {
+  test("keeps lifecycle ownership after sending a message", async () => {
     const adapter = createDiscordAdapter({
       ...discordAccountDefaults,
       allowedChannels: {},
@@ -552,10 +552,48 @@ describe("Discord adapter lifecycle feedback", () => {
 
     await adapter.handleTurnLifecycleEvent?.({
       type: "processing",
-      batchId: "batch-2",
+      batchId: "batch-1",
       sources: [source],
     });
-    expect(channel.sendTyping).toHaveBeenCalledTimes(2);
+    expect(channel.sendTyping).toHaveBeenCalledTimes(1);
+
+    await adapter.stop();
+  });
+
+  test("reference-counts queued sources for the same target", async () => {
+    const adapter = createDiscordAdapter({
+      ...discordAccountDefaults,
+      allowedChannels: {},
+      acknowledgeMessageReaction: false,
+    });
+    await adapter.start();
+    const client = FakeDiscordClient.instances.at(-1);
+    if (!client) throw new Error("Discord client was not created");
+    const channel = createTextChannel();
+    client.channels.fetch.mockImplementation(async () => channel);
+    const first = createTurnSource();
+    const second = { ...first, messageId: "message-2" };
+
+    await adapter.handleTurnLifecycleEvent?.({ type: "queued", source: first });
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "queued",
+      source: second,
+    });
+    expect(channel.sendTyping).toHaveBeenCalledTimes(1);
+
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "finished",
+      batchId: "batch-1",
+      sources: [first],
+      outcome: "completed",
+      stopReason: "end_turn",
+    });
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "processing",
+      batchId: "batch-2",
+      sources: [second],
+    });
+    expect(channel.sendTyping).toHaveBeenCalledTimes(1);
 
     await adapter.stop();
   });

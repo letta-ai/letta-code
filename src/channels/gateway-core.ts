@@ -591,6 +591,18 @@ export class ChannelGateway {
           removed.flatMap((entry) => entry.sources),
         );
       }
+      return;
+    }
+    for (const entry of removed) {
+      void this.enqueueHook(state, () =>
+        this.hooks.onLifecycle({
+          type: "finished",
+          batchId: `channel-${entry.clientMessageId}`,
+          sources: entry.sources,
+          outcome: "cancelled",
+          stopReason: "cancelled",
+        }),
+      );
     }
   }
 

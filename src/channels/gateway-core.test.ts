@@ -130,6 +130,33 @@ test("queued input activates when dequeued via update_queue", async () => {
   gateway.close();
 });
 
+test("removed queued input emits cancellation while another turn is active", async () => {
+  const client = new FakeClient();
+  const { hooks, lifecycleEvents } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const activeSource = makeSource({ messageId: "active" });
+  const queuedSource = makeSource({ messageId: "queued" });
+
+  await gateway.submit(
+    makeDelivery({ sources: [activeSource], clientMessageId: "cm-active" }),
+  );
+  client.inputResponse.disposition = "queued";
+  await gateway.submit(
+    makeDelivery({ sources: [queuedSource], clientMessageId: "cm-queued" }),
+  );
+  client.emit(makeQueueUpdate([]));
+  await Bun.sleep(0);
+
+  expect(lifecycleEvents.at(-1)).toEqual({
+    type: "finished",
+    batchId: "channel-cm-queued",
+    sources: [queuedSource],
+    outcome: "cancelled",
+    stopReason: "cancelled",
+  });
+  gateway.close();
+});
+
 test("source steering does not merge sources from a new turn into an active turn", async () => {
   const client = new FakeClient();
   const { hooks, lifecycleEvents } = makeHooks();
