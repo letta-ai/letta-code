@@ -402,9 +402,7 @@ export async function resolveStaleApprovals(
           otid: crypto.randomUUID(),
         },
       ]);
-      const consumedQueuedTurn = consumeQueuedTurn(runtime, {
-        matchActiveSuperRun: true,
-      });
+      const consumedQueuedTurn = consumeQueuedTurn(runtime);
       if (consumedQueuedTurn) {
         const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
         continuationInput = appendQueuedTurnToInput(

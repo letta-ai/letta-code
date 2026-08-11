@@ -13,7 +13,5 @@
 export interface RuntimeScope {
   agent_id: string;
   conversation_id: string;
-  /** Super-run correlation for cloud-owned queued turns. */
-  super_run_id?: string;
   acting_user_id?: string;
 }

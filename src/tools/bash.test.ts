@@ -140,7 +140,7 @@ describe("Bash tool", () => {
 
   test("times out long-running command", async () => {
     const result = await bash({
-      command: "sleep 10",
+      command: "tail -f /dev/null",
       description: "Test timeout",
       timeout: 100,
     });
@@ -148,6 +148,18 @@ describe("Bash tool", () => {
     expect(result.status).toBe("error");
     expect(result.content[0]?.text).toContain("timed out");
   }, 2000);
+
+  test("blocks foreground sleep with guidance toward background waits", async () => {
+    const result = await bash({
+      command: "sleep 10",
+      description: "Test foreground sleep block",
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.content[0]?.text).toContain("Foreground `sleep` is blocked");
+    expect(result.content[0]?.text).toContain("run_in_background");
+    expect(result.content[0]?.text).toContain("Monitor");
+  });
 
   test("runs command in background mode", async () => {
     const result = await bash({

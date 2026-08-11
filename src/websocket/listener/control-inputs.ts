@@ -175,7 +175,6 @@ export async function handleApprovalResponseInput(
     runtime: {
       agent_id?: string | null;
       conversation_id?: string | null;
-      super_run_id?: string | null;
     };
     response: ApprovalResponseBody;
     connectionId?: ListenerConnectionId;
@@ -214,7 +213,6 @@ export async function handleApprovalResponseInput(
       opts?: {
         onStatusChange?: StartListenerOptions["onStatusChange"];
         connectionId?: string;
-        superRunId?: string;
       },
     ) => Promise<boolean>;
     scheduleQueuePump: (
@@ -273,9 +271,6 @@ export async function handleApprovalResponseInput(
       {
         onStatusChange: params.opts.onStatusChange,
         connectionId: params.opts.connectionId,
-        ...(params.runtime.super_run_id
-          ? { superRunId: params.runtime.super_run_id }
-          : {}),
       },
     )
   ) {

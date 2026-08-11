@@ -6,5 +6,6 @@
 - Returns stdout and stderr output along with shell status
 - Supports optional regex filtering to show only lines matching a pattern
 - Use this tool when you need to monitor or check the output of a long-running shell
+- If you are repeatedly calling this tool waiting for a recurring pattern to appear ("tell me every time an ERROR line appears"), stop polling and use the Monitor tool instead: each stdout line is an event — you keep working and notifications arrive in the chat
 - Shell IDs can be found using the /bg command
 - If the accumulated output exceeds 30,000 characters, it will be truncated before being returned to you

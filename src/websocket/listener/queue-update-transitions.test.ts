@@ -44,7 +44,7 @@ test("active continuation dequeue emits exact message identities", async () => {
 
   expect(enqueueInboundUserMessage(runtime, queuedMessage("cm-1"))).toBe(true);
   expect(enqueueInboundUserMessage(runtime, queuedMessage("cm-2"))).toBe(true);
-  const consumed = consumeQueuedTurn(runtime, { matchActiveSuperRun: true });
+  const consumed = consumeQueuedTurn(runtime);
   expect(consumed?.dequeuedBatch.items).toHaveLength(2);
 
   await Promise.resolve();

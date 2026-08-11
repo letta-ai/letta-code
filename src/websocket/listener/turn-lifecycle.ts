@@ -87,7 +87,6 @@ export class TurnLifecycle {
   readonly #createId: () => string;
   #state: TurnState = IDLE_STATE;
   #lastStopReason: StopReasonType | null = null;
-  #superRunOwner: { leaseId: string; superRunId: string | null } | null = null;
 
   constructor(createId: () => string = () => crypto.randomUUID()) {
     this.#createId = createId;
@@ -115,10 +114,6 @@ export class TurnLifecycle {
 
   get activeRunId(): string | null {
     return this.#state.kind === "active" ? this.#state.runId : null;
-  }
-
-  get superRunId(): string | null {
-    return this.#superRunOwner?.superRunId ?? null;
   }
 
   get executingToolCallIds(): readonly string[] {
@@ -173,7 +168,6 @@ export class TurnLifecycle {
     initialStatus?: ActiveTurnLoopStatus;
     abortController?: AbortController;
     executingToolCallIds?: readonly string[];
-    superRunId?: string;
   }): TurnLease {
     if (this.#state.kind === "active" || this.#state.kind === "cancelling") {
       throw new Error(
@@ -186,10 +180,6 @@ export class TurnLifecycle {
       id: this.#createId(),
       signal: abortController.signal,
     });
-    this.#superRunOwner = {
-      leaseId: lease.id,
-      superRunId: options.superRunId ?? null,
-    };
     this.#state = {
       kind: "active",
       origin: options.origin,
@@ -220,14 +210,6 @@ export class TurnLifecycle {
       return false;
     }
     this.#state = { ...this.#state, loopStatus: status };
-    return true;
-  }
-
-  releaseSuperRunId(lease: TurnLease): boolean {
-    if (this.#superRunOwner?.leaseId !== lease.id) {
-      return false;
-    }
-    this.#superRunOwner = null;
     return true;
   }
 
@@ -268,7 +250,6 @@ export class TurnLifecycle {
     if (this.#state.kind !== "idle") {
       return false;
     }
-    this.#superRunOwner = null;
     this.#state = {
       kind: "command",
       loopStatus: "EXECUTING_COMMAND",
@@ -378,7 +359,6 @@ export class TurnLifecycle {
 
   reset(stopReason: StopReasonType = "cancelled"): TurnFinishTransition {
     const state = this.#state;
-    this.#superRunOwner = null;
     if (state.kind === "active" || state.kind === "cancelling") {
       if (!state.abortController.signal.aborted) {
         state.abortController.abort();
