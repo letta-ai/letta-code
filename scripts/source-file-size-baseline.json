@@ -38,13 +38,13 @@
   "src/tools/impl/enter-worktree.ts": 1020,
   "src/tools/manager.ts": 3016,
   "src/tools/tool-execution-context.test.ts": 1138,
-  "src/types/protocol_v2.ts": 2889,
+  "src/types/protocol_v2.ts": 2830,
   "src/websocket/listen-client-concurrency.test.ts": 2686,
   "src/websocket/listen-client-protocol.test.ts": 5820,
   "src/websocket/listener/commands/memory.ts": 1114,
   "src/websocket/listener/file-commands.ts": 1053,
   "src/websocket/listener/lifecycle.ts": 1051,
-  "src/websocket/listener/protocol-inbound.ts": 2264,
+  "src/websocket/listener/protocol-inbound.ts": 2256,
   "src/websocket/listener/protocol-outbound.ts": 1085,
   "src/websocket/listener/turn.ts": 1010
 }

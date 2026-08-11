@@ -21,6 +21,7 @@ import {
 import { handleExecuteCommand } from "./commands";
 import { handleAgentConversationManagementProtocolCommand } from "./commands/agents-conversations";
 import { handleAppServerInfoCommand } from "./commands/app-server-info";
+import { handleChatGPTResetCreditsCommand } from "./commands/chatgpt-reset-credits";
 import { handleChatGPTUsageCommand } from "./commands/chatgpt-usage";
 import { handleConnectProvidersCommand } from "./commands/connect-providers";
 import { handleCronProtocolCommand } from "./commands/cron";
@@ -665,6 +666,16 @@ export function createListenerMessageHandler(
 
       if (
         handleChatGPTUsageCommand(parsed, {
+          socket,
+          safeSocketSend,
+          runDetachedListenerTask,
+        })
+      ) {
+        return;
+      }
+
+      if (
+        handleChatGPTResetCreditsCommand(parsed, {
           socket,
           safeSocketSend,
           runDetachedListenerTask,
