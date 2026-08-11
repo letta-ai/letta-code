@@ -1,40 +1,40 @@
-# Agent SDK recipes for routines
+# Agent SDK recipes for automations
 
-Working patterns for rungs 3–6 using `@letta-ai/letta-agent-sdk` (TypeScript). Verify against the installed version: the package is 0.x and moves; `node_modules/@letta-ai/letta-agent-sdk/dist/*.d.ts` is the authoritative surface. Docs: https://docs.letta.com/agent-sdk
+These examples show ways to use `@letta-ai/letta-agent-sdk` from TypeScript. The package is 0.x, so check the installed `node_modules/@letta-ai/letta-agent-sdk/dist/*.d.ts` types when an API is version-sensitive. Docs: https://docs.letta.com/agent-sdk
 
 ```bash
 bun init -y && bun add @letta-ai/letta-agent-sdk  # pin the exact version in package.json
 ```
 
-## Client setup — start with cloud sandboxes
+## Cloud sandbox
 
-The default deployment for a routine: agent state lives in Letta Cloud, tools execute in a managed cloud sandbox the SDK creates for the session. Nothing to host for execution — your program is just the orchestrator.
+With the cloud backend, agent state lives in Letta Cloud. The SDK can create a managed cloud sandbox where the agent runs its tools.
 
 ```ts
 import { LettaAgentClient } from "@letta-ai/letta-agent-sdk";
 
 const client = new LettaAgentClient({
   backend: "cloud",
-  apiKey: process.env.LETTA_API_KEY, // scoped key provisioned for this routine
+  apiKey: process.env.LETTA_API_KEY,
 });
 ```
 
-Backend selection in one line each:
+The SDK offers the following execution options:
 
-- `backend: "cloud"` — managed sandbox per session. Default for routines.
-- `backend: "cloud"` + `environment: { name: "work-laptop" }` — same hosted agent, tools run on a named connected computer (yours or your user's). Use a stable `deviceId`/`id` selector, not a `connectionId`.
-- `backend: "local"` — everything on this machine; the SDK owns an App Server subprocess. For routines that must touch local files with no cloud state.
+- `backend: "cloud"` — a managed cloud sandbox runs tools for the session.
+- `backend: "cloud"` with `environment: { name: "work-laptop" }` — a connected computer runs the tools. Stable selectors include `deviceId` and environment `id`. A `connectionId` identifies one live connection.
+- `backend: "local"` — agent state and tools stay on the current machine. The SDK owns the App Server subprocess.
 - `environment` and `sandbox` are mutually exclusive.
 
-Sandbox facts that matter for routines: sandbox files are TTL-bound — durable state belongs in agent memory or storage your routine owns, never in the sandbox. A `cwd` you pass must be a path inside the sandbox; local paths are not mounted automatically. Expect 10–20s cold starts.
+Sandbox files last until the sandbox expires. Agent memory, conversation history, or application storage can hold state that must outlive the sandbox. A `cwd` value refers to a path inside the sandbox. It does not mount a local path.
 
-## Rung 3 — one-shot workflow
+## One-off program
 
-Run turns against an existing agent, produce a result, exit. Reuse the agent you already are (or your user's designated agent) rather than creating throwaway identities.
+This example starts a new conversation on an existing agent, streams one turn, records the result, and exits.
 
 ```ts
-// release-audit.ts — invoked by hand or by another routine; runs once and exits.
-const AGENT_ID = process.env.ROUTINE_AGENT_ID!; // agent-xxx
+// release-audit.ts — invoked by a person or another program.
+const AGENT_ID = process.env.AUTOMATION_AGENT_ID!; // agent-xxx
 
 await using session = client.createSession(AGENT_ID); // new conversation for this run
 
@@ -58,9 +58,9 @@ for await (const event of session.stream()) {
 
 Turn anatomy: one `send()` + one pass through `stream()`; the stream terminates after the turn's `result` event. `abort()` stops a turn without closing the session; `close()`/`await using` releases session-scoped resources (client tools, MCP connections, cwd/env). A session whose connection died cannot be reused — `resumeSession(conversationId)` and continue.
 
-## Creating a dedicated routine agent
+## Dedicated automation agent
 
-Only when the routine needs judgment that should accumulate separately from you — otherwise skip this and use an existing agent.
+An automation can use an existing agent or create a dedicated agent. A dedicated agent keeps its memory and identity separate from other work.
 
 ```ts
 const agentId = await client.createAgent({
@@ -68,16 +68,16 @@ const agentId = await client.createAgent({
   persona:
     "You review pull-request state for one repository. You judge staleness, risk, and what deserves human attention. You report conclusions, not raw data.",
 });
-// Persist agentId in the routine's own storage — this identity is the durable asset.
+// The application can store agentId and resume this agent later.
 ```
 
-## Conversation-per-resource, with the map in your storage
+## One conversation per resource
 
-Conversations are addressable state: `createSession(agentId)` opens a new one, `resumeSession("conv-xxx")` continues it. The resource→conversation map is operational truth and lives in the routine's storage, not in anyone's memory.
+Conversations are addressable state: `createSession(agentId)` opens a new conversation, and `resumeSession("conv-xxx")` continues it. This example stores the resource-to-conversation map in SQLite.
 
 ```ts
 import { Database } from "bun:sqlite";
-const db = new Database("routine-state.sqlite");
+const db = new Database("automation-state.sqlite");
 db.run(`CREATE TABLE IF NOT EXISTS resources (
   key TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, last_event_id TEXT
 )`);
@@ -101,21 +101,21 @@ async function sessionFor(resourceKey: string) {
 }
 ```
 
-Justify the granularity first (see Step 3 of the skill): per-repo beats per-file when judgments need cross-file comparison.
+Conversation granularity can follow the reasoning context. For example, one conversation per repository can compare related file changes. One conversation per pull request can keep a long review history.
 
-## Rung 4 — scheduled routine
+## Scheduled program
 
-The program above, run by a scheduler. For yourself, use the `scheduling-tasks` skill (`letta cron`) rather than writing a daemon. For a standalone host, ordinary cron:
+The same program can run from `letta cron`, an operating-system scheduler, or another scheduling service. For example:
 
 ```
-*/30 * * * * cd /opt/routines/pr-shepherd && bun run sweep.ts >> sweep.log 2>&1
+*/30 * * * * cd /opt/automations/pr-shepherd && bun run sweep.ts >> sweep.log 2>&1
 ```
 
-One process per state directory; take a lock file so overlapping fires cannot double-run.
+A lock file can prevent two scheduled runs from using the same state at the same time.
 
-## Rungs 5–6 — watcher / event-driven service
+## Event-driven program
 
-The shape: deterministic ingest → dedupe against your ledger → one turn on the owning conversation → receipt. Agent judgment happens inside the turn; everything around it is ordinary code.
+This example accepts an event, checks a local record, sends the event to the resource conversation, and records the Agent SDK run IDs.
 
 ```ts
 // One iteration of a poll loop or one webhook delivery.
@@ -129,7 +129,7 @@ async function handleEvent(evt: { id: string; resource: string; payload: string 
   await session.send(
     [
       `Event ${evt.id} on ${evt.resource}:`,
-      evt.payload, // exact fresh evidence — never rely on conversation memory for current state
+      evt.payload,
       "Decide: no action, or a one-line escalation with reason.",
     ].join("\n"),
   );
@@ -147,25 +147,25 @@ async function handleEvent(evt: { id: string; resource: string; payload: string 
 }
 ```
 
-Worker → coordinator reporting is just another turn on the main conversation:
+A worker conversation can report a conclusion to a coordinator conversation:
 
 ```ts
 async function reportToCoordinator(packet: string) {
   await using main = client.resumeSession(MAIN_CONVERSATION_ID);
-  await main.send(`[pr-shepherd] ${packet}`); // compact decision packet, not a transcript
+  await main.send(`[pr-shepherd] ${packet}`);
   for await (const e of main.stream()) if (e.type === "result") break;
 }
 ```
 
-Before running either rung, read [operations.md](operations.md) — envelopes, cursors, reconciliation, provider readback, budgets, and recursion controls are mandatory at this level.
+[Operations options](operations.md) describes event envelopes, cursors, reconciliation, action records, limits, and manifests for repeated programs.
 
-## Failure handling every routine needs
+## Connection and retry behavior
 
-- **Expired sandbox:** `send()` throws `CloudManagedSandboxExpiredError` *before* transmitting. This is the one safe automatic retry: close, `resumeSession(conversationId)`, retry once.
-- **Connection failure after `send()` succeeded:** do NOT blindly retry — the message may have reached the runtime. Reconcile with `client.conversations.listMessages(...)` or `bootstrapState()` first. Unknown send state is not retry permission.
-- **Missed events while disconnected:** the SDK does not replay them. After resuming, reconcile from history.
-- **Correlate everything by `runId`s** from the `result` event — that is your receipt linking events, history, and retries.
+- `CloudManagedSandboxExpiredError` occurs before `send()` transmits the message. The program can resume the same conversation in a new session and retry once.
+- A connection failure after `send()` succeeds has an unknown delivery state. `client.conversations.listMessages(...)` or `bootstrapState()` can show whether the message reached the conversation before the program retries it.
+- The SDK does not replay stream events missed during a disconnect. Conversation history provides the durable record after the program resumes.
+- The `result` event includes run IDs that can connect stream events, history, and application records.
 
-## Approvals inside routines
+## Approval options
 
-Unattended routines must not depend on interactive approval. Configure sessions so every allowed action is auto-approvable within the charter, and everything else is denied — a denial that escalates to a human beats a stalled hidden prompt. If a pending approval does strand (process died mid-turn), recover it in a new session with `recoverPendingApprovals()` rather than resending the message. See https://docs.letta.com/agent-sdk/permissions
+An Agent SDK session can ask for interactive approval, approve selected tools through `canUseTool`, or deny an action and report it to the application. If a session closes with an approval pending, a new session can inspect it with `recoverPendingApprovals()`. See https://docs.letta.com/agent-sdk/permissions

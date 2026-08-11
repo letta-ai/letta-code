@@ -5,109 +5,106 @@ description: Load this skill to understand how to use the Letta Agent SDK to aut
 
 # Building Automation
 
-You are not only a chat participant. When you notice repeated, brittle, or manual work — yours or your user's — you can preserve it as something executable. This skill is the decision layer: whether the work deserves a durable form, which form, and how to build it without leaving behind unowned daemons.
+Use this skill when you notice work that you or your user repeats. It explains ways to preserve the work and use the Letta Agent SDK when the automation needs an agent.
 
-Two rules orient everything:
+A useful split is:
 
-1. **Choose the smallest executable form that can own the work.**
-2. **Preserve judgment as instructions. Preserve mechanics as code. Add orchestration only when the work actually requires orchestration.**
+- **Instructions preserve judgment.** A skill can store a review method, release process, or other procedure that still needs interpretation.
+- **Code handles mechanics.** Scripts can collect data, format output, compare files, track cursors, and apply fixed rules.
+- **The Agent SDK adds agents and orchestration.** It can connect code to persistent agents, conversations, tools, approvals, and execution environments.
 
-```
-Is the work repeated, costly-if-wrong, or explicitly requested?
-├─ no → keep it manual; note the observation
-└─ yes → can the whole procedure be stated as rules?
-    ├─ yes → write a script or tool; no agent at runtime
-    └─ no → partition: code owns machinery, agent owns judgment. What starts it?
-        ├─ you, inside a normal turn        → practice, or skill + scripts (rungs 1–2)
-        ├─ a request, button, or command    → one-shot workflow (rung 3)
-        ├─ a clock                          → scheduled routine (rung 4)
-        └─ an external event
-            ├─ polling is tolerable         → scheduled routine, shorter interval
-            └─ live reaction truly required → watcher or service (rungs 5–6)
-```
+These parts can be used together. For example, a skill can explain how to review a pull request, a script can collect the Git state, and an Agent SDK program can ask separate agents to review the change.
 
-## Step 0 — should this exist?
+## Available forms
 
-Build when at least one is true:
+Repeated work can take several forms:
 
-- You have done it three or more times and re-derived the steps each time.
-- A missed step has meaningful consequences, and a preserved form prevents the miss. (Frequency is not the only criterion: a disaster-recovery procedure may run once every two years and still deserve preservation after its first successful use.)
-- Waiting for a human to remember to start it is the bottleneck.
-- Your user asked for it.
+- **Instructions in a skill:** useful when judgment remains the main part of the work.
+- **A skill with scripts:** useful when part of the work follows fixed steps.
+- **A one-off program:** runs on request, asks an agent to do the work, returns a result, and exits.
+- **A scheduled program:** runs the same program at a fixed time or interval.
+- **An event-driven program:** sends events from GitHub, Linear, files, or another source to an agent.
+- **A long-running service:** stays available when the automation needs low latency or continuous event handling.
 
-Otherwise keep it manual and note the observation. Declining to build is a valid outcome of this skill. Some reusable capabilities should remain practices: if the hard part is judgment, wrapping it in TypeScript does not make the judgment more deterministic — it merely gives the uncertainty a package.json.
+An automation can start with one form and change later. It can also stay as instructions if code does not add value.
 
-**Propose before you build anything that runs outside the current turn.** Every routine expands your scope: more events you observe, more credentials you touch, more time you operate unattended. You benefit from that expansion, so you cannot be its only advocate. Give the user a short brief — what it does, what starts it, what it may touch, what it costs, how to stop it — and get agreement. That brief is the routine's charter; the routine must not exceed it. You may freely improve how you perform already-authorized work; you may not silently invent new responsibilities or turn a one-time favor into an eternal mandate.
+## Questions that can help
 
-## Step 1 — partition judgment from machinery
+The following questions describe the main design choices:
 
-- **Code owns:** collection, formatting, diffing, cursors, dedupe, retries, locks, fixed routing rules, receipts.
-- **Agent owns:** interpretation, prioritization, reading anomalies, deciding what escalates — anything that improves with accumulated context.
+- What starts the work: a person, a command, a schedule, or an event?
+- Which parts follow fixed rules?
+- Which parts need an agent to interpret the situation?
+- Does the work need to continue after the current conversation ends?
+- What state does it need between runs?
+- Where will its tools run?
+- Can it read information, draft changes, or perform external actions?
+- How will the user see the result?
 
-If a rule can be stated, it is code. The model belongs at the ambiguity boundary, not inside every step. Compile yourself out when inputs are well-defined, outputs are mechanically verifiable, the decision table is stable, and retries are safe. But do not pretend an ambiguous process is deterministic — that produces scripts full of arbitrary policy disguised as mechanics, which is worse.
+The answers can point to a script, an Agent SDK program, or a combination of both.
 
-Two cautions:
+## What the Agent SDK provides
 
-- Do not launder judgment into summaries. If your value comes from reading raw output and catching the unexpected, a routine that hands you tidy status reports has deleted the judgment layer. Keep raw evidence reachable from every report.
-- A persistent conversation supplies historical judgment, not present truth. Every run must carry fresh evidence; memory does not substitute for the current state of the ticket, file, or PR.
+The Agent SDK is useful when the automation needs one or more of these features:
 
-## Step 2 — the ladder
+- A persistent agent with memory.
+- Separate conversations for different tasks or resources.
+- Streaming reasoning, tool calls, tool results, and final responses.
+- Tools that run in a managed cloud sandbox, on a connected computer, or on the local machine.
+- Tool approval and permission handling.
+- A program that coordinates several agent conversations.
 
-Enter at the lowest rung that owns the work. Each rung adds operational burden — hosting, secrets, monitoring, upgrades, retirement — that someone must then carry.
+The SDK works well for both one-off programs and repeated services. The [Agent SDK recipes](references/sdk-recipes.md) show TypeScript patterns for these forms.
 
-1. **Practice.** A checklist or procedure in a skill; you execute it inside ordinary turns. See the `creating-skills` skill.
-2. **Skill + scripts.** Deterministic steps move into scripts beside `SKILL.md`; you invoke them and interpret results.
-3. **One-shot workflow.** A push-button program: runs turns or conversations, produces a result, exits. A plain script if no agent judgment is needed at runtime; an Agent SDK program when it needs conversations, tools, or approvals. See [references/sdk-recipes.md](references/sdk-recipes.md).
-4. **Scheduled routine.** Rung 2 or 3 on a timer. See the `scheduling-tasks` skill. A schedule on a short interval is usually the honest version of "watcher" — if you can only poll, a 30-minute cron beats a resident process.
-5. **Passive watcher.** A hosted process that observes (poll, filesystem, stream) and acts or alerts on a condition.
-6. **Event-driven service.** Webhooks or queues feeding turns continuously, usually with conversation routing.
+## State options
 
-**Promote only on evidence.** Note → skill when the decision process is stable enough to explain. Skill → schedule when human initiation is the bottleneck. Schedule → watcher/service only when reaction latency measurably matters or per-resource volume demands it. "Could run continuously" is not a requirement.
+Different types of state fit in different places:
 
-**Retire deliberately.** Step down the ladder or delete when the trigger no longer exists, noise exceeds signal, assumptions fail repeatedly, the product now does it directly, a deterministic script replaced the agent layer, or nobody can explain why it is still running. Remove execution authority and scheduling first; preserve source and history. An immortal harmless daemon is still damage: it holds credentials, costs money, and nobody owns it. Design deletion at creation time, or "temporary" becomes infrastructure.
+- **Agent memory** can store knowledge that the agent can use across conversations.
+- **Conversation history** can store prior messages, decisions, and unresolved questions for one thread of work.
+- **Files or a database** can store cursors, queues, timestamps, retry counts, and records of external actions.
 
-## Step 3 — five decisions
+An automation can use all three. The choice depends on how the state is used.
 
-Make each explicitly. Defaults are the conservative end.
+## Conversation options
 
-- **Lifetime.** One-shot → temporary → recurring → continuous. Default one-shot.
-- **Intelligence.** Agent at build time only → agent on exceptions → agent on every event. Default build-time-only; per-event judgment must earn its token cost.
-- **State.** Operational truth — cursors, dedupe keys, retry counts, effect records — lives in storage the routine owns (files, SQLite). Conversations preserve judgment, decisions, and unresolved questions. Agent memory is not an effect ledger; conversation history is not a job database.
-- **Execution.** Inline in a turn, script in a skill, cron, or a hosted process — and who owns that process. Name the owner before building rungs 5–6.
-- **Authority.** Observe → draft → act with approval → act within charter. Reads, classification, dedupe, and drafting are usually free. Approval is required for messages to humans or public surfaces, tickets and assignments, destructive writes, credential or config changes, deployments, money, and anything touching memory or identity. Where per-action approval would destroy the value, pre-authorize named patterns in the charter (e.g. "may assign reviewers within this routing map; new patterns need approval"). Approval at the authority boundary is useful; approval at every function call is ritualized annoyance.
+An Agent SDK program can use:
 
-**Conversation topology is its own decision, not a default.** Options: no conversation at runtime; the current conversation; one per run; one per domain; one per resource; a coordinator with ephemeral workers; stateless turns over external storage. Separate conversations should correspond to independent reasoning contexts, not database rows. Granularity follows the decision boundary — if judging one item requires comparing across the set, use one conversation per set, not per item. A conversation per PR with a long review lifecycle can make sense; a conversation per webhook event is bookkeeping theater. Per-resource conversations need retirement and reconciliation, not immortal accumulation.
+- The agent's default conversation.
+- A new conversation for each run.
+- A conversation for each long-lived resource, such as a pull request or customer.
+- One conversation for a group of related resources.
+- A coordinator conversation that receives results from worker conversations.
 
-## Step 4 — the gate
+Separate conversations are useful when their history helps future decisions. A database can hold resource mappings when the program only needs structured lookup data.
 
-Do not write code until you can answer all five:
+## Execution options
 
-1. What exact event or command starts it?
-2. What stable thing owns the state, and where does that state live?
-3. Why does this need agent judgment instead of ordinary code — and at which step?
-4. What effects is it authorized to perform, and who owns the process?
-5. What receipt will prove it helped?
+The Agent SDK supports several places for tool execution:
 
-If any answer is vague, build the smaller form instead.
+- **Managed cloud sandbox:** Letta Cloud creates a contained computer for the session.
+- **Connected computer:** the agent runs tools on a selected remote environment.
+- **Local backend:** the agent state and tools stay on the current machine.
 
-## Step 5 — build
+The surrounding program can run from a command, a scheduled task, a server, or another application. The SDK connects that program to the agent and its execution environment.
 
-**Rungs 1–2:** follow `creating-skills`. Keep `SKILL.md` as the judgment and invocation guide; put deterministic steps in scripts beside it, with fixtures and an operations note as needed.
+## Authority options
 
-**Rungs 3–6:** working code patterns — client setup, cloud sandboxes, one-shots, conversation-per-resource, watchers, coordinator reporting — are in [references/sdk-recipes.md](references/sdk-recipes.md). Operational invariants for anything with external side effects — envelopes, cursors, idempotency, provider readback, budgets, recursion controls, shadow mode — are in [references/operations.md](references/operations.md).
+An automation can have different levels of authority:
 
-**Every routine at rung 3 and above gets a manifest** the user can find: name, purpose, rung, trigger, host and owner, package versions, agent and conversation IDs, authority and credential scopes, approval policy, budgets, health, last event and effect, stop command, retirement condition. Keep manifests in one place in your memory filesystem (e.g. `routines/<name>.md`). "What is running right now, with access to what?" must always have a precise answer — a test suite alone does not answer it. Before building, check the registry (yours and other agents') so two routines do not own the same events or double-post to the same channel.
+- Read information and report what it finds.
+- Draft an external action for review.
+- Ask for approval before an action.
+- Perform actions that the user has already authorized.
 
-**Credentials** enter at a scoped boundary: the narrowest key that works, stored where the process runs, never inherited ambiently from a shell that happens to have broader power. Model-visible errors must not contain secrets.
+The chosen level affects credentials, approvals, error handling, and reporting. A dry-run mode can show proposed actions before the automation performs them.
 
-## Step 6 — operate, measure, retire
+## Storage and sharing
 
-Success is not automation count. Measure: repeated human context-loading removed, silent failures caught, escalation precision, duplicate effects (target zero), cost per useful outcome. Report conclusions and exceptions to the main conversation — what started the routine, what changed, evidence, unresolved risks, cost when meaningful, how to inspect or stop it — not every internal turn.
+A skill can keep the instructions and source files together. Common directories include `scripts/`, `src/`, `tests/`, `fixtures/`, and `templates/`. Runtime state and credentials can live in storage selected for the automation.
 
-Keep the agent layer falsifiable: if persistent judgment does not visibly beat the deterministic version, delete the agent layer and keep the script.
+An automation can be personal to one agent, attached to a project, shared across agents, or prepared for public use. The same source can move between these scopes when its assumptions and credentials are clear.
 
-## Where routines live
+## Operations
 
-A skill is the right durable home and invocation interface for most routines: `SKILL.md` owns judgment and sequencing; `scripts/` or `src/` own mechanics; `tests/`, `fixtures/`, `templates/`, and an operations note sit beside them. The skill documents where runtime state lives — it does not contain live secrets or mutable state itself.
-
-Scope follows the knowledge: personal (your habits and user preferences), project-attached (repo conventions, release processes), shared (organization practices, with an explicit owner), publishable (sanitized, tested, stripped of accidental assumptions). Promotion across scopes is deliberate — a personal trick is not automatically a communal standard.
+Repeated and deployed automations can also use run history, idempotency records, cost limits, ownership information, health checks, and stop commands. [Operations options](references/operations.md) explains these pieces and when they are useful.
