@@ -51,6 +51,17 @@ export function createTelegramTypingController(deps: {
     lastOutboundAtByTarget.delete(targetKey);
   }
 
+  function touchWatchdog(targetKey: string): void {
+    const entry = typingByTarget.get(targetKey);
+    if (!entry) return;
+    clearTimeout(entry.timeout);
+    entry.timeout = setTimeout(
+      () => clearTarget(targetKey),
+      TELEGRAM_TYPING_MAX_MS,
+    );
+    entry.timeout.unref?.();
+  }
+
   function start(source: ChannelTurnSource): void {
     const chatId = getChatId(source);
     const targetKey = getTargetKey(source);
@@ -60,6 +71,7 @@ export function createTelegramTypingController(deps: {
     const existing = typingByTarget.get(targetKey);
     if (existing) {
       existing.sourceKeys.add(sourceKey);
+      touchWatchdog(targetKey);
       return;
     }
 
@@ -68,6 +80,7 @@ export function createTelegramTypingController(deps: {
       const lastOutboundAt = lastOutboundAtByTarget.get(targetKey) ?? 0;
       if (Date.now() - lastOutboundAt < OUTBOUND_TYPING_SUPPRESSION_MS) return;
       void deps.sendTypingAction(chatId, threadId);
+      touchWatchdog(targetKey);
     }, TELEGRAM_TYPING_REFRESH_MS);
     const timeout = setTimeout(
       () => clearTarget(targetKey),
@@ -87,7 +100,9 @@ export function createTelegramTypingController(deps: {
     threadId: string | null | undefined,
   ): void {
     const key = targetKey(chatId, threadId);
-    if (typingByTarget.has(key)) lastOutboundAtByTarget.set(key, Date.now());
+    if (!typingByTarget.has(key)) return;
+    lastOutboundAtByTarget.set(key, Date.now());
+    touchWatchdog(key);
   }
 
   function stop(source: ChannelTurnSource): void {

@@ -582,6 +582,8 @@ export class ChannelGateway {
         state.pendingSourcesByClientMessageId.delete(clientMessageId);
       }
     }
+    // Removal while another turn is active ⇒ cancel. This assumes turn_finished
+    // always precedes dequeue of the next item; a reverse race would false-cancel.
     if (!state.active && removed.length > 0) {
       const first = removed[0];
       if (first) {

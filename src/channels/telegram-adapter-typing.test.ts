@@ -182,6 +182,91 @@ test("telegram adapter reference-counts sources per forum topic", async () => {
   await adapter.stop();
 });
 
+test("telegram adapter cancelled releases typing; sibling keeps topic active", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  await adapter.start();
+
+  const first = {
+    channel: "telegram",
+    accountId: "telegram-test-account",
+    chatId: "555",
+    chatType: "channel" as const,
+    messageId: "42",
+    threadId: "7",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+  const second = { ...first, messageId: "43" };
+  const otherTopic = { ...first, messageId: "44", threadId: "8" };
+
+  await adapter.handleTurnLifecycleEvent?.({ type: "queued", source: first });
+  await adapter.handleTurnLifecycleEvent?.({ type: "queued", source: second });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: otherTopic,
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(2);
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    sources: [first],
+    outcome: "cancelled",
+    stopReason: "cancelled",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-2",
+    sources: [second],
+  });
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(2);
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-2",
+    sources: [otherTopic],
+    outcome: "cancelled",
+    stopReason: "cancelled",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-3",
+    sources: [otherTopic],
+  });
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(3);
+  expect(bot?.api.sendChatAction).toHaveBeenLastCalledWith("555", "typing", {
+    message_thread_id: 8,
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-4",
+    sources: [second],
+    outcome: "cancelled",
+    stopReason: "cancelled",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-5",
+    sources: [second],
+  });
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(4);
+  expect(bot?.api.sendChatAction).toHaveBeenLastCalledWith("555", "typing", {
+    message_thread_id: 7,
+  });
+
+  await adapter.stop();
+});
+
 test("telegram adapter ignores lifecycle events for non-telegram sources", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
