@@ -351,21 +351,23 @@ test("slack adapter routes explicit mentions in configured mention-only channels
 
   await adapter.start();
   const app = FakeSlackApp.instances[0];
-  const handler = app?.messageHandler;
-  if (!handler) {
-    throw new Error("Expected Slack message handler");
+  const messageHandler = app?.messageHandler;
+  const mentionHandler = app?.eventHandlers.get("app_mention");
+  if (!messageHandler || !mentionHandler) {
+    throw new Error("Expected Slack message and app_mention handlers");
   }
 
-  await handler({
-    message: {
-      channel: "C123",
-      user: "U123",
-      text: "<@U0AS42PTEAX> please build this",
-      ts: "1712800000.000100",
-      thread_ts: "1712790000.000050",
-    },
-  });
+  const event = {
+    channel: "C123",
+    user: "U123",
+    text: "<@U0AS42PTEAX> please build this",
+    ts: "1712800000.000100",
+    thread_ts: "1712790000.000050",
+  };
+  await messageHandler({ message: event });
+  await mentionHandler({ event });
 
+  expect(onMessage).toHaveBeenCalledTimes(1);
   expect(onMessage).toHaveBeenCalledWith(
     expect.objectContaining({
       chatId: "C123",

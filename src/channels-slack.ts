@@ -29,6 +29,11 @@ export {
 export type { CreateSlackMessageActionAdapterOptions } from "./channels/slack/message-action-contract";
 export { createSlackMessageActionAdapter } from "./channels/slack/message-action-contract";
 export {
+  buildSlackModelPickerBlocks,
+  resolveSlackSelectedModel,
+  SLACK_MODEL_SELECT_ACTION_ID,
+} from "./channels/slack/model-picker-blocks";
+export {
   formatSlackLifecycleErrorMessage,
   shouldPostSlackTerminalError,
 } from "./channels/slack/presentation";

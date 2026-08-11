@@ -173,17 +173,6 @@ export function getSlackActionRecord(
   return Array.isArray(actions) ? asRecord(actions[0]) : null;
 }
 
-export function resolveSlackSelectedModel(
-  action: unknown,
-  body: unknown,
-): string | null {
-  const actionRecord = getSlackActionRecord(action, body);
-  const selectedOption = asRecord(actionRecord?.selected_option);
-  return (
-    firstNonEmptyString(selectedOption?.value, actionRecord?.value) ?? null
-  );
-}
-
 export function resolveSlackActionChannelId(body: unknown): string | null {
   const bodyRecord = asRecord(body);
   const channel = asRecord(bodyRecord?.channel);

@@ -1,6 +1,9 @@
 import type SlackApp from "@slack/bolt";
 import { listChannelSlashCommands } from "@/channels/commands";
-import { SLACK_MODEL_SELECT_ACTION_ID } from "@/channels/slack/model-picker-blocks";
+import {
+  resolveSlackSelectedModel,
+  SLACK_MODEL_SELECT_ACTION_ID,
+} from "@/channels/slack/model-picker-blocks";
 import type {
   ChannelAdapter,
   InboundChannelMessage,
@@ -31,7 +34,6 @@ import {
   resolveSlackActionThreadId,
   resolveSlackActionUser,
   resolveSlackChatType,
-  resolveSlackSelectedModel,
   resolveSlackSenderTeamId,
   resolveSlackUserDisplayName,
   slackTimestampToMillis,
@@ -180,6 +182,7 @@ export function createSlackIngressController(params: {
       const basePolicy = resolveSlackMessageIngressPolicy({
         message: rawMessage,
         botUserId: params.getBotUserId(),
+        appMentionEventWillHandleMentions: true,
       });
       if (!basePolicy.shouldRoute) return;
       if (
@@ -216,6 +219,7 @@ export function createSlackIngressController(params: {
         message: rawMessage,
         botUserId: params.getBotUserId(),
         isAgentThread,
+        appMentionEventWillHandleMentions: true,
       });
       if (!policy.shouldRoute) return;
       rememberMessageThread(policy.messageId, policy.threadId);
