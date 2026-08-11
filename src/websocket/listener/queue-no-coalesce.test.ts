@@ -99,36 +99,6 @@ describe("queue noCoalesce batching", () => {
     });
   });
 
-  test("a different super run waits for the active turn to finish", () => {
-    const runtime = getOrCreateScopedRuntime(
-      createRuntime(),
-      "agent-1",
-      "conv-1",
-    );
-    const activeLease = runtime.turnLifecycle.begin({
-      origin: "message",
-      workingDirectory: process.cwd(),
-      superRunId: "super-run-active",
-    });
-    expect(
-      enqueueInboundUserMessage(runtime, {
-        ...bridgeMessage("next", "otid-next"),
-        superRunId: "super-run-next",
-      }),
-    ).toBe(true);
-
-    expect(
-      consumeQueuedTurn(runtime, { matchActiveSuperRun: true }),
-    ).toBeNull();
-    expect(runtime.queueRuntime.length).toBe(1);
-
-    runtime.turnLifecycle.finish(activeLease, "end_turn");
-    runtime.turnLifecycle.releaseSuperRunId(activeLease);
-    const next = consumeQueuedTurn(runtime);
-    expect(next?.queuedTurn.superRunId).toBe("super-run-next");
-    expect(next?.dequeuedBatch.items).toHaveLength(1);
-  });
-
   test("plain messages still coalesce (existing behavior unchanged)", () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),

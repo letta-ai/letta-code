@@ -103,7 +103,7 @@ describe("recovered approval lease boundaries", () => {
       createTransport([]),
       { request_id: "perm-1", decision: { behavior: "allow" } },
       async (
-        message,
+        _message,
         _socket,
         ownerRuntime,
         _onStatusChange,
@@ -111,12 +111,9 @@ describe("recovered approval lease boundaries", () => {
         _batchId,
         turnLease,
       ) => {
-        expect(message.superRunId).toBe("super-run-recovered");
-        expect(ownerRuntime.superRunId).toBe("super-run-recovered");
         if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
       },
       {
-        superRunId: "super-run-recovered",
         dependencies: {
           applySuggestedPermissions: async () => {
             permissionWriteStarted = true;
@@ -225,7 +222,6 @@ describe("recovered approval lease boundaries", () => {
       { request_id: "perm-1", decision: { behavior: "allow" } },
       mock(async () => {}),
       {
-        superRunId: "super-run-failed-recovery",
         dependencies: {
           applySuggestedPermissions: async () => false,
           ensureSecretsHydrated: async () => {},
@@ -246,7 +242,6 @@ describe("recovered approval lease boundaries", () => {
     runtime.turnLifecycle.requestCancellation();
     rejectExecution(new Error("tool execution crashed"));
     await handled.catch(() => {});
-    expect(runtime.superRunId).toBeNull();
 
     const deltas = sentPayloads
       .map((payload) => JSON.parse(payload))

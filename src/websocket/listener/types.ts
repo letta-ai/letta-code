@@ -75,8 +75,6 @@ export interface IncomingMessage {
   connectionId?: ListenerConnectionId;
   agentId?: string;
   conversationId?: string;
-  /** Cloud super-run correlation for this turn. */
-  superRunId?: string;
   /** Queue this message as its own turn; never merge with other messages. */
   noCoalesce?: boolean;
   /**
@@ -191,8 +189,6 @@ export type ConversationRuntime = {
   key: string;
   agentId: string | null;
   conversationId: string;
-  /** Super-run correlation owned by the active or unwinding turn lease. */
-  readonly superRunId: string | null;
   /** Runtime-scoped SDK override. Undefined uses the process defaults. */
   skillSources: SkillSource[] | undefined;
   /** Connection currently executing this conversation's turn, if client-owned. */
