@@ -1,6 +1,6 @@
 ---
 name: building-automation
-description: Load this skill to understand how to use the Letta Agent SDK to automate yourself by building one-off or repeated automations.
+description: Load this skill to learn how to use the Letta Agent SDK to automate yourself through one-off or recurring workflows.
 ---
 
 # Building Automation
