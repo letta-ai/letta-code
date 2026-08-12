@@ -55,6 +55,30 @@ export const DISABLED_MOD_CAPABILITIES: ModCapabilities = {
   },
 };
 
+export const PROVIDERS_ONLY_MOD_CAPABILITIES: ModCapabilities = {
+  ...DISABLED_MOD_CAPABILITIES,
+  events: { ...DISABLED_MOD_CAPABILITIES.events },
+  providers: true,
+  ui: { ...DISABLED_MOD_CAPABILITIES.ui },
+};
+
+export const LETTA_MOD_CAPABILITY_PROFILE_ENV = "LETTA_MOD_CAPABILITY_PROFILE";
+export const PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE = "providers-only";
+
+export function resolveProcessModCapabilities(
+  configuredCapabilities: ModCapabilities | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): ModCapabilities {
+  if (
+    env[LETTA_MOD_CAPABILITY_PROFILE_ENV] ===
+    PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE
+  ) {
+    return cloneModCapabilities(PROVIDERS_ONLY_MOD_CAPABILITIES);
+  }
+
+  return resolveModCapabilities(configuredCapabilities);
+}
+
 export function cloneModCapabilities(
   capabilities: ModCapabilities,
 ): ModCapabilities {

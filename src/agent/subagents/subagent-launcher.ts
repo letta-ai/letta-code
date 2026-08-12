@@ -8,7 +8,10 @@
 
 import { type BackendMode, getLocalBackendStorageDir } from "@/backend";
 import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
-import { LETTA_DISABLE_MODS_ENV } from "@/mods/disable";
+import {
+  LETTA_MOD_CAPABILITY_PROFILE_ENV,
+  PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
+} from "@/mods/capabilities";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   resolveEntryScriptPath,
@@ -189,7 +192,9 @@ export function composeSubagentChildEnv(
     ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     LETTA_CODE_AGENT_ROLE: "subagent",
-    ...(subagentType === "reflection" && { [LETTA_DISABLE_MODS_ENV]: "1" }),
+    ...(subagentType === "reflection" && {
+      [LETTA_MOD_CAPABILITY_PROFILE_ENV]: PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
+    }),
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
   };
