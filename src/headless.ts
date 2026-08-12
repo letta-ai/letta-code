@@ -6,7 +6,6 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
-  Message as LettaMessage,
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
@@ -115,6 +114,7 @@ import {
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
+import { waitForEnvironmentAssistantMessage } from "./headless-environment-response";
 import { resolveHeadlessMemfsPolicy } from "./headless-memfs-policy";
 import {
   createHeadlessModAdapter,
@@ -375,7 +375,6 @@ export const __headlessTestUtils = {
   contentToTaskNotificationText,
   toBidirectionalQueuedInput,
   prepareHeadlessToolExecutionContext,
-  waitForEnvironmentAssistantMessage,
 };
 
 type ReflectionOverrides = {
@@ -701,151 +700,6 @@ async function writeFinalHeadlessStdout(text: string): Promise<void> {
     }
     process.stdout.write(text, () => resolve());
   });
-}
-
-function pageItems<T>(page: unknown): T[] {
-  if (Array.isArray(page)) return page as T[];
-  if (page && typeof page === "object") {
-    const maybePage = page as {
-      getPaginatedItems?: () => T[];
-      items?: T[];
-    };
-    if (typeof maybePage.getPaginatedItems === "function") {
-      return maybePage.getPaginatedItems();
-    }
-    if (Array.isArray(maybePage.items)) {
-      return maybePage.items;
-    }
-  }
-  return [];
-}
-
-function extractMessageText(message: LettaMessage): string {
-  const content = (message as { content?: unknown }).content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (
-          part &&
-          typeof part === "object" &&
-          "type" in part &&
-          part.type === "text" &&
-          "text" in part &&
-          typeof part.text === "string"
-        ) {
-          return part.text;
-        }
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  return "";
-}
-
-function isAssistantMessage(message: LettaMessage): boolean {
-  return (
-    (message as { message_type?: string }).message_type === "assistant_message"
-  );
-}
-
-function messageTime(message: LettaMessage): number {
-  const date =
-    (message as { date?: string; created_at?: string }).date ??
-    (message as { created_at?: string }).created_at;
-  return date ? new Date(date).getTime() : 0;
-}
-
-function agentLastRunCompletionMs(agent: AgentState): number | null {
-  const raw = (agent as { last_run_completion?: unknown }).last_run_completion;
-  if (typeof raw !== "string" || raw.length === 0) return null;
-  const ms = new Date(raw).getTime();
-  return Number.isFinite(ms) ? ms : null;
-}
-
-function agentLastStopReason(agent: AgentState): StopReasonType | null {
-  const raw = (agent as { last_stop_reason?: unknown }).last_stop_reason;
-  return typeof raw === "string" && raw.length > 0
-    ? (raw as StopReasonType)
-    : null;
-}
-
-async function waitForEnvironmentAssistantMessage(params: {
-  backend: ReturnType<typeof getBackend>;
-  agentId: string;
-  conversationId: string;
-  startedAtMs: number;
-  baselineLastRunCompletionMs?: number | null;
-  timeoutMs?: number;
-  pollIntervalMs?: number;
-}): Promise<{ text: string; stopReason: StopReasonType | null }> {
-  const timeoutMs = params.timeoutMs ?? 10 * 60_000;
-  const pollIntervalMs = params.pollIntervalMs ?? 1_000;
-  const deadline = Date.now() + timeoutMs;
-  let lastText = "";
-  let postCompletionStableCount = 0;
-  let observedCompletion = false;
-  let observedStopReason: StopReasonType | null = null;
-
-  while (Date.now() < deadline) {
-    const freshAgent = await params.backend.retrieveAgent(params.agentId);
-    const completionMs = agentLastRunCompletionMs(freshAgent);
-    const baselineCompletionMs = params.baselineLastRunCompletionMs ?? null;
-    const wasObservedCompletion = observedCompletion;
-    if (
-      completionMs !== null &&
-      (baselineCompletionMs === null || completionMs > baselineCompletionMs) &&
-      completionMs >= params.startedAtMs - 5_000
-    ) {
-      observedCompletion = true;
-      observedStopReason = agentLastStopReason(freshAgent);
-      if (!wasObservedCompletion) {
-        postCompletionStableCount = 0;
-      }
-    }
-
-    const page =
-      params.conversationId === "default"
-        ? await params.backend.listAgentMessages(params.agentId, {
-            conversation_id: "default",
-            limit: 50,
-            order: "desc",
-          })
-        : await params.backend.listConversationMessages(params.conversationId, {
-            limit: 50,
-            order: "desc",
-          });
-
-    const messages = pageItems<LettaMessage>(page);
-    const assistant = messages
-      .filter(
-        (message) =>
-          isAssistantMessage(message) &&
-          messageTime(message) >= params.startedAtMs - 2_000,
-      )
-      .sort((a, b) => messageTime(b) - messageTime(a))[0];
-
-    const text = assistant ? extractMessageText(assistant).trim() : "";
-    if (text.length > 0) {
-      if (text === lastText) {
-        if (observedCompletion) postCompletionStableCount += 1;
-      } else {
-        lastText = text;
-        postCompletionStableCount = observedCompletion ? 1 : 0;
-      }
-      if (observedCompletion && postCompletionStableCount >= 2) {
-        return { text, stopReason: observedStopReason };
-      }
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-  }
-
-  if (observedCompletion && lastText) {
-    return { text: lastText, stopReason: observedStopReason };
-  }
-  throw new Error("Timed out waiting for environment turn completion");
 }
 
 type ReplyEnvironmentMetadata =
@@ -2379,8 +2233,7 @@ ${SYSTEM_REMINDER_CLOSE}
       }
       await exitHeadless(1, "headless_environment_unsupported");
     }
-    const startedAtMs = Date.now();
-    const baselineLastRunCompletionMs = agentLastRunCompletionMs(agent);
+    const otid = randomUUID();
     await sendEnvironmentMessage(connectionId, {
       agentId: agent.id,
       conversationId,
@@ -2389,7 +2242,7 @@ ${SYSTEM_REMINDER_CLOSE}
           role: "user",
           content: contentParts,
           client_message_id: randomUUID(),
-          otid: randomUUID(),
+          otid,
         },
       ],
     });
@@ -2398,8 +2251,7 @@ ${SYSTEM_REMINDER_CLOSE}
       backend,
       agentId: agent.id,
       conversationId,
-      startedAtMs,
-      baselineLastRunCompletionMs,
+      otid,
     });
     const resultText = environmentResult.text;
     const stats = sessionStats.getSnapshot();
