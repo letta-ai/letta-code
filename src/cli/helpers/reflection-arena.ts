@@ -10,7 +10,6 @@ import {
   finalizeReflectionMemoryWorktree,
   type ReflectionMemoryWorktree,
   type ReflectionMemoryWorktreeFinalizeResult,
-  reflectionIntegrationConsumesTranscript,
   reflectionMemoryParentHasChanges,
 } from "@/agent/memory-worktree";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
@@ -18,6 +17,7 @@ import {
   buildReflectionArenaHfChoiceRow,
   maybeUploadReflectionArenaChoiceToHf,
 } from "@/cli/helpers/reflection-arena-hf-upload";
+import { finalizeAutoReflectionCompletion } from "@/cli/helpers/reflection-completion";
 import {
   emitReflectionRunEnd,
   emitReflectionRunStart,
@@ -33,7 +33,6 @@ import {
 import {
   type AutoReflectionPayload,
   buildAutoReflectionPayload,
-  finalizeAutoReflectionPayload,
 } from "@/cli/helpers/reflection-transcript";
 import { telemetry } from "@/telemetry";
 import { debugLog, debugWarn } from "@/utils/debug";
@@ -899,6 +898,7 @@ export async function finalizeReflectionArenaChoice(
 
   const discarded: ReflectionArenaCandidateLabel[] = [];
   let integration: ReflectionMemoryWorktreeFinalizeResult | undefined;
+  let completionSuccess = false;
   let memoryBaseCommit: string | null = null;
   let memoryCandidateCommit: string | null = null;
 
@@ -931,6 +931,7 @@ export async function finalizeReflectionArenaChoice(
       logRecompileFailure: (message) => debugWarn("memory", message),
     });
     integration = finalized.integration;
+    completionSuccess = finalized.completionSuccess;
   }
 
   for (const candidate of run.candidates) {
@@ -944,12 +945,13 @@ export async function finalizeReflectionArenaChoice(
     });
   }
 
-  await finalizeAutoReflectionPayload(
+  await finalizeAutoReflectionCompletion(
     run.agentId,
     run.conversationId,
     run.payloadPath,
     run.endSnapshotLine,
-    integration ? reflectionIntegrationConsumesTranscript(integration) : false,
+    run.endMessageId,
+    completionSuccess,
   );
 
   const completedRun: ReflectionArenaRun = {
