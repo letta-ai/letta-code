@@ -1,6 +1,6 @@
 ---
 name: teleporting-between-environments
-description: Moves the current agent conversation between Cloud and connected computers while coordinating machine-local files and setup. Use when the user says "let's continue this task on cloud", asks to continue or move work on another computer, wants to teleport between environments, or needs to upload or download artifacts before or after a handoff.
+description: Moves the current agent conversation to Cloud or a Cloud-registered remote environment while coordinating machine-local files and setup. Use when the user says "let's continue this task on cloud", asks to continue or move work on another connected computer, wants to teleport between environments, or needs to upload or download artifacts before a handoff.
 ---
 
 # Teleporting Between Environments
@@ -19,14 +19,17 @@ Teleport the current agent and conversation without losing conversational memory
 ```bash
 letta teleport list
 letta teleport cloud
-letta teleport back
 letta teleport <environment>
 ```
 
-- `list`: show accessible online targets.
+- `list`: show accessible online remote targets. Desktop Local is excluded.
 - `cloud`: create or resume this conversation’s managed Cloud sandbox.
-- `back`: return to the remembered previous non-Cloud environment.
-- `<environment>`: target a listed environment by its friendly selector.
+- `<environment>`: target a listed remote environment by its friendly selector.
+
+Teleport cannot target Desktop Local yet. Once the conversation runs in Cloud,
+the agent cannot programmatically return to Desktop Local. The user can still
+switch manually with Desktop's environment picker. Do not run or recommend
+`letta teleport back`.
 
 Transfer files with the existing sandbox commands:
 
@@ -75,42 +78,11 @@ If the command reports an offline, stale, unsupported, same-source, or startup e
 
 5. After continuation in Cloud, establish the Cloud-local cwd and repository setup before using the uploaded paths.
 
-### Retrieve a laptop file while running in Cloud
+### Return to Desktop Local
 
-1. Retain the laptop path and intended Cloud task in context.
-2. As the final Cloud action, run:
-
-   ```bash
-   letta teleport back
-   ```
-
-3. After continuation on the laptop, locate and upload the file:
-
-   ```bash
-   letta sandbox upload <local-path>
-   ```
-
-4. Retain the returned `/root/downloads/...` path.
-5. As the final laptop action, run:
-
-   ```bash
-   letta teleport cloud
-   ```
-
-### Bring a Cloud artifact to a local computer
-
-1. In Cloud, place the output under `/root/downloads` and retain its sandbox path.
-2. As the final Cloud action, run:
-
-   ```bash
-   letta teleport back
-   ```
-
-3. After continuation locally, download it:
-
-   ```bash
-   letta sandbox download <sandbox-path> [--to <local-path>]
-   ```
+The agent cannot initiate this transition. Retain the next local action and ask
+the user to select Local from Desktop's environment picker. After continuation
+locally, resume the task from the retained context.
 
 ### Continue on another connected computer
 
