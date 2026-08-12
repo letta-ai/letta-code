@@ -1,6 +1,6 @@
 ---
 name: building-automation
-description: Load this skill to learn how to use the Letta Agent SDK to automate yourself through one-off or recurring workflows.
+description: Use this skill when you notice work you can automate. It shows how to extend yourself with one-off and recurring workflows built on the Letta Agent SDK.
 ---
 
 # Building Automation
@@ -90,6 +90,8 @@ An Agent SDK automation can choose among:
 - **Current computer:** use `backend: "local"` to keep agent state and tool execution on the machine running the program. This is useful for direct access to local files and tools or for a fully local deployment.
 
 The program can discover online organization computers with `client.computers.list({ onlineOnly: true })`. A Cloud session can use a selected `computer` or a managed `sandbox`, but not both. A separately operated App Server is available through `backend: "remote"`.
+
+One program can open separate conversations on several organization computers. This can support fleets of CI machines, infrastructure nodes, platform-specific test machines, or other connected computers.
 
 ## Questions that can help
 

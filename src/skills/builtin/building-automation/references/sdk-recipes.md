@@ -49,6 +49,8 @@ await using session = client.resumeSession(AGENT_ID, {
 });
 ```
 
+The same API can route separate conversations to a fleet of connected computers. Examples include CI machines, infrastructure nodes, and platform-specific test machines. A larger fleet can use the bounded-concurrency pattern later in this guide.
+
 Sandbox files last until the sandbox expires. Agent memory, conversation history, or application storage can hold state that must outlive the sandbox. A sandbox `cwd` refers to a path inside the sandbox; it does not mount a local path. Changing computers never copies files or credentials between them. See the [Computers documentation](https://docs.letta.com/platform/computers) and [Agent SDK deployment guide](https://docs.letta.com/agent-sdk/deployment).
 
 ## Call yourself for a one-off task
