@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 import {
   resolveSandboxSession,
   runSandboxSubcommand,
@@ -130,9 +131,7 @@ describe("sandbox subcommand", () => {
       );
 
       expect(exitCode).toBe(0);
-      expect(writes).toEqual([
-        { path: `${process.cwd()}/copy.txt`, data: [1, 2, 3] },
-      ]);
+      expect(writes).toEqual([{ path: resolve("copy.txt"), data: [1, 2, 3] }]);
     } finally {
       console.log = originalLog;
     }
