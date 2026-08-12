@@ -57,7 +57,6 @@ export async function createEphemeralConversation(
     name: "Ephemeral conversation",
     system: body.system,
     tools: [],
-    tags: [],
     memory: { blocks: [] },
     llm_config: {
       handle: body.model,
