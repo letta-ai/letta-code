@@ -169,6 +169,18 @@ describe("teleport subcommand", () => {
                 lastSeenAt: Date.now(),
                 firstSeenAt: Date.now(),
               },
+              {
+                id: "env-offline",
+                connectionId: null,
+                deviceId: "device-offline",
+                connectionName: "Offline Laptop",
+                organizationId: "org-1",
+                podId: null,
+                connectedAt: null,
+                lastHeartbeat: null,
+                lastSeenAt: Date.now(),
+                firstSeenAt: Date.now(),
+              },
             ],
             hasNextPage: false,
           };

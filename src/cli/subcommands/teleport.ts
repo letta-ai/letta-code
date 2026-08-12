@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { isLocalAgentId } from "@/agent/agent-id";
 import {
   type EnvironmentConnection,
+  isEnvironmentOnline,
   listEnvironments,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
@@ -182,7 +183,11 @@ export async function runTeleportSubcommand(
       const list = deps.listEnvironments ?? listEnvironments;
       const result = await list({ limit: 100, onlineOnly: true });
       const connections = result.connections
-        .filter(isTeleportableRemoteEnvironment)
+        .filter(
+          (environment) =>
+            isEnvironmentOnline(environment) &&
+            isTeleportableRemoteEnvironment(environment),
+        )
         .map(formatEnvironmentForList);
       console.log(JSON.stringify({ ...result, connections }, null, 2));
       return 0;
