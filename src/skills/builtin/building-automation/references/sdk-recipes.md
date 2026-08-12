@@ -267,47 +267,97 @@ A lock file can prevent two scheduled runs from using the same state at the same
 
 ## Event-driven program
 
-This example accepts an event, checks a local record, sends the event to the resource conversation, and records the Agent SDK run IDs.
+This example accepts an event, persists the agent's decision, and then delivers any escalation. Decision completion and outbound delivery are separate states: recording a decision must not cause a failed delivery to be skipped on retry. The dispatcher must serialize calls for each event ID with a database-backed lock or resource queue so two workers cannot deliver the same event concurrently.
 
 ```ts
+db.run(`CREATE TABLE IF NOT EXISTS effects (
+  event_id TEXT PRIMARY KEY,
+  decision TEXT NOT NULL,
+  run_ids TEXT NOT NULL,
+  decided_at INTEGER NOT NULL,
+  delivered_at INTEGER
+)`);
+
 // One iteration of a poll loop or one webhook delivery.
 async function handleEvent(evt: { id: string; resource: string; payload: string }) {
-  const seen = db
-    .query("SELECT 1 FROM effects WHERE event_id = ?")
+  let effect = db
+    .query<
+      { decision: string; delivered_at: number | null },
+      [string]
+    >("SELECT decision, delivered_at FROM effects WHERE event_id = ?")
     .get(evt.id);
-  if (seen) return; // idempotent: already handled
 
-  await using session = await sessionFor(evt.resource);
-  await session.send(
-    [
-      `Event ${evt.id} on ${evt.resource}:`,
-      evt.payload,
-      "Decide: no action, or a one-line escalation with reason.",
-    ].join("\n"),
-  );
+  if (!effect) {
+    await using session = await sessionFor(evt.resource);
+    let assistantText = "";
+    await session.send(
+      [
+        `Event ${evt.id} on ${evt.resource}:`,
+        evt.payload,
+        "Decide: no action, or a one-line escalation with reason.",
+      ].join("\n"),
+    );
 
-  for await (const e of session.stream()) {
-    if (e.type === "result") {
-      db.run("INSERT INTO effects (event_id, run_ids, at) VALUES (?, ?, ?)", [
-        evt.id,
-        JSON.stringify(e.runIds),
-        Date.now(),
-      ]);
-      if (e.success && e.result?.startsWith("ESCALATE:")) await reportToCoordinator(e.result);
+    for await (const e of session.stream()) {
+      if (e.type === "assistant") assistantText += e.content;
+      if (e.type === "result") {
+        if (!e.success) throw new Error(`Decision failed for ${evt.id}`);
+        const decision = (e.result ?? assistantText).trim();
+        if (!decision) throw new Error(`Decision was empty for ${evt.id}`);
+        db.run(
+          "INSERT INTO effects (event_id, decision, run_ids, decided_at) VALUES (?, ?, ?, ?)",
+          [evt.id, decision, JSON.stringify(e.runIds ?? []), Date.now()],
+        );
+        effect = { decision, delivered_at: null };
+      }
     }
   }
+
+  if (!effect || effect.delivered_at) return;
+  if (effect.decision.startsWith("ESCALATE:")) {
+    await reportToCoordinator(evt.id, effect.decision);
+  }
+  db.run("UPDATE effects SET delivered_at = ? WHERE event_id = ?", [
+    Date.now(),
+    evt.id,
+  ]);
 }
 ```
 
-A worker conversation can report a conclusion to a coordinator conversation:
+A worker conversation can report a conclusion to a coordinator conversation. The event marker makes an unknown-delivery retry reconcilable: before sending, scan the durable conversation history for the same marker.
 
 ```ts
-async function reportToCoordinator(packet: string) {
+function containsMarker(message: { message_type?: string; content?: unknown }, marker: string) {
+  return (
+    message.message_type === "user_message" &&
+    typeof message.content === "string" &&
+    message.content.includes(marker)
+  );
+}
+
+async function reportToCoordinator(eventId: string, packet: string) {
   await using main = client.resumeSession(MAIN_CONVERSATION_ID);
-  await main.send(`[pr-shepherd] ${packet}`);
+  const marker = `[pr-shepherd:event:${eventId}]`;
+  let before: string | undefined;
+
+  do {
+    const page = await main.listMessages({
+      conversationId: MAIN_CONVERSATION_ID,
+      order: "desc",
+      limit: 100,
+      before,
+    });
+    if (page.messages.some((message) => containsMarker(message, marker))) return;
+    if (page.hasMore === false || !page.nextBefore) break;
+    before = page.nextBefore;
+  } while (true);
+
+  await main.send(`${marker} ${packet}`);
   for await (const e of main.stream()) if (e.type === "result") break;
 }
 ```
+
+If the process stops after the coordinator accepts the message but before `delivered_at` is updated, the next attempt finds the marker and finishes the local record without sending a duplicate. For an external destination, use its native idempotency key or query it by a stable action ID before retrying.
 
 [Operations options](operations.md) describes event envelopes, cursors, reconciliation, action records, limits, and manifests for repeated programs.
 
