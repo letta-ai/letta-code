@@ -1,4 +1,11 @@
 export type {
+  ChannelControlRequestCoordinatorOptions,
+  ChannelControlRequestInboundInput,
+  ChannelControlRequestResponseDeliveryResult,
+  PendingChannelControlRequest,
+} from "./channels/control-request-coordinator";
+export { ChannelControlRequestCoordinator } from "./channels/control-request-coordinator";
+export type {
   ChannelGatewayClient,
   ChannelGatewayDelivery,
   ChannelGatewayHooks,
@@ -6,6 +13,7 @@ export type {
   ChannelGatewayRichDraft,
 } from "./channels/gateway-core";
 export { ChannelGateway } from "./channels/gateway-core";
+export { formatChannelControlRequestPrompt } from "./channels/interactive";
 export type {
   ExecuteMessageChannelOptions,
   MessageChannelExecutionResolver,
