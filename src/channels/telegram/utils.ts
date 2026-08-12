@@ -392,13 +392,14 @@ export function getTelegramMessageThreadId(
   }
 
   const chatType = message.chat.type;
+  // Per Telegram Bot API / TDLib, message_thread_id is a forum topic only when
+  // is_topic_message is true. Forum General can emit reply-thread IDs without
+  // that flag; treating chat.is_forum as sufficient would fragment those the
+  // same way non-forum groups used to. Private bot topics keep any thread id.
   if (chatType === "group" || chatType === "supergroup") {
-    const isForumTopic =
-      message.chat.is_forum === true ||
-      (chatType === "supergroup" && message.is_topic_message === true);
-    if (!isForumTopic) {
-      return null;
-    }
+    return message.is_topic_message === true
+      ? String(message.message_thread_id)
+      : null;
   }
 
   return String(message.message_thread_id);

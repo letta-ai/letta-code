@@ -78,6 +78,7 @@ test("telegram adapter preserves group topic metadata on inbound messages", asyn
         is_forum: true,
       },
       message_thread_id: 42,
+      is_topic_message: true,
       from: { id: 456, username: "alice", first_name: "Alice" },
       text: "Hello from topic",
       date: 1_736_380_800,
@@ -101,6 +102,47 @@ test("telegram adapter preserves group topic metadata on inbound messages", asyn
     attachments: undefined,
     raw: expect.objectContaining({ message_id: 77 }),
   });
+});
+
+test("telegram adapter ignores forum General reply-thread ids without is_topic_message", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  await bot?.emit("message", {
+    message: {
+      chat: {
+        id: -100123,
+        type: "supergroup",
+        title: "Void Cafe",
+        is_forum: true,
+      },
+      message_thread_id: 42,
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "Hello from General",
+      date: 1_736_380_800,
+      message_id: 77,
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      chatId: "-100123",
+      chatType: "channel",
+      threadId: undefined,
+    }),
+  );
 });
 
 test("telegram adapter preserves private bot topic metadata on inbound messages", async () => {

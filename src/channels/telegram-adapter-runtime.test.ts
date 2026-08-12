@@ -191,6 +191,84 @@ test("telegram channel keeps changing non-forum group thread ids on one route", 
   ]);
 });
 
+test("telegram channel keeps forum General reply-thread ids on the root route", async () => {
+  createChannelAccountLive(
+    "telegram",
+    {
+      displayName: "Telegram Forum Bot",
+      enabled: false,
+      token: "test-token",
+      dmPolicy: "pairing",
+      groupMode: "open",
+    },
+    { accountId: "telegram-forum" },
+  );
+  bindChannelAccountLive(
+    "telegram",
+    "telegram-forum",
+    "agent-telegram",
+    "default",
+  );
+  await startChannelAccountLive("telegram", "telegram-forum");
+
+  const registry = getChannelRegistry();
+  expect(registry).not.toBeNull();
+  const deliveries: unknown[] = [];
+  registry?.setMessageHandler((delivery) => {
+    deliveries.push(delivery);
+  });
+  registry?.setReady();
+
+  const bot = FakeBot.instances[0];
+  for (const [messageId, threadId, text] of [
+    [77, 101, "First General message"],
+    [78, 202, "Second General reply"],
+  ] as const) {
+    await bot?.emit("message", {
+      message: {
+        chat: {
+          id: -100123,
+          type: "supergroup",
+          title: "Void Cafe",
+          is_forum: true,
+        },
+        message_thread_id: threadId,
+        from: { id: 456, username: "alice", first_name: "Alice" },
+        text,
+        date: 1_736_380_800 + messageId,
+        message_id: messageId,
+      },
+    });
+  }
+
+  expect(createConversation).toHaveBeenCalledTimes(1);
+  expect(getRoute("telegram", "-100123", "telegram-forum")).toMatchObject({
+    accountId: "telegram-forum",
+    chatId: "-100123",
+    chatType: "channel",
+    threadId: null,
+    agentId: "agent-telegram",
+    conversationId: "conv-telegram-e2e",
+  });
+  expect(getRoute("telegram", "-100123", "telegram-forum", "101")).toBeNull();
+  expect(getRoute("telegram", "-100123", "telegram-forum", "202")).toBeNull();
+  expect(deliveries).toHaveLength(2);
+  expect(deliveries).toEqual([
+    expect.objectContaining({
+      route: expect.objectContaining({
+        threadId: null,
+        conversationId: "conv-telegram-e2e",
+      }),
+    }),
+    expect.objectContaining({
+      route: expect.objectContaining({
+        threadId: null,
+        conversationId: "conv-telegram-e2e",
+      }),
+    }),
+  ]);
+});
+
 test("telegram channel account start rolls back enabled state when adapter startup fails", async () => {
   FakeBot.nextInitImpl = async () => {
     throw new Error("invalid Telegram token");
