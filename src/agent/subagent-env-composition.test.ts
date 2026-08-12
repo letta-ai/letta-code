@@ -5,18 +5,22 @@ import {
   composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
 } from "@/agent/subagents/subagent-launcher";
+import {
+  LETTA_MOD_CAPABILITY_PROFILE_ENV,
+  PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
+} from "@/mods/capabilities";
 import { LETTA_DISABLE_MODS_ENV } from "@/mods/disable";
 
 const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
 const PARENT_MEMORY_DIR = `/Users/someone/.letta/agents/${PARENT_ID}/memory`;
 
 describe("composeSubagentChildEnv", () => {
-  test("reflection subagents disable mods in the child process only", () => {
+  test("reflection subagents load only mod providers in the child process", () => {
     const parentProcessEnv: NodeJS.ProcessEnv = {
       HOME: "/home/user",
       [LETTA_DISABLE_MODS_ENV]: "0",
     };
-    const originalProcessValue = process.env[LETTA_DISABLE_MODS_ENV];
+    const originalProcessValue = process.env[LETTA_MOD_CAPABILITY_PROFILE_ENV];
 
     const env = composeSubagentChildEnv({
       parentProcessEnv,
@@ -26,12 +30,17 @@ describe("composeSubagentChildEnv", () => {
       inheritedPrimaryRoot: PARENT_MEMORY_DIR,
     });
 
-    expect(env[LETTA_DISABLE_MODS_ENV]).toBe("1");
-    expect(parentProcessEnv[LETTA_DISABLE_MODS_ENV]).toBe("0");
-    expect(process.env[LETTA_DISABLE_MODS_ENV]).toBe(originalProcessValue);
+    expect(env[LETTA_MOD_CAPABILITY_PROFILE_ENV]).toBe(
+      PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
+    );
+    expect(env[LETTA_DISABLE_MODS_ENV]).toBe("0");
+    expect(parentProcessEnv[LETTA_MOD_CAPABILITY_PROFILE_ENV]).toBeUndefined();
+    expect(process.env[LETTA_MOD_CAPABILITY_PROFILE_ENV]).toBe(
+      originalProcessValue,
+    );
   });
 
-  test("non-reflection subagents do not disable mods by default", () => {
+  test("non-reflection subagents do not restrict mods by default", () => {
     const env = composeSubagentChildEnv({
       parentProcessEnv: { HOME: "/home/user" },
       parentAgentId: PARENT_ID,
@@ -41,6 +50,7 @@ describe("composeSubagentChildEnv", () => {
     });
 
     expect(env[LETTA_DISABLE_MODS_ENV]).toBeUndefined();
+    expect(env[LETTA_MOD_CAPABILITY_PROFILE_ENV]).toBeUndefined();
   });
 
   test("normal subagent records parent identity without overriding memory dir", () => {

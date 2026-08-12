@@ -11,7 +11,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
 import type { Backend } from "@/backend";
-import { DISABLED_MOD_CAPABILITIES } from "@/mods/capabilities";
+import { getRegisteredPiProvider } from "@/backend/dev/pi-provider-mod-registry";
+import {
+  DISABLED_MOD_CAPABILITIES,
+  LETTA_MOD_CAPABILITY_PROFILE_ENV,
+  PROVIDERS_ONLY_MOD_CAPABILITIES,
+  PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
+} from "@/mods/capabilities";
 import { LETTA_DISABLE_MODS_ENV } from "@/mods/disable";
 import { createModAdapter } from "@/mods/mod-adapter";
 import { getModDiagnosticsLatestFilePath } from "@/mods/mod-diagnostics-file";
@@ -123,6 +129,68 @@ describe("mod adapter", () => {
       } else {
         process.env[LETTA_DISABLE_MODS_ENV] = original;
       }
+    }
+  });
+
+  test("provider-only profile loads providers without hooks, tools, or UI", async () => {
+    const root = createTempDir();
+    const originalProfile = process.env[LETTA_MOD_CAPABILITY_PROFILE_ENV];
+    let adapter: ReturnType<typeof createModAdapter> | undefined;
+
+    try {
+      process.env[LETTA_MOD_CAPABILITY_PROFILE_ENV] =
+        PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE;
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "provider.ts"),
+        `export default function(letta) {
+          letta.providers.register("reflection-test", {
+            baseUrl: "http://localhost:8000/v1",
+            apiKey: "not-needed",
+            api: "openai-completions",
+            models: [{
+              id: "reflection-model",
+              name: "Reflection Model",
+              reasoning: false,
+              input: ["text"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 32000,
+              maxTokens: 4096,
+            }],
+          });
+          letta.tools.register({
+            name: "reflection_tool",
+            description: "Must stay isolated",
+            run() { return "unexpected"; },
+          });
+          letta.events.on("turn_start", () => ({ input: [] }));
+        }`,
+      );
+
+      adapter = createModAdapter({
+        cacheDirectory: path.join(root, "mod-cache"),
+        getClient: async () => ({}) as unknown as Letta,
+        globalModsDirectory: modDir,
+      });
+      await adapter.reload();
+
+      const snapshot = adapter.getSnapshot().registry;
+      expect(snapshot.capabilities).toEqual(PROVIDERS_ONLY_MOD_CAPABILITIES);
+      expect(getRegisteredPiProvider("reflection-test")).toBeDefined();
+      expect(snapshot.tools).toEqual({});
+      expect(snapshot.events).toEqual({});
+
+      adapter.dispose();
+      expect(getRegisteredPiProvider("reflection-test")).toBeUndefined();
+    } finally {
+      adapter?.dispose();
+      if (originalProfile === undefined) {
+        delete process.env[LETTA_MOD_CAPABILITY_PROFILE_ENV];
+      } else {
+        process.env[LETTA_MOD_CAPABILITY_PROFILE_ENV] = originalProfile;
+      }
+      rmSync(root, { force: true, recursive: true });
     }
   });
 
