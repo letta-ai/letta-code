@@ -387,9 +387,21 @@ export function getTelegramChatLabel(
 export function getTelegramMessageThreadId(
   message: TelegramLikeMessage,
 ): string | null {
-  return message.message_thread_id !== undefined
-    ? String(message.message_thread_id)
-    : null;
+  if (message.message_thread_id === undefined) {
+    return null;
+  }
+
+  const chatType = message.chat.type;
+  if (chatType === "group" || chatType === "supergroup") {
+    const isForumTopic =
+      message.chat.is_forum === true ||
+      (chatType === "supergroup" && message.is_topic_message === true);
+    if (!isForumTopic) {
+      return null;
+    }
+  }
+
+  return String(message.message_thread_id);
 }
 
 export function getTelegramReplyContext(

@@ -71,7 +71,12 @@ test("telegram adapter preserves group topic metadata on inbound messages", asyn
   const bot = FakeBot.instances[0];
   await bot?.emit("message", {
     message: {
-      chat: { id: -100123, type: "supergroup", title: "Void Cafe" },
+      chat: {
+        id: -100123,
+        type: "supergroup",
+        title: "Void Cafe",
+        is_forum: true,
+      },
       message_thread_id: 42,
       from: { id: 456, username: "alice", first_name: "Alice" },
       text: "Hello from topic",
@@ -96,6 +101,43 @@ test("telegram adapter preserves group topic metadata on inbound messages", asyn
     attachments: undefined,
     raw: expect.objectContaining({ message_id: 77 }),
   });
+});
+
+test("telegram adapter preserves private bot topic metadata on inbound messages", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  await bot?.emit("message", {
+    message: {
+      chat: { id: 123, type: "private" },
+      message_thread_id: 42,
+      is_topic_message: true,
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "Hello from a private topic",
+      date: 1_736_380_800,
+      message_id: 77,
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      chatId: "123",
+      chatType: "direct",
+      threadId: "42",
+    }),
+  );
 });
 
 test("telegram adapter detects bot mentions and strips a leading mention", async () => {
@@ -245,6 +287,7 @@ test("telegram adapter debounces group bursts by chat/topic", async () => {
     message: {
       chat: { id: -100123, type: "supergroup", title: "Void Cafe" },
       message_thread_id: 42,
+      is_topic_message: true,
       from: { id: 456, username: "alice", first_name: "Alice" },
       text: "first",
       date: 1_736_380_800,
@@ -255,6 +298,7 @@ test("telegram adapter debounces group bursts by chat/topic", async () => {
     message: {
       chat: { id: -100123, type: "supergroup", title: "Void Cafe" },
       message_thread_id: 42,
+      is_topic_message: true,
       from: { id: 789, username: "bob", first_name: "Bob" },
       text: "second",
       date: 1_736_380_801,

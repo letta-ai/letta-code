@@ -67,6 +67,7 @@ test("telegram channel starts through service and routes inbound topic messages 
     message: {
       chat: { id: -100123, type: "supergroup", title: "Void Cafe" },
       message_thread_id: 42,
+      is_topic_message: true,
       from: { id: 456, username: "alice", first_name: "Alice" },
       text: "Hello from a Telegram topic",
       date: 1_736_380_800,
@@ -115,6 +116,79 @@ test("telegram channel starts through service and routes inbound topic messages 
   expect(content[1]?.text).toContain('account_id="telegram-e2e"');
   expect(content[1]?.text).toContain('thread_id="42"');
   expect(content[1]?.text).toContain("Hello from a Telegram topic");
+});
+
+test("telegram channel keeps changing non-forum group thread ids on one route", async () => {
+  createChannelAccountLive(
+    "telegram",
+    {
+      displayName: "Telegram Group Bot",
+      enabled: false,
+      token: "test-token",
+      dmPolicy: "pairing",
+      groupMode: "open",
+    },
+    { accountId: "telegram-group" },
+  );
+  bindChannelAccountLive(
+    "telegram",
+    "telegram-group",
+    "agent-telegram",
+    "default",
+  );
+  await startChannelAccountLive("telegram", "telegram-group");
+
+  const registry = getChannelRegistry();
+  expect(registry).not.toBeNull();
+  const deliveries: unknown[] = [];
+  registry?.setMessageHandler((delivery) => {
+    deliveries.push(delivery);
+  });
+  registry?.setReady();
+
+  const bot = FakeBot.instances[0];
+  for (const [messageId, threadId, text] of [
+    [77, 101, "First group message"],
+    [78, 202, "Second group message"],
+  ] as const) {
+    await bot?.emit("message", {
+      message: {
+        chat: { id: -100123, type: "supergroup", title: "Void Cafe" },
+        message_thread_id: threadId,
+        from: { id: 456, username: "alice", first_name: "Alice" },
+        text,
+        date: 1_736_380_800 + messageId,
+        message_id: messageId,
+      },
+    });
+  }
+
+  expect(createConversation).toHaveBeenCalledTimes(1);
+  expect(getRoute("telegram", "-100123", "telegram-group")).toMatchObject({
+    accountId: "telegram-group",
+    chatId: "-100123",
+    chatType: "channel",
+    threadId: null,
+    agentId: "agent-telegram",
+    conversationId: "conv-telegram-e2e",
+  });
+  expect(getRoute("telegram", "-100123", "telegram-group", "101")).toBeNull();
+  expect(getRoute("telegram", "-100123", "telegram-group", "202")).toBeNull();
+  expect(deliveries).toHaveLength(2);
+  expect(deliveries).toEqual([
+    expect.objectContaining({
+      route: expect.objectContaining({
+        threadId: null,
+        conversationId: "conv-telegram-e2e",
+      }),
+    }),
+    expect.objectContaining({
+      route: expect.objectContaining({
+        threadId: null,
+        conversationId: "conv-telegram-e2e",
+      }),
+    }),
+  ]);
 });
 
 test("telegram channel account start rolls back enabled state when adapter startup fails", async () => {
@@ -219,6 +293,7 @@ test("telegram channel routes permission prompts and approvals through the topic
     message: {
       chat: { id: -100123, type: "supergroup", title: "Void Cafe" },
       message_thread_id: 42,
+      is_topic_message: true,
       from: { id: 456, username: "alice", first_name: "Alice" },
       text: "approve",
       date: 1_736_380_801,
