@@ -90,11 +90,9 @@ import {
 import { classifyApprovals } from "./cli/helpers/approval-classification";
 import { createContextTracker } from "./cli/helpers/context-tracker";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
-import {
-  getReflectionSettings,
-  persistReflectionSettingsForAgent,
-  type ReflectionSettings,
-  type ReflectionTrigger,
+import type {
+  ReflectionSettings,
+  ReflectionTrigger,
 } from "./cli/helpers/memory-reminder";
 import { maybeLaunchPostTurnReflection } from "./cli/helpers/post-turn-reflection";
 import {
@@ -115,6 +113,11 @@ import {
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import { waitForEnvironmentAssistantMessage } from "./headless-environment-response";
+import {
+  cleanupHeadlessEphemeralConversation,
+  clearHeadlessClientToolRules,
+  createHeadlessEphemeralConversation,
+} from "./headless-ephemeral-startup";
 import { resolveHeadlessMemfsPolicy } from "./headless-memfs-policy";
 import {
   createHeadlessModAdapter,
@@ -122,6 +125,10 @@ import {
   emitHeadlessConversationClose,
   emitHeadlessConversationOpen,
 } from "./headless-mod-adapter";
+import {
+  applyHeadlessReflectionOverrides,
+  type ReflectionOverrides,
+} from "./headless-reflection-settings";
 import {
   emitLocalToolCalls,
   emitLocalToolReturns,
@@ -160,10 +167,7 @@ import {
   registerExternalTools,
   setExternalToolExecutor,
 } from "./tools/manager";
-import {
-  clearPersistedClientToolRules,
-  prepareToolExecutionContextForScope,
-} from "./tools/toolset";
+import { prepareToolExecutionContextForScope } from "./tools/toolset";
 import type {
   BootstrapSessionStateRequest,
   CanUseToolControlRequest,
@@ -377,11 +381,6 @@ export const __headlessTestUtils = {
   prepareHeadlessToolExecutionContext,
 };
 
-type ReflectionOverrides = {
-  trigger?: ReflectionTrigger;
-  stepCount?: number;
-};
-
 function parseReflectionOverrides(
   values: ParsedCliArgs["values"],
 ): ReflectionOverrides {
@@ -421,42 +420,6 @@ function parseReflectionOverrides(
   }
 
   return overrides;
-}
-
-function hasReflectionOverrides(overrides: ReflectionOverrides): boolean {
-  return overrides.trigger !== undefined || overrides.stepCount !== undefined;
-}
-
-async function applyReflectionOverrides(
-  agentId: string,
-  overrides: ReflectionOverrides,
-): Promise<ReflectionSettings> {
-  const current = getReflectionSettings(agentId);
-  const merged: ReflectionSettings = {
-    ...current,
-    trigger: overrides.trigger ?? current.trigger,
-    stepCount: overrides.stepCount ?? current.stepCount,
-  };
-  if (!hasReflectionOverrides(overrides)) {
-    return merged;
-  }
-
-  const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
-  if (!memfsEnabled && merged.trigger !== "off") {
-    throw new Error(
-      `--reflection-trigger ${merged.trigger} requires memfs enabled for this agent.`,
-    );
-  }
-
-  try {
-    settingsManager.getLocalProjectSettings();
-  } catch {
-    await settingsManager.loadLocalProjectSettings();
-  }
-
-  await persistReflectionSettingsForAgent(agentId, merged);
-
-  return merged;
 }
 
 async function prepareHeadlessToolExecutionContext(params: {
@@ -891,6 +854,7 @@ export async function handleHeadlessCommand(
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
+  let ephemeralConversationId: string | null = null;
   let autoEnableMemfsForFreshAgent = false;
   const startupBackendMode = backend.capabilities.localModelCatalog
     ? "local"
@@ -900,6 +864,7 @@ export async function handleHeadlessCommand(
   let specifiedConversationId = values.conversation;
   let specifiedAgentIdFromAmbientBackendSwitch = false;
   const forceNew = values["new-agent"];
+  const ephemeralFlag = values.ephemeral;
   const systemPromptPreset = values.system;
   const systemCustom = values["system-custom"];
   const personalityInput = values.personality;
@@ -915,12 +880,14 @@ export async function handleHeadlessCommand(
   // Fresh subagents are stateless by role. --stateless extends only the
   // MemFS-less session behavior to an existing --agent/--conversation launch;
   // it does not change that agent's model, prompt, tools, or sampling config.
-  const { isFreshStatelessSubagent, isStatelessSession } =
-    resolveHeadlessMemfsPolicy({
-      statelessRequested: Boolean(statelessFlag),
-      isSubagentRole,
-      newAgentRequested: Boolean(forceNew),
-    });
+  const memfsPolicy = resolveHeadlessMemfsPolicy({
+    statelessRequested: Boolean(statelessFlag),
+    isSubagentRole,
+    newAgentRequested: Boolean(forceNew),
+  });
+  const { isFreshStatelessSubagent } = memfsPolicy;
+  const isStatelessSession =
+    Boolean(ephemeralFlag) || memfsPolicy.isStatelessSession;
   if (isStatelessSession && backend.capabilities.localMemfs) {
     const { disableLocalBackendMemfsForProcess } = await import(
       "@/backend/local/paths"
@@ -1097,6 +1064,7 @@ export async function handleHeadlessCommand(
       forceNewConversation,
       importFile: fromAfFile,
       stateless: statelessFlag,
+      ephemeral: ephemeralFlag,
       isHeadless: true,
       memfs: memfsFlag,
       memfsStartup: values["memfs-startup"],
@@ -1105,6 +1073,14 @@ export async function handleHeadlessCommand(
     return reportAndExitHeadless(
       "headless_flag_conflict_validation_failed",
       error,
+      "headless_startup_flag_conflicts",
+    );
+  }
+
+  if (ephemeralFlag && (isBidirectionalMode || usesRemoteEnvironment)) {
+    return reportAndExitHeadless(
+      "headless_ephemeral_transport_unsupported",
+      "--ephemeral supports direct one-shot headless prompts only",
       "headless_startup_flag_conflicts",
     );
   }
@@ -1296,6 +1272,28 @@ export async function handleHeadlessCommand(
     }
   }
 
+  if (!agent && ephemeralFlag) {
+    try {
+      const result = await createHeadlessEphemeralConversation({
+        backendMode: startupBackendMode,
+        personality: personalityInput,
+        model,
+        systemPromptPreset,
+        systemPromptCustom: systemCustom,
+      });
+      agent = result.agent;
+      ephemeralConversationId = result.conversationId;
+    } catch (error) {
+      await reportStartupErrorAndExit(
+        "headless_ephemeral_conversation_create_failed",
+        error,
+        "headless_startup_agent_create",
+        values["output-format"] || "text",
+      );
+      throw error;
+    }
+  }
+
   // Priority 3: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     // Pre-determine memfs mode so the agent is created with the correct prompt.
@@ -1416,14 +1414,18 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
   markMilestone("HEADLESS_AGENT_RESOLVED");
-  telemetry.setCurrentAgentId(agent.id);
-  await replaceClientMcpServers(
-    agent.id,
-    settingsManager.getMcpServers(agent.id),
-    { stderr: "pipe" },
-  );
+  const publicAgentId = ephemeralFlag ? null : agent.id;
+  telemetry.setCurrentAgentId(publicAgentId);
+  if (!ephemeralFlag) {
+    await replaceClientMcpServers(
+      agent.id,
+      settingsManager.getMcpServers(agent.id),
+      { stderr: "pipe" },
+    );
+  }
 
-  const isResumingAgent = !!(specifiedAgentId || (!forceNew && !fromAfFile));
+  const isResumingAgent =
+    !ephemeralFlag && !!(specifiedAgentId || (!forceNew && !fromAfFile));
   // Refresh presets before applying optional model/system-prompt overrides.
 
   if (isResumingAgent) {
@@ -1497,7 +1499,7 @@ export async function handleHeadlessCommand(
   let memfsBgPromise: Promise<unknown> | undefined;
 
   // Init secrets cache — runs in parallel with memfs sync below.
-  const secretsAgentId = agent?.id;
+  const secretsAgentId = ephemeralFlag ? undefined : agent?.id;
   const secretsInitPromise = secretsAgentId
     ? import("@/utils/secrets-store").then(({ initSecretsFromServer }) =>
         initSecretsFromServer(secretsAgentId, agent ?? undefined),
@@ -1648,39 +1650,22 @@ export async function handleHeadlessCommand(
     });
   }
 
-  const startupAgentId = agent.id;
-  void clearPersistedClientToolRules(startupAgentId, agent)
-    .then((cleanup) => {
-      if (cleanup) {
-        const count = cleanup.removedToolNames.length;
-        const names = cleanup.removedToolNames.join(", ");
-        debugLog(
-          "headless startup",
-          `Cleared ${count} persisted client tool rule${count === 1 ? "" : "s"} for ${startupAgentId}${count > 0 ? `: ${names}` : ""}`,
-        );
-        return;
-      }
-
-      debugLog(
-        "headless startup",
-        `No persisted client tool rules to clear for ${startupAgentId}`,
-      );
-    })
-    .catch((error) => {
-      debugWarn(
-        "headless startup",
-        `Failed to clear persisted client tool rules for ${startupAgentId}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    });
+  if (!ephemeralFlag) {
+    clearHeadlessClientToolRules(agent);
+  }
 
   try {
-    const resolvedReflectionSettings = await applyReflectionOverrides(
-      agent.id,
-      reflectionOverrides,
-    );
-    effectiveReflectionSettings = isStatelessSession
-      ? { ...resolvedReflectionSettings, trigger: "off" }
-      : resolvedReflectionSettings;
+    if (ephemeralFlag) {
+      effectiveReflectionSettings = { trigger: "off", stepCount: 0 };
+    } else {
+      const resolvedReflectionSettings = await applyHeadlessReflectionOverrides(
+        agent.id,
+        reflectionOverrides,
+      );
+      effectiveReflectionSettings = isStatelessSession
+        ? { ...resolvedReflectionSettings, trigger: "off" }
+        : resolvedReflectionSettings;
+    }
   } catch (error) {
     console.error(
       `Failed to apply sleeptime settings: ${error instanceof Error ? error.message : String(error)}`,
@@ -1688,7 +1673,10 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  if (specifiedConversationId) {
+  if (ephemeralConversationId) {
+    conversationId = ephemeralConversationId;
+    conversationOpenReason = "new";
+  } else if (specifiedConversationId) {
     if (specifiedConversationId === "default") {
       // "default" is the agent's primary message history (no explicit conversation)
       // Don't validate - just use it directly
@@ -1751,7 +1739,7 @@ export async function handleHeadlessCommand(
 
   // Save session (agent + conversation) to both project and global settings
   // Skip for subagents - they shouldn't pollute the LRU settings
-  if (shouldPersistSessionState()) {
+  if (!ephemeralFlag && shouldPersistSessionState()) {
     await settingsManager.loadLocalProjectSettings();
     settingsManager.persistSession(agent.id, conversationId);
   }
@@ -1908,6 +1896,8 @@ export async function handleHeadlessCommand(
       telemetry.trackSessionEnd(sessionStats.getSnapshot(), exitReason);
       await telemetry.flush();
     } finally {
+      await cleanupHeadlessEphemeralConversation(ephemeralConversationId);
+      ephemeralConversationId = null;
       headlessModAdapter.dispose();
       telemetry.setSessionStatsGetter(undefined);
     }
@@ -1920,7 +1910,7 @@ export async function handleHeadlessCommand(
       type: "system",
       subtype: "init",
       session_id: sessionId,
-      agent_id: agent.id,
+      agent_id: publicAgentId,
       conversation_id: conversationId,
       model: agent.llm_config?.model ?? "",
       tools: availableTools,
@@ -1948,8 +1938,10 @@ export async function handleHeadlessCommand(
   ) => {
     const { getResumeDataFromBackend } = await import("@/agent/check-approval");
     while (true) {
-      // Re-fetch agent to get latest in-context messages (source of truth for backend)
-      const freshAgent = await backend.retrieveAgent(agent.id);
+      // Detached conversations have no server-side agent to retrieve.
+      const freshAgent = ephemeralFlag
+        ? agent
+        : await backend.retrieveAgent(agent.id);
 
       let resume: Awaited<ReturnType<typeof getResumeDataFromBackend>>;
       try {
@@ -2191,7 +2183,7 @@ ${SYSTEM_REMINDER_CLOSE}
               ),
               num_turns: 0,
               result: unsupportedReason,
-              agent_id: agent.id,
+              agent_id: publicAgentId,
               conversation_id: conversationId,
               environment: responseEnvironment,
               usage: null,
@@ -2212,7 +2204,7 @@ ${SYSTEM_REMINDER_CLOSE}
           duration_api_ms: Math.round(sessionStats.getSnapshot().totalApiMs),
           num_turns: 0,
           result: unsupportedReason,
-          agent_id: agent.id,
+          agent_id: publicAgentId,
           conversation_id: conversationId,
           environment: responseEnvironment,
           run_ids: [],
@@ -2267,7 +2259,7 @@ ${SYSTEM_REMINDER_CLOSE}
             duration_api_ms: Math.round(stats.totalApiMs),
             num_turns: 1,
             result: resultText,
-            agent_id: agent.id,
+            agent_id: publicAgentId,
             conversation_id: conversationId,
             environment: responseEnvironment,
             usage: null,
@@ -2291,7 +2283,7 @@ ${SYSTEM_REMINDER_CLOSE}
         duration_api_ms: Math.round(stats.totalApiMs),
         num_turns: 1,
         result: resultText,
-        agent_id: agent.id,
+        agent_id: publicAgentId,
         conversation_id: conversationId,
         environment: responseEnvironment,
         run_ids: [],
@@ -3439,7 +3431,7 @@ ${SYSTEM_REMINDER_CLOSE}
       duration_api_ms: Math.round(stats.totalApiMs),
       num_turns: stats.usage.stepCount,
       result: resultText,
-      agent_id: agent.id,
+      agent_id: publicAgentId,
       conversation_id: conversationId,
       ...(fromAgentId
         ? { environment: { source: "same-environment" as const } }
@@ -3474,7 +3466,7 @@ ${SYSTEM_REMINDER_CLOSE}
       duration_api_ms: Math.round(stats.totalApiMs),
       num_turns: stats.usage.stepCount,
       result: resultText,
-      agent_id: agent.id,
+      agent_id: publicAgentId,
       conversation_id: conversationId,
       ...(fromAgentId
         ? { environment: { source: "same-environment" as const } }

@@ -84,7 +84,7 @@ export interface MessageEnvelope {
   /** Monotonic per-session event sequence. Optional for backward compatibility. */
   event_seq?: number;
   /** Agent that triggered this event. Used with default conversation scoping. */
-  agent_id?: string;
+  agent_id?: string | null;
   /** Conversation that triggered this event. Used for conversation-scoped filtering. */
   conversation_id?: string;
 }
@@ -96,7 +96,7 @@ export interface MessageEnvelope {
 export interface SystemInitMessage extends MessageEnvelope {
   type: "system";
   subtype: "init";
-  agent_id: string;
+  agent_id: string | null;
   conversation_id: string;
   model: string;
   tools: string[];
@@ -322,7 +322,7 @@ export type UsageStatistics = LettaStreamingResponse.LettaUsageStatistics;
 export interface ResultMessage extends MessageEnvelope {
   type: "result";
   subtype: ResultSubtype;
-  agent_id: string;
+  agent_id: string | null;
   conversation_id: string;
   duration_ms: number;
   duration_api_ms: number;

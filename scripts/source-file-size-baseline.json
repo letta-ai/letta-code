@@ -21,7 +21,7 @@
   "src/cli/mods/local-mod-loader.test.ts": 1043,
   "src/cli/reflection-transcript.test.ts": 1084,
   "src/cli/subcommands/skills.ts": 1264,
-  "src/headless.ts": 5105,
+  "src/headless.ts": 5097,
   "src/hooks/integration.test.ts": 1147,
   "src/index.ts": 2773,
   "src/mods/learning-harness.ts": 2434,

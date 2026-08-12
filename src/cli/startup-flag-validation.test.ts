@@ -105,6 +105,35 @@ describe("startup flag validation helpers", () => {
     ).toThrow("--stateless requires --agent");
   });
 
+  test("ephemeral startup rejects agent-backed and memory-backed modes", () => {
+    const baseOptions = {
+      specifiedConversationId: null,
+      specifiedAgentId: null,
+      specifiedAgentName: null,
+      forceNewAgent: false,
+      forceNewConversation: false,
+      importFile: null,
+      stateless: false,
+      ephemeral: true,
+      isHeadless: true,
+      memfs: false,
+      memfsStartup: undefined,
+    };
+
+    expect(() =>
+      validatePrimaryStartupFlagConflicts(baseOptions),
+    ).not.toThrow();
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({
+        ...baseOptions,
+        specifiedAgentId: "agent-123",
+      }),
+    ).toThrow("--ephemeral cannot be used with --agent");
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({ ...baseOptions, memfs: true }),
+    ).toThrow("--ephemeral cannot be used with --stateless, --memfs");
+  });
+
   test("primary startup validation preserves conversation conflict behavior", () => {
     expect(() =>
       validatePrimaryStartupFlagConflicts({

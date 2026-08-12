@@ -71,6 +71,7 @@ interface PrimaryStartupFlagOptions {
   importFile: string | null | undefined;
   shouldResume?: boolean | null;
   stateless: boolean | null | undefined;
+  ephemeral?: boolean | null;
   isHeadless: boolean;
   memfs: boolean | null | undefined;
   memfsStartup: string | null | undefined;
@@ -79,6 +80,36 @@ interface PrimaryStartupFlagOptions {
 export function validatePrimaryStartupFlagConflicts(
   options: PrimaryStartupFlagOptions,
 ): void {
+  validateFlagConflicts({
+    guard: options.ephemeral,
+    checks: [
+      {
+        when: !options.isHeadless,
+        message: "--ephemeral is only supported in headless mode",
+      },
+      {
+        when:
+          options.specifiedAgentId ||
+          options.specifiedAgentName ||
+          options.specifiedConversationId,
+        message:
+          "--ephemeral cannot be used with --agent, --name, or --conversation",
+      },
+      {
+        when: options.forceNewAgent || options.forceNewConversation,
+        message: "--ephemeral cannot be used with --new-agent or --new",
+      },
+      {
+        when: options.stateless || options.memfs || options.memfsStartup,
+        message:
+          "--ephemeral cannot be used with --stateless, --memfs, or --memfs-startup",
+      },
+      {
+        when: options.importFile || options.shouldResume,
+        message: "--ephemeral cannot be used with --import or --resume",
+      },
+    ],
+  });
   validateStatelessStartupOptions({
     stateless: options.stateless,
     isHeadless: options.isHeadless,

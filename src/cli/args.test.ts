@@ -45,10 +45,12 @@ describe("shared CLI arg schema", () => {
 
     expect(headlessFlags).toContain("memfs-startup");
     expect(headlessFlags).toContain("stateless");
+    expect(headlessFlags).toContain("ephemeral");
     expect(headlessFlags).not.toContain("resume");
     expect(interactiveFlags).toContain("resume");
     expect(interactiveFlags).not.toContain("memfs-startup");
     expect(interactiveFlags).not.toContain("stateless");
+    expect(interactiveFlags).not.toContain("ephemeral");
     expect(headlessFlags).toContain("agent");
     expect(interactiveFlags).toContain("agent");
     expect(headlessFlags).toContain("no-mods");
