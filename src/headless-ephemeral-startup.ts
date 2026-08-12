@@ -1,6 +1,5 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { createEphemeralConversation } from "@/agent/ephemeral-conversation";
-import { deleteEphemeralConversation } from "@/backend/api/ephemeral-conversations";
 import { clearPersistedClientToolRules } from "@/tools/toolset";
 import { debugLog, debugWarn } from "@/utils/debug";
 
@@ -25,20 +24,6 @@ export async function createHeadlessEphemeralConversation(params: {
     systemPromptCustom: params.systemPromptCustom,
     memoryPromptMode: "standard",
   });
-}
-
-export async function cleanupHeadlessEphemeralConversation(
-  conversationId: string | null,
-): Promise<void> {
-  if (!conversationId) return;
-  try {
-    await deleteEphemeralConversation(conversationId);
-  } catch (error) {
-    debugWarn(
-      "headless cleanup",
-      `Failed to delete ephemeral conversation ${conversationId}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
 }
 
 export function clearHeadlessClientToolRules(agent: AgentState): void {

@@ -114,7 +114,6 @@ import {
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import { waitForEnvironmentAssistantMessage } from "./headless-environment-response";
 import {
-  cleanupHeadlessEphemeralConversation,
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
 } from "./headless-ephemeral-startup";
@@ -1896,8 +1895,6 @@ export async function handleHeadlessCommand(
       telemetry.trackSessionEnd(sessionStats.getSnapshot(), exitReason);
       await telemetry.flush();
     } finally {
-      await cleanupHeadlessEphemeralConversation(ephemeralConversationId);
-      ephemeralConversationId = null;
       headlessModAdapter.dispose();
       telemetry.setSessionStatsGetter(undefined);
     }

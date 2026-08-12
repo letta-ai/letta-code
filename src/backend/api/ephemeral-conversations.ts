@@ -15,15 +15,6 @@ export interface EphemeralConversation {
   context_window_limit: number | null;
 }
 
-export async function deleteEphemeralConversation(
-  conversationId: string,
-): Promise<void> {
-  await apiRequest(
-    "DELETE",
-    `/v1/conversations/${encodeURIComponent(conversationId)}`,
-  );
-}
-
 export async function createEphemeralConversation(
   body: EphemeralConversationCreateBody,
 ): Promise<EphemeralConversation> {
