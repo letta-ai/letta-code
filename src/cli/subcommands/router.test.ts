@@ -129,6 +129,23 @@ describe("subcommand router", () => {
     }
   });
 
+  test("routes sandbox help", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      const exitCode = await runSubcommand(["sandbox", "help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain("letta sandbox upload");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   test("identifies backend-aware subcommands for early backend selection", () => {
     expect(subcommandNeedsEarlyBackendMode("app-server")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("connect")).toBe(true);
@@ -138,6 +155,7 @@ describe("subcommand router", () => {
     expect(subcommandNeedsEarlyBackendMode("envs")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("memory")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("mods")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("sandbox")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("version")).toBe(false);
     expect(subcommandNeedsEarlyBackendMode("backend")).toBe(false);
     expect(subcommandNeedsEarlyBackendMode(undefined)).toBe(false);
