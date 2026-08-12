@@ -52,6 +52,7 @@ import {
   sendApprovalContinuationWithRetry,
 } from "./send";
 import { injectQueuedSkillContent } from "./skill-injection";
+import { claimPendingTeleportAtBoundary } from "./teleport";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import {
   createTurnInputState,
@@ -60,7 +61,7 @@ import {
 } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
-import type { ConversationRuntime } from "./types";
+import type { ConversationRuntime, PendingTeleport } from "./types";
 
 type ApprovalTransportOpenResult = "open" | "interrupted";
 
@@ -106,6 +107,10 @@ export type ApprovalBranchResult =
       stream: Stream<LettaStreamingResponse>;
     } & ApprovalBranchProgress)
   | ({ kind: "interrupted" } & ApprovalBranchProgress)
+  | ({
+      kind: "teleport";
+      pendingTeleport: PendingTeleport;
+    } & ApprovalBranchProgress)
   | ({
       kind: "terminal";
       drainResult: Extract<
@@ -567,6 +572,31 @@ export async function handleApprovalStop(params: {
 
   if (shouldInterrupt()) {
     return interruptTermination();
+  }
+
+  const pendingTeleport = claimPendingTeleportAtBoundary({
+    listener: runtime.listener,
+    agentId,
+    conversationId,
+    continuation: { approvals: persistedExecutionResults },
+  });
+  if (pendingTeleport) {
+    clearPendingApprovalBatchIds(
+      runtime,
+      decisions.map((decision) => decision.approval),
+    );
+    return {
+      kind: "teleport",
+      pendingTeleport,
+      turnInput,
+      dequeuedBatchId,
+      pendingNormalizationInterruptedToolCallIds: [],
+      turnToolContextId,
+      lastExecutionResults,
+      lastExecutingToolCallIds,
+      lastNeedsUserInputToolCallIds,
+      lastApprovalContinuationAccepted: false,
+    };
   }
 
   let nextTurnInput = createTurnInputState([

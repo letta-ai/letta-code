@@ -124,17 +124,22 @@ import {
   isAppServerInfoCommand,
   isConversationForkCommand,
 } from "./management-protocol-inbound";
+import {
+  isObjectRecord,
+  isRuntimeScope,
+  isStringArray,
+  isStringRecord,
+} from "./protocol-validation";
+import {
+  isTeleportContinuePayload,
+  parseTeleportCommand,
+} from "./teleport-protocol-inbound";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
 export type ServerLifecycleMessage = {
   type: "pong";
 };
 
-function isStringArray(value: unknown): value is string[] {
-  return (
-    Array.isArray(value) && value.every((item) => typeof item === "string")
-  );
-}
 const TOOLSET_PREFERENCES = new Set([
   "auto",
   "codex",
@@ -152,32 +157,6 @@ function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
       (typeof value.base === "string" &&
         TOOLSET_PREFERENCES.has(value.base))) &&
     (value.include === undefined || isStringArray(value.include))
-  );
-}
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return (
-    !!value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.values(value).every((item) => typeof item === "string")
-  );
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function isRuntimeScope(value: unknown): value is RuntimeScope {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const candidate = value as { agent_id?: unknown; conversation_id?: unknown };
-  return (
-    typeof candidate.agent_id === "string" &&
-    candidate.agent_id.length > 0 &&
-    typeof candidate.conversation_id === "string" &&
-    candidate.conversation_id.length > 0
   );
 }
 
@@ -235,6 +214,9 @@ function isInputCommand(value: unknown): value is InputCommand {
   }
   if (payload.kind === "approval_response") {
     return isValidApprovalResponseBody(payload);
+  }
+  if (payload.kind === "teleport_continue") {
+    return isTeleportContinuePayload(payload);
   }
   return false;
 }
@@ -392,6 +374,16 @@ function getInvalidInputReason(value: unknown): {
         runtime: candidate.runtime,
         reason:
           "Protocol violation: input.kind=approval_response requires payload.request_id and either payload.decision or payload.error",
+      };
+    }
+    return null;
+  }
+  if (payload.kind === "teleport_continue") {
+    if (!isTeleportContinuePayload(payload)) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.kind=teleport_continue requires teleport_id, source, and optional continuation.approvals[]",
       };
     }
     return null;
@@ -2152,6 +2144,8 @@ export function parseServerMessage(
     if (legacyInput) {
       return legacyInput;
     }
+    const teleportCommand = parseTeleportCommand(parsed);
+    if (teleportCommand) return teleportCommand;
     if (
       isInputCommand(parsed) ||
       isChangeDeviceStateCommand(parsed) ||

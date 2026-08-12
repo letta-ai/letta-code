@@ -27,6 +27,7 @@ import type {
   LoopStatus,
   RuntimeScope,
   StopReasonType,
+  TeleportContinuation,
   WsProtocolCommand,
 } from "@/types/protocol_v2";
 import type {
@@ -135,6 +136,16 @@ export interface PendingExternalToolCall {
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
 }
+
+export type PendingTeleport = {
+  teleportId: string;
+  connectionId: ListenerConnectionId;
+  agentId: string;
+  conversationId: string;
+  requestedAt: number;
+  readyAt?: number;
+  continuation?: TeleportContinuation;
+};
 
 export interface ModeChangePayload {
   mode: "standard" | "acceptEdits" | "unrestricted" | "strict";
@@ -367,6 +378,8 @@ export type ListenerRuntime = {
   /** Agent IDs whose cached secrets are stale and must re-fetch on the next hydration call. */
   secretsDirtyAgents: Set<string>;
   pendingExternalToolCalls: Map<string, PendingExternalToolCall>;
+  /** Source handoffs retained briefly so a failed destination can resume. */
+  pendingTeleports?: Map<string, PendingTeleport>;
   /**
    * Agent metadata warmups for listen-mode reminders. The cached promise is
    * reused while the listener stays connected so first-turn reminders can join

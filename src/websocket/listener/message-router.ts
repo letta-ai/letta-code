@@ -63,6 +63,11 @@ import {
 } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
+import {
+  handleTeleportProbe,
+  handleTeleportRequest,
+  takeFailedTeleport,
+} from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
 import type {
@@ -269,6 +274,59 @@ export function createListenerMessageHandler(
         return;
       }
 
+      if (parsed.type === "teleport_probe") {
+        handleTeleportProbe(parsed, socket, safeSocketSend);
+        return;
+      }
+
+      if (parsed.type === "teleport_request") {
+        handleTeleportRequest({
+          listener: runtime,
+          command: parsed,
+          connectionId,
+        });
+        return;
+      }
+
+      if (parsed.type === "teleport_failed") {
+        const pending = takeFailedTeleport({
+          listener: runtime,
+          teleportId: parsed.teleport_id,
+          agentId: parsed.runtime.agent_id,
+          conversationId: parsed.runtime.conversation_id,
+        });
+        const approvals = pending?.continuation?.approvals;
+        if (pending && approvals && approvals.length > 0) {
+          const scopedRuntime = getOrCreateScopedRuntime(
+            runtime,
+            pending.agentId,
+            pending.conversationId,
+          );
+          runDetachedListenerTask("teleport_failed", async () => {
+            await processIncomingMessage(
+              {
+                type: "message",
+                connectionId: pending.connectionId,
+                agentId: pending.agentId,
+                conversationId: pending.conversationId,
+                messages: [
+                  {
+                    type: "approval",
+                    approvals,
+                    otid: crypto.randomUUID(),
+                  },
+                ],
+              },
+              socket,
+              scopedRuntime,
+              opts.onStatusChange,
+              pending.connectionId,
+            );
+          });
+        }
+        return;
+      }
+
       if (parsed.type === "external_tool_call_response") {
         handleExternalToolCallResponseCommand(runtime, connectionId, parsed);
         return;
@@ -380,6 +438,59 @@ export function createListenerMessageHandler(
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
           console.log(`[Listen V2] Dropping input: runtime mismatch or closed`);
           acknowledgeInput(false, "Runtime is no longer active");
+          return;
+        }
+
+        if (parsed.payload.kind === "teleport_continue") {
+          const scopedRuntime = getOrCreateScopedRuntime(
+            runtime,
+            parsed.runtime.agent_id,
+            parsed.runtime.conversation_id,
+          );
+          const acceptedKey = `teleport:${parsed.payload.teleport_id}`;
+          const previousDisposition =
+            scopedRuntime.acceptedInputDispositions.get(acceptedKey);
+          if (previousDisposition) {
+            acknowledgeInput(true, undefined, previousDisposition);
+            return;
+          }
+
+          const approvals = parsed.payload.continuation?.approvals;
+          if (!approvals || approvals.length === 0) {
+            acknowledgeInput(true);
+            return;
+          }
+          if (scopedRuntime.isProcessing) {
+            acknowledgeInput(
+              false,
+              "Destination runtime is already processing",
+            );
+            return;
+          }
+
+          scopedRuntime.acceptedInputDispositions.set(acceptedKey, "started");
+          acknowledgeInput(true, undefined, "started");
+          runDetachedListenerTask("teleport_continue", async () => {
+            await processIncomingMessage(
+              {
+                type: "message",
+                connectionId,
+                agentId: parsed.runtime.agent_id,
+                conversationId: parsed.runtime.conversation_id,
+                messages: [
+                  {
+                    type: "approval",
+                    approvals,
+                    otid: crypto.randomUUID(),
+                  },
+                ],
+              },
+              socket,
+              scopedRuntime,
+              opts.onStatusChange,
+              connectionId,
+            );
+          });
           return;
         }
 

@@ -45,11 +45,13 @@ import type {
 } from "./external-tool-protocol";
 import type { RuntimeScope } from "./runtime-scope";
 import type { CronRunLogPage, CronTask } from "./schedule-protocol";
+import type * as TeleportProtocol from "./teleport-protocol";
 
 export type * from "./background-process-protocol";
 export type * from "./external-tool-protocol";
 export type * from "./runtime-scope";
 export type * from "./schedule-protocol";
+export type * from "./teleport-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 
@@ -679,18 +681,14 @@ export interface InputCreateMessagePayload {
 export type InputApprovalResponsePayload = {
   kind: "approval_response";
 } & ApprovalResponseBody;
-
 export type InputPayload =
   | InputCreateMessagePayload
-  | InputApprovalResponsePayload;
+  | InputApprovalResponsePayload
+  | TeleportProtocol.InputTeleportContinuePayload;
 
 export interface InputCommand {
   type: "input";
-  /**
-   * Optional correlation id. When present, the listener acknowledges that the
-   * input was accepted into its normal dispatch/queue path without waiting for
-   * the turn to finish.
-   */
+  /** Correlates acknowledgement without waiting for the turn to finish. */
   request_id?: string;
   runtime: RuntimeScope;
   payload: InputPayload;
@@ -2688,6 +2686,7 @@ export type WsProtocolCommand =
   | AbortMessageCommand
   | SyncCommand
   | RuntimeStartCommand
+  | TeleportProtocol.TeleportProtocolCommand
   | RuntimeExternalToolsUpdateCommand
   | ExternalToolCallResponseCommand
   | TerminalSpawnCommand
@@ -2781,6 +2780,7 @@ export type WsProtocolCommandType = WsProtocolCommand["type"];
 export type WsProtocolMessage =
   | ControlRequest
   | InputAcceptedResponseMessage
+  | TeleportProtocol.TeleportProtocolMessage
   | ExecuteCommandResponseMessage
   | DeviceStatusUpdateMessage
   | LoopStatusUpdateMessage

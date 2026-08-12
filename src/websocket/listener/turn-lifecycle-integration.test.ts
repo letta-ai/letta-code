@@ -5,12 +5,14 @@ import {
   setConversationId,
   setCurrentAgentId,
 } from "@/agent/context";
+import { openListenerConnection } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import { shouldProcessInboundMessageDirectly } from "./queue";
 import { finalizeHandledRecoveryTurn } from "./recovery";
 import { clearConversationRuntimeState } from "./runtime";
+import { finishPendingTeleport, handleTeleportRequest } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import { releaseListenerTurnContext } from "./turn-context";
@@ -23,6 +25,26 @@ function createOpenTransport(sentPayloads: string[] = []): ListenerTransport {
     isOpen: () => true,
     send: (payload: string) => sentPayloads.push(payload),
   };
+}
+
+function openTestConnection(
+  listener: ReturnType<typeof createRuntime>,
+  connectionId: string,
+): void {
+  openListenerConnection({
+    runtime: listener,
+    connectionId,
+    writer: createOpenTransport(),
+    options: {
+      connectionId,
+      wsUrl: "ws://test",
+      deviceId: "device-test",
+      connectionName: "Test",
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    },
+  });
 }
 
 async function waitForPendingApproval(
@@ -213,6 +235,107 @@ describe("listener turn lifecycle integration", () => {
     expect(result.kind).toBe("terminal");
     expect(waitForApprovalTransportOpen).toHaveBeenCalledTimes(0);
     expect(executeApprovalBatch).toHaveBeenCalledTimes(1);
+  });
+
+  test("teleport yields after persisting the current tool result", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
+    });
+    openTestConnection(listener, "cloud-relay");
+    handleTeleportRequest({
+      listener,
+      connectionId: "cloud-relay",
+      command: {
+        type: "teleport_request",
+        request_id: "teleport-1",
+        teleport_id: "teleport-1",
+        runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+        target: {
+          connection_id: "target-connection",
+          device_id: "target-device",
+          connection_name: "Cloud",
+        },
+      },
+    });
+    const approval = {
+      toolCallId: "call-teleport",
+      toolName: "Bash",
+      toolArgs: '{"command":"letta teleport cloud"}',
+    };
+    const sendApprovalContinuation = mock(async () => {
+      throw new Error("source must not start another model step");
+    });
+
+    const result = await startQuestionApproval(runtime, turnLease, {
+      approvals: [approval],
+      processOwnedTurn: true,
+      dependencies: {
+        classifyApprovals: async () => ({
+          autoAllowed: [{ approval, parsedArgs: {}, context: null }],
+          autoDenied: [],
+          needsUserInput: [],
+        }),
+        executeApprovalBatch: async () => [
+          {
+            type: "tool" as const,
+            tool_call_id: approval.toolCallId,
+            status: "success" as const,
+            tool_return: '{"status":"waiting_for_source"}',
+          },
+        ],
+        ensureSecretsHydrated: async () => {},
+        sendApprovalContinuation,
+      } as never,
+    });
+
+    expect(result.kind).toBe("teleport");
+    if (result.kind === "teleport") {
+      expect(result.pendingTeleport.continuation?.approvals).toEqual([
+        {
+          type: "tool",
+          tool_call_id: "call-teleport",
+          status: "success",
+          tool_return: '{"status":"waiting_for_source"}',
+        },
+      ]);
+    }
+    expect(sendApprovalContinuation).toHaveBeenCalledTimes(0);
+  });
+
+  test("a text-only turn becomes ready at its end-turn boundary", () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    openTestConnection(listener, "cloud-relay");
+    handleTeleportRequest({
+      listener,
+      connectionId: "cloud-relay",
+      command: {
+        type: "teleport_request",
+        request_id: "teleport-text",
+        teleport_id: "teleport-text",
+        runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+        target: {
+          connection_id: "target-connection",
+          device_id: "target-device",
+          connection_name: "Cloud",
+        },
+      },
+    });
+
+    runtime.turnLifecycle.finish(lease, "end_turn");
+    finishPendingTeleport(runtime);
+
+    expect(listener.pendingTeleports?.get("teleport-text")?.readyAt).toEqual(
+      expect.any(Number),
+    );
   });
 
   // Guards the gate's polarity and its default. A relay turn's results must
