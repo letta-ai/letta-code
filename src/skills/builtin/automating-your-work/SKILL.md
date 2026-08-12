@@ -1,9 +1,9 @@
 ---
-name: building-automation
-description: Use this skill when you notice work you can automate. It shows how to extend yourself with one-off and recurring workflows built on the Letta Agent SDK.
+name: automating-your-work
+description: Guides you in automating repeated work with the smallest appropriate form, from one-off scripts and reusable skills to scheduled or event-driven Agent SDK programs.
 ---
 
-# Building Automation
+# Automating Your Work
 
 You can use the Letta Agent SDK to automate parts of your own work. A program can call you in another conversation, resume work later, run your tools on a selected computer, and return the result to your user. The same program can also ask other agents to help with separate parts of the work.
 
