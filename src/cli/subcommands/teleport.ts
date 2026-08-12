@@ -2,7 +2,6 @@ import { parseArgs } from "node:util";
 import { isLocalAgentId } from "@/agent/agent-id";
 import {
   type EnvironmentConnection,
-  getRuntimeLastEnvironment,
   listEnvironments,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
@@ -17,7 +16,6 @@ interface TeleportSubcommandDeps {
   listEnvironments?: typeof listEnvironments;
   resolveEnvironmentConnectionId?: typeof resolveEnvironmentConnectionId;
   resolveAgentSandboxConnectionId?: typeof resolveAgentSandboxConnectionId;
-  getRuntimeLastEnvironment?: typeof getRuntimeLastEnvironment;
   teleportToEnvironment?: typeof teleportToEnvironment;
 }
 
@@ -31,7 +29,6 @@ function printUsage(): void {
 Usage:
   letta teleport list
   letta teleport cloud
-  letta teleport back
   letta teleport <environment>
 
 Notes:
@@ -39,11 +36,12 @@ Notes:
     LETTA_CONVERSATION_ID (or AGENT_ID / CONVERSATION_ID), falling back to the
     last active session.
   - Requires a Letta Cloud agent and a non-virtual conversation.
-  - list: prints accessible online environments as JSON.
+  - list: prints accessible online remote environments as JSON.
   - cloud: teleports to the agent's Cloud sandbox.
-  - back: teleports to the last online prior environment.
-  - <environment>: teleports to a specific environment by name, device-id,
-    connection-id, or environment id.
+  - <environment>: teleports to a specific remote environment by name,
+    device-id, connection-id, or environment id.
+  - Desktop Local is not a teleport target yet. Use the Desktop environment
+    picker to switch back to Local.
   - Output is JSON only.
 `.trim(),
   );
@@ -134,6 +132,25 @@ function formatEnvironmentForList(
   };
 }
 
+function isTeleportableRemoteEnvironment(
+  environment: EnvironmentConnection,
+): boolean {
+  return (
+    environment.organizationId !== "local" &&
+    !environment.connectionId?.startsWith("local-")
+  );
+}
+
+function assertTeleportableRemoteEnvironment(
+  environment: EnvironmentConnection,
+): void {
+  if (!isTeleportableRemoteEnvironment(environment)) {
+    throw new Error(
+      "Desktop Local is not a teleport target yet. Use the Desktop environment picker to switch back to Local.",
+    );
+  }
+}
+
 async function initializeTeleportSettings(): Promise<void> {
   await settingsManager.initialize();
   await settingsManager.loadLocalProjectSettings();
@@ -158,21 +175,20 @@ export async function runTeleportSubcommand(
     return 0;
   }
 
-  const knownActions = ["list", "cloud", "back"];
-  const isEnvironmentSelector = !knownActions.includes(action);
-
   try {
     await (deps.initializeSettings ?? initializeTeleportSettings)();
 
     if (action === "list") {
       const list = deps.listEnvironments ?? listEnvironments;
       const result = await list({ limit: 100, onlineOnly: true });
-      const connections = result.connections.map(formatEnvironmentForList);
+      const connections = result.connections
+        .filter(isTeleportableRemoteEnvironment)
+        .map(formatEnvironmentForList);
       console.log(JSON.stringify({ ...result, connections }, null, 2));
       return 0;
     }
 
-    // cloud, back, and <environment> all need a valid session
+    // cloud and <environment> both need a valid session
     const session = resolveTeleportSession(
       process.env,
       (
@@ -190,31 +206,15 @@ export async function runTeleportSubcommand(
       });
       targetConnectionId = result.connectionId;
     } else if (action === "back") {
-      const getLast =
-        deps.getRuntimeLastEnvironment ?? getRuntimeLastEnvironment;
-      const lastEnv = await getLast(session.agentId, session.conversationId);
-      if (!lastEnv) {
-        throw new Error("No prior environment found to teleport back to");
-      }
-      if (!lastEnv.isOnline) {
-        throw new Error(
-          `Prior environment "${lastEnv.connectionName}" is offline`,
-        );
-      }
-      // Verify it's online via resolveEnvironmentConnectionId
-      const resolve =
-        deps.resolveEnvironmentConnectionId ?? resolveEnvironmentConnectionId;
-      const resolved = await resolve(lastEnv.deviceId);
-      targetConnectionId = resolved.connectionId;
-    } else if (isEnvironmentSelector) {
+      throw new Error(
+        "Teleport back is not supported yet. Use the Desktop environment picker to switch back to Local.",
+      );
+    } else {
       const resolve =
         deps.resolveEnvironmentConnectionId ?? resolveEnvironmentConnectionId;
       const resolved = await resolve(action);
+      assertTeleportableRemoteEnvironment(resolved.environment);
       targetConnectionId = resolved.connectionId;
-    } else {
-      console.error(`Unknown action: ${action}`);
-      printUsage();
-      return 1;
     }
 
     const teleport = deps.teleportToEnvironment ?? teleportToEnvironment;

@@ -231,33 +231,6 @@ export interface TeleportResponse {
   updatedAt: number;
 }
 
-export interface RuntimeLastEnvironmentResponse {
-  environmentId: string | null;
-  deviceId: string;
-  connectionName: string;
-  metadata: EnvironmentMetadata | null;
-  status: "online" | "offline" | "unreachable";
-  isOnline: boolean;
-  lastSeenAt: number | null;
-  lastUsedAt: number;
-  source: "environment" | "sandbox" | "unknown";
-}
-
-/**
- * Fetch the prior online environment for a conversation from Cloud.
- * Returns null when no prior environment is recorded.
- */
-export async function getRuntimeLastEnvironment(
-  agentId: string,
-  conversationId: string,
-  request: typeof apiRequest = apiRequest,
-): Promise<RuntimeLastEnvironmentResponse | null> {
-  return request<RuntimeLastEnvironmentResponse | null>(
-    "GET",
-    `/v1/environments/runtimes/${encodeURIComponent(agentId)}/${encodeURIComponent(conversationId)}/last`,
-  );
-}
-
 /**
  * Submit a teleport request to Cloud. Returns immediately after the 202
  * acceptance — the harness owns polling/yield after this returns.

@@ -65,7 +65,10 @@ describe("teleport subcommand", () => {
       expect(exitCode).toBe(0);
       expect(out.messages.join("\n")).toContain("letta teleport list");
       expect(out.messages.join("\n")).toContain("letta teleport cloud");
-      expect(out.messages.join("\n")).toContain("letta teleport back");
+      expect(out.messages.join("\n")).not.toContain("letta teleport back");
+      expect(out.messages.join("\n")).toContain(
+        "Desktop Local is not a teleport target yet",
+      );
     } finally {
       out.restore();
     }
@@ -133,7 +136,7 @@ describe("teleport subcommand", () => {
     );
   });
 
-  test("list prints accessible online environments as JSON", async () => {
+  test("list prints accessible online remote environments as JSON", async () => {
     const out = captureOutput();
     try {
       const exitCode = await runTeleportSubcommand(["list"], {
@@ -142,6 +145,18 @@ describe("teleport subcommand", () => {
           expect(options).toEqual({ limit: 100, onlineOnly: true });
           return {
             connections: [
+              {
+                id: "local-env",
+                connectionId: "local-1",
+                deviceId: "local-device",
+                connectionName: "Desktop Local",
+                organizationId: "local",
+                podId: "local",
+                connectedAt: null,
+                lastHeartbeat: Date.now(),
+                lastSeenAt: Date.now(),
+                firstSeenAt: Date.now(),
+              },
               {
                 id: "env-1",
                 connectionId: "conn-1",
@@ -234,110 +249,52 @@ describe("teleport subcommand", () => {
     }
   });
 
-  test("back resolves last environment and submits teleport", async () => {
-    const out = captureOutput();
-    const teleportCalls: Array<{ targetConnectionId: string }> = [];
-    try {
-      const exitCode = await withEnvironment(CLOUD_ENV, () =>
-        runTeleportSubcommand(["back"], {
-          initializeSettings: async () => {},
-          getLastSession: () => null,
-          getRuntimeLastEnvironment: async (agentId, conversationId) => {
-            expect(agentId).toBe("agent-1");
-            expect(conversationId).toBe("conv-1");
-            return {
-              environmentId: "env-prior",
-              deviceId: "device-prior",
-              connectionName: "Prior Laptop",
-              metadata: null,
-              status: "online",
-              isOnline: true,
-              lastSeenAt: 100,
-              lastUsedAt: 100,
-              source: "environment",
-            };
-          },
-          resolveEnvironmentConnectionId: async (selector) => {
-            expect(selector).toBe("device-prior");
-            return {
-              connectionId: "conn-prior",
-              environment: {} as never,
-            };
-          },
-          teleportToEnvironment: async (
-            _agentId,
-            _conversationId,
-            targetConnectionId,
-          ) => {
-            teleportCalls.push({ targetConnectionId });
-            return {
-              id: "teleport-2",
-              agentId: "agent-1",
-              conversationId: "conv-1",
-              sourceConnectionId: "source-conn",
-              targetConnectionId: "conn-prior",
-              targetDeviceId: "device-prior",
-              targetConnectionName: "Prior Laptop",
-              status: "starting_destination",
-              error: null,
-              createdAt: 1,
-              updatedAt: 1,
-            };
-          },
-        }),
-      );
-
-      expect(exitCode).toBe(0);
-      expect(teleportCalls).toEqual([{ targetConnectionId: "conn-prior" }]);
-      const parsed = JSON.parse(out.messages[0] ?? "{}");
-      expect(parsed.status).toBe("starting_destination");
-      expect(parsed.targetConnectionName).toBe("Prior Laptop");
-    } finally {
-      out.restore();
-    }
-  });
-
-  test("back errors when no prior environment exists", async () => {
+  test("back explains that return teleport is not supported yet", async () => {
     const out = captureOutput();
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["back"], {
           initializeSettings: async () => {},
           getLastSession: () => null,
-          getRuntimeLastEnvironment: async () => null,
         }),
       );
 
       expect(exitCode).toBe(1);
-      expect(out.errors[0]).toContain("No prior environment found");
+      expect(out.errors[0]).toContain("Teleport back is not supported yet");
     } finally {
       out.restore();
     }
   });
 
-  test("back errors when the prior environment is offline", async () => {
+  test("rejects Desktop Local as an explicit environment target", async () => {
     const out = captureOutput();
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
-        runTeleportSubcommand(["back"], {
+        runTeleportSubcommand(["caren-mac.local"], {
           initializeSettings: async () => {},
           getLastSession: () => null,
-          getRuntimeLastEnvironment: async () => ({
-            environmentId: "env-prior",
-            deviceId: "device-prior",
-            connectionName: "Prior Laptop",
-            metadata: null,
-            status: "offline",
-            isOnline: false,
-            lastSeenAt: 100,
-            lastUsedAt: 100,
-            source: "environment",
+          resolveEnvironmentConnectionId: async () => ({
+            connectionId: "local-1",
+            environment: {
+              id: "local-env",
+              connectionId: "local-1",
+              deviceId: "local-device",
+              connectionName: "caren-mac.local",
+              organizationId: "local",
+              podId: "local",
+              connectedAt: null,
+              lastHeartbeat: Date.now(),
+              lastSeenAt: Date.now(),
+              firstSeenAt: Date.now(),
+            },
           }),
         }),
       );
 
       expect(exitCode).toBe(1);
-      expect(out.errors[0]).toContain("offline");
+      expect(out.errors[0]).toContain(
+        "Desktop Local is not a teleport target yet",
+      );
     } finally {
       out.restore();
     }

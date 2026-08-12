@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   createAgentSandbox,
-  getRuntimeLastEnvironment,
   teleportToEnvironment,
 } from "@/backend/api/environments";
 import type { apiRequest } from "@/backend/api/request";
@@ -55,60 +54,6 @@ describe("Cloud sandbox environment resolution", () => {
     await createAgentSandbox("agent-1", { conversationId: "default" }, request);
 
     expect(bodies).toEqual([{}]);
-  });
-});
-
-describe("getRuntimeLastEnvironment", () => {
-  test("GETs the last environment for a conversation", async () => {
-    const calls: Array<{ method: string; path: string }> = [];
-    const request = (async (method: string, path: string): Promise<unknown> => {
-      calls.push({ method, path });
-      return {
-        environmentId: "env-prior",
-        deviceId: "device-prior",
-        connectionName: "Prior Laptop",
-        metadata: null,
-        status: "online",
-        isOnline: true,
-        lastSeenAt: 100,
-        lastUsedAt: 100,
-        source: "environment",
-      };
-    }) as typeof apiRequest;
-
-    const result = await getRuntimeLastEnvironment(
-      "agent-1",
-      "conv-1",
-      request,
-    );
-
-    expect(calls).toEqual([
-      {
-        method: "GET",
-        path: "/v1/environments/runtimes/agent-1/conv-1/last",
-      },
-    ]);
-    expect(result).toEqual({
-      environmentId: "env-prior",
-      deviceId: "device-prior",
-      connectionName: "Prior Laptop",
-      metadata: null,
-      status: "online",
-      isOnline: true,
-      lastSeenAt: 100,
-      lastUsedAt: 100,
-      source: "environment",
-    });
-  });
-
-  test("returns null when no prior environment exists", async () => {
-    const request = (async (): Promise<unknown> => null) as typeof apiRequest;
-    const result = await getRuntimeLastEnvironment(
-      "agent-1",
-      "conv-1",
-      request,
-    );
-    expect(result).toBeNull();
   });
 });
 

@@ -208,7 +208,7 @@ SUBCOMMANDS
   letta agents list [--query <text> | --name <name> | --tags <tags>]
   letta environments list [--online-only]
   letta environments current
-  letta teleport list|cloud|back|<environment>
+  letta teleport list|cloud|<environment>
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
