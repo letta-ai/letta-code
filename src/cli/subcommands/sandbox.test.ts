@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import {
   resolveSandboxSession,
@@ -134,6 +136,37 @@ describe("sandbox subcommand", () => {
       expect(writes).toEqual([{ path: resolve("copy.txt"), data: [1, 2, 3] }]);
     } finally {
       console.log = originalLog;
+    }
+  });
+
+  test("loads project settings before production session resolution", async () => {
+    const workingDirectory = await mkdtemp(
+      `${tmpdir()}/letta-sandbox-settings-`,
+    );
+    const originalWorkingDirectory = process.cwd();
+    const originalLog = console.log;
+    console.log = () => {};
+    process.chdir(workingDirectory);
+    try {
+      const exitCode = await withEnvironment(CLOUD_ENV, () =>
+        runSandboxSubcommand(["upload", "note.txt"], {
+          isCloud: async () => true,
+          statLocalPath: async () => ({ isFile: () => true }),
+          readLocalFile: async () => Buffer.from("hello"),
+          ensureSandbox: async () => ({
+            sandboxId: "sandbox-1",
+            deviceId: "device-1",
+            connectionName: "Cloud",
+          }),
+          uploadFile: async () => ({ files: [] }),
+        }),
+      );
+
+      expect(exitCode).toBe(0);
+    } finally {
+      process.chdir(originalWorkingDirectory);
+      console.log = originalLog;
+      await rm(workingDirectory, { recursive: true, force: true });
     }
   });
 });

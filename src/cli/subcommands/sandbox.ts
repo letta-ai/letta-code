@@ -89,6 +89,11 @@ export function resolveSandboxSession(
   return session;
 }
 
+async function initializeSandboxSettings(): Promise<void> {
+  await settingsManager.initialize();
+  await settingsManager.loadLocalProjectSettings();
+}
+
 export async function runSandboxSubcommand(
   argv: string[],
   deps: SandboxSubcommandDeps = {},
@@ -114,7 +119,7 @@ export async function runSandboxSubcommand(
   }
 
   try {
-    await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
+    await (deps.initializeSettings ?? initializeSandboxSettings)();
     if (!(await (deps.isCloud ?? isLettaCloud)())) {
       throw new Error("Sandbox file transfer is only available on Letta Cloud");
     }
