@@ -2312,7 +2312,7 @@ ${SYSTEM_REMINDER_CLOSE}
     const environmentSelector = String(explicitEnvironmentSelector);
     const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
     const environmentRouting = useCloudSandbox
-      ? await resolveAgentSandboxConnectionId(agent.id)
+      ? await resolveAgentSandboxConnectionId(agent.id, { conversationId })
       : await resolveEnvironmentConnectionId(environmentSelector);
     const { connectionId, environment } = environmentRouting;
     const responseEnvironment = buildEnvironmentResponseMetadata({
