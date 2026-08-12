@@ -543,10 +543,7 @@ export function getModelPresetUpdateForAgent(
  * auto-applied on resume and the comparison logic that decides
  * whether an update is needed.
  */
-const RESUME_REFRESH_FIELDS = [
-  "max_output_tokens",
-  "parallel_tool_calls",
-] as const;
+const RESUME_REFRESH_FIELDS = ["parallel_tool_calls"] as const;
 
 /**
  * Build the subset of preset updateArgs that should be synced on resume,
@@ -570,12 +567,7 @@ export function getResumeRefreshArgs(
   // Extract only the resume-scoped fields from the full preset
   for (const field of RESUME_REFRESH_FIELDS) {
     const value = presetUpdateArgs[field];
-    if (
-      field === "max_output_tokens" &&
-      (typeof value === "number" || value === null)
-    ) {
-      updateArgs[field] = value;
-    } else if (field === "parallel_tool_calls" && typeof value === "boolean") {
+    if (typeof value === "boolean") {
       updateArgs[field] = value;
     }
   }
@@ -585,20 +577,12 @@ export function getResumeRefreshArgs(
   }
 
   // Compare against the agent's current values
-  const currentMaxTokens = agent.llm_config?.max_tokens;
-  const wantMaxTokens = updateArgs.max_output_tokens as
-    | number
-    | null
-    | undefined;
   const currentParallel = agent.model_settings?.parallel_tool_calls;
   const wantParallel = updateArgs.parallel_tool_calls as boolean | undefined;
-
-  const maxTokensMatch =
-    wantMaxTokens === undefined || currentMaxTokens === wantMaxTokens;
   const parallelMatch =
     wantParallel === undefined || currentParallel === wantParallel;
 
-  return { updateArgs, needsUpdate: !(maxTokensMatch && parallelMatch) };
+  return { updateArgs, needsUpdate: !parallelMatch };
 }
 
 /**
