@@ -114,8 +114,10 @@ test("telegram adapter ignores forum General reply-thread ids without is_topic_m
     allowedUsers: [],
   });
 
-  const onMessage = mock(async () => {});
-  adapter.onMessage = onMessage;
+  const received: InboundChannelMessage[] = [];
+  adapter.onMessage = async (message) => {
+    received.push(message);
+  };
 
   await adapter.start();
 
@@ -136,13 +138,12 @@ test("telegram adapter ignores forum General reply-thread ids without is_topic_m
     },
   });
 
-  expect(onMessage).toHaveBeenCalledWith(
-    expect.objectContaining({
-      chatId: "-100123",
-      chatType: "channel",
-      threadId: undefined,
-    }),
-  );
+  expect(received).toHaveLength(1);
+  expect(received[0]).toMatchObject({
+    chatId: "-100123",
+    chatType: "channel",
+  });
+  expect(received[0]?.threadId).toBeUndefined();
 });
 
 test("telegram adapter preserves private bot topic metadata on inbound messages", async () => {
