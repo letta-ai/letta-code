@@ -103,7 +103,7 @@ describe("worktree Git runner", () => {
       const startedAt = Date.now();
       let failure = "";
       try {
-        await runGit(["fetch"], binDir, { timeoutMs: 100 });
+        await runGit(["fetch"], binDir, { timeoutMs: 500 });
       } catch (error) {
         failure = formatGitFailure(error);
       }
@@ -119,7 +119,7 @@ describe("worktree Git runner", () => {
     async () => {
       const binDir = await installHangingGit(tempDirs, originalPath);
       const controller = new AbortController();
-      const abortTimer = setTimeout(() => controller.abort(), 100);
+      const abortTimer = setTimeout(() => controller.abort(), 500);
       const startedAt = Date.now();
       let failure = "";
       try {

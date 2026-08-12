@@ -29,6 +29,7 @@ import type {
   SubagentStateUpdateMessage,
   WsProtocolMessage,
 } from "@/types/protocol_v2";
+import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
 import { isDebugEnabled } from "@/utils/debug";
 import { buildBackgroundProcessSnapshot } from "./background-process-snapshot";
 import {
@@ -403,6 +404,9 @@ type OutboundProtocolMessage = WsProtocolMessage extends infer TMessage
 function classifyOutboundFrame(
   message: OutboundProtocolMessage,
 ): OutboundFrameClass {
+  if (message.type === "update_queue" && (message.removed?.length ?? 0) > 0) {
+    return "critical";
+  }
   return COALESCABLE_STATUS_MESSAGE_TYPES.has(message.type)
     ? "status"
     : "critical";
@@ -587,6 +591,7 @@ export function emitQueueUpdate(
     conversation_id?: string | null;
   },
   routing: ListenerMessageRouting = TO_SUBSCRIBERS,
+  removed: readonly QueueRemovalTransition[] = [],
 ): void {
   const listener = getListenerRuntime(runtime);
   if (!listener) {
@@ -599,6 +604,7 @@ export function emitQueueUpdate(
   > = {
     type: "update_queue",
     queue: buildQueueSnapshot(runtime, resolvedScope),
+    removed: [...removed],
   };
   emitProtocolV2Message(socket, runtime, message, resolvedScope, routing);
 }
@@ -759,11 +765,12 @@ export function emitQueueUpdateIfOpen(
     agent_id?: string | null;
     conversation_id?: string | null;
   },
+  removed: readonly QueueRemovalTransition[] = [],
 ): void {
   const listener = getListenerRuntime(runtime);
   const transport = listener?.transport ?? listener?.socket;
   if (transport && isListenerTransportOpen(transport)) {
-    emitQueueUpdate(transport, runtime, scope);
+    emitQueueUpdate(transport, runtime, scope, TO_SUBSCRIBERS, removed);
   }
 }
 
@@ -914,26 +921,6 @@ export function emitSubagentStateIfOpen(
   if (transport && isListenerTransportOpen(transport)) {
     emitSubagentStateUpdate(transport, runtime, scope);
   }
-}
-
-export function scheduleQueueEmit(
-  runtime: ListenerRuntime,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
-): void {
-  runtime.pendingQueueEmitScope = scope;
-
-  if (runtime.queueEmitScheduled) return;
-  runtime.queueEmitScheduled = true;
-
-  queueMicrotask(() => {
-    runtime.queueEmitScheduled = false;
-    const emitScope = runtime.pendingQueueEmitScope;
-    runtime.pendingQueueEmitScope = undefined;
-    emitQueueUpdateIfOpen(runtime, emitScope);
-  });
 }
 
 export function createLifecycleMessageBase<TMessageType extends string>(

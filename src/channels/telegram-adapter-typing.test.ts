@@ -8,7 +8,7 @@ import {
 
 installTelegramAdapterTestHooks();
 
-test("telegram adapter sends typing chat action while a turn is processing", async () => {
+test("telegram adapter owns typing from queue acceptance through completion", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
     channel: "telegram",
@@ -37,7 +37,7 @@ test("telegram adapter sends typing chat action while a turn is processing", asy
   });
 
   const bot = FakeBot.instances[0];
-  expect(bot?.api.sendChatAction).not.toHaveBeenCalled();
+  expect(bot?.api.sendChatAction).toHaveBeenCalledWith("555", "typing", {});
 
   await adapter.handleTurnLifecycleEvent?.({
     type: "processing",
@@ -45,7 +45,6 @@ test("telegram adapter sends typing chat action while a turn is processing", asy
     sources: [turnSource],
   });
 
-  expect(bot?.api.sendChatAction).toHaveBeenCalledWith("555", "typing");
   const initialCallCount = bot?.api.sendChatAction.mock.calls.length ?? 0;
   expect(initialCallCount).toBeGreaterThanOrEqual(1);
 
@@ -78,7 +77,7 @@ test("telegram adapter sends typing chat action while a turn is processing", asy
   expect(bot?.api.sendChatAction.mock.calls.length).toBe(totalCallsAfterStop);
 });
 
-test("telegram adapter stops refreshing typing after sending a message", async () => {
+test("telegram adapter keeps lifecycle ownership after sending a message", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
     channel: "telegram",
@@ -118,11 +117,152 @@ test("telegram adapter stops refreshing typing after sending a message", async (
 
   await adapter.handleTurnLifecycleEvent?.({
     type: "processing",
-    batchId: "batch-2",
+    batchId: "batch-1",
     sources: [turnSource],
   });
 
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(1);
+
+  await adapter.stop();
+});
+
+test("telegram adapter reference-counts sources per forum topic", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  await adapter.start();
+  const first = {
+    channel: "telegram",
+    accountId: "telegram-test-account",
+    chatId: "555",
+    chatType: "channel" as const,
+    messageId: "42",
+    threadId: "7",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+  const second = { ...first, messageId: "43" };
+  const otherTopic = { ...first, messageId: "44", threadId: "8" };
+
+  await adapter.handleTurnLifecycleEvent?.({ type: "queued", source: first });
+  await adapter.handleTurnLifecycleEvent?.({ type: "queued", source: second });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: otherTopic,
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot?.api.sendChatAction).toHaveBeenCalledWith("555", "typing", {
+    message_thread_id: 7,
+  });
+  expect(bot?.api.sendChatAction).toHaveBeenCalledWith("555", "typing", {
+    message_thread_id: 8,
+  });
   expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(2);
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    sources: [first],
+    outcome: "completed",
+    stopReason: "end_turn",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-2",
+    sources: [second],
+  });
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(2);
+
+  await adapter.stop();
+});
+
+test("telegram adapter cancelled releases typing; sibling keeps topic active", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  await adapter.start();
+
+  const first = {
+    channel: "telegram",
+    accountId: "telegram-test-account",
+    chatId: "555",
+    chatType: "channel" as const,
+    messageId: "42",
+    threadId: "7",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+  const second = { ...first, messageId: "43" };
+  const otherTopic = { ...first, messageId: "44", threadId: "8" };
+
+  await adapter.handleTurnLifecycleEvent?.({ type: "queued", source: first });
+  await adapter.handleTurnLifecycleEvent?.({ type: "queued", source: second });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: otherTopic,
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(2);
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    sources: [first],
+    outcome: "cancelled",
+    stopReason: "cancelled",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-2",
+    sources: [second],
+  });
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(2);
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-2",
+    sources: [otherTopic],
+    outcome: "cancelled",
+    stopReason: "cancelled",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-3",
+    sources: [otherTopic],
+  });
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(3);
+  expect(bot?.api.sendChatAction).toHaveBeenLastCalledWith("555", "typing", {
+    message_thread_id: 8,
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-4",
+    sources: [second],
+    outcome: "cancelled",
+    stopReason: "cancelled",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-5",
+    sources: [second],
+  });
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(4);
+  expect(bot?.api.sendChatAction).toHaveBeenLastCalledWith("555", "typing", {
+    message_thread_id: 7,
+  });
 
   await adapter.stop();
 });
@@ -158,7 +298,7 @@ test("telegram adapter ignores lifecycle events for non-telegram sources", async
   await adapter.stop();
 });
 
-test("telegram adapter clears typing after sending a reaction", async () => {
+test("telegram adapter keeps lifecycle ownership after sending a reaction", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
     channel: "telegram",
@@ -204,7 +344,7 @@ test("telegram adapter clears typing after sending a reaction", async () => {
     sources: [turnSource],
   });
 
-  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(2);
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(1);
 
   await adapter.stop();
 });

@@ -124,6 +124,33 @@ describe("emitProtocolV2Message backpressure", () => {
     expect(socket.terminated).toBe(true);
     expect(socket.sentPayloads).toEqual([]);
   });
+
+  test("never coalesces queue removal transitions", () => {
+    const { runtime, socket } = createRuntime();
+    socket.bufferedAmount = OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
+
+    for (let i = 0; i <= OUTBOUND_QUEUE_LIMITS.MAX_QUEUED_FRAMES; i += 1) {
+      emitProtocolV2Message(
+        socket as never,
+        runtime,
+        {
+          type: "update_queue",
+          queue: [],
+          removed: [
+            {
+              client_message_id: `cm-${i}`,
+              disposition: "dequeued",
+            },
+          ],
+        },
+        undefined,
+        TO_SUBSCRIBERS,
+      );
+    }
+
+    expect(socket.terminated).toBe(true);
+    expect(socket.sentPayloads).toEqual([]);
+  });
 });
 
 describe("emitProtocolV2Message connection routing", () => {

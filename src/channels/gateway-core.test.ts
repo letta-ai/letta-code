@@ -115,8 +115,14 @@ test("queued input activates when dequeued via update_queue", async () => {
     0,
   );
 
-  // Simulate dequeue: queue update where the item is no longer in the queue
-  client.emit(makeQueueUpdate([]) as unknown as WsProtocolMessage);
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      {
+        client_message_id: "cm-queued-1",
+        disposition: "dequeued",
+      },
+    ]) as unknown as WsProtocolMessage,
+  );
 
   // Now processing should be activated
   expect(lifecycleEvents.filter((e) => e.type === "processing")).toHaveLength(
@@ -127,6 +133,177 @@ test("queued input activates when dequeued via update_queue", async () => {
     expect(processingEvent.sources).toEqual([source]);
   }
 
+  gateway.close();
+});
+
+test("dequeue transition survives split-stream arrival before input acceptance", async () => {
+  let releaseInput!: () => void;
+  const inputWait = new Promise<void>((resolve) => {
+    releaseInput = resolve;
+  });
+  const client = new FakeClient({
+    inputResponse: { accepted: true, disposition: "queued" },
+    inputWait,
+  });
+  const { hooks, lifecycleEvents } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const source = makeSource({ messageId: "early-dequeue" });
+
+  const submission = gateway.submit(
+    makeDelivery({ sources: [source], clientMessageId: "cm-early" }),
+  );
+  for (
+    let attempt = 0;
+    attempt < 20 && client.submittedInputs.length === 0;
+    attempt += 1
+  ) {
+    await Bun.sleep(0);
+  }
+  expect(client.submittedInputs).toHaveLength(1);
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      { client_message_id: "cm-early", disposition: "dequeued" },
+    ]),
+  );
+  releaseInput();
+  await submission;
+  await Bun.sleep(0);
+
+  expect(lifecycleEvents.map((event) => event.type)).toEqual([
+    "queued",
+    "processing",
+  ]);
+  expect(lifecycleEvents[1]).toMatchObject({
+    type: "processing",
+    sources: [source],
+  });
+  gateway.close();
+});
+
+test("removed queued input emits cancellation while another turn is active", async () => {
+  const client = new FakeClient();
+  const { hooks, lifecycleEvents } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const activeSource = makeSource({ messageId: "active" });
+  const queuedSource = makeSource({ messageId: "queued" });
+
+  await gateway.submit(
+    makeDelivery({ sources: [activeSource], clientMessageId: "cm-active" }),
+  );
+  client.inputResponse.disposition = "queued";
+  await gateway.submit(
+    makeDelivery({ sources: [queuedSource], clientMessageId: "cm-queued" }),
+  );
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      { client_message_id: "cm-queued", disposition: "cancelled" },
+    ]),
+  );
+  await Bun.sleep(0);
+
+  expect(lifecycleEvents.at(-1)).toEqual({
+    type: "finished",
+    batchId: "channel-cm-queued",
+    sources: [queuedSource],
+    outcome: "cancelled",
+    stopReason: "cancelled",
+  });
+  gateway.close();
+});
+
+test("dequeue into an active continuation joins lifecycle ownership without cancellation", async () => {
+  const client = new FakeClient();
+  const { hooks, lifecycleEvents } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const activeSource = makeSource({ messageId: "active" });
+  const continuedSource = makeSource({ messageId: "continued" });
+
+  await gateway.submit(
+    makeDelivery({ sources: [activeSource], clientMessageId: "cm-active" }),
+  );
+  client.inputResponse.disposition = "queued";
+  await gateway.submit(
+    makeDelivery({
+      sources: [continuedSource],
+      clientMessageId: "cm-continued",
+    }),
+  );
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      { client_message_id: "cm-continued", disposition: "dequeued" },
+    ]),
+  );
+  await Bun.sleep(0);
+
+  const processing = lifecycleEvents.filter(
+    (event) => event.type === "processing",
+  );
+  expect(processing).toHaveLength(2);
+  expect(processing[1]).toMatchObject({
+    type: "processing",
+    batchId: "channel-cm-active",
+    sources: [continuedSource],
+  });
+  expect(
+    lifecycleEvents.some(
+      (event) => event.type === "finished" && event.outcome === "cancelled",
+    ),
+  ).toBe(false);
+
+  client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
+  const terminal = lifecycleEvents.at(-1);
+  expect(terminal).toMatchObject({
+    type: "finished",
+    sources: [activeSource, continuedSource],
+    outcome: "completed",
+  });
+  gateway.close();
+});
+
+test("coalesced same-target inputs retain every message-distinct lifecycle source", async () => {
+  const client = new FakeClient();
+  const { hooks, lifecycleEvents } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const activeSource = makeSource({ messageId: "active" });
+  const firstQueuedSource = makeSource({ messageId: "queued-1" });
+  const secondQueuedSource = makeSource({ messageId: "queued-2" });
+
+  await gateway.submit(
+    makeDelivery({ sources: [activeSource], clientMessageId: "cm-active" }),
+  );
+  client.inputResponse.disposition = "queued";
+  await gateway.submit(
+    makeDelivery({
+      sources: [firstQueuedSource],
+      clientMessageId: "cm-queued-1",
+    }),
+  );
+  await gateway.submit(
+    makeDelivery({
+      sources: [secondQueuedSource],
+      clientMessageId: "cm-queued-2",
+    }),
+  );
+
+  client.emit(makeTurnFinished("end_turn"));
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      { client_message_id: "cm-queued-1", disposition: "dequeued" },
+      { client_message_id: "cm-queued-2", disposition: "dequeued" },
+    ]),
+  );
+  client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
+
+  const terminal = lifecycleEvents
+    .filter((event) => event.type === "finished")
+    .at(-1);
+  expect(terminal).toMatchObject({
+    type: "finished",
+    sources: [firstQueuedSource, secondQueuedSource],
+    outcome: "completed",
+  });
   gateway.close();
 });
 
@@ -163,7 +340,11 @@ test("source steering does not merge sources from a new turn into an active turn
   client.emit(makeTurnFinished("end_turn"));
 
   // Dequeue the second turn
-  client.emit(makeQueueUpdate([]) as unknown as WsProtocolMessage);
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      { client_message_id: "cm-b", disposition: "dequeued" },
+    ]) as unknown as WsProtocolMessage,
+  );
   await Bun.sleep(0);
 
   // Now the second turn should be processing with only source2 (not merged)
