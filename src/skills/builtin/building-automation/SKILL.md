@@ -7,6 +7,19 @@ description: Use this skill when you notice work you can automate. It shows how 
 
 You can use the Letta Agent SDK to automate parts of your own work. A program can call you in another conversation, resume work later, run your tools on a selected computer, and return the result to your user. The same program can also ask other agents to help with separate parts of the work.
 
+## Choose the work before the machinery
+
+Do not begin with the examples in this skill. They illustrate mechanics, not what you should build. Choose from work that has actually repeated in your own recent history or that your user has explicitly asked to automate.
+
+Before designing anything:
+
+1. Identify the concrete repeated work and the evidence that it repeats.
+2. Check whether an existing primitive already owns it. Use a background command for one completion, `Monitor` for a stream of matching events, a schedule plus an existing skill for a recurring turn, and ordinary code for deterministic transforms.
+3. Name what requires an agent: judgment, persistent context, delegated work, model choice, or execution on another computer. If none of these is necessary, do not add the Agent SDK.
+4. Consider several candidates from the agent's actual work before selecting one. Do not select a worked example from this document merely because it is available in context.
+
+Choose the smallest form that closes the loop. A native tool or short script is a successful automation decision when it makes a larger agent program unnecessary.
+
 ## Ways to automate yourself
 
 An automation can take many forms:
@@ -24,11 +37,11 @@ These forms can use the same agent and the same code. A one-off helper can later
 
 The parts of an automation can be split in different ways:
 
-- **Instructions** can describe judgment, such as how you review a pull request or decide which issue needs attention.
-- **Code** can handle fixed work, such as collecting files, parsing events, tracking progress, or formatting results.
+- **Instructions** can describe judgment, such as deciding whether documentation drift changes the meaning of a guide or whether an anomaly deserves attention.
+- **Code** can handle fixed work, such as collecting type signatures, parsing events, tracking progress, or formatting results.
 - **An agent turn** can interpret new information, use tools, and decide what to do next.
 
-For example, a pull request automation can use a script to collect the diff and test results. It can then ask you to review the evidence with your existing knowledge of the project.
+For example, an API-drift check can use a script to collect exported type changes. It can then ask you whether those changes invalidate any maintained recipes, using a saved conversation to preserve earlier release decisions.
 
 ## Use your own agent
 
@@ -37,7 +50,7 @@ Your agent ID gives an Agent SDK program access to your persistent memory and id
 - Your default conversation.
 - A new conversation for one isolated task.
 - A saved conversation that continues across several runs.
-- A conversation for each long-lived resource, such as a pull request or customer.
+- A conversation for each long-lived resource, such as a customer, dataset, deployment, or maintained guide.
 
 This lets an automation reuse what you already know. The program can send fresh evidence with each turn and keep the conversation ID when it wants to continue the same thread later.
 
