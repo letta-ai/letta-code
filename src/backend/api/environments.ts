@@ -90,11 +90,15 @@ export async function getEnvironmentConnection(
 
 export async function createAgentSandbox(
   agentId: string,
+  options: { conversationId?: string } = {},
+  request: typeof apiRequest = apiRequest,
 ): Promise<CreateAgentSandboxResponse> {
-  return apiRequest<CreateAgentSandboxResponse>(
+  const conversationId =
+    options.conversationId === "default" ? undefined : options.conversationId;
+  return request<CreateAgentSandboxResponse>(
     "POST",
     `/v1/agents/${encodeURIComponent(agentId)}/sandboxes`,
-    {},
+    conversationId ? { conversationId } : {},
   );
 }
 
@@ -166,11 +170,17 @@ export async function resolveEnvironmentConnectionId(
 
 export async function resolveAgentSandboxConnectionId(
   agentId: string,
-  options: { timeoutMs?: number; pollIntervalMs?: number } = {},
+  options: {
+    conversationId?: string;
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+  } = {},
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
   const timeoutMs = options.timeoutMs ?? 3 * 60_000;
   const pollIntervalMs = options.pollIntervalMs ?? 2_000;
-  const sandbox = await createAgentSandbox(agentId);
+  const sandbox = await createAgentSandbox(agentId, {
+    conversationId: options.conversationId,
+  });
   const deviceId = sandbox.deviceId || `sandbox-${agentId}`;
   const deadline = Date.now() + timeoutMs;
   let lastEnvironment: EnvironmentConnection | null = null;
