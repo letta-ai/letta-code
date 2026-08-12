@@ -23,6 +23,7 @@ import {
   handleMemorySubagentCompletion,
   type MemorySubagentSuccessMessageOverride,
 } from "@/cli/helpers/memory-subagent-completion";
+import { finalizeAutoReflectionCompletion } from "@/cli/helpers/reflection-completion";
 import {
   buildReflectionIntegrationConversationTitle,
   buildReflectionIntegrationPrompt,
@@ -31,7 +32,6 @@ import {
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
-  finalizeAutoReflectionPayload,
   getReflectionTranscriptState,
 } from "@/cli/helpers/reflection-transcript";
 import { type ReflectionWorktreeCleanupOutcome, telemetry } from "@/telemetry";
@@ -741,11 +741,12 @@ export async function launchReflectionSubagent(
             logRecompileFailure: (message) => debugWarn("memory", message),
           });
 
-          await finalizeAutoReflectionPayload(
+          await finalizeAutoReflectionCompletion(
             agentId,
             conversationId,
             autoPayload.payloadPath,
             autoPayload.endSnapshotLine,
+            autoPayload.endMessageId,
             completionSuccess,
           );
           await onCompletionMessage?.(completionMessage, {

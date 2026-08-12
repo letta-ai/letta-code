@@ -81,6 +81,7 @@ import {
   sampleReflectionArenaComparisonModel,
   startReflectionArenaRun,
 } from "@/cli/helpers/reflection-arena";
+import { finalizeMultiReflectionCompletion } from "@/cli/helpers/reflection-completion";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   finalizeReflectionMemoryWorktreeLaunch,
@@ -96,7 +97,6 @@ import {
   buildMultiReflectionPayload,
   buildReflectionAutoPayload,
   buildReflectionSelectorPrompt,
-  finalizeMultiReflectionPayload,
   readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
 import {
@@ -3370,7 +3370,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                                 logRecompileFailure: (message) =>
                                   debugWarn("memory", message),
                               });
-                            await finalizeMultiReflectionPayload(
+                            await finalizeMultiReflectionCompletion(
                               agentId,
                               autoReflectionPayload.manifest,
                               completionSuccess,
@@ -3489,7 +3489,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       logRecompileFailure: (message) =>
                         debugWarn("memory", message),
                     });
-                  await finalizeMultiReflectionPayload(
+                  await finalizeMultiReflectionCompletion(
                     agentId,
                     reflectionPayload.manifest,
                     completionSuccess,
