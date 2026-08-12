@@ -756,7 +756,7 @@ export function ProviderSelector({
         accessKey,
         region,
         profile,
-        { target: selectedTarget },
+        { target: selectedTarget, connection: baseURL ? { baseURL } : {} },
       );
       if (mountedRef.current) {
         setValidationState("valid");
