@@ -101,6 +101,17 @@ describe("shouldRunQueuedReflectionLaunch", () => {
 });
 
 describe("launchReflectionSubagent", () => {
+  test("skips client-side reflection after server cutover", async () => {
+    const isCutover = mock(async () => true);
+
+    const result = await launchReflectionSubagent(queuedLaunchOptions(), {
+      isCutover,
+    });
+
+    expect(result).toEqual({ launched: false, reason: "cutover" });
+    expect(isCutover).toHaveBeenCalledWith("agent-1");
+  });
+
   test("skips before payload and worktree creation when parent memory is dirty", async () => {
     const originalLocalBackend = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
     const originalLocalBackendDir = process.env.LETTA_LOCAL_BACKEND_DIR;
@@ -120,6 +131,7 @@ describe("launchReflectionSubagent", () => {
 
       const result = await launchReflectionSubagent(
         queuedLaunchOptions({ agentId }),
+        { isCutover: async () => false },
       );
 
       expect(result).toEqual({ launched: false, reason: "parent_dirty" });
@@ -144,6 +156,9 @@ describe("launchReflectionSubagent", () => {
 
 describe("getReflectionLaunchSkippedMessage", () => {
   test("formats parent-dirty and listener-specific skipped reasons", () => {
+    expect(getReflectionLaunchSkippedMessage("cutover")).toContain(
+      "managed by Letta Cloud",
+    );
     expect(getReflectionLaunchSkippedMessage("parent_dirty")).toContain(
       "uncommitted changes",
     );

@@ -1,10 +1,34 @@
 import { describe, expect, test } from "bun:test";
 import {
+  retrieveCloudReflectionConfig,
   updateCloudReflectionConfig,
   updateCloudReflectionConversationProgress,
 } from "./reflection";
 
 describe("Cloud reflection API", () => {
+  test("retrieves the agent config", async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const config = {
+      agent_id: "agent/1",
+      enabled: true,
+      min_turn_count: 25,
+      cutover: true,
+      created_at: "2026-08-13T00:00:00.000Z",
+      updated_at: "2026-08-13T00:00:00.000Z",
+    };
+    const request = async <T>(method: string, path: string): Promise<T> => {
+      calls.push({ method, path });
+      return config as unknown as T;
+    };
+
+    await expect(
+      retrieveCloudReflectionConfig("agent/1", request),
+    ).resolves.toEqual(config);
+    expect(calls).toEqual([
+      { method: "GET", path: "/v1/agents/agent%2F1/reflection" },
+    ]);
+  });
+
   test("patches the agent config endpoint", async () => {
     const calls: Array<{
       method: string;
