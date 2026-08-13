@@ -24,6 +24,7 @@ interface RoutedRuntimeToolPublisher {
 
 type RoutedRuntimeToolBuilder = (
   sources: ChannelTurnSource[],
+  runtime: RuntimeScope,
 ) => Promise<ExternalToolDefinitionPayload | null>;
 
 type DesiredRuntimeRegistration = {
@@ -57,7 +58,11 @@ function groupSourcesByRuntime(
   return [...sourcesByRuntime.values()];
 }
 
-function toolScopeKey(sources: ChannelTurnSource[]): string {
+function toolScopeKey(
+  sources: ChannelTurnSource[],
+  runtime: RuntimeScope,
+): string {
+  if (sources.length === 0) return `proactive:${runtime.agent_id}`;
   return JSON.stringify(
     [
       ...new Set(
@@ -86,10 +91,10 @@ async function buildDesiredRegistrations(
   >();
   await Promise.all(
     groupedSources.map(async ({ runtime, sources }) => {
-      const scopeKey = toolScopeKey(sources);
+      const scopeKey = toolScopeKey(sources, runtime);
       let toolPromise = toolsByScope.get(scopeKey);
       if (!toolPromise) {
-        toolPromise = buildTool(sources);
+        toolPromise = buildTool(sources, runtime);
         toolsByScope.set(scopeKey, toolPromise);
       }
       const tool = await toolPromise;
@@ -104,17 +109,29 @@ async function buildDesiredRegistrations(
       });
     }),
   );
-  for (const runtime of knownRuntimes) {
-    const key = runtimeKey(runtime);
-    if (desired.has(key)) continue;
-    const externalTools: RuntimeStartExternalToolsGroup[] = [];
-    desired.set(key, {
-      runtime,
-      sources: [],
-      externalTools,
-      signature: JSON.stringify(externalTools),
-    });
-  }
+  await Promise.all(
+    knownRuntimes.map(async (runtime) => {
+      const key = runtimeKey(runtime);
+      if (desired.has(key)) return;
+      const sources: ChannelTurnSource[] = [];
+      const scopeKey = toolScopeKey(sources, runtime);
+      let toolPromise = toolsByScope.get(scopeKey);
+      if (!toolPromise) {
+        toolPromise = buildTool(sources, runtime);
+        toolsByScope.set(scopeKey, toolPromise);
+      }
+      const tool = await toolPromise;
+      const externalTools: RuntimeStartExternalToolsGroup[] = tool
+        ? [{ tools: [tool] }]
+        : [];
+      desired.set(key, {
+        runtime,
+        sources,
+        externalTools,
+        signature: JSON.stringify(externalTools),
+      });
+    }),
+  );
   return desired;
 }
 

@@ -41,6 +41,7 @@ export function isChannelServiceCommandType(
 
 export type ServiceCommandRequest =
   | { kind: "protocol"; command: WsProtocolCommand }
+  | { kind: "register_runtime"; runtime: RuntimeScope }
   | {
       kind: "slash_command";
       command: "channels";
@@ -50,6 +51,7 @@ export type ServiceCommandRequest =
 
 export type ServiceCommandResponse =
   | { kind: "protocol"; messages: WsProtocolMessage[] }
+  | { kind: "runtime_registered" }
   | { kind: "text"; text: string };
 
 export type ServiceEvent = {

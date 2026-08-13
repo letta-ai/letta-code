@@ -98,7 +98,7 @@ async function executeChannelServiceCommand(
 }
 
 async function executeGatewayServiceCommand(
-  request: ServiceCommandRequest,
+  request: Exclude<ServiceCommandRequest, { kind: "register_runtime" }>,
 ): Promise<ServiceCommandResponse> {
   if (request.kind === "protocol") {
     return {
@@ -241,13 +241,8 @@ export async function startLocalChannelGateway(
           }
         : null;
     },
-    buildExternalTool: async (runtime) => {
-      return buildGatewayMessageChannelTool(
-        registry.resolveTurnSourcesForScope(
-          runtime.agent_id,
-          runtime.conversation_id,
-        ),
-      );
+    buildExternalTool: async (runtime, sources) => {
+      return buildGatewayMessageChannelTool(sources, runtime);
     },
     executeExternalTool: async (request, sources, idempotencyScope) => {
       if (request.tool_name !== "MessageChannel" || !request.runtime) {
@@ -612,9 +607,18 @@ export async function startLocalChannelGateway(
   registry.setReady();
   return {
     executeCommand: async (command) => {
-      let result: Awaited<ReturnType<typeof executeGatewayServiceCommand>>;
+      let result: ServiceCommandResponse;
       try {
-        result = await executeGatewayServiceCommand(command);
+        if (command.kind === "register_runtime") {
+          const sources = registry.resolveTurnSourcesForScope(
+            command.runtime.agent_id,
+            command.runtime.conversation_id,
+          );
+          await gateway.registerRuntime(command.runtime, sources);
+          result = { kind: "runtime_registered" };
+        } else {
+          result = await executeGatewayServiceCommand(command);
+        }
       } catch (error) {
         routedRuntimeRegistrationRefresher.requestRefresh();
         throw error;
