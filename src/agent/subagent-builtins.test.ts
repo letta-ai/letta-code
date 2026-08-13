@@ -52,6 +52,13 @@ describe("built-in subagents", () => {
     expect(configs["general-purpose"]?.recommendedModel).toBe("inherit");
   });
 
+  test("fork inherits the parent model and full toolset", async () => {
+    const configs = await getAllSubagentConfigs();
+
+    expect(configs.fork?.recommendedModel).toBe("inherit");
+    expect(configs.fork?.allowedTools).toBe("all");
+  });
+
   test("memory-related built-ins use the memory-subagent launch profile", async () => {
     const configs = await getAllSubagentConfigs();
 

@@ -23,6 +23,7 @@ import { spawnSubagent } from "@/agent/subagents/manager";
 import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import { sleep } from "@/utils/sleep";
 import {
@@ -620,6 +621,25 @@ export function spawnBackgroundSubagentTask(
   return { taskId, outputFile, subagentId };
 }
 
+export async function inheritForkToolset(
+  agentId: string,
+  parentConversationId: string,
+  forkConversationId: string,
+): Promise<void> {
+  const parentToolset = settingsManager.getToolsetPreference(
+    agentId,
+    parentConversationId,
+  );
+  if (parentToolset === "auto") return;
+
+  settingsManager.setToolsetPreference(
+    agentId,
+    parentToolset,
+    forkConversationId,
+  );
+  await settingsManager.flush();
+}
+
 /**
  * Task tool - Launch a specialized subagent to handle complex tasks
  */
@@ -715,6 +735,7 @@ export async function task(args: TaskArgs): Promise<string> {
         ...(parentConvId === "default" ? { agentId: parentAgentId } : {}),
         hidden: true,
       });
+      await inheritForkToolset(parentAgentId, parentConvId, forkedConv.id);
       effectiveAgentId = parentAgentId;
       effectiveConversationId = forkedConv.id;
     } catch (error) {
