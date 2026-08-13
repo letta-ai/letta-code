@@ -48,8 +48,12 @@ test("runtime workspace sandbox is fail-closed and does not need the global flag
     );
     expect(result.backend).toBe("seatbelt");
     expect(result.env[SANDBOX_ENV_VAR]).toBe("seatbelt");
-    expect(defineValue(result.launcher, "-DDENIED_0=")).toBe(isolationRoot);
-    expect(defineValue(result.launcher, "-DWRITABLE_0=")).toBe(root);
+    expect(defineValue(result.launcher, "-DDENIED_0=")).toBe(
+      canonicalizeRoot(isolationRoot),
+    );
+    expect(defineValue(result.launcher, "-DWRITABLE_0=")).toBe(
+      canonicalizeRoot(root),
+    );
     expect(result.launcher[2]).toContain("(deny file-write*");
 
     expect(() =>

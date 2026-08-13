@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkPermission } from "@/permissions/checker";
+import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import {
   buildWorkspaceSandboxPolicy,
   evaluateWorkspaceSandboxGuard,
@@ -19,10 +20,12 @@ function fixture(): {
   root: string;
   peer: string;
 } {
-  const base = mkdtempSync(join(tmpdir(), "workspace-sandbox-"));
-  const isolationRoot = join(base, "runs");
-  const root = join(isolationRoot, "run-a");
-  const peer = join(isolationRoot, "run-b");
+  const base = canonicalizeRoot(
+    mkdtempSync(join(tmpdir(), "workspace-sandbox-")),
+  );
+  const isolationRoot = canonicalizeRoot(join(base, "runs"));
+  const root = canonicalizeRoot(join(isolationRoot, "run-a"));
+  const peer = canonicalizeRoot(join(isolationRoot, "run-b"));
   mkdirSync(root, { recursive: true });
   mkdirSync(peer, { recursive: true });
   return { base, isolationRoot, root, peer };
