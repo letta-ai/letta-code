@@ -1611,8 +1611,8 @@ export interface CronAddCommand {
   agent_id: string;
   /**
    * Conversation target for scheduled fires.
-   * - omitted/"default": agent default conversation
-   * - "new": create a fresh conversation for every fire
+   * - omitted/"new": create a fresh conversation for every fire
+   * - "default": agent default conversation
    * - any other string: existing conversation id
    */
   conversation_id?: string;

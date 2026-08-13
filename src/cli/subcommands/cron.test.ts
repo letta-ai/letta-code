@@ -204,6 +204,46 @@ describe("cron add execution targeting", () => {
     }
   });
 
+  test("--conversation self captures the current conversation", async () => {
+    process.env.LETTA_CONVERSATION_ID = "current-conversation";
+    const requests = installScheduleApi({});
+
+    expect(
+      await runCronSubcommand([
+        ...withoutConversationArgument(addArgs),
+        "--conversation",
+        "self",
+        "--runner",
+        "cloud",
+      ]),
+    ).toBe(0);
+
+    expect(
+      requests.find((request) => request.method === "POST")?.body,
+    ).toMatchObject({ conversation_id: "current-conversation" });
+  });
+
+  test("--conversation self fails without a current conversation", async () => {
+    const requests = installScheduleApi({});
+    const errors: string[] = [];
+    console.error = mock((line: string) => errors.push(String(line)));
+
+    expect(
+      await runCronSubcommand([
+        ...withoutConversationArgument(addArgs),
+        "--conversation",
+        "self",
+        "--runner",
+        "cloud",
+      ]),
+    ).toBe(1);
+
+    expect(errors).toContain(
+      "Error: --conversation self requires an active conversation (LETTA_CONVERSATION_ID is not set).",
+    );
+    expect(requests.some((request) => request.method === "POST")).toBe(false);
+  });
+
   test("default Cloud creation targets the current registered listener at the HTTP boundary", async () => {
     const requests = installScheduleApi({
       environments: { "device-persisted": environment("device-persisted") },
