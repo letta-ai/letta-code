@@ -71,6 +71,7 @@ import {
 import { normalizeCwdAgentId } from "./scope";
 import { markAwaitingAcceptedApprovalContinuationRunId } from "./send";
 import { injectQueuedSkillContent } from "./skill-injection";
+import * as tp from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import { runListenerTurnCleanup } from "./turn-cleanup";
@@ -116,6 +117,7 @@ export async function handleIncomingMessage(
     );
   } finally {
     notifyTurnFinished(msg);
+    tp.finishPendingTeleport(runtime);
   }
 }
 
@@ -147,17 +149,15 @@ async function handleIncomingMessageInner(
     conversationId,
   );
 
+  let postStopApprovalRecoveryRetries = 0,
+    llmApiErrorRetries = 0,
+    emptyResponseRetries = 0,
+    lastApprovalContinuationAccepted = false,
+    activeDequeuedBatchId = dequeuedBatchId;
   const msgRunIds: string[] = [];
-  let postStopApprovalRecoveryRetries = 0;
-  let llmApiErrorRetries = 0;
-  let emptyResponseRetries = 0;
-  let lastApprovalContinuationAccepted = false;
-  let activeDequeuedBatchId = dequeuedBatchId;
-
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
-
   const turnLease =
     existingTurnLease ??
     runtime.turnLifecycle.begin({
@@ -167,17 +167,14 @@ async function handleIncomingMessageInner(
   if (connectionId) {
     runtime.activeConnectionId = connectionId;
   }
-  if (!runtime.turnLifecycle.isCurrent(turnLease)) {
+  if (!runtime.turnLifecycle.isCurrent(turnLease))
     throw new Error("Cannot continue a turn with a stale lifecycle lease");
-  }
   const turnAbortSignal = turnLease.signal;
   let finalizedByThisInvocation = false;
   const noteFinalization = (
     transition: ReturnType<typeof finishListenerTurn>,
   ) => {
-    if (transition.finished) {
-      finalizedByThisInvocation = true;
-    }
+    finalizedByThisInvocation ||= transition.finished;
     return transition;
   };
   const finishTurn = (options: Parameters<typeof finishListenerTurn>[2]) =>
@@ -355,7 +352,6 @@ async function handleIncomingMessageInner(
     let runId: string | undefined;
     const buffers = createBuffers(agentId);
     seedInboundUserTranscriptLines(buffers, inboundUserTranscriptLines);
-
     while (true) {
       runIdSent = false;
       let latestErrorText: string | null = null;
@@ -460,7 +456,6 @@ async function handleIncomingMessageInner(
         break;
       }
       lastApprovalContinuationAccepted = false;
-
       if (stopReason === "end_turn") {
         const transcriptLines = toLines(buffers);
         const completion = await completeSuccessfulListenerTurn({
@@ -852,6 +847,11 @@ async function handleIncomingMessageInner(
       lastApprovalContinuationAccepted =
         approvalResult.lastApprovalContinuationAccepted;
 
+      if (approvalResult.kind === "teleport") {
+        const pending = approvalResult.pendingTeleport;
+        noteFinalization(tp.finishTeleport(runtime, turnLease, pending));
+        return;
+      }
       if (approvalResult.kind === "interrupted") {
         if (runtime.turnLifecycle.isCurrent(turnLease)) {
           populateInterruptQueue(runtime, {

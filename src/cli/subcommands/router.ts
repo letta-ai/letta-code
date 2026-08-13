@@ -15,6 +15,7 @@ import { asLegacyAppServerCommand, runServerSubcommand } from "./server";
 import { runSetupSubcommand } from "./setup";
 import { runSharedMemorySubcommand } from "./shared-memory";
 import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
+import { runTeleportSubcommand } from "./teleport";
 import { runTrajectoriesSubcommand } from "./trajectories";
 
 async function runUpdateSubcommand(): Promise<number> {
@@ -51,6 +52,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "server":
     case "shared-memory":
     case "skills":
+    case "teleport":
       return true;
     default:
       return false;
@@ -89,6 +91,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runModsSubcommand(rest);
     case "sandbox":
       return runSandboxSubcommand(rest);
+    case "teleport":
+      return runTeleportSubcommand(rest);
     case "server":
       return runServerSubcommand(rest);
     case "remote": // alias

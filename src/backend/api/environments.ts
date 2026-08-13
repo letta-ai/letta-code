@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { apiRequest } from "./request";
 
 export interface EnvironmentMetadata {
@@ -207,5 +208,45 @@ export async function resolveAgentSandboxConnectionId(
 
   throw new Error(
     `Timed out waiting for cloud sandbox ${sandbox.connectionName} to register${lastError instanceof Error ? `: ${lastError.message}` : ""}`,
+  );
+}
+
+export type TeleportStatus =
+  | "waiting_for_source"
+  | "starting_destination"
+  | "completed"
+  | "failed";
+
+export interface TeleportResponse {
+  id: string;
+  agentId: string;
+  conversationId: string;
+  sourceConnectionId: string;
+  targetConnectionId: string;
+  targetDeviceId: string;
+  targetConnectionName: string;
+  status: TeleportStatus;
+  error: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * Submit a teleport request to Cloud. Returns immediately after the 202
+ * acceptance — the harness owns polling/yield after this returns.
+ */
+export async function teleportToEnvironment(
+  agentId: string,
+  conversationId: string,
+  targetConnectionId: string,
+  request: typeof apiRequest = apiRequest,
+): Promise<TeleportResponse> {
+  return request<TeleportResponse>(
+    "POST",
+    `/v1/environments/runtimes/${encodeURIComponent(agentId)}/${encodeURIComponent(conversationId)}/teleport`,
+    {
+      targetConnectionId,
+      idempotencyKey: randomUUID(),
+    },
   );
 }
