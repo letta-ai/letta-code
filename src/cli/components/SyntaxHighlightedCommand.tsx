@@ -42,47 +42,60 @@ import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
-const shikiHighlighter = createHighlighterCoreSync({
-  themes: [catppuccinMocha, catppuccinLatte],
-  langs: [
-    bashLang,
-    cLang,
-    cppLang,
-    csharpLang,
-    cssLang,
-    diffLang,
-    dockerLang,
-    goLang,
-    graphqlLang,
-    htmlLang,
-    iniLang,
-    javaLang,
-    javascriptLang,
-    jsonLang,
-    kotlinLang,
-    lessLang,
-    luaLang,
-    makeLang,
-    markdownLang,
-    perlLang,
-    phpLang,
-    pythonLang,
-    rLang,
-    rubyLang,
-    rustLang,
-    scalaLang,
-    scssLang,
-    sqlLang,
-    swiftLang,
-    tomlLang,
-    tsxLang,
-    typescriptLang,
-    wasmLang,
-    xmlLang,
-    yamlLang,
-  ],
-  engine: createJavaScriptRegexEngine(),
-});
+// Created lazily on first highlight: building the highlighter parses TextMate
+// grammars for every language below (~150-250ms of CPU), which would otherwise
+// run at module load on every process start — including non-TUI paths like
+// `letta --version` and the sandbox listener (`letta remote`) that never
+// render a code block.
+let shikiHighlighter: ReturnType<typeof createHighlighterCoreSync> | null =
+  null;
+
+function getShikiHighlighter(): ReturnType<typeof createHighlighterCoreSync> {
+  if (shikiHighlighter === null) {
+    shikiHighlighter = createHighlighterCoreSync({
+      themes: [catppuccinMocha, catppuccinLatte],
+      langs: [
+        bashLang,
+        cLang,
+        cppLang,
+        csharpLang,
+        cssLang,
+        diffLang,
+        dockerLang,
+        goLang,
+        graphqlLang,
+        htmlLang,
+        iniLang,
+        javaLang,
+        javascriptLang,
+        jsonLang,
+        kotlinLang,
+        lessLang,
+        luaLang,
+        makeLang,
+        markdownLang,
+        perlLang,
+        phpLang,
+        pythonLang,
+        rLang,
+        rubyLang,
+        rustLang,
+        scalaLang,
+        scssLang,
+        sqlLang,
+        swiftLang,
+        tomlLang,
+        tsxLang,
+        typescriptLang,
+        wasmLang,
+        xmlLang,
+        yamlLang,
+      ],
+      engine: createJavaScriptRegexEngine(),
+    });
+  }
+  return shikiHighlighter;
+}
 const BASH_LANGUAGE = "bash";
 const FIRST_LINE_PROMPT = "$";
 const PROMPT_COLUMN_WIDTH = 2;
@@ -292,7 +305,7 @@ export function highlightCode(
   language: string,
 ): StyledSpan[][] | undefined {
   try {
-    const result = shikiHighlighter.codeToTokens(code, {
+    const result = getShikiHighlighter().codeToTokens(code, {
       lang: language,
       theme:
         colors.shellSyntax === colors.shellSyntaxLight
