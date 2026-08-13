@@ -87,7 +87,7 @@ Add options:
   --once                 Fire once (with --at); default for --at
   --cron <expr>          Raw 5-field cron expression
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
-  --conversation <id>    Conversation ID (defaults to LETTA_CONVERSATION_ID or "default")
+  --conversation <id>    Conversation ID (omit for a fresh conversation per fire)
   --runner <runner>      Where the schedule lives and fires (normally omit:
                          the default keeps the schedule running where it was
                          created):
@@ -157,8 +157,8 @@ function getAgentId(fromArgs?: string): string {
   return fromArgs || process.env.LETTA_AGENT_ID || "";
 }
 
-function getConversationId(fromArgs?: string): string {
-  return fromArgs || process.env.LETTA_CONVERSATION_ID || "default";
+function getConversationTarget(fromArgs?: string): string {
+  return fromArgs || "new";
 }
 
 // ── Runner resolution ───────────────────────────────────────────────
@@ -293,7 +293,7 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     return 1;
   }
 
-  const conversationId = getConversationId(values.conversation);
+  const conversationId = getConversationTarget(values.conversation);
 
   // Determine schedule type
   const everyValue = values.every;
