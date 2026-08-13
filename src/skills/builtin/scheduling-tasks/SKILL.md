@@ -31,7 +31,7 @@ The CLI reports its placement in the command output. If it warns that the schedu
 Two patterns cover most schedules:
 
 - **Fast follow-ups** ("check on the PR in 5m"): the default is right — same computer as the active conversation. If the session dies before it fires, the follow-up usually died with the task anyway.
-- **Recurring jobs** ("every Monday 11am, start the lunch order"): prefer durability. If the CLI warned that a recurring schedule is local, that's usually wrong for the user's intent — recreate it with `--runner cloud`, or `--computer` if the job needs a specific always-on computer. Also consider whether the job should post into a dedicated conversation rather than this one (continuity in one thread vs a fresh context per run).
+- **Recurring jobs** ("every Monday 11am, start the lunch order"): prefer durability. If the CLI warned that a recurring schedule is local, that's usually wrong for the user's intent — recreate it with `--runner cloud`, or `--computer` if the job needs a specific always-on computer. A fresh conversation per run is the default; pass a conversation explicitly when the job needs continuity in one thread.
 
 ## CLI Usage
 
@@ -64,7 +64,7 @@ letta cron add --name <short-name> --description <text> --prompt <text> <schedul
 | Flag | Description |
 |------|-------------|
 | `--agent <id>` | Agent ID (defaults to `LETTA_AGENT_ID` from the current shell/session) |
-| `--conversation <id>` | Conversation ID (defaults to `LETTA_CONVERSATION_ID` from the current shell/session, otherwise `"default"`) |
+| `--conversation <id>` | Conversation target: omit or pass `new` for a fresh conversation per fire; pass `self` for the current conversation; pass `default` for the agent default; or pass a concrete ID |
 | `--runner <runner>` | `cloud` or `local` — normally omit; see "Where Schedules Run" above |
 | `--computer <id>` | Execute on a specific connected computer — normally omit |
 | `--once` | Mark `--at` as one-shot (already the default for `--at`) |
@@ -97,7 +97,7 @@ For local run history, `--run-id <id>` selects one run. Cloud history ignores th
 
 If exact routing matters, pass both `--agent` and `--conversation` explicitly.
 
-`letta cron add` will otherwise fall back to `LETTA_AGENT_ID` and `LETTA_CONVERSATION_ID` from the current shell/session. Those values may be correct for the current chat, but they can also be inherited from surrounding tooling, another conversation, or an older shell.
+`letta cron add` falls back to `LETTA_AGENT_ID` for the agent. An omitted `--conversation` means `"new"`, so every fire gets a fresh conversation. Pass `--conversation self` to capture the current `LETTA_CONVERSATION_ID`, `--conversation default` for the agent default, or a concrete conversation ID.
 
 Safest pattern:
 
@@ -107,14 +107,14 @@ letta cron add \
   --description "Daily email summary in this conversation" \
   --prompt "Check the user's email and post a summary here." \
   --cron "0 10 * * *" \
-  --agent "$AGENT_ID" \
-  --conversation "$CONVERSATION_ID"
+  --agent "$LETTA_AGENT_ID" \
+  --conversation self
 ```
 
 Then verify the binding explicitly:
 
 ```bash
-letta cron list --agent "$AGENT_ID" --conversation "$CONVERSATION_ID"
+letta cron list --agent "$LETTA_AGENT_ID" --conversation self
 ```
 
 ### Deleting or Replacing Tasks
@@ -156,7 +156,9 @@ letta cron add \
   --name "deploy-check" \
   --description "One-time check on deployment status" \
   --prompt "Check the deployment status and report the result here." \
-  --at "in 30m"
+  --at "in 30m" \
+  --agent "$LETTA_AGENT_ID" \
+  --conversation self
 ```
 
 ### "Every weekday at 5pm, remind me to submit my timesheet" (user in UTC−7)
@@ -203,7 +205,7 @@ Include context about what the user originally asked for, so you can give a help
 - **Minimum granularity**: 1 minute. Intervals under 60 seconds are rounded up.
 - **Recurring tasks**: No longer auto-expire. They remain active until explicitly cancelled.
 - **One-shot cleanup (local runner)**: One-shot local tasks are garbage-collected 24 hours after firing.
-- **Default binding precedence**: `letta cron add` uses `--agent` / `--conversation` first, then falls back to `LETTA_AGENT_ID` / `LETTA_CONVERSATION_ID`, then finally uses `"default"` for the conversation if no env var is present.
+- **Default binding**: `letta cron add` uses `--agent` first, then `LETTA_AGENT_ID`. Omit `--conversation` for a fresh conversation per fire; use `--conversation self` to capture `LETTA_CONVERSATION_ID` explicitly.
 - **Local scheduler requirement**: Local schedules only fire while a Letta session is running on their computer; fires while no session runs are marked as missed. Cloud schedules fire from the cloud regardless.
 - **`--at` for specific times**: `--at "3:00pm"` schedules a one-shot. If the time has already passed today, it schedules for tomorrow.
 - **Cloud schedule creation failures are loud**: if creating a cloud schedule fails, no schedule is created — a failed create never silently becomes a local schedule. (The local placement for computers the cloud scheduler can't reach is decided before creation and reported in the output.)

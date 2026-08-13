@@ -229,6 +229,7 @@ export type ConversationRuntime = {
   currentToolsetPreference: ToolsetPreference;
   currentLoadedTools: string[];
   currentAvailableSkills: AvailableSkillSummary[];
+  transientChannelRuntimeTools: boolean;
   pendingApprovalBatchByToolCallId: Map<string, string>;
   /**
    * tool_call_id -> server-assigned id of the approval_request_message that

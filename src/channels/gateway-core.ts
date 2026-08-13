@@ -369,6 +369,50 @@ export class ChannelGateway {
     });
   }
 
+  /** Publish tools for a listener-owned turn without subscribing to its stream. */
+  async publishRuntimeTools(
+    runtime: RuntimeScope,
+    sources: ChannelTurnSource[] = [],
+  ): Promise<boolean> {
+    return await this.enqueueRegistration(async () => {
+      if (this.states.has(runtimeKey(runtime))) return false;
+      const tool = await this.hooks.buildExternalTool(runtime, sources);
+      const response = await this.client.runtimeExternalToolsUpdate({
+        updates: [
+          {
+            runtimes: [runtime],
+            external_tools: tool ? [{ tools: [tool] }] : [],
+          },
+        ],
+      });
+      if (!response.success) {
+        throw new Error(
+          response.error ?? "Failed to publish channel runtime tools",
+        );
+      }
+      return tool !== null;
+    });
+  }
+
+  async releaseRuntimeTools(
+    runtime: RuntimeScope,
+    routedSources: ChannelTurnSource[] = [],
+  ): Promise<void> {
+    await this.enqueueRegistration(async () => {
+      if (routedSources.length > 0 || this.states.has(runtimeKey(runtime))) {
+        return;
+      }
+      const response = await this.client.runtimeExternalToolsUpdate({
+        updates: [{ runtimes: [runtime], external_tools: [] }],
+      });
+      if (!response.success) {
+        throw new Error(
+          response.error ?? "Failed to release channel runtime tools",
+        );
+      }
+    });
+  }
+
   async submitApprovalResponse(
     runtime: RuntimeScope,
     response: ApprovalResponseBody,

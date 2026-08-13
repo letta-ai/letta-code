@@ -993,14 +993,13 @@ async function handleIncomingMessageInner(
     }
 
     try {
-      if (finalizedByThisInvocation) {
-        await runListenerTurnCleanup({
-          runtime,
-          agentId,
-          normalizedAgentId,
-          conversationId,
-        });
-      }
+      await runListenerTurnCleanup({
+        runtime,
+        agentId,
+        normalizedAgentId,
+        conversationId,
+        finalized: finalizedByThisInvocation,
+      });
     } finally {
       releaseListenerTurnContext({ runtime, agentId, conversationId });
     }
