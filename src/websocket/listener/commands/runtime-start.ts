@@ -11,6 +11,8 @@ import { createAgentWithBaseToolsRecovery } from "@/agent/create";
 import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
 import { type ConversationUpdateBody, getBackend } from "@/backend";
 import { migratePermissionMode } from "@/permissions/mode";
+import { canonicalizeRoot } from "@/permissions/sandbox-policy";
+import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
 import { subscribeListenerConnection } from "@/websocket/listener/connection";
@@ -22,6 +24,7 @@ import {
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
 import { isRuntimeStartCommand } from "@/websocket/listener/protocol-inbound";
+import { assertRuntimeWorkspaceSandboxChangeAllowed } from "@/websocket/listener/runtime-workspace-sandbox";
 import type {
   ConversationRuntime,
   ListenerConnectionId,
@@ -290,6 +293,33 @@ async function applyRuntimeStartState(
   scope: RuntimeScope,
   scopedRuntime: ConversationRuntime,
 ): Promise<void> {
+  const workspaceSandbox = parsed.workspace_sandbox
+    ? resolveWorkspaceSandbox({
+        root: parsed.workspace_sandbox.root,
+        isolationRoot: parsed.workspace_sandbox.isolation_root,
+      })
+    : undefined;
+  const requestedWorkingDirectory =
+    parsed.cwd ??
+    workspaceSandbox?.root ??
+    getBootWorkingDirectory(context.runtime);
+  const canonicalWorkingDirectory = canonicalizeRoot(requestedWorkingDirectory);
+  if (
+    workspaceSandbox &&
+    canonicalWorkingDirectory !== workspaceSandbox.root &&
+    !canonicalWorkingDirectory.startsWith(`${workspaceSandbox.root}/`)
+  ) {
+    throw new Error(
+      "runtime_start cwd must be inside the workspace sandbox root",
+    );
+  }
+  assertRuntimeWorkspaceSandboxChangeAllowed(
+    context.runtime,
+    scopedRuntime,
+    workspaceSandbox,
+  );
+  scopedRuntime.workspaceSandbox = workspaceSandbox;
+
   if (
     parsed.skill_sources === undefined &&
     parsed.preserve_skill_sources !== true
@@ -319,12 +349,12 @@ async function applyRuntimeStartState(
     persistPermissionModeMapForRuntime(context.runtime);
   }
 
-  if (parsed.cwd !== undefined) {
+  if (parsed.cwd !== undefined || workspaceSandbox) {
     await switchConversationWorkingDirectory({
       runtime: context.runtime,
       agentId: scope.agent_id,
       conversationId: scope.conversation_id,
-      workingDirectory: parsed.cwd ?? getBootWorkingDirectory(context.runtime),
+      workingDirectory: requestedWorkingDirectory,
       emitStatus: false,
       statusRuntime: scopedRuntime,
       statusSocket: context.socket,

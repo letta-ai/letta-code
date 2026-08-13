@@ -168,7 +168,9 @@ export function evictConversationRuntimeIfIdle(
     runtime.pendingInterruptedContext !== null ||
     (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
     runtime.queuedMessagesByItemId.size > 0 ||
-    runtime.queueRuntime?.length > 0
+    runtime.queueRuntime?.length > 0 ||
+    (runtime.workspaceSandbox !== undefined &&
+      runtime.listener.connectionIdsByRuntimeKey.has(runtime.key))
   ) {
     return false;
   }
@@ -253,6 +255,7 @@ export function createConversationRuntime(
     agentId: normalizedAgentId,
     conversationId: normalizedConversationId,
     skillSources: listener.skillSourcesByConversation.get(runtimeKey)?.slice(),
+    workspaceSandbox: undefined,
     activeConnectionId: null,
     turnLifecycle,
     messageQueue: Promise.resolve(),

@@ -9,6 +9,13 @@ export type RuntimePermissionMode =
   | "unrestricted"
   | "strict";
 
+export interface RuntimeWorkspaceSandbox {
+  /** Runtime-owned writable workspace. */
+  root: string;
+  /** Parent tree whose peer workspaces must stay hidden. */
+  isolationRoot: string;
+}
+
 export interface RuntimeContextSnapshot {
   /** Listener transport connection that owns the current turn, when present. */
   connectionId?: string | null;
@@ -28,6 +35,7 @@ export interface RuntimeContextSnapshot {
   workingDirectoryRecoveredFrom?: string | null;
   toolContextId?: string | null;
   permissionMode?: RuntimePermissionMode;
+  workspaceSandbox?: RuntimeWorkspaceSandbox;
 }
 
 const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();

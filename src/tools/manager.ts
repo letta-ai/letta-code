@@ -1260,10 +1260,10 @@ export async function checkToolPermission(
       permissionMode: effectivePermissionModeState?.mode ?? null,
       workingDirectory: effectiveWorkingDirectory,
     });
-
   const permissions = await loadPermissions(effectiveWorkingDirectory);
   return runWithRuntimeContext(
     {
+      ...(context?.runtimeContext ?? {}),
       ...(effectiveAgentId ? { agentId: effectiveAgentId } : {}),
       workingDirectory: effectiveWorkingDirectory,
       permissionMode: effectivePermissionModeState?.mode,
