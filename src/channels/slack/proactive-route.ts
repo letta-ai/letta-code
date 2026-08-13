@@ -104,6 +104,9 @@ export function createProactiveSlackTransport(
               error instanceof Error ? error.message : String(error)
             }`,
           );
+          throw new Error(
+            `Slack accepted message ${result.messageId}, but its thread route could not be persisted: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
       }
       return result;

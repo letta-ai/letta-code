@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, mock, test } from "bun:test";
 import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
@@ -6,7 +6,10 @@ import {
   getRouteRaw,
   setRouteInMemory,
 } from "@/channels/routing";
-import { bindProactiveSlackThreadRoute } from "./proactive-route";
+import {
+  bindProactiveSlackThreadRoute,
+  createProactiveSlackTransport,
+} from "./proactive-route";
 
 const params = {
   accountId: "account-1",
@@ -89,4 +92,50 @@ test("rolls back an in-memory binding when persistence fails", () => {
 
   __testOverrideSaveRoutes(() => {});
   expect(() => bindProactiveSlackThreadRoute(params)).not.toThrow();
+});
+
+test("reports a sent root as an error when its route cannot be persisted", async () => {
+  __testOverrideLoadRoutes(() => null);
+  __testOverrideSaveRoutes(() => {
+    throw new Error("disk unavailable");
+  });
+  const sendMessage = mock(async () => ({ messageId: params.rootMessageId }));
+  const transport = createProactiveSlackTransport({
+    adapter: {
+      id: "slack:account-1",
+      channelId: "slack",
+      accountId: params.accountId,
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    },
+    accountId: params.accountId,
+    target: {
+      chatId: params.chatId,
+      chatType: "channel",
+      threadId: null,
+    },
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+  });
+
+  await expect(
+    transport.sendMessage({
+      channel: "slack",
+      accountId: params.accountId,
+      chatId: params.chatId,
+      text: "hello",
+      agentId: params.agentId,
+      conversationId: params.conversationId,
+    }),
+  ).rejects.toThrow(
+    `Slack accepted message ${params.rootMessageId}, but its thread route could not be persisted: disk unavailable`,
+  );
+  expect(sendMessage).toHaveBeenCalledTimes(1);
+  expect(
+    getRouteRaw("slack", params.chatId, params.accountId, params.rootMessageId),
+  ).toBeUndefined();
 });
