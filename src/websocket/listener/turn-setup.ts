@@ -21,7 +21,7 @@ import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
-import { registerChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
+import { publishChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
 import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
 import {
@@ -270,10 +270,11 @@ export async function prepareListenerTurn(params: {
     runtime.listener,
     agentId,
   );
-  await registerChannelRuntimeToolsForTurn(runtime.listener, {
-    agent_id: agentId,
-    conversation_id: conversationId,
-  });
+  runtime.transientChannelRuntimeTools =
+    await publishChannelRuntimeToolsForTurn(runtime.listener, {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    });
   if (isInterrupted()) {
     return { kind: "interrupted" };
   }

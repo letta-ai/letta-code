@@ -98,7 +98,10 @@ async function executeChannelServiceCommand(
 }
 
 async function executeGatewayServiceCommand(
-  request: Exclude<ServiceCommandRequest, { kind: "register_runtime" }>,
+  request: Exclude<
+    ServiceCommandRequest,
+    { kind: "publish_runtime_tools" | "release_runtime_tools" }
+  >,
 ): Promise<ServiceCommandResponse> {
   if (request.kind === "protocol") {
     return {
@@ -609,13 +612,23 @@ export async function startLocalChannelGateway(
     executeCommand: async (command) => {
       let result: ServiceCommandResponse;
       try {
-        if (command.kind === "register_runtime") {
+        if (command.kind === "publish_runtime_tools") {
           const sources = registry.resolveTurnSourcesForScope(
             command.runtime.agent_id,
             command.runtime.conversation_id,
           );
-          await gateway.registerRuntime(command.runtime, sources);
-          result = { kind: "runtime_registered" };
+          const transient = await gateway.publishRuntimeTools(
+            command.runtime,
+            sources,
+          );
+          result = { kind: "runtime_tools_published", transient };
+        } else if (command.kind === "release_runtime_tools") {
+          const sources = registry.resolveTurnSourcesForScope(
+            command.runtime.agent_id,
+            command.runtime.conversation_id,
+          );
+          await gateway.releaseRuntimeTools(command.runtime, sources);
+          result = { kind: "runtime_tools_released" };
         } else {
           result = await executeGatewayServiceCommand(command);
         }
