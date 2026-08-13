@@ -1,5 +1,14 @@
 import { type ApiRequestMethod, apiRequest } from "./request";
 
+export interface CloudReflectionConfig {
+  agent_id: string;
+  enabled: boolean;
+  min_turn_count: number;
+  cutover?: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface UpdateCloudReflectionConfigInput {
   enabled: boolean;
   min_turn_count: number;
@@ -17,6 +26,13 @@ type ReflectionApiRequest = <T>(
 
 function agentPath(agentId: string): string {
   return `/v1/agents/${encodeURIComponent(agentId)}`;
+}
+
+export async function retrieveCloudReflectionConfig(
+  agentId: string,
+  request: ReflectionApiRequest = apiRequest,
+): Promise<CloudReflectionConfig> {
+  return request("GET", `${agentPath(agentId)}/reflection`);
 }
 
 export async function updateCloudReflectionConfig(
