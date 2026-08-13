@@ -474,8 +474,8 @@ export interface AddTaskInput {
   agent_id: string;
   /**
    * Conversation target for scheduled fires.
-   * - omitted/"new": fresh conversation per fire
-   * - "default": agent default conversation
+   * - omitted/"default": agent default conversation
+   * - "new": fresh conversation per fire
    * - any other string: existing conversation id
    */
   conversation_id?: string;
@@ -500,7 +500,7 @@ export function addTask(input: AddTaskInput): AddTaskResult {
   return withLock(() => {
     const data = readCronFile();
     const agentId = input.agent_id;
-    const conversationId = input.conversation_id ?? "new";
+    const conversationId = input.conversation_id ?? "default";
 
     // Check per-agent active limit
     const activeCount = data.tasks.filter(

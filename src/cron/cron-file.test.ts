@@ -98,13 +98,13 @@ describe("addTask", () => {
     expect(result.task.conversation_id).toBe("new");
   });
 
-  test("defaults an omitted conversation target to new", () => {
+  test("defaults an omitted conversation target to default", () => {
     const input = makeInput();
     delete input.conversation_id;
 
     const result = addTask(input);
 
-    expect(result.task.conversation_id).toBe("new");
+    expect(result.task.conversation_id).toBe("default");
   });
 
   test("preserves an explicit default conversation target", () => {
