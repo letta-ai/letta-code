@@ -16,6 +16,7 @@ const originalConsoleError = console.error;
 const originalBaseUrl = process.env.LETTA_BASE_URL;
 const originalApiKey = process.env.LETTA_API_KEY;
 const originalRuntimeDeviceId = process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID;
+const originalConversationId = process.env.LETTA_CONVERSATION_ID;
 const originalLettaHome = process.env.LETTA_HOME;
 
 const addArgs = [
@@ -33,6 +34,12 @@ const addArgs = [
   "--conversation",
   "conversation-test",
 ];
+
+function withoutConversationArgument(args: string[]): string[] {
+  const index = args.indexOf("--conversation");
+  if (index < 0) return [...args];
+  return [...args.slice(0, index), ...args.slice(index + 2)];
+}
 
 function environment(deviceId: string) {
   const now = Date.now();
@@ -114,6 +121,7 @@ beforeEach(() => {
   process.env.LETTA_BASE_URL = "https://example.test";
   process.env.LETTA_API_KEY = "test-key";
   delete process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID;
+  delete process.env.LETTA_CONVERSATION_ID;
   settingsManager.initialize = mock(
     async () => {},
   ) as typeof settingsManager.initialize;
@@ -144,6 +152,7 @@ afterEach(() => {
     ["LETTA_BASE_URL", originalBaseUrl],
     ["LETTA_API_KEY", originalApiKey],
     ["LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID", originalRuntimeDeviceId],
+    ["LETTA_CONVERSATION_ID", originalConversationId],
     ["LETTA_HOME", originalLettaHome],
   ] as const) {
     if (value === undefined) delete process.env[key];
@@ -152,6 +161,89 @@ afterEach(() => {
 });
 
 describe("cron add execution targeting", () => {
+  test("Cloud schedules default to a new conversation per fire and ignore ambient conversation state", async () => {
+    process.env.LETTA_CONVERSATION_ID = "ambient-conversation";
+    const requests = installScheduleApi({});
+
+    expect(
+      await runCronSubcommand([
+        ...withoutConversationArgument(addArgs),
+        "--runner",
+        "cloud",
+      ]),
+    ).toBe(0);
+
+    expect(
+      requests.find((request) => request.method === "POST")?.body,
+    ).toMatchObject({ conversation_id: "new" });
+  });
+
+  test("local schedules default to a new conversation per fire and ignore ambient conversation state", async () => {
+    const home = mkdtempSync(join(tmpdir(), "letta-cron-conversation-test-"));
+    process.env.LETTA_HOME = home;
+    process.env.LETTA_CONVERSATION_ID = "ambient-conversation";
+    installScheduleApi({});
+    const logs: string[] = [];
+    console.log = mock((line: string) => {
+      logs.push(String(line));
+    });
+
+    try {
+      expect(
+        await runCronSubcommand([
+          ...withoutConversationArgument(addArgs),
+          "--runner",
+          "local",
+        ]),
+      ).toBe(0);
+
+      const output = JSON.parse(logs.join("")) as Record<string, unknown>;
+      expect(output.conversation_id).toBe("new");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("--conversation self captures the current conversation", async () => {
+    process.env.LETTA_CONVERSATION_ID = "current-conversation";
+    const requests = installScheduleApi({});
+
+    expect(
+      await runCronSubcommand([
+        ...withoutConversationArgument(addArgs),
+        "--conversation",
+        "self",
+        "--runner",
+        "cloud",
+      ]),
+    ).toBe(0);
+
+    expect(
+      requests.find((request) => request.method === "POST")?.body,
+    ).toMatchObject({ conversation_id: "current-conversation" });
+  });
+
+  test("--conversation self fails without a current conversation", async () => {
+    const requests = installScheduleApi({});
+    const errors: string[] = [];
+    console.error = mock((line: string) => errors.push(String(line)));
+
+    expect(
+      await runCronSubcommand([
+        ...withoutConversationArgument(addArgs),
+        "--conversation",
+        "self",
+        "--runner",
+        "cloud",
+      ]),
+    ).toBe(1);
+
+    expect(errors).toContain(
+      "Error: --conversation self requires an active conversation (LETTA_CONVERSATION_ID is not set).",
+    );
+    expect(requests.some((request) => request.method === "POST")).toBe(false);
+  });
+
   test("default Cloud creation targets the current registered listener at the HTTP boundary", async () => {
     const requests = installScheduleApi({
       environments: { "device-persisted": environment("device-persisted") },
