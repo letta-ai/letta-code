@@ -42,11 +42,8 @@ import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
-// Created lazily on first highlight: building the highlighter parses TextMate
-// grammars for every language below (~150-250ms of CPU), which would otherwise
-// run at module load on every process start — including non-TUI paths like
-// `letta --version` and the sandbox listener (`letta remote`) that never
-// render a code block.
+// Created lazily on first highlight: grammar parsing costs ~150-250ms of CPU,
+// which shouldn't run at module load on every process start.
 let shikiHighlighter: ReturnType<typeof createHighlighterCoreSync> | null =
   null;
 
