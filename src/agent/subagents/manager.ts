@@ -772,11 +772,11 @@ ${SYSTEM_REMINDER_CLOSE}
   }
 
   return `${SYSTEM_REMINDER_OPEN}
-You have been forked from the primary conversational thread to run as an independent subagent. The fork only exists so you can see the parent agent's conversation trajectory in-context as reference — you are NOT the primary agent and do not share its full toolset.
+You have been forked from the primary conversational thread to run as an independent subagent. The fork only exists so you can see the parent agent's conversation trajectory in-context as reference — you are NOT the primary agent.
 
 **Your sole task is the one described in the user message below. Ignore any existing ongoing tasks from the inherited trajectory.** Do not attempt to continue, finish, or act on anything the primary agent was in the middle of doing.
 
-You have a scoped toolset that may differ from the primary agent's. Stay within it; don't assume you have the primary's full tool access.
+You inherit the primary agent's toolset.
 
 You CANNOT ask questions mid-execution — all instructions are provided upfront.
 Your final message will be returned to the caller.
