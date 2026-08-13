@@ -1,4 +1,14 @@
-import { addRoute, getRouteRaw, loadRoutes } from "@/channels/routing";
+import type {
+  ChannelMessageActionTransport,
+  ChannelResolvedMessageTarget,
+} from "@/channels/plugin-types";
+import {
+  addRoute,
+  getRouteRaw,
+  loadRoutes,
+  removeRouteInMemory,
+} from "@/channels/routing";
+import type { ChannelAdapter } from "@/channels/types";
 
 export interface BindProactiveSlackThreadRouteParams {
   accountId: string;
@@ -36,16 +46,67 @@ export function bindProactiveSlackThreadRoute(
   }
 
   const now = new Date().toISOString();
-  addRoute("slack", {
-    accountId: params.accountId,
-    chatId: params.chatId,
-    chatType: "channel",
-    threadId: params.rootMessageId,
-    agentId: params.agentId,
-    conversationId: params.conversationId,
-    enabled: true,
-    outboundEnabled: true,
-    createdAt: now,
-    updatedAt: now,
-  });
+  try {
+    addRoute("slack", {
+      accountId: params.accountId,
+      chatId: params.chatId,
+      chatType: "channel",
+      threadId: params.rootMessageId,
+      agentId: params.agentId,
+      conversationId: params.conversationId,
+      enabled: true,
+      outboundEnabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+  } catch (error) {
+    removeRouteInMemory(
+      "slack",
+      params.chatId,
+      params.accountId,
+      params.rootMessageId,
+    );
+    throw error;
+  }
+}
+
+interface CreateProactiveSlackTransportParams {
+  adapter: ChannelAdapter;
+  accountId: string;
+  target: ChannelResolvedMessageTarget;
+  agentId: string;
+  conversationId: string;
+}
+
+export function createProactiveSlackTransport(
+  params: CreateProactiveSlackTransportParams,
+): ChannelMessageActionTransport {
+  return {
+    sendMessage: async (message) => {
+      const result = await params.adapter.sendMessage(message);
+      const isRootChannelPost =
+        params.target.chatType === "channel" &&
+        !message.threadId?.trim() &&
+        !message.replyToMessageId?.trim() &&
+        !message.reaction;
+      if (isRootChannelPost && result.messageId.trim()) {
+        try {
+          bindProactiveSlackThreadRoute({
+            accountId: params.accountId,
+            chatId: params.target.chatId,
+            rootMessageId: result.messageId,
+            agentId: params.agentId,
+            conversationId: params.conversationId,
+          });
+        } catch (error) {
+          console.error(
+            `[Channels] Failed to bind proactive Slack thread: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+      return result;
+    },
+  };
 }

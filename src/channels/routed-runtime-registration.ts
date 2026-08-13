@@ -82,6 +82,15 @@ async function buildDesiredRegistrations(
   const groupedSources = groupSourcesByRuntime(
     registry.resolveRoutedTurnSources(),
   );
+  const sourcesByRuntime = new Map(
+    groupedSources.map((entry) => [runtimeKey(entry.runtime), entry]),
+  );
+  for (const runtime of knownRuntimes) {
+    const key = runtimeKey(runtime);
+    if (!sourcesByRuntime.has(key)) {
+      sourcesByRuntime.set(key, { runtime, sources: [] });
+    }
+  }
   const desired = new Map<string, DesiredRuntimeRegistration>();
   // Hundreds of conversations commonly share one channel/account capability
   // set. Resolve and serialize that schema once, then fan it out by runtime.
@@ -90,7 +99,7 @@ async function buildDesiredRegistrations(
     Promise<ExternalToolDefinitionPayload | null>
   >();
   await Promise.all(
-    groupedSources.map(async ({ runtime, sources }) => {
+    [...sourcesByRuntime.values()].map(async ({ runtime, sources }) => {
       const scopeKey = toolScopeKey(sources, runtime);
       let toolPromise = toolsByScope.get(scopeKey);
       if (!toolPromise) {
@@ -102,29 +111,6 @@ async function buildDesiredRegistrations(
         ? [{ tools: [tool] }]
         : [];
       desired.set(runtimeKey(runtime), {
-        runtime,
-        sources,
-        externalTools,
-        signature: JSON.stringify(externalTools),
-      });
-    }),
-  );
-  await Promise.all(
-    knownRuntimes.map(async (runtime) => {
-      const key = runtimeKey(runtime);
-      if (desired.has(key)) return;
-      const sources: ChannelTurnSource[] = [];
-      const scopeKey = toolScopeKey(sources, runtime);
-      let toolPromise = toolsByScope.get(scopeKey);
-      if (!toolPromise) {
-        toolPromise = buildTool(sources, runtime);
-        toolsByScope.set(scopeKey, toolPromise);
-      }
-      const tool = await toolPromise;
-      const externalTools: RuntimeStartExternalToolsGroup[] = tool
-        ? [{ tools: [tool] }]
-        : [];
-      desired.set(key, {
         runtime,
         sources,
         externalTools,

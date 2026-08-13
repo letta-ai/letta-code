@@ -73,3 +73,20 @@ test("keeps an idempotent binding and refuses to overwrite a conflict", () => {
     conversationId: "conv-other",
   });
 });
+
+test("rolls back an in-memory binding when persistence fails", () => {
+  __testOverrideLoadRoutes(() => null);
+  __testOverrideSaveRoutes(() => {
+    throw new Error("disk unavailable");
+  });
+
+  expect(() => bindProactiveSlackThreadRoute(params)).toThrow(
+    "disk unavailable",
+  );
+  expect(
+    getRouteRaw("slack", params.chatId, params.accountId, params.rootMessageId),
+  ).toBeUndefined();
+
+  __testOverrideSaveRoutes(() => {});
+  expect(() => bindProactiveSlackThreadRoute(params)).not.toThrow();
+});

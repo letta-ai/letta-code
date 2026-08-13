@@ -19,52 +19,10 @@ import {
   isSupportedChannelId,
   loadChannelPlugin,
 } from "@/channels/plugin-registry";
-import type {
-  ChannelMessageActionTransport,
-  ChannelResolvedMessageTarget,
-} from "@/channels/plugin-types";
 import { getChannelRegistry } from "@/channels/registry";
 import { resolveEligibleProactiveSlackAccount } from "@/channels/slack/proactive-accounts";
-import { bindProactiveSlackThreadRoute } from "@/channels/slack/proactive-route";
-import type { ChannelAdapter } from "@/channels/types";
+import { createProactiveSlackTransport } from "@/channels/slack/proactive-route";
 import type { ExternalToolCallResult } from "@/types/app-server-protocol";
-
-function createProactiveSlackTransport(params: {
-  adapter: ChannelAdapter;
-  accountId: string;
-  target: ChannelResolvedMessageTarget;
-  agentId: string;
-  conversationId: string;
-}): ChannelMessageActionTransport {
-  return {
-    sendMessage: async (message) => {
-      const result = await params.adapter.sendMessage(message);
-      const isRootChannelPost =
-        params.target.chatType === "channel" &&
-        !message.threadId?.trim() &&
-        !message.replyToMessageId?.trim() &&
-        !message.reaction;
-      if (isRootChannelPost && result.messageId.trim()) {
-        try {
-          bindProactiveSlackThreadRoute({
-            accountId: params.accountId,
-            chatId: params.target.chatId,
-            rootMessageId: result.messageId,
-            agentId: params.agentId,
-            conversationId: params.conversationId,
-          });
-        } catch (error) {
-          console.error(
-            `[Channels] Failed to bind proactive Slack thread: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
-      }
-      return result;
-    },
-  };
-}
 
 function createLocalMessageChannelResolver(): MessageChannelExecutionResolver {
   return {
