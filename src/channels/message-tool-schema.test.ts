@@ -120,6 +120,9 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(resolved.description).toContain(
       "Available actions across the active channels: send, react, upload-file, download-file, send-rich.",
     );
+    expect(resolved.description).not.toContain(
+      "finish with only `Sent.` as the internal confirmation",
+    );
     expect(resolved.description).toContain(
       SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX,
     );
@@ -174,6 +177,12 @@ describe("buildDynamicMessageChannelSchema", () => {
     );
     expect(resolved.description).toContain(
       "If a user-visible reply is appropriate, your final action for the turn must be one MessageChannel call",
+    );
+    expect(resolved.description).toContain(
+      "After that final send succeeds, do not repeat or paraphrase the sent message in assistant text; finish with only `Sent.` as the internal confirmation.",
+    );
+    expect(resolved.description).toContain(
+      "This does not apply to a short acknowledgement sent before continuing substantive work.",
     );
     expect(resolved.description).toContain(
       "If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement.",
