@@ -44,7 +44,6 @@ export {
 } from "./channels/slack/progress";
 export {
   normalizeSlackReactionName,
-  normalizeSlackText,
   resolveSlackChatType,
   resolveSlackOutboundThreadTs,
   slackTimestampToMillis,

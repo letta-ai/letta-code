@@ -394,7 +394,7 @@ export interface InboundChannelMessage {
   raw?: unknown;
   /** Broad chat surface type used for routing/pairing decisions. */
   chatType?: ChannelChatType;
-  /** Whether adapter policy treats this inbound as a mention-addressed turn. */
+  /** Legacy route-eligibility signal; may include implicit agent-owned threads. */
   isMention?: boolean;
   /** Adapter routing provenance for this delivered event. */
   routedBy?: "mention" | "dm" | "thread";
