@@ -60,6 +60,11 @@ import {
   validateTargetDevice,
 } from "./cron-runner";
 import {
+  resolveCronAddConversationTarget,
+  resolveCronAgentId,
+  resolveCronConversationFilter,
+} from "./cron-scope";
+import {
   ensureSettingsForCloud,
   printAmbiguousTaskName,
   resolveTaskName,
@@ -87,7 +92,9 @@ Add options:
   --once                 Fire once (with --at); default for --at
   --cron <expr>          Raw 5-field cron expression
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
-  --conversation <id>    Conversation ID (defaults to LETTA_CONVERSATION_ID or "default")
+  --conversation <id>    Conversation target (omit or "new" for a fresh
+                         conversation per fire; "self" for the current
+                         conversation; "default" for the agent default)
   --runner <runner>      Where the schedule lives and fires (normally omit:
                          the default keeps the schedule running where it was
                          created):
@@ -151,14 +158,6 @@ function parseCronArgs(argv: string[]) {
     strict: true,
     allowPositionals: true,
   });
-}
-
-function getAgentId(fromArgs?: string): string {
-  return fromArgs || process.env.LETTA_AGENT_ID || "";
-}
-
-function getConversationId(fromArgs?: string): string {
-  return fromArgs || process.env.LETTA_CONVERSATION_ID || "default";
 }
 
 // ── Runner resolution ───────────────────────────────────────────────
@@ -287,13 +286,14 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     return 1;
   }
 
-  const agentId = getAgentId(values.agent);
+  const agentId = resolveCronAgentId(values.agent);
   if (!agentId) {
     console.error("Error: --agent or LETTA_AGENT_ID required.");
     return 1;
   }
 
-  const conversationId = getConversationId(values.conversation);
+  const conversationId = resolveCronAddConversationTarget(values.conversation);
+  if (conversationId === null) return 1;
 
   // Determine schedule type
   const everyValue = values.every;
@@ -564,7 +564,8 @@ async function handleList(values: CronArgValues): Promise<number> {
   }
 
   const agentId = values.agent || process.env.LETTA_AGENT_ID || undefined;
-  const conversationId = values.conversation || undefined;
+  const conversationId = resolveCronConversationFilter(values.conversation);
+  if (conversationId === null) return 1;
 
   const includeLocal = values.runner !== "cloud";
   const includeCloud = values.runner !== "local";
@@ -661,7 +662,7 @@ async function handleGet(
     return 1;
   }
 
-  const agentId = getAgentId(values.agent);
+  const agentId = resolveCronAgentId(values.agent);
 
   // Local store is a cheap file read; check it first unless --runner cloud.
   if (values.runner !== "cloud") {
@@ -769,7 +770,7 @@ async function handleRuns(values: CronArgValues): Promise<number> {
     return 1;
   }
 
-  const agentId = getAgentId(values.agent);
+  const agentId = resolveCronAgentId(values.agent);
   if (!agentId) {
     console.error(
       `Error: task ${id} not found locally, and --agent or LETTA_AGENT_ID is required to look up Cloud schedule runs.`,
@@ -829,7 +830,7 @@ async function handleDelete(
     }
   }
 
-  const agentId = getAgentId(values.agent);
+  const agentId = resolveCronAgentId(values.agent);
 
   // Cloud delete by ID (unless --runner local).
   if (values.runner !== "local") {
@@ -898,7 +899,7 @@ async function handleDelete(
 }
 
 async function handleDeleteAll(values: CronArgValues): Promise<number> {
-  const agentId = getAgentId(values.agent);
+  const agentId = resolveCronAgentId(values.agent);
   if (!agentId) {
     console.error("Error: --agent or LETTA_AGENT_ID required with --all.");
     return 1;

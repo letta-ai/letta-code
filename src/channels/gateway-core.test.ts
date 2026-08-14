@@ -664,6 +664,66 @@ test("publishes hundreds of routed runtime tools without runtime_start", async (
   gateway.close();
 });
 
+test("publishes process-owned runtime tools without retaining gateway runtimes", async () => {
+  const client = new FakeClient();
+  const { hooks } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+
+  for (let index = 0; index < 350; index += 1) {
+    const runtime = {
+      agent_id: "agent-1",
+      conversation_id: `conv-schedule-${index}`,
+    };
+    expect(await gateway.publishRuntimeTools(runtime)).toBe(true);
+    await gateway.releaseRuntimeTools(runtime);
+  }
+
+  expect(client.runtimeToolUpdates).toHaveLength(700);
+  expect(
+    client.runtimeToolUpdates.filter(
+      (update) => update.external_tools.length === 0,
+    ),
+  ).toHaveLength(350);
+  expect(client.startedRuntimes).toHaveLength(0);
+  expect(gateway.getKnownRuntimes()).toHaveLength(0);
+  gateway.close();
+});
+
+test("does not release tools owned by a gateway runtime", async () => {
+  const client = new FakeClient();
+  const { hooks } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+
+  await gateway.registerRuntime(TEST_RUNTIME);
+  expect(await gateway.publishRuntimeTools(TEST_RUNTIME)).toBe(false);
+  await gateway.releaseRuntimeTools(TEST_RUNTIME);
+
+  expect(client.startedRuntimes).toHaveLength(1);
+  expect(client.runtimeToolUpdates).toHaveLength(0);
+  gateway.close();
+});
+
+test("does not release tools after the turn creates a routed source", async () => {
+  const client = new FakeClient();
+  const { hooks } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const runtime = {
+    agent_id: "agent-1",
+    conversation_id: "conv-schedule-1",
+  };
+
+  expect(await gateway.publishRuntimeTools(runtime)).toBe(true);
+  await gateway.releaseRuntimeTools(runtime, [
+    makeSource({
+      agentId: runtime.agent_id,
+      conversationId: runtime.conversation_id,
+    }),
+  ]);
+
+  expect(client.runtimeToolUpdates).toHaveLength(1);
+  gateway.close();
+});
+
 test("runtime registration removes MessageChannel when no route remains", async () => {
   const client = new FakeClient();
   const { hooks } = makeHooks({ buildExternalTool: async () => null });

@@ -17,6 +17,7 @@ import type {
   QueueRuntime,
 } from "@/queue/queue-runtime";
 import type { SharedReminderState } from "@/reminders/state";
+import type { RuntimeWorkspaceSandbox } from "@/runtime-context";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
@@ -27,6 +28,7 @@ import type {
   LoopStatus,
   RuntimeScope,
   StopReasonType,
+  TeleportContinuation,
   WsProtocolCommand,
 } from "@/types/protocol_v2";
 import type {
@@ -136,6 +138,16 @@ export interface PendingExternalToolCall {
   timeout: ReturnType<typeof setTimeout>;
 }
 
+export type PendingTeleport = {
+  teleportId: string;
+  connectionId: ListenerConnectionId;
+  agentId: string;
+  conversationId: string;
+  requestedAt: number;
+  readyAt?: number;
+  continuation?: TeleportContinuation;
+};
+
 export interface ModeChangePayload {
   mode: "standard" | "acceptEdits" | "unrestricted" | "strict";
 }
@@ -191,6 +203,8 @@ export type ConversationRuntime = {
   conversationId: string;
   /** Runtime-scoped SDK override. Undefined uses the process defaults. */
   skillSources: SkillSource[] | undefined;
+  /** Explicit runtime filesystem boundary for shared app-server sessions. */
+  workspaceSandbox: RuntimeWorkspaceSandbox | undefined;
   /** Connection currently executing this conversation's turn, if client-owned. */
   activeConnectionId: ListenerConnectionId | null;
   turnLifecycle: TurnLifecycle;
@@ -218,6 +232,7 @@ export type ConversationRuntime = {
   currentToolsetPreference: ToolsetPreference;
   currentLoadedTools: string[];
   currentAvailableSkills: AvailableSkillSummary[];
+  transientChannelRuntimeTools: boolean;
   pendingApprovalBatchByToolCallId: Map<string, string>;
   /**
    * tool_call_id -> server-assigned id of the approval_request_message that
@@ -367,6 +382,8 @@ export type ListenerRuntime = {
   /** Agent IDs whose cached secrets are stale and must re-fetch on the next hydration call. */
   secretsDirtyAgents: Set<string>;
   pendingExternalToolCalls: Map<string, PendingExternalToolCall>;
+  /** Source handoffs retained briefly so a failed destination can resume. */
+  pendingTeleports?: Map<string, PendingTeleport>;
   /**
    * Agent metadata warmups for listen-mode reminders. The cached promise is
    * reused while the listener stays connected so first-turn reminders can join

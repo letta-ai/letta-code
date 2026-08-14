@@ -65,6 +65,89 @@ describe("input protocol-inbound validators", () => {
       );
     }
   });
+
+  test("accepts a teleport continuation without a synthetic user message", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          request_id: "continue-1",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "teleport_continue",
+            teleport_id: "teleport-1",
+            source: {
+              device_id: "source-device",
+              connection_name: "Laptop",
+            },
+            continuation: {
+              approvals: [
+                {
+                  type: "tool",
+                  tool_call_id: "call-1",
+                  status: "success",
+                  tool_return: "done",
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("input");
+    if (parsed?.type === "input") {
+      expect(parsed.payload.kind).toBe("teleport_continue");
+    }
+  });
+
+  test("rejects a teleport continuation without source identity", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "teleport_continue",
+            teleport_id: "teleport-1",
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("__invalid_input");
+  });
+});
+
+describe("teleport protocol-inbound validators", () => {
+  test.each([
+    {
+      type: "teleport_probe",
+      request_id: "probe-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+    },
+    {
+      type: "teleport_request",
+      request_id: "teleport-1",
+      teleport_id: "teleport-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      target: {
+        connection_id: "target-connection",
+        device_id: "target-device",
+        connection_name: "Cloud",
+      },
+    },
+    {
+      type: "teleport_failed",
+      teleport_id: "teleport-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      error: "Target failed to start",
+    },
+  ])("accepts $type", (message) => {
+    expect(parseServerMessage(Buffer.from(JSON.stringify(message)))?.type).toBe(
+      message.type,
+    );
+  });
 });
 
 describe("update model protocol-inbound validator", () => {
@@ -109,6 +192,10 @@ describe("agent/conversation management protocol-inbound validators", () => {
       conversation_source_tags: ["channel:slack"],
       cwd: "/tmp/project",
       mode: "acceptEdits",
+      workspace_sandbox: {
+        root: "/tmp/runs/run-1",
+        isolation_root: "/tmp/runs",
+      },
       skill_sources: [],
       preserve_skill_sources: true,
       client_info: { name: "test", title: "Test", version: "1.0.0" },

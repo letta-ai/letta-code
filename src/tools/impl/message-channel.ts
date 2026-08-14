@@ -21,6 +21,7 @@ import {
 } from "@/channels/plugin-registry";
 import { getChannelRegistry } from "@/channels/registry";
 import { resolveEligibleProactiveSlackAccount } from "@/channels/slack/proactive-accounts";
+import { createProactiveSlackTransport } from "@/channels/slack/proactive-route";
 import type { ExternalToolCallResult } from "@/types/app-server-protocol";
 
 function createLocalMessageChannelResolver(): MessageChannelExecutionResolver {
@@ -64,7 +65,6 @@ function createLocalMessageChannelResolver(): MessageChannelExecutionResolver {
       }
       const eligibleAccount = resolveEligibleProactiveSlackAccount({
         agentId: params.scope.agentId,
-        conversationId: params.scope.conversationId,
         accountId: params.accountId,
       });
       if (typeof eligibleAccount === "string") return eligibleAccount;
@@ -82,7 +82,13 @@ function createLocalMessageChannelResolver(): MessageChannelExecutionResolver {
       return {
         accountId: eligibleAccount.account.accountId,
         target,
-        transport: eligibleAccount.adapter,
+        transport: createProactiveSlackTransport({
+          adapter: eligibleAccount.adapter,
+          accountId: eligibleAccount.account.accountId,
+          target,
+          agentId: params.scope.agentId,
+          conversationId: params.scope.conversationId,
+        }),
         messageActions,
       };
     },

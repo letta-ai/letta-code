@@ -1,4 +1,7 @@
-import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import {
+  getScopedMemoryFilesystemRoot,
+  isLettaCloud,
+} from "@/agent/memory-filesystem";
 import {
   buildReflectionIntegrationMemoryScope,
   buildReflectionMemoryScope,
@@ -13,6 +16,7 @@ import {
 } from "@/agent/memory-worktree";
 import { getSubagents } from "@/agent/subagent-state";
 import { getBackend } from "@/backend";
+import { retrieveCloudReflectionConfig } from "@/backend/api/reflection";
 import {
   getReflectionSettings,
   type ReflectionSettings,
@@ -67,6 +71,7 @@ export type ReflectionLaunchTriggerSource =
 
 export type ReflectionLaunchSkippedReason =
   | "memfs_disabled"
+  | "cutover"
   | "already_active"
   | "parent_dirty"
   | "no_payload"
@@ -77,6 +82,8 @@ export function getReflectionLaunchSkippedMessage(
   surface: "cli" | "listener" = "cli",
 ): string | undefined {
   switch (reason) {
+    case "cutover":
+      return "Reflection is managed by Letta Cloud for this agent.";
     case "already_active":
       return surface === "listener"
         ? "A reflection agent is already running for this conversation."
@@ -606,8 +613,27 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   };
 }
 
+async function isReflectionCutover(agentId: string): Promise<boolean> {
+  try {
+    if (!(await isLettaCloud())) return false;
+    const config = await retrieveCloudReflectionConfig(agentId);
+    return config.cutover === true;
+  } catch (error) {
+    debugWarn(
+      "memory",
+      `Failed to check Cloud reflection cutover: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return false;
+  }
+}
+
 export async function launchReflectionSubagent(
   options: ReflectionLaunchOptions,
+  dependencies: {
+    isCutover?: (agentId: string) => Promise<boolean>;
+  } = {},
 ): Promise<ReflectionLaunchResult> {
   const {
     agentId,
@@ -624,6 +650,14 @@ export async function launchReflectionSubagent(
 
   if (!memfsEnabled) {
     return { launched: false, reason: "memfs_disabled" };
+  }
+
+  if (await (dependencies.isCutover ?? isReflectionCutover)(agentId)) {
+    debugLog(
+      "memory",
+      `Skipping reflection launch (${triggerSource}) because server-side reflection owns this agent`,
+    );
+    return { launched: false, reason: "cutover" };
   }
 
   if (!tryReserveReflectionLaunch(agentId)) {

@@ -116,6 +116,7 @@ import { waitForEnvironmentAssistantMessage } from "./headless-environment-respo
 import {
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
+  prepareHeadlessEphemeralBackend,
 } from "./headless-ephemeral-startup";
 import { resolveHeadlessMemfsPolicy } from "./headless-memfs-policy";
 import {
@@ -819,15 +820,14 @@ export async function handleHeadlessCommand(
     console.error("Error: No prompt provided");
     process.exit(1);
   }
-
   const devBackend = values["dev-backend"];
   if (typeof devBackend === "string" && devBackend.length > 0) {
     const { configureDevBackend } = await import("@/backend");
     await configureDevBackend(devBackend);
   }
+  prepareHeadlessEphemeralBackend(Boolean(values.ephemeral));
   const backend = getBackend();
   markMilestone("HEADLESS_CLIENT_READY");
-
   // Check for --resume flag (interactive only)
   if (values.resume) {
     trackHeadlessBoundaryError(

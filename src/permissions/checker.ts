@@ -15,6 +15,7 @@ import {
   modToolApprovalPolicy,
 } from "@/mods/tool-registry";
 import type { ModContext } from "@/mods/types";
+import { getRuntimeContext } from "@/runtime-context";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
 import {
   canonicalToolName,
@@ -40,6 +41,7 @@ import type {
   PermissionRules,
   PermissionTraceEvent,
 } from "./types";
+import { evaluateWorkspaceSandboxGuard } from "./workspace-sandbox";
 
 /**
  * Tools that don't require approval within working directory
@@ -312,6 +314,24 @@ function checkPermissionForEngine(
   const sessionRules = sessionPermissions.getRules();
   const workingDirectoryTools =
     engine === "v2" ? WORKING_DIRECTORY_TOOLS_V2 : WORKING_DIRECTORY_TOOLS_V1;
+
+  const workspaceGuardResult = evaluateWorkspaceSandboxGuard(
+    permissionToolName,
+    toolArgs,
+    workingDirectory,
+    getRuntimeContext()?.workspaceSandbox,
+  );
+  if (workspaceGuardResult) {
+    traceEvent(trace, "workspace-sandbox", workspaceGuardResult.reason);
+    return {
+      result: {
+        decision: "deny",
+        matchedRule: workspaceGuardResult.matchedRule,
+        reason: workspaceGuardResult.reason,
+      },
+      trace,
+    };
+  }
 
   // Cross-agent guard — when enabled, denies any tool call targeting another
   // agent's memory unless that agent is in the allowed set. Unbypassable by

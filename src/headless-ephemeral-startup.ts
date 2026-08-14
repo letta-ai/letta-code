@@ -1,7 +1,20 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { createEphemeralConversation } from "@/agent/ephemeral-conversation";
+import {
+  createEphemeralConversation,
+  createLocalEphemeralConversation,
+} from "@/agent/ephemeral-conversation";
+import {
+  configureEphemeralLocalBackend,
+  isLocalBackendEnabled,
+} from "@/backend";
 import { clearPersistedClientToolRules } from "@/tools/toolset";
 import { debugLog, debugWarn } from "@/utils/debug";
+
+export function prepareHeadlessEphemeralBackend(enabled: boolean): void {
+  if (enabled && isLocalBackendEnabled()) {
+    configureEphemeralLocalBackend();
+  }
+}
 
 export async function createHeadlessEphemeralConversation(params: {
   backendMode: string;
@@ -10,20 +23,20 @@ export async function createHeadlessEphemeralConversation(params: {
   systemPromptPreset: string | undefined;
   systemPromptCustom: string | undefined;
 }): Promise<{ agent: AgentState; conversationId: string }> {
-  if (params.backendMode !== "api") {
-    throw new Error("--ephemeral requires the Letta Cloud API backend");
-  }
   if (params.personality) {
     throw new Error(
       "--ephemeral cannot be used with --personality because it has no memory blocks",
     );
   }
-  return createEphemeralConversation({
+  const options = {
     model: params.model,
     systemPromptPreset: params.systemPromptPreset,
     systemPromptCustom: params.systemPromptCustom,
-    memoryPromptMode: "standard",
-  });
+    memoryPromptMode: "standard" as const,
+  };
+  return params.backendMode === "local"
+    ? createLocalEphemeralConversation(options)
+    : createEphemeralConversation(options);
 }
 
 export function clearHeadlessClientToolRules(agent: AgentState): void {
