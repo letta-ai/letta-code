@@ -9,6 +9,7 @@ import {
   resolveSlackThreadHistory,
   resolveSlackThreadStarter,
 } from "./media";
+import { resolveSlackUserMentionsInMessage } from "./user-mentions";
 import { asRecord, isNonEmptyString } from "./utils";
 
 const INITIAL_SLACK_THREAD_HISTORY_LIMIT = 20;
@@ -86,12 +87,21 @@ export async function prepareSlackInboundMessage(params: {
   getBotId: () => string | null;
 }): Promise<InboundChannelMessage> {
   const { msg, config } = params;
-  if (
-    msg.channel !== "slack" ||
-    !isNonEmptyString(msg.threadId) ||
-    !isNonEmptyString(msg.messageId)
-  ) {
+  if (msg.channel !== "slack") {
     return msg;
+  }
+
+  const resolveMentions = (
+    message: InboundChannelMessage,
+    app?: SlackApp,
+  ): Promise<InboundChannelMessage> =>
+    resolveSlackUserMentionsInMessage({
+      message,
+      resolveUserName: async (userId) =>
+        params.resolveUserName(app ?? (await params.ensureApp()), userId),
+    });
+  if (!isNonEmptyString(msg.threadId) || !isNonEmptyString(msg.messageId)) {
+    return resolveMentions(msg);
   }
 
   const isFirstRouteTurn = params.options?.isFirstRouteTurn === true;
@@ -107,7 +117,7 @@ export async function prepareSlackInboundMessage(params: {
     !isChannelBootstrap &&
     !shouldHydrateCurrentAttachments
   ) {
-    return msg;
+    return resolveMentions(msg);
   }
 
   const app = await params.ensureApp();
@@ -160,7 +170,7 @@ export async function prepareSlackInboundMessage(params: {
       });
   const history = resolvedHistory;
   if (!starter && history.length === 0 && currentAttachments.length === 0) {
-    return msg;
+    return resolveMentions(msg, app);
   }
 
   const userIds = new Set<string>();
@@ -181,7 +191,7 @@ export async function prepareSlackInboundMessage(params: {
     }
     return isNonEmptyString(botId) ? `Bot (${botId})` : undefined;
   };
-  return {
+  const preparedMessage: InboundChannelMessage = {
     ...msg,
     ...(currentAttachments.length > 0
       ? { attachments: currentAttachments }
@@ -218,4 +228,5 @@ export async function prepareSlackInboundMessage(params: {
         : {}),
     },
   };
+  return resolveMentions(preparedMessage, app);
 }

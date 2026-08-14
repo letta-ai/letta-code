@@ -24,6 +24,7 @@ import type {
   SlackDebounceRawInput,
 } from "./internal-types";
 import { resolveSlackInboundAttachments } from "./media";
+import { sanitizeSlackUserDisplayName } from "./user-mentions";
 import {
   asRecord,
   firstNonEmptyString,
@@ -120,8 +121,9 @@ export function createSlackIngressController(params: {
         await app.client.users.info({ user: userId }),
       );
       if (displayName) {
-        knownUserDisplayNames.set(userId, displayName);
-        return displayName;
+        const sanitizedName = sanitizeSlackUserDisplayName(displayName, userId);
+        knownUserDisplayNames.set(userId, sanitizedName);
+        return sanitizedName;
       }
     } catch {}
     knownUserDisplayNames.set(userId, userId);
@@ -242,6 +244,7 @@ export function createSlackIngressController(params: {
             threadId: policy.threadId,
             chatType: "direct",
             isMention: policy.wasMentioned,
+            routedBy: policy.routedBy,
             attachments,
             raw: message,
           },
@@ -271,6 +274,7 @@ export function createSlackIngressController(params: {
           threadId: policy.threadId,
           chatType: "channel",
           isMention: policy.effectiveMention,
+          routedBy: policy.routedBy,
           attachments,
           raw: message,
         },
@@ -286,7 +290,10 @@ export function createSlackIngressController(params: {
       if (!params.getAdapter().onMessage || !rawEvent) {
         return;
       }
-      const policy = resolveSlackAppMentionIngressPolicy({ event: rawEvent });
+      const policy = resolveSlackAppMentionIngressPolicy({
+        event: rawEvent,
+        botUserId: params.getBotUserId(),
+      });
       if (!policy.shouldRoute) {
         return;
       }
@@ -325,6 +332,7 @@ export function createSlackIngressController(params: {
           threadId: policy.threadId,
           chatType: "channel",
           isMention: true,
+          routedBy: policy.routedBy,
           attachments: await resolveSlackInboundAttachments({
             accountId: config.accountId,
             token: config.botToken,

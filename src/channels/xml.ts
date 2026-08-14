@@ -6,6 +6,7 @@
  */
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type { ChannelUserMention } from "@/channels/message-references";
 import { getLocalTime } from "@/cli/helpers/session-context";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import type {
@@ -30,6 +31,45 @@ function escapeXmlText(text: string): string {
  */
 function escapeXmlAttribute(text: string): string {
   return escapeXmlText(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+function sanitizeMentionDisplayName(mention: ChannelUserMention): string {
+  const name = mention.displayName
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 80)
+    .trim();
+  return name || mention.userId;
+}
+
+function buildTextWithUserMentions(
+  text: string,
+  mentions: ChannelUserMention[] | undefined,
+): string {
+  if (!mentions || mentions.length === 0) return escapeXmlText(text);
+  let cursor = 0;
+  const parts: string[] = [];
+  for (const mention of mentions) {
+    if (
+      !Number.isInteger(mention.start) ||
+      !Number.isInteger(mention.end) ||
+      mention.start < cursor ||
+      mention.end <= mention.start ||
+      mention.end > text.length ||
+      !mention.userId.trim()
+    ) {
+      return escapeXmlText(text);
+    }
+    parts.push(escapeXmlText(text.slice(cursor, mention.start)));
+    const displayName = sanitizeMentionDisplayName(mention);
+    parts.push(
+      `<mention id="${escapeXmlAttribute(mention.userId)}">@${escapeXmlText(displayName)}</mention>`,
+    );
+    cursor = mention.end;
+  }
+  parts.push(escapeXmlText(text.slice(cursor)));
+  return parts.join("");
 }
 
 function formatMebibytes(bytes: number): string {
@@ -231,7 +271,11 @@ function buildReplyContextXml(msg: InboundChannelMessage): string | null {
 
   const attrString = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
   if (replyContext.text?.trim()) {
-    return `<reply-context${attrString}>\n${escapeXmlText(replyContext.text)}\n</reply-context>`;
+    const text = buildTextWithUserMentions(
+      replyContext.text,
+      replyContext.userMentions,
+    );
+    return `<reply-context${attrString}>\n${text}\n</reply-context>`;
   }
   return `<reply-context${attrString} />`;
 }
@@ -254,7 +298,9 @@ function buildThreadContextEntryXml(
 
   const attrString = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
   const body = [
-    ...(entry.text ? [escapeXmlText(entry.text)] : []),
+    ...(entry.text
+      ? [buildTextWithUserMentions(entry.text, entry.userMentions)]
+      : []),
     ...(entry.attachments ?? []).map((attachment) =>
       buildAttachmentXml(attachment, {
         ...context,
@@ -342,9 +388,14 @@ export function buildChannelNotificationXml(
   if (msg.threadId) {
     attrs.push(`thread_id="${escapeXmlAttribute(msg.threadId)}"`);
   }
+  if (msg.routedBy) {
+    attrs.push(`routed_by="${escapeXmlAttribute(msg.routedBy)}"`);
+  }
 
   const attrString = attrs.join(" ");
-  const escapedText = msg.text ? escapeXmlText(msg.text) : "";
+  const escapedText = msg.text
+    ? buildTextWithUserMentions(msg.text, msg.userMentions)
+    : "";
   const reactionXml = buildReactionXml(msg);
   const replyContextXml = buildReplyContextXml(msg);
   const threadContextXml = buildThreadContextXml(msg);
