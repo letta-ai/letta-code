@@ -192,6 +192,10 @@ describe("agent/conversation management protocol-inbound validators", () => {
       conversation_source_tags: ["channel:slack"],
       cwd: "/tmp/project",
       mode: "acceptEdits",
+      workspace_sandbox: {
+        root: "/tmp/runs/run-1",
+        isolation_root: "/tmp/runs",
+      },
       skill_sources: [],
       preserve_skill_sources: true,
       client_info: { name: "test", title: "Test", version: "1.0.0" },

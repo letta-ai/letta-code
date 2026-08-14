@@ -20,6 +20,7 @@ export interface AppServerInfoResponseMessage {
     conversation_management: boolean;
     memory_management: boolean;
     runtime_start: boolean;
+    runtime_workspace_sandbox?: boolean;
     runtime_external_tools_update?: boolean;
     split_channels: boolean;
   };
@@ -56,6 +57,8 @@ export function isAppServerInfoResponseMessage(
     typeof capabilityRecord.conversation_management === "boolean" &&
     typeof capabilityRecord.memory_management === "boolean" &&
     typeof capabilityRecord.runtime_start === "boolean" &&
+    (capabilityRecord.runtime_workspace_sandbox === undefined ||
+      typeof capabilityRecord.runtime_workspace_sandbox === "boolean") &&
     (capabilityRecord.runtime_external_tools_update === undefined ||
       typeof capabilityRecord.runtime_external_tools_update === "boolean") &&
     typeof capabilityRecord.split_channels === "boolean"

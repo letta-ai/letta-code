@@ -765,7 +765,6 @@ export interface RuntimeStartClientInfo {
   title?: string;
   version?: string;
 }
-
 export interface RuntimeStartCommand {
   type: "runtime_start";
   /** Echoed back in the response for request correlation. */
@@ -784,6 +783,7 @@ export interface RuntimeStartCommand {
   cwd?: string | null;
   /** Initial permission mode for this runtime scope. */
   mode?: DevicePermissionMode;
+  workspace_sandbox?: { root: string; isolation_root: string };
   skill_sources?: readonly ("bundled" | "global" | "agent" | "project")[];
   /** Preserve the current override when skill_sources is omitted. */ preserve_skill_sources?: boolean;
   /** Optional client metadata for diagnostics/future protocol negotiation. */

@@ -299,6 +299,7 @@ export async function prepareListenerTurn(params: {
     permissionModeState,
     skillsDirectory: listenerOptions?.skillsDirectory,
     skillSources: runtime.skillSources,
+    workspaceSandbox: runtime.workspaceSandbox,
     cachedAgent,
     modContext: createListenerAgentModContext(agentId),
     modAdapters,
