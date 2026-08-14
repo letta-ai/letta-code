@@ -32,6 +32,12 @@ describe("external MessageChannel gateway boundary", () => {
       "Plain assistant text is not delivered to that external user.",
     );
     expect(definition.description).toContain(
+      "After that final send succeeds, do not repeat or paraphrase the sent message in assistant text; finish with only `Sent.` as the internal confirmation.",
+    );
+    expect(definition.description).toContain(
+      "This does not apply to a short acknowledgement sent before continuing substantive work.",
+    );
+    expect(definition.description).toContain(
       "Replies to routed Slack threads stay in the current thread automatically.",
     );
     expect(definition.description).not.toContain("`upload-file`");
