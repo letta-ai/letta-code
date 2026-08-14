@@ -7,7 +7,6 @@
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ChannelUserMention } from "@/channels/message-references";
-import { getLocalTime } from "@/cli/helpers/session-context";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import type {
   ChannelMessageAttachment,
@@ -97,29 +96,15 @@ function hasNotificationAttachmentPaths(msg: InboundChannelMessage): boolean {
   );
 }
 
-/**
- * Format the reminder text that explains channel reply semantics to the agent.
- */
-export function buildChannelReminderText(msg: InboundChannelMessage): string {
-  const localTime = escapeXmlText(getLocalTime());
-  const escapedChannel = escapeXmlText(msg.channel);
-
-  const lines = [
+function buildChannelAttachmentReminderText(
+  msg: InboundChannelMessage,
+): string | undefined {
+  if (!hasNotificationAttachmentPaths(msg)) return undefined;
+  return [
     SYSTEM_REMINDER_OPEN,
-    `External ${escapedChannel} turn. Plain assistant text is not delivered; follow the scoped MessageChannel instructions to respond.`,
-    `Current local time on this device: ${localTime}`,
+    "If this notification includes attachment local_path values, you may be able to inspect those files using local file or image tools available in your current toolset (for example Read or ViewImage), using the local_path.",
     SYSTEM_REMINDER_CLOSE,
-  ];
-
-  if (hasNotificationAttachmentPaths(msg)) {
-    lines.splice(
-      lines.length - 2,
-      0,
-      "If this notification includes attachment local_path values, you may be able to inspect those files using local file or image tools available in your current toolset (for example Read or ViewImage), using the local_path.",
-    );
-  }
-
-  return lines.join("\n");
+  ].join("\n");
 }
 
 type AttachmentXmlContext = {
@@ -423,15 +408,17 @@ export function buildChannelNotificationXml(
 /**
  * Format an inbound channel message as structured content parts.
  *
- * The reminder and the notification XML are emitted as separate text parts so
- * UIs that already know how to hide pure system-reminder parts can do so
- * without needing to parse concatenated XML blobs.
+ * Attachment guidance is emitted only when this event contains inspectable
+ * local paths. Reply semantics live in the scoped MessageChannel definition.
  */
 export function formatChannelNotification(
   msg: InboundChannelMessage,
 ): MessageCreate["content"] {
+  const attachmentReminder = buildChannelAttachmentReminderText(msg);
   return [
-    { type: "text", text: buildChannelReminderText(msg) },
+    ...(attachmentReminder
+      ? [{ type: "text" as const, text: attachmentReminder }]
+      : []),
     { type: "text", text: buildChannelNotificationXml(msg) },
     ...(msg.attachments ?? []).flatMap((attachment) => {
       if (

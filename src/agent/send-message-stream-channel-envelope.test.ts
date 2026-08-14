@@ -22,7 +22,7 @@ describe("channel request envelope", () => {
     clearTools();
   });
 
-  test("sends a compact Slack reminder with reply guidance in MessageChannel", async () => {
+  test("keeps reply guidance in MessageChannel without a durable reminder", async () => {
     const inboundMessage: InboundChannelMessage = {
       channel: "slack",
       accountId: "acct-slack",
@@ -100,7 +100,8 @@ describe("channel request envelope", () => {
     const replyGuidance =
       "Replies to routed Slack threads stay in the current thread automatically.";
 
-    expect(requestText).toContain("External slack turn.");
+    expect(requestText).not.toContain("External slack turn.");
+    expect(requestText).not.toContain("Current local time on this device:");
     expect(requestText).toContain('source=\\"slack\\"');
     expect(requestText).toContain('chat_id=\\"C123\\"');
     expect(requestText).toContain('thread_id=\\"1712790000.000050\\"');
