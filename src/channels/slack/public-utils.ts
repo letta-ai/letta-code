@@ -12,7 +12,7 @@ export function firstNonEmptyString(...values: unknown[]): string | undefined {
 }
 
 export function normalizeSlackText(text: string): string {
-  return text.replace(/^(?:\s*<@[A-Z0-9]+>\s*)+/, "").trim();
+  return text.trim();
 }
 
 export function resolveSlackChatType(chatId: string): "direct" | "channel" {

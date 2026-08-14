@@ -71,6 +71,7 @@ export {
   normalizeChannelLifecycleErrorMessage,
   sanitizeChannelLifecycleErrorText,
 } from "./channels/lifecycle-error";
+export type { ChannelUserMention } from "./channels/message-references";
 export type {
   ChannelMessageActionAdapter,
   ChannelMessageActionContext,

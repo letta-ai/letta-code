@@ -158,6 +158,14 @@ export function createSlackInboundDebounceController(params: {
               .map((entry) => entry.inbound.text)
               .filter(Boolean)
               .join("\n");
+      const hasExplicitMention = dedupedEntries.some(
+        (entry) => entry.inbound.routedBy === "mention",
+      );
+      const routedBy = hasExplicitMention
+        ? "mention"
+        : last.inbound.chatType === "direct"
+          ? "dm"
+          : last.inbound.routedBy;
       try {
         await onMessage({
           ...last.inbound,
@@ -166,6 +174,7 @@ export function createSlackInboundDebounceController(params: {
             (entry) =>
               entry.opts.wasMentioned || entry.inbound.isMention === true,
           ),
+          routedBy,
         });
       } catch (error) {
         console.error(
