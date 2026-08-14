@@ -131,6 +131,12 @@ import {
   isStringRecord,
 } from "./protocol-validation";
 import {
+  isRuntimeStartClientInfo,
+  isRuntimeStartCreateAgentOptions,
+  isRuntimeStartCreateConversationOptions,
+  isRuntimeStartWorkspaceSandbox,
+} from "./runtime-start-validation";
+import {
   isTeleportContinuePayload,
   parseTeleportCommand,
 } from "./teleport-protocol-inbound";
@@ -493,28 +499,6 @@ function isDevicePermissionMode(value: unknown): boolean {
   );
 }
 
-function isRuntimeStartCreateAgentOptions(value: unknown): boolean {
-  if (!isObjectRecord(value)) return false;
-  return (
-    isObjectRecord(value.body) &&
-    (value.pin_global === undefined || typeof value.pin_global === "boolean") &&
-    (value.memfs === undefined || typeof value.memfs === "boolean")
-  );
-}
-
-function isRuntimeStartCreateConversationOptions(value: unknown): boolean {
-  if (!isObjectRecord(value)) return false;
-  return value.body === undefined || isObjectRecord(value.body);
-}
-function isRuntimeStartClientInfo(value: unknown): boolean {
-  if (!isObjectRecord(value)) return false;
-  return (
-    typeof value.name === "string" &&
-    (value.title === undefined || typeof value.title === "string") &&
-    (value.version === undefined || typeof value.version === "string")
-  );
-}
-
 export function isRuntimeStartCommand(
   value: unknown,
 ): value is RuntimeStartCommand {
@@ -534,6 +518,8 @@ export function isRuntimeStartCommand(
       isStringArray(c.conversation_source_tags)) &&
     (c.cwd === undefined || c.cwd === null || typeof c.cwd === "string") &&
     (c.mode === undefined || isDevicePermissionMode(c.mode)) &&
+    (c.workspace_sandbox === undefined ||
+      isRuntimeStartWorkspaceSandbox(c.workspace_sandbox)) &&
     (c.skill_sources === undefined || isSkillSourceArray(c.skill_sources)) &&
     (c.preserve_skill_sources === undefined ||
       typeof c.preserve_skill_sources === "boolean") &&
