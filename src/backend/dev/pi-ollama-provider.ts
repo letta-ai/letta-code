@@ -3,6 +3,7 @@ import {
   createLocalEndpointPiProvider,
   type LocalEndpointDiscover,
   type LocalEndpointModelMetadata,
+  localEndpointNativeBaseURL,
 } from "./pi-local-endpoint-provider";
 
 export const OLLAMA_PI_PROVIDER_ID = "ollama";
@@ -70,7 +71,7 @@ function parseOllamaTags(data: unknown): OllamaTagEntry[] {
  * `/api/ps` reports `context_length` per *loaded* model, which is the window
  * the engine will actually serve for it. Prefer it whenever it is available.
  */
-function parseOllamaRunningContexts(data: unknown): Map<string, number> {
+export function parseOllamaRunningContexts(data: unknown): Map<string, number> {
   const contexts = new Map<string, number>();
   if (!data || typeof data !== "object") return contexts;
   const models = (data as { models?: unknown }).models;
@@ -89,6 +90,116 @@ function parseOllamaRunningContexts(data: unknown): Map<string, number> {
     contexts.set(id, contextLength);
   }
   return contexts;
+}
+
+const OLLAMA_STATUS_TIMEOUT_MS = 2_000;
+const OLLAMA_MODEL_LOAD_TIMEOUT_MS = 120_000;
+
+export interface ResolveOllamaServedContextOptions {
+  baseURL: string;
+  modelId: string;
+  apiKey?: string;
+  fetchImpl?: typeof fetch;
+}
+
+async function fetchOllamaNative<T>(
+  fetchImpl: typeof fetch,
+  url: string,
+  options: {
+    apiKey?: string;
+    body?: unknown;
+    timeoutMs: number;
+    consume(response: Response): Promise<T>;
+  },
+): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  try {
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (options.apiKey && options.apiKey !== "not-needed") {
+      headers.Authorization = `Bearer ${options.apiKey}`;
+    }
+    if (options.body !== undefined)
+      headers["Content-Type"] = "application/json";
+    const response = await fetchImpl(url, {
+      method: options.body === undefined ? "GET" : "POST",
+      headers,
+      ...(options.body === undefined
+        ? {}
+        : { body: JSON.stringify(options.body) }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    // Keep the abort deadline active through body consumption and parsing.
+    // Fetch resolves at headers, while Ollama's load completes with the body.
+    return await options.consume(response);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Resolve turn-time serving truth for one exact Ollama model. Catalog metadata
+ * cannot answer this for an unloaded model, so use Ollama's documented empty
+ * generate request to load only the selected model, then require `/api/ps` to
+ * report that exact identity before any real prompt is dispatched.
+ */
+export async function resolveOllamaServedContext(
+  options: ResolveOllamaServedContextOptions,
+): Promise<number> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const nativeBaseURL = localEndpointNativeBaseURL(options.baseURL);
+  const psURL = `${nativeBaseURL}/api/ps`;
+  const runningContext = async (): Promise<number | undefined> => {
+    const data = await fetchOllamaNative(fetchImpl, psURL, {
+      ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+      timeoutMs: OLLAMA_STATUS_TIMEOUT_MS,
+      consume: (response) => response.json(),
+    });
+    return parseOllamaRunningContexts(data).get(options.modelId);
+  };
+
+  try {
+    const alreadyLoaded = await runningContext();
+    if (alreadyLoaded !== undefined) return alreadyLoaded;
+  } catch {
+    // A failed initial status probe does not make loading unsafe. The required
+    // post-load probe below is authoritative and fails closed.
+  }
+
+  try {
+    await fetchOllamaNative(fetchImpl, `${nativeBaseURL}/api/generate`, {
+      ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+      body: { model: options.modelId, stream: false },
+      timeoutMs: OLLAMA_MODEL_LOAD_TIMEOUT_MS,
+      consume: (response) => response.text(),
+    });
+  } catch (error) {
+    throw new Error(
+      `Unable to load Ollama model "${options.modelId}" to determine its served context window. ` +
+        `Refusing to send the prompt because Ollama may silently truncate it. ` +
+        `Check the Ollama endpoint, model installation, and available memory. (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+
+  try {
+    const loadedContext = await runningContext();
+    if (loadedContext !== undefined) return loadedContext;
+  } catch (error) {
+    throw new Error(
+      `Ollama loaded model "${options.modelId}", but /api/ps could not verify its served context window. ` +
+        `Refusing to send the prompt because Ollama may silently truncate it. ` +
+        `Check that the endpoint supports /api/ps. (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+
+  throw new Error(
+    `Ollama did not report an exact served context window for loaded model "${options.modelId}" in /api/ps. ` +
+      `Refusing to send the prompt because Ollama may silently truncate it. ` +
+      `Check the model name and Ollama server logs.`,
+  );
 }
 
 function parseOllamaShow(
@@ -142,14 +253,6 @@ const ollamaDiscover: LocalEndpointDiscover = async (context) => {
     .fetchJson(`${context.nativeBaseURL}/api/ps`)
     .then(parseOllamaRunningContexts)
     .catch(() => new Map<string, number>());
-  // `OLLAMA_CONTEXT_LENGTH` is daemon-wide, so any loaded model reveals the
-  // window this endpoint serves to models that are not loaded yet. Take the
-  // smallest observed value: a model loaded with an explicit larger `num_ctx`
-  // by another client should not inflate what we assume for everything else.
-  const endpointDefaultContext =
-    runtimeContexts.size > 0
-      ? Math.min(...runtimeContexts.values())
-      : undefined;
   return Promise.all(
     entries.map(async ({ id: modelId, digest }) => {
       // /api/show reads GGUF metadata from disk, which can take seconds for
@@ -158,8 +261,10 @@ const ollamaDiscover: LocalEndpointDiscover = async (context) => {
       // runtime window is part of the fingerprint because it changes without
       // the blob changing — loading a model, or restarting the daemon with a
       // different OLLAMA_CONTEXT_LENGTH, must republish the Model.
-      const runtimeContextLength =
-        runtimeContexts.get(modelId) ?? endpointDefaultContext;
+      // `/api/ps` is runtime truth only for the exact loaded model. Another
+      // model may have been loaded with a per-request num_ctx, so its value says
+      // nothing reliable about this artifact or the daemon default.
+      const runtimeContextLength = runtimeContexts.get(modelId);
       const fingerprint = digest
         ? `${digest}:${runtimeContextLength ?? "-"}`
         : undefined;

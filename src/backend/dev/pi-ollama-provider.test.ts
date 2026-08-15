@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { testRefreshContext } from "@/test-utils/pi-refresh-context";
 import { localEndpointNativeBaseURL } from "./pi-local-endpoint-provider";
+import { resolvePiModelForAgent } from "./pi-model-factory";
+import { LocalPiModelsRuntime } from "./pi-models-runtime";
 import { createOllamaPiProvider } from "./pi-ollama-provider";
 
 interface FakeOllamaState {
@@ -126,10 +128,10 @@ describe("createOllamaPiProvider", () => {
     ).toBe(32768);
   });
 
-  test("applies a loaded model's window to models that are not loaded", async () => {
+  test("does not apply another loaded model's window as an endpoint default", async () => {
     const state = qwenState();
-    // OLLAMA_CONTEXT_LENGTH is daemon-wide, so the one loaded model reveals the
-    // window the endpoint will serve for the other one too.
+    // A client can load each model with a different num_ctx. `/api/ps` is
+    // authoritative only for the exact model identity in that record.
     state.ps = { models: [{ name: "smol-text:3b", context_length: 8192 }] };
     const provider = createOllamaPiProvider({
       baseURL: "http://localhost:11434",
@@ -139,28 +141,10 @@ describe("createOllamaPiProvider", () => {
 
     expect(
       provider.getModels().find((m) => m.id === "qwen3.6:27b")?.contextWindow,
-    ).toBe(8192);
-  });
-
-  test("takes the smallest observed runtime window", async () => {
-    const state = qwenState();
-    // A model another client loaded with a large explicit num_ctx must not
-    // inflate what we assume the endpoint serves by default.
-    state.ps = {
-      models: [
-        { name: "other:7b", context_length: 131072 },
-        { name: "smol-text:3b", context_length: 16384 },
-      ],
-    };
-    const provider = createOllamaPiProvider({
-      baseURL: "http://localhost:11434",
-      fetchImpl: fakeOllamaFetch(state),
-    });
-    await provider.refreshModels?.(testRefreshContext());
-
+    ).toBe(128000);
     expect(
-      provider.getModels().find((m) => m.id === "qwen3.6:27b")?.contextWindow,
-    ).toBe(16384);
+      provider.getModels().find((m) => m.id === "smol-text:3b")?.contextWindow,
+    ).toBe(8192);
   });
 
   test("falls back to GGUF metadata when /api/ps is unavailable", async () => {
@@ -321,6 +305,35 @@ describe("createOllamaPiProvider as Ollama Cloud", () => {
     expect(authHeaders.every((header) => header === "Bearer cloud-key")).toBe(
       true,
     );
+  });
+
+  test("turn resolution does not require local-daemon serving APIs", async () => {
+    const previousApiKey = process.env.OLLAMA_API_KEY;
+    process.env.OLLAMA_API_KEY = "cloud-key";
+    const state = qwenState();
+    const fetchImpl = fakeOllamaFetch(state);
+    const runtime = new LocalPiModelsRuntime({ fetchImpl });
+
+    try {
+      const resolved = await resolvePiModelForAgent(
+        "ollama-cloud/qwen3.6:27b",
+        {
+          provider_type: "ollama_cloud",
+          context_window_limit: 262144,
+        },
+        { modelsRuntime: runtime },
+      );
+      expect(resolved.model.contextWindow).toBe(262144);
+      expect(state.requests.some((url) => url.endsWith("/api/generate"))).toBe(
+        false,
+      );
+      // Catalog discovery may probe /api/ps best-effort and receive 404. Turn
+      // resolution must not require a local-daemon served-window result.
+      expect(state.requests.some((url) => url.endsWith("/api/ps"))).toBe(true);
+    } finally {
+      if (previousApiKey === undefined) delete process.env.OLLAMA_API_KEY;
+      else process.env.OLLAMA_API_KEY = previousApiKey;
+    }
   });
 });
 

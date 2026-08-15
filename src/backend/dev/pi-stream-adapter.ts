@@ -396,9 +396,10 @@ function assertPromptFloorFitsContextWindow(
   const floorTokens = estimateProviderPromptFloorTokens(input);
   if (floorTokens <= contextWindow) return;
 
-  const remedy = model.provider?.startsWith("ollama")
-    ? `Raise the served window (for example OLLAMA_CONTEXT_LENGTH=${nextPowerOfTwoAtLeast(floorTokens)} ollama serve)`
-    : "Raise the engine's context window";
+  const remedy =
+    model.provider === "ollama"
+      ? `Raise the served window (for example OLLAMA_CONTEXT_LENGTH=${nextPowerOfTwoAtLeast(floorTokens)} ollama serve)`
+      : "Raise the engine's context window";
   throw new Error(
     `The system prompt and tool definitions need about ${floorTokens.toLocaleString()} tokens, ` +
       `but "${model.id}" is served with a ${contextWindow.toLocaleString()}-token context window. ` +
