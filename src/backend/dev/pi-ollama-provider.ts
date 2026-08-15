@@ -191,6 +191,7 @@ export async function resolveOllamaServedContext(
     const loadedContext = await runningContext();
     if (loadedContext !== undefined) return loadedContext;
   } catch (error) {
+    if (options.signal?.aborted) throw options.signal.reason ?? error;
     throw new Error(
       `Ollama loaded model "${options.modelId}", but /api/ps could not verify its served context window. ` +
         `Refusing to send the prompt because Ollama may silently truncate it. ` +

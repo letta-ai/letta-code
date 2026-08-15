@@ -113,6 +113,38 @@ describe("resolveOllamaServedContext", () => {
     controller.abort(new Error("turn cancelled"));
     await expect(pending).rejects.toThrow("turn cancelled");
   });
+
+  test("cancels the required post-load status probe with the turn", async () => {
+    let statusStarted = () => {};
+    const started = new Promise<void>((resolve) => {
+      statusStarted = resolve;
+    });
+    const fetchImpl = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      if (String(input).endsWith("/api/generate")) return Response.json({});
+      statusStarted();
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(init.signal?.reason ?? new Error("aborted")),
+          { once: true },
+        );
+      });
+    }) as typeof fetch;
+    const controller = new AbortController();
+    const pending = resolveOllamaServedContext({
+      baseURL: "http://localhost:11434",
+      modelId: "qwen3.6:27b",
+      fetchImpl,
+      signal: controller.signal,
+    });
+
+    await started;
+    controller.abort(new Error("turn cancelled"));
+    await expect(pending).rejects.toThrow("turn cancelled");
+  });
 });
 
 describe("createOllamaPiProvider", () => {
