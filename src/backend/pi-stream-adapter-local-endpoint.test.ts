@@ -308,8 +308,15 @@ describe("PiStreamAdapter local endpoint payloads", () => {
       // over a prompt we already know will be clipped.
       expect(chatRequests).toBe(0);
       expect(psRequests).toBeGreaterThanOrEqual(2);
-      expect(loadBodies).toEqual([{ model: "deepseek-r1:8b", stream: false }]);
-      expect(servingLifecycle.slice(0, 3)).toEqual(["ps", "generate", "ps"]);
+      expect(loadBodies).toEqual([
+        { model: "deepseek-r1:8b", prompt: "", stream: false },
+        { model: "deepseek-r1:8b", prompt: "", stream: false },
+      ]);
+      expect(servingLifecycle[0]).toBe("generate");
+      expect(
+        servingLifecycle.filter((event) => event === "generate"),
+      ).toHaveLength(2);
+      expect(servingLifecycle.at(-1)).toBe("ps");
     } finally {
       if (previousOllamaBaseUrl === undefined) {
         delete process.env.OLLAMA_BASE_URL;

@@ -3,7 +3,10 @@ import { testRefreshContext } from "@/test-utils/pi-refresh-context";
 import { localEndpointNativeBaseURL } from "./pi-local-endpoint-provider";
 import { resolvePiModelForAgent } from "./pi-model-factory";
 import { LocalPiModelsRuntime } from "./pi-models-runtime";
-import { createOllamaPiProvider } from "./pi-ollama-provider";
+import {
+  createOllamaPiProvider,
+  resolveOllamaServedContext,
+} from "./pi-ollama-provider";
 
 interface FakeOllamaState {
   tags: unknown;
@@ -79,6 +82,36 @@ describe("localEndpointNativeBaseURL", () => {
     expect(localEndpointNativeBaseURL("http://localhost:11434")).toBe(
       "http://localhost:11434",
     );
+  });
+});
+
+describe("resolveOllamaServedContext", () => {
+  test("cancels a pending model load with the turn", async () => {
+    const fetchImpl = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      if (!String(input).endsWith("/api/generate")) {
+        return Response.json({ models: [] });
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(init.signal?.reason ?? new Error("aborted")),
+          { once: true },
+        );
+      });
+    }) as typeof fetch;
+    const controller = new AbortController();
+    const pending = resolveOllamaServedContext({
+      baseURL: "http://localhost:11434",
+      modelId: "qwen3.6:27b",
+      fetchImpl,
+      signal: controller.signal,
+    });
+
+    controller.abort(new Error("turn cancelled"));
+    await expect(pending).rejects.toThrow("turn cancelled");
   });
 });
 

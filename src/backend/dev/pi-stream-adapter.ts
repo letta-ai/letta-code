@@ -591,6 +591,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       {
         localProviderAuthStorageDir: this.localProviderAuthStorageDir,
         modelsRuntime: this.modelsRuntime,
+        ...(this.abortSignal ? { abortSignal: this.abortSignal } : {}),
       },
     );
     const contextWindow = resolved.model.contextWindow;
@@ -622,6 +623,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       {
         localProviderAuthStorageDir: this.localProviderAuthStorageDir,
         modelsRuntime: this.modelsRuntime,
+        ...(this.abortSignal ? { abortSignal: this.abortSignal } : {}),
       },
     );
     assertPromptFloorFitsContextWindow(input, resolved.model);

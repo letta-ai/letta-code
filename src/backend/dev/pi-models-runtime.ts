@@ -313,6 +313,7 @@ export class LocalPiModelsRuntime {
     providerId: string,
     modelId: string,
     fallbackModelId?: string,
+    abortSignal?: AbortSignal,
   ): Promise<{ model: Model<Api> | undefined; auth: AuthResult | undefined }> {
     this.ensureManagedProviders(providerId);
     const lookup = () =>
@@ -355,6 +356,7 @@ export class LocalPiModelsRuntime {
             ? { apiKey: ollamaConnection.apiKey }
             : {}),
           ...(this.fetchImpl ? { fetchImpl: this.fetchImpl } : {}),
+          ...(abortSignal ? { signal: abortSignal } : {}),
         });
         try {
           await this.refresh(providerId);

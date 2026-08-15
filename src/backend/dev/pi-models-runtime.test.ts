@@ -22,8 +22,7 @@ interface FakeOllamaModel {
 interface FakeOllamaServer {
   url: string;
   chatBodies: Array<Record<string, unknown>>;
-  loadBodies?: Array<Record<string, unknown>>;
-  setRuntimeContext?(modelId: string, contextLength: number | undefined): void;
+  setDefaultRuntimeContext?(modelId: string, contextLength: number): void;
   stop(): void;
 }
 
@@ -60,8 +59,13 @@ function sseChatResponse(modelId: string): Response {
 
 function startFakeOllama(models: FakeOllamaModel[]): FakeOllamaServer {
   const chatBodies: Array<Record<string, unknown>> = [];
-  const loadBodies: Array<Record<string, unknown>> = [];
   const runtimeContexts = new Map<string, number>();
+  const defaultRuntimeContexts = new Map(
+    models.map((model) => [
+      model.id,
+      Math.min(model.contextLength ?? 128000, 128000),
+    ]),
+  );
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -81,13 +85,9 @@ function startFakeOllama(models: FakeOllamaModel[]): FakeOllamaServer {
       }
       if (url.pathname === "/api/generate") {
         const body = (await request.json()) as Record<string, unknown>;
-        loadBodies.push(body);
         const model = models.find((entry) => entry.id === body.model);
         if (!model) return new Response("not found", { status: 404 });
-        runtimeContexts.set(
-          model.id,
-          Math.min(model.contextLength ?? 128000, 128000),
-        );
+        runtimeContexts.set(model.id, defaultRuntimeContexts.get(model.id)!);
         return Response.json({ model: model.id, done: true });
       }
       if (url.pathname === "/api/show") {
@@ -117,10 +117,8 @@ function startFakeOllama(models: FakeOllamaModel[]): FakeOllamaServer {
   return {
     url: `http://localhost:${server.port}`,
     chatBodies,
-    loadBodies,
-    setRuntimeContext: (modelId, contextLength) => {
-      if (contextLength === undefined) runtimeContexts.delete(modelId);
-      else runtimeContexts.set(modelId, contextLength);
+    setDefaultRuntimeContext: (modelId, contextLength) => {
+      defaultRuntimeContexts.set(modelId, contextLength);
     },
     stop: () => server.stop(true),
   };
@@ -464,7 +462,7 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       runtime.getModel("ollama", "qwen3.6:27b")!,
     );
 
-    server.setRuntimeContext?.("qwen3.6:27b", 8192);
+    server.setDefaultRuntimeContext?.("qwen3.6:27b", 8192);
     const resolvedAfterRuntimeChange = await resolvePiModelForAgent(
       "ollama/qwen3.6:27b",
       persisted ?? {},

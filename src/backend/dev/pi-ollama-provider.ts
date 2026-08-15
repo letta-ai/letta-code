@@ -100,6 +100,7 @@ export interface ResolveOllamaServedContextOptions {
   modelId: string;
   apiKey?: string;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
 }
 
 async function fetchOllamaNative<T>(
@@ -108,12 +109,16 @@ async function fetchOllamaNative<T>(
   options: {
     apiKey?: string;
     body?: unknown;
+    signal?: AbortSignal;
     timeoutMs: number;
     consume(response: Response): Promise<T>;
   },
 ): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  const abort = () => controller.abort(options.signal?.reason);
+  if (options.signal?.aborted) abort();
+  else options.signal?.addEventListener("abort", abort, { once: true });
   try {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (options.apiKey && options.apiKey !== "not-needed") {
@@ -137,14 +142,17 @@ async function fetchOllamaNative<T>(
     return await options.consume(response);
   } finally {
     clearTimeout(timeout);
+    options.signal?.removeEventListener("abort", abort);
   }
 }
 
 /**
  * Resolve turn-time serving truth for one exact Ollama model. Catalog metadata
- * cannot answer this for an unloaded model, so use Ollama's documented empty
- * generate request to load only the selected model, then require `/api/ps` to
- * report that exact identity before any real prompt is dispatched.
+ * cannot answer this for an unloaded model. A model already loaded by another
+ * client can also use that client's `num_ctx`, while our OpenAI-compatible
+ * request uses the daemon default. Use Ollama's documented empty generate
+ * request to load the selected model with the same default our turn will use,
+ * then require `/api/ps` to report that exact identity before dispatch.
  */
 export async function resolveOllamaServedContext(
   options: ResolveOllamaServedContextOptions,
@@ -155,6 +163,7 @@ export async function resolveOllamaServedContext(
   const runningContext = async (): Promise<number | undefined> => {
     const data = await fetchOllamaNative(fetchImpl, psURL, {
       ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
       timeoutMs: OLLAMA_STATUS_TIMEOUT_MS,
       consume: (response) => response.json(),
     });
@@ -162,21 +171,15 @@ export async function resolveOllamaServedContext(
   };
 
   try {
-    const alreadyLoaded = await runningContext();
-    if (alreadyLoaded !== undefined) return alreadyLoaded;
-  } catch {
-    // A failed initial status probe does not make loading unsafe. The required
-    // post-load probe below is authoritative and fails closed.
-  }
-
-  try {
     await fetchOllamaNative(fetchImpl, `${nativeBaseURL}/api/generate`, {
       ...(options.apiKey ? { apiKey: options.apiKey } : {}),
-      body: { model: options.modelId, stream: false },
+      ...(options.signal ? { signal: options.signal } : {}),
+      body: { model: options.modelId, prompt: "", stream: false },
       timeoutMs: OLLAMA_MODEL_LOAD_TIMEOUT_MS,
       consume: (response) => response.text(),
     });
   } catch (error) {
+    if (options.signal?.aborted) throw options.signal.reason ?? error;
     throw new Error(
       `Unable to load Ollama model "${options.modelId}" to determine its served context window. ` +
         `Refusing to send the prompt because Ollama may silently truncate it. ` +

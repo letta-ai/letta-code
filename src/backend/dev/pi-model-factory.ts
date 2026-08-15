@@ -113,6 +113,7 @@ export interface PiModelFactoryOptions {
   model?: string;
   localProviderAuthStorageDir?: string;
   preferredProviderType?: string;
+  abortSignal?: AbortSignal;
   /**
    * Per-backend pi-ai Models runtime. Runtime-managed providers (local
    * endpoints and mod registrations) resolve to the complete Model object
@@ -489,6 +490,7 @@ export async function resolvePiModelForAgent(
       runtimeProviderId,
       modelId,
       fallbackModelId,
+      options.abortSignal,
     );
   // The runtime is the sole credential source (stored records, ambient env
   // via the runtime's AuthContext aliases, per-credential OAuth request
