@@ -48,6 +48,7 @@ import { getBackend, isLocalBackendEnabled } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
 import { subscribePiProviderRegistry } from "@/backend/dev/pi-provider-mod-registry";
+import { useConversationTitleSync } from "@/cli/app/conversation-title-sync";
 import {
   cancelActiveConnectOperation,
   isActiveConnectOperationCancellable,
@@ -403,12 +404,10 @@ export function App({
   }, [agentState]);
 
   const projectDirectory = process.cwd();
-
   const [conversationId, setConversationId] = useState(initialConversationId);
   const [conversationSummary, setConversationSummary] = useState<string | null>(
     null,
   );
-
   // Keep a ref to the current agentId for use in callbacks that need the latest value
   const agentIdRef = useRef(agentId);
   useEffect(() => {
@@ -1235,6 +1234,7 @@ export function App({
     },
     [],
   );
+  useConversationTitleSync(conversationId, setConversationSummary);
   const deriveAutoConversationTitle = useCallback(() => {
     if (firstUserQueryRef.current) {
       return firstUserQueryRef.current;

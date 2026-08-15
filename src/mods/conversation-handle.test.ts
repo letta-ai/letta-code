@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Backend, ConversationMessageListBody } from "@/backend";
 import { createModConversationHandle } from "@/mods/conversation-handle";
+import { subscribeToConversationTitleChanges } from "@/mods/conversation-title-events";
 
 const sendMessageStream = async () => (async function* () {})();
 
@@ -64,6 +65,48 @@ describe("mod conversation handle", () => {
 
     expect(() => handle.getHistory()).toThrow(
       "Mod conversation backend is not available",
+    );
+  });
+
+  test("updateTitle persists and publishes the conversation title", async () => {
+    const calls: Array<{ id: string; body: unknown }> = [];
+    const publishedTitles: string[] = [];
+    const unsubscribe = subscribeToConversationTitleChanges((change) =>
+      publishedTitles.push(change.title),
+    );
+    const backend = {
+      updateConversation: async (id: string, body: unknown) => {
+        calls.push({ id, body });
+        return {};
+      },
+    } as unknown as Backend;
+    const handle = createModConversationHandle({
+      backend,
+      conversationId: "conversation-1",
+      sendMessageStream,
+    });
+
+    await handle.updateTitle!("Focused title");
+    unsubscribe();
+
+    expect(calls).toEqual([
+      {
+        id: "conversation-1",
+        body: { summary: "Focused title" },
+      },
+    ]);
+    expect(publishedTitles).toEqual(["Focused title"]);
+  });
+
+  test("updateTitle rejects a missing conversation id", async () => {
+    const handle = createModConversationHandle({
+      backend: {} as Backend,
+      conversationId: null,
+      sendMessageStream,
+    });
+
+    await expect(handle.updateTitle!("Focused title")).rejects.toThrow(
+      "conversationId is not available",
     );
   });
 
