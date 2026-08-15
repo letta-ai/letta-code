@@ -9,6 +9,14 @@ import {
 export const OLLAMA_PI_PROVIDER_ID = "ollama";
 export const OLLAMA_CLOUD_PI_PROVIDER_ID = "ollama-cloud";
 
+/** Ollama assigns the `latest` tag when a model handle omits one. */
+export function normalizeOllamaModelId(modelId: string): string {
+  const leaf = modelId.slice(modelId.lastIndexOf("/") + 1);
+  return leaf.includes(":") || leaf.includes("@")
+    ? modelId
+    : `${modelId}:latest`;
+}
+
 export interface OllamaPiProviderOptions {
   /** Base URL as configured; `/v1` is appended/stripped as needed. */
   baseURL: string;
@@ -158,6 +166,7 @@ export async function resolveOllamaServedContext(
   options: ResolveOllamaServedContextOptions,
 ): Promise<number> {
   const fetchImpl = options.fetchImpl ?? fetch;
+  const modelId = normalizeOllamaModelId(options.modelId);
   const nativeBaseURL = localEndpointNativeBaseURL(options.baseURL);
   const psURL = `${nativeBaseURL}/api/ps`;
   const runningContext = async (): Promise<number | undefined> => {
@@ -167,21 +176,21 @@ export async function resolveOllamaServedContext(
       timeoutMs: OLLAMA_STATUS_TIMEOUT_MS,
       consume: (response) => response.json(),
     });
-    return parseOllamaRunningContexts(data).get(options.modelId);
+    return parseOllamaRunningContexts(data).get(modelId);
   };
 
   try {
     await fetchOllamaNative(fetchImpl, `${nativeBaseURL}/api/generate`, {
       ...(options.apiKey ? { apiKey: options.apiKey } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
-      body: { model: options.modelId, prompt: "", stream: false },
+      body: { model: modelId, prompt: "", stream: false },
       timeoutMs: OLLAMA_MODEL_LOAD_TIMEOUT_MS,
       consume: (response) => response.text(),
     });
   } catch (error) {
     if (options.signal?.aborted) throw options.signal.reason ?? error;
     throw new Error(
-      `Unable to load Ollama model "${options.modelId}" to determine its served context window. ` +
+      `Unable to load Ollama model "${modelId}" to determine its served context window. ` +
         `Refusing to send the prompt because Ollama may silently truncate it. ` +
         `Check the Ollama endpoint, model installation, and available memory. (${error instanceof Error ? error.message : String(error)})`,
     );
@@ -193,14 +202,14 @@ export async function resolveOllamaServedContext(
   } catch (error) {
     if (options.signal?.aborted) throw options.signal.reason ?? error;
     throw new Error(
-      `Ollama loaded model "${options.modelId}", but /api/ps could not verify its served context window. ` +
+      `Ollama loaded model "${modelId}", but /api/ps could not verify its served context window. ` +
         `Refusing to send the prompt because Ollama may silently truncate it. ` +
         `Check that the endpoint supports /api/ps. (${error instanceof Error ? error.message : String(error)})`,
     );
   }
 
   throw new Error(
-    `Ollama did not report an exact served context window for loaded model "${options.modelId}" in /api/ps. ` +
+    `Ollama did not report an exact served context window for loaded model "${modelId}" in /api/ps. ` +
       `Refusing to send the prompt because Ollama may silently truncate it. ` +
       `Check the model name and Ollama server logs.`,
   );

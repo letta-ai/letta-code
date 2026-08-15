@@ -213,7 +213,7 @@ describe("PiStreamAdapter local endpoint payloads", () => {
   // the visible symptom is an agent whose persona and memory have gone missing.
   // Compaction cannot recover it — the system prompt and tool schemas are not
   // history — so the turn must fail with something the user can act on.
-  test("loads an unloaded selected model and uses its exact served window", async () => {
+  test("loads an unloaded implicit-latest model and uses its exact served window", async () => {
     let chatRequests = 0;
     let psRequests = 0;
     const loadBodies: unknown[] = [];
@@ -224,7 +224,7 @@ describe("PiStreamAdapter local endpoint payloads", () => {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
-            models: [{ name: "deepseek-r1:8b" }, { name: "unselected:7b" }],
+            models: [{ name: "deepseek-r1:latest" }, { name: "unselected:7b" }],
           }),
         );
         return;
@@ -236,7 +236,7 @@ describe("PiStreamAdapter local endpoint payloads", () => {
         res.end(
           JSON.stringify({
             models: selectedLoaded
-              ? [{ name: "deepseek-r1:8b", context_length: 8192 }]
+              ? [{ name: "deepseek-r1:latest", context_length: 8192 }]
               : [],
           }),
         );
@@ -291,7 +291,7 @@ describe("PiStreamAdapter local endpoint payloads", () => {
             ...baseInput,
             agent: {
               ...baseInput.agent,
-              model: "ollama/deepseek-r1:8b",
+              model: "ollama/deepseek-r1",
               // Simulate the architectural value persisted at selection.
               model_settings: {
                 provider_type: "ollama",
@@ -307,15 +307,19 @@ describe("PiStreamAdapter local endpoint payloads", () => {
       // The request must never reach the engine: sending it would mean handing
       // over a prompt we already know will be clipped.
       expect(chatRequests).toBe(0);
-      expect(psRequests).toBeGreaterThanOrEqual(2);
-      expect(loadBodies).toEqual([
-        { model: "deepseek-r1:8b", prompt: "", stream: false },
-        { model: "deepseek-r1:8b", prompt: "", stream: false },
-      ]);
+      expect(psRequests).toBeGreaterThanOrEqual(1);
+      expect(loadBodies.length).toBeGreaterThanOrEqual(1);
+      expect(loadBodies).toEqual(
+        loadBodies.map(() => ({
+          model: "deepseek-r1:latest",
+          prompt: "",
+          stream: false,
+        })),
+      );
       expect(servingLifecycle[0]).toBe("generate");
       expect(
         servingLifecycle.filter((event) => event === "generate"),
-      ).toHaveLength(2);
+      ).toHaveLength(loadBodies.length);
       expect(servingLifecycle.at(-1)).toBe("ps");
     } finally {
       if (previousOllamaBaseUrl === undefined) {

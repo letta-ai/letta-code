@@ -33,6 +33,7 @@ import {
 import { createModPiProvider } from "./pi-mod-provider";
 import {
   createOllamaPiProvider,
+  normalizeOllamaModelId,
   OLLAMA_CLOUD_PI_PROVIDER_ID,
   OLLAMA_PI_PROVIDER_ID,
   resolveOllamaServedContext,
@@ -318,6 +319,9 @@ export class LocalPiModelsRuntime {
     this.ensureManagedProviders(providerId);
     const lookup = () =>
       this.models.getModel(providerId, modelId) ??
+      (this.isBuiltInLocalOllamaProvider(providerId)
+        ? this.models.getModel(providerId, normalizeOllamaModelId(modelId))
+        : undefined) ??
       (fallbackModelId
         ? this.models.getModel(providerId, fallbackModelId)
         : undefined);
