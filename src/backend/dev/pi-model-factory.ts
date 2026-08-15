@@ -288,9 +288,19 @@ export interface ZaiConnection {
   timeout: LocalProviderTimeout;
 }
 
+function isZaiCodingBaseURL(baseURL: string | undefined): boolean {
+  return typeof baseURL === "string" && baseURL.includes("/coding/");
+}
+
 export function resolveZaiConnection(options: {
   storageDir?: string;
   preferredProviderType?: "zai" | "zai_coding";
+  /**
+   * Catalog/published model URL. Current GLM models publish the coding-plan
+   * endpoint; a lone stored `zai` key should reuse that instead of being
+   * forced onto pay-as-you-go `/api/paas/v4`.
+   */
+  publishedBaseURL?: string;
 }): ZaiConnection {
   const regularRecord = localProviderRecord(
     ["zai", LOCAL_ZAI_PROVIDER_NAME],
@@ -331,15 +341,32 @@ export function resolveZaiConnection(options: {
       providerIds: [LOCAL_ZAI_CODING_PROVIDER_NAME, "zai-coding"],
     }),
   };
+  const reuseRegularKeyOnCodingEndpoint = (): ZaiConnection => ({
+    ...codingConnection,
+    apiKey: regularKey,
+    timeout: regularConnection.timeout,
+  });
+  const publishedWantsCoding = isZaiCodingBaseURL(options.publishedBaseURL);
+  const hasDedicatedCodingRecord = Boolean(codingKey);
 
   if (options.preferredProviderType === "zai_coding" && codingKey) {
     return codingConnection;
   }
   if (options.preferredProviderType === "zai" && regularKey) {
+    // /model zai/glm-* stores provider_type=zai even for coding-plan models.
+    // Only stay on pay-as-you-go when a dedicated coding record exists or the
+    // catalog model itself is not a coding endpoint.
+    if (!hasDedicatedCodingRecord && publishedWantsCoding) {
+      return reuseRegularKeyOnCodingEndpoint();
+    }
     return regularConnection;
   }
   if (codingKey) return codingConnection;
-  if (regularKey) return regularConnection;
+  if (regularKey) {
+    return publishedWantsCoding
+      ? reuseRegularKeyOnCodingEndpoint()
+      : regularConnection;
+  }
   return codingConnection;
 }
 
@@ -553,6 +580,7 @@ export async function resolvePiModelForAgent(
         preferredProviderType === "zai_coding"
           ? preferredProviderType
           : undefined,
+      publishedBaseURL: publishedModel?.baseUrl,
     });
     connection = {
       apiKey: zai.apiKey,

@@ -8,6 +8,7 @@ import {
   applyPiEnvOverrides,
   reasoningForSettings,
   resolvePiModelForAgent,
+  resolveZaiConnection,
 } from "@/backend/dev/pi-model-factory";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import { getProviderOAuthAuth } from "@/backend/dev/pi-oauth";
@@ -60,6 +61,85 @@ describe("pi model factory", () => {
     expect(reasoningForSettings({}, "anthropic/claude-sonnet-4-6")).toBe(
       undefined,
     );
+  });
+
+  test("reuses a lone zAI key on the published coding-plan endpoint", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-zai-coding-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "zai",
+        providerName: "zai",
+        apiKey: "test-zai-coding-plan-key",
+      });
+
+      expect(
+        resolveZaiConnection({
+          storageDir,
+          preferredProviderType: "zai",
+          publishedBaseURL: "https://api.z.ai/api/coding/paas/v4",
+        }),
+      ).toMatchObject({
+        apiKey: "test-zai-coding-plan-key",
+        baseURL: "https://api.z.ai/api/coding/paas/v4",
+        providerName: "zai-coding",
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "zai/glm-5.3",
+        { provider_type: "zai" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+      expect(resolved.model.baseUrl).toBe(
+        "https://api.z.ai/api/coding/paas/v4",
+      );
+      expect(resolved.apiKey).toBe("test-zai-coding-plan-key");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps dedicated zAI pay-as-you-go and coding records distinct", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-zai-split-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "zai",
+        providerName: "zai",
+        apiKey: "test-zai-paygo-key",
+      });
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "zai_coding",
+        providerName: "lc-zai-coding",
+        apiKey: "test-zai-coding-key",
+      });
+
+      expect(
+        resolveZaiConnection({
+          storageDir,
+          preferredProviderType: "zai",
+          publishedBaseURL: "https://api.z.ai/api/coding/paas/v4",
+        }),
+      ).toMatchObject({
+        apiKey: "test-zai-paygo-key",
+        baseURL: "https://api.z.ai/api/paas/v4",
+        providerName: "zai",
+      });
+      expect(
+        resolveZaiConnection({
+          storageDir,
+          preferredProviderType: "zai_coding",
+          publishedBaseURL: "https://api.z.ai/api/coding/paas/v4",
+        }),
+      ).toMatchObject({
+        apiKey: "test-zai-coding-key",
+        baseURL: "https://api.z.ai/api/coding/paas/v4",
+        providerName: "zai-coding",
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("notifies subscribers when mod provider registry changes", () => {
