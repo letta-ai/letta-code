@@ -62,6 +62,11 @@ export interface ChannelGatewayDelivery {
   defaultPermissionMode?: ChannelDefaultPermissionMode;
 }
 
+export type ChannelGatewayHandoffDelivery = Omit<
+  ChannelGatewayDelivery,
+  "content"
+>;
+
 export interface ChannelGatewayHooks {
   buildExternalTool(
     runtime: RuntimeScope,
@@ -288,13 +293,7 @@ export class ChannelGateway {
         state.pendingSourcesByClientMessageId.delete(delivery.clientMessageId);
         return false;
       }
-      state.acceptedClientMessageIds.add(delivery.clientMessageId);
-      if (
-        state.acceptedClientMessageIds.size > MAX_ACCEPTED_CLIENT_MESSAGE_IDS
-      ) {
-        const oldest = state.acceptedClientMessageIds.values().next().value;
-        if (oldest) state.acceptedClientMessageIds.delete(oldest);
-      }
+      this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
       const queuedEvents = delivery.sources.map((source) =>
         this.enqueueHook(state, () =>
           this.hooks.onLifecycle({ type: "queued", source }),
@@ -349,6 +348,89 @@ export class ChannelGateway {
       state.active = null;
     }
     return replayedRequestIds;
+  }
+
+  /** Adopt an in-flight turn without submitting its user input again. */
+  async adoptActiveDelivery(
+    delivery: ChannelGatewayHandoffDelivery,
+  ): Promise<void> {
+    const key = runtimeKey(delivery.runtime);
+    const stateExisted = this.states.has(key);
+    const state = this.getState(delivery.runtime);
+    const batchId = `channel-${delivery.clientMessageId}`;
+    await this.enqueueRegistration(async () => {
+      if (state.active) {
+        if (state.active.batchId !== batchId) {
+          throw new Error(
+            `Cannot adopt ${batchId}; ${state.active.batchId} is already active`,
+          );
+        }
+        this.activateSources(state, delivery.clientMessageId, delivery.sources);
+        this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
+        return;
+      }
+
+      const previousRoutedSources = state.routedSources;
+      const wasAccepted = state.acceptedClientMessageIds.has(
+        delivery.clientMessageId,
+      );
+      const routingSources = uniqueRoutedSources(delivery.sources);
+      const active: ActiveGatewayTurn = {
+        batchId,
+        routingSources,
+        lifecycleSources: uniqueLifecycleSources(delivery.sources),
+        progress: createChannelTurnProgressBuilder(),
+        richDraft: null,
+        idempotencyScope: createMessageChannelIdempotencyScope(),
+      };
+      state.active = active;
+      state.routedSources = uniqueRoutedSources([
+        ...state.routedSources,
+        ...delivery.sources,
+      ]);
+      this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
+      try {
+        await this.performRuntimeRegistration(state, {
+          ...delivery,
+          content: "",
+        });
+      } catch (error) {
+        if (state.active === active) state.active = null;
+        state.routedSources = previousRoutedSources;
+        if (!wasAccepted) {
+          state.acceptedClientMessageIds.delete(delivery.clientMessageId);
+        }
+        if (!stateExisted && state.active === null) this.states.delete(key);
+        throw error;
+      }
+      if (state.active !== active) return;
+      active.richDraft =
+        this.hooks.createRichDraft?.({ batchId, sources: routingSources }) ??
+        null;
+      void this.enqueueHook(state, () =>
+        this.hooks.onLifecycle({
+          type: "processing",
+          batchId,
+          sources: active.lifecycleSources,
+        }),
+      );
+    });
+  }
+
+  /** Forget a handed-off turn silently; the caller then releases its tools. */
+  releaseActiveDelivery(
+    runtime: RuntimeScope,
+    clientMessageId: string,
+  ): boolean {
+    const key = runtimeKey(runtime);
+    const state = this.states.get(key);
+    const active = state?.active;
+    if (!state || active?.batchId !== `channel-${clientMessageId}`) {
+      return false;
+    }
+    active.richDraft?.dispose();
+    this.states.delete(key);
+    return true;
   }
 
   async registerRuntime(
@@ -488,6 +570,18 @@ export class ChannelGateway {
       this.states.set(key, state);
     }
     return state;
+  }
+
+  private rememberAcceptedClientMessageId(
+    state: GatewayRuntimeState,
+    clientMessageId: string,
+  ): void {
+    state.acceptedClientMessageIds.delete(clientMessageId);
+    state.acceptedClientMessageIds.add(clientMessageId);
+    if (state.acceptedClientMessageIds.size <= MAX_ACCEPTED_CLIENT_MESSAGE_IDS)
+      return;
+    const oldest = state.acceptedClientMessageIds.values().next().value;
+    if (oldest) state.acceptedClientMessageIds.delete(oldest);
   }
 
   private enqueueHook(
