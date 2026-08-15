@@ -76,6 +76,23 @@ function thinkingLevelSetting(
     : undefined;
 }
 
+function modelIdFromHandle(modelHandle?: string): string | undefined {
+  if (!modelHandle) return undefined;
+  return modelHandle.slice(modelHandle.indexOf("/") + 1);
+}
+
+// zAI GLM-5.3 (and sibling always-on GLM-5 variants) reject
+// `thinking: {type: "disabled"}` with code 1210. pi-ai sends that whenever
+// `options.reasoning` is absent, so these models need a concrete effort even
+// when Letta has no explicit reasoning setting.
+function alwaysOnZaiThinking(modelId?: string): boolean {
+  return (
+    modelId === "glm-5.3" ||
+    modelId === "glm-5-turbo" ||
+    modelId === "glm-5.2-highspeed"
+  );
+}
+
 // Maps Letta model settings to a pi-ai ThinkingLevel. Every pi-ai Anthropic
 // call against a reasoning-capable model must pass this when available:
 // pi-ai sends `thinking: {type: "disabled"}` for reasoning models when
@@ -88,17 +105,23 @@ export function reasoningForSettings(
   const thinking = isRecord(modelSettings.thinking)
     ? modelSettings.thinking
     : undefined;
-  if (thinking?.type === "disabled") return undefined;
+  const modelId = modelIdFromHandle(modelHandle);
+  const preserveMax = modelId?.startsWith("gpt-5.6") === true;
   const nestedReasoning = isRecord(modelSettings.reasoning)
     ? modelSettings.reasoning
     : undefined;
-  const modelId = modelHandle?.slice(modelHandle.indexOf("/") + 1);
-  const preserveMax = modelId?.startsWith("gpt-5.6") === true;
-  return (
+  const explicit =
     thinkingLevelSetting(nestedReasoning?.reasoning_effort, preserveMax) ??
     thinkingLevelSetting(modelSettings.effort, preserveMax) ??
-    thinkingLevelSetting(modelSettings.reasoning_effort, preserveMax)
-  );
+    thinkingLevelSetting(modelSettings.reasoning_effort, preserveMax);
+  if (alwaysOnZaiThinking(modelId)) {
+    // API accepts low / high / max; low is the cheapest always-on default.
+    return explicit === "medium" || explicit === "minimal"
+      ? "low"
+      : (explicit ?? "low");
+  }
+  if (thinking?.type === "disabled") return undefined;
+  return explicit;
 }
 
 export interface PiModelSettings {
