@@ -395,6 +395,10 @@ jobs:
         run: curl -fsSL https://ollama.com/install.sh | sh
 
       - name: Start Ollama server
+        env:
+          # The full Letta Code prompt must fit so this provider smoke reaches
+          # inference instead of exercising the intentional truncation guard.
+          OLLAMA_CONTEXT_LENGTH: 32768
         run: |
           ollama serve > /tmp/ollama.log 2>&1 &
           for _ in $(seq 1 30); do
