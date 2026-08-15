@@ -205,6 +205,22 @@ export function estimateProviderContextTokens(
 }
 
 /**
+ * Tokens the request cannot shed: the compiled system prompt plus the tool
+ * definitions. Compaction rewrites message history, so when this floor alone
+ * exceeds the serving context window there is no recovery — every turn would be
+ * truncated by the engine before the model ever sees the memory the system
+ * prompt carries. Callers use this to fail loudly instead.
+ */
+export function estimateProviderPromptFloorTokens(
+  input: ProviderTurnInput,
+): number {
+  return (
+    estimateSerializedTokens(input.systemPrompt ?? input.agent.system) +
+    estimateSerializedTokens(input.clientTools)
+  );
+}
+
+/**
  * Context pressure must be handled before the provider request, not only after
  * an overflow. pi-ai first makes an oversized request valid by shrinking its
  * output allowance to `contextWindow - estimatedContext - 4096`, floored at

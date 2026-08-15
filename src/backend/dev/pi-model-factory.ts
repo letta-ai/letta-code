@@ -113,6 +113,7 @@ export interface PiModelFactoryOptions {
   model?: string;
   localProviderAuthStorageDir?: string;
   preferredProviderType?: string;
+  abortSignal?: AbortSignal;
   /**
    * Per-backend pi-ai Models runtime. Runtime-managed providers (local
    * endpoints and mod registrations) resolve to the complete Model object
@@ -489,6 +490,7 @@ export async function resolvePiModelForAgent(
       runtimeProviderId,
       modelId,
       fallbackModelId,
+      options.abortSignal,
     );
   // The runtime is the sole credential source (stored records, ambient env
   // via the runtime's AuthContext aliases, per-credential OAuth request
@@ -554,8 +556,25 @@ export async function resolvePiModelForAgent(
   // restate the published values never clone. Base URL overrides apply only
   // to built-in catalog providers (managed endpoints and mods own their
   // base URLs end-to-end).
-  const contextWindow = numericSetting(modelSettings.context_window_limit);
-  const maxTokens = numericSetting(modelSettings.max_tokens);
+  const configuredContextWindow = numericSetting(
+    modelSettings.context_window_limit,
+  );
+  // Ollama selection persists architectural catalog values into settings.
+  // They must not inflate exact local-daemon serving truth. Other endpoints
+  // retain the existing explicit override escape hatch.
+  const isLocalOllama =
+    modelsRuntime.isBuiltInLocalOllamaProvider(runtimeProviderId);
+  const contextWindow =
+    configuredContextWindow && isLocalOllama
+      ? Math.min(configuredContextWindow, hookedModel.contextWindow)
+      : configuredContextWindow;
+  const configuredMaxTokens = numericSetting(modelSettings.max_tokens);
+  const maxTokens = isLocalOllama
+    ? Math.min(
+        configuredMaxTokens ?? hookedModel.maxTokens,
+        contextWindow ?? hookedModel.contextWindow,
+      )
+    : configuredMaxTokens;
   const allowBaseUrlOverride =
     !registeredProvider &&
     spec !== undefined &&

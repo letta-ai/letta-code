@@ -411,11 +411,19 @@ jobs:
       - name: Pull model
         run: ollama pull "${{ matrix.model }}"
 
+      - name: Configure smoke model context
+        run: |
+          cat > /tmp/letta-ci-smoke.Modelfile <<'EOF'
+          FROM ${{ matrix.model }}
+          PARAMETER num_ctx 32768
+          EOF
+          ollama create letta-ci-smoke -f /tmp/letta-ci-smoke.Modelfile
+
       - name: Run Ollama provider smoke (connect + autodetect + round-trip)
         env:
           OLLAMA_BASE_URL: http://localhost:11434/v1
         run: |
-          bun run src/test-utils/headless-scenario.ts --backend local --model "ollama/${{ matrix.model }}" --output text --parallel on --smoke
+          bun run src/test-utils/headless-scenario.ts --backend local --model "ollama/letta-ci-smoke" --output text --parallel on --smoke
 
   reflection-headless:
     needs: [classify, check]
