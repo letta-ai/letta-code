@@ -212,7 +212,6 @@ async function runDenyLifecycleScenario(): Promise<HeadlessEvent[]> {
       cwd: repoRoot,
       env: createIsolatedCliTestEnv({
         HOME: homeDir,
-        USERPROFILE: homeDir,
         LETTA_FS_SANDBOX: "0",
         NO_COLOR: "1",
       }),
