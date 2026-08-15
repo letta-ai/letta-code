@@ -17,7 +17,11 @@ import {
   resolveModel,
 } from "./model";
 import { updateAgentLLMConfig } from "./modify";
-import { isKnownPreset, type MemoryPromptMode } from "./prompt-assets";
+import {
+  isKnownPreset,
+  localMemoryMode,
+  type MemoryPromptMode,
+} from "./prompt-assets";
 import { resolveAndBuildSystemPrompt } from "./system-prompt-resolution";
 import { recordManagedSystemPrompt } from "./system-prompt-versioning";
 
@@ -145,7 +149,8 @@ export function resolveCreatedAgentMemfsConfig(
     options.capabilities.localMemfs ||
     (options.capabilities.remoteMemfs && options.isLettaCloud) ||
     options.requestedMemoryPromptMode === "memfs" ||
-    options.requestedMemoryPromptMode === "local-memfs";
+    options.requestedMemoryPromptMode === "local-memfs" ||
+    options.requestedMemoryPromptMode === "local-agent-memory";
   const enableMemfs = options.isSubagent ? false : supported;
   const memoryPromptMode =
     (options.requestedMemoryPromptMode !== "standard"
@@ -153,7 +158,7 @@ export function resolveCreatedAgentMemfsConfig(
       : undefined) ??
     (enableMemfs
       ? options.capabilities.localMemfs
-        ? "local-memfs"
+        ? localMemoryMode()
         : "memfs"
       : "standard");
 

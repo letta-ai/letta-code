@@ -16,6 +16,7 @@ import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import { isRecord } from "@/utils/type-guards";
 import { getModelContextWindow } from "./available-models";
 import { getModelInfo, type ModelReasoningSelection } from "./model";
+import { localMemoryMode } from "./prompt-assets";
 
 type ModelSettings =
   | OpenAIModelSettings
@@ -749,7 +750,7 @@ export async function updateAgentSystemPrompt(
 
     const backend = getBackend();
     const memoryMode = backend.capabilities.localMemfs
-      ? "local-memfs"
+      ? localMemoryMode()
       : settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
         ? "memfs"
         : "standard";
@@ -830,7 +831,7 @@ export async function updateAgentSystemPromptMemfs(
     );
 
     const newMode = getBackend().capabilities.localMemfs
-      ? "local-memfs"
+      ? localMemoryMode()
       : "memfs";
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
@@ -856,7 +857,7 @@ export async function updateAgentSystemPromptMemfs(
       if (!storedHash && settingsManager.isReady) {
         const currentMode = settingsManager.isMemfsEnabled(agentId)
           ? getBackend().capabilities.localMemfs
-            ? "local-memfs"
+            ? localMemoryMode()
             : "memfs"
           : "standard";
         if (

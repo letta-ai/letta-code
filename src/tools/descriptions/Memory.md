@@ -1,7 +1,7 @@
 # Memory
 A convenience tool for memories stored in the memory directory (`$MEMORY_DIR`) that automatically commits changes. The harness pushes clean committed memory changes after the turn for remote MemFS agents.
 
-Files stored inside of `system/` eventually become part of the agent's system prompt, so are always in the context window and do not need to be re-read. Other files only have metadata in the system prompt, so may need to be explicitly read to be updated. 
+Follow the memory layout described in the system prompt. In Agent Memory mode, root Markdown is core memory and nested memory is deferred through `MEMORY.md` indexes; `skills/` remains governed by Agent Skills. In legacy MemFS mode, files under `system/` are core memory. The tool creates missing Agent Memory indexes automatically.
 
 Supported operations on memory files:  
 - `str_replace`
@@ -13,7 +13,7 @@ Supported operations on memory files:
 For larger reorganizations, edit the projected files directly and commit the changes yourself (see the syncing instructions in your system prompt).
 
 Path formats accepted:
-- relative memory file paths (e.g. `system/contacts.md`, `reference/project/team.md`)
+- relative memory file paths (e.g. `persona.md`, `projects/team.md`, or legacy `system/contacts.md`)
 - absolute paths only when they are inside `$MEMORY_DIR`
 
 Note: absolute paths outside `$MEMORY_DIR` are rejected.
@@ -35,12 +35,14 @@ memory(command="delete", reason="Remove stale notes", file_path="reference/histo
 # Rename a memory file 
 memory(command="rename", reason="Promote temp notes", old_path="reference/history/temp.md", new_path="reference/history/permanent.md")
 
-# Update a block description
+# Update a legacy block description
 memory(command="update_description", reason="Clarify coding prefs block", file_path="system/human/prefs/coding.md", description="The user's coding preferences.")
 
-# Create a block with starting text
+# Create a legacy block with starting text
 memory(command="create", reason="Track coding preferences", file_path="system/human/prefs/coding.md", description="The user's coding preferences.", file_text="The user seems to add type hints to all of their Python code.")
 
 # Create an empty block
 memory(command="create", reason="Create coding preferences block", file_path="reference/history/coding_preferences.md", description="The user's coding preferences.")
 ```
+
+In Agent Memory mode, `description` is optional and new files remain plain Markdown unless a description is supplied.

@@ -36,13 +36,16 @@ describe("letta memory tokens", () => {
   let tmpRoot: string;
   let priorMemoryDir: string | undefined;
   let priorAgentId: string | undefined;
+  let priorAgentMemory: string | undefined;
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), "memory-tokens-"));
     priorMemoryDir = process.env.MEMORY_DIR;
     priorAgentId = process.env.LETTA_AGENT_ID;
+    priorAgentMemory = process.env.LETTA_LOCAL_AGENT_MEMORY;
     delete process.env.MEMORY_DIR;
     delete process.env.LETTA_AGENT_ID;
+    delete process.env.LETTA_LOCAL_AGENT_MEMORY;
   });
 
   afterEach(() => {
@@ -56,6 +59,11 @@ describe("letta memory tokens", () => {
       process.env.LETTA_AGENT_ID = priorAgentId;
     } else {
       delete process.env.LETTA_AGENT_ID;
+    }
+    if (priorAgentMemory !== undefined) {
+      process.env.LETTA_LOCAL_AGENT_MEMORY = priorAgentMemory;
+    } else {
+      delete process.env.LETTA_LOCAL_AGENT_MEMORY;
     }
   });
 
@@ -100,6 +108,36 @@ describe("letta memory tokens", () => {
       const code = await runMemorySubcommand(["tokens", "--quiet"]);
       expect(code).toBe(0);
       expect(capture.stdout.join("\n")).toContain("Total: 1 tokens");
+    } finally {
+      restore();
+    }
+  });
+
+  test("counts only root Markdown in Agent Memory mode", async () => {
+    process.env.LETTA_LOCAL_AGENT_MEMORY = "1";
+    writeFileSync(join(tmpRoot, "MEMORY.md"), "abcd");
+    writeFileSync(join(tmpRoot, "persona.md"), "abcdefgh");
+    writeSystemFile("legacy.md", "a".repeat(40));
+    mkdirSync(join(tmpRoot, "projects"), { recursive: true });
+    writeFileSync(join(tmpRoot, "projects", "MEMORY.md"), "deferred");
+
+    const { capture, restore } = captureConsole();
+    try {
+      const code = await runMemorySubcommand([
+        "tokens",
+        "--memory-dir",
+        tmpRoot,
+        "--format",
+        "json",
+      ]);
+      expect(code).toBe(0);
+      expect(JSON.parse(capture.stdout.join("\n"))).toEqual({
+        total_tokens: 3,
+        files: [
+          { path: "MEMORY.md", tokens: 1 },
+          { path: "persona.md", tokens: 2 },
+        ],
+      });
     } finally {
       restore();
     }

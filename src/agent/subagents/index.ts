@@ -16,14 +16,19 @@ import {
   parseCommaSeparatedList,
   parseFrontmatter,
 } from "@/utils/frontmatter";
+import { isLocalAgentMemoryEnabled } from "@/utils/local-agent-memory";
 // Built-in subagent definitions (embedded at build time)
 import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
 import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
+import historyAnalyzerAgentMemoryMd from "./builtin/history-analyzer-agent-memory.md";
 import initAgentMd from "./builtin/init.md";
+import initAgentMemoryMd from "./builtin/init-agent-memory.md";
 import memoryAgentMd from "./builtin/memory.md";
+import memoryAgentMemoryMd from "./builtin/memory-agent-memory.md";
 import recallAgentMd from "./builtin/recall.md";
 import reflectionAgentMd from "./builtin/reflection.md";
+import reflectionAgentMemoryMd from "./builtin/reflection-agent-memory.md";
 
 const STANDARD_BUILTIN_SOURCES = [
   forkAgentMd,
@@ -43,6 +48,16 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
   memoryAgentMd,
   recallAgentMd,
   reflectionAgentMd,
+];
+
+const LOCAL_AGENT_MEMORY_BUILTIN_SOURCES = [
+  forkAgentMd,
+  generalPurposeAgentMd,
+  historyAnalyzerAgentMemoryMd,
+  initAgentMemoryMd,
+  memoryAgentMemoryMd,
+  recallAgentMd,
+  reflectionAgentMemoryMd,
 ];
 
 // ============================================================================
@@ -142,11 +157,14 @@ const cache = {
   builtins: {
     standard: null as Record<string, SubagentConfig> | null,
     localMemfs: null as Record<string, SubagentConfig> | null,
+    localAgentMemory: null as Record<string, SubagentConfig> | null,
   },
   configs: null as Record<string, SubagentConfig> | null,
   workingDir: null as string | null,
-  localMemfs: null as boolean | null,
+  builtinMode: null as BuiltinMemoryMode | null,
 };
+
+type BuiltinMemoryMode = "standard" | "localMemfs" | "localAgentMemory";
 
 // ============================================================================
 // Parsing Helpers
@@ -358,22 +376,25 @@ async function parseSubagentFile(
  * Built-in subagents that ship with the package
  * These are available to all users without configuration
  */
-function usesLocalMemfsBuiltinPrompts(): boolean {
-  return getBackend().capabilities.localMemfs;
+function getBuiltinMemoryMode(): BuiltinMemoryMode {
+  if (!getBackend().capabilities.localMemfs) return "standard";
+  return isLocalAgentMemoryEnabled() ? "localAgentMemory" : "localMemfs";
 }
 
 function getBuiltinSubagents(
-  localMemfs = usesLocalMemfsBuiltinPrompts(),
+  mode: BuiltinMemoryMode = getBuiltinMemoryMode(),
 ): Record<string, SubagentConfig> {
-  const cacheKey = localMemfs ? "localMemfs" : "standard";
-  if (cache.builtins[cacheKey]) {
-    return cache.builtins[cacheKey];
+  if (cache.builtins[mode]) {
+    return cache.builtins[mode];
   }
 
   const builtins: Record<string, SubagentConfig> = {};
-  const sources = localMemfs
-    ? LOCAL_MEMFS_BUILTIN_SOURCES
-    : STANDARD_BUILTIN_SOURCES;
+  const sources =
+    mode === "localAgentMemory"
+      ? LOCAL_AGENT_MEMORY_BUILTIN_SOURCES
+      : mode === "localMemfs"
+        ? LOCAL_MEMFS_BUILTIN_SOURCES
+        : STANDARD_BUILTIN_SOURCES;
 
   for (const source of sources) {
     try {
@@ -389,7 +410,7 @@ function getBuiltinSubagents(
     }
   }
 
-  cache.builtins[cacheKey] = builtins;
+  cache.builtins[mode] = builtins;
   return builtins;
 }
 
@@ -495,19 +516,19 @@ export async function discoverSubagents(
 export async function getAllSubagentConfigs(
   workingDirectory: string = process.cwd(),
 ): Promise<Record<string, SubagentConfig>> {
-  const localMemfs = usesLocalMemfsBuiltinPrompts();
+  const builtinMode = getBuiltinMemoryMode();
   // Return cached if same working directory
   if (
     cache.configs &&
     cache.workingDir === workingDirectory &&
-    cache.localMemfs === localMemfs
+    cache.builtinMode === builtinMode
   ) {
     return cache.configs;
   }
 
   // Start with a copy of built-in subagents (don't mutate the cache)
   const configs: Record<string, SubagentConfig> = {
-    ...getBuiltinSubagents(localMemfs),
+    ...getBuiltinSubagents(builtinMode),
   };
 
   // Discover user-defined subagents from .letta/agents/
@@ -529,7 +550,7 @@ export async function getAllSubagentConfigs(
   // Cache results
   cache.configs = configs;
   cache.workingDir = workingDirectory;
-  cache.localMemfs = localMemfs;
+  cache.builtinMode = builtinMode;
 
   return configs;
 }
@@ -540,5 +561,5 @@ export async function getAllSubagentConfigs(
 export function clearSubagentConfigCache(): void {
   cache.configs = null;
   cache.workingDir = null;
-  cache.localMemfs = null;
+  cache.builtinMode = null;
 }

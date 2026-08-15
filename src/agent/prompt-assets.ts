@@ -1,5 +1,7 @@
 // Additional system prompts for /system command
 
+export { localMemoryMode } from "@/utils/local-agent-memory";
+
 import approvalRecoveryAlert from "./prompts/approval_recovery_alert.txt";
 import humanPrompt from "./prompts/human.mdx";
 import humanKawaiiPrompt from "./prompts/human_kawaii.mdx";
@@ -8,6 +10,7 @@ import humanMemoPrompt from "./prompts/human_memo.mdx";
 import humanTutorialPrompt from "./prompts/human_tutorial.mdx";
 import interruptRecoveryAlert from "./prompts/interrupt_recovery_alert.txt";
 import lettaMemfsPrompt from "./prompts/letta.md";
+import lettaLocalAgentMemoryPrompt from "./prompts/letta_local_agent_memory.md";
 import lettaLocalMemfsPrompt from "./prompts/letta_local_memfs.md";
 import lettaNoMemfsPrompt from "./prompts/letta_no_memfs.md";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
@@ -63,6 +66,7 @@ export interface SystemPromptOption {
   content: string;
   memfsContent?: string;
   localMemfsContent?: string;
+  localAgentMemoryContent?: string;
   isDefault?: boolean;
   isFeatured?: boolean;
 }
@@ -75,6 +79,7 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     content: lettaNoMemfsPrompt,
     memfsContent: lettaMemfsPrompt,
     localMemfsContent: lettaLocalMemfsPrompt,
+    localAgentMemoryContent: lettaLocalAgentMemoryPrompt,
     isDefault: true,
     isFeatured: true,
   },
@@ -85,6 +90,7 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     content: lettaNoMemfsPrompt,
     memfsContent: lettaMemfsPrompt,
     localMemfsContent: lettaLocalMemfsPrompt,
+    localAgentMemoryContent: lettaLocalAgentMemoryPrompt,
     isFeatured: true,
   },
   {
@@ -107,14 +113,21 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
   },
 ];
 
-export type MemoryPromptMode = "standard" | "memfs" | "local-memfs";
+export type MemoryPromptMode =
+  | "standard"
+  | "memfs"
+  | "local-memfs"
+  | "local-agent-memory";
 
 export function getSystemPromptVariantContents(
   prompt: SystemPromptOption,
 ): string[] {
-  return [prompt.content, prompt.memfsContent, prompt.localMemfsContent].filter(
-    (content): content is string => typeof content === "string",
-  );
+  return [
+    prompt.content,
+    prompt.memfsContent,
+    prompt.localMemfsContent,
+    prompt.localAgentMemoryContent,
+  ].filter((content): content is string => typeof content === "string");
 }
 
 /**
@@ -140,6 +153,14 @@ export function buildSystemPrompt(
   }
   if (memoryMode === "local-memfs") {
     return (
+      preset.localMemfsContent ??
+      preset.memfsContent ??
+      preset.content
+    ).trim();
+  }
+  if (memoryMode === "local-agent-memory") {
+    return (
+      preset.localAgentMemoryContent ??
       preset.localMemfsContent ??
       preset.memfsContent ??
       preset.content

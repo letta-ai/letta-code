@@ -8,6 +8,7 @@ import { LETTA_CODE_ORIGIN_TAG, LETTA_CODE_SUBAGENT_TAG } from "./agent-tags";
 import {
   buildSystemPrompt,
   isKnownPreset,
+  localMemoryMode,
   type MemoryPromptMode,
   SYSTEM_PROMPTS,
 } from "./prompt-assets";
@@ -73,7 +74,7 @@ export function recordManagedSystemPrompt(
 export function getMemoryPromptModeForAgent(agentId: string): MemoryPromptMode {
   const backend = getBackend();
   if (backend.capabilities.localMemfs) {
-    return "local-memfs";
+    return localMemoryMode();
   }
   return settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
     ? "memfs"

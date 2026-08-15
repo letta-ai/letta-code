@@ -12,6 +12,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isLocalAgentMemoryEnabled } from "@/utils/local-agent-memory";
 
 export const SYSTEM_PROMPT_BYTES_PER_TOKEN = 4;
 
@@ -69,6 +70,25 @@ function walkMarkdownFiles(dir: string): string[] {
 export function estimateSystemPromptSize(
   memoryDir: string,
 ): SystemPromptSizeEstimate {
+  if (isLocalAgentMemoryEnabled()) {
+    if (!existsSync(memoryDir)) return { total: 0, files: [] };
+    const rows = readdirSync(memoryDir, { withFileTypes: true })
+      .filter(
+        (entry) =>
+          entry.isFile() &&
+          !entry.name.startsWith(".") &&
+          entry.name.endsWith(".md"),
+      )
+      .map((entry) => {
+        const text = readFileSync(join(memoryDir, entry.name), "utf8");
+        return { path: entry.name, tokens: estimateSystemTokens(text) };
+      })
+      .sort((a, b) => a.path.localeCompare(b.path));
+    return {
+      total: rows.reduce((sum, row) => sum + row.tokens, 0),
+      files: rows,
+    };
+  }
   const systemDir = join(memoryDir, "system");
   if (!existsSync(systemDir)) {
     return { total: 0, files: [] };

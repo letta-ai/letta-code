@@ -16,6 +16,10 @@ import {
   commitMemoryWrite,
   type MemoryWriteSyncMode,
 } from "@/agent/memory-git";
+import {
+  ensureAgentMemoryIndexes,
+  isLocalAgentMemoryEnabled,
+} from "@/utils/local-agent-memory";
 import { validateRequiredParams } from "./validation";
 
 type MemoryCommand =
@@ -89,7 +93,7 @@ interface MemoryResult {
 
 interface ParsedMemoryFile {
   frontmatter: {
-    description: string;
+    description?: string;
     read_only?: string;
   };
   body: string;
@@ -111,6 +115,9 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
   await assertMemoryRepoCleanForWrite(memoryDir);
 
   const affectedPaths = await applyMemoryCommand(memoryDir, args);
+  affectedPaths.push(
+    ...(await ensureAgentMemoryIndexes(memoryDir, affectedPaths)),
+  );
   if (affectedPaths.length === 0) {
     throw new Error(
       `Memory ${args.command} made no changes: it produced no changed paths. ` +
@@ -158,11 +165,9 @@ async function applyMemoryCommand(
 
   if (command === "create") {
     const pathArg = requireString(args.file_path, "file_path", "create");
-    const description = requireString(
-      args.description,
-      "description",
-      "create",
-    );
+    const description = isLocalAgentMemoryEnabled()
+      ? args.description?.trim()
+      : requireString(args.description, "description", "create");
     const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
@@ -472,6 +477,9 @@ async function loadEditableMemoryFile(
 function parseMemoryFile(content: string): ParsedMemoryFile {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!match) {
+    if (isLocalAgentMemoryEnabled()) {
+      return { frontmatter: {}, body: content };
+    }
     throw new Error("memory: target file is missing required frontmatter");
   }
 
@@ -494,7 +502,7 @@ function parseMemoryFile(content: string): ParsedMemoryFile {
     }
   }
 
-  if (!description || !description.trim()) {
+  if ((!description || !description.trim()) && !isLocalAgentMemoryEnabled()) {
     throw new Error("memory: target file frontmatter is missing 'description'");
   }
   return {
@@ -507,10 +515,17 @@ function parseMemoryFile(content: string): ParsedMemoryFile {
 }
 
 function renderMemoryFile(
-  frontmatter: { description: string; read_only?: string },
+  frontmatter: { description?: string; read_only?: string },
   body: string,
 ): string {
-  const description = frontmatter.description.trim();
+  const description = frontmatter.description?.trim() ?? "";
+  if (
+    isLocalAgentMemoryEnabled() &&
+    !description &&
+    frontmatter.read_only === undefined
+  ) {
+    return body;
+  }
   if (!description) {
     throw new Error("memory: 'description' must not be empty");
   }

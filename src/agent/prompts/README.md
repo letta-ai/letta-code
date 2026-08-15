@@ -11,6 +11,7 @@ Selectable via the `/system` command. Each preset is a complete system prompt. P
 | `letta_no_memfs.md` | Default for non-memfs agents | Letta-tuned system prompt for standard memory blocks |
 | `letta.md` | Default for hosted memfs agents | Letta-tuned system prompt for git-backed MemFS memory, including shared memory |
 | `letta_local_memfs.md` | Default for local backend memfs agents | Letta-tuned system prompt for local-only git-backed MemFS memory |
+| `letta_local_agent_memory.md` | Local backend Agent Memory experiment | Alternate root-core, indexed-external memory prompt selected by `LETTA_LOCAL_AGENT_MEMORY=1` |
 | `source_claude.md` | `/system source-claude` | Near-verbatim Claude Code prompt for benchmarking |
 | `source_codex.md` | `/system source-codex` | Near-verbatim OpenAI Codex prompt for benchmarking |
 | `source_gemini.md` | `/system source-gemini` | Near-verbatim Gemini CLI prompt for benchmarking |

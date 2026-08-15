@@ -57,7 +57,7 @@ import {
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
 import { resolvePersonalityId } from "./agent/personality-presets";
-import type { MemoryPromptMode } from "./agent/prompt-assets";
+import { localMemoryMode, type MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
@@ -1311,7 +1311,7 @@ export async function handleHeadlessCommand(
       .capabilities.localMemfs
       ? isFreshStatelessSubagent
         ? "standard"
-        : "local-memfs"
+        : localMemoryMode()
       : (requestedMemoryPromptMode ??
         (willAutoEnableMemfs ? "memfs" : undefined));
 
