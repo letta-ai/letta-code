@@ -453,7 +453,11 @@ export async function getLocalOAuthApiKey(input: {
 
   let credentials = toPiOAuthCredentials(record.auth);
   if (Date.now() >= credentials.expires) {
-    credentials = await oauth.refresh({ type: "oauth", ...credentials });
+    // pi-ai 0.84+: OAuthAuth.refresh requires an AbortSignal.
+    credentials = await oauth.refresh(
+      { type: "oauth", ...credentials },
+      new AbortController().signal,
+    );
   }
   const modelAuth = await oauth.toAuth({ type: "oauth", ...credentials });
   if (!modelAuth.apiKey) return undefined;

@@ -119,14 +119,14 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.82.1",
+    "@earendil-works/pi-ai": "0.84.2",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@pierre/diffs": "1.2.2",
     "@scarf/scarf": "^1.4.0",
-    "cross-spawn": "^7.0.6",
     "cron-parser": "^5.6.1",
+    "cross-spawn": "^7.0.6",
     "glob": "^13.0.0",
     "ink-link": "^5.0.0",
     "node-pty": "^1.1.0",
