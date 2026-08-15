@@ -54,9 +54,47 @@ function parseOllamaTags(data: unknown): OllamaTagEntry[] {
     .filter((entry): entry is OllamaTagEntry => entry !== undefined);
 }
 
+/**
+ * Runtime context windows from `GET /api/ps`, keyed by model id.
+ *
+ * `/api/show` reports the architectural maximum baked into the GGUF, which is
+ * what the model *could* support — not what the daemon will actually serve.
+ * Ollama serves `OLLAMA_CONTEXT_LENGTH` (or a per-request `num_ctx`, which the
+ * OpenAI-compatible surface we stream through does not accept) and silently
+ * truncates any prompt longer than that: no error, no warning, and the reported
+ * prompt token count reflects the post-truncation prompt. Publishing the GGUF
+ * maximum therefore hands the harness a window several times larger than
+ * reality, so compaction never fires and the oldest part of the prompt — the
+ * compiled system prompt carrying persona and memory — is dropped on the floor.
+ *
+ * `/api/ps` reports `context_length` per *loaded* model, which is the window
+ * the engine will actually serve for it. Prefer it whenever it is available.
+ */
+function parseOllamaRunningContexts(data: unknown): Map<string, number> {
+  const contexts = new Map<string, number>();
+  if (!data || typeof data !== "object") return contexts;
+  const models = (data as { models?: unknown }).models;
+  if (!Array.isArray(models)) return contexts;
+  for (const entry of models) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as {
+      name?: unknown;
+      model?: unknown;
+      context_length?: unknown;
+    };
+    const id = record.name ?? record.model;
+    const contextLength = record.context_length;
+    if (typeof id !== "string" || id.length === 0) continue;
+    if (typeof contextLength !== "number" || contextLength <= 0) continue;
+    contexts.set(id, contextLength);
+  }
+  return contexts;
+}
+
 function parseOllamaShow(
   modelId: string,
   data: unknown,
+  runtimeContextLength?: number,
 ): LocalEndpointModelMetadata {
   if (!data || typeof data !== "object") return { id: modelId };
   const record = data as { capabilities?: unknown; model_info?: unknown };
@@ -69,16 +107,22 @@ function parseOllamaShow(
     typeof modelInfo?.["general.architecture"] === "string"
       ? (modelInfo["general.architecture"] as string)
       : undefined;
-  const contextLength = architecture
+  const architecturalContextLength = architecture
     ? modelInfo?.[`${architecture}.context_length`]
     : undefined;
+  // Runtime window wins: it is what the daemon will serve. The GGUF maximum is
+  // only a fallback for models that are not currently loaded.
+  const contextLength =
+    runtimeContextLength ??
+    (typeof architecturalContextLength === "number" &&
+    architecturalContextLength > 0
+      ? architecturalContextLength
+      : undefined);
   return {
     id: modelId,
     vision: capabilities.includes("vision"),
     thinking: capabilities.includes("thinking"),
-    ...(typeof contextLength === "number" && contextLength > 0
-      ? { contextLength }
-      : {}),
+    ...(contextLength !== undefined ? { contextLength } : {}),
   };
 }
 
@@ -92,18 +136,40 @@ function parseOllamaShow(
 const ollamaDiscover: LocalEndpointDiscover = async (context) => {
   const tags = await context.fetchJson(`${context.nativeBaseURL}/api/tags`);
   const entries = parseOllamaTags(tags);
+  // Loaded-model runtime windows. Best-effort: an endpoint that does not serve
+  // /api/ps (or fails it) falls back to GGUF metadata, the previous behavior.
+  const runtimeContexts = await context
+    .fetchJson(`${context.nativeBaseURL}/api/ps`)
+    .then(parseOllamaRunningContexts)
+    .catch(() => new Map<string, number>());
+  // `OLLAMA_CONTEXT_LENGTH` is daemon-wide, so any loaded model reveals the
+  // window this endpoint serves to models that are not loaded yet. Take the
+  // smallest observed value: a model loaded with an explicit larger `num_ctx`
+  // by another client should not inflate what we assume for everything else.
+  const endpointDefaultContext =
+    runtimeContexts.size > 0
+      ? Math.min(...runtimeContexts.values())
+      : undefined;
   return Promise.all(
     entries.map(async ({ id: modelId, digest }) => {
       // /api/show reads GGUF metadata from disk, which can take seconds for
       // large models. The tag digest identifies the installed blob, so an
-      // unchanged digest means the last-known published Model is current.
+      // unchanged digest means the last-known published Model is current. The
+      // runtime window is part of the fingerprint because it changes without
+      // the blob changing — loading a model, or restarting the daemon with a
+      // different OLLAMA_CONTEXT_LENGTH, must republish the Model.
+      const runtimeContextLength =
+        runtimeContexts.get(modelId) ?? endpointDefaultContext;
+      const fingerprint = digest
+        ? `${digest}:${runtimeContextLength ?? "-"}`
+        : undefined;
       const known = context.lastKnown.get(modelId);
       if (
         known &&
-        digest &&
-        context.metadataFingerprints.get(modelId) === digest
+        fingerprint &&
+        context.metadataFingerprints.get(modelId) === fingerprint
       ) {
-        context.nextMetadataFingerprints.set(modelId, digest);
+        context.nextMetadataFingerprints.set(modelId, fingerprint);
         return known;
       }
       try {
@@ -111,8 +177,12 @@ const ollamaDiscover: LocalEndpointDiscover = async (context) => {
           `${context.nativeBaseURL}/api/show`,
           { body: { model: modelId } },
         );
-        if (digest) context.nextMetadataFingerprints.set(modelId, digest);
-        return context.buildModel(parseOllamaShow(modelId, show));
+        if (fingerprint) {
+          context.nextMetadataFingerprints.set(modelId, fingerprint);
+        }
+        return context.buildModel(
+          parseOllamaShow(modelId, show, runtimeContextLength),
+        );
       } catch {
         // Metadata fetch failed for this one model: keep its last-known
         // published Model rather than guessing capabilities. A never-seen

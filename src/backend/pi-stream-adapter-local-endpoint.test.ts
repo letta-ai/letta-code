@@ -190,4 +190,83 @@ describe("PiStreamAdapter local endpoint payloads", () => {
       await closeServer(server);
     }
   });
+
+  // Local engines truncate an oversized prompt silently instead of erroring, so
+  // the visible symptom is an agent whose persona and memory have gone missing.
+  // Compaction cannot recover it — the system prompt and tool schemas are not
+  // history — so the turn must fail with something the user can act on.
+  test("refuses a turn whose system prompt cannot fit the served window", async () => {
+    let chatRequests = 0;
+    const server = createServer(async (req, res) => {
+      if (req.method === "GET" && req.url === "/api/tags") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ models: [{ name: "deepseek-r1:8b" }] }));
+        return;
+      }
+      if (req.method === "GET" && req.url === "/api/ps") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            models: [{ name: "deepseek-r1:8b", context_length: 4096 }],
+          }),
+        );
+        return;
+      }
+      if (req.method === "POST" && req.url === "/api/show") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ capabilities: ["completion"] }));
+        return;
+      }
+      if (req.method === "POST" && req.url === "/v1/chat/completions") {
+        chatRequests += 1;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("expected tcp server address");
+    }
+
+    const previousOllamaBaseUrl = process.env.OLLAMA_BASE_URL;
+    process.env.OLLAMA_BASE_URL = `http://127.0.0.1:${address.port}/v1`;
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "pi-stream-context-floor-"),
+    );
+
+    try {
+      const baseInput = input();
+      await expect(
+        collectEvents(
+          new PiStreamAdapter({
+            localProviderAuthStorageDir: storageDir,
+          }).stream({
+            ...baseInput,
+            agent: {
+              ...baseInput.agent,
+              model: "ollama/deepseek-r1:8b",
+              model_settings: { provider_type: "ollama" },
+            },
+            // Roughly 25k tokens of system prompt against a 4k window.
+            systemPrompt: "x".repeat(100_000),
+          }),
+        ),
+      ).rejects.toThrow(/context window/i);
+
+      // The request must never reach the engine: sending it would mean handing
+      // over a prompt we already know will be clipped.
+      expect(chatRequests).toBe(0);
+    } finally {
+      if (previousOllamaBaseUrl === undefined) {
+        delete process.env.OLLAMA_BASE_URL;
+      } else {
+        process.env.OLLAMA_BASE_URL = previousOllamaBaseUrl;
+      }
+      await rm(storageDir, { recursive: true, force: true });
+      await closeServer(server);
+    }
+  });
 });

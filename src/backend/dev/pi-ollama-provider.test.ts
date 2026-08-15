@@ -6,6 +6,8 @@ import { createOllamaPiProvider } from "./pi-ollama-provider";
 interface FakeOllamaState {
   tags: unknown;
   show: Record<string, unknown>;
+  /** `GET /api/ps` payload; omitted means the endpoint answers 404. */
+  ps?: unknown;
   failTags?: boolean;
   failShowFor?: Set<string>;
   requests: string[];
@@ -18,6 +20,11 @@ function fakeOllamaFetch(state: FakeOllamaState): typeof fetch {
     if (url.endsWith("/api/tags")) {
       if (state.failTags) throw new Error("connection refused");
       return Response.json(state.tags);
+    }
+    if (url.endsWith("/api/ps")) {
+      if (state.ps === undefined)
+        return new Response("not found", { status: 404 });
+      return Response.json(state.ps);
     }
     if (url.endsWith("/api/show")) {
       const body = JSON.parse(String(init?.body)) as { model: string };
@@ -97,6 +104,103 @@ describe("createOllamaPiProvider", () => {
     expect(text?.input).toEqual(["text"]);
     expect(text?.reasoning).toBe(false);
     expect(text?.contextWindow).toBe(32768);
+  });
+
+  // Ollama serves OLLAMA_CONTEXT_LENGTH, not the GGUF maximum, and silently
+  // truncates anything longer. Publishing the architectural maximum makes the
+  // harness think it has room it does not have, so compaction never fires and
+  // the engine drops the front of the prompt — persona and memory included.
+  test("prefers the runtime window from /api/ps over GGUF metadata", async () => {
+    const state = qwenState();
+    state.ps = {
+      models: [{ name: "qwen3.6:27b", context_length: 32768 }],
+    };
+    const provider = createOllamaPiProvider({
+      baseURL: "http://localhost:11434",
+      fetchImpl: fakeOllamaFetch(state),
+    });
+    await provider.refreshModels?.(testRefreshContext());
+
+    expect(
+      provider.getModels().find((m) => m.id === "qwen3.6:27b")?.contextWindow,
+    ).toBe(32768);
+  });
+
+  test("applies a loaded model's window to models that are not loaded", async () => {
+    const state = qwenState();
+    // OLLAMA_CONTEXT_LENGTH is daemon-wide, so the one loaded model reveals the
+    // window the endpoint will serve for the other one too.
+    state.ps = { models: [{ name: "smol-text:3b", context_length: 8192 }] };
+    const provider = createOllamaPiProvider({
+      baseURL: "http://localhost:11434",
+      fetchImpl: fakeOllamaFetch(state),
+    });
+    await provider.refreshModels?.(testRefreshContext());
+
+    expect(
+      provider.getModels().find((m) => m.id === "qwen3.6:27b")?.contextWindow,
+    ).toBe(8192);
+  });
+
+  test("takes the smallest observed runtime window", async () => {
+    const state = qwenState();
+    // A model another client loaded with a large explicit num_ctx must not
+    // inflate what we assume the endpoint serves by default.
+    state.ps = {
+      models: [
+        { name: "other:7b", context_length: 131072 },
+        { name: "smol-text:3b", context_length: 16384 },
+      ],
+    };
+    const provider = createOllamaPiProvider({
+      baseURL: "http://localhost:11434",
+      fetchImpl: fakeOllamaFetch(state),
+    });
+    await provider.refreshModels?.(testRefreshContext());
+
+    expect(
+      provider.getModels().find((m) => m.id === "qwen3.6:27b")?.contextWindow,
+    ).toBe(16384);
+  });
+
+  test("falls back to GGUF metadata when /api/ps is unavailable", async () => {
+    const state = qwenState();
+    const provider = createOllamaPiProvider({
+      baseURL: "http://localhost:11434",
+      fetchImpl: fakeOllamaFetch(state),
+    });
+    await provider.refreshModels?.(testRefreshContext());
+
+    // 262144 in metadata, clamped by the harness default.
+    expect(
+      provider.getModels().find((m) => m.id === "qwen3.6:27b")?.contextWindow,
+    ).toBe(128000);
+  });
+
+  test("republishes when the runtime window changes without a digest change", async () => {
+    const state: FakeOllamaState = {
+      tags: { models: [{ name: "qwen3.6:27b", digest: "sha256-aaa" }] },
+      show: { "qwen3.6:27b": { capabilities: ["completion"] } },
+      ps: { models: [{ name: "qwen3.6:27b", context_length: 8192 }] },
+      requests: [],
+    };
+    const provider = createOllamaPiProvider({
+      baseURL: "http://localhost:11434",
+      fetchImpl: fakeOllamaFetch(state),
+    });
+    const refreshContext = testRefreshContext();
+    await provider.refreshModels?.(refreshContext);
+    expect(
+      provider.getModels().find((m) => m.id === "qwen3.6:27b")?.contextWindow,
+    ).toBe(8192);
+
+    // Daemon restarted with a larger OLLAMA_CONTEXT_LENGTH: same blob, new
+    // window. The digest fast-path must not pin the stale value.
+    state.ps = { models: [{ name: "qwen3.6:27b", context_length: 65536 }] };
+    await provider.refreshModels?.(refreshContext);
+    expect(
+      provider.getModels().find((m) => m.id === "qwen3.6:27b")?.contextWindow,
+    ).toBe(65536);
   });
 
   test("skips /api/show when the tag digest is unchanged", async () => {
