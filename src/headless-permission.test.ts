@@ -131,11 +131,12 @@ describe("headless can_use_tool deny interruption", () => {
   test("continues after an ordinary deny and terminates once after an interrupting deny", async () => {
     const events = await runDenyLifecycleScenario();
     const results = events.filter((event) => event.type === "result");
+    const resultSubtypes = results.map((result) => result.subtype);
 
-    expect(results.map((result) => result.subtype)).toEqual([
-      "success",
-      "interrupted",
-    ]);
+    if (resultSubtypes[1] !== "interrupted") {
+      throw new Error(`Unexpected deny lifecycle: ${JSON.stringify(events)}`);
+    }
+    expect(resultSubtypes).toEqual(["success", "interrupted"]);
 
     const requests = events
       .map((event, index) => ({ event, index }))
