@@ -1,4 +1,7 @@
-import type { AuthInteraction, AuthPrompt } from "@earendil-works/pi-ai";
+import type {
+  AuthPrompt,
+  ProviderAuthInteraction,
+} from "@earendil-works/pi-ai";
 import type {
   OAuthPrompt,
   OAuthSelectPrompt,
@@ -67,8 +70,10 @@ export async function runLocalOAuthConnectFlow(
   const browserOpener = callbacks.openBrowser ?? openOAuthBrowser;
   await callbacks.onStatus(`Starting ${oauth.name} login...`);
 
-  const interaction: AuthInteraction = {
-    ...(callbacks.signal ? { signal: callbacks.signal } : {}),
+  // pi-ai 0.84+: ProviderAuthInteraction requires a concrete AbortSignal.
+  const signal = callbacks.signal ?? new AbortController().signal;
+  const interaction: ProviderAuthInteraction = {
+    signal,
     notify: (event) => {
       switch (event.type) {
         case "auth_url": {
