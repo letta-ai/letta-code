@@ -122,6 +122,15 @@ export function createAccountFromPatch(
       transcribeVoice: normalizedPatch.transcribeVoice === true,
       downloadMedia: normalizedPatch.downloadMedia === true,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes,
+      attachmentFilter: normalizedPatch.attachmentFilter === true,
+      attachmentMimeTypes: normalizedPatch.attachmentMimeTypes ?? [],
+      attachmentAllowedRecipients:
+        normalizedPatch.attachmentAllowedRecipients ?? [],
+      attachmentAllowedPaths: normalizedPatch.attachmentAllowedPaths ?? [],
+      attachmentPathRecursive: normalizedPatch.attachmentPathRecursive === true,
+      inboundDebounceMs: normalizedPatch.inboundDebounceMs,
+      waitingBehavior: normalizedPatch.waitingBehavior ?? "off",
+      messagePrefix: normalizedPatch.messagePrefix,
       createdAt: now,
       updatedAt: now,
     };
@@ -180,6 +189,7 @@ export function createAccountFromPatch(
       normalizedPatch.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: normalizedPatch.transcribeVoice === true,
     listenMode: normalizedPatch.listenMode === true,
+    mentionOnlyChannels: [...(normalizedPatch.mentionOnlyChannels ?? [])],
     allowBots: normalizedPatch.allowBots ?? false,
     dmPolicy: normalizedPatch.dmPolicy ?? "open",
     allowedUsers: normalizedPatch.allowedUsers ?? [],
@@ -282,6 +292,32 @@ export function mergeAccountPatch(
       downloadMedia:
         normalizedPatch.downloadMedia ?? existing.downloadMedia ?? false,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes ?? existing.mediaMaxBytes,
+      attachmentFilter:
+        normalizedPatch.attachmentFilter ?? existing.attachmentFilter ?? false,
+      attachmentMimeTypes:
+        normalizedPatch.attachmentMimeTypes ??
+        existing.attachmentMimeTypes ??
+        [],
+      attachmentAllowedRecipients:
+        normalizedPatch.attachmentAllowedRecipients ??
+        existing.attachmentAllowedRecipients ??
+        [],
+      attachmentAllowedPaths:
+        normalizedPatch.attachmentAllowedPaths ??
+        existing.attachmentAllowedPaths ??
+        [],
+      attachmentPathRecursive:
+        normalizedPatch.attachmentPathRecursive ??
+        existing.attachmentPathRecursive ??
+        false,
+      inboundDebounceMs:
+        normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
+      waitingBehavior:
+        normalizedPatch.waitingBehavior ?? existing.waitingBehavior ?? "off",
+      messagePrefix:
+        normalizedPatch.messagePrefix !== undefined
+          ? normalizedPatch.messagePrefix
+          : existing.messagePrefix,
       updatedAt: nextUpdatedAt,
     };
   }
@@ -366,6 +402,11 @@ export function mergeAccountPatch(
     transcribeVoice:
       normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
     listenMode: normalizedPatch.listenMode ?? existing.listenMode ?? false,
+    mentionOnlyChannels: [
+      ...(normalizedPatch.mentionOnlyChannels ??
+        existing.mentionOnlyChannels ??
+        []),
+    ],
     allowBots: normalizedPatch.allowBots ?? existing.allowBots ?? false,
     dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
     allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,

@@ -57,7 +57,14 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   group_mode: "groupMode",
   inbound_debounce_ms: "inboundDebounceMs",
   listen_mode: "listenMode",
+  mention_only_channels: "mentionOnlyChannels",
+  message_prefix: "messagePrefix",
   media_max_bytes: "mediaMaxBytes",
+  attachment_filter: "attachmentFilter",
+  attachment_mime_types: "attachmentMimeTypes",
+  attachment_allowed_recipients: "attachmentAllowedRecipients",
+  attachment_allowed_paths: "attachmentAllowedPaths",
+  attachment_path_recursive: "attachmentPathRecursive",
   mention_patterns: "mentionPatterns",
   recipient_aliases: "recipientAliases",
   remove_stale_routes: "removeStaleRoutes",
@@ -66,6 +73,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
   download_media: "downloadMedia",
+  waiting_behavior: "waitingBehavior",
 };
 
 let warnedAboutDualKeys = false;
@@ -207,6 +215,13 @@ function prepareAccountForStorage(account: ChannelAccount): ChannelAccount {
   return cloned;
 }
 
+function normalizeInboundDebounceMs(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.trunc(Math.min(value, 10000));
+}
+
 function cloneAccount<T extends ChannelAccount>(account: T): T {
   const cloned = {
     ...account,
@@ -224,6 +239,12 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
     (cloned as TelegramChannelAccount).binding = { ...account.binding };
   }
 
+  if (isSlackChannelAccount(account)) {
+    (cloned as SlackChannelAccount).mentionOnlyChannels = [
+      ...(account.mentionOnlyChannels ?? []),
+    ];
+  }
+
   if (isDiscordChannelAccount(account) && account.allowedChannels) {
     (cloned as DiscordChannelAccount).allowedChannels = Array.isArray(
       account.allowedChannels,
@@ -238,6 +259,15 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
     ];
     (cloned as WhatsAppChannelAccount).mentionPatterns = [
       ...(account.mentionPatterns ?? []),
+    ];
+    (cloned as WhatsAppChannelAccount).attachmentMimeTypes = [
+      ...(account.attachmentMimeTypes ?? []),
+    ];
+    (cloned as WhatsAppChannelAccount).attachmentAllowedRecipients = [
+      ...(account.attachmentAllowedRecipients ?? []),
+    ];
+    (cloned as WhatsAppChannelAccount).attachmentAllowedPaths = [
+      ...(account.attachmentAllowedPaths ?? []),
     ];
   }
 
@@ -329,6 +359,13 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     delete (next as unknown as Record<string, unknown>).progressUi;
     (next as SlackChannelAccount).listenMode =
       (next as SlackChannelAccount).listenMode === true;
+    const mentionOnlyChannels = (next as SlackChannelAccount)
+      .mentionOnlyChannels;
+    (next as SlackChannelAccount).mentionOnlyChannels = Array.isArray(
+      mentionOnlyChannels,
+    )
+      ? [...mentionOnlyChannels]
+      : [];
     (next as SlackChannelAccount).allowBots = normalizeSlackAllowBotsMode(
       (next as SlackChannelAccount).allowBots,
     );
@@ -357,6 +394,18 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.mentionPatterns = [...(next.mentionPatterns ?? [])];
     next.downloadMedia = next.downloadMedia === true;
     next.transcribeVoice = next.transcribeVoice === true;
+    next.attachmentFilter = next.attachmentFilter === true;
+    next.attachmentMimeTypes = [...(next.attachmentMimeTypes ?? [])];
+    next.attachmentAllowedRecipients = [
+      ...(next.attachmentAllowedRecipients ?? []),
+    ];
+    next.attachmentAllowedPaths = [...(next.attachmentAllowedPaths ?? [])];
+    next.attachmentPathRecursive = next.attachmentPathRecursive === true;
+    next.inboundDebounceMs = normalizeInboundDebounceMs(next.inboundDebounceMs);
+    next.waitingBehavior =
+      next.waitingBehavior === "typing_indicator" ? "typing_indicator" : "off";
+    next.messagePrefix =
+      typeof next.messagePrefix === "string" ? next.messagePrefix : undefined;
   }
   if (isSignalChannelAccount(next)) {
     next.baseUrl = next.baseUrl ?? "";
@@ -443,6 +492,16 @@ function makeDefaultLegacyAccount(
       transcribeVoice: config.transcribeVoice === true,
       downloadMedia: config.downloadMedia === true,
       mediaMaxBytes: config.mediaMaxBytes,
+      attachmentFilter: config.attachmentFilter === true,
+      attachmentMimeTypes: [...(config.attachmentMimeTypes ?? [])],
+      attachmentAllowedRecipients: [
+        ...(config.attachmentAllowedRecipients ?? []),
+      ],
+      attachmentAllowedPaths: [...(config.attachmentAllowedPaths ?? [])],
+      attachmentPathRecursive: config.attachmentPathRecursive === true,
+      inboundDebounceMs: config.inboundDebounceMs,
+      waitingBehavior: config.waitingBehavior ?? "off",
+      messagePrefix: config.messagePrefix,
       createdAt: now,
       updatedAt: now,
     };
@@ -486,6 +545,7 @@ function makeDefaultLegacyAccount(
     defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: config.transcribeVoice === true,
     listenMode: config.listenMode === true,
+    mentionOnlyChannels: [...(config.mentionOnlyChannels ?? [])],
     allowBots: config.allowBots ?? false,
     createdAt: now,
     updatedAt: now,
@@ -577,7 +637,13 @@ function saveChannelAccounts(channelId: string): void {
   if (saveAccountsOverride) {
     saveAccountsOverride(
       channelId,
-      writeAccounts.map((account) => cloneAccount(account)),
+      writeAccounts.map((account) => {
+        const cloned = cloneAccount(account);
+        for (const camelKey of Object.values(SNAKE_TO_CAMEL)) {
+          delete (cloned as unknown as Record<string, unknown>)[camelKey];
+        }
+        return cloned;
+      }),
     );
     return;
   }

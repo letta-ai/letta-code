@@ -202,3 +202,18 @@ jobs:
           gh workflow run bump-code-desktop-letta-code.yml \
             --repo letta-ai/letta-cloud \
             -f letta_code_version="$TARGET_VERSION"
+
+      # A workflow-created release does not emit another Actions run when it
+      # uses GITHUB_TOKEN, so dispatch the separate cascade workflow directly.
+      # Once dispatched, downstream failures stay on the cascade run and cannot
+      # invalidate the already-published Letta Code release.
+      - name: Dispatch dependent package release cascade
+        if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.is_prerelease == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          TARGET_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh workflow run release-cascade.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f letta_code_version="$TARGET_VERSION"

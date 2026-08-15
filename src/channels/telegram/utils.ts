@@ -442,4 +442,7 @@ export function formatTelegramLifecycleErrorMessage(
 
 export const TELEGRAM_TYPING_REFRESH_MS = 4_000;
 
-export const TELEGRAM_TYPING_MAX_MS = 5 * 60 * 1000;
+// Lifecycle events own normal cleanup. This remains only as a lost-terminal
+// backstop; the controller slides it on activity so a healthy long turn is not
+// measured from first start.
+export const TELEGRAM_TYPING_MAX_MS = 6 * 60 * 60 * 1000;

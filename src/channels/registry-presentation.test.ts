@@ -52,7 +52,7 @@ describe("buildSlackConversationSummary", () => {
         senderName: "Charles",
         text: "hey there",
       }),
-    ).toBe("[Slack] DM with Charles");
+    ).toBe("DM with Charles");
   });
 
   test("labels threaded direct messages with a clipped text preview", () => {
@@ -66,7 +66,7 @@ describe("buildSlackConversationSummary", () => {
         text: "  following up in the DM thread about the deploy preview  ",
       }),
     ).toBe(
-      "[Slack] DM thread with Charles: following up in the DM thread about the deploy preview",
+      "DM thread with Charles: following up in the DM thread about the deploy preview",
     );
   });
 
@@ -79,9 +79,7 @@ describe("buildSlackConversationSummary", () => {
         senderName: "Charles",
         text: "  what messages do you see in this thread right now?  ",
       }),
-    ).toBe(
-      "[Slack] Thread: what messages do you see in this thread right now?",
-    );
+    ).toBe("Thread: what messages do you see in this thread right now?");
   });
 
   test("includes the channel label when available", () => {
@@ -95,7 +93,7 @@ describe("buildSlackConversationSummary", () => {
         text: "Need help with the deploy preview environment after lunch",
       }),
     ).toBe(
-      "[Slack] Thread in #random: Need help with the deploy preview environment after lunch",
+      "Thread in #random: Need help with the deploy preview environment after lunch",
     );
   });
 
@@ -108,6 +106,6 @@ describe("buildSlackConversationSummary", () => {
         senderName: "Charles",
         text: "   ",
       }),
-    ).toBe("[Slack] Thread C123");
+    ).toBe("Thread C123");
   });
 });

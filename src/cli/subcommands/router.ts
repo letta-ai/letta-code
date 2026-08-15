@@ -10,9 +10,12 @@ import { runLocalBackendSubcommand } from "./local-backend";
 import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
 import { runModsSubcommand } from "./mods";
+import { runSandboxSubcommand } from "./sandbox";
 import { asLegacyAppServerCommand, runServerSubcommand } from "./server";
 import { runSetupSubcommand } from "./setup";
+import { runSharedMemorySubcommand } from "./shared-memory";
 import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
+import { runTeleportSubcommand } from "./teleport";
 import { runTrajectoriesSubcommand } from "./trajectories";
 
 async function runUpdateSubcommand(): Promise<number> {
@@ -33,6 +36,7 @@ export function subcommandNeedsEarlyBackendMode(
 ): boolean {
   switch (command) {
     case "app-server":
+    case "channel-gateway":
     case "agents":
     case "connect":
     case "dream":
@@ -44,8 +48,11 @@ export function subcommandNeedsEarlyBackendMode(
     case "messages":
     case "mods":
     case "remote":
+    case "sandbox":
     case "server":
+    case "shared-memory":
     case "skills":
+    case "teleport":
       return true;
     default:
       return false;
@@ -82,6 +89,10 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runEnvironmentsSubcommand(rest);
     case "mods":
       return runModsSubcommand(rest);
+    case "sandbox":
+      return runSandboxSubcommand(rest);
+    case "teleport":
+      return runTeleportSubcommand(rest);
     case "server":
       return runServerSubcommand(rest);
     case "remote": // alias
@@ -94,6 +105,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runSetupSubcommand(rest);
     case "install":
       return runInstallSubcommand(rest);
+    case "shared-memory":
+      return runSharedMemorySubcommand(rest);
     case "skills":
       return runSkillsSubcommand(rest);
     case "cron":
@@ -102,6 +115,10 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runDreamSubcommand(rest);
     case "channels":
       return runChannelsSubcommand(rest);
+    case "channel-gateway": {
+      const { runChannelGatewaySubcommand } = await import("./channel-gateway");
+      return runChannelGatewaySubcommand(rest);
+    }
     case "local-backend":
       return runLocalBackendSubcommand(rest);
     case "trajectories":

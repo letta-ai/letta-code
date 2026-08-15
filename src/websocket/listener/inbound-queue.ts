@@ -1,6 +1,15 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ConversationRuntime, IncomingMessage } from "./types";
 
+export function getInboundClientMessageId(
+  incoming: IncomingMessage,
+): string | undefined {
+  return incoming.messages.find(
+    (payload): payload is MessageCreate & { client_message_id?: string } =>
+      "content" in payload,
+  )?.client_message_id;
+}
+
 export function enqueueInboundUserMessage(
   runtime: ConversationRuntime,
   incoming: IncomingMessage,

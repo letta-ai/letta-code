@@ -35,6 +35,7 @@ export interface TelemetryEvent {
     | "user_input"
     | "reflection_start"
     | "reflection_end"
+    | "reflection_worktree_cleanup"
     | "reflection_arena_vote";
   timestamp: string;
   data: Record<string, unknown>;
@@ -83,6 +84,12 @@ export interface ErrorData {
   run_id?: string;
   recent_chunks?: Record<string, unknown>[];
   debug_log_tail?: string;
+  is_subagent?: boolean;
+  subagent_type?: string;
+  model_handle?: string;
+  fallback_kind?: string;
+  platform?: string;
+  version?: string;
 }
 
 export interface UserInputData {
@@ -117,6 +124,29 @@ export interface ReflectionEndData {
   error?: string;
   step_count?: number;
   duration_ms?: number;
+  model?: string;
+  version?: string;
+  platform?: string;
+}
+
+export type ReflectionWorktreeCleanupOutcome =
+  | "parent_dirty"
+  | "merge_conflict"
+  | "reflection_worktree_dirty"
+  | "subagent_failed";
+
+export interface ReflectionWorktreeCleanupData {
+  outcome: ReflectionWorktreeCleanupOutcome;
+  integration_status:
+    | "parent_dirty"
+    | "merge_conflict"
+    | "dirty_uncommitted"
+    | "failed";
+  trigger_source?: ReflectionTriggerSource;
+  subagent_id?: string;
+  conversation_id?: string;
+  reflection_worktree_id?: string;
+  commit_count?: number;
   model?: string;
   version?: string;
   platform?: string;
@@ -456,6 +486,7 @@ class TelemetryManager {
       | UserInputData
       | ReflectionStartData
       | ReflectionEndData
+      | ReflectionWorktreeCleanupData
       | ReflectionArenaVoteData,
   ) {
     if (!this.isTelemetryEnabled()) {
@@ -684,6 +715,10 @@ class TelemetryManager {
       modelId?: string;
       runId?: string;
       recentChunks?: Record<string, unknown>[];
+      isSubagent?: boolean;
+      subagentType?: string;
+      modelHandle?: string;
+      fallbackKind?: string;
     },
   ) {
     // Skip error telemetry for self-hosted users to avoid spamming cloud analytics
@@ -705,6 +740,12 @@ class TelemetryManager {
       run_id: options?.runId,
       recent_chunks: options?.recentChunks,
       debug_log_tail: debugLogFile.getTail(),
+      is_subagent: options?.isSubagent,
+      subagent_type: options?.subagentType,
+      model_handle: options?.modelHandle,
+      fallback_kind: options?.fallbackKind,
+      platform: process.platform,
+      version: getVersion(),
     };
     this.track("error", data);
   }
@@ -783,6 +824,17 @@ class TelemetryManager {
       platform: process.platform,
     };
     this.track("reflection_end", data);
+  }
+
+  trackReflectionWorktreeCleanup(
+    options: Omit<ReflectionWorktreeCleanupData, "version" | "platform">,
+  ) {
+    const data: ReflectionWorktreeCleanupData = {
+      ...options,
+      version: getVersion(),
+      platform: process.platform,
+    };
+    this.track("reflection_worktree_cleanup", data);
   }
 
   trackReflectionArenaVote(

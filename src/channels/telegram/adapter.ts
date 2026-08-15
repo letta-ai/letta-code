@@ -163,11 +163,16 @@ export function createTelegramAdapter(
     await debouncer.enqueue({ inbound });
   }
 
-  async function sendTypingAction(chatId: string): Promise<void> {
+  async function sendTypingAction(
+    chatId: string,
+    threadId: string | null,
+  ): Promise<void> {
     if (!running) return;
     try {
       const telegramBot = await ensureBot();
-      await telegramBot.api.sendChatAction(chatId, "typing");
+      await telegramBot.api.sendChatAction(chatId, "typing", {
+        ...(threadId ? { message_thread_id: Number(threadId) } : {}),
+      });
     } catch (error) {
       console.warn(
         `[Telegram] Failed to send typing action for chat ${chatId}:`,
@@ -732,7 +737,7 @@ export function createTelegramAdapter(
           );
         }
 
-        typing.clearChat(msg.chatId);
+        typing.markOutbound(msg.chatId, resolveTelegramOutboundThreadId(msg));
         return { messageId: targetMessageId };
       }
 
@@ -786,7 +791,7 @@ export function createTelegramAdapter(
           }
         })();
 
-        typing.clearChat(msg.chatId);
+        typing.markOutbound(msg.chatId, resolveTelegramOutboundThreadId(msg));
         return { messageId: String(result.message_id) };
       }
 
@@ -796,7 +801,7 @@ export function createTelegramAdapter(
           const result = await raw.sendRichMessage(
             buildTelegramRichMessagePayload(msg),
           );
-          typing.clearChat(msg.chatId);
+          typing.markOutbound(msg.chatId, resolveTelegramOutboundThreadId(msg));
           return { messageId: String(result.message_id) };
         } catch (error) {
           if (!shouldFallbackTelegramRichMessage(error)) {
@@ -828,7 +833,7 @@ export function createTelegramAdapter(
         msg.text,
         opts,
       );
-      typing.clearChat(msg.chatId);
+      typing.markOutbound(msg.chatId, threadId);
       return { messageId: String(result.message_id) };
     },
 
@@ -850,6 +855,7 @@ export function createTelegramAdapter(
         ...(threadId ? { message_thread_id: Number(threadId) } : {}),
         ...(reply_parameters ? { reply_parameters } : {}),
       });
+      typing.markOutbound(chatId, threadId);
     },
 
     async handleTurnLifecycleEvent(
@@ -858,6 +864,7 @@ export function createTelegramAdapter(
       if (!running) return;
 
       if (event.type === "queued") {
+        typing.start(event.source);
         return;
       }
 
@@ -920,7 +927,7 @@ export function createTelegramAdapter(
           ...(reply_parameters ? { reply_parameters } : {}),
         },
       );
-      typing.clearChat(event.source.chatId);
+      typing.stop(event.source);
     },
 
     onMessage: undefined,

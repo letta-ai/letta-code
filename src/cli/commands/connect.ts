@@ -26,6 +26,7 @@ import { runLocalOAuthConnectFlow } from "./connect-local-oauth";
 import {
   defaultConnectApiKey,
   isConnectApiKeyProvider,
+  isConnectBaseURLRequired,
   isConnectBedrockProvider,
   isConnectOAuthProvider,
   isConnectZaiBaseProvider,
@@ -129,6 +130,7 @@ function formatConnectUsage(): string {
     "  /connect codex",
     "  /connect anthropic <api_key>",
     "  /connect openai <api_key>",
+    "  /connect openai-compatible --base-url http://localhost:8000/v1 [--api-key <api_key>]",
     "  /connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s",
     "  /connect bedrock iam --access-key <id> --secret-key <key> --region <region>",
     "  /connect bedrock profile --profile <name> --region <region>",
@@ -221,7 +223,9 @@ function formatApiKeyUsage(provider: ResolvedConnectProvider): string {
       `Usage: /connect ${provider.canonical} [api_key]`,
       "",
       `Connect to ${provider.byokProvider.displayName}. API key is optional for this local provider.`,
-      "Optional: --base-url <url> --timeout <ms|duration|false>",
+      isConnectBaseURLRequired(provider)
+        ? "Required: --base-url <url>. Optional: --timeout <ms|duration|false>"
+        : "Optional: --base-url <url> --timeout <ms|duration|false>",
     ].join("\n");
   }
   return [
@@ -828,6 +832,16 @@ export async function handleConnect(
         ctx.refreshDerived,
         msg,
         `${parsed.error}\n\n${formatApiKeyUsage(provider)}`,
+        false,
+      );
+      return;
+    }
+    if (isConnectBaseURLRequired(provider) && !parsed.baseURL?.trim()) {
+      addCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        msg,
+        `Missing required field: --base-url <url>.\n\n${formatApiKeyUsage(provider)}`,
         false,
       );
       return;

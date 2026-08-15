@@ -1,4 +1,8 @@
-import { enqueueInboundUserMessage } from "./inbound-queue";
+import { getOrCreateProcessTransport } from "./connection";
+import {
+  enqueueInboundUserMessage,
+  getInboundClientMessageId,
+} from "./inbound-queue";
 import {
   scheduleQueuePump,
   shouldProcessInboundMessageDirectly,
@@ -15,6 +19,36 @@ import type {
   StartListenerOptions,
 } from "./types";
 
+const MAX_ACCEPTED_INPUT_DISPOSITIONS = 4096;
+
+export function getAcceptedInputDisposition(
+  runtime: ConversationRuntime,
+  clientMessageId: string | undefined,
+): "started" | "queued" | undefined {
+  if (!clientMessageId) return undefined;
+  const disposition = runtime.acceptedInputDispositions.get(clientMessageId);
+  if (!disposition) return undefined;
+  runtime.acceptedInputDispositions.delete(clientMessageId);
+  runtime.acceptedInputDispositions.set(clientMessageId, disposition);
+  return disposition;
+}
+
+export function rememberAcceptedInputDisposition(
+  runtime: ConversationRuntime,
+  clientMessageId: string | undefined,
+  disposition: "started" | "queued",
+): void {
+  if (!clientMessageId) return;
+  runtime.acceptedInputDispositions.delete(clientMessageId);
+  runtime.acceptedInputDispositions.set(clientMessageId, disposition);
+  if (
+    runtime.acceptedInputDispositions.size > MAX_ACCEPTED_INPUT_DISPOSITIONS
+  ) {
+    const oldest = runtime.acceptedInputDispositions.keys().next().value;
+    if (oldest) runtime.acceptedInputDispositions.delete(oldest);
+  }
+}
+
 export function dispatchInboundMessageWhenReady(params: {
   listener: ListenerRuntime;
   runtime: ConversationRuntime;
@@ -29,6 +63,10 @@ export function dispatchInboundMessageWhenReady(params: {
     error: unknown,
     context: string,
   ) => void;
+  onInputAccepted?: (result: {
+    accepted: boolean;
+    disposition?: "started" | "queued";
+  }) => void;
 }): void {
   const {
     listener,
@@ -40,19 +78,52 @@ export function dispatchInboundMessageWhenReady(params: {
     processIncomingMessage,
     actingUserId,
     trackListenerError,
+    onInputAccepted,
   } = params;
+  const clientMessageId = getInboundClientMessageId(incoming);
+  let inputAcknowledged = false;
+  const acknowledgeInput = (result: {
+    accepted: boolean;
+    disposition?: "started" | "queued";
+  }): void => {
+    if (inputAcknowledged) return;
+    inputAcknowledged = true;
+    onInputAccepted?.(result);
+  };
 
   runtime.messageQueue = runtime.messageQueue
     .then(async () => {
       if (listener !== getActiveRuntime() || listener.intentionallyClosed) {
+        acknowledgeInput({ accepted: false });
+        return;
+      }
+      const acceptedDisposition = getAcceptedInputDisposition(
+        runtime,
+        clientMessageId,
+      );
+      if (acceptedDisposition) {
+        acknowledgeInput({ accepted: true, disposition: acceptedDisposition });
         return;
       }
       if (
         shouldQueueInboundMessage(incoming) &&
         !shouldProcessInboundMessageDirectly(runtime, incoming)
       ) {
-        enqueueInboundUserMessage(runtime, incoming, actingUserId);
-        scheduleQueuePump(runtime, socket, options, processQueuedTurn);
+        const accepted = enqueueInboundUserMessage(
+          runtime,
+          incoming,
+          actingUserId,
+        );
+        if (accepted) {
+          rememberAcceptedInputDisposition(runtime, clientMessageId, "queued");
+        }
+        acknowledgeInput({
+          accepted,
+          ...(accepted ? { disposition: "queued" } : {}),
+        });
+        if (accepted) {
+          scheduleQueuePump(runtime, socket, options, processQueuedTurn);
+        }
         return;
       }
 
@@ -61,9 +132,17 @@ export function dispatchInboundMessageWhenReady(params: {
         options.onStatusChange,
         options.connectionId,
       );
+      rememberAcceptedInputDisposition(runtime, clientMessageId, "started");
+      acknowledgeInput({ accepted: true, disposition: "started" });
+      // Queued turns store the actor on the queue item. Direct turns skip that
+      // item, so carry the actor on the message consumed by turn.ts instead.
+      const attributedIncoming =
+        actingUserId && incoming.actingUserId !== actingUserId
+          ? { ...incoming, actingUserId }
+          : incoming;
       await processIncomingMessage(
-        incoming,
-        socket,
+        attributedIncoming,
+        getOrCreateProcessTransport(listener),
         runtime,
         options.onStatusChange,
         options.connectionId,
@@ -82,6 +161,7 @@ export function dispatchInboundMessageWhenReady(params: {
       }
     })
     .catch((error: unknown) => {
+      acknowledgeInput({ accepted: false });
       trackListenerError(
         "listener_queued_input_failed",
         error,

@@ -6,11 +6,14 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
-  Message as LettaMessage,
+  Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
-import { trackBoundaryError } from "@/telemetry/error-reporting";
+import {
+  trackBoundaryError,
+  trackEndTurnNoAssistant,
+} from "@/telemetry/error-reporting";
 import { extractTelemetryInputText } from "@/telemetry/input";
 import { installHeadlessStdoutGuard } from "@/utils/headless-stdout-guard";
 import {
@@ -107,9 +110,12 @@ import { installLocalBackendModEventHooks } from "./cli/mods/local-backend-mod-e
 import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
+  validatePrimaryStartupFlagConflicts,
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
+import { waitForEnvironmentAssistantMessage } from "./headless-environment-response";
+import { resolveHeadlessMemfsPolicy } from "./headless-memfs-policy";
 import {
   createHeadlessModAdapter,
   createHeadlessModContext,
@@ -194,6 +200,12 @@ const LLM_API_ERROR_MAX_RETRIES = 3;
 // Retry config for empty response errors (Opus 4.6 SADs)
 // Retry 1: same input. Retry 2: with system reminder nudge.
 const EMPTY_RESPONSE_MAX_RETRIES = 2;
+
+const HEADLESS_STREAM_RESUME_POLICY = {
+  initialDelayMs: 250,
+  maxAttempts: 20,
+  maxDelayMs: 2_000,
+};
 
 // Provider fallback: Anthropic model ID → Bedrock model ID.
 // After 1 failed retry against Anthropic, automatically retry via Bedrock.
@@ -366,7 +378,6 @@ export const __headlessTestUtils = {
   contentToTaskNotificationText,
   toBidirectionalQueuedInput,
   prepareHeadlessToolExecutionContext,
-  waitForEnvironmentAssistantMessage,
 };
 
 type ReflectionOverrides = {
@@ -425,10 +436,10 @@ async function applyReflectionOverrides(
 ): Promise<ReflectionSettings> {
   const current = getReflectionSettings(agentId);
   const merged: ReflectionSettings = {
+    ...current,
     trigger: overrides.trigger ?? current.trigger,
     stepCount: overrides.stepCount ?? current.stepCount,
   };
-
   if (!hasReflectionOverrides(overrides)) {
     return merged;
   }
@@ -694,151 +705,6 @@ async function writeFinalHeadlessStdout(text: string): Promise<void> {
   });
 }
 
-function pageItems<T>(page: unknown): T[] {
-  if (Array.isArray(page)) return page as T[];
-  if (page && typeof page === "object") {
-    const maybePage = page as {
-      getPaginatedItems?: () => T[];
-      items?: T[];
-    };
-    if (typeof maybePage.getPaginatedItems === "function") {
-      return maybePage.getPaginatedItems();
-    }
-    if (Array.isArray(maybePage.items)) {
-      return maybePage.items;
-    }
-  }
-  return [];
-}
-
-function extractMessageText(message: LettaMessage): string {
-  const content = (message as { content?: unknown }).content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (
-          part &&
-          typeof part === "object" &&
-          "type" in part &&
-          part.type === "text" &&
-          "text" in part &&
-          typeof part.text === "string"
-        ) {
-          return part.text;
-        }
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  return "";
-}
-
-function isAssistantMessage(message: LettaMessage): boolean {
-  return (
-    (message as { message_type?: string }).message_type === "assistant_message"
-  );
-}
-
-function messageTime(message: LettaMessage): number {
-  const date =
-    (message as { date?: string; created_at?: string }).date ??
-    (message as { created_at?: string }).created_at;
-  return date ? new Date(date).getTime() : 0;
-}
-
-function agentLastRunCompletionMs(agent: AgentState): number | null {
-  const raw = (agent as { last_run_completion?: unknown }).last_run_completion;
-  if (typeof raw !== "string" || raw.length === 0) return null;
-  const ms = new Date(raw).getTime();
-  return Number.isFinite(ms) ? ms : null;
-}
-
-function agentLastStopReason(agent: AgentState): StopReasonType | null {
-  const raw = (agent as { last_stop_reason?: unknown }).last_stop_reason;
-  return typeof raw === "string" && raw.length > 0
-    ? (raw as StopReasonType)
-    : null;
-}
-
-async function waitForEnvironmentAssistantMessage(params: {
-  backend: ReturnType<typeof getBackend>;
-  agentId: string;
-  conversationId: string;
-  startedAtMs: number;
-  baselineLastRunCompletionMs?: number | null;
-  timeoutMs?: number;
-  pollIntervalMs?: number;
-}): Promise<{ text: string; stopReason: StopReasonType | null }> {
-  const timeoutMs = params.timeoutMs ?? 10 * 60_000;
-  const pollIntervalMs = params.pollIntervalMs ?? 1_000;
-  const deadline = Date.now() + timeoutMs;
-  let lastText = "";
-  let postCompletionStableCount = 0;
-  let observedCompletion = false;
-  let observedStopReason: StopReasonType | null = null;
-
-  while (Date.now() < deadline) {
-    const freshAgent = await params.backend.retrieveAgent(params.agentId);
-    const completionMs = agentLastRunCompletionMs(freshAgent);
-    const baselineCompletionMs = params.baselineLastRunCompletionMs ?? null;
-    const wasObservedCompletion = observedCompletion;
-    if (
-      completionMs !== null &&
-      (baselineCompletionMs === null || completionMs > baselineCompletionMs) &&
-      completionMs >= params.startedAtMs - 5_000
-    ) {
-      observedCompletion = true;
-      observedStopReason = agentLastStopReason(freshAgent);
-      if (!wasObservedCompletion) {
-        postCompletionStableCount = 0;
-      }
-    }
-
-    const page =
-      params.conversationId === "default"
-        ? await params.backend.listAgentMessages(params.agentId, {
-            conversation_id: "default",
-            limit: 50,
-            order: "desc",
-          })
-        : await params.backend.listConversationMessages(params.conversationId, {
-            limit: 50,
-            order: "desc",
-          });
-
-    const messages = pageItems<LettaMessage>(page);
-    const assistant = messages
-      .filter(
-        (message) =>
-          isAssistantMessage(message) &&
-          messageTime(message) >= params.startedAtMs - 2_000,
-      )
-      .sort((a, b) => messageTime(b) - messageTime(a))[0];
-
-    const text = assistant ? extractMessageText(assistant).trim() : "";
-    if (text.length > 0) {
-      if (text === lastText) {
-        if (observedCompletion) postCompletionStableCount += 1;
-      } else {
-        lastText = text;
-        postCompletionStableCount = observedCompletion ? 1 : 0;
-      }
-      if (observedCompletion && postCompletionStableCount >= 2) {
-        return { text, stopReason: observedStopReason };
-      }
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-  }
-
-  if (observedCompletion && lastText) {
-    return { text: lastText, stopReason: observedStopReason };
-  }
-  throw new Error("Timed out waiting for environment turn completion");
-}
-
 type ReplyEnvironmentMetadata =
   | {
       source: "same-environment";
@@ -1047,15 +913,18 @@ export async function handleHeadlessCommand(
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
   const memfsFlag = values.memfs;
-  // Newly created subagents are ephemeral and deliberately stateless: they
-  // never get memfs (no repo clone per spawn). This role-based carve-out is
-  // the only supported non-memfs path — there is no user-facing opt-out.
-  // Fork/recall subagents deploy an EXISTING (memfs-tagged) agent instead of
-  // creating one (`--agent`/`--conv`, not `--new-agent`), so they keep their
-  // memory: the tag-driven sync below handles them like any other agent.
+  const statelessFlag = values.stateless;
   const isSubagentRole = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-  const isStatelessSubagent = isSubagentRole && Boolean(values["new-agent"]);
-  if (isStatelessSubagent && backend.capabilities.localMemfs) {
+  // Fresh subagents are stateless by role. --stateless extends only the
+  // MemFS-less session behavior to an existing --agent/--conversation launch;
+  // it does not change that agent's model, prompt, tools, or sampling config.
+  const { isFreshStatelessSubagent, isStatelessSession } =
+    resolveHeadlessMemfsPolicy({
+      statelessRequested: Boolean(statelessFlag),
+      isSubagentRole,
+      newAgentRequested: Boolean(forceNew),
+    });
+  if (isStatelessSession && backend.capabilities.localMemfs) {
     const { disableLocalBackendMemfsForProcess } = await import(
       "@/backend/local/paths"
     );
@@ -1082,7 +951,7 @@ export async function handleHeadlessCommand(
     console.error("Error: --memfs is not supported by this backend yet");
     process.exit(1);
   }
-  const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !isStatelessSubagent;
+  const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !isStatelessSession;
   const fromAfFile = resolveImportFlagAlias({
     importFlagValue: values.import,
     fromAfFlagValue: values["from-af"],
@@ -1223,36 +1092,17 @@ export async function handleHeadlessCommand(
 
   // Validate shared mutual-exclusion rules for startup flags.
   try {
-    validateFlagConflicts({
-      guard: specifiedConversationId && specifiedConversationId !== "default",
-      checks: [
-        {
-          when: specifiedAgentId,
-          message: "--conversation cannot be used with --agent",
-        },
-        {
-          when: specifiedAgentName,
-          message: "--conversation cannot be used with --name",
-        },
-        {
-          when: forceNew,
-          message: "--conversation cannot be used with --new-agent",
-        },
-        {
-          when: fromAfFile,
-          message: "--conversation cannot be used with --import",
-        },
-      ],
-    });
-
-    validateFlagConflicts({
-      guard: forceNewConversation,
-      checks: [
-        {
-          when: specifiedConversationId,
-          message: "--new cannot be used with --conversation",
-        },
-      ],
+    validatePrimaryStartupFlagConflicts({
+      specifiedConversationId,
+      specifiedAgentId,
+      specifiedAgentName,
+      forceNewAgent: forceNew,
+      forceNewConversation,
+      importFile: fromAfFile,
+      stateless: statelessFlag,
+      isHeadless: true,
+      memfs: memfsFlag,
+      memfsStartup: values["memfs-startup"],
     });
   } catch (error) {
     return reportAndExitHeadless(
@@ -1459,7 +1309,7 @@ export async function handleHeadlessCommand(
       (await isLettaCloud());
     const effectiveMemoryMode: MemoryPromptMode | undefined = backend
       .capabilities.localMemfs
-      ? isStatelessSubagent
+      ? isFreshStatelessSubagent
         ? "standard"
         : "local-memfs"
       : (requestedMemoryPromptMode ??
@@ -1630,12 +1480,16 @@ export async function handleHeadlessCommand(
     ? true
     : memfsFlag;
 
-  if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
+  if (
+    !isStatelessSession &&
+    backend.capabilities.remoteMemfs &&
+    !autoEnableMemfsForFreshAgent
+  ) {
     const { hydrateMemfsSettingFromAgent, isLettaCloud } = await import(
       "@/agent/memory-filesystem"
     );
     const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
-    if (!memfsEnabled && !isStatelessSubagent && (await isLettaCloud())) {
+    if (!memfsEnabled && (await isLettaCloud())) {
       // Auto-enable memfs for existing agents that don't have it yet.
       // Matches interactive mode behavior where memfs defaults to enabled.
       startupMemfsFlag = true;
@@ -1658,9 +1512,15 @@ export async function handleHeadlessCommand(
   //   "blocking"  (default) – await the pull; exit on conflict.
   //   "background"           – fire pull async; session init proceeds immediately.
   //   "skip"                 – skip the pull this session.
-  if (!backend.capabilities.remoteMemfs) {
+  if (isStatelessSession) {
+    // This is a session launch policy: do not hydrate tags, auto-enable,
+    // clone, or pull MemFS. Recording false also keeps downstream client tools,
+    // skills, reflection, and init metadata aligned without mutating the
+    // server-side agent configuration.
+    settingsManager.setMemfsEnabled(agent.id, false);
+  } else if (!backend.capabilities.remoteMemfs) {
     if (backend.capabilities.localMemfs) {
-      settingsManager.setMemfsEnabled(agent.id, !isStatelessSubagent);
+      settingsManager.setMemfsEnabled(agent.id, true);
     }
   } else if (memfsStartupPolicy === "skip") {
     // Run enable logic but skip the git pull.
@@ -1817,10 +1677,13 @@ export async function handleHeadlessCommand(
     });
 
   try {
-    effectiveReflectionSettings = await applyReflectionOverrides(
+    const resolvedReflectionSettings = await applyReflectionOverrides(
       agent.id,
       reflectionOverrides,
     );
+    effectiveReflectionSettings = isStatelessSession
+      ? { ...resolvedReflectionSettings, trigger: "off" }
+      : resolvedReflectionSettings;
   } catch (error) {
     console.error(
       `Failed to apply sleeptime settings: ${error instanceof Error ? error.message : String(error)}`,
@@ -2306,7 +2169,7 @@ ${SYSTEM_REMINDER_CLOSE}
     const environmentSelector = String(explicitEnvironmentSelector);
     const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
     const environmentRouting = useCloudSandbox
-      ? await resolveAgentSandboxConnectionId(agent.id)
+      ? await resolveAgentSandboxConnectionId(agent.id, { conversationId })
       : await resolveEnvironmentConnectionId(environmentSelector);
     const { connectionId, environment } = environmentRouting;
     const responseEnvironment = buildEnvironmentResponseMetadata({
@@ -2373,8 +2236,7 @@ ${SYSTEM_REMINDER_CLOSE}
       }
       await exitHeadless(1, "headless_environment_unsupported");
     }
-    const startedAtMs = Date.now();
-    const baselineLastRunCompletionMs = agentLastRunCompletionMs(agent);
+    const otid = randomUUID();
     await sendEnvironmentMessage(connectionId, {
       agentId: agent.id,
       conversationId,
@@ -2383,7 +2245,7 @@ ${SYSTEM_REMINDER_CLOSE}
           role: "user",
           content: contentParts,
           client_message_id: randomUUID(),
-          otid: randomUUID(),
+          otid,
         },
       ],
     });
@@ -2392,8 +2254,7 @@ ${SYSTEM_REMINDER_CLOSE}
       backend,
       agentId: agent.id,
       conversationId,
-      startedAtMs,
-      baselineLastRunCompletionMs,
+      otid,
     });
     const resultText = environmentResult.text;
     const stats = sessionStats.getSnapshot();
@@ -2793,23 +2654,11 @@ ${SYSTEM_REMINDER_CLOSE}
         throw preStreamError;
       }
 
-      // For stream-json, output each chunk as it arrives
-      let stopReason: StopReasonType | null = null;
-      let approvals: Array<{
-        toolCallId: string;
-        toolName: string;
-        toolArgs: string;
-      }> = [];
-      let apiDurationMs: number;
-      let lastRunId: string | null = null;
       let approvalPendingRecovery = false;
 
+      let streamJsonHook: DrainStreamHook | undefined;
       if (outputFormat === "stream-json") {
-        const streamJsonHook: DrainStreamHook = ({
-          chunk,
-          shouldOutput,
-          errorInfo,
-        }) => {
+        streamJsonHook = ({ chunk, shouldOutput, errorInfo }) => {
           let shouldOutputChunk = shouldOutput;
 
           if (errorInfo && shouldOutput) {
@@ -2896,38 +2745,24 @@ ${SYSTEM_REMINDER_CLOSE}
 
           return { shouldOutput: shouldOutputChunk, shouldAccumulate: true };
         };
-
-        const result = await drainStreamWithResume(
-          stream,
-          buffers,
-          () => {},
-          sigintSignal,
-          undefined,
-          streamJsonHook,
-          reminderContextTracker,
-        );
-        stopReason = result.stopReason;
-        approvals = result.approvals || [];
-        apiDurationMs = result.apiDurationMs;
-        lastRunId = result.lastRunId || null;
-        if (lastRunId) lastKnownRunId = lastRunId;
-      } else {
-        // Normal mode: use drainStreamWithResume
-        const result = await drainStreamWithResume(
-          stream,
-          buffers,
-          () => {}, // No UI refresh needed in headless mode
-          sigintSignal,
-          undefined,
-          undefined,
-          reminderContextTracker,
-        );
-        stopReason = result.stopReason;
-        approvals = result.approvals || [];
-        apiDurationMs = result.apiDurationMs;
-        lastRunId = result.lastRunId || null;
-        if (lastRunId) lastKnownRunId = lastRunId;
       }
+
+      const result = await drainStreamWithResume(
+        stream,
+        buffers,
+        () => {},
+        sigintSignal,
+        undefined,
+        streamJsonHook,
+        reminderContextTracker,
+        undefined,
+        HEADLESS_STREAM_RESUME_POLICY,
+      );
+      const { apiDurationMs, stopReason } = result;
+      const approvals = result.approvals || [];
+      const lastRunId = result.lastRunId || null;
+      const fallbackError = result.fallbackError ?? null;
+      if (lastRunId) lastKnownRunId = lastRunId;
 
       // Track API duration for this stream
       sessionStats.endTurn(apiDurationMs);
@@ -2937,11 +2772,11 @@ ${SYSTEM_REMINDER_CLOSE}
         await exitInterrupted();
       }
 
-      // Check max turns after each turn (server may have taken multiple steps),
-      // but defer the limit when we're still resolving pending approvals.
-      // Otherwise we can exit while the backend is waiting for approval input,
-      // leaving the run stuck in requires_approval.
-      if (stopReason !== "requires_approval" && !approvalPendingRecovery) {
+      if (
+        stopReason !== "requires_approval" &&
+        !approvalPendingRecovery &&
+        !(stopReason === "error" && fallbackError)
+      ) {
         await checkMaxTurns();
       }
 
@@ -3430,14 +3265,15 @@ ${SYSTEM_REMINDER_CLOSE}
       let errorMessage =
         errorMessages.length > 0
           ? errorMessages.join("; ")
-          : `Unexpected stop reason: ${stopReason}`;
+          : fallbackError || `Unexpected stop reason: ${stopReason}`;
 
       // Fetch detailed error from run metadata if available (same as TUI mode)
-      if (lastRunId && errorMessages.length === 0) {
+      let finalRun: Run | null = null;
+      if (lastRunId) {
         try {
-          const run = await getBackend().retrieveRun(lastRunId);
-          if (run.metadata?.error) {
-            const errorData = run.metadata.error as {
+          finalRun = await getBackend().retrieveRun(lastRunId);
+          if (finalRun.metadata?.error && errorMessages.length === 0) {
+            const errorData = finalRun.metadata.error as {
               type?: string;
               message?: string;
               detail?: string;
@@ -3454,6 +3290,19 @@ ${SYSTEM_REMINDER_CLOSE}
         } catch (_e) {
           // If we can't fetch error details, append note to error message
           errorMessage = `${errorMessage}\n(Unable to fetch additional error details from server)`;
+        }
+      }
+
+      if (
+        lastRunId &&
+        finalRun &&
+        !finalRun.metadata?.error &&
+        (finalRun.status === "created" || finalRun.status === "running")
+      ) {
+        try {
+          await backend.cancelRun(finalRun.agent_id || agent.id, lastRunId);
+        } catch {
+          // Best effort: preserve the stream error when cancellation also fails.
         }
       }
 
@@ -3555,6 +3404,19 @@ ${SYSTEM_REMINDER_CLOSE}
     lastReasoning?.text ||
     lastToolResult?.resultText ||
     "No assistant response found";
+
+  // end_turn with no assistant text → trajectory ended on reasoning or tool call (parse error)
+  if (!lastAssistant && (lastReasoning || lastToolResult)) {
+    trackEndTurnNoAssistant({
+      fallbackKind: lastReasoning ? "reasoning" : "tool_call",
+      modelHandle: agent.llm_config?.model ?? model,
+      runId: lastKnownRunId ?? undefined,
+      isSubagent,
+      subagentType:
+        systemPromptPreset ??
+        agent.tags?.find((t) => t.startsWith("type:"))?.slice(5),
+    });
+  }
 
   const stats = sessionStats.getSnapshot();
   const usage = {

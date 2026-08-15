@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { bash } from "@/tools/impl/bash";
 import { bash_output } from "@/tools/impl/bash-output";
 import { kill_bash } from "@/tools/impl/kill-bash";
@@ -103,6 +105,29 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     const result = await kill_bash({ shell_id: "nonexistent" });
 
     expect(result.killed).toBe(false);
+  });
+
+  test("KillBash preserves completed-process cleanup behavior", async () => {
+    let killed = false;
+    backgroundProcesses.set("bash_completed", {
+      process: {
+        kill() {
+          killed = true;
+        },
+      },
+      command: "echo done",
+      stdout: [],
+      stderr: [],
+      status: "completed",
+      exitCode: 0,
+      lastReadIndex: { stdout: 0, stderr: 0 },
+    });
+
+    expect(await kill_bash({ shell_id: "bash_completed" })).toEqual({
+      killed: true,
+    });
+    expect(killed).toBe(true);
+    expect(backgroundProcesses.has("bash_completed")).toBe(false);
   });
 
   test("background process returns output file path", async () => {
@@ -214,4 +239,59 @@ describe.skipIf(isWindows)("Bash background tools", () => {
       "Too many background processes already running",
     );
   });
+
+  test("background timeout force-kills the whole process tree", async () => {
+    const tempDir = fs.mkdtempSync(join(tmpdir(), "letta-bash-tree-"));
+    const descendantPath = join(tempDir, "descendant.cjs");
+    const launcherPath = join(tempDir, "launcher.cjs");
+    fs.writeFileSync(
+      descendantPath,
+      [
+        'process.on("SIGTERM", () => {});',
+        "setTimeout(() => process.exit(0), 7000);",
+        "setInterval(() => {}, 1000);",
+      ].join(""),
+    );
+    fs.writeFileSync(
+      launcherPath,
+      [
+        'const { spawn } = require("node:child_process");',
+        `const descendant = spawn(process.execPath, [${JSON.stringify(descendantPath)}], { stdio: "inherit" });`,
+        'process.stdout.write("descendant:" + descendant.pid + "\\n");',
+        'process.on("SIGTERM", () => {});',
+        "setTimeout(() => process.exit(0), 7000);",
+        "setInterval(() => {}, 1000);",
+      ].join(""),
+    );
+
+    try {
+      const result = await bash({
+        command: `node ${JSON.stringify(launcherPath)}`,
+        description: "Test background process tree timeout",
+        run_in_background: true,
+        timeout: 200,
+      });
+      const bashId = result.content[0]?.text.match(/bash_\d+/)?.[0];
+      expect(bashId).toBeDefined();
+      if (!bashId) throw new Error("Expected background Bash id");
+
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        if (backgroundProcesses.get(bashId)?.status !== "running") break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      const processEntry = backgroundProcesses.get(bashId);
+      expect(processEntry?.status).toBe("failed");
+      expect(processEntry?.stderr.join("\n")).toContain(
+        "Command timed out after 200ms",
+      );
+      const descendantPid = Number(
+        processEntry?.stdout.join("\n").match(/descendant:(\d+)/)?.[1],
+      );
+      expect(descendantPid).toBeGreaterThan(0);
+      expect(() => process.kill(descendantPid, 0)).toThrow();
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  }, 10_000);
 });

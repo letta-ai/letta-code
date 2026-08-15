@@ -49,6 +49,50 @@ interface ResponsesRequest {
   stream?: boolean;
 }
 
+interface StoredResponseState {
+  agentId: string;
+  conversationId: string;
+}
+
+const STORED_RESPONSE_PREFIX = "resp_letta_";
+
+function createStoredResponseId(state: StoredResponseState): string {
+  const cursor = Buffer.from(
+    JSON.stringify({
+      version: 1,
+      nonce: randomUUID(),
+      agent_id: state.agentId,
+      conversation_id: state.conversationId,
+    }),
+  ).toString("base64url");
+  return `${STORED_RESPONSE_PREFIX}${cursor}`;
+}
+
+function parseStoredResponseId(responseId: string): StoredResponseState | null {
+  if (!responseId.startsWith(STORED_RESPONSE_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(
+        responseId.slice(STORED_RESPONSE_PREFIX.length),
+        "base64url",
+      ).toString("utf8"),
+    ) as Record<string, unknown>;
+    if (
+      parsed.version !== 1 ||
+      typeof parsed.agent_id !== "string" ||
+      typeof parsed.conversation_id !== "string"
+    ) {
+      return null;
+    }
+    return {
+      agentId: parsed.agent_id,
+      conversationId: parsed.conversation_id,
+    };
+  } catch {
+    return null;
+  }
+}
+
 interface FunctionCallItem {
   type: "function_call";
   id: string;
@@ -514,31 +558,63 @@ export async function handleResponses(
     return;
   }
 
-  if (body.store === true) {
-    sendOpenAiError(
-      response,
-      400,
-      "stored Responses are not supported; use a stable chat identity header for conversation continuity",
-      "invalid_request_error",
-      "unsupported_parameter",
-    );
-    return;
-  }
-  if (body.previous_response_id) {
-    sendOpenAiError(
-      response,
-      400,
-      "previous_response_id is not supported; send the conversation input or a stable chat identity header",
-      "invalid_request_error",
-      "unsupported_parameter",
-    );
-    return;
-  }
-
   const input = normalizeInput(body.input);
   const streaming = body.stream === true;
   const headerChatKey = chatKeyFromHeaders(request, streaming);
-  const prepared = toBridgeMessages(input, Boolean(headerChatKey));
+  const previousResponse = body.previous_response_id
+    ? parseStoredResponseId(body.previous_response_id)
+    : null;
+  if (body.previous_response_id && !previousResponse) {
+    sendOpenAiError(
+      response,
+      404,
+      `The response '${body.previous_response_id}' does not exist or is no longer stored.`,
+      "invalid_request_error",
+      "response_not_found",
+    );
+    return;
+  }
+  if (previousResponse && previousResponse.agentId !== agent.id) {
+    sendOpenAiError(
+      response,
+      404,
+      `The response '${body.previous_response_id}' does not exist for model '${body.model}'.`,
+      "invalid_request_error",
+      "response_not_found",
+    );
+    return;
+  }
+  if (previousResponse) {
+    try {
+      const source = await getBackend().retrieveConversation(
+        previousResponse.conversationId,
+      );
+      if (source.agent_id !== agent.id) {
+        sendOpenAiError(
+          response,
+          404,
+          `The response '${body.previous_response_id}' does not exist for model '${body.model}'.`,
+          "invalid_request_error",
+          "response_not_found",
+        );
+        return;
+      }
+    } catch {
+      sendOpenAiError(
+        response,
+        404,
+        `The response '${body.previous_response_id}' does not exist or is no longer stored.`,
+        "invalid_request_error",
+        "response_not_found",
+      );
+      return;
+    }
+  }
+
+  const prepared = toBridgeMessages(
+    input,
+    Boolean(headerChatKey || previousResponse),
+  );
   applyInstructions(prepared.messages, [
     body.instructions,
     ...inputInstructions(body.input),
@@ -555,7 +631,31 @@ export async function handleResponses(
 
   let conversationId: string;
   try {
-    if (headerChatKey) {
+    if (previousResponse) {
+      const backend = getBackend();
+      if (!backend.forkConversation) {
+        sendOpenAiError(
+          response,
+          501,
+          "previous_response_id is unavailable because this backend cannot fork conversations",
+          "server_error",
+          "unsupported_backend",
+        );
+        return;
+      }
+      const forked = await backend.forkConversation(
+        previousResponse.conversationId,
+        {
+          agentId: agent.id,
+          hidden: true,
+        },
+      );
+      conversationId = forked.id;
+      if (headerChatKey) {
+        const key = `chat-key:${agent.id}:${headerChatKey}`;
+        rememberConversation(key, conversationId);
+      }
+    } else if (headerChatKey) {
       const key = `chat-key:${agent.id}:${headerChatKey}`;
       conversationId = await resolveConversationId(agent.id, key);
       rememberConversation(key, conversationId);
@@ -577,7 +677,10 @@ export async function handleResponses(
     return;
   }
 
-  const responseId = `resp_${randomUUID()}`;
+  const responseId =
+    body.store === true
+      ? createStoredResponseId({ agentId: agent.id, conversationId })
+      : `resp_${randomUUID()}`;
   const createdAt = Math.floor(Date.now() / 1000);
   let sequenceNumber = 0;
   let clientClosed = false;
@@ -649,10 +752,10 @@ export async function handleResponses(
   }
   builder.finish();
 
-  // Header-less requests replay the supplied input into a fresh conversation.
-  // The endpoint does not expose response retrieval, so retaining that
-  // internal conversation would only create unreachable state.
-  if (!headerChatKey) {
+  const shouldStore = body.store === true && !outcome.error;
+  // Stateless requests replay the supplied input into a fresh conversation.
+  // Stored Responses and header-keyed chats retain their conversation state.
+  if (!headerChatKey && !shouldStore) {
     void getBackend()
       .deleteConversation?.(conversationId)
       .catch(() => {

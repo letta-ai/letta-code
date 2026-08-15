@@ -6,6 +6,7 @@ import {
   listChannelAccounts,
   loadChannelAccounts,
 } from "@/channels/accounts";
+import { __setChannelCredentialsStoreModeForTests } from "@/channels/credential-store";
 import {
   __testOverrideLoadPairingStore,
   __testOverrideSavePairingStore,
@@ -53,10 +54,12 @@ describe("discord channel service", () => {
     __testOverrideLoadTargetStore(null);
     __testOverrideSaveTargetStore(null);
     __testOverrideResolveChannelAccountDisplayName(null);
+    __setChannelCredentialsStoreModeForTests(null);
   }
 
   beforeEach(() => {
     resetState();
+    __setChannelCredentialsStoreModeForTests("file");
     __testOverrideLoadChannelAccounts(() => []);
     __testOverrideSaveChannelAccounts(() => {});
     __testOverrideLoadRoutes(() => null);

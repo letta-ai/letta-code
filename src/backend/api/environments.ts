@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { apiRequest } from "./request";
 
 export interface EnvironmentMetadata {
@@ -90,11 +91,15 @@ export async function getEnvironmentConnection(
 
 export async function createAgentSandbox(
   agentId: string,
+  options: { conversationId?: string } = {},
+  request: typeof apiRequest = apiRequest,
 ): Promise<CreateAgentSandboxResponse> {
-  return apiRequest<CreateAgentSandboxResponse>(
+  const conversationId =
+    options.conversationId === "default" ? undefined : options.conversationId;
+  return request<CreateAgentSandboxResponse>(
     "POST",
     `/v1/agents/${encodeURIComponent(agentId)}/sandboxes`,
-    {},
+    conversationId ? { conversationId } : {},
   );
 }
 
@@ -166,11 +171,17 @@ export async function resolveEnvironmentConnectionId(
 
 export async function resolveAgentSandboxConnectionId(
   agentId: string,
-  options: { timeoutMs?: number; pollIntervalMs?: number } = {},
+  options: {
+    conversationId?: string;
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+  } = {},
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
   const timeoutMs = options.timeoutMs ?? 3 * 60_000;
   const pollIntervalMs = options.pollIntervalMs ?? 2_000;
-  const sandbox = await createAgentSandbox(agentId);
+  const sandbox = await createAgentSandbox(agentId, {
+    conversationId: options.conversationId,
+  });
   const deviceId = sandbox.deviceId || `sandbox-${agentId}`;
   const deadline = Date.now() + timeoutMs;
   let lastEnvironment: EnvironmentConnection | null = null;
@@ -197,5 +208,45 @@ export async function resolveAgentSandboxConnectionId(
 
   throw new Error(
     `Timed out waiting for cloud sandbox ${sandbox.connectionName} to register${lastError instanceof Error ? `: ${lastError.message}` : ""}`,
+  );
+}
+
+export type TeleportStatus =
+  | "waiting_for_source"
+  | "starting_destination"
+  | "completed"
+  | "failed";
+
+export interface TeleportResponse {
+  id: string;
+  agentId: string;
+  conversationId: string;
+  sourceConnectionId: string;
+  targetConnectionId: string;
+  targetDeviceId: string;
+  targetConnectionName: string;
+  status: TeleportStatus;
+  error: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * Submit a teleport request to Cloud. Returns immediately after the 202
+ * acceptance — the harness owns polling/yield after this returns.
+ */
+export async function teleportToEnvironment(
+  agentId: string,
+  conversationId: string,
+  targetConnectionId: string,
+  request: typeof apiRequest = apiRequest,
+): Promise<TeleportResponse> {
+  return request<TeleportResponse>(
+    "POST",
+    `/v1/environments/runtimes/${encodeURIComponent(agentId)}/${encodeURIComponent(conversationId)}/teleport`,
+    {
+      targetConnectionId,
+      idempotencyKey: randomUUID(),
+    },
   );
 }

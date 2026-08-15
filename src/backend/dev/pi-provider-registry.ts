@@ -9,6 +9,8 @@ import {
 
 export const LOCAL_CHATGPT_PROVIDER_NAME = "chatgpt-plus-pro";
 export const LOCAL_OPENAI_PROVIDER_NAME = "lc-openai";
+export const LOCAL_OPENAI_COMPATIBLE_PROVIDER_NAME = "lc-openai-compatible";
+export const OPENAI_COMPATIBLE_PI_PROVIDER_ID = "openai-compatible";
 export const LOCAL_ANTHROPIC_PROVIDER_NAME = "lc-anthropic";
 export const LOCAL_OPENROUTER_PROVIDER_NAME = "lc-openrouter";
 export const LOCAL_OLLAMA_PROVIDER_NAME = "lc-ollama";
@@ -28,6 +30,7 @@ export const LOCAL_BEDROCK_PROVIDER_NAME = "lc-bedrock";
 export type LocalEndpointProvider =
   | "ollama"
   | "ollama-cloud"
+  | "openai-compatible"
   | "lmstudio"
   | "llama-cpp";
 
@@ -308,6 +311,18 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
     baseUrlEnv: () => process.env.OLLAMA_CLOUD_BASE_URL,
     localModelDiscovery: "openai-compatible",
     envConfigured: () => hasEnvValue(process.env.OLLAMA_API_KEY),
+    createCustomModel: true,
+  },
+  {
+    id: OPENAI_COMPATIBLE_PI_PROVIDER_ID,
+    providerTypes: ["openai-compatible"],
+    handlePrefixes: ["openai-compatible/"],
+    localProviderNames: [
+      OPENAI_COMPATIBLE_PI_PROVIDER_ID,
+      LOCAL_OPENAI_COMPATIBLE_PROVIDER_NAME,
+    ],
+    fallbackApiKey: "not-needed",
+    localModelDiscovery: "openai-compatible",
     createCustomModel: true,
   },
   {

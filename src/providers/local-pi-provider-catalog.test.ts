@@ -44,6 +44,29 @@ describe("local pi provider catalog", () => {
     expect(apiProviderIds.has("llama-cpp")).toBe(false);
   });
 
+  test("local OpenAI-compatible config is distinct and requires only its base URL", () => {
+    const provider = getProviderConfigs("local").find(
+      (candidate) => candidate.id === "openai-compatible",
+    );
+
+    expect(provider).toMatchObject({
+      id: "openai-compatible",
+      displayName: "OpenAI-compatible API",
+      providerType: "openai-compatible",
+      providerName: "openai-compatible",
+      providerNames: ["openai-compatible", "lc-openai-compatible"],
+      requiresApiKey: false,
+      defaultApiKey: "not-needed",
+      fields: [
+        { key: "apiKey", secret: true, required: false },
+        { key: "baseUrl", label: "Base URL" },
+      ],
+    });
+    expect(provider?.providerType).not.toBe("openai");
+    expect(provider?.providerType).not.toBe("lmstudio_openai");
+    expect(provider?.providerType).not.toBe("llama_cpp");
+  });
+
   test("local /connect configs cover every upstream pi-ai provider", () => {
     const coveredProviders = new Set(
       getProviderConfigs("local")
@@ -120,6 +143,7 @@ describe("local pi provider catalog", () => {
     const endpointProviders = new Set([
       "ollama",
       "ollama-cloud",
+      "openai-compatible",
       "lmstudio",
       "llama-cpp",
     ]);

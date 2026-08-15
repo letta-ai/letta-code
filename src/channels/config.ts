@@ -28,11 +28,16 @@ import type {
   WhatsAppChannelConfig,
   WhatsAppGroupMode,
 } from "./types";
+import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
 
 // ── Paths ─────────────────────────────────────────────────────────
 
 const CHANNELS_ROOT = join(homedir(), ".letta", "channels");
 let channelsRootOverride: string | null = null;
+
+function parseWhatsAppWaitingBehavior(value: unknown): WhatsAppWaitingBehavior {
+  return value === "typing_indicator" ? "typing_indicator" : "off";
+}
 
 export function getChannelsRoot(): string {
   return channelsRootOverride ?? CHANNELS_ROOT;
@@ -175,6 +180,11 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
       transcribeVoice: parsed.transcribe_voice === true,
       listenMode: parsed.listen_mode === true,
+      mentionOnlyChannels: Array.isArray(parsed.mention_only_channels)
+        ? parsed.mention_only_channels.filter(
+            (channelId): channelId is string => typeof channelId === "string",
+          )
+        : [],
       allowBots: normalizeSlackAllowBotsMode(parsed.allow_bots),
     };
   },
@@ -263,6 +273,9 @@ const whatsappConfigCodec: ChannelConfigCodec<WhatsAppChannelConfig> = {
   parse(parsed) {
     const rawAllowedGroups = parsed.allowed_groups;
     const rawMentionPatterns = parsed.mention_patterns;
+    const rawAttachmentMimeTypes = parsed.attachment_mime_types;
+    const rawAttachmentAllowedRecipients = parsed.attachment_allowed_recipients;
+    const rawAttachmentAllowedPaths = parsed.attachment_allowed_paths;
     return {
       channel: "whatsapp",
       enabled: parsed.enabled !== false,
@@ -282,6 +295,28 @@ const whatsappConfigCodec: ChannelConfigCodec<WhatsAppChannelConfig> = {
       mediaMaxBytes:
         typeof parsed.media_max_bytes === "number"
           ? parsed.media_max_bytes
+          : undefined,
+      attachmentFilter: parsed.attachment_filter === true,
+      attachmentMimeTypes: Array.isArray(rawAttachmentMimeTypes)
+        ? (rawAttachmentMimeTypes as string[])
+        : [],
+      attachmentAllowedRecipients: Array.isArray(rawAttachmentAllowedRecipients)
+        ? (rawAttachmentAllowedRecipients as string[])
+        : [],
+      attachmentAllowedPaths: Array.isArray(rawAttachmentAllowedPaths)
+        ? (rawAttachmentAllowedPaths as string[])
+        : [],
+      attachmentPathRecursive: parsed.attachment_path_recursive === true,
+      inboundDebounceMs:
+        typeof parsed.inbound_debounce_ms === "number" &&
+        Number.isFinite(parsed.inbound_debounce_ms) &&
+        parsed.inbound_debounce_ms >= 0
+          ? Math.trunc(Math.min(parsed.inbound_debounce_ms, 10000))
+          : undefined,
+      waitingBehavior: parseWhatsAppWaitingBehavior(parsed.waiting_behavior),
+      messagePrefix:
+        typeof parsed.message_prefix === "string"
+          ? parsed.message_prefix
           : undefined,
     };
   },

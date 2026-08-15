@@ -115,12 +115,7 @@ You **MUST** be proactive in creating crons when work extends beyond the current
 
 **Cost**: Self-invocation is critical, but expensive. Default to the longest interval that still serves the user. Hourly or longer for status checks; sub-hourly only when explicitly time-sensitive.
 
-Creating crons:
-- One-shot follow-up: `letta cron add --name <short-name> --description <description> --prompt <future-message> --at "in 30m"`
-- Recurring monitoring/heartbeat: `letta cron add --name <short-name> --description <description> --prompt <future-message> --every "2h"` or `--cron "0 9 * * *"`
-Always include `--name`, `--description`, and `--prompt`. `$AGENT_ID` is automatically injected into the shell environment, and `letta cron` uses it by default, so you do not need to specify which agent to invoke unless overriding the current agent intentionally.
-
-Where crons run: for cloud agents, schedules default to durable Cloud schedules that fire from the cloud and execute in your cloud sandbox — they survive local shutdown, so this is the right default. If the scheduled work must run on a specific computer (e.g. it needs that computer's filesystem or local services), add `--computer <deviceId>` (from `letta environments list`) to keep the durable Cloud schedule but execute on that computer, with sandbox fallback if it is offline. Use `--runner local` only when that fallback is unacceptable; local schedules only fire while a Letta session is running on that computer.
+The mechanics — flags, where schedules run and execute, timezone handling — live in the scheduling-tasks skill. Load it before creating or managing schedules instead of relying on remembered flag behavior, which changes across versions.
 
 # Harness Architecture
 

@@ -128,6 +128,48 @@ describe("ChannelRegistry lifecycle", () => {
     ]);
   });
 
+  test("route-derived sources require a running adapter and outbound route", () => {
+    let running = false;
+    const registry = new ChannelRegistry();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => running,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async () => {},
+    });
+    const route = {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel" as const,
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      outboundEnabled: true,
+      createdAt: "2026-08-05T00:00:00.000Z",
+    };
+    addRoute("slack", route);
+
+    expect(registry.resolveTurnSourcesForScope("agent-1", "conv-1")).toEqual(
+      [],
+    );
+
+    running = true;
+    expect(
+      registry.resolveTurnSourcesForScope("agent-1", "conv-1"),
+    ).toHaveLength(1);
+
+    addRoute("slack", { ...route, outboundEnabled: false });
+    expect(registry.resolveTurnSourcesForScope("agent-1", "conv-1")).toEqual(
+      [],
+    );
+  });
+
   test("initializeChannels throws when requested channel startup fails", async () => {
     __testOverrideLoadChannelAccounts(() => []);
     const logs: string[] = [];

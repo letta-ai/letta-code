@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   copyFile,
@@ -28,7 +27,21 @@ import {
 } from "@/websocket/listener/cwd-change";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
 import { restartWorktreeWatcher } from "@/websocket/listener/worktree-watcher";
-import { getShellEnv } from "./shell-env.js";
+import {
+  buildCreatedWorktreeMessage,
+  buildEnteredWorktreeMessage,
+  readProjectInstructions,
+} from "./enter-worktree-messages.js";
+import {
+  formatGitFailure,
+  gitRefExists,
+  gitStdout,
+  isPathWithin,
+  resolveDefaultBaseRef,
+  resolvePrimaryWorktreeRoot,
+  resolveRepoRoot,
+  runGit,
+} from "./worktree-git.js";
 
 interface EnterWorktreeArgs {
   name?: string;
@@ -40,6 +53,7 @@ interface EnterWorktreeArgs {
   switch_cwd?: boolean;
   symlink_dependencies?: boolean;
   force?: boolean;
+  signal?: AbortSignal;
   _executionContextId?: string;
 }
 
@@ -52,24 +66,6 @@ interface EnterWorktreeResult {
   switched_cwd?: boolean;
 }
 
-type GitResult = {
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-};
-
-class GitCommandError extends Error {
-  constructor(
-    message: string,
-    readonly args: string[],
-    readonly result?: GitResult,
-  ) {
-    super(message);
-    this.name = "GitCommandError";
-  }
-}
-
-const DEFAULT_GIT_TIMEOUT_MS = 120_000;
 const FETCH_GIT_TIMEOUT_MS = 180_000;
 const MAX_SLUG_LENGTH = 48;
 
@@ -96,121 +92,6 @@ function slugifyName(name: string): string {
     .replace(/[-.]+$/g, "");
 
   return slug || `worktree-${randomUUID().slice(0, 8)}`;
-}
-
-function formatGitFailure(error: unknown): string {
-  if (error instanceof GitCommandError) {
-    const detail = error.result?.stderr.trim() || error.result?.stdout.trim();
-    const formatted = detail ? `${error.message}\n${detail}` : error.message;
-    return addWindowsPathLengthHint(formatted);
-  }
-  return addWindowsPathLengthHint(
-    error instanceof Error ? error.message : String(error),
-  );
-}
-
-export function addWindowsPathLengthHint(
-  message: string,
-  platform: NodeJS.Platform = process.platform,
-): string {
-  if (platform !== "win32") {
-    return message;
-  }
-
-  const normalized = message.toLowerCase();
-  const looksLikePathLengthFailure =
-    normalized.includes("filename too long") ||
-    normalized.includes("could not reset index file to revision");
-
-  if (!looksLikePathLengthFailure) {
-    return message;
-  }
-
-  return `${message}\n\nThis looks like a Windows path-length issue. Try:\n- git config --global core.longpaths true\n- move the repo to a shorter path, like C:\\src\\<repo>, and retry.`;
-}
-
-async function runGit(
-  args: string[],
-  cwd: string,
-  options: { timeoutMs?: number; allowFailure?: boolean } = {},
-): Promise<GitResult> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
-
-  return await new Promise<GitResult>((resolve, reject) => {
-    const child = spawn("git", args, {
-      cwd,
-      env: getShellEnv(),
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let timedOut = false;
-
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-    }, timeoutMs);
-
-    child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
-
-    child.on("error", (error) => {
-      clearTimeout(timeout);
-      reject(
-        new GitCommandError(
-          `Failed to run git ${args.join(" ")}: ${error.message}`,
-          args,
-        ),
-      );
-    });
-
-    child.on("close", (exitCode) => {
-      clearTimeout(timeout);
-      const result = {
-        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-        stderr: Buffer.concat(stderrChunks).toString("utf8"),
-        exitCode,
-      };
-
-      if (timedOut) {
-        reject(
-          new GitCommandError(
-            `Timed out running git ${args.join(" ")}`,
-            args,
-            result,
-          ),
-        );
-        return;
-      }
-
-      if (exitCode !== 0 && !options.allowFailure) {
-        reject(
-          new GitCommandError(
-            `Failed to run git ${args.join(" ")}`,
-            args,
-            result,
-          ),
-        );
-        return;
-      }
-
-      resolve(result);
-    });
-  });
-}
-
-async function gitStdout(args: string[], cwd: string): Promise<string> {
-  const result = await runGit(args, cwd);
-  return result.stdout.trim();
-}
-
-async function gitRefExists(cwd: string, ref: string): Promise<boolean> {
-  const result = await runGit(["rev-parse", "--verify", "--quiet", ref], cwd, {
-    allowFailure: true,
-  });
-  return result.exitCode === 0;
 }
 
 async function localBranchExists(
@@ -241,10 +122,6 @@ async function assertValidBranchName(
   }
 }
 
-async function resolveRepoRoot(cwd: string): Promise<string> {
-  return await gitStdout(["rev-parse", "--show-toplevel"], cwd);
-}
-
 async function resolveWorktreeSourceRoot(params: {
   currentCwd: string;
   requestedRepoPath?: string;
@@ -267,16 +144,6 @@ async function resolveWorktreeSourceRoot(params: {
       ].join("\n"),
     );
   }
-}
-
-async function resolvePrimaryWorktreeRoot(repoRoot: string): Promise<string> {
-  const commonDir = await gitStdout(
-    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    repoRoot,
-  );
-  return path.basename(commonDir) === ".git"
-    ? path.dirname(commonDir)
-    : repoRoot;
 }
 
 /**
@@ -306,39 +173,10 @@ async function resolveWorktreeContext(params: {
   return { currentCwd, repoRoot, primaryRoot, managedDir };
 }
 
-async function resolveDefaultBaseRef(repoRoot: string): Promise<string> {
-  const remoteHead = await runGit(
-    ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
-    repoRoot,
-    { allowFailure: true },
-  );
-  const remoteHeadRef = remoteHead.stdout.trim();
-  if (remoteHead.exitCode === 0 && remoteHeadRef) {
-    return remoteHeadRef;
-  }
-
-  for (const candidate of ["origin/main", "origin/master", "main", "master"]) {
-    if (await gitRefExists(repoRoot, candidate)) {
-      return candidate;
-    }
-  }
-
-  const currentBranch = await runGit(
-    ["rev-parse", "--abbrev-ref", "HEAD"],
-    repoRoot,
-    {
-      allowFailure: true,
-    },
-  );
-  const branch = currentBranch.stdout.trim();
-  return currentBranch.exitCode === 0 && branch && branch !== "HEAD"
-    ? branch
-    : "HEAD";
-}
-
 async function refreshBaseRef(
   repoRoot: string,
   baseRef: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const slashIndex = baseRef.indexOf("/");
   if (slashIndex <= 0) {
@@ -359,9 +197,7 @@ async function refreshBaseRef(
   await runGit(
     ["fetch", remote, `${branch}:refs/remotes/${remote}/${branch}`],
     repoRoot,
-    {
-      timeoutMs: FETCH_GIT_TIMEOUT_MS,
-    },
+    { signal, timeoutMs: FETCH_GIT_TIMEOUT_MS },
   );
 }
 
@@ -405,52 +241,6 @@ async function chooseUniqueBranchName(
   }
 
   throw new Error("Could not generate a unique worktree branch name");
-}
-
-function buildSuccessMessage(params: {
-  worktreePath: string;
-  branchName: string;
-  baseRef: string;
-  switchedCwd: boolean;
-  provisionNotes: string[];
-  linkedDependencies: boolean;
-}): string {
-  const provisioning =
-    params.provisionNotes.length > 0
-      ? [
-          "",
-          "Provisioning:",
-          ...params.provisionNotes.map((note) => `- ${note}`),
-        ]
-      : ["", "Provisioning: nothing to copy, symlink, or link."];
-
-  // The dependency directories are SYMLINKED to the primary checkout, so a
-  // package install in this worktree writes through to the primary checkout's
-  // node_modules. Tell the agent how to opt out when it needs its own deps.
-  const dependencyStep = params.linkedDependencies
-    ? "- Dependencies (e.g. node_modules) are symlinked from the primary checkout and ready to use. Do NOT run a package install here — it would modify the primary checkout's dependencies. If this worktree needs different or isolated packages, recreate it with `symlink_dependencies: false` and install fresh."
-    : "- Dependencies were not symlinked. If the project has dependencies, install them with the repo's package manager (check whether it uses bun, pnpm, yarn, or npm) before building or testing.";
-
-  const lines = [
-    "Created worktree.",
-    "",
-    `Path: ${params.worktreePath}`,
-    `Branch: ${params.branchName}`,
-    `Base: ${params.baseRef}`,
-    ...provisioning,
-    "",
-    params.switchedCwd
-      ? "This conversation's working directory is now the new worktree."
-      : "The conversation working directory was left unchanged.",
-    "",
-    "Next steps:",
-    "- Confirm you are in the new worktree with `git status` before editing.",
-    "- Read README, AGENTS.md, or other project setup docs before running commands.",
-    dependencyStep,
-    "- Git hooks and ignored files listed in .worktreeinclude are provisioned automatically.",
-    "- Then make changes, test, commit, and push from this worktree.",
-  ];
-  return lines.join("\n");
 }
 
 const DEFAULT_SYMLINK_DIRECTORIES = ["node_modules"];
@@ -515,14 +305,6 @@ function isUnsafeRelativePath(relPath: string): boolean {
 }
 
 /** True when `child` is `parent` or nested under it (path-based, no realpath). */
-function isPathWithin(child: string, parent: string): boolean {
-  const resolvedChild = path.resolve(child);
-  const resolvedParent = path.resolve(parent);
-  return (
-    resolvedChild === resolvedParent ||
-    resolvedChild.startsWith(resolvedParent + path.sep)
-  );
-}
 
 /**
  * Symlinks `relDir` from the primary checkout into the worktree so large,
@@ -785,7 +567,7 @@ export async function provisionWorktree(params: {
  * using the listener-aware path when a runtime is attached and falling back to
  * a plain process chdir otherwise. Shared by the create and enter flows.
  */
-async function switchSessionToWorktree(params: {
+export async function switchSessionToWorktree(params: {
   worktreePath: string;
   shouldSwitchCwd: boolean;
   runtimeContext: ReturnType<typeof getRuntimeContext>;
@@ -826,7 +608,7 @@ async function switchSessionToWorktree(params: {
 // runtime-context ownership, and the user-facing conflict message.
 
 /** Resolves the per-worktree git admin directory, or null if it cannot. */
-async function resolveWorktreeGitDir(
+export async function resolveWorktreeGitDir(
   worktreePath: string,
 ): Promise<string | null> {
   try {
@@ -840,7 +622,7 @@ async function resolveWorktreeGitDir(
   }
 }
 
-function lockOwner(
+export function lockOwner(
   runtimeContext: ReturnType<typeof getRuntimeContext>,
 ): WorktreeLockOwner {
   return {
@@ -968,34 +750,6 @@ async function listRegisteredWorktrees(
   return entries;
 }
 
-function buildEnteredMessage(params: {
-  worktreePath: string;
-  branchName?: string;
-  switchedCwd: boolean;
-  lockNote?: string;
-}): string {
-  const lines = [
-    "Switched to existing worktree.",
-    "",
-    `Path: ${params.worktreePath}`,
-    `Branch: ${params.branchName ?? "(detached)"}`,
-  ];
-  if (params.lockNote) {
-    lines.push(`Lock: ${params.lockNote}`);
-  }
-  lines.push(
-    "",
-    params.switchedCwd
-      ? "This conversation's working directory is now this worktree."
-      : "The conversation working directory was left unchanged.",
-    "",
-    "Next steps:",
-    "- Confirm you are in the worktree with `git status` before editing.",
-    "- This worktree already existed, so it was not re-provisioned; its dependencies, hooks, and ignored files are whatever it already had.",
-  );
-  return lines.join("\n");
-}
-
 /**
  * Switches the session into an existing worktree. Validation-only: the target
  * must be a registered, non-prunable linked worktree of this repository, living
@@ -1078,12 +832,14 @@ async function enterExistingWorktree(params: {
     runtimeContext,
     executionContextId: getStringArg(args, "_executionContextId"),
   });
+  const projectInstructions = await readProjectInstructions(resolvedTarget);
 
-  const message = buildEnteredMessage({
+  const message = buildEnteredWorktreeMessage({
     worktreePath: resolvedTarget,
     branchName: match.branch,
     switchedCwd,
     lockNote,
+    projectInstructions,
   });
 
   return {
@@ -1156,7 +912,7 @@ export async function enter_worktree(
       getStringArg(args, "base_ref") ?? (await resolveDefaultBaseRef(repoRoot));
 
     if (args.refresh_base !== false) {
-      await refreshBaseRef(repoRoot, baseRef);
+      await refreshBaseRef(repoRoot, baseRef, args.signal);
     }
 
     if (!(await gitRefExists(repoRoot, baseRef))) {
@@ -1233,14 +989,18 @@ export async function enter_worktree(
       runtimeContext,
       executionContextId: getStringArg(args, "_executionContextId"),
     });
+    const projectInstructions = await readProjectInstructions(
+      normalizedWorktreePath,
+    );
 
-    const message = buildSuccessMessage({
+    const message = buildCreatedWorktreeMessage({
       worktreePath: normalizedWorktreePath,
       branchName,
       baseRef,
       switchedCwd,
       provisionNotes,
       linkedDependencies,
+      projectInstructions,
     });
 
     return {

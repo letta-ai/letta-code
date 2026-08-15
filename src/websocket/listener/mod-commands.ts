@@ -10,51 +10,16 @@ import type {
   ModCommandContext,
   ModCommandResult,
 } from "@/mods/types";
-import type { ModCommandInfo } from "@/types/protocol_v2";
 import { getConversationWorkingDirectory } from "./cwd";
-import {
-  createListenerModContext,
-  getLoadedListenerModAdapters,
-} from "./mod-adapter";
+import { createListenerModContext } from "./mod-adapter";
+
+export {
+  getListenerModCommand,
+  listListenerModCommands,
+} from "./mod-command-registry";
+
 import { getConversationPermissionModeState } from "./permission-mode";
-import type { ConversationRuntime, ListenerRuntime } from "./types";
-
-/**
- * Registered mod commands as advertisable facts. Clients read these to surface
- * mod commands in their palette by their own policy (separate from the built-in
- * `supported_commands` allowlist).
- */
-export function listListenerModCommands(
-  runtime: ListenerRuntime,
-  agentId?: string | null,
-): ModCommandInfo[] {
-  const commands = new Map<string, ModCommand>();
-  for (const adapter of getLoadedListenerModAdapters(runtime, agentId)) {
-    for (const command of Object.values(
-      adapter.getSnapshot().registry.commands,
-    )) {
-      commands.set(command.id, command);
-    }
-  }
-  return Array.from(commands.values()).map((command) => ({
-    id: command.id,
-    description: command.description,
-    ...(command.args ? { args: command.args } : {}),
-  }));
-}
-
-/** Look up a registered mod command by id, if any. */
-export function getListenerModCommand(
-  runtime: ListenerRuntime,
-  commandId: string,
-  agentId?: string | null,
-): ModCommand | undefined {
-  let result: ModCommand | undefined;
-  for (const adapter of getLoadedListenerModAdapters(runtime, agentId)) {
-    result = adapter.getSnapshot().registry.commands[commandId] ?? result;
-  }
-  return result;
-}
+import type { ConversationRuntime } from "./types";
 
 /**
  * Run a mod command in the listener and return its result. Builds a

@@ -4,6 +4,7 @@ import {
   CLOUD_CRON_UTC_NOTE,
   CLOUD_DEVICE_FALLBACK_NOTE,
   resolveCronRunner,
+  resolveInferredTargetDevice,
   validateTargetDevice,
 } from "./cron-runner";
 
@@ -222,7 +223,7 @@ describe("validateTargetDevice", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain("Omit --computer");
+      expect(result.error).toContain("--runner cloud");
     }
   });
 
@@ -244,4 +245,75 @@ describe("validateTargetDevice", () => {
       expect(result.error).toContain("local desktop connection");
     }
   });
+});
+
+describe("resolveInferredTargetDevice", () => {
+  const onlineEnvironment = {
+    id: "environment-1",
+    connectionId: "connection-1",
+    deviceId: "device-external-1",
+    connectionName: "external listener",
+    organizationId: "org-1",
+    podId: null,
+    connectedAt: Date.now(),
+    lastHeartbeat: Date.now(),
+    lastSeenAt: Date.now(),
+    firstSeenAt: Date.now(),
+  };
+
+  test("accepts a registered online external listener", async () => {
+    expect(
+      await resolveInferredTargetDevice(
+        onlineEnvironment.deviceId,
+        async () => onlineEnvironment,
+      ),
+    ).toEqual({ kind: "device" });
+  });
+
+  test("resolves a managed sandbox runtime to the untargeted Cloud sandbox without a registry lookup", async () => {
+    // Sandbox rows can be registered/online in the environments registry, but
+    // individual sandboxes get retired and recreated, so one must never be
+    // pinned as a device target. The lookup must not even run.
+    expect(
+      await resolveInferredTargetDevice("sandbox-agent-example", async () => {
+        throw new Error("registry lookup should not run for sandbox ids");
+      }),
+    ).toEqual({ kind: "cloud-sandbox" });
+  });
+
+  test.each([
+    ["unregistered", "device-missing", null],
+    [
+      "offline",
+      "device-external-1",
+      {
+        ...onlineEnvironment,
+        connectionId: null,
+        lastHeartbeat: Date.now() - 300_000,
+      },
+    ],
+    [
+      "Desktop-local",
+      "device-local-1",
+      {
+        ...onlineEnvironment,
+        deviceId: "device-local-1",
+        organizationId: "local",
+      },
+    ],
+    ["synthetic local", "local", null],
+    ["synthetic Cloud", "__letta_cloud__", null],
+  ])(
+    "resolves %s identities to the local-runner fallback",
+    async (_label, deviceId, environment) => {
+      const result = await resolveInferredTargetDevice(
+        deviceId,
+        async () => environment,
+      );
+      expect(result.kind).toBe("local-fallback");
+      if (result.kind === "local-fallback") {
+        expect(result.reason.length).toBeGreaterThan(0);
+      }
+    },
+  );
 });

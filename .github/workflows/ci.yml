@@ -17,7 +17,6 @@ jobs:
     outputs:
       release_bump_only: ${{ steps.classify.outputs.release_bump_only }}
       run_heavy_ci: ${{ steps.classify.outputs.run_heavy_ci }}
-      channels_changed: ${{ steps.classify.outputs.channels_changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -60,22 +59,12 @@ jobs:
             esac
           done
 
-          CHANNELS_CHANGED=false
-          for file in $CHANGED_FILES; do
-            case "$file" in
-              src/channels/*|src/websocket/listener/commands/channels.ts|src/websocket/listener/protocol-inbound.ts|src/websocket/listen-client-channel-accounts.test.ts)
-                CHANNELS_CHANGED=true
-                ;;
-            esac
-          done
-
           RELEASE_BUMP_ONLY=false
           if [ "$TITLE_MATCH" = true ] && [ "$FILES_MATCH" = true ]; then
             RELEASE_BUMP_ONLY=true
           fi
 
           echo "release_bump_only=$RELEASE_BUMP_ONLY" >> "$GITHUB_OUTPUT"
-          echo "channels_changed=$CHANNELS_CHANGED" >> "$GITHUB_OUTPUT"
 
           if [ "$RELEASE_BUMP_ONLY" = true ]; then
             echo "run_heavy_ci=false" >> "$GITHUB_OUTPUT"
@@ -84,7 +73,6 @@ jobs:
           fi
 
           echo "title=$TITLE"
-          echo "channels_changed=$CHANNELS_CHANGED"
           printf 'changed_files=%s\n' "$CHANGED_FILES"
 
   check:
@@ -166,6 +154,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # PR checkouts use a merge commit. Depth 2 includes its base and head.
+          fetch-depth: 2
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

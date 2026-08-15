@@ -77,7 +77,7 @@ test("telegram channel starts through service and routes inbound topic messages 
   expect(createConversation).toHaveBeenCalledTimes(1);
   expect(createConversation).toHaveBeenCalledWith({
     agent_id: "agent-telegram",
-    summary: "[Telegram] Topic in Void Cafe: Hello from a Telegram topic",
+    summary: "Topic in Void Cafe: Hello from a Telegram topic",
   });
   expect(getRoute("telegram", "-100123", "telegram-e2e", "42")).toMatchObject({
     accountId: "telegram-e2e",
@@ -109,12 +109,13 @@ test("telegram channel starts through service and routes inbound topic messages 
   });
   const content = (deliveries[0] as { content: Array<{ text: string }> })
     .content;
-  expect(content[0]?.text).toContain("External telegram turn");
-  expect(content[1]?.text).toContain('source="telegram"');
-  expect(content[1]?.text).toContain('chat_id="-100123"');
-  expect(content[1]?.text).toContain('account_id="telegram-e2e"');
-  expect(content[1]?.text).toContain('thread_id="42"');
-  expect(content[1]?.text).toContain("Hello from a Telegram topic");
+  expect(content).toHaveLength(1);
+  expect(content[0]?.text).not.toContain("<system-reminder>");
+  expect(content[0]?.text).toContain('source="telegram"');
+  expect(content[0]?.text).toContain('chat_id="-100123"');
+  expect(content[0]?.text).toContain('account_id="telegram-e2e"');
+  expect(content[0]?.text).toContain('thread_id="42"');
+  expect(content[0]?.text).toContain("Hello from a Telegram topic");
 });
 
 test("telegram channel account start rolls back enabled state when adapter startup fails", async () => {

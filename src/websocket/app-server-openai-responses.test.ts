@@ -14,7 +14,11 @@ const TEST_AGENT = {
   created_at: "2026-01-01T00:00:00Z",
 };
 
-function fakeBackend(created: string[] = [], deleted: string[] = []): Backend {
+function fakeBackend(
+  created: string[] = [],
+  deleted: string[] = [],
+  forkedFrom: string[] = [],
+): Backend {
   return {
     listAgents: async () => [TEST_AGENT],
     createConversation: async () => {
@@ -25,6 +29,16 @@ function fakeBackend(created: string[] = [], deleted: string[] = []): Backend {
     deleteConversation: async (conversationId: string) => {
       deleted.push(conversationId);
       return {};
+    },
+    retrieveConversation: async (conversationId: string) => {
+      if (!created.includes(conversationId)) throw new Error("not found");
+      return { id: conversationId, agent_id: TEST_AGENT.id };
+    },
+    forkConversation: async (conversationId: string) => {
+      forkedFrom.push(conversationId);
+      const id = `conv-responses-${created.length + 1}`;
+      created.push(id);
+      return { id };
     },
   } as unknown as Backend;
 }
@@ -513,30 +527,102 @@ describe("app-server Responses API", () => {
     ]);
   });
 
-  test("rejects stored response state until retrieval and cleanup are supported", async () => {
+  test("stores Responses and continues them with previous_response_id", async () => {
+    const created: string[] = [];
+    const deleted: string[] = [];
+    const forkedFrom: string[] = [];
+    __testSetBackend(fakeBackend(created, deleted, forkedFrom));
+    const turns: Array<{ conversationId: string; messages: unknown[] }> = [];
+    stubToolTurn((conversationId, messages) => {
+      turns.push({ conversationId, messages });
+    });
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    const first = await fetch(httpUrl(handle, "/v1/responses"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "Tutor (Letta Agent)",
+        input: "Remember that my favorite color is green.",
+        store: true,
+      }),
+    });
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { id: string };
+
+    // Stored response IDs carry a durable conversation cursor rather than
+    // relying on an App Server process-local lookup table.
+    await handle.close();
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    const second = await fetch(httpUrl(handle, "/v1/responses"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "Tutor (Letta Agent)",
+        input: "What is my favorite color?",
+        previous_response_id: firstBody.id,
+        store: true,
+      }),
+    });
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as { id: string };
+    expect(secondBody.id).toStartWith("resp_");
+    expect(secondBody.id).not.toBe(firstBody.id);
+
+    expect(created).toEqual(["conv-responses-1", "conv-responses-2"]);
+    expect(forkedFrom).toEqual(["conv-responses-1"]);
+    expect(deleted).toEqual([]);
+    expect(turns.map((turn) => turn.conversationId)).toEqual([
+      "conv-responses-1",
+      "conv-responses-2",
+    ]);
+    expect(turns.map((turn) => turn.messages)).toMatchObject([
+      [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Remember that my favorite color is green.",
+            },
+          ],
+        },
+      ],
+      [
+        {
+          role: "user",
+          content: [{ type: "text", text: "What is my favorite color?" }],
+        },
+      ],
+    ]);
+  });
+
+  test("rejects unknown previous_response_id values", async () => {
     __testSetBackend(fakeBackend());
     handle = await startAppServer({
       listen: "ws://127.0.0.1:0",
       openaiApi: true,
     });
 
-    for (const unsupported of [
-      { store: true },
-      { previous_response_id: "resp_previous" },
-    ]) {
-      const response = await fetch(httpUrl(handle, "/v1/responses"), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          model: "Tutor (Letta Agent)",
-          input: "Hello",
-          ...unsupported,
-        }),
-      });
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as { error: { code: string } };
-      expect(body.error.code).toBe("unsupported_parameter");
-    }
+    const response = await fetch(httpUrl(handle, "/v1/responses"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "Tutor (Letta Agent)",
+        input: "Hello",
+        previous_response_id: "resp_missing",
+      }),
+    });
+    expect(response.status).toBe(404);
+    const body = (await response.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("response_not_found");
   });
 
   test("requires user input", async () => {

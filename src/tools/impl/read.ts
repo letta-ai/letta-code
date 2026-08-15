@@ -147,19 +147,19 @@ function formatWithLineNumbers(
   // Apply per-line character limit (Claude Code: 2000 chars/line)
   let linesWereTruncatedInLength = false;
   const formattedLines = selectedLines.map((line, index) => {
+    // `cat -n`-style prefix: flush-left line number + tab, matching Claude
+    // Code. The separator must stay a literal tab so the Edit tool's
+    // documented "line number + tab" prefix contract holds.
     const lineNumber = actualStartLine + index + 1;
-    const maxLineNumber = actualStartLine + selectedLines.length;
-    const padding = Math.max(1, maxLineNumber.toString().length);
-    const paddedNumber = lineNumber.toString().padStart(padding);
 
     // Truncate long lines
     if (line.length > LIMITS.READ_MAX_CHARS_PER_LINE) {
       linesWereTruncatedInLength = true;
       const truncated = line.slice(0, LIMITS.READ_MAX_CHARS_PER_LINE);
-      return `${paddedNumber}→${truncated}... [line truncated]`;
+      return `${lineNumber}\t${truncated}... [line truncated]`;
     }
 
-    return `${paddedNumber}→${line}`;
+    return `${lineNumber}\t${line}`;
   });
 
   let result = formattedLines.join("\n");

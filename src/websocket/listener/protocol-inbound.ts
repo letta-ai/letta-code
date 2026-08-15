@@ -1,8 +1,14 @@
 import type WebSocket from "ws";
 import { isSkillSourceArray } from "@/agent/skill-sources";
-import { isValidChannelPluginConfigPayload } from "@/channels/account-config";
-import { isSupportedChannelId } from "@/channels/plugin-registry";
 import type { ExperimentId } from "@/experiments/types";
+import {
+  CHANNEL_ACCOUNT_CREATE_FIELDS,
+  CHANNEL_ACCOUNT_UPDATE_FIELDS,
+  CHANNEL_SET_CONFIG_FIELDS,
+  hasOnlyFields,
+  hasValidChannelPolicyFields,
+  isChannelId,
+} from "@/types/channel-service-validation";
 import type {
   AbortMessageCommand,
   AgentCreateCommand,
@@ -33,6 +39,7 @@ import type {
   ChannelTargetsListCommand,
   ChatGPTUsageReadCommand,
   CheckoutBranchCommand,
+  ClientToolsetConfig,
   ConnectProviderCommand,
   ConversationCompactCommand,
   ConversationCreateCommand,
@@ -55,7 +62,6 @@ import type {
   EditFileCommand,
   EnableMemfsCommand,
   ExecuteCommandCommand,
-  ExternalToolCallResponseCommand,
   FileOpsCommand,
   GetCwdMapCommand,
   GetExperimentsCommand,
@@ -110,43 +116,53 @@ function isExperimentId(value: unknown): value is ExperimentId {
 
 import { isValidApprovalResponseBody } from "./approval";
 import {
+  isExternalToolCallResponseCommand,
+  isRuntimeExternalToolsUpdateCommand,
+  isRuntimeStartExternalToolsGroup,
+} from "./external-tool-protocol";
+import {
   isAppServerInfoCommand,
   isConversationForkCommand,
 } from "./management-protocol-inbound";
+import {
+  isObjectRecord,
+  isRuntimeScope,
+  isStringArray,
+  isStringRecord,
+} from "./protocol-validation";
+import {
+  isRuntimeStartClientInfo,
+  isRuntimeStartCreateAgentOptions,
+  isRuntimeStartCreateConversationOptions,
+  isRuntimeStartWorkspaceSandbox,
+} from "./runtime-start-validation";
+import {
+  isTeleportContinuePayload,
+  parseTeleportCommand,
+} from "./teleport-protocol-inbound";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
 export type ServerLifecycleMessage = {
   type: "pong";
 };
 
-function isStringArray(value: unknown): value is string[] {
-  return (
-    Array.isArray(value) && value.every((item) => typeof item === "string")
-  );
-}
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return (
-    !!value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.values(value).every((item) => typeof item === "string")
-  );
-}
+const TOOLSET_PREFERENCES = new Set([
+  "auto",
+  "codex",
+  "codex_snake",
+  "default",
+  "gemini",
+  "gemini_snake",
+  "none",
+]);
 
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function isRuntimeScope(value: unknown): value is RuntimeScope {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const candidate = value as { agent_id?: unknown; conversation_id?: unknown };
+function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
+  if (!isObjectRecord(value)) return false;
   return (
-    typeof candidate.agent_id === "string" &&
-    candidate.agent_id.length > 0 &&
-    typeof candidate.conversation_id === "string" &&
-    candidate.conversation_id.length > 0
+    (value.base === undefined ||
+      (typeof value.base === "string" &&
+        TOOLSET_PREFERENCES.has(value.base))) &&
+    (value.include === undefined || isStringArray(value.include))
   );
 }
 
@@ -156,10 +172,18 @@ function isInputCommand(value: unknown): value is InputCommand {
   }
   const candidate = value as {
     type?: unknown;
+    request_id?: unknown;
     runtime?: unknown;
     payload?: unknown;
   };
   if (candidate.type !== "input" || !isRuntimeScope(candidate.runtime)) {
+    return false;
+  }
+  if (
+    candidate.request_id !== undefined &&
+    (typeof candidate.request_id !== "string" ||
+      candidate.request_id.length === 0)
+  ) {
     return false;
   }
   if (!candidate.payload || typeof candidate.payload !== "object") {
@@ -169,7 +193,9 @@ function isInputCommand(value: unknown): value is InputCommand {
   const payload = candidate.payload as {
     kind?: unknown;
     messages?: unknown;
+    image_failure_mode?: unknown;
     client_tool_allowlist?: unknown;
+    client_toolset?: unknown;
     external_tool_scope_ids?: unknown;
     exclude_interactive_tools?: unknown;
     request_id?: unknown;
@@ -179,8 +205,13 @@ function isInputCommand(value: unknown): value is InputCommand {
   if (payload.kind === "create_message") {
     return (
       Array.isArray(payload.messages) &&
+      (payload.image_failure_mode === undefined ||
+        payload.image_failure_mode === "strict" ||
+        payload.image_failure_mode === "drop") &&
       (payload.client_tool_allowlist === undefined ||
         isStringArray(payload.client_tool_allowlist)) &&
+      (payload.client_toolset === undefined ||
+        isClientToolsetConfig(payload.client_toolset)) &&
       (payload.external_tool_scope_ids === undefined ||
         isStringArray(payload.external_tool_scope_ids)) &&
       (payload.exclude_interactive_tools === undefined ||
@@ -189,6 +220,9 @@ function isInputCommand(value: unknown): value is InputCommand {
   }
   if (payload.kind === "approval_response") {
     return isValidApprovalResponseBody(payload);
+  }
+  if (payload.kind === "teleport_continue") {
+    return isTeleportContinuePayload(payload);
   }
   return false;
 }
@@ -205,7 +239,9 @@ function legacyEnvironmentMessageToInputCommand(
     conversationId?: unknown;
     conversation_id?: unknown;
     messages?: unknown;
+    image_failure_mode?: unknown;
     clientToolAllowlist?: unknown;
+    clientToolset?: unknown;
     externalToolScopeIds?: unknown;
   };
   if (
@@ -233,6 +269,9 @@ function legacyEnvironmentMessageToInputCommand(
       messages: candidate.messages as InputCreateMessagePayload["messages"],
       client_tool_allowlist: isStringArray(candidate.clientToolAllowlist)
         ? candidate.clientToolAllowlist
+        : undefined,
+      client_toolset: isClientToolsetConfig(candidate.clientToolset)
+        ? candidate.clientToolset
         : undefined,
       external_tool_scope_ids: isStringArray(candidate.externalToolScopeIds)
         ? candidate.externalToolScopeIds
@@ -265,7 +304,9 @@ function getInvalidInputReason(value: unknown): {
   const payload = candidate.payload as {
     kind?: unknown;
     messages?: unknown;
+    image_failure_mode?: unknown;
     client_tool_allowlist?: unknown;
+    client_toolset?: unknown;
     external_tool_scope_ids?: unknown;
     exclude_interactive_tools?: unknown;
     request_id?: unknown;
@@ -281,6 +322,17 @@ function getInvalidInputReason(value: unknown): {
       };
     }
     if (
+      payload.image_failure_mode !== undefined &&
+      payload.image_failure_mode !== "strict" &&
+      payload.image_failure_mode !== "drop"
+    ) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.payload.image_failure_mode must be strict or drop",
+      };
+    }
+    if (
       payload.client_tool_allowlist !== undefined &&
       !isStringArray(payload.client_tool_allowlist)
     ) {
@@ -288,6 +340,16 @@ function getInvalidInputReason(value: unknown): {
         runtime: candidate.runtime,
         reason:
           "Protocol violation: input.payload.client_tool_allowlist must be string[]",
+      };
+    }
+    if (
+      payload.client_toolset !== undefined &&
+      !isClientToolsetConfig(payload.client_toolset)
+    ) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.payload.client_toolset must contain an optional valid base and string[] include",
       };
     }
     if (
@@ -318,6 +380,16 @@ function getInvalidInputReason(value: unknown): {
         runtime: candidate.runtime,
         reason:
           "Protocol violation: input.kind=approval_response requires payload.request_id and either payload.decision or payload.error",
+      };
+    }
+    return null;
+  }
+  if (payload.kind === "teleport_continue") {
+    if (!isTeleportContinuePayload(payload)) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.kind=teleport_continue requires teleport_id, source, and optional continuation.approvals[]",
       };
     }
     return null;
@@ -404,6 +476,7 @@ function isSyncCommand(value: unknown): value is SyncCommand {
     request_id?: unknown;
     recover_approvals?: unknown;
     force_device_status?: unknown;
+    wait_for_replay?: unknown;
   };
   return (
     candidate.type === "sync" &&
@@ -426,65 +499,11 @@ function isDevicePermissionMode(value: unknown): boolean {
   );
 }
 
-function isRuntimeStartCreateAgentOptions(value: unknown): boolean {
-  if (!isObjectRecord(value)) return false;
-  return (
-    isObjectRecord(value.body) &&
-    (value.pin_global === undefined || typeof value.pin_global === "boolean") &&
-    (value.memfs === undefined || typeof value.memfs === "boolean")
-  );
-}
-
-function isRuntimeStartCreateConversationOptions(value: unknown): boolean {
-  if (!isObjectRecord(value)) return false;
-  return value.body === undefined || isObjectRecord(value.body);
-}
-function isRuntimeStartClientInfo(value: unknown): boolean {
-  if (!isObjectRecord(value)) return false;
-  return (
-    typeof value.name === "string" &&
-    (value.title === undefined || typeof value.title === "string") &&
-    (value.version === undefined || typeof value.version === "string")
-  );
-}
-
-function isExternalToolDefinitionPayload(value: unknown): boolean {
-  if (!isObjectRecord(value)) return false;
-  return (
-    typeof value.name === "string" &&
-    (value.label === undefined || typeof value.label === "string") &&
-    typeof value.description === "string" &&
-    isObjectRecord(value.parameters)
-  );
-}
-
-function isRuntimeStartExternalToolsGroup(value: unknown): boolean {
-  if (!isObjectRecord(value)) return false;
-  return (
-    (value.scope_id === undefined || typeof value.scope_id === "string") &&
-    Array.isArray(value.tools) &&
-    value.tools.every(isExternalToolDefinitionPayload)
-  );
-}
 export function isRuntimeStartCommand(
   value: unknown,
 ): value is RuntimeStartCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    agent_id?: unknown;
-    create_agent?: unknown;
-    conversation_id?: unknown;
-    create_conversation?: unknown;
-    cwd?: unknown;
-    mode?: unknown;
-    skill_sources?: unknown;
-    client_info?: unknown;
-    recover_approvals?: unknown;
-    force_device_status?: unknown;
-    external_tools?: unknown;
-  };
+  const c = value as Record<string, unknown>;
   return (
     c.type === "runtime_start" &&
     typeof c.request_id === "string" &&
@@ -495,44 +514,25 @@ export function isRuntimeStartCommand(
       typeof c.conversation_id === "string") &&
     (c.create_conversation === undefined ||
       isRuntimeStartCreateConversationOptions(c.create_conversation)) &&
+    (c.conversation_source_tags === undefined ||
+      isStringArray(c.conversation_source_tags)) &&
     (c.cwd === undefined || c.cwd === null || typeof c.cwd === "string") &&
     (c.mode === undefined || isDevicePermissionMode(c.mode)) &&
+    (c.workspace_sandbox === undefined ||
+      isRuntimeStartWorkspaceSandbox(c.workspace_sandbox)) &&
     (c.skill_sources === undefined || isSkillSourceArray(c.skill_sources)) &&
+    (c.preserve_skill_sources === undefined ||
+      typeof c.preserve_skill_sources === "boolean") &&
     (c.client_info === undefined || isRuntimeStartClientInfo(c.client_info)) &&
     (c.recover_approvals === undefined ||
       typeof c.recover_approvals === "boolean") &&
     (c.force_device_status === undefined ||
       typeof c.force_device_status === "boolean") &&
+    (c.wait_for_replay === undefined ||
+      typeof c.wait_for_replay === "boolean") &&
     (c.external_tools === undefined ||
       (Array.isArray(c.external_tools) &&
         c.external_tools.every(isRuntimeStartExternalToolsGroup)))
-  );
-}
-
-export function isExternalToolCallResponseCommand(
-  value: unknown,
-): value is ExternalToolCallResponseCommand {
-  if (!isObjectRecord(value)) return false;
-  if (
-    value.type !== "external_tool_call_response" ||
-    typeof value.request_id !== "string"
-  ) {
-    return false;
-  }
-  if (value.error !== undefined && typeof value.error !== "string") {
-    return false;
-  }
-  if (value.result === undefined) {
-    return typeof value.error === "string";
-  }
-  if (!isObjectRecord(value.result)) {
-    return false;
-  }
-  return (
-    Array.isArray(value.result.content) &&
-    value.result.content.every(isObjectRecord) &&
-    (value.result.is_error === undefined ||
-      typeof value.result.is_error === "boolean")
   );
 }
 
@@ -636,11 +636,19 @@ export function isGetTreeCommand(value: unknown): value is GetTreeCommand {
 
 export function isReadFileCommand(value: unknown): value is ReadFileCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as { type?: unknown; path?: unknown; request_id?: unknown };
+  const c = value as {
+    type?: unknown;
+    path?: unknown;
+    request_id?: unknown;
+    encoding?: unknown;
+  };
   return (
     c.type === "read_file" &&
     typeof c.path === "string" &&
-    typeof c.request_id === "string"
+    typeof c.request_id === "string" &&
+    (c.encoding === undefined ||
+      c.encoding === "utf8" ||
+      c.encoding === "base64")
   );
 }
 
@@ -1471,7 +1479,6 @@ export function isConversationCompactCommand(
     (c.body === undefined || isObjectRecord(c.body))
   );
 }
-
 export function isGetReflectionSettingsCommand(
   value: unknown,
 ): value is GetReflectionSettingsCommand {
@@ -1487,7 +1494,6 @@ export function isGetReflectionSettingsCommand(
     isRuntimeScope(c.runtime)
   );
 }
-
 export function isSetReflectionSettingsCommand(
   value: unknown,
 ): value is SetReflectionSettingsCommand {
@@ -1511,6 +1517,8 @@ export function isSetReflectionSettingsCommand(
   const settings = c.settings as {
     trigger?: unknown;
     step_count?: unknown;
+    merge?: unknown;
+    merge_instructions?: unknown;
   };
   return (
     (settings.trigger === "off" ||
@@ -1519,13 +1527,17 @@ export function isSetReflectionSettingsCommand(
     typeof settings.step_count === "number" &&
     Number.isInteger(settings.step_count) &&
     settings.step_count > 0 &&
+    (settings.merge === undefined ||
+      settings.merge === "auto" ||
+      settings.merge === "explicit") &&
+    (settings.merge_instructions === undefined ||
+      typeof settings.merge_instructions === "string") &&
     (c.scope === undefined ||
       c.scope === "local_project" ||
       c.scope === "global" ||
       c.scope === "both")
   );
 }
-
 export function isGetExperimentsCommand(
   value: unknown,
 ): value is GetExperimentsCommand {
@@ -1536,7 +1548,6 @@ export function isGetExperimentsCommand(
   };
   return c.type === "get_experiments" && typeof c.request_id === "string";
 }
-
 export function isSetExperimentCommand(
   value: unknown,
 ): value is SetExperimentCommand {
@@ -1554,65 +1565,6 @@ export function isSetExperimentCommand(
     typeof c.enabled === "boolean"
   );
 }
-
-function isChannelId(value: unknown): value is string {
-  return typeof value === "string" && isSupportedChannelId(value);
-}
-
-function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
-  const hasValidDmPolicy =
-    config.dm_policy === undefined ||
-    config.dm_policy === "pairing" ||
-    config.dm_policy === "allowlist" ||
-    config.dm_policy === "open";
-  const hasValidAllowedUsers =
-    config.allowed_users === undefined ||
-    (Array.isArray(config.allowed_users) &&
-      config.allowed_users.every((entry) => typeof entry === "string"));
-  const hasValidDisplayName =
-    config.display_name === undefined ||
-    typeof config.display_name === "string";
-  const hasValidEnabled =
-    config.enabled === undefined || typeof config.enabled === "boolean";
-
-  return (
-    hasValidDmPolicy &&
-    hasValidAllowedUsers &&
-    hasValidDisplayName &&
-    hasValidEnabled
-  );
-}
-
-function hasOnlyFields(
-  value: Record<string, unknown>,
-  allowedFields: ReadonlySet<string>,
-): boolean {
-  return Object.keys(value).every((field) => allowedFields.has(field));
-}
-
-const CHANNEL_ACCOUNT_CREATE_FIELDS = new Set([
-  "account_id",
-  "display_name",
-  "enabled",
-  "dm_policy",
-  "allowed_users",
-  "config",
-]);
-
-const CHANNEL_ACCOUNT_UPDATE_FIELDS = new Set([
-  "display_name",
-  "enabled",
-  "dm_policy",
-  "allowed_users",
-  "config",
-]);
-
-const CHANNEL_SET_CONFIG_FIELDS = new Set([
-  "dm_policy",
-  "allowed_users",
-  "plugin_config",
-]);
-
 export function isChannelsListCommand(
   value: unknown,
 ): value is ChannelsListCommand {
@@ -1667,7 +1619,7 @@ export function isChannelAccountCreateCommand(
     return false;
   }
 
-  return isValidChannelPluginConfigPayload(c.channel_id, account);
+  return true;
 }
 
 export function isChannelAccountUpdateCommand(
@@ -1700,7 +1652,7 @@ export function isChannelAccountUpdateCommand(
     return false;
   }
 
-  return isValidChannelPluginConfigPayload(c.channel_id, patch);
+  return true;
 }
 
 export function isChannelAccountBindCommand(
@@ -1842,11 +1794,7 @@ export function isChannelSetConfigCommand(
     return false;
   }
 
-  return isValidChannelPluginConfigPayload(
-    c.channel_id,
-    config,
-    "plugin_config",
-  );
+  return true;
 }
 
 export function isChannelStartCommand(
@@ -2182,12 +2130,15 @@ export function parseServerMessage(
     if (legacyInput) {
       return legacyInput;
     }
+    const teleportCommand = parseTeleportCommand(parsed);
+    if (teleportCommand) return teleportCommand;
     if (
       isInputCommand(parsed) ||
       isChangeDeviceStateCommand(parsed) ||
       isAbortMessageCommand(parsed) ||
       isSyncCommand(parsed) ||
       isRuntimeStartCommand(parsed) ||
+      isRuntimeExternalToolsUpdateCommand(parsed) ||
       isExternalToolCallResponseCommand(parsed) ||
       isTerminalSpawnCommand(parsed) ||
       isTerminalInputCommand(parsed) ||

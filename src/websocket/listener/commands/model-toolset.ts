@@ -36,6 +36,7 @@ import type {
 } from "@/types/protocol_v2";
 import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import {
+  createListenerAgentModContext,
   createListenerModEvents,
   ensureListenerModAdaptersForAgent,
 } from "@/websocket/listener/mod-adapter";
@@ -347,27 +348,6 @@ export function resolveModelForUpdate(
   };
 }
 
-function formatToolsetStatusMessageForModelUpdate(params: {
-  nextToolset: ToolsetName;
-  toolsetPreference: ToolsetName | "auto";
-}): string {
-  const { nextToolset, toolsetPreference } = params;
-
-  if (toolsetPreference === "auto") {
-    return (
-      "Toolset auto-switched for this model: now using the " +
-      formatToolsetName(nextToolset) +
-      " toolset."
-    );
-  }
-
-  return (
-    "Manual toolset override remains active: " +
-    formatToolsetName(toolsetPreference) +
-    "."
-  );
-}
-
 function formatEffortSuffix(
   modelLabel: string,
   updateArgs?: Record<string, unknown>,
@@ -394,30 +374,14 @@ function formatEffortSuffix(
 
 export function buildModelUpdateStatusMessage(params: {
   modelLabel: string;
-  toolsetChanged: boolean;
   toolsetError: string | null;
-  nextToolset: ToolsetName;
-  toolsetPreference: ToolsetName | "auto";
   updateArgs?: Record<string, unknown>;
 }): { message: string; level: "info" | "warning" } {
-  const {
-    modelLabel,
-    toolsetChanged,
-    toolsetError,
-    nextToolset,
-    toolsetPreference,
-    updateArgs,
-  } = params;
+  const { modelLabel, toolsetError, updateArgs } = params;
   let message = `Model updated to ${modelLabel}${formatEffortSuffix(modelLabel, updateArgs)}.`;
   if (toolsetError) {
     message += ` Warning: toolset switch failed (${toolsetError}).`;
     return { message, level: "warning" };
-  }
-  if (toolsetChanged) {
-    message += ` ${formatToolsetStatusMessageForModelUpdate({
-      nextToolset,
-      toolsetPreference,
-    })}`;
   }
   return { message, level: "info" };
 }
@@ -516,10 +480,6 @@ export async function applyModelUpdateForRuntime(params: {
     appliedTo = "conversation";
   }
 
-  const toolsetPreference = settingsManager.getToolsetPreference(agentId);
-  const previousToolNames = scopedRuntime.currentLoadedTools;
-  let nextToolset: ToolsetName;
-  let nextLoadedTools: string[] = previousToolNames;
   let toolsetError: string | null = null;
 
   try {
@@ -536,31 +496,24 @@ export async function applyModelUpdateForRuntime(params: {
         providerTypeFromModelSettings(modelSettings) ??
         inferProviderTypeFromRegistryHandle(model.handle) ??
         null,
+      modContext: createListenerAgentModContext(agentId),
       modAdapters,
       modEvents: createListenerModEvents(modAdapters),
     });
-    nextToolset = preparedToolContext.toolset;
-    nextLoadedTools = preparedToolContext.preparedToolContext.loadedToolNames;
     scopedRuntime.currentToolset = preparedToolContext.toolset;
     scopedRuntime.currentToolsetPreference =
       preparedToolContext.toolsetPreference;
-    scopedRuntime.currentLoadedTools = nextLoadedTools;
+    scopedRuntime.currentLoadedTools =
+      preparedToolContext.preparedToolContext.loadedToolNames;
   } catch (error) {
-    nextToolset = toolsetPreference === "auto" ? "default" : toolsetPreference;
     toolsetError =
       error instanceof Error ? error.message : "Failed to switch toolset";
   }
 
-  const toolsetChanged =
-    !toolsetError &&
-    JSON.stringify(previousToolNames) !== JSON.stringify(nextLoadedTools);
   const { message: statusMessage, level: statusLevel } =
     buildModelUpdateStatusMessage({
       modelLabel: model.label,
-      toolsetChanged,
       toolsetError,
-      nextToolset,
-      toolsetPreference,
       updateArgs: model.updateArgs,
     });
 
@@ -616,14 +569,18 @@ export async function applyToolsetUpdateForRuntime(params: {
   let nextToolset: ToolsetName;
   const previousToolsetPreference = (() => {
     try {
-      return settingsManager.getToolsetPreference(agentId);
+      return settingsManager.getToolsetPreference(agentId, conversationId);
     } catch {
       return scopedRuntime.currentToolsetPreference;
     }
   })();
 
   try {
-    settingsManager.setToolsetPreference(agentId, toolsetPreference);
+    settingsManager.setToolsetPreference(
+      agentId,
+      toolsetPreference,
+      conversationId,
+    );
     const modAdapters = await ensureListenerModAdaptersForAgent(
       listener,
       agentId,
@@ -631,6 +588,7 @@ export async function applyToolsetUpdateForRuntime(params: {
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
+      modContext: createListenerAgentModContext(agentId),
       modAdapters,
       modEvents: createListenerModEvents(modAdapters),
     });
@@ -641,7 +599,11 @@ export async function applyToolsetUpdateForRuntime(params: {
     scopedRuntime.currentLoadedTools =
       preparedToolContext.preparedToolContext.loadedToolNames;
   } catch (error) {
-    settingsManager.setToolsetPreference(agentId, previousToolsetPreference);
+    settingsManager.setToolsetPreference(
+      agentId,
+      previousToolsetPreference,
+      conversationId,
+    );
     throw error;
   }
 

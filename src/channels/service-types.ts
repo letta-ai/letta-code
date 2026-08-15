@@ -9,6 +9,7 @@ import type {
   TelegramGroupMode,
   WhatsAppGroupMode,
 } from "./types";
+import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
 
 export interface ChannelSummary {
   channelId: string;
@@ -43,6 +44,7 @@ export interface ChannelConfigSnapshot {
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
   listenMode?: boolean;
+  mentionOnlyChannels?: string[];
   allowBots?: ChannelAllowBotsMode;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
@@ -55,6 +57,13 @@ export interface ChannelConfigSnapshot {
   richDraftStreaming?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
+  attachmentFilter?: boolean;
+  attachmentMimeTypes?: string[];
+  attachmentAllowedRecipients?: string[];
+  attachmentAllowedPaths?: string[];
+  attachmentPathRecursive?: boolean;
+  waitingBehavior?: WhatsAppWaitingBehavior;
+  messagePrefix?: string;
 }
 
 export interface PendingPairingSnapshot {
@@ -123,6 +132,7 @@ export interface ChannelAccountSnapshot {
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
   listenMode?: boolean;
+  mentionOnlyChannels?: string[];
   allowBots?: ChannelAllowBotsMode;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
@@ -132,6 +142,13 @@ export interface ChannelAccountSnapshot {
   recipientAliases?: Record<string, string>;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
+  attachmentFilter?: boolean;
+  attachmentMimeTypes?: string[];
+  attachmentAllowedRecipients?: string[];
+  attachmentAllowedPaths?: string[];
+  attachmentPathRecursive?: boolean;
+  waitingBehavior?: WhatsAppWaitingBehavior;
+  messagePrefix?: string;
   createdAt: string;
   updatedAt: string;
 }

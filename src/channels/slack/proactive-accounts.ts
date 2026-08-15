@@ -1,9 +1,5 @@
-import {
-  getChannelAccount,
-  LEGACY_CHANNEL_ACCOUNT_ID,
-} from "@/channels/accounts";
+import { listChannelAccounts } from "@/channels/accounts";
 import { getChannelRegistry } from "@/channels/registry";
-import { getRoutesForChannel, loadRoutes } from "@/channels/routing";
 import type { ChannelAdapter, SlackChannelAccount } from "@/channels/types";
 import { isSlackChannelAccount } from "@/channels/types";
 
@@ -14,36 +10,16 @@ export interface EligibleProactiveSlackAccount {
 
 export function listEligibleProactiveSlackAccounts(params: {
   agentId: string;
-  conversationId: string;
 }): EligibleProactiveSlackAccount[] {
   const registry = getChannelRegistry();
   if (!registry) {
     return [];
   }
 
-  loadRoutes("slack");
-  const seen = new Set<string>();
-
   const eligible: EligibleProactiveSlackAccount[] = [];
-  for (const route of getRoutesForChannel("slack")) {
+  for (const account of listChannelAccounts("slack")) {
     if (
-      route.agentId !== params.agentId ||
-      route.conversationId !== params.conversationId ||
-      !route.enabled ||
-      route.outboundEnabled === false
-    ) {
-      continue;
-    }
-
-    const accountId = route.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
-    if (seen.has(accountId)) {
-      continue;
-    }
-    seen.add(accountId);
-
-    const account = getChannelAccount("slack", accountId);
-    if (
-      !account ||
+      !account.enabled ||
       !isSlackChannelAccount(account) ||
       account.agentId !== params.agentId
     ) {
@@ -65,12 +41,10 @@ export function listEligibleProactiveSlackAccounts(params: {
 
 export function resolveEligibleProactiveSlackAccount(params: {
   agentId: string;
-  conversationId: string;
   accountId?: string | null;
 }): EligibleProactiveSlackAccount | string {
   const eligible = listEligibleProactiveSlackAccounts({
     agentId: params.agentId,
-    conversationId: params.conversationId,
   });
 
   if (params.accountId) {

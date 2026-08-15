@@ -230,26 +230,10 @@ describe("listener approval reconnect timing", () => {
     return count;
   }
 
-  function makeTelegramTurnSources(): ChannelTurnSource[] {
-    return [
-      {
-        channel: "telegram",
-        accountId: "telegram-account-1",
-        chatId: "-1001234567890",
-        chatType: "channel",
-        senderId: "telegram-user-42",
-        messageId: "telegram-message-77",
-        threadId: "telegram-topic-9",
-        agentId: "agent-1",
-        conversationId: "conv-1",
-      },
-    ];
-  }
-
   function makeAutoAllowedDeps(
     approval: Approval,
     turnLease: { signal: AbortSignal },
-    telegramTurnSources: ChannelTurnSource[],
+    _turnSources: ChannelTurnSource[],
     executionResults: ApprovalResult[],
   ) {
     return {
@@ -276,7 +260,6 @@ describe("listener approval reconnect timing", () => {
             abortSignal?: AbortSignal;
             workingDirectory?: string;
             parentScope?: { agentId?: string; conversationId?: string };
-            channelTurnSources?: ChannelTurnSource[];
           },
         ) => {
           expect(decisions).toEqual([{ type: "approve", approval }]);
@@ -286,7 +269,6 @@ describe("listener approval reconnect timing", () => {
             agentId: "agent-1",
             conversationId: "conv-1",
           });
-          expect(options.channelTurnSources).toEqual(telegramTurnSources);
           return executionResults;
         },
       ),
@@ -320,13 +302,6 @@ describe("listener approval reconnect timing", () => {
       "agent-1",
       "conv-1",
     );
-    const telegramTurnSources = makeTelegramTurnSources();
-    conversationRuntime.activeChannelTurn = {
-      sources: telegramTurnSources,
-      batchId: "telegram-batch-disconnected",
-      progress: null,
-      contextRecovered: false,
-    };
     const turnLease = conversationRuntime.turnLifecycle.begin({
       origin: "message",
       workingDirectory: process.cwd(),
@@ -372,12 +347,7 @@ describe("listener approval reconnect timing", () => {
         tool_return: "client-tool-output",
       },
     ] satisfies ApprovalResult[];
-    const deps = makeAutoAllowedDeps(
-      approval,
-      turnLease,
-      telegramTurnSources,
-      executionResults,
-    );
+    const deps = makeAutoAllowedDeps(approval, turnLease, [], executionResults);
 
     const approvalStop = handleApprovalStop({
       approvals: [approval],
@@ -436,6 +406,7 @@ describe("listener approval reconnect timing", () => {
         drainResult: result.drainResult,
         agentId: "agent-1",
         conversationId: "conv-1",
+        turnId: "run-disconnected",
       },
     );
     expect(transition.finished).toBe(true);

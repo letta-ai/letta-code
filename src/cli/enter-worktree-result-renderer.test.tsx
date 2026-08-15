@@ -44,7 +44,21 @@ const enterWorktreeResult = [
   "- Read README, AGENTS.md, or other project setup docs before running commands.",
 ].join("\n");
 
-async function renderEnterWorktreeToolCall(): Promise<string> {
+const switchedWorktreeResult = [
+  "Switched to existing worktree.",
+  "",
+  "Path: /Users/loaner/dev/letta-code-prod/.letta/worktrees/render-test-worktree",
+  "Branch: letta/render-test-worktree-a90824a8",
+  "",
+  "This conversation's working directory is now this worktree.",
+  "",
+  "Next steps:",
+  "- Confirm you are in the worktree with `git status` before editing.",
+].join("\n");
+
+async function renderEnterWorktreeToolCall(
+  resultText = enterWorktreeResult,
+): Promise<string> {
   const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
   const instance = render(
     <ToolCallMessage
@@ -57,7 +71,7 @@ async function renderEnterWorktreeToolCall(): Promise<string> {
           name: "render-test-worktree",
           switch_cwd: false,
         }),
-        resultText: enterWorktreeResult,
+        resultText,
         resultOk: true,
         phase: "finished",
       }}
@@ -81,6 +95,7 @@ async function renderEnterWorktreeToolCall(): Promise<string> {
 
 test("parses EnterWorktree tool result fields", () => {
   expect(parseEnterWorktreeResult(enterWorktreeResult)).toEqual({
+    action: "created",
     path: "/Users/loaner/dev/letta-code-prod/.letta/worktrees/render-test-worktree",
     branch: "letta/render-test-worktree-a90824a8",
     base: "origin/main",
@@ -103,4 +118,21 @@ test("EnterWorktree tool result renders a compact structured summary", async () 
   expect(output).toContain("unchanged");
   expect(output).not.toContain("Next steps");
   expect(output).not.toContain("Confirm you are in the new worktree");
+});
+
+test("EnterWorktree tool result identifies an existing worktree switch", async () => {
+  expect(parseEnterWorktreeResult(switchedWorktreeResult)).toEqual({
+    action: "switched",
+    path: "/Users/loaner/dev/letta-code-prod/.letta/worktrees/render-test-worktree",
+    branch: "letta/render-test-worktree-a90824a8",
+    base: undefined,
+    switchedCwd: true,
+  });
+
+  const output = await renderEnterWorktreeToolCall(switchedWorktreeResult);
+
+  expect(output).toContain("Switched to existing worktree");
+  expect(output).not.toContain("Created worktree");
+  expect(output).toContain("CWD:");
+  expect(output).toContain("switched to worktree");
 });

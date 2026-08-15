@@ -350,9 +350,9 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
         const isOpenAICompatibleProxy =
           modelUpdateArgs?.[OPENAI_COMPATIBLE_PROXY_UPDATE_ARG] === true &&
           providerType === "openai";
-        const usesDistinctXHighLabel = /Fable 5|Opus 4\.[78]|GPT-5\.6/.test(
-          model.label,
-        );
+        // Keep picker labels aligned with models that preserve xhigh separately from max.
+        const usesDistinctXHighLabel =
+          /Fable 5|Opus 4\.[78]|Opus 5|Sonnet 5|GPT-5\.6/.test(model.label);
         const reasoningLevel =
           isOpenAICompatibleProxy && rawReasoningEffort === null
             ? "default"
@@ -510,14 +510,14 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           // "default" is a virtual sentinel for the agent's primary history, not a
           // real conversation object. When active, model changes must update the agent
           // itself (otherwise the next agent sync will snap back).
-          const isDefaultConversation = conversationIdRef.current === "default";
+          const conversationId = conversationIdRef.current;
           let conversationModelSettings:
             | AgentState["model_settings"]
             | null
             | undefined;
           let conversationContextWindowLimit: number | null | undefined;
           let updatedAgent: AgentState | null = null;
-          if (isDefaultConversation) {
+          if (conversationId === "default") {
             const { updateAgentLLMConfig } = await import("@/agent/modify");
             updatedAgent = await updateAgentLLMConfig(
               agentIdRef.current,
@@ -531,7 +531,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               "@/agent/modify"
             );
             const updatedConversation = await updateConversationLLMConfig(
-              conversationIdRef.current,
+              conversationId,
               modelHandle,
               modelUpdateArgsForRequest,
               updateOptions,
@@ -564,7 +564,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
                 llmConfigRef.current,
               ) ?? null);
 
-          if (isDefaultConversation) {
+          if (conversationId === "default") {
             setHasConversationModelOverride(false);
             setConversationOverrideModelSettings(null);
             setConversationOverrideContextWindowLimit(null);
@@ -590,7 +590,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             providerTypeFromModelSettings(conversationModelSettings) ??
             providerTypeFromUpdateArgs(modelUpdateArgsForRequest) ??
             providerTypeFromUpdateArgs(modelUpdateArgs);
-          if (!isDefaultConversation) {
+          if (conversationId !== "default") {
             setConversationOverrideContextWindowLimit(
               typeof resolvedContextWindow === "number"
                 ? resolvedContextWindow
@@ -633,10 +633,9 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           setHasAvailableLocalModels(true);
 
           const persistedToolsetPreference =
-            settingsManager.getToolsetPreference(agentId);
+            settingsManager.getToolsetPreference(agentId, conversationId);
           const previousToolsetSnapshot = currentToolset;
           const previousToolNamesSnapshot = getToolNames();
-          let toolsetNoticeLine: string | null = null;
 
           if (persistedToolsetPreference === "auto") {
             const { switchToolsetForModel } = await import("@/tools/toolset");
@@ -647,12 +646,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             );
             setCurrentToolsetPreference("auto");
             setCurrentToolset(toolsetName);
-            // Only notify when the toolset actually changes (e.g., Claude → Codex)
             if (toolsetName !== currentToolset) {
-              toolsetNoticeLine =
-                "Auto toolset selected: switched to " +
-                formatToolsetName(toolsetName) +
-                ". Use /toolset to set a manual override.";
               maybeRecordToolsetChangeReminder({
                 source: "/model (auto toolset)",
                 previousToolset: previousToolsetSnapshot,
@@ -675,20 +669,14 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               });
             }
             setCurrentToolsetPreference(persistedToolsetPreference);
-            toolsetNoticeLine =
-              "Manual toolset override remains active: " +
-              formatToolsetName(persistedToolsetPreference) +
-              ".";
           }
 
-          const outputLines = [
+          const output =
             "Switched to " +
-              model.label +
-              (reasoningLevel ? ` (${reasoningLevel} reasoning)` : ""),
-            ...(toolsetNoticeLine ? [toolsetNoticeLine] : []),
-          ].join("\n");
+            model.label +
+            (reasoningLevel ? ` (${reasoningLevel} reasoning)` : "");
 
-          cmd.finish(outputLines, true);
+          cmd.finish(output, true);
         });
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
@@ -1160,7 +1148,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
       setQueuedOverlayAction,
     ],
   );
-
+  // biome-ignore lint/correctness/useExhaustiveDependencies: conversationIdRef is stable; .current is read when a queued switch runs.
   const handleToolsetSelect = useCallback(
     async (toolsetId: ToolsetPreference, commandId?: string | null) => {
       const overlayCommand = commandId
@@ -1203,7 +1191,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           );
           const previousToolsetSnapshot = currentToolset;
           const previousToolNamesSnapshot = getToolNames();
-
+          const convId = conversationIdRef.current;
           if (toolsetId === "auto") {
             const modelHandle =
               currentModelHandle ??
@@ -1225,7 +1213,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               agentId,
               providerType,
             );
-            settingsManager.setToolsetPreference(agentId, "auto");
+            settingsManager.setToolsetPreference(agentId, "auto", convId);
             setCurrentToolsetPreference("auto");
             setCurrentToolset(derivedToolset);
             maybeRecordToolsetChangeReminder({
@@ -1243,7 +1231,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           }
 
           await forceToolsetSwitch(toolsetId, agentId);
-          settingsManager.setToolsetPreference(agentId, toolsetId);
+          settingsManager.setToolsetPreference(agentId, toolsetId, convId);
           setCurrentToolsetPreference(toolsetId);
           setCurrentToolset(toolsetId);
           maybeRecordToolsetChangeReminder({

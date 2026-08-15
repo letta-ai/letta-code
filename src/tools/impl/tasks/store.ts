@@ -22,7 +22,7 @@ export interface TaskRecord {
   blocks: string[];
   /** IDs of tasks that block this task */
   blockedBy: string[];
-  metadata: Record<string, string>;
+  metadata: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
 }
@@ -37,16 +37,9 @@ function nextTaskId(): string {
 }
 
 function cloneMetadata(
-  meta: Record<string, string> | undefined,
-): Record<string, string> {
-  if (!meta) return {};
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(meta)) {
-    if (typeof k === "string" && typeof v === "string") {
-      out[k] = v;
-    }
-  }
-  return out;
+  meta: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  return meta ? { ...meta } : {};
 }
 
 function dedupe(values: string[]): string[] {
@@ -84,16 +77,11 @@ export function getTask(taskId: string): TaskRecord | undefined {
   return t ? { ...t } : undefined;
 }
 
-export interface ListTasksOptions {
-  includeDeleted?: boolean;
-}
-
-export function listTasks(options: ListTasksOptions = {}): TaskRecord[] {
+export function listTasks(): TaskRecord[] {
   const out: TaskRecord[] = [];
   for (const id of insertionOrder) {
     const t = tasks.get(id);
     if (!t) continue;
-    if (!options.includeDeleted && t.status === "deleted") continue;
     out.push({ ...t });
   }
   return out;
@@ -108,7 +96,7 @@ export interface UpdateTaskInput {
   owner?: string;
   addBlocks?: string[];
   addBlockedBy?: string[];
-  metadata?: Record<string, string>;
+  metadata?: Record<string, unknown>;
 }
 
 export class TaskNotFoundError extends Error {
@@ -136,15 +124,24 @@ export function updateTask(input: UpdateTaskInput): TaskRecord {
     existing.blockedBy = dedupe([...existing.blockedBy, ...input.addBlockedBy]);
   }
   if (input.metadata) {
-    // Merge (not replace) so partial updates don't clobber existing keys.
-    existing.metadata = {
-      ...existing.metadata,
-      ...cloneMetadata(input.metadata),
-    };
+    // Merge partial updates; null removes an existing metadata key.
+    for (const [key, value] of Object.entries(input.metadata)) {
+      if (value === null) {
+        delete existing.metadata[key];
+      } else {
+        existing.metadata[key] = value;
+      }
+    }
   }
   existing.updatedAt = Date.now();
 
-  return { ...existing };
+  const updated = { ...existing };
+  if (existing.status === "deleted") {
+    tasks.delete(input.taskId);
+    const orderIndex = insertionOrder.indexOf(input.taskId);
+    if (orderIndex !== -1) insertionOrder.splice(orderIndex, 1);
+  }
+  return updated;
 }
 
 /** Test-only hook to reset state between unit tests. */

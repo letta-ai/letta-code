@@ -16,10 +16,8 @@ import {
   runWithRuntimeContext,
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-import {
-  addWindowsPathLengthHint,
-  enter_worktree,
-} from "@/tools/impl/enter-worktree";
+import { enter_worktree } from "@/tools/impl/enter-worktree";
+import { addWindowsPathLengthHint } from "@/tools/impl/worktree-git";
 import {
   clearToolsWithLock,
   executeTool,
@@ -158,6 +156,64 @@ describe("EnterWorktree tool", () => {
         git(["rev-parse", "--show-toplevel"], result.worktree_path),
       ),
     ).toBe(result.worktree_path);
+  });
+
+  test("loads root AGENTS.md into a new worktree result", async () => {
+    const repo = await trackRepo();
+    await writeFile(
+      path.join(repo, "AGENTS.md"),
+      "# Agent setup\n\nRun `just install-agent` before validation.\n",
+    );
+    git(["add", "AGENTS.md"], repo);
+    git(["commit", "-m", "add agent instructions"], repo);
+
+    const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
+      enter_worktree({
+        name: "Instruction Loading",
+        refresh_base: false,
+        switch_cwd: false,
+      }),
+    );
+
+    expect(result.status).toBe("success");
+    expect(result.content[0]?.text).toContain(
+      "Root project instructions loaded automatically from AGENTS.md",
+    );
+    expect(result.content[0]?.text).toContain(
+      "Run `just install-agent` before validation.",
+    );
+    expect(result.content[0]?.text).toContain(
+      "Follow the loaded project instructions for dependency setup.",
+    );
+  });
+
+  test("clips oversized root AGENTS.md with the shared tool limit", async () => {
+    const repo = await trackRepo();
+    await writeFile(
+      path.join(repo, "AGENTS.md"),
+      `# Oversized instructions\n${"A".repeat(40_000)}\nEND-MARKER\n`,
+    );
+    git(["add", "AGENTS.md"], repo);
+    git(["commit", "-m", "add oversized agent instructions"], repo);
+
+    const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
+      enter_worktree({
+        name: "Oversized Instructions",
+        refresh_base: false,
+        switch_cwd: false,
+      }),
+    );
+    const text = result.content[0]?.text ?? "";
+
+    expect(result.status).toBe("success");
+    expect(text).toMatch(
+      /\[Output truncated: showing 30,000 of 40,0\d{2} characters\.\]/,
+    );
+    expect(text).toContain("END-MARKER");
+    expect(text).toContain(
+      "AGENTS.md was truncated. Read the file before continuing.",
+    );
+    expect(text.length).toBeLessThan(32_000);
   });
 
   test("switches only the active conversation cwd", async () => {
@@ -590,6 +646,12 @@ describe("EnterWorktree tool", () => {
   test("switches into an existing managed worktree via path", async () => {
     const repo = await trackRepo();
     setActiveRuntime(null);
+    await writeFile(
+      path.join(repo, "AGENTS.md"),
+      "# Existing worktree instructions\n",
+    );
+    git(["add", "AGENTS.md"], repo);
+    git(["commit", "-m", "add existing worktree instructions"], repo);
 
     const created = await runWithRuntimeContext(
       { workingDirectory: repo },
@@ -616,6 +678,9 @@ describe("EnterWorktree tool", () => {
     expect(entered.branch_name).toBe(created.branch_name);
     expect(process.cwd()).toBe(created.worktree_path);
     expect(entered.content[0]?.text).toContain("Switched to existing worktree");
+    expect(entered.content[0]?.text).toContain(
+      "# Existing worktree instructions",
+    );
   });
 
   test("refuses to enter a worktree outside .letta/worktrees", async () => {

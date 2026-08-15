@@ -9,6 +9,7 @@ import {
   buildSubagentArgs,
   buildSubagentPrompt,
   recallPromptForBackend,
+  shouldPrependDeploySystemReminder,
 } from "@/agent/subagents/manager";
 import {
   resolveSubagentLauncher,
@@ -31,6 +32,17 @@ describe("recallPromptForBackend", () => {
     expect(localPrompt).toContain("~/.letta/lc-local-backend");
     expect(localPrompt).not.toContain("--mode <mode>");
     expect(localPrompt).not.toContain("Semantic similarity search");
+  });
+});
+
+describe("shouldPrependDeploySystemReminder", () => {
+  test("does not describe a same-agent conversation as coming from itself", () => {
+    expect(
+      shouldPrependDeploySystemReminder("agent-primary", "agent-primary"),
+    ).toBe(false);
+    expect(
+      shouldPrependDeploySystemReminder("agent-worker", "agent-primary"),
+    ).toBe(true);
   });
 });
 
@@ -245,6 +257,25 @@ describe("resolveSubagentWorkingDirectory", () => {
     );
 
     expect(cwd).toBe("/tmp/project-root");
+  });
+
+  test("reflection integration agents run directly from their memory worktree", () => {
+    const worktree =
+      "/Users/test/.letta/agents/agent-parent/memory-worktrees/reflection-123";
+    const cwd = resolveSubagentWorkingDirectory(
+      { USER_CWD: "/tmp/project-root" } as NodeJS.ProcessEnv,
+      "/tmp/fallback-root",
+      {
+        subagentType: "general-purpose",
+        launchProfile: "memory-subagent",
+        memoryScope: {
+          primaryRoot: worktree,
+          writableRoots: [worktree],
+        },
+      },
+    );
+
+    expect(cwd).toBe(worktree);
   });
 
   test("non-reflection subagents still prefer USER_CWD", () => {
@@ -738,6 +769,18 @@ describe("resolveSubagentModel", () => {
     });
 
     expect(result).toBe("letta/auto-fast");
+  });
+
+  test("general-purpose inheritance takes precedence over free-tier defaults", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "general-purpose",
+      recommendedModel: "inherit",
+      parentModelHandle: "openai/gpt-5",
+      billingTier: "free",
+      availableHandles: new Set(["letta/auto-fast", "letta/auto"]),
+    });
+
+    expect(result).toBe("openai/gpt-5");
   });
 
   test("free tier falls back to auto when auto-fast is unavailable", async () => {

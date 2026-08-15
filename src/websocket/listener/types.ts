@@ -6,7 +6,6 @@ import type {
   ApprovalResult,
 } from "@/agent/approval-execution";
 import type { SkillSource } from "@/agent/skill-sources";
-import type { ChannelTurnSource } from "@/channels/types";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { ModAdapter } from "@/mods/mod-adapter";
@@ -18,17 +17,24 @@ import type {
   QueueRuntime,
 } from "@/queue/queue-runtime";
 import type { SharedReminderState } from "@/reminders/state";
+import type { RuntimeWorkspaceSandbox } from "@/runtime-context";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
+  AvailableSkillSummary,
+  ClientToolsetConfig,
   ControlRequest,
   ExternalToolCallResult,
   LoopStatus,
   RuntimeScope,
   StopReasonType,
+  TeleportContinuation,
   WsProtocolCommand,
 } from "@/types/protocol_v2";
-import type { ActiveChannelTurn } from "./channel-turn-session";
+import type {
+  ServiceCommandRequest,
+  ServiceCommandResponse,
+} from "@/types/service-protocol";
 import type { ListenerTransport } from "./transport";
 import type { TurnLifecycle } from "./turn-lifecycle";
 
@@ -38,7 +44,8 @@ export interface StartListenerOptions {
   supportsSplitStatusChannels?: boolean;
   deviceId: string;
   connectionName: string;
-  onConnected: (connectionId: string) => void;
+  skillsDirectory?: string;
+  onConnected: (connectionId: string) => void | Promise<void>;
   onDisconnected: () => void;
   onNeedsReregister?: () => void;
   onError: (error: Error) => void;
@@ -72,8 +79,20 @@ export interface IncomingMessage {
   conversationId?: string;
   /** Queue this message as its own turn; never merge with other messages. */
   noCoalesce?: boolean;
-  channelTurnSources?: ChannelTurnSource[];
+  /**
+   * This turn's output is owned by an in-process caller (the OpenAI-compatible
+   * HTTP bridge), not by a relay WebSocket client. Such turns are consumed by
+   * in-process stream observers and returned in the HTTP response, so they must
+   * not block on a listener connection that may never attach.
+   *
+   * Ownership varies per turn, not per runtime: one app-server runtime serves
+   * both HTTP requests and real WebSocket clients, and relay-originated turns
+   * still need the reconnect wait that preserves their output.
+   */
+  processOwnedTurn?: boolean;
+  imageFailureMode?: "strict" | "drop";
   clientToolAllowlist?: string[];
+  clientToolset?: ClientToolsetConfig;
   externalToolScopeIds?: string[];
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
@@ -118,6 +137,16 @@ export interface PendingExternalToolCall {
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
 }
+
+export type PendingTeleport = {
+  teleportId: string;
+  connectionId: ListenerConnectionId;
+  agentId: string;
+  conversationId: string;
+  requestedAt: number;
+  readyAt?: number;
+  continuation?: TeleportContinuation;
+};
 
 export interface ModeChangePayload {
   mode: "standard" | "acceptEdits" | "unrestricted" | "strict";
@@ -174,11 +203,14 @@ export type ConversationRuntime = {
   conversationId: string;
   /** Runtime-scoped SDK override. Undefined uses the process defaults. */
   skillSources: SkillSource[] | undefined;
-  activeChannelTurn: ActiveChannelTurn | null;
+  /** Explicit runtime filesystem boundary for shared app-server sessions. */
+  workspaceSandbox: RuntimeWorkspaceSandbox | undefined;
   /** Connection currently executing this conversation's turn, if client-owned. */
   activeConnectionId: ListenerConnectionId | null;
   turnLifecycle: TurnLifecycle;
   messageQueue: Promise<void>;
+  /** Recently accepted ingress IDs, retained for idempotent client retries. */
+  acceptedInputDispositions: Map<string, "started" | "queued">;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
   readonly lastStopReason: StopReasonType | null;
@@ -199,7 +231,16 @@ export type ConversationRuntime = {
   currentToolset: ToolsetName | null;
   currentToolsetPreference: ToolsetPreference;
   currentLoadedTools: string[];
+  currentAvailableSkills: AvailableSkillSummary[];
+  transientChannelRuntimeTools: boolean;
   pendingApprovalBatchByToolCallId: Map<string, string>;
+  /**
+   * tool_call_id -> server-assigned id of the approval_request_message that
+   * carried the tool call. client_tool_start/end reuse this id instead of
+   * minting a phantom `message-*` id (LET-10608). Populated and cleared
+   * alongside pendingApprovalBatchByToolCallId.
+   */
+  approvalMessageIdByToolCallId: Map<string, string>;
   pendingInterruptedResults: Array<ApprovalResult> | null;
   pendingInterruptedContext: {
     agentId: string;
@@ -294,6 +335,10 @@ export type ListenerRuntime = {
   processServicesReady: Promise<void> | null;
   /** Generation owned by processServicesReady, or null when no attempt is active. */
   processServicesReadyGeneration: number | null;
+  serviceCommandHandler:
+    | ((command: ServiceCommandRequest) => Promise<ServiceCommandResponse>)
+    | null;
+  serviceCommandTypes: Set<WsProtocolCommand["type"]>;
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {
@@ -337,6 +382,8 @@ export type ListenerRuntime = {
   /** Agent IDs whose cached secrets are stale and must re-fetch on the next hydration call. */
   secretsDirtyAgents: Set<string>;
   pendingExternalToolCalls: Map<string, PendingExternalToolCall>;
+  /** Source handoffs retained briefly so a failed destination can resume. */
+  pendingTeleports?: Map<string, PendingTeleport>;
   /**
    * Agent metadata warmups for listen-mode reminders. The cached promise is
    * reused while the listener stays connected so first-turn reminders can join
@@ -362,6 +409,8 @@ export type ListenerRuntime = {
   _unsubscribeSubagentState?: (() => void) | undefined;
   /** Unsubscribe from subagent stream events (set on socket open, cleared on close). */
   _unsubscribeSubagentStreamEvents?: (() => void) | undefined;
+  /** Unsubscribe from background process state (set on socket open, cleared on close). */
+  _unsubscribeBackgroundProcessState?: (() => void) | undefined;
 };
 
 export interface InterruptPopulateInput {

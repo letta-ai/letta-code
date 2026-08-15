@@ -23,9 +23,13 @@ import { spawnSubagent } from "@/agent/subagents/manager";
 import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import { sleep } from "@/utils/sleep";
-import { formatTaskNotification } from "@/utils/task-notifications.js";
+import {
+  formatTaskNotification,
+  resolveNotificationScope,
+} from "@/utils/task-notifications.js";
 import {
   appendToOutputFile,
   assertBackgroundTaskCapacity,
@@ -61,6 +65,7 @@ const BACKGROUND_STARTUP_POLL_MS = 50;
 type TaskRunResult = {
   agentId: string;
   conversationId?: string;
+  model?: string;
   report: string;
   success: boolean;
   error?: string;
@@ -71,6 +76,8 @@ type TaskRunResult = {
 
 export interface SpawnBackgroundSubagentTaskArgs {
   subagentType: string;
+  /** User-facing task type; execution still uses subagentType. */
+  displayType?: string;
   prompt: string;
   description: string;
   model?: string;
@@ -127,6 +134,7 @@ export interface SpawnBackgroundSubagentTaskArgs {
     error?: string;
     agentId?: string;
     conversationId?: string;
+    model?: string;
     stepCount?: number;
     durationMs?: number;
     report?: string;
@@ -224,27 +232,6 @@ function writeTaskTranscriptResult(
   );
 }
 
-function resolveParentScope(parentScope?: {
-  agentId: string;
-  conversationId: string;
-}): { agentId: string; conversationId: string } | undefined {
-  if (parentScope?.agentId) {
-    return {
-      agentId: parentScope.agentId,
-      conversationId: parentScope.conversationId || "default",
-    };
-  }
-
-  try {
-    return {
-      agentId: getCurrentAgentId(),
-      conversationId: getConversationId() ?? "default",
-    };
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Wait briefly for a background subagent to publish its agent URL.
  * This keeps Task mostly non-blocking while allowing static transcript rows
@@ -312,6 +299,37 @@ export async function waitForBackgroundSubagentAgentId(
   }
 }
 
+export async function waitForBackgroundSubagentConversationId(
+  subagentId: string,
+  timeoutMs: number | null = null,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const deadline =
+    timeoutMs !== null && timeoutMs > 0 ? Date.now() + timeoutMs : null;
+
+  while (true) {
+    if (signal?.aborted) {
+      return null;
+    }
+
+    const agent = getSubagentSnapshot().agents.find((a) => a.id === subagentId);
+    if (!agent) {
+      return null;
+    }
+    if (agent.conversationId) {
+      return agent.conversationId;
+    }
+    if (agent.status === "error" || agent.status === "completed") {
+      return agent.conversationId ?? null;
+    }
+    if (deadline !== null && Date.now() >= deadline) {
+      return agent.conversationId ?? null;
+    }
+
+    await sleep(BACKGROUND_STARTUP_POLL_MS);
+  }
+}
+
 /**
  * Spawn a background subagent task and return task metadata immediately.
  * Notification/hook behavior is identical to Task's background path.
@@ -323,6 +341,7 @@ export function spawnBackgroundSubagentTask(
 
   const {
     subagentType,
+    displayType,
     prompt,
     description,
     model,
@@ -344,7 +363,7 @@ export function spawnBackgroundSubagentTask(
   const shouldEmitCompletionNotification =
     emitCompletionNotification ?? !silentCompletion;
 
-  const resolvedParentScope = resolveParentScope(parentScope);
+  const resolvedParentScope = resolveNotificationScope(parentScope);
 
   const spawnSubagentFn = deps?.spawnSubagentImpl ?? spawnSubagent;
   const addToMessageQueueFn = deps?.addToMessageQueueImpl ?? addToMessageQueue;
@@ -362,7 +381,7 @@ export function spawnBackgroundSubagentTask(
   const subagentId = generateSubagentIdFn();
   registerSubagentFn(
     subagentId,
-    subagentType,
+    displayType ?? subagentType,
     description,
     toolCallId,
     true,
@@ -378,6 +397,7 @@ export function spawnBackgroundSubagentTask(
   const bgTask: BackgroundTask = {
     description,
     subagentType,
+    displayType,
     subagentId,
     status: "running",
     output: [],
@@ -445,6 +465,7 @@ export function spawnBackgroundSubagentTask(
           error: result.error,
           agentId: result.agentId,
           conversationId: result.conversationId,
+          model: result.model,
           stepCount: result.stepCount,
           durationMs: result.durationMs,
           report: result.report,
@@ -600,6 +621,25 @@ export function spawnBackgroundSubagentTask(
   return { taskId, outputFile, subagentId };
 }
 
+export async function inheritForkToolset(
+  agentId: string,
+  parentConversationId: string,
+  forkConversationId: string,
+): Promise<void> {
+  const parentToolset = settingsManager.getToolsetPreference(
+    agentId,
+    parentConversationId,
+  );
+  if (parentToolset === "auto") return;
+
+  settingsManager.setToolsetPreference(
+    agentId,
+    parentToolset,
+    forkConversationId,
+  );
+  await settingsManager.flush();
+}
+
 /**
  * Task tool - Launch a specialized subagent to handle complex tasks
  */
@@ -695,6 +735,7 @@ export async function task(args: TaskArgs): Promise<string> {
         ...(parentConvId === "default" ? { agentId: parentAgentId } : {}),
         hidden: true,
       });
+      await inheritForkToolset(parentAgentId, parentConvId, forkedConv.id);
       effectiveAgentId = parentAgentId;
       effectiveConversationId = forkedConv.id;
     } catch (error) {
@@ -707,7 +748,7 @@ export async function task(args: TaskArgs): Promise<string> {
   const prompt = inputPrompt;
 
   const isBackground = args.run_in_background ?? config.background;
-  const resolvedParentScope = resolveParentScope(args.parentScope);
+  const resolvedParentScope = resolveNotificationScope(args.parentScope);
 
   // Handle background execution
   if (isBackground) {

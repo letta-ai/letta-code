@@ -44,6 +44,7 @@ const DEFAULT_TIMEOUT = 120000;
 
 type SpawnContext = {
   command: string[];
+  sourceCommand: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeout: number;
@@ -74,6 +75,7 @@ async function runProcess(context: SpawnContext): Promise<ShellResult> {
       cwd: context.cwd,
       env: context.env,
       timeoutMs: context.timeout,
+      sourceCommand: context.sourceCommand,
       signal: context.signal,
       onOutput: context.onOutput,
     },
@@ -140,6 +142,7 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
 
   const context: SpawnContext = {
     command: sandboxed.launcher,
+    sourceCommand: command,
     cwd,
     env: sandboxed.env,
     timeout,

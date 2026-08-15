@@ -721,9 +721,10 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
 
     await runtime.refreshAll();
 
-    // Auto-detectable local daemons may be probed; the remote Ollama Cloud
-    // endpoint must not be touched without a configured record/env key.
+    // Auto-detectable local daemons may be probed. Remote and user-defined
+    // endpoints must not be touched before the user configures them.
     expect(requested.some((url) => url.includes("ollama.com"))).toBe(false);
+    expect(requested).not.toContain("/v1/models");
   });
 
   test("endpoint change drops the stored catalog instead of restoring stale models", async () => {
@@ -785,5 +786,172 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
     );
     expect(resolved.model.input).toEqual(["text", "image"]);
+  });
+
+  test("OpenAI-compatible discovery publishes arbitrary IDs and turns use the same Model", async () => {
+    const requests: Array<{ path: string; authorization: string | null }> = [];
+    const chatBodies: Array<Record<string, unknown>> = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url);
+        requests.push({
+          path: url.pathname,
+          authorization: request.headers.get("authorization"),
+        });
+        if (url.pathname === "/v1/models") {
+          return Response.json({
+            data: [
+              { id: "vendor/model:latest", object: "model" },
+              { id: "plain-model", object: "model" },
+            ],
+          });
+        }
+        if (url.pathname === "/v1/chat/completions") {
+          const body = (await request.json()) as Record<string, unknown>;
+          chatBodies.push(body);
+          return sseChatResponse(String(body.model));
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    servers.push({ url: "", chatBodies: [], stop: () => server.stop(true) });
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "pi-openai-compatible-runtime-"),
+    );
+    storageDirs.push(storageDir);
+    await createOrUpdateLocalProvider({
+      providerType: "openai-compatible",
+      providerName: "openai-compatible",
+      apiKey: "compatible-key",
+      baseURL: `http://localhost:${server.port}/v1/`,
+      storageDir,
+    });
+    const runtime = new LocalPiModelsRuntime({ storageDir });
+
+    const listed = await listLocalModels(storageDir, {
+      fetch: failingDiscoveryFetch,
+      modelsRuntime: runtime,
+    });
+    expect(listed.map((model) => model.handle)).toContain(
+      "openai-compatible/vendor/model:latest",
+    );
+    expect(listed.map((model) => model.handle)).toContain(
+      "openai-compatible/plain-model",
+    );
+
+    const published = runtime.getModel(
+      "openai-compatible",
+      "vendor/model:latest",
+    );
+    if (!published)
+      throw new Error("Expected discovered model to be published");
+    expect(published).toMatchObject({
+      provider: "openai-compatible",
+      id: "vendor/model:latest",
+      baseUrl: `http://localhost:${server.port}/v1`,
+      input: ["text"],
+      reasoning: false,
+    });
+    const resolved = await resolvePiModelForAgent(
+      "openai-compatible/vendor/model:latest",
+      { provider_type: "openai-compatible" },
+      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+    );
+    expect(resolved.model).toBe(published);
+    expect(resolved.apiKey).toBe("compatible-key");
+
+    const result = await runtime
+      .streamSimple(
+        resolved.model,
+        {
+          messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
+        },
+        { apiKey: resolved.apiKey, maxRetries: 0 },
+      )
+      .result();
+    expect(result.stopReason).toBe("stop");
+    expect(chatBodies).toEqual([
+      expect.objectContaining({ model: "vendor/model:latest" }),
+    ]);
+    expect(requests).toContainEqual({
+      path: "/v1/models",
+      authorization: "Bearer compatible-key",
+    });
+    expect(requests).toContainEqual({
+      path: "/v1/chat/completions",
+      authorization: "Bearer compatible-key",
+    });
+    expect(requests.some((request) => request.path === "/v1/v1/models")).toBe(
+      false,
+    );
+
+    server.stop(true);
+    await expect(runtime.refresh("openai-compatible")).rejects.toThrow();
+    const retained = runtime.getModel(
+      "openai-compatible",
+      "vendor/model:latest",
+    );
+    expect(retained).toEqual(published);
+    if (!retained) throw new Error("Expected last-known model to be retained");
+    const resolvedAfterFailure = await resolvePiModelForAgent(
+      "openai-compatible/vendor/model:latest",
+      { provider_type: "openai-compatible" },
+      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+    );
+    expect(resolvedAfterFailure.model).toBe(retained);
+  });
+
+  test("keyless OpenAI-compatible discovery does not send the sentinel as Bearer auth", async () => {
+    const authorizations: Array<string | null> = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        authorizations.push(request.headers.get("authorization"));
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({ data: [{ id: "keyless-model" }] });
+        }
+        if (url.pathname === "/v1/chat/completions") {
+          return sseChatResponse("keyless-model");
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    servers.push({ url: "", chatBodies: [], stop: () => server.stop(true) });
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "pi-openai-compatible-keyless-"),
+    );
+    storageDirs.push(storageDir);
+    await createOrUpdateLocalProvider({
+      providerType: "openai-compatible",
+      providerName: "openai-compatible",
+      apiKey: "not-needed",
+      baseURL: `http://localhost:${server.port}`,
+      storageDir,
+    });
+    const runtime = new LocalPiModelsRuntime({ storageDir });
+
+    await runtime.refresh("openai-compatible");
+
+    const resolved = await resolvePiModelForAgent(
+      "openai-compatible/keyless-model",
+      { provider_type: "openai-compatible" },
+      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+    );
+    const published = runtime.getModel("openai-compatible", "keyless-model");
+    if (!published) throw new Error("Expected keyless model to be published");
+    expect(resolved.model).toBe(published);
+    const result = await runtime
+      .streamSimple(
+        resolved.model,
+        {
+          messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
+        },
+        { apiKey: resolved.apiKey, maxRetries: 0 },
+      )
+      .result();
+    expect(result.stopReason).toBe("stop");
+    expect(authorizations).toEqual([null, null]);
   });
 });

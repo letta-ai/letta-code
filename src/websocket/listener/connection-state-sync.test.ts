@@ -1,16 +1,11 @@
 import { expect, test } from "bun:test";
-import { isQueueBridgeConnected } from "@/utils/message-queue-bridge";
-import {
-  openListenerConnection,
-  suspendListenerConnection,
-} from "./connection";
+import { openListenerConnection } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
   createRuntime,
   startConnectedListenerRuntime,
   stopRuntime,
 } from "./lifecycle";
-import { invalidateProcessServices } from "./process-services";
 import { setActiveRuntime } from "./runtime";
 import type { LocalTransport } from "./transport";
 import type { StartListenerOptions } from "./types";
@@ -70,173 +65,84 @@ test("an unsubscribed app-server connection receives no existing runtime state",
   }
 });
 
-test("failed process-service initialization can be retried", async () => {
+test("keeps attached App Server connections from bypassing the startup barrier", async () => {
   const runtime = createRuntime();
-  const firstTransport = new MockTransport();
-  const firstOptions: StartListenerOptions = {
-    connectionId: "first-client",
+  const transport = new MockTransport();
+  const appServerTransport = new MockTransport();
+  const appServerOptions: StartListenerOptions = {
+    connectionId: "app-server",
     wsUrl: "local://app-server",
     deviceId: "test-device",
-    connectionName: "first-client",
+    connectionName: "app-server",
     onConnected: () => {},
     onDisconnected: () => {},
     onError: () => {},
   };
-  openListenerConnection({
-    runtime,
-    connectionId: firstOptions.connectionId,
-    writer: firstTransport,
-    options: firstOptions,
+  let releaseGateway!: () => void;
+  let gatewayStarted!: () => void;
+  const gatewayReady = new Promise<void>((resolve) => {
+    releaseGateway = resolve;
   });
-  let initializationAttempts = 0;
-  const initializeChannels = async () => {
-    initializationAttempts += 1;
-    if (initializationAttempts === 1) {
-      throw new Error("channel recovery failed");
-    }
-  };
-  setActiveRuntime(runtime);
-
-  try {
-    await expect(
-      startConnectedListenerRuntime(
+  const gatewayStarting = new Promise<void>((resolve) => {
+    gatewayStarted = resolve;
+  });
+  const options: StartListenerOptions = {
+    connectionId: "local-listener",
+    wsUrl: "local://listener",
+    deviceId: "test-device",
+    connectionName: "local-listener",
+    onConnected: async () => {
+      await startConnectedListenerRuntime(
         runtime,
-        firstTransport,
-        firstOptions,
+        appServerTransport,
+        appServerOptions,
         async () => {},
         {
           startHeartbeat: false,
           startCronScheduler: false,
-          emitInitialState: false,
-          wireChannelIngress: initializeChannels,
+          startProcessServices: false,
         },
-      ),
-    ).rejects.toThrow("channel recovery failed");
-    expect(runtime.processServicesStarted).toBe(false);
-    expect(runtime.processServicesReady).toBeNull();
-
-    const secondTransport = new MockTransport();
-    const secondOptions = {
-      ...firstOptions,
-      connectionId: "second-client",
-      connectionName: "second-client",
-    };
-    openListenerConnection({
-      runtime,
-      connectionId: secondOptions.connectionId,
-      writer: secondTransport,
-      options: secondOptions,
-    });
-    await startConnectedListenerRuntime(
-      runtime,
-      secondTransport,
-      secondOptions,
-      async () => {},
-      {
-        startHeartbeat: false,
-        startCronScheduler: false,
-        emitInitialState: false,
-        wireChannelIngress: initializeChannels,
-      },
-    );
-
-    expect(initializationAttempts).toBe(2);
-    expect(runtime.processServicesStarted).toBe(true);
-  } finally {
-    stopRuntime(runtime, true);
-    setActiveRuntime(null);
-  }
-});
-
-test("outbound reconnect replaces an initialization invalidated by disconnect", async () => {
-  const runtime = createRuntime();
-  const options: StartListenerOptions = {
-    connectionId: "outbound-client",
-    wsUrl: "ws://relay.test",
-    deviceId: "test-device",
-    connectionName: "outbound-client",
-    onConnected: () => {},
+      );
+      gatewayStarted();
+      await gatewayReady;
+    },
     onDisconnected: () => {},
     onError: () => {},
   };
-  const gates: Array<() => void> = [];
-  const initializeChannels = () =>
-    new Promise<void>((resolve) => {
-      gates.push(resolve);
-    });
-  const firstTransport = new MockTransport();
   openListenerConnection({
     runtime,
     connectionId: options.connectionId,
-    writer: firstTransport,
+    writer: transport,
     options,
+  });
+  openListenerConnection({
+    runtime,
+    connectionId: appServerOptions.connectionId,
+    writer: appServerTransport,
+    options: appServerOptions,
   });
   setActiveRuntime(runtime);
 
   try {
-    const firstStart = startConnectedListenerRuntime(
+    const start = startConnectedListenerRuntime(
       runtime,
-      firstTransport,
+      transport,
       options,
       async () => {},
       {
         startHeartbeat: false,
         startCronScheduler: false,
-        emitInitialState: false,
-        wireChannelIngress: initializeChannels,
       },
     );
-    for (let attempt = 0; gates.length < 1 && attempt < 10; attempt += 1) {
-      await Promise.resolve();
-    }
-    expect(gates).toHaveLength(1);
-    expect(isQueueBridgeConnected()).toBe(true);
+    await gatewayStarting;
 
-    invalidateProcessServices(runtime);
-    suspendListenerConnection(runtime, options.connectionId);
-    expect(isQueueBridgeConnected()).toBe(false);
-    expect(runtime.processServicesStarted).toBe(false);
-    expect(runtime.processServicesReady).not.toBeNull();
-
-    const secondTransport = new MockTransport();
-    openListenerConnection({
-      runtime,
-      connectionId: options.connectionId,
-      writer: secondTransport,
-      options,
-    });
-    const reconnectStart = startConnectedListenerRuntime(
-      runtime,
-      secondTransport,
-      options,
-      async () => {},
-      {
-        startHeartbeat: false,
-        startCronScheduler: false,
-        emitInitialState: false,
-        wireChannelIngress: initializeChannels,
-      },
-    );
-    await Promise.resolve();
-    expect(gates).toHaveLength(1);
-
-    gates[0]?.();
-    await firstStart;
-    for (let attempt = 0; gates.length < 2 && attempt < 10; attempt += 1) {
-      await Promise.resolve();
-    }
-    expect(gates).toHaveLength(2);
-    expect(isQueueBridgeConnected()).toBe(true);
     expect(runtime.processServicesStarted).toBe(false);
 
-    gates[1]?.();
-    await reconnectStart;
-    expect(isQueueBridgeConnected()).toBe(true);
+    releaseGateway();
+    await start;
     expect(runtime.processServicesStarted).toBe(true);
-    expect(runtime.processServicesReady).toBeNull();
-    expect(runtime.processServicesReadyGeneration).toBeNull();
   } finally {
-    for (const resolve of gates) resolve();
+    releaseGateway();
     stopRuntime(runtime, true);
     setActiveRuntime(null);
   }

@@ -98,6 +98,20 @@ describe("addTask", () => {
     expect(result.task.conversation_id).toBe("new");
   });
 
+  test("defaults an omitted conversation target to new", () => {
+    const input = makeInput();
+    delete input.conversation_id;
+
+    const result = addTask(input);
+
+    expect(result.task.conversation_id).toBe("new");
+  });
+
+  test("preserves an explicit default conversation target", () => {
+    const result = addTask(makeInput({ conversation_id: "default" }));
+    expect(result.task.conversation_id).toBe("default");
+  });
+
   test("creates a one-shot task", () => {
     const scheduledFor = new Date(Date.now() + 60000);
     const result = addTask(

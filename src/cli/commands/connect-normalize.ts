@@ -127,6 +127,16 @@ export function isConnectBedrockProvider(
   );
 }
 
+export function isConnectBaseURLRequired(
+  provider: ResolvedConnectProvider,
+): boolean {
+  return (
+    provider.byokProvider.fields?.some(
+      (field) => field.key === "baseUrl" && field.required !== false,
+    ) === true
+  );
+}
+
 export function isConnectApiKeyProvider(
   provider: ResolvedConnectProvider,
 ): boolean {

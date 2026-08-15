@@ -95,6 +95,99 @@ test("Long bash commands should use wildcard patterns, not exact match", () => {
   expect(result2.decision).toBe("allow");
 });
 
+test("Monitor command sources use Bash permission rules", () => {
+  const result = checkPermission(
+    "Monitor",
+    { command: "node watch-build.js" },
+    {
+      allow: ["Bash(node:*)"],
+      deny: [],
+      ask: [],
+    },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("Bash(node:*)");
+});
+
+test("Monitor deny rules also block command sources", () => {
+  const result = checkPermission(
+    "Monitor",
+    { command: "node watch-build.js" },
+    {
+      allow: ["Bash(node:*)"],
+      deny: ["Monitor"],
+      ask: [],
+    },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("deny");
+  expect(result.matchedRule).toBe("Monitor");
+});
+
+test("read-only Monitor commands follow Bash auto-approval", () => {
+  const result = checkPermission(
+    "Monitor",
+    { command: "tail -f app.log | grep --line-buffered ERROR" },
+    { allow: [], deny: [], ask: [] },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Read-only shell command");
+});
+
+test("Monitor command sources match alwaysAsk and ask rules by tool name", () => {
+  const alwaysAskResult = checkPermission(
+    "Monitor",
+    { command: "tail -f app.log | grep --line-buffered ERROR" },
+    { allow: [], deny: [], ask: [], alwaysAsk: ["Monitor"] },
+    "/Users/test/project",
+  );
+  expect(alwaysAskResult.decision).toBe("alwaysAsk");
+  expect(alwaysAskResult.matchedRule).toBe("Monitor");
+
+  const askResult = checkPermission(
+    "Monitor",
+    { command: "curl -X POST https://example.com" },
+    { allow: [], deny: [], ask: ["Monitor"] },
+    "/Users/test/project",
+  );
+  expect(askResult.decision).toBe("ask");
+  expect(askResult.matchedRule).toBe("Monitor");
+});
+
+test("session alwaysAsk rules match Monitor command sources", () => {
+  sessionPermissions.addRule("Monitor", "alwaysAsk");
+
+  const result = checkPermission(
+    "Monitor",
+    { command: "tail -f app.log | grep --line-buffered ERROR" },
+    { allow: [], deny: [], ask: [] },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("alwaysAsk");
+  expect(result.matchedRule).toBe("Monitor (session)");
+});
+
+test("Monitor WebSocket sources do not use Bash permission rules", () => {
+  const result = checkPermission(
+    "Monitor",
+    { ws: { url: "wss://events.example.com" } },
+    {
+      allow: ["Bash(:*)"],
+      deny: [],
+      ask: [],
+    },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("ask");
+});
+
 test("npx tsc wildcard permissions match compound TypeScript check commands", () => {
   const permissions: PermissionRules = {
     allow: ["Bash(npx tsc:*)"],

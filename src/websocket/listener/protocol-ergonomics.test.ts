@@ -51,7 +51,6 @@ function makeHandler(
     },
     runDetachedListenerTask: () => {},
     trackListenerError: () => {},
-    wireChannelIngress: async () => {},
     ...overrides,
   });
 }
@@ -94,6 +93,7 @@ describe("listener protocol ergonomics", () => {
           },
         ],
         client_tool_allowlist: undefined,
+        client_toolset: undefined,
         external_tool_scope_ids: undefined,
       },
     });
@@ -129,6 +129,109 @@ describe("listener protocol ergonomics", () => {
       runtime: { agent_id: "agent-1", conversation_id: "default" },
       success: true,
     });
+  });
+
+  test("teleport probe advertises listener support", async () => {
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+    const sent: unknown[] = [];
+
+    await makeHandler(
+      runtime,
+      sent,
+    )(
+      Buffer.from(
+        JSON.stringify({
+          type: "teleport_probe",
+          request_id: "probe-1",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+        }),
+      ),
+    );
+
+    expect(sent).toContainEqual({
+      type: "teleport_probe_response",
+      request_id: "probe-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      supported: true,
+    });
+  });
+
+  test("teleport continuation resumes with tool results and no user message", async () => {
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+    const conversationRuntime =
+      __listenClientTestUtils.getOrCreateScopedRuntime(
+        runtime,
+        "agent-1",
+        "conv-1",
+      );
+    const sent: unknown[] = [];
+    const receivedIncoming: IncomingMessage[] = [];
+    const processIncomingMessage = mock(async (incoming: IncomingMessage) => {
+      receivedIncoming.push(incoming);
+    });
+    let detachedTask: Promise<void> | null = null;
+    __listenClientTestUtils.setActiveRuntime(runtime);
+
+    await makeHandler(runtime, sent, {
+      getParsedRuntimeScope: () => ({
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+      }),
+      getOrCreateScopedRuntime: () => conversationRuntime,
+      processIncomingMessage,
+      runDetachedListenerTask: (_name, task) => {
+        detachedTask = task();
+      },
+    })(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          request_id: "continue-1",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "teleport_continue",
+            teleport_id: "teleport-1",
+            source: {
+              device_id: "source-device",
+              connection_name: "Laptop",
+            },
+            continuation: {
+              approvals: [
+                {
+                  type: "tool",
+                  tool_call_id: "call-1",
+                  status: "success",
+                  tool_return: "done",
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    );
+    await detachedTask;
+
+    expect(sent).toContainEqual({
+      type: "input_accepted",
+      request_id: "continue-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      accepted: true,
+      disposition: "started",
+    });
+    const incoming = receivedIncoming[0];
+    expect(incoming?.messages).toHaveLength(1);
+    expect(incoming?.messages[0]).toMatchObject({
+      type: "approval",
+      approvals: [
+        {
+          type: "tool",
+          tool_call_id: "call-1",
+          status: "success",
+          tool_return: "done",
+        },
+      ],
+    });
+    expect(incoming?.messages.some((message) => "role" in message)).toBe(false);
   });
 
   test("sync request_id gets a failure response when the listener is inactive", async () => {
@@ -367,5 +470,33 @@ describe("listener protocol ergonomics", () => {
     expect(status.boot_working_directory).toBe(runtime.bootWorkingDirectory);
     expect(status.current_working_directory).toBe(runtime.bootWorkingDirectory);
     expect(runtime.workingDirectoryRevision).toBe(1);
+  });
+
+  test("reports the skills prepared for the active conversation", () => {
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+    const conversationRuntime =
+      __listenClientTestUtils.getOrCreateScopedRuntime(
+        runtime,
+        "agent-1",
+        "conv-1",
+      );
+    conversationRuntime.currentAvailableSkills = [
+      {
+        id: "searching-and-viewing-slack",
+        name: "searching-and-viewing-slack",
+        description: "Search Slack from a managed computer.",
+        path: "/root/.letta/cloud-skills/searching-and-viewing-slack/SKILL.md",
+        source: "project",
+      },
+    ];
+
+    const status = __listenClientTestUtils.buildDeviceStatus(runtime, {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    });
+
+    expect(status.current_available_skills).toEqual(
+      conversationRuntime.currentAvailableSkills,
+    );
   });
 });

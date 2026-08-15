@@ -1,6 +1,6 @@
 // How a subagent child process is launched: the command/args to spawn, the
 // working directory it runs in, and the environment it inherits (including the
-// memory-subagent MEMORY_DIR wiring and channel-context propagation).
+// memory-subagent MEMORY_DIR wiring).
 //
 // Extracted from `manager.ts`. Pure resolution helpers — they depend only on
 // lower-level backend/runtime/shell helpers and shared subagent types, never
@@ -9,11 +9,10 @@
 import { type BackendMode, getLocalBackendStorageDir } from "@/backend";
 import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
 import {
-  getCurrentWorkingDirectory,
-  type InheritedChannelContextPayload,
-  LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
-  type RuntimeContextSnapshot,
-} from "@/runtime-context";
+  LETTA_MOD_CAPABILITY_PROFILE_ENV,
+  PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
+} from "@/mods/capabilities";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
@@ -49,6 +48,14 @@ export function resolveSubagentWorkingDirectory(
     options.memoryScope
   ) {
     return env.USER_CWD || fallbackCwd;
+  }
+
+  if (
+    options.subagentType !== "reflection" &&
+    options.launchProfile === "memory-subagent" &&
+    options.memoryScope?.primaryRoot
+  ) {
+    return options.memoryScope.primaryRoot;
   }
 
   const primaryRoot =
@@ -124,6 +131,8 @@ export interface ComposeSubagentChildEnvOptions {
   /** Parent agent ID. When present, sets LETTA_PARENT_AGENT_ID so prompts,
    * scripts, and the cross-agent guard can identify the immediate parent. */
   parentAgentId: string | undefined;
+  /** Subagent config type, used for type-specific child process isolation. */
+  subagentType?: string;
   /** The subagent config's declared launch profile. Subagents with the memory-subagent profile
    * operate on the parent's memory filesystem. */
   launchProfile: SubagentLaunchProfile | undefined;
@@ -142,26 +151,6 @@ export interface ComposeSubagentChildEnvOptions {
    * can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead of
    * interpolating the absolute path. Unset → no TRANSCRIPT_PATH in child. */
   transcriptPath?: string | null;
-  /** Serializable channel scope for child processes. Execution-context IDs are
-   * process-local, so channel scope must be copied explicitly across spawn. */
-  inheritedChannelContext?: InheritedChannelContextPayload | null;
-}
-
-export function buildInheritedChannelContextPayload(
-  runtimeContext: RuntimeContextSnapshot | undefined,
-): InheritedChannelContextPayload | null {
-  const channelToolScope = runtimeContext?.channelToolScope;
-  const channelTurnSources = runtimeContext?.channelTurnSources ?? [];
-  if (!channelToolScope?.channels.length && channelTurnSources.length === 0) {
-    return null;
-  }
-
-  return {
-    ...(channelToolScope?.channels.length ? { channelToolScope } : {}),
-    ...(channelTurnSources.length
-      ? { channelTurnSources: [...channelTurnSources] }
-      : {}),
-  };
 }
 
 /**
@@ -189,13 +178,13 @@ export function composeSubagentChildEnv(
     backendMode,
     localBackendStorageDir,
     parentAgentId,
+    subagentType,
     launchProfile,
     inheritedPrimaryRoot,
     memoryScope,
     inheritedApiKey,
     inheritedBaseUrl,
     transcriptPath,
-    inheritedChannelContext,
   } = options;
 
   const childEnv: NodeJS.ProcessEnv = {
@@ -203,13 +192,11 @@ export function composeSubagentChildEnv(
     ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     LETTA_CODE_AGENT_ROLE: "subagent",
+    ...(subagentType === "reflection" && {
+      [LETTA_MOD_CAPABILITY_PROFILE_ENV]: PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
+    }),
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
-    ...(inheritedChannelContext && {
-      [LETTA_INHERITED_CHANNEL_CONTEXT_ENV]: JSON.stringify(
-        inheritedChannelContext,
-      ),
-    }),
   };
 
   if (backendMode === "local") {

@@ -141,6 +141,25 @@ describe("channel credential storage", () => {
     expect(hydrated?.appToken).toBe("xapp-secret");
   });
 
+  test("Slack account reads isolate mention-only channel lists", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("file");
+    const account = makeSlackAccount();
+    account.mentionOnlyChannels = ["C123"];
+    await upsertChannelAccountWithSecrets("slack", account);
+
+    const firstRead = (await getChannelAccountWithSecrets(
+      "slack",
+      "slack-account",
+    )) as SlackChannelAccount;
+    firstRead.mentionOnlyChannels?.push("C999");
+
+    const secondRead = (await getChannelAccountWithSecrets(
+      "slack",
+      "slack-account",
+    )) as SlackChannelAccount;
+    expect(secondRead.mentionOnlyChannels).toEqual(["C123"]);
+  });
+
   test("keyring mode migrates existing plaintext tokens out of accounts.json", async () => {
     __setActiveChannelCredentialsStoreModeForTests("keyring");
     mkdirSync(join(channelsRoot, "slack"), { recursive: true });

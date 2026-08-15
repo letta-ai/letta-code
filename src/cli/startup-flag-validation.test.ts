@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
+  validatePrimaryStartupFlagConflicts,
   validateRegistryHandleOrThrow,
 } from "@/cli/startup-flag-validation";
 
@@ -56,5 +57,68 @@ describe("startup flag validation helpers", () => {
     expect(() => validateRegistryHandleOrThrow("@author")).toThrow(
       'Invalid registry handle "@author"',
     );
+  });
+
+  test("stateless startup requires an existing agent in headless mode", () => {
+    const baseOptions = {
+      specifiedConversationId: null,
+      specifiedAgentId: "agent-123",
+      specifiedAgentName: null,
+      forceNewConversation: false,
+      importFile: null,
+      stateless: true,
+      isHeadless: true,
+      memfs: false,
+      memfsStartup: undefined,
+      forceNewAgent: false,
+    };
+
+    expect(() =>
+      validatePrimaryStartupFlagConflicts(baseOptions),
+    ).not.toThrow();
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({
+        ...baseOptions,
+        isHeadless: false,
+      }),
+    ).toThrow("--stateless is only supported in headless mode");
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({ ...baseOptions, memfs: true }),
+    ).toThrow("--stateless cannot be used with --memfs");
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({
+        ...baseOptions,
+        memfsStartup: "skip",
+      }),
+    ).toThrow("--stateless cannot be used with --memfs-startup");
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({
+        ...baseOptions,
+        forceNewAgent: true,
+      }),
+    ).toThrow("--stateless is for existing agents");
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({
+        ...baseOptions,
+        specifiedAgentId: null,
+      }),
+    ).toThrow("--stateless requires --agent");
+  });
+
+  test("primary startup validation preserves conversation conflict behavior", () => {
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({
+        specifiedConversationId: "conv-123",
+        specifiedAgentId: "agent-123",
+        specifiedAgentName: null,
+        forceNewAgent: false,
+        forceNewConversation: false,
+        importFile: null,
+        stateless: false,
+        isHeadless: true,
+        memfs: false,
+        memfsStartup: undefined,
+      }),
+    ).toThrow("--conversation cannot be used with --agent");
   });
 });

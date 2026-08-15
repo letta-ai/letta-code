@@ -4,11 +4,6 @@ import { resolveModelHandleFromLlmConfig } from "@/agent/model-handles";
 import type { SkillSource } from "@/agent/skill-sources";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
-import type { MessageChannelToolDiscoveryScope } from "@/channels/message-tool";
-import { getSupportedChannelIds } from "@/channels/plugin-registry";
-import { getChannelRegistry } from "@/channels/registry";
-import { getRoutesForChannel, loadRoutes } from "@/channels/routing";
-import type { ChannelTurnSource, SupportedChannelId } from "@/channels/types";
 import { experimentManager } from "@/experiments/manager";
 import { buildModInvocationContext } from "@/mods/context";
 import type { ModEvents } from "@/mods/event-emitter";
@@ -16,11 +11,7 @@ import type { ModAdapter } from "@/mods/mod-adapter";
 import type { ModPermissionDefinition } from "@/mods/permission-registry";
 import type { ModToolDefinition } from "@/mods/tool-registry";
 import type { ModContext } from "@/mods/types";
-import {
-  type InheritedChannelContextPayload,
-  LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
-  type RuntimeContextSnapshot,
-} from "@/runtime-context";
+import type { RuntimeContextSnapshot } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import { toolFilter } from "./filter";
@@ -30,6 +21,7 @@ import {
   filterBuiltInToolNamesByClientAllowlist,
   GEMINI_DEFAULT_TOOLS,
   GEMINI_PASCAL_TOOLS,
+  getInternalToolName,
   getToolNames,
   isOpenAIModel,
   loadSpecificTools,
@@ -41,7 +33,10 @@ import {
   prepareToolExecutionContextForSpecificTools,
 } from "./manager";
 import type { PermissionModeState } from "./permission-mode-state";
-import type { ToolName } from "./tool-definitions";
+import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
+import type { ToolsetName, ToolsetPreference } from "./toolset-types";
+
+export type { ToolsetName, ToolsetPreference } from "./toolset-types";
 
 // Toolset definitions from manager.ts (single source of truth)
 
@@ -73,15 +68,64 @@ export const MEMORY_TOOL_NAMES = new Set([
   "memory_rethink",
 ]);
 
-// Toolset type including snake_case variants
-export type ToolsetName =
-  | "codex"
-  | "codex_snake"
-  | "default"
-  | "gemini"
-  | "gemini_snake"
-  | "none";
-export type ToolsetPreference = ToolsetName | "auto";
+export interface ClientToolsetConfig {
+  /** Request-scoped base toolset. Omitted preserves the runtime preference. */
+  base?: ToolsetPreference;
+  /** Additional bundled client tools to load before applying the allowlist. */
+  include?: string[];
+}
+
+function resolveIncludedToolNames(toolNames: string[] | undefined): ToolName[] {
+  if (!toolNames) return [];
+
+  return toolNames.map((toolName) => {
+    const internalName = getInternalToolName(toolName);
+    if (!Object.hasOwn(TOOL_DEFINITIONS, internalName)) {
+      throw new Error(`Unknown bundled client tool: ${toolName}`);
+    }
+    return internalName as ToolName;
+  });
+}
+
+/**
+ * Bundled client tools named in the allowlist, so that allowlisting a tool
+ * also loads it. Without this an allowlist is only a filter over whatever the
+ * base happens to carry, so a client asking for exactly ["Read", "LS",
+ * "Glob", "Grep"] silently gets just the ones its base already had.
+ *
+ * Unknown names are skipped rather than rejected: unlike `include`, an
+ * allowlist legitimately carries MCP and other external tool names that are
+ * not bundled client tools.
+ */
+function resolveAllowlistedToolNames(
+  allowlist: string[] | undefined,
+): ToolName[] {
+  if (!allowlist) return [];
+
+  const toolNames: ToolName[] = [];
+  for (const allowedName of allowlist) {
+    const internalName = getInternalToolName(allowedName);
+    if (Object.hasOwn(TOOL_DEFINITIONS, internalName)) {
+      toolNames.push(internalName as ToolName);
+    }
+  }
+  return toolNames;
+}
+
+function appendUniqueToolNames(
+  baseToolNames: ToolName[],
+  includedToolNames: ToolName[],
+): ToolName[] {
+  const result = [...baseToolNames];
+  const seen = new Set(result);
+  for (const toolName of includedToolNames) {
+    if (!seen.has(toolName)) {
+      result.push(toolName);
+      seen.add(toolName);
+    }
+  }
+  return result;
+}
 
 export function deriveToolsetFromModel(
   modelIdentifier: string,
@@ -145,10 +189,7 @@ function getPreferredAgentModelHandle(
   return resolveModelHandleFromLlmConfig(agent.llm_config);
 }
 
-function getToolNamesForToolset(
-  toolsetName: ToolsetName,
-  channelToolScope?: MessageChannelToolDiscoveryScope | null,
-): ToolName[] {
+function getToolNamesForToolset(toolsetName: ToolsetName): ToolName[] {
   let tools: ToolName[];
   switch (toolsetName) {
     case "codex":
@@ -171,16 +212,6 @@ function getToolNamesForToolset(
       break;
   }
 
-  const hasScopedChannelTool =
-    channelToolScope !== undefined
-      ? (channelToolScope?.channels.length ?? 0) > 0
-      : (getChannelRegistry()?.getActiveChannelIds().length ?? 0) > 0;
-
-  // Append channel tool if channels are active (covers ALL pinned toolsets)
-  if (hasScopedChannelTool && !tools.includes("MessageChannel" as ToolName)) {
-    tools.push("MessageChannel" as ToolName);
-  }
-
   return appendArtifactToolsIfEnabled(tools);
 }
 
@@ -189,12 +220,12 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   providerType?: string | null;
   conversationId?: string | null;
   toolsetPreference: ToolsetPreference;
+  clientToolset?: ClientToolsetConfig;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
   externalToolScopeIds?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
-  channelToolScope?: MessageChannelToolDiscoveryScope | null;
   modContext?: ModContext;
   modEvents?: ModEvents;
   modAdapters?: ModAdapter[];
@@ -206,12 +237,12 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     providerType,
     conversationId,
     toolsetPreference,
+    clientToolset,
     exclude,
     clientToolAllowlist,
     externalToolScopeIds,
     workingDirectory,
     permissionModeState,
-    channelToolScope,
     modContext,
     modEvents,
     modAdapters,
@@ -222,8 +253,13 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     modelIdentifier && modelIdentifier.length > 0
       ? (resolveModel(modelIdentifier) ?? modelIdentifier)
       : null;
+  const effectiveToolsetPreference = clientToolset?.base ?? toolsetPreference;
+  const includedToolNames = appendUniqueToolNames(
+    resolveIncludedToolNames(clientToolset?.include),
+    resolveAllowlistedToolNames(clientToolAllowlist),
+  );
 
-  if (toolsetPreference === "auto") {
+  if (effectiveToolsetPreference === "auto") {
     const derivedToolset = effectiveModel
       ? deriveToolsetFromModel(effectiveModel, providerType)
       : "default";
@@ -244,12 +280,13 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     const preparedToolContext = await prepareToolExecutionContextForModel(
       effectiveModel ?? undefined,
       {
+        resolvedToolset: derivedToolset,
         exclude,
+        include: includedToolNames,
         clientToolAllowlist,
         externalToolScopeIds,
         workingDirectory,
         permissionModeState,
-        channelToolScope,
         modContext: scopedModContext,
         modEvents,
         modPermissions: modCapabilities.permissions,
@@ -274,7 +311,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     modelIdentifier: effectiveModel,
     permissionMode:
       permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
-    toolset: toolsetPreference,
+    toolset: effectiveToolsetPreference,
     workingDirectory,
   });
   const modCapabilities = mergeModAdapterCapabilities(
@@ -283,9 +320,10 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   );
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
     filterBuiltInToolNamesByClientAllowlist(
-      getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
-        (toolName) => (exclude ? !exclude.includes(toolName) : true),
-      ),
+      appendUniqueToolNames(
+        getToolNamesForToolset(effectiveToolsetPreference),
+        includedToolNames,
+      ).filter((toolName) => (exclude ? !exclude.includes(toolName) : true)),
       clientToolAllowlist,
     ),
     {
@@ -293,7 +331,6 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       externalToolScopeIds,
       workingDirectory,
       permissionModeState,
-      channelToolScope,
       modContext: scopedModContext,
       modEvents,
       modPermissions: modCapabilities.permissions,
@@ -304,192 +341,53 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 
   return {
     preparedToolContext,
-    toolset: toolsetPreference,
+    toolset: effectiveToolsetPreference,
     toolsetPreference,
     effectiveModel,
     agent: null,
   };
 }
 
-export function resolveConversationChannelToolScope(
-  agentId: string,
-  conversationId: string,
-): MessageChannelToolDiscoveryScope {
-  const registry = getChannelRegistry();
-  if (!registry) {
-    return { channels: [] };
-  }
-
-  const channels: Array<{
-    channelId: SupportedChannelId;
-    accountId?: string | null;
-  }> = [];
-  const seen = new Set<string>();
-
-  for (const channelId of getSupportedChannelIds()) {
-    loadRoutes(channelId);
-    for (const route of getRoutesForChannel(channelId)) {
-      if (
-        route.agentId !== agentId ||
-        route.conversationId !== conversationId ||
-        !route.enabled ||
-        route.outboundEnabled === false
-      ) {
-        continue;
-      }
-
-      const adapter = registry.getAdapter(channelId, route.accountId);
-      if (!adapter?.isRunning()) {
-        continue;
-      }
-
-      const key = `${channelId}:${route.accountId ?? ""}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      channels.push({
-        channelId,
-        accountId: route.accountId ?? null,
-      });
-    }
-  }
-  return { channels };
-}
-
-function parseInheritedChannelToolScope(
-  value: unknown,
-): MessageChannelToolDiscoveryScope | null {
-  if (!isRecord(value) || !Array.isArray(value.channels)) {
-    return null;
-  }
-
-  const supportedChannelIds = new Set<string>(getSupportedChannelIds());
-  const channels: MessageChannelToolDiscoveryScope["channels"] = [];
-  for (const entry of value.channels) {
-    if (!isRecord(entry) || typeof entry.channelId !== "string") {
-      continue;
-    }
-    if (!supportedChannelIds.has(entry.channelId)) {
-      continue;
-    }
-    const accountId = entry.accountId;
-    channels.push({
-      channelId: entry.channelId as SupportedChannelId,
-      ...(typeof accountId === "string" || accountId === null
-        ? { accountId }
-        : {}),
-    });
-  }
-
-  return { channels };
-}
-
-function parseInheritedChannelTurnSources(value: unknown): ChannelTurnSource[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const sources: ChannelTurnSource[] = [];
-  for (const entry of value) {
-    if (
-      !isRecord(entry) ||
-      typeof entry.channel !== "string" ||
-      typeof entry.chatId !== "string" ||
-      typeof entry.agentId !== "string" ||
-      typeof entry.conversationId !== "string"
-    ) {
-      continue;
-    }
-
-    sources.push({
-      channel: entry.channel,
-      chatId: entry.chatId,
-      agentId: entry.agentId,
-      conversationId: entry.conversationId,
-      ...(typeof entry.accountId === "string"
-        ? { accountId: entry.accountId }
-        : {}),
-      ...(entry.chatType === "direct" || entry.chatType === "channel"
-        ? { chatType: entry.chatType }
-        : {}),
-      ...(typeof entry.messageId === "string"
-        ? { messageId: entry.messageId }
-        : {}),
-      ...(typeof entry.threadId === "string" || entry.threadId === null
-        ? { threadId: entry.threadId }
-        : {}),
-    });
-  }
-
-  return sources;
-}
-
-function parseInheritedChannelContextEnv(): InheritedChannelContextPayload | null {
-  const raw = process.env[LETTA_INHERITED_CHANNEL_CONTEXT_ENV];
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed)) {
-      return null;
-    }
-
-    const channelToolScope = parseInheritedChannelToolScope(
-      parsed.channelToolScope,
-    );
-    const channelTurnSources = parseInheritedChannelTurnSources(
-      parsed.channelTurnSources,
-    );
-    if (!channelToolScope?.channels.length && channelTurnSources.length === 0) {
-      return null;
-    }
-
-    return {
-      ...(channelToolScope?.channels.length ? { channelToolScope } : {}),
-      ...(channelTurnSources.length ? { channelTurnSources } : {}),
-    };
-  } catch {
-    return null;
-  }
-}
-
 export async function prepareToolExecutionContextForScope(params: {
   connectionId?: string;
+  environmentDeviceId?: string;
   agentId: string;
   conversationId?: string | null;
   overrideModel?: string | null;
   overrideProviderType?: string | null;
   cachedEffectiveModel?: string | null;
   exclude?: ToolName[];
+  clientToolset?: ClientToolsetConfig;
   clientToolAllowlist?: string[];
   externalToolScopeIds?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
+  skillsDirectory?: string;
   skillSources?: SkillSource[];
+  workspaceSandbox?: RuntimeContextSnapshot["workspaceSandbox"];
   cachedAgent?: AgentState | null;
-  channelTurnSources?: import("@/channels/types").ChannelTurnSource[];
   modContext?: ModContext;
   modEvents?: ModEvents;
   modAdapters?: ModAdapter[];
 }): Promise<PreparedScopeToolContext> {
   const {
     connectionId,
+    environmentDeviceId,
     agentId,
     conversationId,
     overrideModel,
     overrideProviderType,
     cachedEffectiveModel,
     exclude,
+    clientToolset,
     clientToolAllowlist,
     externalToolScopeIds,
     workingDirectory,
     permissionModeState,
+    skillsDirectory,
     skillSources,
+    workspaceSandbox,
     cachedAgent,
-    channelTurnSources: explicitChannelTurnSources,
     modContext,
     modEvents,
     modAdapters,
@@ -535,30 +433,23 @@ export async function prepareToolExecutionContextForScope(params: {
 
   const toolsetPreference = (() => {
     try {
-      return settingsManager.getToolsetPreference(agentId);
+      return settingsManager.getToolsetPreference(
+        agentId,
+        conversationId ?? "default",
+      );
     } catch {
       return "auto" as const;
     }
   })();
 
-  const inheritedChannelContext = parseInheritedChannelContextEnv();
-  const inheritedChannelToolScope =
-    inheritedChannelContext?.channelToolScope ?? null;
-  const inheritedChannelTurnSources =
-    explicitChannelTurnSources ??
-    inheritedChannelContext?.channelTurnSources ??
-    [];
   const scopedConversationId = conversationId ?? "default";
-  const channelToolScope =
-    inheritedChannelToolScope && inheritedChannelToolScope.channels.length > 0
-      ? inheritedChannelToolScope
-      : resolveConversationChannelToolScope(agentId, scopedConversationId);
 
   const result = await prepareToolExecutionContextForResolvedTarget({
     modelIdentifier: effectiveModel,
     providerType: effectiveProviderType,
     conversationId: conversationId ?? undefined,
     toolsetPreference,
+    clientToolset,
     exclude,
     clientToolAllowlist,
     externalToolScopeIds,
@@ -570,17 +461,15 @@ export async function prepareToolExecutionContextForScope(params: {
     agent: agent as AgentState,
     runtimeContext: {
       connectionId,
+      environmentDeviceId,
       agentId,
       agentName: (agent as AgentState).name ?? null,
       conversationId: scopedConversationId,
       workingDirectory,
+      ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
       ...(skillSources !== undefined ? { skillSources } : {}),
-      ...(channelToolScope.channels.length > 0 ? { channelToolScope } : {}),
-      ...(inheritedChannelTurnSources.length > 0
-        ? { channelTurnSources: inheritedChannelTurnSources }
-        : {}),
+      ...(workspaceSandbox !== undefined ? { workspaceSandbox } : {}),
     },
-    channelToolScope,
   });
   return { ...result, agent: agent as AgentState };
 }

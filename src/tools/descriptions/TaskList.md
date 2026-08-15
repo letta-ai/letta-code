@@ -2,7 +2,7 @@
 
 List all tasks in the current session, in creation order.
 
-Soft-deleted tasks (`status: "deleted"`) are excluded from the output. Use `TaskGet` with a specific ID to retrieve a deleted task.
+Tasks removed with `status: "deleted"` are excluded from the output and cannot be retrieved.
 
 ## When to use
 

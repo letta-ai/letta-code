@@ -1,27 +1,18 @@
-import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import {
   type ApprovalDecision,
   executeApprovalBatch,
 } from "@/agent/approval-execution";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
 import {
-  getResumeDataFromBackend,
-  type ResumeData,
-} from "@/agent/check-approval";
-import {
-  buildFreshDenialApprovals,
   isApprovalPendingError,
   isInvalidToolCallIdsError,
   normalizeStreamErrorTypeToStopReason,
-  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryPostStreamRunError,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
-import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
-import { getChannelRegistry } from "@/channels/registry";
-import type { ChannelTurnSource } from "@/channels/types";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { formatPermissionDenial } from "@/permissions/format-denial";
@@ -36,10 +27,7 @@ import {
   applySuggestedPermissionsForApproval,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
-import {
-  finishActiveChannelTurn,
-  recoverActiveChannelTurn,
-} from "./channel-turn-session";
+import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
@@ -52,6 +40,7 @@ import {
   normalizeToolReturnWireMessage,
 } from "./interrupts";
 import {
+  createListenerAgentModContext,
   createListenerModEvents,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
@@ -63,7 +52,10 @@ import {
   emitRuntimeStateUpdates,
 } from "./protocol-outbound";
 import { consumeQueuedTurn } from "./queue";
-import { emitLoopErrorNotice } from "./recoverable-notices";
+import {
+  emitLoopErrorNotice,
+  getTranscriptLoopErrorMessage,
+} from "./recoverable-notices";
 import {
   clearRecoveredApprovalState,
   hasInterruptedCacheForScope,
@@ -97,14 +89,6 @@ export function getApprovalToolCallDesyncErrorText(errorInfo: {
     return message;
   }
   return null;
-}
-
-function isBackendNotFoundError(error: unknown): boolean {
-  return (
-    (error instanceof APIError &&
-      (error.status === 404 || error.status === 422)) ||
-    (error instanceof Error && error.name === "LocalBackendNotFoundError")
-  );
 }
 
 export function shouldAttemptPostStopApprovalRecovery(params: {
@@ -232,9 +216,11 @@ export async function drainRecoveryStreamWithEmission(
       }
 
       if (shouldOutput) {
-        const normalizedChunk = normalizeToolReturnWireMessage(
-          chunk as unknown as Record<string, unknown>,
-        );
+        const normalizedChunk =
+          normalizeCloudRetryWireMessage(chunk) ??
+          normalizeToolReturnWireMessage(
+            chunk as unknown as Record<string, unknown>,
+          );
         if (normalizedChunk) {
           emitCanonicalMessageDelta(
             socket,
@@ -264,13 +250,16 @@ export function finalizeHandledRecoveryTurn(
     drainResult: Awaited<ReturnType<typeof drainStreamWithResume>>;
     agentId?: string | null;
     conversationId: string;
+    turnId: string;
   },
 ): ReturnType<typeof finishListenerTurn> {
   if (params.drainResult.stopReason === "end_turn") {
     return finishListenerTurn(runtime, turnLease, {
       stopReason: "end_turn",
+      socket,
       agentId: params.agentId,
       conversationId: params.conversationId,
+      turnId: params.turnId,
     });
   }
 
@@ -281,27 +270,34 @@ export function finalizeHandledRecoveryTurn(
       runId: runtime.activeRunId,
       agentId: params.agentId ?? undefined,
       conversationId: params.conversationId,
+      turnId: params.turnId,
     });
   }
 
   const terminalStopReason =
     (params.drainResult.stopReason as StopReasonType) || "error";
   const runId = runtime.activeRunId;
-  const transition = finishListenerTurn(runtime, turnLease, {
-    stopReason: terminalStopReason,
+  const noticeParams = {
+    message: `Recovery continuation ended unexpectedly: ${terminalStopReason}`,
     agentId: params.agentId,
     conversationId: params.conversationId,
+  };
+  const transition = finishListenerTurn(runtime, turnLease, {
+    stopReason: terminalStopReason,
+    socket,
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+    turnId: params.turnId,
+    error: getTranscriptLoopErrorMessage(noticeParams),
   });
   if (!transition.finished) {
     return transition;
   }
   emitLoopErrorNotice(socket, runtime, {
-    message: `Recovery continuation ended unexpectedly: ${terminalStopReason}`,
+    ...noticeParams,
     stopReason: terminalStopReason,
     isTerminal: true,
     runId: runId || undefined,
-    agentId: params.agentId ?? undefined,
-    conversationId: params.conversationId,
   });
   return transition;
 }
@@ -387,73 +383,6 @@ function buildRecoveredAutoDecisions(
       reason: formatPermissionDenial(ac.permission, ac.denyReason),
     })),
   ];
-}
-
-export async function recoverApprovalStateForSync(
-  runtime: ConversationRuntime,
-  scope: { agent_id: string; conversation_id: string },
-): Promise<void> {
-  if (hasInterruptedCacheForScope(runtime.listener, scope)) {
-    clearRecoveredApprovalState(runtime);
-    return;
-  }
-
-  const sameActiveScope =
-    runtime.agentId === scope.agent_id &&
-    runtime.conversationId === scope.conversation_id;
-
-  if (sameActiveScope && runtime.turnLifecycle.kind !== "idle") {
-    clearRecoveredApprovalState(runtime);
-    return;
-  }
-
-  if (runtime.pendingApprovalResolvers.size > 0 && sameActiveScope) {
-    clearRecoveredApprovalState(runtime);
-    return;
-  }
-
-  const backend = getBackend();
-  let agent: Awaited<ReturnType<typeof backend.retrieveAgent>>;
-  try {
-    agent = await backend.retrieveAgent(scope.agent_id);
-  } catch (error) {
-    if (isBackendNotFoundError(error)) {
-      clearRecoveredApprovalState(runtime);
-      return;
-    }
-    throw error;
-  }
-
-  let resumeData: ResumeData;
-  try {
-    resumeData = await getResumeDataFromBackend(agent, scope.conversation_id, {
-      includeMessageHistory: false,
-    });
-  } catch (error) {
-    if (isBackendNotFoundError(error)) {
-      clearRecoveredApprovalState(runtime);
-      return;
-    }
-    throw error;
-  }
-
-  const pendingApprovals = resumeData.pendingApprovals ?? [];
-  if (pendingApprovals.length === 0) {
-    clearRecoveredApprovalState(runtime);
-    return;
-  }
-
-  runtime.pendingInterruptedResults = buildFreshDenialApprovals(
-    pendingApprovals,
-    STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-  );
-  runtime.pendingInterruptedContext = {
-    agentId: scope.agent_id,
-    conversationId: scope.conversation_id,
-    continuationEpoch: runtime.continuationEpoch,
-  };
-  runtime.pendingInterruptedToolCallIds = null;
-  clearRecoveredApprovalState(runtime);
 }
 
 export async function resolveRecoveredApprovalResponse(
@@ -616,7 +545,6 @@ export async function resolveRecoveredApprovalResponse(
           initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
         })
       : null;
-  let shouldFinalizeRecoveredChannelTurn = false;
   let continuationFinalized = false;
 
   try {
@@ -689,29 +617,6 @@ export async function resolveRecoveredApprovalResponse(
       (decision) => decision.approval.toolCallId,
     );
 
-    const activeChannelTurn = runtime.activeChannelTurn;
-    if (
-      (!activeChannelTurn || activeChannelTurn.sources.length === 0) &&
-      recovered.agentId
-    ) {
-      const recoveredSources =
-        getChannelRegistry()?.resolveTurnSourcesForScope(
-          recovered.agentId,
-          recovered.conversationId,
-        ) ?? [];
-      if (recoveredSources.length > 0) {
-        recoverActiveChannelTurn(runtime, {
-          sources: recoveredSources,
-          batchId:
-            activeChannelTurn?.batchId ??
-            `recovered-${requestId || crypto.randomUUID()}`,
-          progress: createChannelTurnProgressBuilder(),
-        });
-      }
-    }
-    shouldFinalizeRecoveredChannelTurn =
-      runtime.activeChannelTurn?.contextRecovered === true;
-
     runtime.turnLifecycle.setExecutingToolCallIds(
       recoveryLease,
       approvedToolCallIds,
@@ -719,7 +624,6 @@ export async function resolveRecoveredApprovalResponse(
     recovered.pendingRequestIds.clear();
     emitRuntimeStateUpdates(runtime, scope);
     const executionRunId = runtime.activeRunId ?? undefined;
-    const executionChannelTurnSources = runtime.activeChannelTurn?.sources;
     emitToolExecutionStartedEvents(socket, runtime, {
       toolCalls: approvedDecisions.map((decision) => ({
         toolCallId: decision.approval.toolCallId,
@@ -765,6 +669,7 @@ export async function resolveRecoveredApprovalResponse(
           recovered.agentId,
           recovered.conversationId,
         ),
+        modContext: createListenerAgentModContext(recovered.agentId),
         modAdapters,
         modEvents: createListenerModEvents(modAdapters),
       });
@@ -787,7 +692,6 @@ export async function resolveRecoveredApprovalResponse(
                 conversationId: recovered.conversationId,
               }
             : undefined,
-        channelTurnSources: executionChannelTurnSources,
       });
     } catch (error) {
       // Execution threw before results exist, so the finished-events
@@ -847,7 +751,6 @@ export async function resolveRecoveredApprovalResponse(
       },
     ]);
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
-    let queuedChannelTurnSources: ChannelTurnSource[] | undefined;
     const consumedQueuedTurn = consumeQueuedTurn(runtime);
     if (consumedQueuedTurn) {
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
@@ -856,7 +759,6 @@ export async function resolveRecoveredApprovalResponse(
         continuationInput,
         queuedTurn,
       );
-      queuedChannelTurnSources = queuedTurn.channelTurnSources;
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
     }
 
@@ -870,9 +772,6 @@ export async function resolveRecoveredApprovalResponse(
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
         messages: continuationInput.messages,
-        ...(queuedChannelTurnSources?.length
-          ? { channelTurnSources: queuedChannelTurnSources }
-          : {}),
       },
       socket,
       runtime,
@@ -890,16 +789,6 @@ export async function resolveRecoveredApprovalResponse(
     }
     continuationFinalized = true;
 
-    if (shouldFinalizeRecoveredChannelTurn) {
-      await finishActiveChannelTurn(runtime, {
-        lastStopReason: runtime.lastStopReason,
-        didThrow: false,
-        error: runtime.lastTerminalLoopErrorMessage ?? undefined,
-        runId: runtime.lastTerminalLoopErrorRunId ?? undefined,
-        retainOnApproval: true,
-      });
-    }
-
     if (runtime.recoveredApprovalState === recovered) {
       clearRecoveredApprovalState(runtime);
     }
@@ -911,25 +800,26 @@ export async function resolveRecoveredApprovalResponse(
     if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
       return true;
     }
-    if (shouldFinalizeRecoveredChannelTurn) {
-      await finishActiveChannelTurn(runtime, {
-        lastStopReason: runtime.lastStopReason,
-        didThrow: true,
-        error: error instanceof Error ? error.message : String(error),
-        runId: runtime.lastTerminalLoopErrorRunId ?? undefined,
-      });
-    }
     if (runtime.recoveredApprovalState === recovered) {
       recovered.pendingRequestIds = new Set(
         recovered.approvalsByRequestId.keys(),
       );
       recovered.responsesByRequestId.clear();
     }
+    const stopReason = recoveryLease.signal.aborted ? "cancelled" : "error";
     finishListenerTurn(runtime, recoveryLease, {
-      stopReason: recoveryLease.signal.aborted ? "cancelled" : "error",
+      stopReason,
       socket,
       agentId: recovered.agentId,
       conversationId: recovered.conversationId,
+      turnId: `batch-recovered-${requestId}`,
+      error:
+        stopReason === "error"
+          ? getTranscriptLoopErrorMessage({
+              error,
+              message: error instanceof Error ? error.message : String(error),
+            })
+          : undefined,
     });
     throw error;
   }

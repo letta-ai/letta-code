@@ -2,9 +2,10 @@ import type { ApprovalResponseBody } from "@/types/protocol_v2";
 import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { parseChannelBangCommand, parseChannelSlashCommand } from "./commands";
 import {
-  formatChannelControlRequestPrompt,
-  parseChannelControlRequestResponse,
-} from "./interactive";
+  ChannelControlRequestCoordinator,
+  type PendingChannelControlRequest,
+} from "./control-request-coordinator";
+import { formatChannelControlRequestPrompt } from "./interactive";
 import {
   listPendingControlRequests as listPersistedPendingControlRequests,
   removePendingControlRequest as removePersistedPendingControlRequest,
@@ -27,31 +28,10 @@ export type ChannelApprovalResponseHandler = (params: {
   response: ApprovalResponseBody;
 }) => Promise<boolean>;
 
-export type PendingChannelControlRequest = {
-  event: ChannelControlRequestEvent;
-  deliveredThisProcess: boolean;
-};
-
-function getChannelApprovalScopeKey(params: {
-  channel: string;
-  accountId?: string;
-  chatId: string;
-  threadId?: string | null;
-}): string {
-  return [
-    params.channel,
-    params.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
-    params.chatId,
-    params.threadId ?? "",
-  ].join(":");
-}
+export type { PendingChannelControlRequest };
 
 export class ChannelControlRequests {
-  private readonly pendingById = new Map<
-    string,
-    PendingChannelControlRequest
-  >();
-  private readonly requestIdByScope = new Map<string, string>();
+  private readonly coordinator: ChannelControlRequestCoordinator;
 
   constructor(
     private readonly deps: {
@@ -62,147 +42,104 @@ export class ChannelControlRequests {
       getApprovalResponseHandler: () => ChannelApprovalResponseHandler | null;
     },
   ) {
-    this.primePersistedRequests();
-  }
-
-  has(requestId: string): boolean {
-    return this.pendingById.has(requestId);
-  }
-
-  getAll(): PendingChannelControlRequest[] {
-    return Array.from(this.pendingById.values()).map((pending) => ({
-      event: structuredClone(pending.event),
-      deliveredThisProcess: pending.deliveredThisProcess,
-    }));
-  }
-
-  private primePersistedRequests(): void {
-    for (const event of listPersistedPendingControlRequests()) {
-      this.pendingById.set(event.requestId, {
-        event,
-        deliveredThisProcess: false,
-      });
-      this.requestIdByScope.set(
-        getChannelApprovalScopeKey({
-          channel: event.source.channel,
-          accountId: event.source.accountId,
-          chatId: event.source.chatId,
-          threadId: event.source.threadId,
-        }),
-        event.requestId,
-      );
-    }
-  }
-
-  async handleNativeResponse(
-    input: ChannelControlResponseInput,
-  ): Promise<ChannelControlResponseResult> {
-    const pending = this.pendingById.get(input.requestId);
-    if (!pending) return "expired";
-
-    const source = pending.event.source;
-    const matchesTarget =
-      source.channel === input.channel &&
-      (source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID) ===
-        (input.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID) &&
-      source.chatId === input.chatId &&
-      (source.threadId ?? null) === (input.threadId ?? null);
-    if (
-      !matchesTarget ||
-      (source.senderId && source.senderId !== input.senderId)
-    ) {
-      return "forbidden";
-    }
-
-    const approvalResponseHandler = this.deps.getApprovalResponseHandler();
-    if (!approvalResponseHandler) return "unavailable";
-    const handled = await approvalResponseHandler({
-      runtime: {
-        agent_id: source.agentId,
-        conversation_id: source.conversationId,
-      },
-      response: input.response,
-    });
-    this.clear(input.requestId);
-    return handled ? "handled" : "expired";
-  }
-
-  private async deliver(requestId: string): Promise<boolean> {
-    const pending = this.pendingById.get(requestId);
-    if (!pending) return false;
-    const event = pending.event;
-    const adapter = this.deps.getAdapter(
-      event.source.channel,
-      event.source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
-    );
-    if (!adapter) return false;
-
-    try {
-      if (adapter.handleControlRequestEvent) {
-        await adapter.handleControlRequestEvent(event);
-      } else {
+    this.coordinator = new ChannelControlRequestCoordinator({
+      deliverPrompt: async (event) => {
+        const adapter = this.getAdapter(event);
+        if (!adapter) throw new Error("Channel adapter is unavailable");
+        if (adapter.handleControlRequestEvent) {
+          await adapter.handleControlRequestEvent(event);
+          return;
+        }
         await adapter.sendDirectReply(
           event.source.chatId,
           formatChannelControlRequestPrompt(event),
           { replyToMessageId: event.source.threadId ?? event.source.messageId },
         );
-      }
-      pending.deliveredThisProcess = true;
-      return true;
+      },
+      deliverReprompt: async (_event, input, message) => {
+        const adapter = this.deps.getAdapter(
+          input.channel,
+          input.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+        );
+        if (!adapter) return;
+        await adapter.sendDirectReply(
+          input.chatId,
+          message,
+          buildDirectReplyOptions(input),
+        );
+      },
+      deliverResponse: async (event, response) => {
+        const handler = this.deps.getApprovalResponseHandler();
+        if (!handler) return "unavailable";
+        const handled = await handler({
+          runtime: {
+            agent_id: event.source.agentId,
+            conversation_id: event.source.conversationId,
+          },
+          response,
+        });
+        return handled ? "handled" : "expired";
+      },
+      persist: (event) => {
+        upsertPersistedPendingControlRequest(event);
+      },
+      remove: (requestId) => {
+        removePersistedPendingControlRequest(requestId);
+      },
+    });
+    this.coordinator.restore(listPersistedPendingControlRequests());
+  }
+
+  has(requestId: string): boolean {
+    return this.coordinator.has(requestId);
+  }
+
+  getAll(): PendingChannelControlRequest[] {
+    return this.coordinator.getAll();
+  }
+
+  async handleNativeResponse(
+    input: ChannelControlResponseInput,
+  ): Promise<ChannelControlResponseResult> {
+    return this.coordinator.handleNativeResponse(input);
+  }
+
+  async register(event: ChannelControlRequestEvent): Promise<void> {
+    try {
+      await this.coordinator.register(event);
     } catch (error) {
       console.error(
         `[Channels] Failed to deliver control request prompt for ${event.source.channel}/${event.source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  async redeliver(requestId: string): Promise<boolean> {
+    try {
+      return await this.coordinator.redeliver(requestId);
+    } catch (error) {
+      const pending = this.coordinator
+        .getAll()
+        .find((candidate) => candidate.event.requestId === requestId);
+      console.error(
+        `[Channels] Failed to deliver control request prompt for ${pending?.event.source.channel ?? "unknown"}/${pending?.event.source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID}:`,
         error instanceof Error ? error.message : error,
       );
       return false;
     }
   }
 
-  async register(event: ChannelControlRequestEvent): Promise<void> {
-    const scopeKey = getChannelApprovalScopeKey({
-      channel: event.source.channel,
-      accountId: event.source.accountId,
-      chatId: event.source.chatId,
-      threadId: event.source.threadId,
-    });
-    const existingRequestId = this.requestIdByScope.get(scopeKey);
-    if (existingRequestId) this.clear(existingRequestId);
-    this.pendingById.set(event.requestId, {
-      event,
-      deliveredThisProcess: false,
-    });
-    this.requestIdByScope.set(scopeKey, event.requestId);
-    upsertPersistedPendingControlRequest(event);
-    await this.deliver(event.requestId);
-  }
-
-  async redeliver(requestId: string): Promise<boolean> {
-    return this.deliver(requestId);
-  }
-
   clear(requestId: string): void {
-    removePersistedPendingControlRequest(requestId);
-    const pending = this.pendingById.get(requestId);
-    if (!pending) return;
-    this.pendingById.delete(requestId);
-    const scopeKey = getChannelApprovalScopeKey({
-      channel: pending.event.source.channel,
-      accountId: pending.event.source.accountId,
-      chatId: pending.event.source.chatId,
-      threadId: pending.event.source.threadId,
-    });
-    if (this.requestIdByScope.get(scopeKey) === requestId) {
-      this.requestIdByScope.delete(scopeKey);
-    }
+    void this.coordinator.clear(requestId);
   }
 
   clearAll(): void {
-    this.pendingById.clear();
-    this.requestIdByScope.clear();
+    this.coordinator.clearAll();
   }
 
   async tryHandleInbound(
-    adapter: ChannelAdapter,
+    _adapter: ChannelAdapter,
     msg: InboundChannelMessage,
   ): Promise<boolean> {
     const channelCommand =
@@ -210,75 +147,22 @@ export class ChannelControlRequests {
       (msg.channel === "slack" && msg.isMention === true
         ? parseChannelBangCommand(msg.text)
         : null);
-    if (channelCommand) return false;
-
-    const scopeKey = getChannelApprovalScopeKey({
+    return this.coordinator.tryHandleInbound({
       channel: msg.channel,
       accountId: msg.accountId,
       chatId: msg.chatId,
+      messageId: msg.messageId,
       threadId: msg.threadId,
+      senderId: msg.senderId,
+      text: msg.text,
+      bypass: Boolean(channelCommand),
     });
-    const requestId = this.requestIdByScope.get(scopeKey);
-    if (!requestId) return false;
-    const pending = this.pendingById.get(requestId);
-    if (!pending) {
-      this.requestIdByScope.delete(scopeKey);
-      return false;
-    }
+  }
 
-    // Same ownership rule as handleNativeResponse: only the sender the
-    // prompt was created for may answer it. Messages from other chat
-    // participants fall through to normal ingress handling instead of
-    // being consumed as an approval response.
-    if (
-      pending.event.source.senderId &&
-      pending.event.source.senderId !== msg.senderId
-    ) {
-      return false;
-    }
-
-    if (
-      msg.channel === "slack" &&
-      pending.event.kind === "generic_tool_approval"
-    ) {
-      return false;
-    }
-
-    const parsed = parseChannelControlRequestResponse(pending.event, msg.text);
-    if (parsed.type === "reprompt") {
-      await adapter.sendDirectReply(
-        msg.chatId,
-        parsed.message,
-        buildDirectReplyOptions(msg),
-      );
-      return true;
-    }
-
-    const approvalResponseHandler = this.deps.getApprovalResponseHandler();
-    if (!approvalResponseHandler) {
-      await adapter.sendDirectReply(
-        msg.chatId,
-        "I’m reconnecting to Letta Code right now, so I couldn’t use that reply yet. Please send it again in a moment.",
-        buildDirectReplyOptions(msg),
-      );
-      return true;
-    }
-
-    const handled = await approvalResponseHandler({
-      runtime: {
-        agent_id: pending.event.source.agentId,
-        conversation_id: pending.event.source.conversationId,
-      },
-      response: parsed.response,
-    });
-    this.clear(requestId);
-    if (!handled) {
-      await adapter.sendDirectReply(
-        msg.chatId,
-        "That approval prompt expired before I could use your reply. Please ask the agent to try again.",
-        buildDirectReplyOptions(msg),
-      );
-    }
-    return true;
+  private getAdapter(event: ChannelControlRequestEvent): ChannelAdapter | null {
+    return this.deps.getAdapter(
+      event.source.channel,
+      event.source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+    );
   }
 }

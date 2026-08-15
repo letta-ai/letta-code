@@ -68,8 +68,10 @@ import {
 import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
+  validatePrimaryStartupFlagConflicts,
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
+import { isHeadlessStartup } from "./cli/startup-mode";
 import {
   runSubcommand,
   subcommandNeedsEarlyBackendMode,
@@ -175,13 +177,14 @@ USAGE
   # maintenance
   letta update          Manually check for updates and install if available
   letta upgrade         Alias for \`letta update\`
-  letta --update        Alias for \`letta update\`
-  letta --upgrade       Alias for \`letta update\`
+  letta --update/--upgrade Aliases for \`letta update\`
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta environments ... List available remote environments (JSON-only)
+  letta teleport ...    Move the current conversation between environments
   letta messages ...    Messages subcommands (JSON-only)
   letta mods ...        List and manage local mods
+  letta sandbox ...     Transfer files to or from the current Cloud sandbox
   letta server ...      Run a remote environment, channels, or the App Server
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
@@ -205,6 +208,7 @@ SUBCOMMANDS
   letta agents list [--query <text> | --name <name> | --tags <tags>]
   letta environments list [--online-only]
   letta environments current
+  letta teleport list|cloud|<environment>
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
@@ -708,13 +712,10 @@ async function main(): Promise<void> {
   if (values.help) {
     printHelp();
 
-    // Test-only hook to keep process alive briefly so startup auto-update can run.
-    const helpDelayMs = Number.parseInt(
-      process.env.LETTA_TEST_HELP_EXIT_DELAY_MS ?? "",
-      10,
-    );
-    if (Number.isFinite(helpDelayMs) && helpDelayMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, helpDelayMs));
+    // Test-only hook for the end-to-end startup update smoke. Normal startup
+    // keeps the update check non-blocking.
+    if (process.env.LETTA_TEST_WAIT_FOR_STARTUP_AUTO_UPDATE === "1") {
+      await autoUpdatePromise;
     }
 
     process.exit(0);
@@ -830,7 +831,7 @@ async function main(): Promise<void> {
     importFlagValue: values.import,
     fromAfFlagValue: values["from-af"],
   });
-  const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+  const isHeadless = isHeadlessStartup(values, process.stdin.isTTY, command);
   const terminalThemePromise = !isHeadless
     ? initTerminalTheme().catch(() => undefined)
     : Promise.resolve(undefined);
@@ -944,7 +945,6 @@ async function main(): Promise<void> {
     });
   }
 
-  // Fail if an unknown command/argument is passed (and we're not in headless mode where it might be a prompt)
   if (command && !isHeadless) {
     console.error(`Error: Unknown command or argument "${command}"`);
     console.error("Run 'letta --help' for usage information.");
@@ -1024,41 +1024,18 @@ async function main(): Promise<void> {
 
   // Validate shared mutual-exclusion rules for startup flags.
   try {
-    validateFlagConflicts({
-      guard: specifiedConversationId && specifiedConversationId !== "default",
-      checks: [
-        {
-          when: specifiedAgentId,
-          message: "--conversation cannot be used with --agent",
-        },
-        {
-          when: specifiedAgentName,
-          message: "--conversation cannot be used with --name",
-        },
-        {
-          when: forceNew,
-          message: "--conversation cannot be used with --new-agent",
-        },
-        {
-          when: fromAfFile,
-          message: "--conversation cannot be used with --import",
-        },
-        {
-          when: shouldResume,
-          message: "--conversation cannot be used with --resume",
-        },
-      ],
-    });
-
-    validateFlagConflicts({
-      guard: forceNewConversation,
-      checks: [
-        {
-          when: specifiedConversationId,
-          message: "--new cannot be used with --conversation",
-        },
-        { when: shouldResume, message: "--new cannot be used with --resume" },
-      ],
+    validatePrimaryStartupFlagConflicts({
+      specifiedConversationId,
+      specifiedAgentId,
+      specifiedAgentName,
+      forceNewAgent: forceNew,
+      forceNewConversation,
+      importFile: fromAfFile,
+      shouldResume,
+      stateless: values.stateless,
+      isHeadless,
+      memfs: memfsFlag,
+      memfsStartup: values["memfs-startup"],
     });
   } catch (error) {
     console.error(

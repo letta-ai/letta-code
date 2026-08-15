@@ -431,7 +431,11 @@ function formatRetryEventStatusLines(
   ];
 }
 
-function upsertStatusLine(b: Buffers, id: string, lines: string[]): void {
+export function upsertStatusLine(
+  b: Buffers,
+  id: string,
+  lines: string[],
+): void {
   const existing = b.byId.get(id);
   if (existing?.kind === "status") {
     existing.lines = lines;

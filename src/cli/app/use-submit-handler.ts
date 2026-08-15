@@ -81,9 +81,12 @@ import {
   sampleReflectionArenaComparisonModel,
   startReflectionArenaRun,
 } from "@/cli/helpers/reflection-arena";
+import { finalizeMultiReflectionCompletion } from "@/cli/helpers/reflection-completion";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   finalizeReflectionMemoryWorktreeLaunch,
+  getReflectionLaunchSkippedMessage,
+  getReflectionMergeLaunchOptions,
   launchReflectionSubagent,
   prepareReflectionMemoryWorktreeLaunch,
   releaseReflectionLaunch,
@@ -94,7 +97,6 @@ import {
   buildMultiReflectionPayload,
   buildReflectionAutoPayload,
   buildReflectionSelectorPrompt,
-  finalizeMultiReflectionPayload,
   readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
 import {
@@ -2289,7 +2291,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       parentAgentName: agentName,
                       parentAgentDescription: agentDescription,
                       surface: "letta_code_tui",
-                      model: currentModelId,
                     },
                     onReady: (message, readyRun) => {
                       appendTaskNotificationEvents([message]);
@@ -2315,7 +2316,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     conversationId: compactConversationId,
                     memfsEnabled: isActiveMemfsEnabled(agentId),
                     triggerSource: "compaction-event",
-                    skipPendingWorktreeReminderScan: true,
                     description: AUTO_REFLECTION_DESCRIPTION,
                     completionConversationId: () => conversationIdRef.current,
                     recompileByConversation:
@@ -2329,7 +2329,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       parentAgentName: agentName,
                       parentAgentDescription: agentDescription,
                       surface: "letta_code_tui",
-                      model: currentModelId,
                     },
                   });
                 }
@@ -3110,7 +3109,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 parentAgentName: agentName,
                 parentAgentDescription: agentDescription,
                 surface: "letta_code_tui",
-                model: currentModelId,
               },
               onReady: (message, readyRun) => {
                 appendTaskNotificationEvents([message]);
@@ -3133,7 +3131,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           return { submitted: true };
         }
-
         // Special handling for /reflect command - manually launch reflection subagent
         if (trimmed === "/reflect" || trimmed.startsWith("/reflect ")) {
           const cmd = commandRunner.start(msg, "Launching reflection agent...");
@@ -3173,7 +3170,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     parentAgentName: agentName,
                     parentAgentDescription: agentDescription,
                     surface: "letta_code_tui",
-                    model: currentModelId,
                   },
                   onReady: (message, readyRun) => {
                     appendTaskNotificationEvents([message]);
@@ -3186,7 +3182,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   },
                 });
                 if (!arenaResult.launched) {
-                  cmd.fail("No new transcript content to reflect on.");
+                  cmd.fail(
+                    getReflectionLaunchSkippedMessage(arenaResult.reason) ??
+                      "Failed to start reflection arena.",
+                  );
                   return { submitted: true };
                 }
                 cmd.finish(
@@ -3215,21 +3214,15 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   parentAgentName: agentName,
                   parentAgentDescription: agentDescription,
                   surface: "letta_code_tui",
-                  model: currentModelId,
                 },
               });
 
               if (!result.launched) {
-                if (result.reason === "already_active") {
-                  cmd.fail(
-                    "A reflection agent is already running in the background.",
-                  );
-                } else if (result.reason === "no_payload") {
-                  cmd.fail("No new transcript content to reflect on.");
-                } else if (result.reason === "memfs_disabled") {
-                  cmd.fail(
-                    "Memory filesystem is not enabled. Use /remember instead.",
-                  );
+                const skippedMessage = getReflectionLaunchSkippedMessage(
+                  result.reason,
+                );
+                if (skippedMessage) {
+                  cmd.fail(skippedMessage);
                 } else {
                   const errorDetails = formatErrorDetails(
                     result.error ?? "Unknown error",
@@ -3346,6 +3339,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                           success: reflectionSuccess,
                           error: reflectionError,
                           agentId: reflectionAgentId,
+                          model: reflectionModel,
                         }) => {
                           try {
                             telemetry.trackReflectionEnd(
@@ -3355,6 +3349,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                                 subagentId: reflectionAgentId ?? undefined,
                                 conversationId: reflectionConversationId,
                                 error: reflectionError,
+                                model: reflectionModel,
                               },
                             );
                             const { completionSuccess, completionMessage } =
@@ -3365,6 +3360,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                                 agentId,
                                 conversationId: conversationIdRef.current,
                                 subagentAgentId: reflectionAgentId ?? undefined,
+                                model: reflectionModel,
+                                ...getReflectionMergeLaunchOptions(agentId),
+                                telemetryContext: { triggerSource: "manual" },
                                 recompileByConversation:
                                   systemPromptRecompileByConversationRef.current,
                                 recompileQueuedByConversation:
@@ -3372,7 +3370,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                                 logRecompileFailure: (message) =>
                                   debugWarn("memory", message),
                               });
-                            await finalizeMultiReflectionPayload(
+                            await finalizeMultiReflectionCompletion(
                               agentId,
                               autoReflectionPayload.manifest,
                               completionSuccess,
@@ -3385,7 +3383,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       });
                       reflectionReservationDelegated = true;
                       finalReflectionSpawned = true;
-
                       telemetry.trackReflectionStart("manual", {
                         conversationId: reflectionConversationId,
                         startMessageId: autoReflectionPayload.startMessageId,
@@ -3446,7 +3443,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 agentId,
                 instruction: reflectArgs.instruction,
               });
-
             const {
               spawnBackgroundSubagentTask,
               waitForBackgroundSubagentAgentId,
@@ -3466,12 +3462,14 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 success,
                 error,
                 agentId: reflectionAgentId,
+                model: reflectionModel,
               }) => {
                 try {
                   telemetry.trackReflectionEnd("manual", success, {
                     subagentId: reflectionAgentId ?? undefined,
                     conversationId: reflectionConversationId,
                     error,
+                    model: reflectionModel,
                   });
                   const { completionSuccess, completionMessage } =
                     await finalizeReflectionMemoryWorktreeLaunch({
@@ -3481,6 +3479,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       agentId,
                       conversationId: conversationIdRef.current,
                       subagentAgentId: reflectionAgentId ?? undefined,
+                      model: reflectionModel,
+                      ...getReflectionMergeLaunchOptions(agentId),
+                      telemetryContext: { triggerSource: "manual" },
                       recompileByConversation:
                         systemPromptRecompileByConversationRef.current,
                       recompileQueuedByConversation:
@@ -3488,7 +3489,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       logRecompileFailure: (message) =>
                         debugWarn("memory", message),
                     });
-                  await finalizeMultiReflectionPayload(
+                  await finalizeMultiReflectionCompletion(
                     agentId,
                     reflectionPayload.manifest,
                     completionSuccess,
@@ -3510,7 +3511,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               startMessageId: reflectionPayload.startMessageId,
               endMessageId: reflectionPayload.endMessageId,
             });
-
             cmd.finish(
               `Reflecting on ${reflectionPayload.manifest.transcripts.length} transcript(s). View the payload here: ${reflectionPayload.payloadPath}`,
               true,

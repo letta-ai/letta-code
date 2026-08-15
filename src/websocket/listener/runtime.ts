@@ -168,7 +168,9 @@ export function evictConversationRuntimeIfIdle(
     runtime.pendingInterruptedContext !== null ||
     (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
     runtime.queuedMessagesByItemId.size > 0 ||
-    runtime.queueRuntime?.length > 0
+    runtime.queueRuntime?.length > 0 ||
+    (runtime.workspaceSandbox !== undefined &&
+      runtime.listener.connectionIdsByRuntimeKey.has(runtime.key))
   ) {
     return false;
   }
@@ -253,10 +255,11 @@ export function createConversationRuntime(
     agentId: normalizedAgentId,
     conversationId: normalizedConversationId,
     skillSources: listener.skillSourcesByConversation.get(runtimeKey)?.slice(),
-    activeChannelTurn: null,
+    workspaceSandbox: undefined,
     activeConnectionId: null,
     turnLifecycle,
     messageQueue: Promise.resolve(),
+    acceptedInputDispositions: new Map(),
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
     get lastStopReason() {
@@ -289,7 +292,10 @@ export function createConversationRuntime(
     currentToolset: null,
     currentToolsetPreference: "auto",
     currentLoadedTools: [],
+    currentAvailableSkills: [],
+    transientChannelRuntimeTools: false,
     pendingApprovalBatchByToolCallId: new Map(),
+    approvalMessageIdByToolCallId: new Map(),
     pendingInterruptedResults: null,
     pendingInterruptedContext: null,
     continuationEpoch: 0,
@@ -356,6 +362,7 @@ export function clearConversationRuntimeState(
     conversationId: runtime.conversationId,
   });
   runtime.pendingApprovalBatchByToolCallId.clear();
+  runtime.approvalMessageIdByToolCallId.clear();
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;

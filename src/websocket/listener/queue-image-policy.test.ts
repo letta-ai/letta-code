@@ -5,14 +5,14 @@ import { createRuntime } from "./lifecycle";
 import { consumeQueuedTurn } from "./queue";
 
 describe("listener queue image policy", () => {
-  test("does not coalesce channel and interactive messages", () => {
+  test("does not coalesce messages with image content", () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
       "agent-1",
       "conv-1",
     );
     const interactiveOtid = "cm-interactive-image";
-    const channelOtid = "cm-channel-text";
+    const followUpOtid = "cm-follow-up-text";
 
     expect(
       enqueueInboundUserMessage(runtime, {
@@ -44,38 +44,28 @@ describe("listener queue image policy", () => {
         type: "message",
         agentId: "agent-1",
         conversationId: "conv-1",
-        channelTurnSources: [
-          {
-            channel: "slack",
-            chatId: "C123",
-            messageId: "1712345.0003",
-            agentId: "agent-1",
-            conversationId: "conv-1",
-          },
-        ],
+        noCoalesce: true,
         messages: [
           {
             role: "user",
-            content: "channel follow-up",
-            otid: channelOtid,
-            client_message_id: channelOtid,
+            content: "follow-up",
+            otid: followUpOtid,
+            client_message_id: followUpOtid,
           },
         ],
       }),
     ).toBe(true);
 
-    const interactiveBatch = consumeQueuedTurn(runtime);
-    expect(interactiveBatch?.dequeuedBatch.items).toHaveLength(1);
-    expect(interactiveBatch?.queuedTurn.channelTurnSources).toBeUndefined();
-    expect(interactiveBatch?.queuedTurn.messages[0]).toMatchObject({
+    const firstBatch = consumeQueuedTurn(runtime);
+    expect(firstBatch?.dequeuedBatch.items).toHaveLength(1);
+    expect(firstBatch?.queuedTurn.messages[0]).toMatchObject({
       otid: interactiveOtid,
     });
 
-    const channelBatch = consumeQueuedTurn(runtime);
-    expect(channelBatch?.dequeuedBatch.items).toHaveLength(1);
-    expect(channelBatch?.queuedTurn.channelTurnSources).toHaveLength(1);
-    expect(channelBatch?.queuedTurn.messages[0]).toMatchObject({
-      otid: channelOtid,
+    const secondBatch = consumeQueuedTurn(runtime);
+    expect(secondBatch?.dequeuedBatch.items).toHaveLength(1);
+    expect(secondBatch?.queuedTurn.messages[0]).toMatchObject({
+      otid: followUpOtid,
     });
   });
 });

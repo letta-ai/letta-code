@@ -1,16 +1,22 @@
-import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
+  getScopedMemoryFilesystemRoot,
+  isLettaCloud,
+} from "@/agent/memory-filesystem";
+import {
+  buildReflectionIntegrationMemoryScope,
   buildReflectionMemoryScope,
   createReflectionMemoryWorktree,
   finalizeReflectionMemoryWorktree,
-  integratePendingReflectionMemoryWorktrees,
+  inspectReflectionMemoryWorktree,
   type ReflectionMemoryWorktree,
   type ReflectionMemoryWorktreeFinalizeResult,
   reflectionIntegrationConsumesTranscript,
-  reflectionIntegrationNeedsReminder,
   reflectionIntegrationShouldRecompile,
+  reflectionMemoryParentHasChanges,
 } from "@/agent/memory-worktree";
 import { getSubagents } from "@/agent/subagent-state";
+import { getBackend } from "@/backend";
+import { retrieveCloudReflectionConfig } from "@/backend/api/reflection";
 import {
   getReflectionSettings,
   type ReflectionSettings,
@@ -21,20 +27,37 @@ import {
   handleMemorySubagentCompletion,
   type MemorySubagentSuccessMessageOverride,
 } from "@/cli/helpers/memory-subagent-completion";
+import { finalizeAutoReflectionCompletion } from "@/cli/helpers/reflection-completion";
+import {
+  buildReflectionIntegrationConversationTitle,
+  buildReflectionIntegrationPrompt,
+} from "@/cli/helpers/reflection-integration";
 import {
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
-  finalizeAutoReflectionPayload,
   getReflectionTranscriptState,
 } from "@/cli/helpers/reflection-transcript";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
-import { telemetry } from "@/telemetry";
+import { type ReflectionWorktreeCleanupOutcome, telemetry } from "@/telemetry";
 import { maybeSendReflectionThresholdFeedback } from "@/telemetry/reflection-threshold-feedback";
 import { debugLog, debugWarn } from "@/utils/debug";
-import { addToMessageQueue } from "@/utils/message-queue-bridge";
 
 export const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
+
+export function getReflectionMergeLaunchOptions(agentId: string) {
+  const settings = getReflectionSettings(agentId);
+  return {
+    mergePolicy: settings.merge ?? "auto",
+    mergeInstructions: settings.mergeInstructions,
+  } as const;
+}
+
+export function getReflectionFinalizationContext(agentId: string) {
+  return {
+    agentId,
+    ...getReflectionMergeLaunchOptions(agentId),
+  } as const;
+}
 
 /** Max background wait for the reflection subagent's agent ID before emitting `reflection_start` (previously 1s inline, timed out ~100% of the time). */
 export const REFLECTION_AGENT_ID_WAIT_MS = 30_000;
@@ -48,9 +71,37 @@ export type ReflectionLaunchTriggerSource =
 
 export type ReflectionLaunchSkippedReason =
   | "memfs_disabled"
+  | "cutover"
   | "already_active"
+  | "parent_dirty"
   | "no_payload"
   | "error";
+
+export function getReflectionLaunchSkippedMessage(
+  reason: ReflectionLaunchSkippedReason,
+  surface: "cli" | "listener" = "cli",
+): string | undefined {
+  switch (reason) {
+    case "cutover":
+      return "Reflection is managed by Letta Cloud for this agent.";
+    case "already_active":
+      return surface === "listener"
+        ? "A reflection agent is already running for this conversation."
+        : "A reflection agent is already running in the background.";
+    case "memfs_disabled":
+      return surface === "listener"
+        ? "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead."
+        : "Memory filesystem is not enabled. Use /remember instead.";
+    case "no_payload":
+      return surface === "listener"
+        ? "No new transcript content to reflect on for this conversation."
+        : "No new transcript content to reflect on.";
+    case "parent_dirty":
+      return "Parent memory has uncommitted changes; commit or discard them before reflecting.";
+    case "error":
+      return undefined;
+  }
+}
 
 export function drainReflectionTelemetry(): void {
   telemetry.drain().catch((error) => {
@@ -64,8 +115,37 @@ export function drainReflectionTelemetry(): void {
 export interface ReflectionFeedbackContext {
   parentAgentName?: string | null;
   parentAgentDescription?: string | null;
-  model?: string | null;
   surface?: string;
+}
+
+function getReflectionWorktreeCleanupOutcome(
+  integration: ReflectionMemoryWorktreeFinalizeResult,
+):
+  | {
+      outcome: ReflectionWorktreeCleanupOutcome;
+      integrationStatus:
+        | "parent_dirty"
+        | "merge_conflict"
+        | "dirty_uncommitted"
+        | "failed";
+    }
+  | undefined {
+  switch (integration.status) {
+    case "parent_dirty":
+      return { outcome: "parent_dirty", integrationStatus: "parent_dirty" };
+    case "merge_conflict":
+      return { outcome: "merge_conflict", integrationStatus: "merge_conflict" };
+    case "dirty_uncommitted":
+      return {
+        outcome: "reflection_worktree_dirty",
+        integrationStatus: "dirty_uncommitted",
+      };
+    case "failed":
+      return { outcome: "subagent_failed", integrationStatus: "failed" };
+    case "merged":
+    case "no_changes":
+      return undefined;
+  }
 }
 
 export function emitReflectionRunStart(params: {
@@ -95,6 +175,7 @@ export function emitReflectionRunEnd(params: {
   error?: string;
   stepCount?: number;
   durationMs?: number;
+  model?: string | null;
   feedbackContext?: ReflectionFeedbackContext;
 }): void {
   telemetry.trackReflectionEnd(params.triggerSource, params.success, {
@@ -103,7 +184,7 @@ export function emitReflectionRunEnd(params: {
     error: params.error,
     stepCount: params.stepCount,
     durationMs: params.durationMs,
-    model: params.feedbackContext?.model,
+    model: params.model,
   });
   drainReflectionTelemetry();
   maybeSendReflectionThresholdFeedback({
@@ -118,7 +199,7 @@ export function emitReflectionRunEnd(params: {
     stepCount: params.stepCount,
     durationMs: params.durationMs,
     surface: params.feedbackContext?.surface,
-    model: params.feedbackContext?.model,
+    model: params.model,
   });
 }
 
@@ -155,7 +236,6 @@ export interface ReflectionLaunchOptions {
   reflectionPromptOverride?: string;
   /** Replace the reflection subagent's system prompt/persona (advanced). */
   reflectionSystemPromptOverride?: string;
-  skipPendingWorktreeReminderScan?: boolean;
   completionConversationId?: string | (() => string);
   recompileByConversation: Map<string, Promise<void>>;
   recompileQueuedByConversation: Set<string>;
@@ -165,6 +245,7 @@ export interface ReflectionLaunchOptions {
       success: boolean;
       error?: string;
       reflectionAgentId?: string;
+      integrationConversationId?: string;
     },
   ) => void | Promise<void>;
   feedbackContext?: ReflectionFeedbackContext;
@@ -282,106 +363,93 @@ function getReflectionCompletionMessage(
     case "no_changes":
       return ({ action }) =>
         `${action}; no durable memory changes were needed.`;
-    case "pending_conflict":
-      return ({ action }) =>
-        `${action}; memory merge will finish after conflicts are resolved.`;
-    case "pending_manual_merge":
-      return ({ action }) =>
-        `${action}; memory merge will finish after pending memory changes are resolved.`;
+    case "parent_dirty":
+      return "Tried to reflect, but parent memory had uncommitted changes; will retry later.";
+    case "merge_conflict":
+      return "Tried to reflect, but memory updates conflicted with newer changes; will retry later.";
     case "dirty_uncommitted":
       return "Tried to reflect, but memory changes were not committed cleanly; will retry later.";
     case "failed":
-      return "Tried to reflect, but memory updates were not completed cleanly; will retry later.";
+      return integration.failurePhase === "integration"
+        ? `${integration.summary} Will retry later.`
+        : "Tried to reflect, but memory updates were not completed cleanly; will retry later.";
   }
 }
 
-function escapeTaskNotificationSummary(summary: string): string {
-  return summary
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+interface ReflectionIntegrationOutcome {
+  success: boolean;
+  error?: string;
+  conversationId?: string;
 }
 
-function formatReflectionIntegrationNotification(reminder: string): string {
-  return `<task-notification>
-<summary>${escapeTaskNotificationSummary(
-    "Memory reflection merge is pending.",
-  )}</summary>
-<result>
-${reminder}
-</result>
-</task-notification>`;
-}
+type RunExplicitReflectionIntegration = typeof runExplicitReflectionIntegration;
 
-export function formatReflectionIntegrationReminder(
-  integration: ReflectionMemoryWorktreeFinalizeResult,
-): string {
-  const resolveCommands = `cd ${JSON.stringify(integration.parentMemoryDir)}
-git status
-reflection_branch=${JSON.stringify(integration.reflectionBranch)}
-reflection_subject=$(git log -1 --pretty=%s "$reflection_branch")
-reflection_summary=$(printf '%s' "$reflection_subject" | sed -E 's/^[a-z]+(\\([^)]+\\))?!?:[[:space:]]*//I')
-merge_message="merge(reflection): \${reflection_summary:-reflection memory updates}"
-# If parent MemFS has unrelated changes, inspect changes, then commit or discard them.
-# Then merge the reflection branch and resolve conflicts if prompted:
-git merge "$reflection_branch" -m "$merge_message" || {
-  git status
-  echo "Resolve conflicted memory files, then stage specific resolved files and run: git commit --no-edit"
-  exit 1
-}
-
-git worktree remove ${JSON.stringify(integration.reflectionWorktreeDir)}
-git branch -d "$reflection_branch"`;
-
-  const reminder = `${SYSTEM_REMINDER_OPEN}
-BACKGROUND MEMORY MAINTENANCE: A reflection memory merge is pending.
-
-A background reflection completed and produced committed memory updates, but the harness could not merge them into your main MemFS automatically.
-
-Do not interrupt the user's current request just because of this reminder, and do not invoke a skill solely because this reminder arrived. If you are already responding to the user, finish that response first. Resolve this later when appropriate, or when the user asks you to handle pending memory merges.
-
-Parent memory dir: ${integration.parentMemoryDir}
-Reflection branch: ${integration.reflectionBranch}
-Reflection worktree: ${integration.reflectionWorktreeDir}
-Status: ${integration.summary}
-
-When you decide to resolve it, use standard git commands like:
-\`\`\`bash
-${resolveCommands}
-\`\`\`
-
-This reminder is one-time. The transcript was already reflected, so do not launch another reflection for the same content just to resolve this merge.
-${SYSTEM_REMINDER_CLOSE}`;
-  return formatReflectionIntegrationNotification(reminder);
-}
-
-function queueReflectionIntegrationReminder(params: {
+async function runExplicitReflectionIntegration(params: {
   agentId: string;
   conversationId: string;
-  integration: ReflectionMemoryWorktreeFinalizeResult;
-}): void {
-  addToMessageQueue({
-    kind: "task_notification",
-    text: formatReflectionIntegrationReminder(params.integration),
-    agentId: params.agentId,
-    conversationId: params.conversationId,
+  worktree: ReflectionMemoryWorktree;
+  instructions?: string;
+  reflectionSubagentId?: string;
+}): Promise<ReflectionIntegrationOutcome> {
+  const {
+    spawnBackgroundSubagentTask,
+    waitForBackgroundSubagentConversationId,
+  } = await import("@/tools/impl/task");
+  return await new Promise<ReflectionIntegrationOutcome>((resolve) => {
+    try {
+      const { subagentId } = spawnBackgroundSubagentTask({
+        subagentType: "general-purpose",
+        displayType: "reflection integration",
+        prompt: buildReflectionIntegrationPrompt({
+          worktree: params.worktree,
+          instructions: params.instructions,
+          reflectionSubagentId: params.reflectionSubagentId,
+        }),
+        description: "Integrate reflection memory changes",
+        existingAgentId: params.agentId,
+        memoryScope: buildReflectionIntegrationMemoryScope(params.worktree),
+        parentScope: {
+          agentId: params.agentId,
+          conversationId: params.conversationId,
+        },
+        silentCompletion: true,
+        onComplete: (result) => {
+          resolve({
+            success: result.success,
+            error: result.success
+              ? undefined
+              : (result.error ?? "Reflection integration did not complete"),
+            conversationId: result.conversationId,
+          });
+        },
+      });
+      void waitForBackgroundSubagentConversationId(
+        subagentId,
+        REFLECTION_AGENT_ID_WAIT_MS,
+      )
+        .then(async (conversationId) => {
+          if (!conversationId) return;
+          await getBackend().updateConversation(conversationId, {
+            summary: buildReflectionIntegrationConversationTitle(
+              params.reflectionSubagentId,
+            ),
+          });
+        })
+        .catch((error) => {
+          debugWarn(
+            "memory",
+            `Failed to title reflection integration conversation: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        });
+    } catch (error) {
+      resolve({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
-}
-
-export async function queuePendingReflectionWorktreeReminders(params: {
-  agentId: string;
-  conversationId: string;
-}): Promise<void> {
-  const memoryDir = getScopedMemoryFilesystemRoot(params.agentId);
-  const unresolvedIntegrations =
-    await integratePendingReflectionMemoryWorktrees(memoryDir);
-  for (const integration of unresolvedIntegrations) {
-    queueReflectionIntegrationReminder({
-      agentId: params.agentId,
-      conversationId: params.conversationId,
-      integration,
-    });
-  }
 }
 
 export async function prepareReflectionMemoryWorktreeLaunch(params: {
@@ -423,6 +491,18 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   conversationId: string;
   subagentAgentId?: string;
   subagentType?: "reflection";
+  knownNoChanges?: boolean;
+  model?: string | null;
+  mergePolicy?: "auto" | "explicit";
+  mergeInstructions?: string;
+  runExplicitIntegration?: RunExplicitReflectionIntegration;
+  updateIntegrationConversation?: (
+    conversationId: string,
+    body: { summary: string; archived: boolean },
+  ) => Promise<unknown>;
+  telemetryContext?: {
+    triggerSource: ReflectionLaunchTriggerSource;
+  };
   recompileByConversation: Map<string, Promise<void>>;
   recompileQueuedByConversation: Set<string>;
   logRecompileFailure?: (message: string) => void;
@@ -430,20 +510,52 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   integration: ReflectionMemoryWorktreeFinalizeResult;
   completionSuccess: boolean;
   completionMessage: string;
+  integrationConversationId?: string;
 }> {
+  let integrationRun: ReflectionIntegrationOutcome | undefined;
+  if (params.subagentSuccess && params.mergePolicy === "explicit") {
+    const state = params.knownNoChanges
+      ? { commitCount: 0, dirty: false }
+      : await inspectReflectionMemoryWorktree(params.worktree);
+    if (state.commitCount > 0 || state.dirty) {
+      integrationRun = await (
+        params.runExplicitIntegration ?? runExplicitReflectionIntegration
+      )({
+        agentId: params.agentId,
+        conversationId: params.conversationId,
+        worktree: params.worktree,
+        instructions: params.mergeInstructions,
+        reflectionSubagentId: params.subagentAgentId,
+      });
+    }
+  }
+
   const integration = await finalizeReflectionMemoryWorktree(params.worktree, {
     shouldMerge: params.subagentSuccess,
+    knownNoChanges: params.knownNoChanges,
+    requireAlreadyMerged:
+      params.mergePolicy === "explicit" && integrationRun !== undefined,
+    failureSummary: integrationRun?.error
+      ? `Reflection integration did not complete (${integrationRun.error}); the worktree was cleaned up so the transcript can be retried.`
+      : undefined,
   });
   const completionSuccess =
     params.subagentSuccess &&
     reflectionIntegrationConsumesTranscript(integration);
 
-  if (reflectionIntegrationNeedsReminder(integration)) {
-    queueReflectionIntegrationReminder({
-      agentId: params.agentId,
-      conversationId: params.conversationId,
-      integration,
+  const cleanup = getReflectionWorktreeCleanupOutcome(integration);
+  if (cleanup) {
+    telemetry.trackReflectionWorktreeCleanup({
+      outcome: cleanup.outcome,
+      integration_status: cleanup.integrationStatus,
+      trigger_source: params.telemetryContext?.triggerSource,
+      subagent_id: params.subagentAgentId,
+      conversation_id: params.conversationId,
+      reflection_worktree_id: params.worktree.id,
+      commit_count: integration.commitCount,
+      model: params.model ?? undefined,
     });
+    drainReflectionTelemetry();
   }
 
   const completionMessage = await handleMemorySubagentCompletion(
@@ -464,11 +576,64 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
     },
   );
 
-  return { integration, completionSuccess, completionMessage };
+  if (completionSuccess && integrationRun?.conversationId) {
+    try {
+      const body = {
+        summary: buildReflectionIntegrationConversationTitle(
+          params.subagentAgentId,
+        ),
+        archived: true,
+      };
+      if (params.updateIntegrationConversation) {
+        await params.updateIntegrationConversation(
+          integrationRun.conversationId,
+          body,
+        );
+      } else {
+        await getBackend().updateConversation(
+          integrationRun.conversationId,
+          body,
+        );
+      }
+    } catch (error) {
+      debugWarn(
+        "memory",
+        `Failed to archive reflection integration conversation: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  return {
+    integration,
+    completionSuccess,
+    completionMessage,
+    integrationConversationId: integrationRun?.conversationId,
+  };
+}
+
+async function isReflectionCutover(agentId: string): Promise<boolean> {
+  try {
+    if (!(await isLettaCloud())) return false;
+    const config = await retrieveCloudReflectionConfig(agentId);
+    return config.cutover === true;
+  } catch (error) {
+    debugWarn(
+      "memory",
+      `Failed to check Cloud reflection cutover: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return false;
+  }
 }
 
 export async function launchReflectionSubagent(
   options: ReflectionLaunchOptions,
+  dependencies: {
+    isCutover?: (agentId: string) => Promise<boolean>;
+  } = {},
 ): Promise<ReflectionLaunchResult> {
   const {
     agentId,
@@ -480,27 +645,19 @@ export async function launchReflectionSubagent(
     recompileQueuedByConversation,
     onCompletionMessage,
   } = options;
+  const reflectionSettings =
+    options.reflectionSettings ?? getReflectionSettings(agentId);
 
   if (!memfsEnabled) {
     return { launched: false, reason: "memfs_disabled" };
   }
 
-  if (
-    triggerSource === "compaction-event" &&
-    !options.skipPendingWorktreeReminderScan
-  ) {
-    try {
-      await queuePendingReflectionWorktreeReminders({
-        agentId,
-        conversationId,
-      });
-    } catch (error) {
-      debugWarn(
-        "memory",
-        "Failed to queue pending reflection worktree reminders after compaction:",
-        error instanceof Error ? error.message : String(error),
-      );
-    }
+  if (await (dependencies.isCutover ?? isReflectionCutover)(agentId)) {
+    debugLog(
+      "memory",
+      `Skipping reflection launch (${triggerSource}) because server-side reflection owns this agent`,
+    );
+    return { launched: false, reason: "cutover" };
   }
 
   if (!tryReserveReflectionLaunch(agentId)) {
@@ -517,6 +674,16 @@ export async function launchReflectionSubagent(
   let releaseOnComplete = false;
   let preparedWorktree: ReflectionMemoryWorktree | undefined;
   try {
+    const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+    if (await reflectionMemoryParentHasChanges(memoryDir)) {
+      debugLog(
+        "memory",
+        `Skipping reflection launch (${triggerSource}) because parent memory has uncommitted changes`,
+      );
+      releaseReflectionLaunch(agentId);
+      return { launched: false, reason: "parent_dirty" };
+    }
+
     const autoPayload = await buildAutoReflectionPayload(
       agentId,
       conversationId,
@@ -549,7 +716,7 @@ export async function launchReflectionSubagent(
         conversationId,
         startMessageId: autoPayload.startMessageId,
         endMessageId: autoPayload.endMessageId,
-        model: options.feedbackContext?.model,
+        model: options.model,
       });
     };
 
@@ -567,6 +734,7 @@ export async function launchReflectionSubagent(
         success,
         error,
         agentId: reflectionAgentId,
+        model: reflectionModel,
         stepCount,
         durationMs,
       }) => {
@@ -580,36 +748,46 @@ export async function launchReflectionSubagent(
             error,
             stepCount,
             durationMs,
+            model: reflectionModel,
             feedbackContext: options.feedbackContext,
           });
           const completionConversationId = resolveCompletionConversationId(
             options.completionConversationId,
             conversationId,
           );
-          const { completionSuccess, completionMessage } =
-            await finalizeReflectionMemoryWorktreeLaunch({
-              worktree,
-              subagentSuccess: success,
-              subagentError: error,
-              agentId,
-              conversationId: completionConversationId,
-              subagentAgentId: reflectionAgentId ?? undefined,
-              recompileByConversation,
-              recompileQueuedByConversation,
-              logRecompileFailure: (message) => debugWarn("memory", message),
-            });
+          const {
+            completionSuccess,
+            completionMessage,
+            integrationConversationId,
+          } = await finalizeReflectionMemoryWorktreeLaunch({
+            worktree,
+            subagentSuccess: success,
+            subagentError: error,
+            agentId,
+            conversationId: completionConversationId,
+            subagentAgentId: reflectionAgentId ?? undefined,
+            model: reflectionModel,
+            mergePolicy: reflectionSettings.merge,
+            mergeInstructions: reflectionSettings.mergeInstructions,
+            telemetryContext: { triggerSource },
+            recompileByConversation,
+            recompileQueuedByConversation,
+            logRecompileFailure: (message) => debugWarn("memory", message),
+          });
 
-          await finalizeAutoReflectionPayload(
+          await finalizeAutoReflectionCompletion(
             agentId,
             conversationId,
             autoPayload.payloadPath,
             autoPayload.endSnapshotLine,
+            autoPayload.endMessageId,
             completionSuccess,
           );
           await onCompletionMessage?.(completionMessage, {
             success: completionSuccess,
             error,
             reflectionAgentId: reflectionAgentId ?? undefined,
+            integrationConversationId,
           });
         } finally {
           releaseReflectionLaunch(agentId);

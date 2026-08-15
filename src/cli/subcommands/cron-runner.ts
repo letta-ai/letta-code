@@ -5,12 +5,14 @@
  * - "local": the runtime-local scheduler (~/.letta/crons.json), executed by
  *   the WS listener process on this device. Dies with the device/sandbox.
  * - "cloud": durable Cloud schedules (`/v1/agents/:id/schedule`), fired by a
- *   cloud worker into the agent's managed cloud sandbox.
+ *   cloud worker into a target listener or the agent's managed Cloud sandbox.
  *
- * Default policy: cloud agents get the cloud runner everywhere (laptop, VPS,
- * managed sandbox) — durability is the default. `--runner local` is the
- * explicit opt-in for schedules that must execute on a specific machine
- * (e.g. they need that device's filesystem). Local-backend agents
+ * Default policy: cloud agents get the cloud runner everywhere. When no runner
+ * or computer is explicit, creation preserves execution locality: an external
+ * listener becomes the schedule's target, and a managed sandbox runtime keeps
+ * the untargeted schedule (which already fires in the agent's Cloud sandbox).
+ * `--runner cloud` deliberately selects the managed Cloud sandbox;
+ * `--runner local` selects process-local storage. Local-backend agents
  * (`agent-local-*`) always use the local runner, and servers that don't serve
  * the Cloud schedule routes (self-hosted OSS core) fall back to it.
  *
@@ -19,6 +21,11 @@
  * LETTA_BASE_URL at a localhost proxy that forwards to the Letta API, so URL
  * shape says nothing about capability.
  */
+
+import {
+  type EnvironmentConnection,
+  isEnvironmentOnline,
+} from "@/backend/api/environments";
 
 export type CronRunner = "local" | "cloud";
 
@@ -99,7 +106,7 @@ export function resolveCronRunner(
 /**
  * Synthetic ids the Desktop environment proxy injects into
  * `letta environments list` responses. Neither is a targetable device:
- * - "__letta_cloud__": the synthetic "Cloud" row (the default sandbox target)
+ * - "__letta_cloud__": the synthetic "Cloud" row (the sandbox target)
  * - "local": the synthetic offline placeholder when no local device is registered
  * Values mirror CLOUD_DEVICE_ID / LOCAL_CONNECTION_ID in the desktop app.
  */
@@ -129,7 +136,7 @@ export function validateTargetDevice(
     return {
       ok: false,
       error:
-        '"Cloud" is the default execution target, not a computer. Omit --computer to run in the agent\'s cloud sandbox.',
+        '"Cloud" is not a computer. Pass --runner cloud to run in the agent\'s Cloud sandbox.',
     };
   }
 
@@ -149,6 +156,74 @@ export function validateTargetDevice(
   }
 
   return { ok: true };
+}
+
+/**
+ * How a default (no --runner/--computer) schedule should execute:
+ * - "device": Cloud schedule targeting the current runtime's device so it
+ *   keeps executing where it was created.
+ * - "cloud-sandbox": untargeted Cloud schedule; it fires in the agent's
+ *   managed Cloud sandbox.
+ * - "local-fallback": the current runtime is not reachable by Cloud
+ *   scheduling, so the schedule should be stored locally instead — that is
+ *   the only way it can keep executing here.
+ */
+export type InferredTargetResolution =
+  | { kind: "device" }
+  | { kind: "cloud-sandbox" }
+  | { kind: "local-fallback"; reason: string };
+
+/**
+ * A default schedule preserves the current turn's execution locality: work
+ * scheduled from a runtime should keep running in that runtime, so a
+ * follow-up never races the active conversation from a second execution
+ * environment (the two don't share a turn queue).
+ *
+ * A managed-sandbox runtime (`sandbox-*` device id) resolves to
+ * "cloud-sandbox": an untargeted schedule already executes in the agent's
+ * managed sandbox, so the untargeted default IS locality-preserving there.
+ * The sandbox check must come first — sandbox rows are registered and
+ * online in the environments registry, but individual sandboxes get
+ * retired and recreated, so pinning one as a device target would be wrong.
+ *
+ * A runtime that is not a live registered external listener (desktop-local
+ * proxy connections, unregistered installations, offline rows) cannot be
+ * reached by the Cloud scheduler at all, so the locality-preserving answer
+ * is "local-fallback": store the schedule in this computer's local
+ * scheduler. The caller surfaces the durability tradeoff to the user.
+ */
+export async function resolveInferredTargetDevice(
+  deviceId: string,
+  lookupEnvironment: () => Promise<EnvironmentConnection | null>,
+): Promise<InferredTargetResolution> {
+  if (deviceId.startsWith("sandbox-")) {
+    return { kind: "cloud-sandbox" };
+  }
+
+  const environment = await lookupEnvironment();
+  const basicValidity = validateTargetDevice(deviceId, environment);
+  if (!basicValidity.ok) {
+    return {
+      kind: "local-fallback",
+      reason: "this computer is not connected to your Letta account",
+    };
+  }
+
+  if (!environment) {
+    return {
+      kind: "local-fallback",
+      reason: "this computer is not connected to your Letta account",
+    };
+  }
+
+  if (!isEnvironmentOnline(environment)) {
+    return {
+      kind: "local-fallback",
+      reason: "this computer's connection to Letta is not currently online",
+    };
+  }
+
+  return { kind: "device" };
 }
 
 // ── Cloud payload mapping ───────────────────────────────────────────

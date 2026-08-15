@@ -1,11 +1,22 @@
-import { QueueRuntime } from "@/queue/queue-runtime";
-import { scheduleQueueEmit } from "./protocol-outbound";
+import { type QueueItem, QueueRuntime } from "@/queue/queue-runtime";
+import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
 import { getQueueItemScope, getQueueItemsScope } from "./queue";
+import { scheduleQueueEmit } from "./queue-update-outbound";
 import {
   evictConversationRuntimeIfIdle,
   getOrCreateConversationRuntime,
 } from "./runtime";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
+
+function queueRemovalTransition(
+  item: QueueItem,
+  disposition: QueueRemovalTransition["disposition"],
+): QueueRemovalTransition {
+  return {
+    client_message_id: item.clientMessageId ?? `cm-${item.id}`,
+    disposition,
+  };
+}
 
 export function ensureConversationQueueRuntime(
   listener: ListenerRuntime,
@@ -22,7 +33,11 @@ export function ensureConversationQueueRuntime(
       },
       onDequeued: (batch) => {
         runtime.pendingTurns = batch.queueLenAfter;
-        scheduleQueueEmit(listener, getQueueItemsScope(batch.items));
+        scheduleQueueEmit(
+          listener,
+          getQueueItemsScope(batch.items),
+          batch.items.map((item) => queueRemovalTransition(item, "dequeued")),
+        );
       },
       onBlocked: () => {
         scheduleQueueEmit(listener, {
@@ -32,13 +47,27 @@ export function ensureConversationQueueRuntime(
       },
       onCleared: (_reason, _clearedCount, items) => {
         runtime.pendingTurns = 0;
-        scheduleQueueEmit(listener, getQueueItemsScope(items));
+        scheduleQueueEmit(
+          listener,
+          getQueueItemsScope(items),
+          items.map((item) => queueRemovalTransition(item, "cancelled")),
+        );
         evictConversationRuntimeIfIdle(runtime);
       },
       onDropped: (item, _reason, queueLen) => {
         runtime.pendingTurns = queueLen;
         runtime.queuedMessagesByItemId.delete(item.id);
-        scheduleQueueEmit(listener, getQueueItemScope(item));
+        scheduleQueueEmit(listener, getQueueItemScope(item), [
+          queueRemovalTransition(item, "cancelled"),
+        ]);
+        evictConversationRuntimeIfIdle(runtime);
+      },
+      onRemoved: (item, queueLen) => {
+        runtime.pendingTurns = queueLen;
+        runtime.queuedMessagesByItemId.delete(item.id);
+        scheduleQueueEmit(listener, getQueueItemScope(item), [
+          queueRemovalTransition(item, "cancelled"),
+        ]);
         evictConversationRuntimeIfIdle(runtime);
       },
     },

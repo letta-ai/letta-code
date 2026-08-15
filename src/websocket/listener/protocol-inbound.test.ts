@@ -65,6 +65,89 @@ describe("input protocol-inbound validators", () => {
       );
     }
   });
+
+  test("accepts a teleport continuation without a synthetic user message", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          request_id: "continue-1",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "teleport_continue",
+            teleport_id: "teleport-1",
+            source: {
+              device_id: "source-device",
+              connection_name: "Laptop",
+            },
+            continuation: {
+              approvals: [
+                {
+                  type: "tool",
+                  tool_call_id: "call-1",
+                  status: "success",
+                  tool_return: "done",
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("input");
+    if (parsed?.type === "input") {
+      expect(parsed.payload.kind).toBe("teleport_continue");
+    }
+  });
+
+  test("rejects a teleport continuation without source identity", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "teleport_continue",
+            teleport_id: "teleport-1",
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("__invalid_input");
+  });
+});
+
+describe("teleport protocol-inbound validators", () => {
+  test.each([
+    {
+      type: "teleport_probe",
+      request_id: "probe-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+    },
+    {
+      type: "teleport_request",
+      request_id: "teleport-1",
+      teleport_id: "teleport-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      target: {
+        connection_id: "target-connection",
+        device_id: "target-device",
+        connection_name: "Cloud",
+      },
+    },
+    {
+      type: "teleport_failed",
+      teleport_id: "teleport-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      error: "Target failed to start",
+    },
+  ])("accepts $type", (message) => {
+    expect(parseServerMessage(Buffer.from(JSON.stringify(message)))?.type).toBe(
+      message.type,
+    );
+  });
 });
 
 describe("update model protocol-inbound validator", () => {
@@ -106,9 +189,15 @@ describe("agent/conversation management protocol-inbound validators", () => {
       request_id: "r0",
       create_agent: { body: { name: "Agent" }, pin_global: false },
       create_conversation: { body: { summary: "New conversation" } },
+      conversation_source_tags: ["channel:slack"],
       cwd: "/tmp/project",
       mode: "acceptEdits",
+      workspace_sandbox: {
+        root: "/tmp/runs/run-1",
+        isolation_root: "/tmp/runs",
+      },
       skill_sources: [],
+      preserve_skill_sources: true,
       client_info: { name: "test", title: "Test", version: "1.0.0" },
       external_tools: [
         {
@@ -127,6 +216,29 @@ describe("agent/conversation management protocol-inbound validators", () => {
       type: "external_tool_call_response",
       request_id: "ext-1",
       result: { content: [{ type: "text", text: "ok" }] },
+    },
+    {
+      type: "runtime_external_tools_update",
+      request_id: "tools-1",
+      updates: [
+        {
+          runtimes: [
+            { agent_id: "agent-1", conversation_id: "conv-1" },
+            { agent_id: "agent-1", conversation_id: "conv-2" },
+          ],
+          external_tools: [
+            {
+              tools: [
+                {
+                  name: "MessageChannel",
+                  description: "Deliver a channel message",
+                  parameters: { type: "object", properties: {} },
+                },
+              ],
+            },
+          ],
+        },
+      ],
     },
     {
       type: "create_agent",
@@ -206,6 +318,12 @@ describe("agent/conversation management protocol-inbound validators", () => {
       type: "runtime_start",
       request_id: "r0",
       agent_id: "agent-1",
+      conversation_source_tags: ["channel:slack", 42],
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
       mode: "bad",
     },
     {
@@ -213,6 +331,12 @@ describe("agent/conversation management protocol-inbound validators", () => {
       request_id: "r0",
       agent_id: "agent-1",
       skill_sources: ["bundled", "invalid"],
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      preserve_skill_sources: "yes",
     },
     {
       type: "runtime_start",
@@ -230,6 +354,35 @@ describe("agent/conversation management protocol-inbound validators", () => {
       type: "external_tool_call_response",
       request_id: "ext-1",
       result: { content: "not-array" },
+    },
+    {
+      type: "runtime_external_tools_update",
+      request_id: "tools-empty-runtime-list",
+      updates: [{ runtimes: [], external_tools: [] }],
+    },
+    {
+      type: "runtime_external_tools_update",
+      request_id: "tools-duplicate-runtime",
+      updates: [
+        {
+          runtimes: [{ agent_id: "agent-1", conversation_id: "conv-1" }],
+          external_tools: [],
+        },
+        {
+          runtimes: [{ agent_id: "agent-1", conversation_id: "conv-1" }],
+          external_tools: [],
+        },
+      ],
+    },
+    {
+      type: "runtime_external_tools_update",
+      request_id: "tools-invalid-definition",
+      updates: [
+        {
+          runtimes: [{ agent_id: "agent-1", conversation_id: "conv-1" }],
+          external_tools: [{ tools: [{ name: "missing schema" }] }],
+        },
+      ],
     },
     {
       type: "create_agent",
@@ -339,7 +492,7 @@ describe("discord protocol-inbound validators", () => {
     expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });
 
-  test("discord account create rejects non-string allowed_channels", () => {
+  test("defers non-string Discord allowed_channels validation to the gateway", () => {
     const msg = {
       type: "channel_account_create",
       channel_id: "discord",
@@ -348,10 +501,10 @@ describe("discord protocol-inbound validators", () => {
         config: { token: "test-token", allowed_channels: ["channel-1", 42] },
       },
     };
-    expect(isChannelAccountCreateCommand(msg)).toBe(false);
+    expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });
 
-  test("discord account create rejects invalid default_permission_mode", () => {
+  test("defers Discord permission-mode validation to the gateway", () => {
     const msg = {
       type: "channel_account_create",
       channel_id: "discord",
@@ -360,17 +513,17 @@ describe("discord protocol-inbound validators", () => {
         config: { token: "test-token", default_permission_mode: "banana" },
       },
     };
-    expect(isChannelAccountCreateCommand(msg)).toBe(false);
+    expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });
 
-  test("discord account create rejects unknown nested plugin config fields", () => {
+  test("defers unknown nested Discord fields to the gateway", () => {
     const msg = {
       type: "channel_account_create",
       channel_id: "discord",
       request_id: "r1",
       account: { config: { bot_token: "xoxb-test" } },
     };
-    expect(isChannelAccountCreateCommand(msg)).toBe(false);
+    expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });
 
   test("discord account create rejects legacy top-level plugin fields", () => {

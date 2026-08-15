@@ -14,12 +14,6 @@ import {
   handleAgentConversationManagementCommand,
   handleAgentConversationManagementProtocolCommand,
 } from "./commands/agents-conversations";
-import { handleChannelRegistryEvent } from "./commands/channel-registry-events";
-import {
-  handleChannelsProtocolCommand,
-  isDetachedChannelsCommand,
-  setChannelsServiceLoaderOverride,
-} from "./commands/channels";
 import { handleCronCommand } from "./commands/cron";
 import { handleListMemoryCommand } from "./commands/memory";
 import { buildListModelsEntries } from "./commands/model-catalog";
@@ -67,14 +61,11 @@ import {
 } from "./interrupts";
 import {
   createRuntime,
-  enqueueChannelTurn,
-  recoverPendingChannelControlRequests,
   replaySyncStateForRuntime,
   runDetachedListenerTask,
   safeSocketSend,
   startConnectedListenerRuntime,
   stopRuntime,
-  wireChannelIngress,
 } from "./lifecycle";
 import {
   buildDeviceStatus,
@@ -89,9 +80,9 @@ import {
 import { consumeQueuedTurn, scheduleQueuePump } from "./queue";
 import {
   getApprovalToolCallDesyncErrorText,
-  recoverApprovalStateForSync,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
+import { recoverApprovalStateForSync } from "./recovery-sync";
 import {
   clearRecoveredApprovalStateForScope,
   getListenerStatus,
@@ -139,6 +130,8 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   processServicesGeneration: number;
   processServicesReady: Promise<void> | null;
   processServicesReadyGeneration: number | null;
+  serviceCommandHandler: ListenerRuntime["serviceCommandHandler"];
+  serviceCommandTypes: ListenerRuntime["serviceCommandTypes"];
   pendingExternalToolCalls: ListenerRuntime["pendingExternalToolCalls"];
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
@@ -188,6 +181,8 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     processServicesGeneration: number;
     processServicesReady: Promise<void> | null;
     processServicesReadyGeneration: number | null;
+    serviceCommandHandler: ListenerRuntime["serviceCommandHandler"];
+    serviceCommandTypes: ListenerRuntime["serviceCommandTypes"];
     pendingExternalToolCalls: ListenerRuntime["pendingExternalToolCalls"];
     eventSeqCounter: number;
     queueEmitScheduled: boolean;
@@ -333,6 +328,18 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.processServicesReadyGeneration,
       set: (value: number | null) => {
         listener.processServicesReadyGeneration = value;
+      },
+    },
+    serviceCommandHandler: {
+      get: () => listener.serviceCommandHandler,
+      set: (value: ListenerRuntime["serviceCommandHandler"]) => {
+        listener.serviceCommandHandler = value;
+      },
+    },
+    serviceCommandTypes: {
+      get: () => listener.serviceCommandTypes,
+      set: (value: ListenerRuntime["serviceCommandTypes"]) => {
+        listener.serviceCommandTypes = value;
       },
     },
     pendingExternalToolCalls: {
@@ -501,11 +508,6 @@ export { parseServerMessage } from "./protocol-inbound";
 export { emitInterruptedStatusDelta } from "./protocol-outbound";
 
 export const __listenClientTestUtils = {
-  setChannelsServiceLoaderForTests: (
-    loader: Parameters<typeof setChannelsServiceLoaderOverride>[0],
-  ) => {
-    setChannelsServiceLoaderOverride(loader);
-  },
   createRuntime: createLegacyTestRuntime,
   createListenerRuntime: createRuntime,
   startConnectedListenerRuntime: startConnectedListenerRuntime,
@@ -565,29 +567,6 @@ export const __listenClientTestUtils = {
     socket: WebSocket,
     overrides?: Parameters<typeof handleListMemoryCommand>[3],
   ) => handleListMemoryCommand(parsed, socket, safeSocketSend, overrides),
-  isDetachedChannelsCommand,
-  handleChannelsProtocolCommand: (
-    parsed: Parameters<typeof handleChannelsProtocolCommand>[0],
-    socket: WebSocket,
-    runtime: ListenerRuntime,
-    opts: Parameters<typeof handleChannelsProtocolCommand>[3],
-    processQueuedTurn: Parameters<typeof handleChannelsProtocolCommand>[4],
-  ) =>
-    handleChannelsProtocolCommand(
-      parsed,
-      socket,
-      runtime,
-      opts,
-      processQueuedTurn,
-      runDetachedListenerTask,
-      wireChannelIngress,
-      safeSocketSend,
-    ),
-  handleChannelRegistryEvent: (
-    event: Parameters<typeof handleChannelRegistryEvent>[0],
-    socket: Parameters<typeof handleChannelRegistryEvent>[1],
-    runtime: ListenerRuntime,
-  ) => handleChannelRegistryEvent(event, socket, runtime),
   handleAgentConversationManagementCommand: (
     parsed: Parameters<typeof handleAgentConversationManagementCommand>[0],
     socket: WebSocket,
@@ -668,7 +647,6 @@ export const __listenClientTestUtils = {
     listener: ListenerRuntime,
   ) =>
     handleReflectionSettingsCommand(parsed, socket, listener, safeSocketSend),
-  enqueueChannelTurn,
   scheduleQueuePump,
   replaySyncStateForRuntime: (
     runtime: ListenerRuntime,
@@ -691,7 +669,6 @@ export const __listenClientTestUtils = {
       ...opts,
       scheduleWarmupsAfterSync: opts?.scheduleWarmupsAfterSync ?? (() => {}),
     }),
-  recoverPendingChannelControlRequests,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (
     runtime: ListenerRuntime | ConversationRuntime,

@@ -67,10 +67,6 @@ export function resolveSlackSenderTeamId(value: unknown): string | undefined {
     : undefined;
 }
 
-export function normalizeSlackText(text: string): string {
-  return text.replace(/^(?:\s*<@[A-Z0-9]+>\s*)+/, "").trim();
-}
-
 const IGNORED_SLACK_MESSAGE_SUBTYPES = new Set([
   "assistant_app_thread",
   "channel_archive",
@@ -173,17 +169,6 @@ export function getSlackActionRecord(
   return Array.isArray(actions) ? asRecord(actions[0]) : null;
 }
 
-export function resolveSlackSelectedModel(
-  action: unknown,
-  body: unknown,
-): string | null {
-  const actionRecord = getSlackActionRecord(action, body);
-  const selectedOption = asRecord(actionRecord?.selected_option);
-  return (
-    firstNonEmptyString(selectedOption?.value, actionRecord?.value) ?? null
-  );
-}
-
 export function resolveSlackActionChannelId(body: unknown): string | null {
   const bodyRecord = asRecord(body);
   const channel = asRecord(bodyRecord?.channel);
@@ -254,6 +239,7 @@ export function resolveSlackUserDisplayName(
   return firstNonEmptyString(
     profile?.display_name,
     profile?.real_name,
+    user?.real_name,
     user?.name,
   );
 }

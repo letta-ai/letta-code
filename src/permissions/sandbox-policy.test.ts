@@ -219,7 +219,10 @@ test("memory-subagent policy can write an exact reflection worktree and parent g
 
 test("deriveSelfAgentRootsForTrees keeps roots outside the tree as-is", () => {
   const tree = getDefaultAgentsTreeRoot();
-  const outside = canonicalizeRoot("/tmp");
+  // A tmpdir sibling is disjoint from the tree even when the isolated test
+  // home (and therefore the tree) lives under tmpdir, unlike tmpdir itself,
+  // which becomes an ancestor of the tree and is refused.
+  const outside = canonicalizeRoot(join(tmpdir(), "letta-outside-fixture"));
   expect(deriveSelfAgentRootsForTrees([outside], [tree])).toEqual([outside]);
 });
 

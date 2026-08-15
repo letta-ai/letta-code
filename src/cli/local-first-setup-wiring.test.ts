@@ -29,14 +29,12 @@ describe("local-first setup wiring", () => {
     expect(source).not.toContain("Choose where your agents should live");
   });
 
-  test("successful cloud login records the api backend preference", () => {
-    const source = readSource("../auth/LettaLoginView.tsx");
-    const start = source.indexOf("settingsManager.updateSettings({");
-    const end = source.indexOf("await settingsManager.flush();", start);
+  test("in-session login preserves the active backend while setup activates cloud", () => {
+    const overlaySource = readSource("./components/LettaLoginOverlay.tsx");
+    const setupSource = readSource("../auth/setup-ui.tsx");
 
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
-    expect(source.slice(start, end)).toContain('preferredBackendMode: "api"');
+    expect(overlaySource).toContain("activateCloudBackend={false}");
+    expect(setupSource).toContain("activateCloudBackend");
   });
 
   test("reauthentication paths do not trust stale stored credentials", () => {

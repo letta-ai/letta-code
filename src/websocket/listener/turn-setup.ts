@@ -3,6 +3,7 @@ import type {
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
+import { buildClientSkillsPayload } from "@/agent/client-skills";
 import {
   setConversationId,
   setCurrentAgentId,
@@ -20,9 +21,11 @@ import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
+import { publishChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
 import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
 import {
+  createListenerAgentModContext,
   createListenerModEvents,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
@@ -59,6 +62,7 @@ export type ListenerTurnSetupResult =
       inboundUserTranscriptLines: Line[];
       pendingNormalizationInterruptedToolCallIds: string[];
       preparedToolContext: PreparedToolContext;
+      overrideModel?: string;
     };
 
 export async function prepareListenerTurn(params: {
@@ -232,7 +236,7 @@ export async function prepareListenerTurn(params: {
         permissionMode: permissionModeState.mode,
         cachedAgent,
       })
-    : ({ cancelled: false, input: messagesToSend } as const);
+    : ({ cancelled: false, handlerCount: 0, input: messagesToSend } as const);
   if (isInterrupted()) {
     return { kind: "interrupted" };
   }
@@ -240,11 +244,22 @@ export async function prepareListenerTurn(params: {
     return { kind: "cancelled", reason: turnStartEmission.reason };
   }
 
+  let overrideModel: string | undefined;
+  if (turnStartEmission.handlerCount > 0) {
+    try {
+      const conversation =
+        await getBackend().retrieveConversation(conversationId);
+      overrideModel = conversation.model ?? undefined;
+    } catch {
+      // Model refresh is best-effort; mod failures must not block the turn.
+    }
+  }
+
   const currentInput = ensureTurnInputMessageOtids(turnStartEmission.input);
   const turnInput = createTurnInputState(
     currentInput,
     getInboundImageFailureModes({
-      channelTurnSources: msg.channelTurnSources,
+      imageFailureMode: msg.imageFailureMode,
       messages: currentInput,
     }),
   );
@@ -255,10 +270,24 @@ export async function prepareListenerTurn(params: {
     runtime.listener,
     agentId,
   );
+  runtime.transientChannelRuntimeTools =
+    await publishChannelRuntimeToolsForTurn(runtime.listener, {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    });
+  if (isInterrupted()) {
+    return { kind: "interrupted" };
+  }
+  const listenerOptions = connectionId
+    ? runtime.listener.connections.get(connectionId)?.options
+    : runtime.listener.connections.values().next().value?.options;
+  const environmentDeviceId = listenerOptions?.deviceId;
   const preparedToolContext = await prepareToolExecutionContextForScope({
     connectionId,
+    environmentDeviceId,
     agentId,
     conversationId,
+    clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
     // Headless clients (SDK sessions, automation) opt out of tools that
     // prompt the human mid-turn; the interactive set is owned by the harness.
@@ -268,12 +297,25 @@ export async function prepareListenerTurn(params: {
     externalToolScopeIds: msg.externalToolScopeIds,
     workingDirectory,
     permissionModeState,
+    skillsDirectory: listenerOptions?.skillsDirectory,
     skillSources: runtime.skillSources,
+    workspaceSandbox: runtime.workspaceSandbox,
     cachedAgent,
-    channelTurnSources: msg.channelTurnSources,
+    modContext: createListenerAgentModContext(agentId),
     modAdapters,
     modEvents: createListenerModEvents(modAdapters),
   });
+  if (isInterrupted()) {
+    return { kind: "interrupted" };
+  }
+
+  const availableSkills = (
+    await buildClientSkillsPayload({
+      agentId,
+      skillsDirectory: listenerOptions?.skillsDirectory,
+      skillSources: runtime.skillSources,
+    })
+  ).availableSkills;
   if (isInterrupted()) {
     return { kind: "interrupted" };
   }
@@ -282,6 +324,7 @@ export async function prepareListenerTurn(params: {
   runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
+  runtime.currentAvailableSkills = availableSkills;
   return {
     kind: "ready",
     getCachedAgent: () => cachedAgent,
@@ -291,5 +334,6 @@ export async function prepareListenerTurn(params: {
       ...queuedInterruptedToolCallIds,
     ],
     preparedToolContext,
+    ...(overrideModel ? { overrideModel } : {}),
   };
 }

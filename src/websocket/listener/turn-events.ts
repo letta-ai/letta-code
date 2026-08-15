@@ -41,7 +41,11 @@ function isTurnInputArray(
 }
 
 export type ListenerTurnStartEmission =
-  | { cancelled: false; input: Array<MessageCreate | ApprovalCreate> }
+  | {
+      cancelled: false;
+      handlerCount: number;
+      input: Array<MessageCreate | ApprovalCreate>;
+    }
   | { cancelled: true; reason: string };
 
 export async function emitListenerTurnStart(options: {
@@ -62,14 +66,14 @@ export async function emitListenerTurnStart(options: {
       sessionId: options.conversationId,
       workingDirectory: options.workingDirectory,
       permissionMode: options.permissionMode ?? null,
-      agent: options.cachedAgent ?? null,
+      agent: options.cachedAgent ?? { id: options.agentId },
     });
     const event = {
       agentId: options.agentId,
       conversationId: options.conversationId,
       input: options.input,
     };
-    await createListenerModEvents(modAdapters).emit(
+    const emission = await createListenerModEvents(modAdapters).emit(
       "turn_start",
       event,
       context,
@@ -80,11 +84,12 @@ export async function emitListenerTurnStart(options: {
     }
     return {
       cancelled: false,
+      handlerCount: emission.handlerCount,
       input: isTurnInputArray(event.input) ? event.input : options.input,
     };
   } catch {
     // Mod turn_start handlers should not block sending the turn.
-    return { cancelled: false, input: options.input };
+    return { cancelled: false, handlerCount: 0, input: options.input };
   }
 }
 
@@ -107,7 +112,7 @@ export async function emitListenerTurnEnd(options: {
       sessionId: options.conversationId,
       workingDirectory: options.workingDirectory,
       permissionMode: options.permissionMode ?? null,
-      agent: options.cachedAgent ?? null,
+      agent: options.cachedAgent ?? { id: options.agentId },
     });
     const event: {
       agentId: string;
@@ -151,7 +156,6 @@ export function buildMaybeLaunchReflectionSubagent(params: {
       conversationId,
       memfsEnabled: settingsManager.isMemfsEnabled(agentId),
       triggerSource,
-      skipPendingWorktreeReminderScan: triggerSource === "compaction-event",
       reflectionSettings,
       description: AUTO_REFLECTION_DESCRIPTION,
       recompileByConversation:

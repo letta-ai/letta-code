@@ -2,7 +2,6 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
-import { getChannelRegistry } from "@/channels/registry";
 import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
@@ -11,6 +10,7 @@ import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import { settingsManager } from "@/settings-manager";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   DeviceStatus,
   DeviceStatusUpdateMessage,
@@ -29,12 +29,9 @@ import type {
   SubagentStateUpdateMessage,
   WsProtocolMessage,
 } from "@/types/protocol_v2";
+import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
 import { isDebugEnabled } from "@/utils/debug";
 import { buildBackgroundProcessSnapshot } from "./background-process-snapshot";
-import {
-  type ChannelTurnRuntimeCarrier,
-  getActiveChannelTurnProgressContext,
-} from "./channel-turn-session";
 import {
   nextListenerConnectionEventSeq,
   resolveListenerConnectionTargets,
@@ -47,7 +44,7 @@ import {
   shouldEmitDeviceStatus,
 } from "./device-status-cache";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
-import { listListenerModCommands } from "./mod-commands";
+import { listListenerModCommands } from "./mod-command-registry";
 import { enqueueOutboundFrame, type OutboundFrameClass } from "./outbound-wire";
 import { getConversationPermissionModeState } from "./permission-mode";
 import {
@@ -205,46 +202,46 @@ export function buildDeviceStatus(
     };
   }
   const scope = getScopeForRuntime(runtime, params);
-  const scopedAgentId = resolveScopedAgentId(listener, scope);
-  const scopedConversationId = resolveScopedConversationId(listener, scope);
+  const agentId = resolveScopedAgentId(listener, scope);
+  const conversationId = resolveScopedConversationId(listener, scope);
   const conversationRuntime = getConversationRuntime(
     listener,
-    scopedAgentId,
-    scopedConversationId,
+    agentId,
+    conversationId,
   );
   const toolsetPreference = (() => {
-    if (!scopedAgentId) {
+    if (!agentId) {
       return "auto" as const;
     }
     try {
-      return settingsManager.getToolsetPreference(scopedAgentId);
+      return settingsManager.getToolsetPreference(agentId, conversationId);
     } catch {
       return "auto" as const;
     }
   })();
   const conversationPermissionModeState = getConversationPermissionModeState(
     listener,
-    scopedAgentId,
-    scopedConversationId,
+    agentId,
+    conversationId,
   );
   const interruptedCacheActive = hasInterruptedCacheForScope(listener, scope);
   const resolvedCwd = getConversationWorkingDirectory(
     listener,
-    scopedAgentId,
-    scopedConversationId,
+    agentId,
+    conversationId,
   );
   const reflectionSettings = (() => {
-    if (!scopedAgentId) {
+    if (!agentId) {
       return null;
     }
     try {
-      return getReflectionSettings(scopedAgentId, resolvedCwd);
+      return getReflectionSettings(agentId, resolvedCwd);
     } catch {
       return null;
     }
   })();
-  const systemPromptDoctorState = scopedAgentId
-    ? getSystemPromptDoctorState(scopedAgentId)
+  const systemPromptDoctorState = agentId
+    ? getSystemPromptDoctorState(agentId)
     : null;
   const transport = listener.transport ?? listener.socket;
   return {
@@ -260,20 +257,20 @@ export function buildDeviceStatus(
       conversationRuntime?.currentToolset ??
       (toolsetPreference === "auto" ? null : toolsetPreference),
     current_toolset_preference:
-      conversationRuntime?.currentToolsetPreference ?? toolsetPreference,
+      conversationRuntime?.currentToolset === null
+        ? toolsetPreference
+        : (conversationRuntime?.currentToolsetPreference ?? toolsetPreference),
     current_loaded_tools: conversationRuntime?.currentLoadedTools ?? [],
-    current_available_skills: [],
+    current_available_skills: conversationRuntime?.currentAvailableSkills ?? [],
     background_processes: buildBackgroundProcessSnapshot(
-      scopedAgentId,
-      scopedConversationId,
+      agentId,
+      conversationId,
     ),
     pending_control_requests: interruptedCacheActive
       ? []
       : getPendingControlRequests(listener, scope),
     experiments: experimentManager.list(),
-    memory_directory: scopedAgentId
-      ? getScopedMemoryFilesystemRoot(scopedAgentId)
-      : null,
+    memory_directory: agentId ? getScopedMemoryFilesystemRoot(agentId) : null,
     ...(params === undefined
       ? {
           cwd_map: getExportedCwdMap(listener),
@@ -283,17 +280,18 @@ export function buildDeviceStatus(
     cwd_revision: listener.workingDirectoryRevision ?? 0,
     should_doctor: systemPromptDoctorState?.should_doctor ?? false,
     supported_commands: FROZEN_SUPPORTED_COMMANDS,
-    ...buildModCommandsField(listener, scopedAgentId),
-    reflection_settings: scopedAgentId
+    ...buildModCommandsField(listener, agentId),
+    reflection_settings: agentId
       ? {
-          agent_id: scopedAgentId,
+          agent_id: agentId,
           trigger: reflectionSettings?.trigger ?? "compaction-event",
           step_count: reflectionSettings?.stepCount ?? 25,
+          merge: reflectionSettings?.merge ?? "auto",
+          merge_instructions: reflectionSettings?.mergeInstructions ?? "",
         }
       : null,
   };
 }
-
 export function buildLoopStatus(
   runtime: RuntimeCarrier,
   params?: {
@@ -347,7 +345,6 @@ export function buildLoopStatus(
         : [],
   };
 }
-
 export function buildQueueSnapshot(
   runtime: RuntimeCarrier,
   params?: {
@@ -398,12 +395,18 @@ const COALESCABLE_STATUS_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   "update_subagent_state",
 ]);
 
+type OutboundProtocolMessage = WsProtocolMessage extends infer TMessage
+  ? TMessage extends WsProtocolMessage
+    ? Omit<TMessage, "runtime" | "event_seq" | "emitted_at" | "idempotency_key">
+    : never
+  : never;
+
 function classifyOutboundFrame(
-  message: Omit<
-    WsProtocolMessage,
-    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
-  >,
+  message: OutboundProtocolMessage,
 ): OutboundFrameClass {
+  if (message.type === "update_queue" && (message.removed?.length ?? 0) > 0) {
+    return "critical";
+  }
   return COALESCABLE_STATUS_MESSAGE_TYPES.has(message.type)
     ? "status"
     : "critical";
@@ -411,10 +414,7 @@ function classifyOutboundFrame(
 export function emitProtocolV2Message(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
-  message: Omit<
-    WsProtocolMessage,
-    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
-  >,
+  message: OutboundProtocolMessage,
   scope:
     | {
         agent_id?: string | null;
@@ -499,6 +499,25 @@ export function emitProtocolV2Message(
   }
 }
 
+export function broadcastServiceProtocolMessage(
+  runtime: ListenerRuntime,
+  message: WsProtocolMessage,
+): void {
+  const payload = JSON.stringify(message);
+  for (const connection of runtime.connections.values()) {
+    if (!isListenerTransportOpen(connection.writer)) continue;
+    try {
+      connection.writer.send(payload);
+    } catch (error) {
+      trackBoundaryError({
+        context: "listener_service_event_broadcast",
+        errorType: "listener_service_event_send_failed",
+        error,
+      });
+    }
+  }
+}
+
 export function emitDeviceStatusUpdate(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
@@ -572,6 +591,7 @@ export function emitQueueUpdate(
     conversation_id?: string | null;
   },
   routing: ListenerMessageRouting = TO_SUBSCRIBERS,
+  removed: readonly QueueRemovalTransition[] = [],
 ): void {
   const listener = getListenerRuntime(runtime);
   if (!listener) {
@@ -584,6 +604,7 @@ export function emitQueueUpdate(
   > = {
     type: "update_queue",
     queue: buildQueueSnapshot(runtime, resolvedScope),
+    removed: [...removed],
   };
   emitProtocolV2Message(socket, runtime, message, resolvedScope, routing);
 }
@@ -714,7 +735,6 @@ export function emitDequeuedUserMessage(
       ? content.length > 0
       : Array.isArray(content) && content.length > 0;
   if (!hasContent) return;
-
   const otid =
     firstUserPayload.otid ??
     firstUserPayload.client_message_id ??
@@ -730,6 +750,7 @@ export function emitDequeuedUserMessage(
       message_type: "user_message",
       content,
       otid,
+      created_by_id: incoming.actingUserId,
     } as StreamDelta,
     {
       agent_id: incoming.agentId,
@@ -744,11 +765,12 @@ export function emitQueueUpdateIfOpen(
     agent_id?: string | null;
     conversation_id?: string | null;
   },
+  removed: readonly QueueRemovalTransition[] = [],
 ): void {
   const listener = getListenerRuntime(runtime);
   const transport = listener?.transport ?? listener?.socket;
   if (transport && isListenerTransportOpen(transport)) {
-    emitQueueUpdate(transport, runtime, scope);
+    emitQueueUpdate(transport, runtime, scope, TO_SUBSCRIBERS, removed);
   }
 }
 
@@ -901,26 +923,6 @@ export function emitSubagentStateIfOpen(
   }
 }
 
-export function scheduleQueueEmit(
-  runtime: ListenerRuntime,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
-): void {
-  runtime.pendingQueueEmitScope = scope;
-
-  if (runtime.queueEmitScheduled) return;
-  runtime.queueEmitScheduled = true;
-
-  queueMicrotask(() => {
-    runtime.queueEmitScheduled = false;
-    const emitScope = runtime.pendingQueueEmitScope;
-    runtime.pendingQueueEmitScope = undefined;
-    emitQueueUpdateIfOpen(runtime, emitScope);
-  });
-}
-
 export function createLifecycleMessageBase<TMessageType extends string>(
   messageType: TMessageType,
   runId?: string | null,
@@ -931,40 +933,11 @@ export function createLifecycleMessageBase<TMessageType extends string>(
   run_id?: string;
 } {
   return {
-    id: `message-${crypto.randomUUID()}`,
+    id: `lifecycle-${crypto.randomUUID()}`,
     date: new Date().toISOString(),
     message_type: messageType,
     ...(runId ? { run_id: runId } : {}),
   };
-}
-
-function dispatchChannelTurnProgressFromDelta(
-  runtime: RuntimeCarrier,
-  delta: StreamDelta,
-): void {
-  if (!runtime || !("activeChannelTurn" in runtime)) return;
-  const context = getActiveChannelTurnProgressContext(
-    runtime as ChannelTurnRuntimeCarrier,
-  );
-  if (!context) {
-    return;
-  }
-  const updates = context.progressBuilder.buildUpdates(delta);
-  if (updates.length === 0) {
-    return;
-  }
-  const registry = getChannelRegistry();
-  if (!registry) {
-    return;
-  }
-  for (const update of updates) {
-    void registry.dispatchTurnProgressEvent({
-      type: "progress",
-      sources: context.sources,
-      ...update,
-      ...(context.batchId ? { batchId: context.batchId } : {}),
-    });
-  }
 }
 
 export function emitCanonicalMessageDelta(
@@ -977,7 +950,6 @@ export function emitCanonicalMessageDelta(
   },
 ): void {
   emitStreamDelta(socket, runtime, delta, scope);
-  dispatchChannelTurnProgressFromDelta(runtime, delta);
 }
 
 export function emitLoopErrorDelta(

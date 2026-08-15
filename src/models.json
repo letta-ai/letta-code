@@ -897,6 +897,73 @@
       }
     },
     {
+      "id": "opus-5",
+      "handle": "anthropic/claude-opus-5",
+      "label": "Opus 5",
+      "description": "Opus 5 (high reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "high",
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-5-low",
+      "handle": "anthropic/claude-opus-5",
+      "label": "Opus 5",
+      "description": "Opus 5 (low reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "low",
+        "max_reasoning_tokens": 4000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-5-medium",
+      "handle": "anthropic/claude-opus-5",
+      "label": "Opus 5",
+      "description": "Opus 5 (med reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "medium",
+        "max_reasoning_tokens": 12000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-5-xhigh",
+      "handle": "anthropic/claude-opus-5",
+      "label": "Opus 5",
+      "description": "Opus 5 (extra-high reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "xhigh",
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-5-max",
+      "handle": "anthropic/claude-opus-5",
+      "label": "Opus 5",
+      "description": "Opus 5 (max reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "max",
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "opus",
       "handle": "anthropic/claude-opus-4-8",
       "label": "Opus 4.8",
@@ -1170,11 +1237,24 @@
       "id": "sonnet-5-xhigh",
       "handle": "anthropic/claude-sonnet-5",
       "label": "Sonnet 5",
-      "description": "Sonnet 5 (max reasoning)",
+      "description": "Sonnet 5 (extra-high reasoning)",
       "updateArgs": {
         "context_window": 1000000,
         "max_output_tokens": 128000,
         "reasoning_effort": "xhigh",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-5-max",
+      "handle": "anthropic/claude-sonnet-5",
+      "label": "Sonnet 5",
+      "description": "Sonnet 5 (max reasoning)",
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "max",
         "enable_reasoner": true,
         "parallel_tool_calls": true
       }

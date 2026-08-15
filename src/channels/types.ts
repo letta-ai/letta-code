@@ -6,14 +6,16 @@
  * platform-specific communication, and a routing table that maps
  * platform chat IDs to agent+conversation pairs.
  */
-
+import type { ChannelUserMention } from "@/channels/message-references";
+import type { WhatsAppMessagePrefixConfig } from "@/channels/whatsapp/message-prefix-config-types";
 import type { PermissionMode } from "@/permissions/mode";
 import type {
   ApprovalResponseBody,
   ListModelsResponseModelEntry,
   StopReasonType,
 } from "@/types/protocol_v2";
-
+import type { WhatsAppAttachmentPolicyConfig } from "./whatsapp/attachment-policy-types";
+import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
 /**
  * Vendor-neutral model-picker payload produced by the generic channel
  * `/model` handler. Adapters decide how (or whether) to render it.
@@ -28,14 +30,12 @@ export type ChannelModelPickerData = {
   availableHandles?: string[] | null;
   recentHandles?: string[];
 };
-
 /**
  * Default channel id used for wire compatibility when WS clients omit
  * `channel_id` on channel commands. Early protocol versions predate
  * multi-channel support, when Telegram was the only bundled channel.
  */
 export const LEGACY_DEFAULT_CHANNEL_ID = "telegram";
-
 /**
  * Per-turn rich draft streaming policy derived from a channel account's
  * generic opt-in fields. Returns null when the account has not opted in.
@@ -46,7 +46,6 @@ export const LEGACY_DEFAULT_CHANNEL_ID = "telegram";
 export type ChannelRichDraftStreamingPolicy = {
   richPrivateChatDefault: boolean;
 };
-
 export function getRichDraftStreamingPolicy(
   account: unknown,
 ): ChannelRichDraftStreamingPolicy | null {
@@ -117,33 +116,31 @@ export interface ChannelMessageAttachment {
   /** Best-effort reason voice memo transcription failed. */
   transcriptionError?: string;
 }
-
 export interface ChannelReactionNotification {
   action: "added" | "removed";
   emoji: string;
   targetMessageId: string;
   targetSenderId?: string;
 }
-
 export interface ChannelThreadContextEntry {
   messageId?: string;
   senderId?: string;
   senderName?: string;
   text: string;
+  userMentions?: ChannelUserMention[];
   attachments?: ChannelMessageAttachment[];
 }
-
 export interface ChannelThreadContext {
   label?: string;
   starter?: ChannelThreadContextEntry;
   history?: ChannelThreadContextEntry[];
 }
-
 export interface ChannelReplyContext {
   messageId?: string;
   senderId?: string;
   senderName?: string;
   text?: string;
+  userMentions?: ChannelUserMention[];
 }
 
 export interface ChannelTurnSource {
@@ -318,6 +315,8 @@ export interface ChannelAdapter {
        * example Slack Block Kit) may render it; others fall back to text.
        */
       modelPicker?: ChannelModelPickerData;
+      /** Channel-specific opt-in for direct replies that should be treated as ordinary outbound agent text. */
+      applyMessagePrefix?: boolean;
     },
   ): Promise<void>;
 
@@ -383,6 +382,8 @@ export interface InboundChannelMessage {
   chatLabel?: string;
   /** Message text content. */
   text: string;
+  /** Platform-verified user mentions within text. */
+  userMentions?: ChannelUserMention[];
   /** Unix timestamp (ms) of the message. */
   timestamp: number;
   /** Platform message ID for threading/replies. */
@@ -393,8 +394,10 @@ export interface InboundChannelMessage {
   raw?: unknown;
   /** Broad chat surface type used for routing/pairing decisions. */
   chatType?: ChannelChatType;
-  /** Whether this inbound message was explicitly addressed to the bot. */
+  /** Legacy route-eligibility signal; may include implicit agent-owned threads. */
   isMention?: boolean;
+  /** Adapter routing provenance for this delivered event. */
+  routedBy?: "mention" | "dm" | "thread";
   /** Whether this message is policy-permitted ambient traffic in an open channel. */
   isOpenChannel?: boolean;
   /** For platform channel threads, the parent channel ID (e.g. Discord guild channel). */
@@ -587,6 +590,7 @@ export interface SlackChannelConfig {
   transcribeVoice?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;
+  mentionOnlyChannels?: string[];
   /**
    * Bot-authored inbound policy. Default false drops bot messages. "mentions"
    * accepts only explicit foreign bot mentions. There is intentionally no
@@ -661,7 +665,9 @@ export interface DiscordChannelConfig {
   allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelConfig {
+export interface WhatsAppChannelConfig
+  extends WhatsAppAttachmentPolicyConfig,
+    WhatsAppMessagePrefixConfig {
   channel: "whatsapp";
   enabled: boolean;
   dmPolicy: DmPolicy;
@@ -669,18 +675,15 @@ export interface WhatsAppChannelConfig {
   agentId: string | null;
   /** Default true. When true, only the user's own Message Yourself chat routes. */
   selfChatMode: boolean;
-  /** Default disabled. Controls group-message ingestion. */
   groupMode: WhatsAppGroupMode;
   /** Optional allowlist of WhatsApp group JIDs. Empty/undefined allows any group when groupMode is not disabled. */
   allowedGroups?: string[];
-  /** Optional textual aliases for group mention detection. */
   mentionPatterns?: string[];
-  /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
-  /** When true, supported inbound media is downloaded to local channel storage. */
   downloadMedia?: boolean;
-  /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  inboundDebounceMs?: number;
+  waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
 export interface SignalChannelConfig {
@@ -765,6 +768,7 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   transcribeVoice?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;
+  mentionOnlyChannels?: string[];
   /**
    * Bot-authored inbound policy. Default false drops bot messages. "mentions"
    * accepts only explicit foreign bot mentions. There is intentionally no
@@ -780,7 +784,6 @@ export interface SlackChannelAccount extends ChannelAccountBase {
    */
   inboundDebounceMs?: number;
 }
-
 export interface DiscordChannelAccount extends ChannelAccountBase {
   channel: "discord";
   token: string;
@@ -848,24 +851,24 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
   allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelAccount extends ChannelAccountBase {
+export interface WhatsAppChannelAccount
+  extends ChannelAccountBase,
+    WhatsAppAttachmentPolicyConfig,
+    WhatsAppMessagePrefixConfig {
   channel: "whatsapp";
   /** Agent ID used for account-bound DM and group auto-routing. */
   agentId: string | null;
   /** Default true. Explicitly set false before replying under the linked user's identity. */
   selfChatMode: boolean;
-  /** Default disabled. Controls group-message ingestion. */
   groupMode: WhatsAppGroupMode;
   /** Optional allowlist of WhatsApp group JIDs. */
   allowedGroups?: string[];
-  /** Optional textual aliases for group mention detection. */
   mentionPatterns?: string[];
-  /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
-  /** When true, supported inbound media is downloaded to local channel storage. */
   downloadMedia?: boolean;
-  /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  inboundDebounceMs?: number;
+  waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
 export interface SignalChannelAccount extends ChannelAccountBase {

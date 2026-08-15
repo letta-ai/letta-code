@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { homedir } from "node:os";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { getLocalBackendCrossAgentTreeRoot } from "@/backend/local/paths";
@@ -7,6 +8,7 @@ import {
   canonicalizeRoot,
   getDefaultAgentsTreeRoot,
 } from "@/permissions/sandbox-policy";
+import { runWithRuntimeContext } from "@/runtime-context";
 import type { SandboxAvailability } from "@/sandbox/availability";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 import { SANDBOX_EXEC_PATH } from "@/sandbox/seatbelt";
@@ -32,6 +34,36 @@ test("no-op when the flag is off", () => {
   const result = applyShellSandbox(LAUNCHER, REPO_CWD, {}, SEATBELT);
   expect(result.backend).toBeNull();
   expect(result.launcher).toBe(LAUNCHER);
+});
+
+test("runtime workspace sandbox is fail-closed and does not need the global flag", () => {
+  const base = mkdtempSync(join(tmpdir(), "shell-workspace-sandbox-"));
+  const isolationRoot = join(base, "runs");
+  const root = join(isolationRoot, "run-a");
+  mkdirSync(root, { recursive: true });
+  try {
+    const result = runWithRuntimeContext(
+      { workspaceSandbox: { root, isolationRoot } },
+      () => applyShellSandbox(LAUNCHER, root, {}, SEATBELT),
+    );
+    expect(result.backend).toBe("seatbelt");
+    expect(result.env[SANDBOX_ENV_VAR]).toBe("seatbelt");
+    expect(defineValue(result.launcher, "-DDENIED_0=")).toBe(
+      canonicalizeRoot(isolationRoot),
+    );
+    expect(defineValue(result.launcher, "-DWRITABLE_0=")).toBe(
+      canonicalizeRoot(root),
+    );
+    expect(result.launcher[2]).toContain("(deny file-write*");
+
+    expect(() =>
+      runWithRuntimeContext({ workspaceSandbox: { root, isolationRoot } }, () =>
+        applyShellSandbox(LAUNCHER, root, {}, NO_BACKEND),
+      ),
+    ).toThrow("requires a kernel sandbox backend");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test("no-op when already inside a sandbox (no nested sandbox-exec)", () => {

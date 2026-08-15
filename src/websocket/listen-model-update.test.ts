@@ -18,7 +18,9 @@ import {
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import { LocalBackend } from "@/backend/local";
 import { settingsManager } from "@/settings-manager";
+import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
+import { applyToolsetUpdateForRuntime } from "@/websocket/listener/commands/model-toolset";
 
 /**
  * Tests for the model update command logic.
@@ -36,11 +38,18 @@ function readModelToolsetCommandSource(): string {
   return readFileSync(commandPath, "utf-8");
 }
 
-function readListenerLifecycleSource(): string {
-  const lifecyclePath = fileURLToPath(
-    new URL("./listener/lifecycle.ts", import.meta.url),
+function readCliConfigurationHandlerSource(): string {
+  const handlerPath = fileURLToPath(
+    new URL("../cli/app/use-configuration-handlers.ts", import.meta.url),
   );
-  return readFileSync(lifecyclePath, "utf-8");
+  return readFileSync(handlerPath, "utf-8");
+}
+
+function readLocalChannelGatewaySource(): string {
+  const gatewayPath = fileURLToPath(
+    new URL("../channels/gateway-local.ts", import.meta.url),
+  );
+  return readFileSync(gatewayPath, "utf-8");
 }
 
 class MockSocket {
@@ -72,54 +81,27 @@ afterEach(async () => {
 });
 
 describe("listen-client model update status message", () => {
-  test("emits only model name when toolset did not change", () => {
+  test("does not add toolset details to the model update", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
       modelLabel: "Claude Sonnet 4",
-      toolsetChanged: false,
       toolsetError: null,
-      nextToolset: "default",
-      toolsetPreference: "auto",
     });
 
     expect(result.message).toBe("Model updated to Claude Sonnet 4.");
     expect(result.level).toBe("info");
   });
 
-  test("includes toolset notice when toolset changed (auto preference)", () => {
-    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
-      modelLabel: "GPT-5",
-      toolsetChanged: true,
-      toolsetError: null,
-      nextToolset: "codex",
-      toolsetPreference: "auto",
-    });
+  test("does not add toolset details to the CLI model update", () => {
+    const source = readCliConfigurationHandlerSource();
 
-    expect(result.message).toContain("Model updated to GPT-5.");
-    expect(result.message).toContain("auto");
-    expect(result.level).toBe("info");
-  });
-
-  test("includes toolset notice when toolset changed (manual override)", () => {
-    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
-      modelLabel: "GPT-5",
-      toolsetChanged: true,
-      toolsetError: null,
-      nextToolset: "codex",
-      toolsetPreference: "codex",
-    });
-
-    expect(result.message).toContain("Model updated to GPT-5.");
-    expect(result.message).toContain("Manual toolset override");
-    expect(result.level).toBe("info");
+    expect(source).not.toContain("Auto toolset selected: switched to");
+    expect(source).not.toContain("Manual toolset override remains active");
   });
 
   test("includes reasoning effort when updateArgs has reasoning_effort", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
       modelLabel: "Opus 4.6",
-      toolsetChanged: false,
       toolsetError: null,
-      nextToolset: "default",
-      toolsetPreference: "auto",
       updateArgs: { reasoning_effort: "medium" },
     });
 
@@ -130,10 +112,7 @@ describe("listen-client model update status message", () => {
   test("shows No Reasoning for reasoning_effort none", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
       modelLabel: "Opus 4.6",
-      toolsetChanged: false,
       toolsetError: null,
-      nextToolset: "default",
-      toolsetPreference: "auto",
       updateArgs: { reasoning_effort: "none" },
     });
 
@@ -143,10 +122,7 @@ describe("listen-client model update status message", () => {
   test("shows Max for reasoning_effort xhigh on older Anthropic models", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
       modelLabel: "Opus 4.6",
-      toolsetChanged: false,
       toolsetError: null,
-      nextToolset: "default",
-      toolsetPreference: "auto",
       updateArgs: { reasoning_effort: "xhigh" },
     });
 
@@ -157,10 +133,7 @@ describe("listen-client model update status message", () => {
     for (const modelLabel of ["Fable 5", "Opus 4.7", "Opus 4.8"]) {
       const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
         modelLabel,
-        toolsetChanged: false,
         toolsetError: null,
-        nextToolset: "default",
-        toolsetPreference: "auto",
         updateArgs: { reasoning_effort: "xhigh" },
       });
 
@@ -173,10 +146,7 @@ describe("listen-client model update status message", () => {
   test("omits effort when updateArgs has no reasoning_effort", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
       modelLabel: "GLM-5",
-      toolsetChanged: false,
       toolsetError: null,
-      nextToolset: "default",
-      toolsetPreference: "auto",
       updateArgs: { context_window: 180000 },
     });
 
@@ -186,10 +156,7 @@ describe("listen-client model update status message", () => {
   test("reports warning level when toolset switch failed", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
       modelLabel: "Claude Sonnet 4",
-      toolsetChanged: false,
       toolsetError: "Network timeout",
-      nextToolset: "default",
-      toolsetPreference: "auto",
     });
 
     expect(result.message).toContain("Model updated to Claude Sonnet 4.");
@@ -197,42 +164,19 @@ describe("listen-client model update status message", () => {
     expect(result.message).toContain("Network timeout");
     expect(result.level).toBe("warning");
   });
-
-  test("toolset error takes precedence over toolset change flag", () => {
-    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
-      modelLabel: "GPT-5",
-      toolsetChanged: true,
-      toolsetError: "API unreachable",
-      nextToolset: "codex",
-      toolsetPreference: "auto",
-    });
-
-    // Should show warning, not the toolset change notice
-    expect(result.message).toContain("Warning: toolset switch failed");
-    expect(result.message).not.toContain("auto");
-    expect(result.level).toBe("warning");
-  });
 });
 
 describe("listen-client applyModelUpdateForRuntime wiring", () => {
-  test("uses scoped runtime tool snapshots for change detection and wraps toolset refresh in try/catch", () => {
+  test("updates scoped runtime tools and wraps toolset refresh in try/catch", () => {
     const source = readModelToolsetCommandSource();
 
-    // Toolset change detection should compare scoped loaded-tool snapshots,
-    // not the mutable process-global registry.
-    expect(source).toContain(
-      "const previousToolNames = scopedRuntime.currentLoadedTools;",
-    );
     expect(source).toContain(
       "await ensureCorrectMemoryTool(agentId, model.handle)",
     );
     expect(source).toContain("await prepareToolExecutionContextForScope({");
     expect(source).toContain("overrideModel: model.handle");
     expect(source).toContain(
-      "scopedRuntime.currentLoadedTools = nextLoadedTools;",
-    );
-    expect(source).toContain(
-      "JSON.stringify(previousToolNames) !== JSON.stringify(nextLoadedTools)",
+      "preparedToolContext.preparedToolContext.loadedToolNames;",
     );
 
     // Tool refresh failures should still degrade cleanly to a warning.
@@ -550,6 +494,155 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
     }
   });
 
+  test("keeps manual toolsets scoped to one conversation", async () => {
+    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-toolset-scope-"));
+    const previousHome = process.env.HOME;
+    try {
+      process.env.HOME = storageDir;
+      await settingsManager.reset();
+      await settingsManager.initialize();
+
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Fable Toolset Agent",
+        model: "anthropic/claude-fable-5",
+        model_settings: { provider_type: "anthropic" },
+      } as AgentCreateBody);
+      const conversationA = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      const conversationB = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      settingsManager.setToolsetPreference(agent.id, "codex");
+
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        agent.id,
+        conversationA.id,
+      );
+      await applyToolsetUpdateForRuntime({
+        socket: new MockSocket() as unknown as WebSocket,
+        listener,
+        scopedRuntime: runtimeA,
+        requestId: "toolset-conv-a",
+        toolsetPreference: "codex",
+      });
+
+      expect(runtimeA.currentToolset).toBe("codex");
+      expect(
+        settingsManager.getToolsetPreference(agent.id, conversationA.id),
+      ).toBe("codex");
+      expect(
+        settingsManager.getToolsetPreference(agent.id, conversationB.id),
+      ).toBe("auto");
+      expect(
+        __listenClientTestUtils.buildDeviceStatus(listener, {
+          agent_id: agent.id,
+          conversation_id: conversationB.id,
+        }).current_toolset_preference,
+      ).toBe("auto");
+
+      const preparedB = await prepareToolExecutionContextForScope({
+        agentId: agent.id,
+        conversationId: conversationB.id,
+      });
+      expect(preparedB.toolsetPreference).toBe("auto");
+      expect(preparedB.toolset).toBe("default");
+      expect(preparedB.preparedToolContext.loadedToolNames).toContain("Edit");
+      expect(preparedB.preparedToolContext.loadedToolNames).not.toContain(
+        "ApplyPatch",
+      );
+
+      settingsManager.setToolsetPreference(
+        agent.id,
+        "gemini",
+        conversationB.id,
+      );
+      const originalModAdapter = listener.modAdapter;
+      listener.modAdapter = {
+        getAvailablePermissions: () => {
+          throw new Error("toolset preparation failed");
+        },
+      } as never;
+      try {
+        await expect(
+          applyToolsetUpdateForRuntime({
+            socket: new MockSocket() as unknown as WebSocket,
+            listener,
+            scopedRuntime: runtimeA,
+            requestId: "toolset-conv-a-failure",
+            toolsetPreference: "default",
+          }),
+        ).rejects.toThrow("toolset preparation failed");
+      } finally {
+        listener.modAdapter = originalModAdapter;
+      }
+      expect(
+        settingsManager.getToolsetPreference(agent.id, conversationA.id),
+      ).toBe("codex");
+      expect(
+        settingsManager.getToolsetPreference(agent.id, conversationB.id),
+      ).toBe("gemini");
+      expect(runtimeA.currentToolset).toBe("codex");
+
+      settingsManager.setToolsetPreference(
+        agent.id,
+        "default",
+        conversationB.id,
+      );
+      const manualDefaultB = await prepareToolExecutionContextForScope({
+        agentId: agent.id,
+        conversationId: conversationB.id,
+        overrideModel: "openai/gpt-5.4",
+        overrideProviderType: "openai",
+      });
+      expect(manualDefaultB.toolsetPreference).toBe("default");
+      expect(manualDefaultB.toolset).toBe("default");
+      settingsManager.setToolsetPreference(agent.id, "auto", conversationB.id);
+
+      await applyToolsetUpdateForRuntime({
+        socket: new MockSocket() as unknown as WebSocket,
+        listener,
+        scopedRuntime: runtimeA,
+        requestId: "toolset-conv-a-auto",
+        toolsetPreference: "auto",
+      });
+      expect(runtimeA.currentToolset).toBe("default");
+      expect(
+        settingsManager.getToolsetPreference(agent.id, conversationA.id),
+      ).toBe("auto");
+      expect(settingsManager.getToolsetPreference(agent.id)).toBe("codex");
+
+      settingsManager.setToolsetPreference(agent.id, "codex", conversationB.id);
+      const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        agent.id,
+        conversationB.id,
+      );
+      expect(runtimeB.currentToolset).toBeNull();
+      expect(
+        __listenClientTestUtils.buildDeviceStatus(listener, {
+          agent_id: agent.id,
+          conversation_id: conversationB.id,
+        }).current_toolset_preference,
+      ).toBe("codex");
+    } finally {
+      await settingsManager.reset();
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("preserves conversation context limit for same-handle desktop model updates", async () => {
     const storageDir = await mkdtemp(join(os.tmpdir(), "ws-model-context-"));
     const previousHome = process.env.HOME;
@@ -621,23 +714,23 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
   });
 });
 
-describe("listen-client channel model command wiring", () => {
-  test("wireChannelIngress routes channel /model through the model update helpers", () => {
-    const source = readListenerLifecycleSource();
+describe("local channel gateway model command wiring", () => {
+  test("routes channel /model through the App Server model protocol", () => {
+    const source = readLocalChannelGatewaySource();
 
     expect(source).toContain("registry.setModelHandler");
-    expect(source).toContain("getCurrentModelStatusForRuntime({");
+    expect(source).toContain("gateway.getModelStatus(runtime)");
     expect(source).toContain(
       "buildChannelCurrentModelMessage(channelId, status)",
     );
     expect(source).toContain('modelIdentifier.toLowerCase() === "list"');
-    expect(source).toContain("buildListModelsResponse(");
-    expect(source).toContain("resolveModelForUpdate({");
-    expect(source).toContain("applyModelUpdateForRuntime({");
+    expect(source).toContain("client.request<ListModelsResponseMessage>(");
+    expect(source).toContain("client.request<UpdateModelResponseMessage>(");
     expect(source).toContain("settingsManager.getRecentModels()");
     expect(source).toContain(
-      "settingsManager.addRecentModel(resolvedModel.handle)",
+      "settingsManager.addRecentModel(response.model_handle ?? modelIdentifier)",
     );
+    expect(source).toContain("gateway.updateModelStatus(");
   });
 });
 

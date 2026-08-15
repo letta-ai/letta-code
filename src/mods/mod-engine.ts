@@ -32,6 +32,7 @@ import {
   recordDeprecatedContextApiSourceDiagnostics,
 } from "@/mods/deprecated-api";
 import { isTypeScriptModFileExtension } from "@/mods/file-extensions";
+import * as modInvocationContext from "@/mods/invocation-context";
 import {
   appendModDiagnostic,
   recordModDiagnostic,
@@ -63,6 +64,11 @@ import {
   unregisterModToolsForOwner,
 } from "@/mods/tool-registry";
 import { normalizeTurnStartCancelReason } from "@/mods/turn-start-cancel";
+import {
+  cloneTurnStartInput,
+  isTurnStartInput,
+  preserveApprovalFirstOrdering,
+} from "@/mods/turn-start-input";
 import type {
   ModCapabilities,
   ModCommand,
@@ -94,6 +100,7 @@ import type {
   ModTurnStartCancelResult,
   ModTurnStartEvent,
 } from "@/mods/types";
+import { createNoopModPanelHandle } from "@/mods/ui-helpers";
 
 export type {
   LocalModSource,
@@ -166,6 +173,7 @@ export interface LettaModApi {
   };
   ui: {
     closePanel: (id: string) => void;
+    notify: (message: string) => void;
     openPanel: (panel: ModPanelOptions) => ModPanelHandle;
     /** @deprecated Removed. Use openPanel; calls emit a migration diagnostic. */
     setStatus: (key: string, value?: unknown) => void;
@@ -219,6 +227,7 @@ export interface LoadLocalModsOptions extends ResolveLocalModSourcesOptions {
   generation?: number;
   onChange?: () => void;
   onDiagnostic?: (diagnostic: ModDiagnostic) => void;
+  onNotification?: modInvocationContext.ModNotificationHandler;
   onRegistryCreated?: (registry: LocalModRegistry) => void;
   registerCapabilitiesGlobally?: boolean;
   reservedToolNames?: Iterable<string>;
@@ -236,14 +245,8 @@ export interface ModEngine {
   subscribe: (listener: () => void) => () => void;
 }
 
-export interface CreateModEngineOptions extends ResolveLocalModSourcesOptions {
-  getClient: () => Promise<Letta>;
+export interface CreateModEngineOptions extends LoadLocalModsOptions {
   getBackend?: () => Backend | undefined;
-  builtinCommandIds?: Iterable<string>;
-  capabilities?: ModCapabilities;
-  onDiagnostic?: (diagnostic: ModDiagnostic) => void;
-  registerCapabilitiesGlobally?: boolean;
-  reservedToolNames?: Iterable<string>;
 }
 
 function getModSourcePriority(scope: ModSourceScope): number {
@@ -527,9 +530,7 @@ function createImportableModPath(
         unlinkSync(path.join(importCacheDirectory, entry));
       }
     }
-  } catch {
-    // Best-effort cache cleanup only.
-  }
+  } catch {}
 
   return importPath;
 }
@@ -554,8 +555,6 @@ function createLazyClient(getClient: () => Promise<Letta>): Letta {
         });
       },
       get(_target, property) {
-        // Keep the proxy from being treated as a Promise when code does
-        // `await letta.client` or Promise.resolve(letta.client).
         if (property === "then") return undefined;
         return createProxy([...path, property]);
       },
@@ -632,19 +631,6 @@ function isTurnStartResultWithCancel(
     normalizeTurnStartCancelReason((cancel as { reason?: unknown }).reason) !==
       null
   );
-}
-
-function isTurnStartInput(value: unknown): value is ModTurnStartEvent["input"] {
-  return (
-    Array.isArray(value) &&
-    value.every((item) => typeof item === "object" && item !== null)
-  );
-}
-
-function cloneTurnStartInput(
-  input: ModTurnStartEvent["input"],
-): ModTurnStartEvent["input"] {
-  return input.map((item) => structuredClone(item));
 }
 
 function isToolStartResultWithArgs(
@@ -890,13 +876,6 @@ function upsertModPanel(
   };
 }
 
-function createNoopModPanelHandle(): ModPanelHandle {
-  return {
-    close() {},
-    update() {},
-  };
-}
-
 function createLettaModApi(
   registry: LocalModRegistry,
   owner: ModOwner,
@@ -904,6 +883,7 @@ function createLettaModApi(
   getClient: () => Promise<Letta>,
   onChange: () => void,
   onDiagnostic: ((diagnostic: ModDiagnostic) => void) | undefined,
+  onNotification: modInvocationContext.ModNotificationHandler | undefined,
   builtinCommandIds: Set<string>,
   reservedToolNames: Set<string>,
   signal: AbortSignal,
@@ -1277,11 +1257,14 @@ function createLettaModApi(
       },
       unregister: unregisterPermission,
     },
-    diagnostics: {
-      report: reportDiagnostic,
-    },
+    diagnostics: { report: reportDiagnostic },
     ui: {
       closePanel,
+      notify(message) {
+        if (!onNotification || !message.trim()) return;
+        if (!guardLive({ id: "notify", kind: "panel" })) return;
+        modInvocationContext.notifyMod(onNotification, message);
+      },
       openPanel(panel) {
         if (!capabilities.ui.panels) {
           return createNoopModPanelHandle();
@@ -1485,6 +1468,7 @@ export async function loadLocalMods(
             getConfiguredClient,
             onChange,
             options.onDiagnostic,
+            options.onNotification,
             builtinCommandIds,
             reservedToolNames,
             abortController.signal,
@@ -1535,7 +1519,9 @@ export async function emitLocalModEvent<TName extends ModEventName>(
   const diagnostics: ModDiagnostic[] = [];
   const results: Array<NonNullable<ModEventResultMap[TName]>> = [];
   let turnStartCancel: ModTurnStartCancelResult | undefined;
-
+  const turnStartHadApproval =
+    name === "turn_start" &&
+    (event as ModTurnStartEvent).input.some((item) => item.type === "approval");
   for (const registration of registrations) {
     const signal = registration.owner
       ? registry.ownerAbortControllers[registration.owner.id]?.signal
@@ -1591,7 +1577,11 @@ export async function emitLocalModEvent<TName extends ModEventName>(
         recordEventDiagnostic,
         "ctx.getContext",
       );
-      const result = await registration.handler(event, eventContext);
+      const result = await modInvocationContext.invoke(
+        eventContext,
+        registration,
+        event,
+      );
       if (isTurnStartResultWithInput(name, result)) {
         (event as ModTurnStartEvent).input = result.input;
       }
@@ -1671,6 +1661,10 @@ export async function emitLocalModEvent<TName extends ModEventName>(
     const turnStartEventWithCancel = event as ModTurnStartEvent & {
       cancel?: ModTurnStartCancelResult;
     };
+    turnStartEventWithCancel.input = preserveApprovalFirstOrdering(
+      turnStartHadApproval,
+      turnStartEventWithCancel.input,
+    );
     if (turnStartCancel) {
       turnStartEventWithCancel.cancel = { ...turnStartCancel };
     } else {
@@ -1782,9 +1776,6 @@ export function createModEngine(options: CreateModEngineOptions): ModEngine {
           onDiagnostic?.(diagnostic);
           return;
         }
-        // Stale handles from a prior generation report through their old
-        // activation callback. Preserve the diagnostic on the current engine
-        // snapshot without reviving the old registry.
         appendModDiagnostic(activeRegistry, diagnostic);
         publish();
         onDiagnostic?.(diagnostic);

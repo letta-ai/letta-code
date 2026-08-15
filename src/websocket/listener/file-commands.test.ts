@@ -230,4 +230,88 @@ describe("listener file commands without file index", () => {
       success: true,
     });
   });
+
+  test("read_file defaults to strict utf8 and rejects binary content", async () => {
+    const root = await mkdtemp(join(tmpdir(), "letta-file-read-"));
+    tempDirs.push(root);
+    await writeFile(join(root, "note.txt"), "hello world");
+    // A PNG header is invalid UTF-8 (0x89 lead byte).
+    const pngBytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02,
+    ]);
+    await writeFile(join(root, "pixel.png"), pngBytes);
+
+    const textHarness = createHarness();
+    expect(
+      textHarness.session.handle({
+        type: "read_file",
+        path: join(root, "note.txt"),
+        request_id: "req-read-text",
+      }),
+    ).toBe(true);
+    await textHarness.flush();
+    expect(textHarness.sent[0]).toMatchObject({
+      type: "read_file_response",
+      request_id: "req-read-text",
+      content: "hello world",
+      encoding: "utf8",
+      success: true,
+    });
+
+    const binaryHarness = createHarness();
+    expect(
+      binaryHarness.session.handle({
+        type: "read_file",
+        path: join(root, "pixel.png"),
+        request_id: "req-read-binary",
+      }),
+    ).toBe(true);
+    await binaryHarness.flush();
+    expect(binaryHarness.sent[0]).toMatchObject({
+      type: "read_file_response",
+      request_id: "req-read-binary",
+      content: null,
+      success: false,
+    });
+  });
+
+  test("read_file with base64 encoding returns raw bytes base64-encoded", async () => {
+    const root = await mkdtemp(join(tmpdir(), "letta-file-read-b64-"));
+    tempDirs.push(root);
+    const pngBytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02,
+    ]);
+    await writeFile(join(root, "pixel.png"), pngBytes);
+
+    const harness = createHarness();
+    expect(
+      harness.session.handle({
+        type: "read_file",
+        path: join(root, "pixel.png"),
+        request_id: "req-read-b64",
+        encoding: "base64",
+      }),
+    ).toBe(true);
+    await harness.flush();
+    expect(harness.sent[0]).toMatchObject({
+      type: "read_file_response",
+      request_id: "req-read-b64",
+      content: pngBytes.toString("base64"),
+      encoding: "base64",
+      success: true,
+    });
+  });
+
+  test("read_file rejects invalid encoding values at the protocol boundary", async () => {
+    const harness = createHarness();
+    expect(
+      harness.session.handle({
+        type: "read_file",
+        path: "/tmp/whatever.png",
+        request_id: "req-bad-encoding",
+        encoding: "hex",
+      }),
+    ).toBe(false);
+    expect(harness.sent).toHaveLength(0);
+  });
 });

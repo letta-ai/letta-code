@@ -257,4 +257,41 @@ describe("recovered approval lease boundaries", () => {
     expect(ends.map((delta) => delta.tool_call_id)).toEqual(["call-1"]);
     expect(ends[0].status).toBe("error");
   });
+
+  test("terminated recovered execution omits terminal error details", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    runtime.recoveredApprovalState = createRecoveredState();
+    const sentPayloads: string[] = [];
+    const handled = resolveRecoveredApprovalResponse(
+      runtime,
+      createTransport(sentPayloads),
+      { request_id: "perm-1", decision: { behavior: "allow" } },
+      mock(async () => {}),
+      {
+        dependencies: {
+          applySuggestedPermissions: async () => false,
+          ensureSecretsHydrated: async () => {},
+          prepareToolExecutionContext: async () => createPreparedToolContext(),
+          executeApprovalBatch: async () => {
+            throw new Error("terminated");
+          },
+        },
+      },
+    );
+
+    await handled.catch(() => {});
+
+    const terminal = sentPayloads
+      .map((payload) => JSON.parse(payload))
+      .find((frame) => frame.type === "turn_finished");
+    expect(terminal).toMatchObject({
+      type: "turn_finished",
+      stop_reason: "error",
+    });
+    expect(terminal).not.toHaveProperty("error");
+  });
 });

@@ -1,7 +1,27 @@
 {
   "tests": [
     {
+      "path": "scripts/unit-test-impact.test.cjs",
+      "timeoutMs": 15000,
+      "reason": "Adding this test to the shared Bun batch shifted existing batch boundaries and exposed package-installer module-mock leakage; run it separately."
+    },
+    {
+      "path": "src/channels/discord-reconcile.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mocks the backend client module in beforeAll; the mock leaks into later files in the same process."
+    },
+    {
       "path": "src/channels/discord-registry.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for the backend client."
+    },
+    {
+      "path": "src/channels/slack-registry.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for the backend client."
+    },
+    {
+      "path": "src/channels/telegram-registry.test.ts",
       "timeoutMs": 15000,
       "reason": "Uses a top-level Bun module mock for the backend client."
     },
@@ -9,6 +29,17 @@
       "path": "src/channels/discord-service.test.ts",
       "timeoutMs": 15000,
       "reason": "Mutates shared channel account, route, pairing, and target stores."
+    },
+    {
+      "path": "src/channels/protocol-command-handler.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates shared channel account, route, credential-store, service-loader, and listener runtime state."
+    },
+    {
+      "path": "src/channels/service.test.ts",
+      "timeoutMs": 15000,
+      "env": { "LETTA_SKIP_KEYCHAIN_CHECK": "1" },
+      "reason": "Mutates shared channel stores and credential mode; local fixtures must not use the macOS keychain."
     },
     {
       "path": "src/channels/slack/media.test.ts",
@@ -24,6 +55,12 @@
       "path": "src/cli/message-search-cache-warm.test.ts",
       "timeoutMs": 15000,
       "reason": "Uses a top-level Bun module mock for backend search."
+    },
+    {
+      "path": "src/cli/helpers/pinned-agent-listing.test.ts",
+      "timeoutMs": 15000,
+      "env": { "LETTA_SKIP_KEYCHAIN_CHECK": "1" },
+      "reason": "Mutates HOME, local-backend paths, the settings singleton, and the keychain service name."
     },
     {
       "path": "src/hooks/prompt-executor.test.ts",
@@ -56,6 +93,22 @@
       "reason": "Mutates the settings singleton, keychain test overrides, HOME, and the secrets service name."
     },
     {
+      "path": "src/settings-manager-toolset.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates the settings singleton and HOME while checking persisted conversation overrides."
+    },
+    {
+      "path": "src/cli/reflection-worktree-completion.test.ts",
+      "timeoutMs": 15000,
+      "env": { "LETTA_CODE_TELEM": "1" },
+      "reason": "Exercises reflection worktree cleanup telemetry with real Git processes and the shared telemetry singleton."
+    },
+    {
+      "path": "src/cli/helpers/reflection-launcher.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Exercises reflection launch preflight with real Git processes and temporary local-backend environment overrides."
+    },
+    {
       "path": "src/telemetry/flush-auth.test.ts",
       "timeoutMs": 15000,
       "env": { "LETTA_CODE_TELEM": "1" },
@@ -71,6 +124,11 @@
       "path": "src/tools/bash.test.ts",
       "timeoutMs": 30000,
       "reason": "Spawns real shells and temporarily mutates process platform and PATH state."
+    },
+    {
+      "path": "src/tools/impl/github-pull-request-shell-adapters.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Spawns every shell adapter while mutating PATH, the backend singleton, and process registries."
     },
     {
       "path": "src/tools/enter-worktree.test.ts",

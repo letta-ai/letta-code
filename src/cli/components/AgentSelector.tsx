@@ -23,6 +23,7 @@ import {
   AGENT_SELECTOR_TAB_EMPTY_STATES,
   type AgentSelectorListAgent,
   type AgentSelectorTabId,
+  formatAgentMemoryBlockCount,
   formatAgentModel,
   formatRelativeTime,
   getVisibleAgentSelectorTabs,
@@ -739,7 +740,6 @@ export function AgentSelector({
       setSearchInput((prev) => prev + input);
     }
   });
-
   // Render agent item (shared between tabs)
   const renderAgentItem = (
     agent: AgentSelectorListAgent,
@@ -750,13 +750,13 @@ export function AgentSelector({
     const isCurrent = agent.id === currentAgentId;
     const isLocalAgent = isLocalAgentId(agent.id);
     const relativeTime = formatRelativeTime(agent.last_run_completion);
-    const blockCount = agent.blocks?.length ?? 0;
+    const blockCountText = formatAgentMemoryBlockCount(agent.blocks?.length);
     const modelStr = formatAgentModel(agent);
     const metadataParts = [relativeTime];
     if (!isLocalAgent && extra?.backend !== "shared") {
-      metadataParts.push(
-        `${blockCount} memory block${blockCount === 1 ? "" : "s"}`,
-      );
+      if (blockCountText) {
+        metadataParts.push(blockCountText);
+      }
       metadataParts.push(modelStr);
     }
     if (extra?.backend === "shared" && agent.creator?.name) {

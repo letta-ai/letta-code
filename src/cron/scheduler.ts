@@ -13,6 +13,7 @@
  */
 
 import { getBackend } from "@/backend";
+import type { ConversationCreateBody } from "@/backend/backend";
 import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queue-runtime";
 import { TO_SUBSCRIBERS } from "@/websocket/listener/connection";
 import { ensureConversationQueueRuntime } from "@/websocket/listener/conversation-runtime";
@@ -47,6 +48,7 @@ import {
   getIntendedCronOccurrence,
 } from "./prompt";
 import { safeAppendCronRunLogForTask } from "./run-log";
+import { SCHEDULE_ORIGIN_TAG } from "./scheduled-task-prompt";
 
 export {
   type CronPromptTiming,
@@ -116,18 +118,15 @@ export function wrapCronPrompt(
   return formatCronPrompt(task, timing);
 }
 
-function getCronConversationSummary(task: CronTask): string {
-  return `[Schedule] ${task.name}`;
-}
-
 async function resolveCronFireConversationId(
   task: CronTask,
 ): Promise<string | undefined> {
   if (task.conversation_id === NEW_CONVERSATION_TARGET) {
     const conversation = await getBackend().createConversation({
       agent_id: task.agent_id,
-      summary: getCronConversationSummary(task),
-    });
+      summary: task.name,
+      tags: [SCHEDULE_ORIGIN_TAG],
+    } as ConversationCreateBody);
     return conversation.id;
   }
 

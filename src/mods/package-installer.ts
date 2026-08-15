@@ -1,8 +1,4 @@
-import {
-  type ChildProcess,
-  type SpawnOptions,
-  spawn,
-} from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
@@ -31,6 +27,10 @@ import {
   upsertManagedModPackage,
   validateManagedModPackageRegistryForMutation,
 } from "@/mods/package-registry";
+import {
+  getPackageManagerProcessFactory,
+  type PackageManagerProcessFactory,
+} from "@/utils/package-manager-spawn";
 
 export interface InstallLocalManagedModPackageResult {
   capabilities: LettaPackageCapability[];
@@ -92,15 +92,11 @@ interface InstallPreparedManagedModPackageParams {
   packageInfo?: PackageSourceInfo;
 }
 
-type ManagedPackageProcessFactory = (
-  command: string,
-  args: string[],
-  options: SpawnOptions,
-) => ChildProcess;
+type ManagedPackageProcessFactory = PackageManagerProcessFactory;
 
 const SKIPPED_PACKAGE_COPY_NAMES = new Set([".git", "node_modules"]);
 
-let spawnNpmInstallProcess: ManagedPackageProcessFactory = spawn;
+let spawnNpmInstallProcessOverride: ManagedPackageProcessFactory | null = null;
 let spawnGitInstallProcess: ManagedPackageProcessFactory = spawn;
 let platformOverride: NodeJS.Platform | null = null;
 
@@ -616,7 +612,11 @@ async function runNpmInstall(params: {
       args: getNpmInstallArgs(params.installSpec),
       command: getNpmExecutable(),
       cwd: params.tempRoot,
-      spawnImpl: spawnNpmInstallProcess,
+      spawnImpl:
+        spawnNpmInstallProcessOverride ??
+        getPackageManagerProcessFactory({
+          platform: platformOverride ?? process.platform,
+        }),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1196,6 +1196,6 @@ export function __testOverrideNpmManagedModPackageInstaller(params: {
   spawnImpl?: ManagedPackageProcessFactory | null;
 }): void {
   spawnGitInstallProcess = params.gitSpawnImpl ?? spawn;
-  spawnNpmInstallProcess = params.spawnImpl ?? spawn;
+  spawnNpmInstallProcessOverride = params.spawnImpl ?? null;
   platformOverride = params.platform ?? null;
 }

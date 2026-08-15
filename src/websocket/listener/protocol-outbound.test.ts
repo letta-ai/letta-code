@@ -18,6 +18,10 @@ import {
 } from "@/websocket/listener/connection";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { createRuntime as createListenerRuntime } from "@/websocket/listener/lifecycle";
+import {
+  createListenerModContext,
+  emitListenerModNotification,
+} from "@/websocket/listener/mod-adapter";
 import { OUTBOUND_QUEUE_LIMITS } from "@/websocket/listener/outbound-wire";
 import {
   emitDequeuedUserMessage,
@@ -120,9 +124,76 @@ describe("emitProtocolV2Message backpressure", () => {
     expect(socket.terminated).toBe(true);
     expect(socket.sentPayloads).toEqual([]);
   });
+
+  test("never coalesces queue removal transitions", () => {
+    const { runtime, socket } = createRuntime();
+    socket.bufferedAmount = OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
+
+    for (let i = 0; i <= OUTBOUND_QUEUE_LIMITS.MAX_QUEUED_FRAMES; i += 1) {
+      emitProtocolV2Message(
+        socket as never,
+        runtime,
+        {
+          type: "update_queue",
+          queue: [],
+          removed: [
+            {
+              client_message_id: `cm-${i}`,
+              disposition: "dequeued",
+            },
+          ],
+        },
+        undefined,
+        TO_SUBSCRIBERS,
+      );
+    }
+
+    expect(socket.terminated).toBe(true);
+    expect(socket.sentPayloads).toEqual([]);
+  });
 });
 
 describe("emitProtocolV2Message connection routing", () => {
+  test("routes mod notifications as UI-only status deltas", () => {
+    const listener = createListenerRuntime();
+    const socket = new MockSocket();
+    const connectionId = "desktop-client";
+    const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+    openListenerConnection({
+      runtime: listener,
+      connectionId,
+      writer: socket as never,
+      options: {
+        connectionId,
+        wsUrl: "ws://test",
+        deviceId: "test",
+        connectionName: connectionId,
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+      },
+    });
+    markListenerConnectionInitialized(listener, connectionId);
+    subscribeListenerConnection(listener, connectionId, scope);
+
+    emitListenerModNotification(
+      listener,
+      "Desktop-only message",
+      createListenerModContext({
+        agent: { id: scope.agent_id },
+        sessionId: scope.conversation_id,
+      }),
+    );
+
+    const message = parseOnlyStreamDelta(socket);
+    expect(message.runtime).toEqual(scope);
+    expect(message.delta).toMatchObject({
+      message_type: "status",
+      message: "Desktop-only message",
+      level: "info",
+    });
+  });
+
   test("fans notifications out to subscribers and honors an explicit target", () => {
     const listener = createListenerRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
@@ -400,6 +471,42 @@ describe("emitProtocolV2Message connection routing", () => {
 });
 
 describe("emitDequeuedUserMessage", () => {
+  test("includes the acting user for live observers", () => {
+    const { runtime, socket } = createRuntime();
+    const incoming = {
+      type: "message",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      actingUserId: "cloud-user-2",
+      messages: [{ role: "user", content: "hello from another person" }],
+    } as IncomingMessage;
+    const batch = {
+      batchId: "batch-user",
+      items: [
+        {
+          id: "item-user",
+          kind: "message",
+          source: "user",
+          content: "hello from another person",
+          actingUserId: "cloud-user-2",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          enqueuedAt: Date.now(),
+        },
+      ],
+      mergedCount: 1,
+      queueLenAfter: 0,
+    } satisfies DequeuedBatch;
+
+    emitDequeuedUserMessage(socket as never, runtime, incoming, batch);
+
+    const message = parseOnlyStreamDelta(socket);
+    expect(message.delta).toMatchObject({
+      message_type: "user_message",
+      created_by_id: "cloud-user-2",
+    });
+  });
+
   test("emits cron_prompt-only turns as visible scheduled task user messages", () => {
     const { runtime, socket } = createRuntime();
     const cronText = [
@@ -452,6 +559,7 @@ describe("emitDequeuedUserMessage", () => {
       content: unknown;
     };
     expect(userDelta.message_type).toBe("user_message");
+    expect(userDelta).not.toHaveProperty("created_by_id");
     expect(userDelta.content).toEqual([
       {
         type: "text",

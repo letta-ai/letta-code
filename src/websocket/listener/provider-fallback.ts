@@ -10,11 +10,12 @@ export type ProviderFallbackState = {
 
 export function createProviderFallbackState(
   agent: AgentState | null | undefined,
+  overrideModel?: string,
 ): ProviderFallbackState {
   const llmConfig = agent?.llm_config;
   const model = llmConfig?.model;
   if (!model) {
-    return { sourceModelId: null, attempted: false };
+    return { sourceModelId: null, attempted: false, overrideModel };
   }
 
   const modelInfo =
@@ -23,6 +24,7 @@ export function createProviderFallbackState(
   return {
     sourceModelId: modelInfo?.id ?? model,
     attempted: false,
+    overrideModel,
   };
 }
 

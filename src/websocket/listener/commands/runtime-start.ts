@@ -9,8 +9,10 @@ import type {
 import type WebSocket from "ws";
 import { createAgentWithBaseToolsRecovery } from "@/agent/create";
 import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
-import { getBackend } from "@/backend";
+import { type ConversationUpdateBody, getBackend } from "@/backend";
 import { migratePermissionMode } from "@/permissions/mode";
+import { canonicalizeRoot } from "@/permissions/sandbox-policy";
+import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
 import { subscribeListenerConnection } from "@/websocket/listener/connection";
@@ -22,6 +24,7 @@ import {
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
 import { isRuntimeStartCommand } from "@/websocket/listener/protocol-inbound";
+import { assertRuntimeWorkspaceSandboxChangeAllowed } from "@/websocket/listener/runtime-workspace-sandbox";
 import type {
   ConversationRuntime,
   ListenerConnectionId,
@@ -233,16 +236,97 @@ async function resolveRuntimeStartConversation(
   return conversation;
 }
 
+const LEGACY_SUMMARY_PREFIX_BY_SOURCE_TAG: Readonly<Record<string, string>> = {
+  "channel:discord": "discord",
+  "channel:slack": "slack",
+  "channel:telegram": "telegram",
+  "origin:schedule": "schedule",
+};
+
+function removeMatchingSourcePrefix(
+  summary: string | null | undefined,
+  sourceTags: readonly string[],
+): string | null | undefined {
+  if (typeof summary !== "string") return summary;
+
+  const match = summary.match(/^\s*\[([^\]]+)\]\s*/);
+  if (!match) return summary;
+
+  const prefix = match[1]?.trim().toLowerCase();
+  const matchesSourceTag = sourceTags.some(
+    (tag) => LEGACY_SUMMARY_PREFIX_BY_SOURCE_TAG[tag] === prefix,
+  );
+  return matchesSourceTag ? summary.slice(match[0].length) : summary;
+}
+
+async function applyRuntimeStartConversationSourceTags(
+  parsed: RuntimeStartCommand,
+  conversation: Conversation,
+): Promise<Conversation> {
+  const sourceTags = parsed.conversation_source_tags;
+  if (conversation.id === "default" || !sourceTags?.length) {
+    return conversation;
+  }
+
+  const currentTags = Reflect.get(conversation, "tags");
+  const existingTags = Array.isArray(currentTags)
+    ? currentTags.filter((tag): tag is string => typeof tag === "string")
+    : [];
+  const missingTags = sourceTags.filter((tag) => !existingTags.includes(tag));
+  const summary = removeMatchingSourcePrefix(conversation.summary, sourceTags);
+  const summaryChanged = summary !== conversation.summary;
+  if (missingTags.length === 0 && !summaryChanged) {
+    return conversation;
+  }
+
+  return getBackend().updateConversation(conversation.id, {
+    ...(missingTags.length > 0
+      ? { tags: [...new Set([...existingTags, ...missingTags])] }
+      : {}),
+    ...(summaryChanged ? { summary } : {}),
+  } as ConversationUpdateBody);
+}
+
 async function applyRuntimeStartState(
   parsed: RuntimeStartCommand,
   context: RuntimeStartCommandContext,
   scope: RuntimeScope,
   scopedRuntime: ConversationRuntime,
 ): Promise<void> {
-  if (parsed.skill_sources === undefined) {
+  const workspaceSandbox = parsed.workspace_sandbox
+    ? resolveWorkspaceSandbox({
+        root: parsed.workspace_sandbox.root,
+        isolationRoot: parsed.workspace_sandbox.isolation_root,
+      })
+    : undefined;
+  const requestedWorkingDirectory =
+    parsed.cwd ??
+    workspaceSandbox?.root ??
+    getBootWorkingDirectory(context.runtime);
+  const canonicalWorkingDirectory = canonicalizeRoot(requestedWorkingDirectory);
+  if (
+    workspaceSandbox &&
+    canonicalWorkingDirectory !== workspaceSandbox.root &&
+    !canonicalWorkingDirectory.startsWith(`${workspaceSandbox.root}/`)
+  ) {
+    throw new Error(
+      "runtime_start cwd must be inside the workspace sandbox root",
+    );
+  }
+  assertRuntimeWorkspaceSandboxChangeAllowed(
+    context.runtime,
+    scopedRuntime,
+    workspaceSandbox,
+  );
+  scopedRuntime.workspaceSandbox = workspaceSandbox;
+
+  if (
+    parsed.skill_sources === undefined &&
+    parsed.preserve_skill_sources !== true
+  ) {
     scopedRuntime.skillSources = undefined;
     context.runtime.skillSourcesByConversation.delete(scopedRuntime.key);
-  } else {
+  } else if (parsed.skill_sources !== undefined) {
     const skillSources = [...new Set(parsed.skill_sources)];
     scopedRuntime.skillSources = skillSources;
     context.runtime.skillSourcesByConversation.set(
@@ -265,12 +349,12 @@ async function applyRuntimeStartState(
     persistPermissionModeMapForRuntime(context.runtime);
   }
 
-  if (parsed.cwd !== undefined) {
+  if (parsed.cwd !== undefined || workspaceSandbox) {
     await switchConversationWorkingDirectory({
       runtime: context.runtime,
       agentId: scope.agent_id,
       conversationId: scope.conversation_id,
-      workingDirectory: parsed.cwd ?? getBootWorkingDirectory(context.runtime),
+      workingDirectory: requestedWorkingDirectory,
       emitStatus: false,
       statusRuntime: scopedRuntime,
       statusSocket: context.socket,
@@ -295,6 +379,10 @@ export async function handleRuntimeStartCommand(
       parsed,
       agent,
       created,
+    );
+    conversation = await applyRuntimeStartConversationSourceTags(
+      parsed,
+      conversation,
     );
     runtimeScope = buildRuntimeScope(agent, conversation);
     const { connectionId } = context;
@@ -324,6 +412,17 @@ export async function handleRuntimeStartCommand(
       parsed.external_tools ?? [],
     );
 
+    if (parsed.wait_for_replay) {
+      await context.replaySyncStateForRuntime(
+        context.runtime,
+        context.socket,
+        runtimeScope,
+        {
+          recoverApprovals: parsed.recover_approvals !== false,
+          forceDeviceStatus: parsed.force_device_status !== false,
+        },
+      );
+    }
     const sent = sendRuntimeStartResponse(context, parsed, {
       success: true,
       runtime: runtimeScope,
@@ -331,7 +430,7 @@ export async function handleRuntimeStartCommand(
       conversation,
       created,
     });
-    shouldReplayState = sent;
+    shouldReplayState = sent && !parsed.wait_for_replay;
   } catch (error) {
     sendRuntimeStartResponse(context, parsed, {
       success: false,

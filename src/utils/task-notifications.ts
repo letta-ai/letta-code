@@ -1,3 +1,4 @@
+import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { SYSTEM_REMINDER_OPEN } from "@/constants";
 
 /**
@@ -10,6 +11,11 @@ import { SYSTEM_REMINDER_OPEN } from "@/constants";
 // ============================================================================
 // Types
 // ============================================================================
+
+export interface NotificationScope {
+  agentId: string;
+  conversationId: string;
+}
 
 export interface TaskNotification {
   taskId: string;
@@ -44,6 +50,36 @@ function unescapeXml(str: string): string {
 // ============================================================================
 
 /**
+ * Resolve the agent/conversation scope a completion notification routes to.
+ *
+ * Prefers the scope injected by executeTool, which is the only correct source
+ * in listener/desktop mode where several agent scopes share one process, and
+ * falls back to the process-global agent context for plain CLI sessions.
+ * Returns undefined when neither is available, in which case the caller should
+ * still queue the notification unscoped rather than drop it.
+ */
+export function resolveNotificationScope(parentScope?: {
+  agentId: string;
+  conversationId: string;
+}): NotificationScope | undefined {
+  if (parentScope?.agentId) {
+    return {
+      agentId: parentScope.agentId,
+      conversationId: parentScope.conversationId || "default",
+    };
+  }
+
+  try {
+    return {
+      agentId: getCurrentAgentId(),
+      conversationId: getConversationId() ?? "default",
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Format a single notification as XML string for queueing.
  */
 export function formatTaskNotification(notification: TaskNotification): string {
@@ -72,6 +108,20 @@ export function formatTaskNotification(notification: TaskNotification): string {
 <result>${escapedResult}</result>${usageBlock}
 </task-notification>
 Full transcript available at: ${notification.outputFile}`;
+}
+
+export function formatMonitorEventNotification(notification: {
+  taskId: string;
+  description: string;
+  event: string;
+}): string {
+  return `<task-notification>
+<task-id>${escapeXml(notification.taskId)}</task-id>
+<summary>${escapeXml(`Monitor event: "${notification.description}"`)}</summary>
+<result>
+<event>${escapeXml(notification.event)}</event>
+</result>
+</task-notification>`;
 }
 
 export function extractTaskNotificationsForDisplay(message: string): {

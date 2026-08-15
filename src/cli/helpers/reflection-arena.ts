@@ -4,22 +4,25 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   buildReflectionMemoryScope,
   finalizeReflectionMemoryWorktree,
   type ReflectionMemoryWorktree,
   type ReflectionMemoryWorktreeFinalizeResult,
-  reflectionIntegrationConsumesTranscript,
+  reflectionMemoryParentHasChanges,
 } from "@/agent/memory-worktree";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import {
   buildReflectionArenaHfChoiceRow,
   maybeUploadReflectionArenaChoiceToHf,
 } from "@/cli/helpers/reflection-arena-hf-upload";
+import { finalizeAutoReflectionCompletion } from "@/cli/helpers/reflection-completion";
 import {
   emitReflectionRunEnd,
   emitReflectionRunStart,
   finalizeReflectionMemoryWorktreeLaunch,
+  getReflectionFinalizationContext,
   prepareReflectionMemoryWorktreeLaunch,
   REFLECTION_AGENT_ID_WAIT_MS,
   type ReflectionFeedbackContext,
@@ -30,10 +33,9 @@ import {
 import {
   type AutoReflectionPayload,
   buildAutoReflectionPayload,
-  finalizeAutoReflectionPayload,
 } from "@/cli/helpers/reflection-transcript";
 import { telemetry } from "@/telemetry";
-import { debugWarn } from "@/utils/debug";
+import { debugLog, debugWarn } from "@/utils/debug";
 
 const execFile = promisify(execFileCb);
 const REFLECTION_ARENA_TELEMETRY_TRANSCRIPT_MAX_CHARS = 1_000_000;
@@ -103,6 +105,9 @@ interface ReflectionArenaCandidateResult {
   conversationId?: string;
   durationMs?: number;
   error?: string;
+  model?: string;
+  memoryHead?: string;
+  memoryNoChanges?: boolean;
   report?: string;
   stepCount?: number;
   success: boolean;
@@ -135,6 +140,7 @@ export interface ReflectionArenaRun {
   runId: string;
   startMessageId?: string;
   status: ReflectionArenaRunStatus;
+  triggerSource?: ReflectionLaunchTriggerSource;
 }
 
 export interface StartReflectionArenaRunOptions {
@@ -160,7 +166,7 @@ export interface LaunchReflectionArenaOptions {
 
 export type LaunchReflectionArenaResult =
   | { launched: true; payloadPath: string; run: ReflectionArenaRun }
-  | { launched: false; reason: "no_payload" };
+  | { launched: false; reason: "no_payload" | "parent_dirty" };
 
 export interface FinalizeReflectionArenaChoiceOptions {
   choice: ReflectionArenaChoice;
@@ -184,18 +190,50 @@ export interface ReflectionArenaChoiceQuestion {
 
 const updateLocks = new Map<string, Promise<void>>();
 
-async function getGitHead(cwd: string): Promise<string | null> {
+async function getGitOutput(
+  cwd: string,
+  args: string[],
+): Promise<string | null> {
   try {
-    const { stdout } = await execFile("git", ["rev-parse", "HEAD"], {
+    const { stdout } = await execFile("git", args, {
       cwd,
       encoding: "utf-8",
       timeout: 30_000,
       maxBuffer: 1024 * 1024,
     });
-    return stdout.trim() || null;
+    return stdout.trim();
   } catch {
     return null;
   }
+}
+
+async function getGitHead(cwd: string): Promise<string | null> {
+  return (await getGitOutput(cwd, ["rev-parse", "HEAD"])) || null;
+}
+
+export async function reflectionMemoryWorktreeHasNoChanges(
+  worktree: ReflectionMemoryWorktree,
+): Promise<boolean | undefined> {
+  const [count, status] = await Promise.all([
+    getGitOutput(worktree.worktreeDir, [
+      "rev-list",
+      "--count",
+      `${worktree.baseHead}..HEAD`,
+    ]),
+    getGitOutput(worktree.worktreeDir, ["status", "--porcelain"]),
+  ]);
+  if (count === null || status === null) return undefined;
+  return count === "0" && status.length === 0;
+}
+
+function candidateIsConfirmedNoOp(
+  candidate: ReflectionArenaCandidate,
+): boolean {
+  return (
+    candidate.result?.success === true &&
+    candidate.result.memoryNoChanges === true &&
+    candidate.result.memoryHead === candidate.worktree.baseHead
+  );
 }
 
 function getReflectionArenaRoot(): string {
@@ -643,6 +681,15 @@ async function markCandidateComplete(params: {
 export async function launchReflectionArena(
   options: LaunchReflectionArenaOptions,
 ): Promise<LaunchReflectionArenaResult> {
+  const memoryDir = getScopedMemoryFilesystemRoot(options.agentId);
+  if (await reflectionMemoryParentHasChanges(memoryDir)) {
+    debugLog(
+      "memory",
+      `Skipping reflection arena launch (${options.triggerSource}) because parent memory has uncommitted changes`,
+    );
+    return { launched: false, reason: "parent_dirty" };
+  }
+
   const payload = await buildAutoReflectionPayload(
     options.agentId,
     options.conversationId,
@@ -699,6 +746,7 @@ export async function startReflectionArenaRun(
       runId,
       startMessageId: options.payload.startMessageId,
       status: "running",
+      triggerSource: options.triggerSource,
     };
     await saveReflectionArenaRun(run);
 
@@ -726,11 +774,16 @@ export async function startReflectionArenaRun(
             error,
             agentId,
             conversationId,
+            model: resolvedModel,
             stepCount,
             durationMs,
             report,
           }) => {
             try {
+              const [memoryHead, memoryNoChanges] = await Promise.all([
+                getGitHead(candidate.worktree.worktreeDir),
+                reflectionMemoryWorktreeHasNoChanges(candidate.worktree),
+              ]);
               emitReflectionRunEnd({
                 parentAgentId: options.agentId,
                 triggerSource: options.triggerSource,
@@ -740,9 +793,9 @@ export async function startReflectionArenaRun(
                 error,
                 stepCount,
                 durationMs,
+                model: resolvedModel ?? model,
                 feedbackContext: {
                   ...options.feedbackContext,
-                  model,
                 },
               });
 
@@ -773,9 +826,12 @@ export async function startReflectionArenaRun(
                   error,
                   agentId,
                   conversationId,
+                  model: resolvedModel ?? model,
                   stepCount,
                   durationMs,
                   report,
+                  ...(memoryHead ? { memoryHead } : {}),
+                  ...(memoryNoChanges !== undefined ? { memoryNoChanges } : {}),
                 },
               });
               if (updated.status === "awaiting_choice") {
@@ -842,6 +898,7 @@ export async function finalizeReflectionArenaChoice(
 
   const discarded: ReflectionArenaCandidateLabel[] = [];
   let integration: ReflectionMemoryWorktreeFinalizeResult | undefined;
+  let completionSuccess = false;
   let memoryBaseCommit: string | null = null;
   let memoryCandidateCommit: string | null = null;
 
@@ -853,19 +910,28 @@ export async function finalizeReflectionArenaChoice(
       throw new Error(`Unknown reflection arena label: ${options.choice}`);
     }
     memoryBaseCommit = chosen.worktree.baseHead;
-    memoryCandidateCommit = await getGitHead(chosen.worktree.worktreeDir);
+    memoryCandidateCommit =
+      (await getGitHead(chosen.worktree.worktreeDir)) ??
+      chosen.result?.memoryHead ??
+      null;
     const finalized = await finalizeReflectionMemoryWorktreeLaunch({
       worktree: chosen.worktree,
       subagentSuccess: chosen.result?.success ?? false,
       subagentError: chosen.result?.error,
-      agentId: run.agentId,
+      knownNoChanges: candidateIsConfirmedNoOp(chosen),
+      ...getReflectionFinalizationContext(run.agentId),
       conversationId: run.conversationId,
       subagentAgentId: chosen.result?.agentId,
+      model: chosen.result?.model ?? chosen.model,
+      telemetryContext: {
+        triggerSource: run.triggerSource ?? "compaction-event",
+      },
       recompileByConversation: options.recompileByConversation,
       recompileQueuedByConversation: options.recompileQueuedByConversation,
       logRecompileFailure: (message) => debugWarn("memory", message),
     });
     integration = finalized.integration;
+    completionSuccess = finalized.completionSuccess;
   }
 
   for (const candidate of run.candidates) {
@@ -875,15 +941,17 @@ export async function finalizeReflectionArenaChoice(
     discarded.push(candidate.label);
     await finalizeReflectionMemoryWorktree(candidate.worktree, {
       shouldMerge: false,
+      knownNoChanges: candidateIsConfirmedNoOp(candidate),
     });
   }
 
-  await finalizeAutoReflectionPayload(
+  await finalizeAutoReflectionCompletion(
     run.agentId,
     run.conversationId,
     run.payloadPath,
     run.endSnapshotLine,
-    integration ? reflectionIntegrationConsumesTranscript(integration) : false,
+    run.endMessageId,
+    completionSuccess,
   );
 
   const completedRun: ReflectionArenaRun = {

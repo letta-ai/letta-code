@@ -144,10 +144,7 @@ function waitForClientPing(socket: WebSocket): Promise<void> {
 }
 
 function waitForClientClose(socket: WebSocket): Promise<void> {
-  if (
-    socket.readyState === WebSocket.CLOSED ||
-    socket.readyState === WebSocket.CLOSING
-  ) {
+  if (socket.readyState === WebSocket.CLOSED) {
     return Promise.resolve();
   }
   return new Promise((resolve, reject) => {

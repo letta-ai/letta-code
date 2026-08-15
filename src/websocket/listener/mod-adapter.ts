@@ -18,6 +18,7 @@ import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { getBootWorkingDirectory } from "./cwd";
 import { ensureMemfsSyncedForAgent } from "./memfs-sync";
+import { emitStatusDelta } from "./protocol-outbound";
 import type { ListenerRuntime } from "./types";
 
 export const LISTENER_MOD_CAPABILITIES: ModCapabilities = {
@@ -51,6 +52,7 @@ export interface CreateListenerModAdapterOptions {
   disabled?: boolean;
   globalModsDirectory?: string;
   includeGlobalMods?: boolean;
+  onNotification?: (message: string, context: ModContext | null) => void;
   registerCapabilitiesGlobally?: boolean;
   sessionId?: string | null;
   workingDirectory?: string | null;
@@ -58,6 +60,22 @@ export interface CreateListenerModAdapterOptions {
 
 async function getUnavailableListenerClient(): Promise<Letta> {
   throw new Error("letta.client is not available in listener mods");
+}
+
+function resolveListenerAgentMemfsContext(
+  agentId: string | null,
+): ModContext["memfs"] {
+  if (!agentId) return { enabled: false, memoryDir: null };
+  try {
+    return settingsManager.isMemfsEnabled(agentId)
+      ? {
+          enabled: true,
+          memoryDir: getScopedMemoryFilesystemRoot(agentId),
+        }
+      : { enabled: false, memoryDir: null };
+  } catch {
+    return { enabled: false, memoryDir: null };
+  }
 }
 
 export function createListenerModContext(
@@ -81,7 +99,7 @@ export function createListenerModContext(
   } = {},
 ): ModContext {
   const cwd = options.workingDirectory ?? getCurrentWorkingDirectory();
-  return buildModInvocationContext({
+  const context = buildModInvocationContext({
     agent: options.agent ?? null,
     conversationId: options.sessionId ?? null,
     modelIdentifier: options.modelIdentifier ?? null,
@@ -89,6 +107,14 @@ export function createListenerModContext(
     toolset: options.toolset ?? null,
     workingDirectory: cwd,
   });
+  return {
+    ...context,
+    memfs: resolveListenerAgentMemfsContext(context.agent.id),
+  };
+}
+
+export function createListenerAgentModContext(agentId: string): ModContext {
+  return createListenerModContext({ agent: { id: agentId } });
 }
 
 export function createListenerModAdapter(
@@ -114,6 +140,9 @@ export function createListenerModAdapter(
     ...(options.includeGlobalMods !== undefined
       ? { includeGlobalMods: options.includeGlobalMods }
       : {}),
+    ...(options.onNotification
+      ? { onNotification: options.onNotification }
+      : {}),
     ...(options.registerCapabilitiesGlobally !== undefined
       ? {
           registerCapabilitiesGlobally: options.registerCapabilitiesGlobally,
@@ -122,10 +151,35 @@ export function createListenerModAdapter(
   });
 }
 
+export function emitListenerModNotification(
+  runtime: ListenerRuntime,
+  message: string,
+  context: ModContext | null,
+): void {
+  const agentId = context?.agent.id;
+  const conversationId = context?.sessionId;
+  if (!agentId || !conversationId) return;
+
+  const origin =
+    runtime.transport ??
+    runtime.socket ??
+    runtime.connections.values().next().value?.writer;
+  if (!origin) return;
+
+  emitStatusDelta(origin, runtime, {
+    message,
+    level: "info",
+    agentId,
+    conversationId,
+  });
+}
+
 export function ensureListenerModAdapter(runtime: ListenerRuntime): ModAdapter {
   runtime.modAdapter ??= createListenerModAdapter({
     sessionId: runtime.sessionId,
     workingDirectory: getBootWorkingDirectory(runtime),
+    onNotification: (message, context) =>
+      emitListenerModNotification(runtime, message, context),
   });
   return runtime.modAdapter;
 }
@@ -181,6 +235,8 @@ export async function ensureListenerAgentModAdapter(
         cacheDirectory: resolveAgentModCacheDirectory(agentId),
         capabilities: LISTENER_AGENT_MOD_CAPABILITIES,
         includeGlobalMods: false,
+        onNotification: (message, context) =>
+          emitListenerModNotification(runtime, message, context),
         registerCapabilitiesGlobally: false,
         sessionId: runtime.sessionId,
         workingDirectory: runtime.bootWorkingDirectory,

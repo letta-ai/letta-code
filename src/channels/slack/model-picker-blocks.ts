@@ -3,14 +3,26 @@ import {
   type ChannelModelListEntry,
   getFallbackModelEntries,
   resolveModelHandles,
-} from "@/channels/commands";
+} from "@/channels/command-runtime-executor";
 import type { ChannelModelPickerData } from "@/channels/types";
+import { asRecord, firstNonEmptyString, getSlackActionRecord } from "./utils";
 
 const SLACK_MODEL_PICKER_OPTION_LIMIT = 100;
 const SLACK_MODEL_OPTION_TEXT_LIMIT = 75;
 const SLACK_MODEL_OPTION_VALUE_LIMIT = 75;
 
 export const SLACK_MODEL_SELECT_ACTION_ID = "letta_channel_model_select";
+
+export function resolveSlackSelectedModel(
+  action: unknown,
+  body: unknown,
+): string | null {
+  const actionRecord = getSlackActionRecord(action, body);
+  const selectedOption = asRecord(actionRecord?.selected_option);
+  return (
+    firstNonEmptyString(selectedOption?.value, actionRecord?.value) ?? null
+  );
+}
 
 type SlackModelOption = {
   text: { type: "plain_text"; text: string; emoji?: boolean };

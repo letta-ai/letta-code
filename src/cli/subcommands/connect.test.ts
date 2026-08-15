@@ -271,6 +271,15 @@ describe("connect subcommand", () => {
     expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
       "lmstudio_openai",
       "not-needed",
+      undefined,
+      undefined,
+      undefined,
+      {
+        connection: {
+          baseURL: "http://127.0.0.1:1234/v1",
+          timeout: 600_000,
+        },
+      },
     );
     expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
       "lmstudio_openai",
@@ -283,6 +292,78 @@ describe("connect subcommand", () => {
         baseURL: "http://127.0.0.1:1234/v1",
         timeout: 600_000,
       },
+    );
+  });
+
+  // Regression for #3381: the API key was validated against the provider's
+  // default endpoint because --base-url never reached checkProviderApiKey, so
+  // any third-party key failed with a 401 from api.openai.com.
+  test("validates the API key against the supplied base URL", async () => {
+    const { deps } = createIoDeps();
+    setProviderTarget("api");
+
+    const exitCode = await runConnectSubcommand(
+      [
+        "openai-compatible",
+        "--base-url",
+        "http://localhost:8080/v1",
+        "--api-key",
+        "third-party-key",
+      ],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
+      "openai",
+      "third-party-key",
+      undefined,
+      undefined,
+      undefined,
+      { connection: { baseURL: "http://localhost:8080/v1" } },
+    );
+  });
+
+  test("requires a base URL for the local OpenAI-compatible provider", async () => {
+    const { stderr, deps } = createIoDeps();
+    setProviderTarget("local");
+
+    const exitCode = await runConnectSubcommand(["openai-compatible"], deps);
+
+    expect(exitCode).toBe(1);
+    expect(stderr.join("\n")).toContain("Missing base URL");
+    expect(deps.promptSecret).not.toHaveBeenCalled();
+    expect(deps.checkProviderApiKey).not.toHaveBeenCalled();
+    expect(deps.createOrUpdateProvider).not.toHaveBeenCalled();
+  });
+
+  test("connects a keyless local OpenAI-compatible provider", async () => {
+    const { deps } = createIoDeps();
+    setProviderTarget("local");
+
+    const exitCode = await runConnectSubcommand(
+      ["openai-compatible", "--base-url", "http://127.0.0.1:8000/v1/"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.promptSecret).not.toHaveBeenCalled();
+    expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
+      "openai-compatible",
+      "not-needed",
+      undefined,
+      undefined,
+      undefined,
+      { connection: { baseURL: "http://127.0.0.1:8000/v1/" } },
+    );
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "openai-compatible",
+      "openai-compatible",
+      "not-needed",
+      undefined,
+      undefined,
+      undefined,
+      { baseURL: "http://127.0.0.1:8000/v1/" },
     );
   });
 
@@ -324,6 +405,10 @@ describe("connect subcommand", () => {
     expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
       "lmstudio_openai",
       "1234",
+      undefined,
+      undefined,
+      undefined,
+      { connection: { baseURL: "http://localhost:8000/v1" } },
     );
     expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
       "lmstudio_openai",

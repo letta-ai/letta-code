@@ -19,7 +19,11 @@ export {
   ONBOARDING_ORIGIN_TAG,
 } from "./agent/agent-tags";
 export {
+  type BuildCreateAgentRequestOptions,
+  buildCreateAgentRequest,
   buildCreateAgentRequestForPersonality,
+  type CreateAgentMemoryBlock,
+  type CreateAgentRequest,
   type CreateAgentRequestForPersonality,
   DEFAULT_CREATED_AGENT_BASE_TOOLS,
   LETTA_CODE_AGENT_TYPE,
