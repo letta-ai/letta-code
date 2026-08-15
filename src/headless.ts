@@ -4450,8 +4450,8 @@ async function runBidirectionalMode(
       }
       // Controller now exists — close the pre-controller race window.
       turnStarting = false;
-
       turnInProgress = true;
+      let permissionInterrupted = false;
       try {
         const buffers = createBuffers(agent.id);
         const startTime = performance.now();
@@ -4542,11 +4542,9 @@ async function runBidirectionalMode(
           }
         }
 
-        // Approval handling loop - continue until end_turn or error
         approvalLoop: while (true) {
           numTurns++;
 
-          // Check if aborted
           if (currentAbortController?.signal.aborted) {
             break;
           }
@@ -4816,6 +4814,7 @@ async function runBidirectionalMode(
               );
 
               if (permResponse.interrupted) {
+                permissionInterrupted = true;
                 break approvalLoop;
               }
 
@@ -4910,8 +4909,8 @@ async function runBidirectionalMode(
           lastToolResult?.resultText ||
           "";
 
-        // Determine result subtype based on how the turn ended
-        const isAborted = currentAbortController?.signal.aborted;
+        const isAborted =
+          permissionInterrupted || currentAbortController?.signal.aborted;
         // isError if: (1) stop reason indicates error, OR (2) we emitted an error during streaming
         const isError =
           sawStreamError ||
@@ -5029,9 +5028,10 @@ async function runBidirectionalMode(
         });
         turnInProgress = false;
         blockedEmittedThisTurn = false;
-        // Remember whether this turn was interrupted so the next user turn can
-        // clear any dangling approval before sending (see priorTurnInterrupted).
-        priorTurnInterrupted = currentAbortController?.signal.aborted === true;
+        // Retain interruption state for dangling approval recovery next turn.
+        priorTurnInterrupted =
+          permissionInterrupted ||
+          currentAbortController?.signal.aborted === true;
         currentAbortController = null;
       }
       continue;
