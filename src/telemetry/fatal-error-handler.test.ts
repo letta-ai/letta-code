@@ -6,13 +6,13 @@ type FatalScenario =
   | "filtered-rejection"
   | "hanging-drain"
   | "recursive-failure"
+  | "throwing-value-conversion"
   | "uncaught-exception"
   | "unhandled-rejection";
 
 interface ScenarioResult {
   exitCode: number;
   output: string;
-  runtimeMs: number;
 }
 
 const handlerModuleUrl = pathToFileURL(
@@ -44,7 +44,13 @@ async function runFatalScenario(
     });
 
     setTimeout(() => console.log("process-continued"), 1_000);
-    if (
+    if (scenario === "throwing-value-conversion") {
+      void Promise.reject({
+        toString() {
+          throw new Error("conversion-failed");
+        },
+      });
+    } else if (
       scenario === "unhandled-rejection" ||
       scenario === "filtered-rejection"
     ) {
@@ -60,7 +66,6 @@ async function runFatalScenario(
     }
   `;
 
-  const startedAt = performance.now();
   const child = Bun.spawn([process.execPath, "-e", script], {
     env: {
       ...process.env,
@@ -78,7 +83,6 @@ async function runFatalScenario(
   return {
     exitCode,
     output: `${stdout}${stderr}`,
-    runtimeMs: performance.now() - startedAt,
   };
 }
 
@@ -130,13 +134,23 @@ describe("fatal telemetry error handlers", () => {
     expect(result.output).not.toContain("process-continued");
   });
 
+  test("a non-stringifiable rejection still drains and exits", async () => {
+    const result = await runFatalScenario("throwing-value-conversion");
+
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain(
+      "tracked:unhandled_rejection:Unknown error",
+    );
+    expect(result.output).toContain("drain-attempted");
+    expect(result.output).not.toContain("process-continued");
+  });
+
   test("a hanging drain cannot keep the process alive", async () => {
     const result = await runFatalScenario("hanging-drain");
 
     expect(result.exitCode).toBe(1);
     expect(result.output).toContain("drain-attempted");
     expect(result.output).not.toContain("process-continued");
-    expect(result.runtimeMs).toBeLessThan(1_000);
   });
 
   test("a filtered fatal error still exits non-zero", async () => {

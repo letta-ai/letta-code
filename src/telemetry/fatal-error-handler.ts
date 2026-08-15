@@ -1,4 +1,6 @@
-export type FatalErrorType = "uncaught_exception" | "unhandled_rejection";
+import { getErrorMessage } from "@/utils/error";
+
+type FatalErrorType = "uncaught_exception" | "unhandled_rejection";
 
 interface FatalErrorHandlerOptions {
   drain: () => Promise<void>;
@@ -11,10 +13,6 @@ interface FatalErrorHandlerOptions {
 }
 
 const DEFAULT_FATAL_DRAIN_TIMEOUT_MS = 3_000;
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function shouldTrackFatalError(
   errorType: FatalErrorType,
@@ -93,7 +91,7 @@ export function installFatalErrorHandlers(
     });
   };
 
-  const uncaughtExceptionHandler = (error: Error): void => {
+  const uncaughtExceptionHandler = (error: unknown): void => {
     handleFatalError("uncaught_exception", error);
   };
   const unhandledRejectionHandler = (reason: unknown): void => {
