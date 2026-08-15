@@ -45,6 +45,23 @@ describe("pi model factory", () => {
     clearRegisteredPiProviders();
   });
 
+  test("defaults always-on zAI GLM models to a valid thinking level", () => {
+    expect(reasoningForSettings({}, "zai/glm-5.3")).toBe("low");
+    expect(
+      reasoningForSettings({ thinking: { type: "disabled" } }, "zai/glm-5.3"),
+    ).toBe("low");
+    expect(
+      reasoningForSettings({ reasoning_effort: "high" }, "zai/glm-5.3"),
+    ).toBe("high");
+    expect(
+      reasoningForSettings({ reasoning_effort: "medium" }, "zai/glm-5.3"),
+    ).toBe("low");
+    expect(reasoningForSettings({}, "zai/glm-5-turbo")).toBe("low");
+    expect(reasoningForSettings({}, "anthropic/claude-sonnet-4-6")).toBe(
+      undefined,
+    );
+  });
+
   test("notifies subscribers when mod provider registry changes", () => {
     const changes: string[] = [];
     const unsubscribe = subscribePiProviderRegistry(() => {
