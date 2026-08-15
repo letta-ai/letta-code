@@ -25,10 +25,9 @@ describe("headless post-interrupt approval recovery wiring", () => {
 
   test("tracks whether the prior turn was interrupted", () => {
     expect(source).toContain("let priorTurnInterrupted = false;");
-    // The epilogue records both protocol-level and controller interruption.
-    expect(source).toContain("permissionInterrupted ||");
+    // The epilogue records the interrupted state from the abort controller.
     expect(source).toContain(
-      "currentAbortController?.signal.aborted === true;",
+      "priorTurnInterrupted = currentAbortController?.signal.aborted === true;",
     );
   });
 
