@@ -70,6 +70,7 @@ import {
 
 export interface LocalBackendOptions {
   storageDir: string;
+  stateStorageDir?: string;
   defaultAgentId?: string;
   executionMode?: LocalBackendExecutionMode;
   executor?: HeadlessTurnExecutor;
@@ -79,7 +80,6 @@ export interface LocalBackendOptions {
   memfsEnabled?: boolean;
   modelsRuntime?: LocalPiModelsRuntime;
 }
-
 /**
  * Hooks the harness installs (via {@link LocalBackend.setModEventHooks}) so
  * mods can observe backend-internal lifecycle that only the local backend owns
@@ -269,7 +269,7 @@ export class LocalBackend extends HeadlessBackend {
       new LocalPiModelsRuntime({ storageDir: options.storageDir });
     const modelConfig = resolveLocalModelConfig(options.storageDir, runtime);
     const storeOptions: LocalStoreOptions = {
-      storageDir: options.storageDir,
+      storageDir: options.stateStorageDir ?? options.storageDir,
       seedDefaultAgent: false,
       strictAgentAccess: true,
       strictConversationAccess: true,

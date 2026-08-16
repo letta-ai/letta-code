@@ -230,6 +230,13 @@ export const CLI_FLAG_CATALOG = {
     mode: "both",
     help: { description: "Enable memory filesystem for this agent" },
   },
+  ephemeral: {
+    parser: { type: "boolean" },
+    mode: "headless",
+    help: {
+      description: "Run in a temporary conversation with no agent or memory",
+    },
+  },
   stateless: {
     parser: { type: "boolean" },
     mode: "headless",
