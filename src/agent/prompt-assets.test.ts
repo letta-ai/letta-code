@@ -109,6 +109,24 @@ describe("buildSystemPrompt", () => {
     expect(withoutSharedMemoryGuidance(hosted)).toBe(local);
   });
 
+  test("default prompt variants explain future invocations", () => {
+    for (const mode of ["standard", "memfs", "local-memfs"] as const) {
+      const result = buildSystemPrompt("letta", mode);
+
+      expect(result).toContain(
+        "To act across time, you must create future invocations explicitly",
+      );
+      expect(result).toContain(
+        "crons (also called schedules) proactively invoke you",
+      );
+      expect(result).toContain("monitors reactively invoke you");
+      expect(result).toContain(
+        "MUST** be proactive in arranging the appropriate future invocation",
+      );
+      expect(result).toContain("live in the scheduling-tasks skill");
+    }
+  });
+
   test("throws on unknown preset", () => {
     expect(() => buildSystemPrompt("unknown-id", "standard")).toThrow(
       'Unknown preset "unknown-id"',
