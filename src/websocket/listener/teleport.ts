@@ -54,6 +54,24 @@ function findPendingTeleportForRuntime(
   return null;
 }
 
+export function isRuntimeWaitingForTeleport(
+  runtime: ListenerRuntime,
+  agentId: string | null,
+  conversationId: string,
+): boolean {
+  if (!agentId) return false;
+  for (const pending of runtime.pendingTeleports?.values() ?? []) {
+    if (
+      pending.agentId === agentId &&
+      pending.conversationId === conversationId &&
+      pending.readyAt !== undefined
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function sendTeleportReady(
   runtime: ListenerRuntime,
   pending: PendingTeleport,

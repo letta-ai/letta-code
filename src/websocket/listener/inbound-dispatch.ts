@@ -9,6 +9,7 @@ import {
   shouldQueueInboundMessage,
 } from "./queue";
 import { emitListenerStatus, getActiveRuntime } from "./runtime";
+import { isRuntimeWaitingForTeleport } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import type { handleIncomingMessage } from "./turn";
 import type {
@@ -94,6 +95,16 @@ export function dispatchInboundMessageWhenReady(params: {
   runtime.messageQueue = runtime.messageQueue
     .then(async () => {
       if (listener !== getActiveRuntime() || listener.intentionallyClosed) {
+        acknowledgeInput({ accepted: false });
+        return;
+      }
+      if (
+        isRuntimeWaitingForTeleport(
+          listener,
+          runtime.agentId,
+          runtime.conversationId,
+        )
+      ) {
         acknowledgeInput({ accepted: false });
         return;
       }

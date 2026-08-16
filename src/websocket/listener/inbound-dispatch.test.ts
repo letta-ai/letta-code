@@ -18,6 +18,13 @@ import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import { createRuntime } from "./lifecycle";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import { setActiveRuntime } from "./runtime";
+import {
+  claimPendingTeleportAtBoundary,
+  finishTeleport,
+  handleTeleportRequest,
+  isRuntimeWaitingForTeleport,
+  takeFailedTeleport,
+} from "./teleport";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import { createTurnInputState } from "./turn-input-state";
@@ -62,6 +69,95 @@ async function waitFor(
 
 afterEach(() => {
   setActiveRuntime(null);
+});
+
+test("input waiting behind a teleported turn does not start on the source", async () => {
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  const socket = new MockSocket();
+  openListenerConnection({
+    runtime: listener,
+    connectionId: "source",
+    writer: socket as never,
+    options: makeOptions("source"),
+  });
+  markListenerConnectionInitialized(listener, "source");
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const lease = runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: process.cwd(),
+    initialStatus: "PROCESSING_API_RESPONSE",
+  });
+  let releaseCurrentTurn: (() => void) | undefined;
+  runtime.messageQueue = new Promise<void>((resolve) => {
+    releaseCurrentTurn = resolve;
+  });
+  const processIncomingMessage = mock(async () => {});
+  const onInputAccepted = mock(() => {});
+
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime,
+    incoming: {
+      type: "message",
+      connectionId: "source",
+      agentId: "agent-1",
+      conversationId: "conversation-1",
+      messages: [{ role: "user", content: "follow up" }],
+    },
+    socket: socket as never,
+    options: makeOptions("source"),
+    processQueuedTurn: mock(async () => {}),
+    processIncomingMessage,
+    trackListenerError: mock(() => {}),
+    onInputAccepted,
+  });
+
+  handleTeleportRequest({
+    listener,
+    connectionId: "source",
+    command: {
+      type: "teleport_request",
+      request_id: "teleport-1",
+      teleport_id: "teleport-1",
+      runtime: {
+        agent_id: "agent-1",
+        conversation_id: "conversation-1",
+      },
+      target: {
+        connection_id: "target",
+        device_id: "target-device",
+        connection_name: "Target",
+      },
+    },
+  });
+  const pending = claimPendingTeleportAtBoundary({
+    listener,
+    agentId: "agent-1",
+    conversationId: "conversation-1",
+  });
+  expect(pending).not.toBeNull();
+  finishTeleport(runtime, lease, pending!);
+  releaseCurrentTurn?.();
+  await runtime.messageQueue;
+
+  expect(onInputAccepted).toHaveBeenCalledWith({ accepted: false });
+  expect(processIncomingMessage).not.toHaveBeenCalled();
+  expect(
+    takeFailedTeleport({
+      listener,
+      teleportId: "teleport-1",
+      agentId: "agent-1",
+      conversationId: "conversation-1",
+    }),
+  ).toBe(pending);
+  expect(
+    isRuntimeWaitingForTeleport(listener, "agent-1", "conversation-1"),
+  ).toBe(false);
 });
 
 test("direct App Server turn follows a subscribed client after origin disconnect", async () => {
