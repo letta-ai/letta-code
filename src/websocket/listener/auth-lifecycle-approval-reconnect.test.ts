@@ -284,9 +284,9 @@ describe("listener approval reconnect timing", () => {
     await startClient();
     await waitFor(
       () =>
-        countConnectionsForChannel("control") === 1 &&
-        countConnectionsForChannel("stream") === 1,
-      "initial control and stream sockets did not open",
+        getActiveRuntime()?.connections.get("connection-id")?.initialized ===
+        true,
+      "initial listener connection did not initialize",
     );
 
     const listener = getActiveRuntime();
@@ -437,9 +437,9 @@ describe("listener approval reconnect timing", () => {
     await startClient();
     await waitFor(
       () =>
-        countConnectionsForChannel("control") === 1 &&
-        countConnectionsForChannel("stream") === 1,
-      "initial control and stream sockets did not open",
+        getActiveRuntime()?.connections.get("connection-id")?.initialized ===
+        true,
+      "initial listener connection did not initialize",
     );
 
     const listener = getActiveRuntime();
