@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import type { FSWatcher } from "node:fs";
+import { type FSWatcher, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -55,7 +55,7 @@ describe("ClientSkillsWatcher", () => {
     watcher.ensureRoots([skillsRoot]);
 
     expect(calls.map((call) => call.path).sort()).toEqual(
-      [resolve(skillsRoot), resolve(linkedSkills)].sort(),
+      [resolve(skillsRoot), realpathSync(linkedSkills)].sort(),
     );
     expect(calls.every((call) => call.recursive)).toBe(true);
 
