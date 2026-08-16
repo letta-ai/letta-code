@@ -53,6 +53,20 @@ describe("GitHub pull request command detection", () => {
     });
   }
 
+  test("recognizes create after writing a PR body with a heredoc", () => {
+    const command = [
+      'body="/tmp/pr-body.md"',
+      "cat > \"$body\" <<'EOF'",
+      "## Summary",
+      "- `bun run check` passes",
+      "EOF",
+      'gh pr create --draft --title "Fix" --body-file "$body"',
+      'rm -f "$body"',
+    ].join("\n");
+
+    expect(isGitHubPullRequestCreateCommand(command)).toBe(true);
+  });
+
   const otherCommands: Array<string | string[]> = [
     "gh pr view 3744",
     "echo gh pr create",
@@ -68,6 +82,16 @@ describe("GitHub pull request command detection", () => {
       expect(isGitHubPullRequestCreateCommand(command)).toBe(false);
     });
   }
+
+  test("ignores gh commands written inside a heredoc body", () => {
+    const command = [
+      "cat > /tmp/example.md <<'EOF'",
+      "gh pr create --fill",
+      "EOF",
+    ].join("\n");
+
+    expect(isGitHubPullRequestCreateCommand(command)).toBe(false);
+  });
 });
 
 describe("GitHub pull request output tracking", () => {

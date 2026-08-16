@@ -27,6 +27,8 @@ export interface GitHubPullRequestOutputTracker {
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=.*/;
 const GITHUB_PR_URL =
   /^https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/([1-9]\d*)\/?$/i;
+const HEREDOC_AT_LINE_END =
+  /<<(-?)\s*(?:'([^']+)'|"([^"]+)"|([^\s'"`<>|&;]+))\s*$/;
 const MAX_TRACKED_OUTPUT_CHARS = 30_000;
 
 const GH_GLOBAL_FLAGS_WITH_VALUES = new Set(["--hostname", "--repo", "-R"]);
@@ -143,6 +145,47 @@ function shellScriptFromCommand(tokens: readonly string[]): string | undefined {
   return undefined;
 }
 
+function commandLinesOutsideHeredocs(command: string): string[] {
+  const commandLines: string[] = [];
+  let delimiter: string | undefined;
+  let stripLeadingTabs = false;
+
+  for (const line of command.split(/\r\n|\n|\r/)) {
+    if (delimiter) {
+      const candidate = stripLeadingTabs ? line.replace(/^\t+/, "") : line;
+      if (candidate === delimiter) {
+        delimiter = undefined;
+        stripLeadingTabs = false;
+      }
+      continue;
+    }
+
+    commandLines.push(line);
+    const match = line.match(HEREDOC_AT_LINE_END);
+    const nextDelimiter = match?.[2] ?? match?.[3] ?? match?.[4];
+    if (nextDelimiter) {
+      delimiter = nextDelimiter;
+      stripLeadingTabs = match?.[1] === "-";
+    }
+  }
+
+  return commandLines;
+}
+
+function splitCommandForPullRequestDetection(command: string): string[] {
+  const segments = splitShellSegmentsAllowCommandSubstitution(command);
+  if (segments) {
+    return segments;
+  }
+
+  // The permission splitter rejects file redirects. PR commands commonly
+  // write a body with a heredoc first, so retry the executable lines without
+  // treating Markdown inside the heredoc as shell commands.
+  return commandLinesOutsideHeredocs(command).flatMap(
+    (line) => splitShellSegmentsAllowCommandSubstitution(line) ?? [line],
+  );
+}
+
 export function isGitHubPullRequestCreateCommand(
   command: ShellSourceCommand,
 ): boolean {
@@ -154,9 +197,7 @@ export function isGitHubPullRequestCreateCommand(
     return shellScript ? isGitHubPullRequestCreateCommand(shellScript) : false;
   }
 
-  const segments = splitShellSegmentsAllowCommandSubstitution(command) ?? [
-    command,
-  ];
+  const segments = splitCommandForPullRequestDetection(command);
   return segments.some((segment) =>
     tokensCreatePullRequest(tokenizeShellWords(segment)),
   );
