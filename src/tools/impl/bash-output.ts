@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { scrubSecretsFromString } from "@/tools/secret-substitution";
 import { sleep } from "@/utils/sleep";
 import {
   backgroundProcesses,
@@ -267,6 +268,8 @@ async function getProcessOutput(
       : retainedOutput.fallbackNotice;
   }
 
+  text = scrubSecretsFromString(text, currentProc.secrets ?? {});
+
   if (filter) {
     text = text
       .split("\n")
@@ -281,7 +284,11 @@ async function getProcessOutput(
     text || "(no output yet)",
     LIMITS.BASH_OUTPUT_CHARS,
     "TaskOutput",
-    { workingDirectory: userCwd, toolName: "TaskOutput" },
+    {
+      workingDirectory: userCwd,
+      toolName: "TaskOutput",
+      secrets: currentProc.secrets,
+    },
   );
 
   return {

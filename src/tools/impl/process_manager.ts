@@ -3,10 +3,12 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { scrubSecretsFromString } from "@/tools/secret-substitution";
 
 type TimerHandle = ReturnType<typeof setTimeout>;
 
@@ -37,6 +39,7 @@ export interface BackgroundProcess {
   description?: string;
   monitorSource?: "command" | "websocket";
   persistent?: boolean;
+  secrets?: Readonly<Record<string, string>>;
   /**
    * Set when the agent deliberately stops the shell (KillBash/TaskStop) so the
    * resulting "exit" event does not wake it with a failure notification for a
@@ -365,4 +368,21 @@ export function createBackgroundOutputFile(id: string): string {
  */
 export function appendToOutputFile(filePath: string, content: string): void {
   appendFileSync(filePath, content);
+}
+
+export function scrubCompletedBackgroundOutput(
+  processState: BackgroundProcess,
+): boolean {
+  if (!processState.outputFile || !processState.secrets) return true;
+  try {
+    const content = readFileSync(processState.outputFile, "utf8");
+    writeFileSync(
+      processState.outputFile,
+      scrubSecretsFromString(content, processState.secrets),
+      { mode: 0o600 },
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }

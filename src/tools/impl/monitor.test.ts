@@ -229,6 +229,37 @@ describe("Monitor", () => {
     expect(output.message).toContain("warning");
   });
 
+  test("redacts split invocation secrets from notifications and stored output", async () => {
+    const secret = "he$$o";
+    const result = await monitor({
+      description: "secret output",
+      timeout_ms: 5000,
+      persistent: false,
+      command: nodeCommand(
+        "const value = process.env.PASSWORD ?? ''; process.stdout.write(value.slice(0, 2)); setTimeout(() => process.stdout.write(value.slice(2) + '\\n'), 25)",
+      ),
+      secretEnv: { PASSWORD: secret },
+    });
+
+    await waitFor(
+      () => backgroundProcesses.get(result.taskId)?.status === "completed",
+    );
+    const eventText = queuedMessages.map((message) => message.text).join("\n");
+    expect(eventText).toContain("PASSWORD=&lt;REDACTED&gt;");
+    expect(eventText).not.toContain(secret);
+
+    const output = await task_output({
+      task_id: result.taskId,
+      block: false,
+      timeout: 1000,
+    });
+    expect(output.message).toContain("PASSWORD=<REDACTED>");
+    expect(output.message).not.toContain(secret);
+
+    const outputFile = backgroundProcesses.get(result.taskId)?.outputFile;
+    expect(readFileSync(outputFile as string, "utf8")).not.toContain(secret);
+  });
+
   test("persistent command monitors can be stopped with TaskStop", async () => {
     const result = await monitor({
       description: "long process",
