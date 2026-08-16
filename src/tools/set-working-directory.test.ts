@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
@@ -49,11 +49,12 @@ async function createDirectoryTree(): Promise<{
   root: string;
   target: string;
 }> {
-  const root = await mkdtemp(joinTemp("letta-set-cwd-"));
-  tempRoots.push(root);
+  const createdRoot = await mkdtemp(joinTemp("letta-set-cwd-"));
+  tempRoots.push(createdRoot);
+  const root = await realpath(createdRoot);
   const target = path.join(root, "nested");
   await mkdir(target, { recursive: true });
-  return { root, target };
+  return { root, target: await realpath(target) };
 }
 
 function joinTemp(prefix: string): string {

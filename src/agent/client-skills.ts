@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { AvailableSkillSummary } from "@/types/protocol_v2";
 import { getSkillSources, getSkillsDirectory } from "./context";
@@ -391,9 +391,21 @@ async function collectClientSideSkills(
     ) ?? [];
 
   const discoveryRuns: Array<{ path: string; sources: SkillSource[] }> = [];
+  const discoveryRunKeys = new Set<string>();
+  const addDiscoveryRun = (run: {
+    path: string;
+    sources: SkillSource[];
+  }): void => {
+    const key = `${resolve(run.path)}|${[...run.sources].sort().join(",")}`;
+    if (discoveryRunKeys.has(key)) {
+      return;
+    }
+    discoveryRunKeys.add(key);
+    discoveryRuns.push(run);
+  };
 
   if (nonProjectSources.length > 0) {
-    discoveryRuns.push({
+    addDiscoveryRun({
       path: options.primaryProjectSkillsDirectory,
       sources: nonProjectSources,
     });
@@ -408,7 +420,7 @@ async function collectClientSideSkills(
     options.configuredSkillsDirectory !== options.legacySkillsDirectory &&
     options.configuredSkillsDirectory !== options.primaryProjectSkillsDirectory
   ) {
-    discoveryRuns.push({
+    addDiscoveryRun({
       path: options.configuredSkillsDirectory,
       sources: ["project"],
     });
@@ -418,14 +430,14 @@ async function collectClientSideSkills(
     includeProjectSource &&
     options.legacySkillsDirectory !== options.primaryProjectSkillsDirectory
   ) {
-    discoveryRuns.push({
+    addDiscoveryRun({
       path: options.legacySkillsDirectory,
       sources: ["project"],
     });
   }
 
   if (includeProjectSource) {
-    discoveryRuns.push({
+    addDiscoveryRun({
       path: options.primaryProjectSkillsDirectory,
       sources: ["project"],
     });
