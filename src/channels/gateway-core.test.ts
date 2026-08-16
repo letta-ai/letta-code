@@ -769,38 +769,80 @@ test("publishes process-owned runtime tools without retaining gateway runtimes",
   gateway.close();
 });
 
-test("does not release tools owned by a gateway runtime", async () => {
+test("idle runtime cleanup is explicit, guarded, and retryable", async () => {
   const client = new FakeClient();
-  const { hooks } = makeHooks();
-  const gateway = new ChannelGateway(client, hooks);
-
+  let failToolUpdate = true;
+  client.runtimeExternalToolsUpdate = async ({ updates }) => {
+    client.runtimeToolUpdates.push(...updates);
+    const shouldFail = failToolUpdate;
+    failToolUpdate = false;
+    return {
+      type: "runtime_external_tools_update_response",
+      request_id: "idle-cleanup",
+      success: !shouldFail,
+      ...(shouldFail ? { error: "tool update failed" } : {}),
+    };
+  };
+  let failAdoption = false;
+  const gateway = new ChannelGateway(
+    client,
+    makeHooks({
+      onLifecycle: (event) => {
+        if (failAdoption && event.type === "processing") {
+          throw new Error("adoption failed");
+        }
+      },
+    }).hooks,
+  );
+  const clean = () =>
+    gateway.releaseRuntimeTools(TEST_RUNTIME, [], { cleanupIdleRuntime: true });
   await gateway.registerRuntime(TEST_RUNTIME);
-  expect(await gateway.publishRuntimeTools(TEST_RUNTIME)).toBe(false);
   await gateway.releaseRuntimeTools(TEST_RUNTIME);
-
-  expect(client.startedRuntimes).toHaveLength(1);
-  expect(client.runtimeToolUpdates).toHaveLength(0);
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
+  failAdoption = true;
+  await expect(
+    gateway.adoptActiveDelivery(
+      makeDelivery({ sources: [], clientMessageId: "failed-adoption" }),
+    ),
+  ).rejects.toThrow("adoption failed");
+  await expect(clean()).rejects.toThrow("tool update failed");
+  expect(gateway.getKnownRuntimes()).toEqual([]);
+  await expect(clean()).resolves.toBeUndefined();
+  expect(client.runtimeToolUpdates).toHaveLength(2);
+  expect(client.runtimeToolUpdates[0]?.external_tools).toEqual([]);
+  expect(client.runtimeToolUpdates[1]?.external_tools).toEqual([]);
+  failAdoption = false;
+  await gateway.adoptActiveDelivery(
+    makeDelivery({ sources: [], clientMessageId: "active" }),
+  );
+  await expect(clean()).rejects.toThrow("active channel runtime");
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
+  gateway.releaseActiveDelivery(TEST_RUNTIME, "active");
+  gateway.adoptQueuedDelivery(
+    makeDelivery({ sources: [], clientMessageId: "queued" }),
+  );
+  await expect(clean()).rejects.toThrow("queued channel runtime");
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
   gateway.close();
 });
 
-test("does not release tools after the turn creates a routed source", async () => {
+test("routed sources block idle cleanup without clearing state or tools", async () => {
   const client = new FakeClient();
-  const { hooks } = makeHooks();
-  const gateway = new ChannelGateway(client, hooks);
-  const runtime = {
-    agent_id: "agent-1",
-    conversation_id: "conv-schedule-1",
-  };
+  const gateway = new ChannelGateway(client, makeHooks().hooks);
+  const source = makeSource();
+  const clean = (sources: ChannelTurnSource[] = []) =>
+    gateway.releaseRuntimeTools(TEST_RUNTIME, sources, {
+      cleanupIdleRuntime: true,
+    });
 
-  expect(await gateway.publishRuntimeTools(runtime)).toBe(true);
-  await gateway.releaseRuntimeTools(runtime, [
-    makeSource({
-      agentId: runtime.agent_id,
-      conversationId: runtime.conversation_id,
-    }),
-  ]);
-
-  expect(client.runtimeToolUpdates).toHaveLength(1);
+  await gateway.registerRuntime(TEST_RUNTIME);
+  await expect(clean([source])).rejects.toThrow("routed channel runtime");
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
+  gateway.setRoutedSources(TEST_RUNTIME, [source]);
+  await expect(clean()).rejects.toThrow("routed channel runtime");
+  await gateway.releaseRuntimeTools(TEST_RUNTIME, [source]);
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
+  expect(client.runtimeToolUpdates).toHaveLength(0);
   gateway.close();
 });
 

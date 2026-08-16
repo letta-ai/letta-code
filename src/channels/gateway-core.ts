@@ -516,9 +516,26 @@ export class ChannelGateway {
   async releaseRuntimeTools(
     runtime: RuntimeScope,
     routedSources: ChannelTurnSource[] = [],
+    options: { cleanupIdleRuntime?: boolean } = {},
   ): Promise<void> {
     await this.enqueueRegistration(async () => {
-      if (routedSources.length > 0 || this.states.has(runtimeKey(runtime))) {
+      const key = runtimeKey(runtime);
+      const state = this.states.get(key);
+      if (options.cleanupIdleRuntime) {
+        if (
+          routedSources.length > 0 ||
+          (state?.routedSources.length ?? 0) > 0
+        ) {
+          throw new Error("Cannot clean up a routed channel runtime");
+        }
+        if (state?.active) {
+          throw new Error("Cannot clean up an active channel runtime");
+        }
+        if ((state?.pendingSourcesByClientMessageId.size ?? 0) > 0) {
+          throw new Error("Cannot clean up a queued channel runtime");
+        }
+        this.states.delete(key);
+      } else if (routedSources.length > 0 || state) {
         return;
       }
       const response = await this.client.runtimeExternalToolsUpdate({
