@@ -123,7 +123,6 @@ describe("buildSystemPrompt", () => {
       expect(result).toContain(
         "MUST** be proactive in arranging the appropriate future invocation",
       );
-      expect(result).toContain("live in the Monitor tool description");
       expect(result).toContain("live in the scheduling-tasks skill");
     }
   });
