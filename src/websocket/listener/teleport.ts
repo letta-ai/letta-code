@@ -167,6 +167,7 @@ export function handleTeleportProbe(
       runtime: command.runtime,
       supported: true,
       drains_accepted_inputs: true,
+      idempotent_continuation: true,
     },
     "teleport_probe_response",
     "teleport_probe",

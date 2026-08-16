@@ -51,6 +51,7 @@ export interface TeleportProbeResponseMessage {
   runtime: RuntimeScope;
   supported: true;
   drains_accepted_inputs: true;
+  idempotent_continuation: true;
 }
 
 export interface TeleportReadyMessage {
