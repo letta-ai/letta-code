@@ -64,7 +64,6 @@ import {
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import {
-  clearPriorReadyTeleports,
   handleTeleportProbe,
   handleTeleportRequest,
   takeFailedTeleport,
@@ -443,12 +442,6 @@ export function createListenerMessageHandler(
         }
 
         if (parsed.payload.kind === "teleport_continue") {
-          clearPriorReadyTeleports({
-            listener: runtime,
-            agentId: parsed.runtime.agent_id,
-            conversationId: parsed.runtime.conversation_id,
-            currentTeleportId: parsed.payload.teleport_id,
-          });
           const scopedRuntime = getOrCreateScopedRuntime(
             runtime,
             parsed.runtime.agent_id,
