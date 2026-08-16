@@ -24,14 +24,22 @@ export interface SecretCommandResult {
  */
 export async function handleSecretCommand(
   args: string[],
+  rawInput?: string,
 ): Promise<SecretCommandResult> {
-  const [subcommand, key, value] = args;
+  const [subcommand, key] = args;
 
   switch (subcommand) {
     case "set": {
       if (!key) {
         return { output: "Usage: /secret set KEY value" };
       }
+      // Values can contain spaces and newlines (e.g. "FlyV1 <token>" or a
+      // pasted private key). The whitespace-split args cannot reconstruct
+      // them, so recover the value verbatim from the resolved input.
+      const value =
+        rawInput !== undefined
+          ? rawInput.replace(/^\/secret\s+set\s+\S+\s*/, "")
+          : args.slice(2).join(" ");
       if (!value) {
         return {
           output:
