@@ -10,6 +10,7 @@ import { createRuntime } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
 import { scheduleQueuePump } from "./queue";
 import { setActiveRuntime } from "./runtime";
+import { isRuntimeWaitingForTeleport } from "./teleport";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
 class MockSocket {
@@ -122,6 +123,79 @@ describe("listener message router ownership handoff", () => {
     expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
       "MessageChannel",
     ]);
+  });
+
+  test("a reverse teleport clears the destination's prior source fence", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socket = new MockSocket();
+    const sent: unknown[] = [];
+    listener.pendingTeleports = new Map([
+      [
+        "teleport-outbound",
+        {
+          teleportId: "teleport-outbound",
+          connectionId: "conn-test",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          requestedAt: 1,
+          readyAt: 2,
+        },
+      ],
+    ]);
+    setActiveRuntime(listener);
+    const handleMessage = createListenerMessageHandler({
+      runtime: listener,
+      socket: socket as unknown as WebSocket,
+      opts: makeListenerOptions(),
+      processQueuedTurn: async () => {},
+      fileCommandSession: { handle: () => false },
+      getParsedRuntimeScope: () => null,
+      replaySyncStateForRuntime: async () => {},
+      getOrCreateScopedRuntime: () => runtime,
+      handleApprovalResponseInput: async () => false,
+      handleChangeDeviceStateInput: async () => false,
+      handleAbortMessageInput: async () => false,
+      stampInboundUserMessageOtids: (incoming) => incoming,
+      safeSocketSend: (_target, payload) => {
+        sent.push(payload);
+        return true;
+      },
+      runDetachedListenerTask: () => {},
+      trackListenerError: () => {},
+      processIncomingMessage: async () => {},
+    });
+
+    expect(isRuntimeWaitingForTeleport(listener, "agent-1", "conv-1")).toBe(
+      true,
+    );
+    await handleMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          request_id: "reverse-continue",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "teleport_continue",
+            teleport_id: "teleport-return",
+            source: {
+              device_id: "device-away",
+              connection_name: "Away",
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(isRuntimeWaitingForTeleport(listener, "agent-1", "conv-1")).toBe(
+      false,
+    );
+    expect(sent).toContainEqual({
+      type: "input_accepted",
+      request_id: "reverse-continue",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      accepted: true,
+    });
   });
 
   test("a direct message that loses the idle race is queued and later drained", async () => {

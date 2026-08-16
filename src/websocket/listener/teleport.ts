@@ -72,6 +72,24 @@ export function isRuntimeWaitingForTeleport(
   return false;
 }
 
+export function clearPriorReadyTeleports(params: {
+  listener: ListenerRuntime;
+  agentId: string;
+  conversationId: string;
+  currentTeleportId: string;
+}): void {
+  for (const [teleportId, pending] of params.listener.pendingTeleports ?? []) {
+    if (
+      teleportId !== params.currentTeleportId &&
+      pending.agentId === params.agentId &&
+      pending.conversationId === params.conversationId &&
+      pending.readyAt !== undefined
+    ) {
+      params.listener.pendingTeleports?.delete(teleportId);
+    }
+  }
+}
+
 function sendTeleportReady(
   runtime: ListenerRuntime,
   pending: PendingTeleport,
