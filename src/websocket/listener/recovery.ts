@@ -751,10 +751,12 @@ export async function resolveRecoveredApprovalResponse(
       },
     ]);
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
+    let continuationActingUserId: string | undefined;
     const consumedQueuedTurn = consumeQueuedTurn(runtime);
     if (consumedQueuedTurn) {
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
       continuationBatchId = dequeuedBatch.batchId;
+      continuationActingUserId = queuedTurn.actingUserId;
       continuationInput = appendQueuedTurnToInput(
         continuationInput,
         queuedTurn,
@@ -771,6 +773,9 @@ export async function resolveRecoveredApprovalResponse(
         type: "message",
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
+        ...(continuationActingUserId
+          ? { actingUserId: continuationActingUserId }
+          : {}),
         messages: continuationInput.messages,
       },
       socket,
