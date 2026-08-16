@@ -21,6 +21,7 @@ import {
 import { handleExecuteCommand } from "./commands";
 import { handleAgentConversationManagementProtocolCommand } from "./commands/agents-conversations";
 import { handleAppServerInfoCommand } from "./commands/app-server-info";
+import { handleCwdProtocolCommand } from "./commands/boot-working-directory";
 import { handleChatGPTUsageCommand } from "./commands/chatgpt-usage";
 import { handleConnectProvidersCommand } from "./commands/connect-providers";
 import { handleCronProtocolCommand } from "./commands/cron";
@@ -32,7 +33,7 @@ import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
 import { subscribeListenerConnection } from "./connection";
-import { getBootWorkingDirectory, getExportedCwdMap } from "./cwd";
+import { getBootWorkingDirectory } from "./cwd";
 import {
   handleExternalToolCallResponseCommand,
   updateRuntimeExternalTools,
@@ -840,19 +841,15 @@ export function createListenerMessageHandler(
         return;
       }
 
-      if (parsed.type === "get_cwd_map") {
-        safeSocketSend(
+      if (
+        parsed.type === "get_cwd_map" ||
+        parsed.type === "set_boot_working_directory"
+      ) {
+        await handleCwdProtocolCommand(parsed, {
           socket,
-          {
-            type: "get_cwd_map_response",
-            request_id: parsed.request_id,
-            success: true,
-            cwd_map: getExportedCwdMap(runtime),
-            boot_working_directory: getBootWorkingDirectory(runtime),
-          },
-          "get_cwd_map_response",
-          "get_cwd_map",
-        );
+          runtime,
+          safeSocketSend,
+        });
         return;
       }
 
