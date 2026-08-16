@@ -223,6 +223,7 @@ describe("listener protocol ergonomics", () => {
     expect(incoming?.messages).toHaveLength(1);
     expect(incoming?.messages[0]).toMatchObject({
       type: "approval",
+      otid: "teleport-1",
       approvals: [
         {
           type: "tool",
