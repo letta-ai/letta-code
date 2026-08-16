@@ -1,4 +1,5 @@
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { scrubSecretsFromString } from "@/tools/secret-substitution";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
   appendBackgroundProcessOutput,
@@ -8,6 +9,7 @@ import {
   createBackgroundOutputFile,
   getNextExecSessionId,
   scheduleBackgroundProcessCleanup,
+  scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
 import { resolveShellWorkdir } from "./shell.js";
 import { getShellEnv } from "./shell-env.js";
@@ -81,6 +83,7 @@ interface ExecSession {
   status: ExecSessionStatus;
   exitCode: number | null;
   tty: boolean;
+  secrets: Readonly<Record<string, string>>;
   cleanupTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -158,14 +161,19 @@ function maxCharsForTokens(maxOutputTokens?: number): number {
   return Math.min(Math.max(1, maxTokens * 4), MAX_INLINE_OUTPUT_CHARS);
 }
 
-function truncateOutput(text: string, maxOutputTokens?: number): string {
+function truncateOutput(
+  text: string,
+  maxOutputTokens: number | undefined,
+  secrets: Readonly<Record<string, string>>,
+): string {
   return truncateByChars(
-    text,
+    scrubSecretsFromString(text, secrets),
     maxCharsForTokens(maxOutputTokens),
     "exec_command",
     {
       workingDirectory: getCurrentWorkingDirectory(),
       toolName: "exec_command",
+      secrets,
     },
   ).content;
 }
@@ -269,6 +277,7 @@ function formatExecOutput(params: {
   output: string;
   originalTokenCount: number;
   maxOutputTokens?: number;
+  secrets: Readonly<Record<string, string>>;
 }): string {
   const sections = [
     `Chunk ID: ${params.chunkId}`,
@@ -284,7 +293,9 @@ function formatExecOutput(params: {
 
   sections.push(`Original token count: ${params.originalTokenCount}`);
   sections.push("Output:");
-  sections.push(truncateOutput(params.output, params.maxOutputTokens));
+  sections.push(
+    truncateOutput(params.output, params.maxOutputTokens, params.secrets),
+  );
   return sections.join("\n");
 }
 
@@ -357,14 +368,16 @@ function buildExecLaunchers(args: ExecCommandArgs): string[][] {
 function createSessionOutputAppender(params: {
   session: ExecSession;
   outputFile: string;
+  secrets: Readonly<Record<string, string>>;
 }): (text: string, stream: "stdout" | "stderr") => void {
   return (text: string, stream: "stdout" | "stderr") => {
-    appendSessionOutput(params.session, text, stream);
+    const sanitizedText = scrubSecretsFromString(text, params.secrets);
+    appendSessionOutput(params.session, sanitizedText, stream);
     const bgProcess = backgroundProcesses.get(params.session.id);
     if (bgProcess) {
-      appendBackgroundProcessOutput(bgProcess, stream, text);
+      appendBackgroundProcessOutput(bgProcess, stream, sanitizedText);
     }
-    appendToOutputFile(params.outputFile, text);
+    appendToOutputFile(params.outputFile, sanitizedText);
   };
 }
 
@@ -373,6 +386,7 @@ function markSessionFailed(session: ExecSession): void {
   const bgProcess = backgroundProcesses.get(session.id);
   if (bgProcess) {
     bgProcess.status = "failed";
+    scrubCompletedBackgroundOutput(bgProcess);
     scheduleBackgroundProcessCleanup(session.id);
   }
   scheduleExecSessionCleanup(session.id);
@@ -385,6 +399,7 @@ function markSessionClosed(session: ExecSession, code: number | null): void {
   if (bgProcess) {
     bgProcess.status = session.status;
     bgProcess.exitCode = code;
+    scrubCompletedBackgroundOutput(bgProcess);
     scheduleBackgroundProcessCleanup(session.id);
   }
   scheduleExecSessionCleanup(session.id);
@@ -466,10 +481,15 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     status: "running",
     exitCode: null,
     tty: args.tty ?? false,
+    secrets: args.secretEnv ?? {},
   };
   execSessions.set(id, session);
 
-  const appendOutput = createSessionOutputAppender({ session, outputFile });
+  const appendOutput = createSessionOutputAppender({
+    session,
+    outputFile,
+    secrets: args.secretEnv ?? {},
+  });
   let runningProcess: RunningShellProcess;
   try {
     runningProcess = startShellProcess(launcher, {
@@ -500,6 +520,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     totalStdoutLines: 0,
     totalStderrLines: 0,
     runtimeScope: args.parentScope,
+    secrets: session.secrets,
   });
   if (session.status !== "running") {
     scheduleBackgroundProcessCleanup(id);
@@ -548,13 +569,14 @@ export async function exec_command(
     output,
     originalTokenCount: estimateTokenCount(output),
     maxOutputTokens: args.max_output_tokens,
+    secrets: session.secrets,
   });
   if (sessionId === null) {
     releaseExecSession(session);
   }
 
   return {
-    output: formattedOutput,
+    output: scrubSecretsFromString(formattedOutput, session.secrets),
   };
 }
 
@@ -599,13 +621,14 @@ export async function write_stdin(
     output,
     originalTokenCount: estimateTokenCount(output),
     maxOutputTokens: args.max_output_tokens,
+    secrets: session.secrets,
   });
   if (nextSessionId === null) {
     releaseExecSession(session);
   }
 
   return {
-    output: formattedOutput,
+    output: scrubSecretsFromString(formattedOutput, session.secrets),
   };
 }
 

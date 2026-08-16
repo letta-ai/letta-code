@@ -70,10 +70,9 @@ export function ensureOverflowDirectory(workingDirectory: string): string {
 /**
  * Write tool output to an overflow file.
  *
- * Secrets are scrubbed before writing: overflow captures tool output before
- * the model-facing scrub in the tool manager runs, so without this the file
- * would persist raw secret values that the agent context never sees. The
- * agent scope resolves from the runtime context, same as the manager scrub.
+ * Secrets available to the current tool invocation are scrubbed before writing:
+ * overflow captures tool output before the model-facing scrub in the tool manager
+ * runs, so without this the file would persist raw secret values.
  *
  * @param content - Full content to write
  * @param workingDirectory - Current working directory (project root)
@@ -84,6 +83,7 @@ export function writeOverflowFile(
   content: string,
   workingDirectory: string,
   toolName?: string,
+  secrets: Readonly<Record<string, string>> = {},
 ): string {
   const overflowDir = ensureOverflowDirectory(workingDirectory);
 
@@ -95,7 +95,7 @@ export function writeOverflowFile(
 
   const filePath = path.join(overflowDir, filename);
 
-  fs.writeFileSync(filePath, scrubSecretsFromString(content), "utf-8");
+  fs.writeFileSync(filePath, scrubSecretsFromString(content, secrets), "utf-8");
 
   return filePath;
 }

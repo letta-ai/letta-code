@@ -29,6 +29,7 @@ interface ShellCommandResult {
 function normalizeShellCommandResult(
   result: ShellResult,
   resolvedWorkdir: string,
+  secrets: Readonly<Record<string, string>>,
 ): ShellCommandResult {
   const { content: truncatedOutput, wasTruncated } = truncateByChars(
     result.output || "(Command completed with no output)",
@@ -37,6 +38,7 @@ function normalizeShellCommandResult(
     {
       workingDirectory: resolvedWorkdir,
       toolName: "Bash",
+      secrets,
     },
   );
 
@@ -93,7 +95,11 @@ export async function shell_command(
         signal,
         onOutput,
       });
-      return normalizeShellCommandResult(result, resolvedWorkdir);
+      return normalizeShellCommandResult(
+        result,
+        resolvedWorkdir,
+        secretEnv ?? {},
+      );
     } catch (error) {
       if (error instanceof ShellExecutionError && error.code === "ENOENT") {
         tried.push(launcher[0] || "");

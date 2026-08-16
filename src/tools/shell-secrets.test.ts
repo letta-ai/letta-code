@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { bash } from "@/tools/impl/bash";
 import { run_shell_command } from "@/tools/impl/run-shell-command-gemini";
 import { shell_command } from "@/tools/impl/shell-command.js";
@@ -12,6 +13,7 @@ import {
   releaseToolExecutionContext,
   type ToolReturnContent,
 } from "@/tools/manager";
+import { createTempRuntimeScriptCommand } from "@/tools/runtime-script";
 import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
@@ -28,6 +30,7 @@ const seededSecrets = {
   PASSWORD: "he$$o",
   TOKEN: "$foo$bar",
   BACKTICK: "`whoami`",
+  PROFILE: "letta",
 } as const;
 
 afterEach(() => {
@@ -101,7 +104,7 @@ describe("shell secret scrubbing", () => {
   test("replaces secret values with NAME=<REDACTED>", async () => {
     await seedSecrets();
     expect(
-      scrubSecretsFromString(`key=${seededSecrets.API_KEY}`, TEST_AGENT_ID),
+      scrubSecretsFromString(`key=${seededSecrets.API_KEY}`, seededSecrets),
     ).toBe("key=API_KEY=<REDACTED>");
   });
 
@@ -110,7 +113,7 @@ describe("shell secret scrubbing", () => {
     expect(
       scrubSecretsFromString(
         `pw=${seededSecrets.PASSWORD} x=${seededSecrets.BACKTICK}`,
-        TEST_AGENT_ID,
+        seededSecrets,
       ),
     ).toBe("pw=PASSWORD=<REDACTED> x=BACKTICK=<REDACTED>");
   });
@@ -156,6 +159,87 @@ describe("shell secret execution", () => {
     });
 
     expectLiteralSecrets(result.message);
+  });
+
+  test("does not scrub an unused low-entropy secret", async () => {
+    await seedSecrets();
+    const context = await prepareToolExecutionContextForSpecificTools(
+      ["Bash"],
+      {
+        runtimeContext: {
+          agentId: TEST_AGENT_ID,
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+
+    try {
+      const command =
+        process.platform === "win32" ? "Write-Output letta" : "printf letta";
+      const result = await executeTool(
+        "Bash",
+        { command, description: "Print ordinary text" },
+        { toolContextId: context.contextId },
+      );
+
+      expect(result.status).toBe("success");
+      expect(toolReturnText(result.toolReturn)).toContain("letta");
+      expect(toolReturnText(result.toolReturn)).not.toContain(
+        "PROFILE=<REDACTED>",
+      );
+    } finally {
+      releaseToolExecutionContext(context.contextId);
+    }
+  });
+
+  test("keeps background output scoped to the launch secrets", async () => {
+    await seedSecrets();
+    const context = await prepareToolExecutionContextForSpecificTools(
+      ["Bash", "TaskOutput"],
+      {
+        runtimeContext: {
+          agentId: TEST_AGENT_ID,
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+
+    const runtimeScript = createTempRuntimeScriptCommand(
+      "const value = process.env.PASSWORD ?? ''; process.stdout.write(value.slice(0, 2)); setTimeout(() => process.stdout.write(value.slice(2)), 25)",
+    );
+    try {
+      const launched = await executeTool(
+        "Bash",
+        {
+          command: `${runtimeScript.command} $PASSWORD`,
+          description: "Print a split background secret",
+          run_in_background: true,
+        },
+        { toolContextId: context.contextId },
+      );
+      const launchedText = toolReturnText(launched.toolReturn);
+      const taskId = launchedText.match(/ID: (bash_\d+)/)?.[1];
+      const outputFile = launchedText.match(/Output file: (.+)/)?.[1];
+      expect(taskId).toBeString();
+      expect(outputFile).toBeString();
+
+      const completed = await executeTool(
+        "TaskOutput",
+        { task_id: taskId, block: true, timeout: 5000 },
+        { toolContextId: context.contextId },
+      );
+      const output = toolReturnText(completed.toolReturn);
+      expect(output).toContain("PASSWORD=<REDACTED>");
+      expect(output).not.toContain(seededSecrets.PASSWORD);
+      expect(readFileSync(outputFile as string, "utf8")).not.toContain(
+        seededSecrets.PASSWORD,
+      );
+    } finally {
+      releaseToolExecutionContext(context.contextId);
+      runtimeScript.cleanup();
+    }
   });
 
   test("executeTool injects and scrubs referenced shell secrets", async () => {
