@@ -1122,10 +1122,10 @@ async function main(): Promise<void> {
   const isUsingLocalBackend = isExperimentalLocalBackendEnabled();
 
   if (!isUsingDevBackend && !isUsingLocalBackend) {
-    // Headless mode against Letta API requires an explicit LETTA_API_KEY env var.
-    // Stored interactive OAuth tokens are not accepted for automated/headless use.
+    // Ephemeral runs may reuse saved OAuth; other headless automation requires an env key.
     if (
       isHeadless &&
+      !values.ephemeral &&
       baseURL === LETTA_CLOUD_API_URL &&
       !process.env.LETTA_API_KEY
     ) {

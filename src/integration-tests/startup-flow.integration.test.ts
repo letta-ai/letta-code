@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  createAuthenticatedCliTestEnv,
+  createIsolatedCliTestEnv,
+} from "@/test-utils/test-process-env";
 import {
   formatAttemptDiagnostics,
   formatCapturedOutput,
@@ -21,9 +28,17 @@ async function runCli(
     timeoutMs?: number;
     expectExit?: number;
     retryOnTimeouts?: number;
+    env?: NodeJS.ProcessEnv;
+    includeMemfsStartup?: boolean;
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
-  const { timeoutMs = 30000, expectExit, retryOnTimeouts = 1 } = options;
+  const {
+    timeoutMs = 30000,
+    expectExit,
+    retryOnTimeouts = 1,
+    env = createAuthenticatedCliTestEnv(),
+    includeMemfsStartup = true,
+  } = options;
   const failedAttempts: Array<{ attempt: number; message: string }> = [];
 
   const runOnce = () =>
@@ -31,10 +46,15 @@ async function runCli(
       (resolve, reject) => {
         const proc = spawn(
           "bun",
-          ["run", "dev", "--memfs-startup", "skip", ...args],
+          [
+            "run",
+            "dev",
+            ...(includeMemfsStartup ? ["--memfs-startup", "skip"] : []),
+            ...args,
+          ],
           {
             cwd: projectRoot,
-            env: createAuthenticatedCliTestEnv(),
+            env,
           },
         );
 
@@ -142,6 +162,8 @@ async function runCliJson(
     timeoutMs?: number;
     retryOnTimeouts?: number;
     retryOnParseErrors?: number;
+    env?: NodeJS.ProcessEnv;
+    includeMemfsStartup?: boolean;
   } = {},
 ): Promise<{
   stdout: string;
@@ -234,6 +256,113 @@ describe("Startup Flow - Invalid Inputs", () => {
 
 describe("Startup Flow - Integration", () => {
   let testAgentId: string | null = null;
+
+  test(
+    "--ephemeral uses saved Cloud authentication without creating an agent",
+    async () => {
+      const apiKey = process.env.LETTA_API_KEY;
+      if (!apiKey) {
+        throw new Error("LETTA_API_KEY is required for this integration test");
+      }
+
+      const homeDir = await mkdtemp(
+        join(tmpdir(), "letta-ephemeral-cloud-home-"),
+      );
+      const settingsDir = join(homeDir, ".letta");
+      await mkdir(settingsDir, { recursive: true });
+      await writeFile(
+        join(settingsDir, "settings.json"),
+        JSON.stringify({
+          env: { LETTA_API_KEY: apiKey },
+          preferredBackendMode: "api",
+        }),
+      );
+
+      try {
+        const result = await runCliJson(
+          [
+            "--ephemeral",
+            "-m",
+            "openai/gpt-5.6-luna",
+            "-p",
+            "Reply with EPHEMERAL_CLOUD_OK and nothing else",
+            "--tools=",
+            "--output-format",
+            "json",
+          ],
+          {
+            timeoutMs: 180000,
+            includeMemfsStartup: false,
+            env: createIsolatedCliTestEnv({
+              HOME: homeDir,
+              LETTA_SKIP_KEYCHAIN_CHECK: "1",
+            }),
+          },
+        );
+
+        expect(result.exitCode).toBe(0);
+        expect(result.output.agent_id).toBeNull();
+        expect(result.output.conversation_id).toStartWith("conv-");
+        expect(result.output.result).toBeDefined();
+      } finally {
+        await rm(homeDir, { recursive: true, force: true });
+      }
+    },
+    { timeout: 190000 },
+  );
+
+  test(
+    "--ephemeral runs fully locally without Cloud authentication or persistent state",
+    async () => {
+      const homeDir = await mkdtemp(
+        join(tmpdir(), "letta-ephemeral-local-home-"),
+      );
+      const storageDir = await mkdtemp(
+        join(tmpdir(), "letta-ephemeral-local-store-"),
+      );
+
+      try {
+        const result = await runCliJson(
+          [
+            "--backend",
+            "local",
+            "--ephemeral",
+            "-m",
+            "openai/gpt-5.6-luna",
+            "-p",
+            "Reply with EPHEMERAL_LOCAL_OK and nothing else",
+            "--tools=",
+            "--output-format",
+            "json",
+          ],
+          {
+            timeoutMs: 60000,
+            includeMemfsStartup: false,
+            env: createIsolatedCliTestEnv({
+              HOME: homeDir,
+              LETTA_LOCAL_BACKEND_DIR: storageDir,
+              LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
+              LETTA_SKIP_KEYCHAIN_CHECK: "1",
+            }),
+          },
+        );
+
+        expect(result.exitCode).toBe(0);
+        expect(result.output.agent_id).toBeNull();
+        expect(result.output.conversation_id).toStartWith("local-conv-");
+        expect(result.output.result).toBeDefined();
+        expect(existsSync(join(storageDir, "agents"))).toBe(false);
+        expect(existsSync(join(storageDir, "conversations"))).toBe(false);
+        expect(existsSync(join(storageDir, "memfs"))).toBe(false);
+      } finally {
+        await Promise.all([
+          rm(homeDir, { recursive: true, force: true }),
+          rm(storageDir, { recursive: true, force: true }),
+        ]);
+      }
+    },
+    { timeout: 70000 },
+  );
 
   test(
     "--new-agent creates agent and responds",

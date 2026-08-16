@@ -1818,8 +1818,7 @@ export async function handleHeadlessCommand(
 
   let availableTools =
     agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [];
-  // Cache the agent from the initial fetch to avoid redundant agents.retrieve
-  // calls on every while-loop iteration.
+  // Cache the initial agent to avoid repeated retrievals in the turn loop.
   let cachedAgent: AgentState | null = null;
   // Capture the resolved model (conversation override → agent fallback) so
   // subsequent while-loop iterations can prepare the correct toolset without
@@ -1830,6 +1829,7 @@ export async function handleHeadlessCommand(
     const initialToolContext = await prepareHeadlessToolExecutionContext({
       agentId: agent.id,
       conversationId,
+      overrideModel: ephemeralFlag ? agent.llm_config?.model : undefined,
       cachedAgent: agent as AgentState,
       modContext: initialHeadlessModContext,
       modEvents: headlessModAdapter.events,
