@@ -154,6 +154,7 @@ describe("listener protocol ergonomics", () => {
       runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
       supported: true,
       drains_accepted_inputs: true,
+      idempotent_continuation: true,
     });
   });
 
@@ -223,6 +224,7 @@ describe("listener protocol ergonomics", () => {
     expect(incoming?.messages).toHaveLength(1);
     expect(incoming?.messages[0]).toMatchObject({
       type: "approval",
+      otid: "teleport-1",
       approvals: [
         {
           type: "tool",
