@@ -109,12 +109,20 @@ describe("buildSystemPrompt", () => {
     expect(withoutSharedMemoryGuidance(hosted)).toBe(local);
   });
 
-  test("default prompt variants require proactive monitoring", () => {
+  test("default prompt variants explain future invocations", () => {
     for (const mode of ["standard", "memfs", "local-memfs"] as const) {
       const result = buildSystemPrompt("letta", mode);
 
-      expect(result).toContain("MUST** be proactive in monitoring work");
+      expect(result).toContain(
+        "To act across time, you must create future invocations explicitly",
+      );
+      expect(result).toContain("cron proactively invokes you");
+      expect(result).toContain("Monitor reactively invokes you");
+      expect(result).toContain(
+        "MUST** be proactive in arranging the appropriate future invocation",
+      );
       expect(result).toContain("live in the Monitor tool description");
+      expect(result).toContain("live in the scheduling-tasks skill");
     }
   });
 
