@@ -1,7 +1,8 @@
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { AvailableSkillSummary } from "@/types/protocol_v2";
+import { ClientSkillsWatcher } from "./client-skills-watcher";
 import { getSkillSources, getSkillsDirectory } from "./context";
 import { resolveScopedMemoryDir } from "./memory-filesystem";
 import {
@@ -30,6 +31,10 @@ import {
  * deduplication (same pattern as secretsStore).
  */
 const CLIENT_SKILLS_CACHE_KEY = Symbol.for("@letta/clientSkillsCache");
+const CLIENT_SKILLS_CACHE_GENERATION_KEY = Symbol.for(
+  "@letta/clientSkillsCacheGeneration",
+);
+const CLIENT_SKILLS_WATCHER_KEY = Symbol.for("@letta/clientSkillsWatcher");
 
 interface CacheEntry {
   key: string;
@@ -42,12 +47,44 @@ type GlobalWithClientSkillsCache = typeof globalThis & {
   [key: symbol]: ClientSkillsCache | undefined;
 };
 
+type GlobalWithClientSkillsState = typeof globalThis & {
+  [CLIENT_SKILLS_CACHE_GENERATION_KEY]?: number;
+  [CLIENT_SKILLS_WATCHER_KEY]?: ClientSkillsWatcher;
+};
+
 function getCache(): ClientSkillsCache {
   const global = globalThis as GlobalWithClientSkillsCache;
   if (!global[CLIENT_SKILLS_CACHE_KEY]) {
     global[CLIENT_SKILLS_CACHE_KEY] = new Map();
   }
   return global[CLIENT_SKILLS_CACHE_KEY] as ClientSkillsCache;
+}
+
+function getCacheGeneration(): number {
+  const global = globalThis as GlobalWithClientSkillsState;
+  return global[CLIENT_SKILLS_CACHE_GENERATION_KEY] ?? 0;
+}
+
+function advanceCacheGeneration(): void {
+  const global = globalThis as GlobalWithClientSkillsState;
+  global[CLIENT_SKILLS_CACHE_GENERATION_KEY] = getCacheGeneration() + 1;
+}
+
+function shouldStartSkillWatchers(): boolean {
+  return (
+    process.env.NODE_ENV !== "test" &&
+    process.env.LETTA_DISABLE_SKILL_WATCHERS !== "1"
+  );
+}
+
+function getWatcher(): ClientSkillsWatcher {
+  const global = globalThis as GlobalWithClientSkillsState;
+  if (!global[CLIENT_SKILLS_WATCHER_KEY]) {
+    global[CLIENT_SKILLS_WATCHER_KEY] = new ClientSkillsWatcher(() => {
+      invalidateClientSkillsPayloadCache();
+    });
+  }
+  return global[CLIENT_SKILLS_WATCHER_KEY];
 }
 
 /**
@@ -61,9 +98,8 @@ function getCache(): ClientSkillsCache {
  *  - legacy and primary project skills directories
  *  - resolved memory skills dirs (scoped or env-fallback)
  *
- * This is conservative: any change in these inputs produces a cache miss,
- * ensuring correctness while still caching the common case where nothing
- * changes between `sendMessageStream` calls.
+ * Filesystem changes invalidate this cache through ClientSkillsWatcher rather
+ * than adding a recursive filesystem revision to this request-time key.
  */
 function computeCacheKey(components: {
   agentId: string | undefined;
@@ -73,7 +109,6 @@ function computeCacheKey(components: {
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
   memorySkillsDirs: string[];
-  skillRootRevisions: string[];
 }): string {
   return [
     components.agentId ?? "",
@@ -83,79 +118,10 @@ function computeCacheKey(components: {
     components.legacySkillsDirectory,
     components.primaryProjectSkillsDirectory,
     [...components.memorySkillsDirs].sort().join(","),
-    [...components.skillRootRevisions].sort().join(","),
   ].join("|");
 }
 
-function getSkillDirectoryRevision(
-  root: string,
-  visitedRealPaths: Set<string> = new Set(),
-): string {
-  const normalizedRoot = root.trim();
-  if (normalizedRoot.length === 0) {
-    return "empty";
-  }
-
-  try {
-    const rootStat = statSync(normalizedRoot);
-    const realPath = realpathSync(normalizedRoot);
-    if (visitedRealPaths.has(realPath)) {
-      return `${normalizedRoot}:cycle`;
-    }
-    visitedRealPaths.add(realPath);
-
-    if (!rootStat.isDirectory()) {
-      return `${normalizedRoot}:file:${rootStat.mtimeMs}:${rootStat.size}`;
-    }
-
-    const entries = readdirSync(normalizedRoot, { withFileTypes: true }).sort(
-      (a, b) => a.name.localeCompare(b.name),
-    );
-    const parts = [`${realPath}:dir:${rootStat.mtimeMs}:${rootStat.size}`];
-
-    for (const entry of entries) {
-      const fullPath = join(normalizedRoot, entry.name);
-      try {
-        if (entry.isDirectory()) {
-          parts.push(
-            `${entry.name}/(${getSkillDirectoryRevision(fullPath, visitedRealPaths)})`,
-          );
-          continue;
-        }
-
-        const isSkillFile = entry.name.toUpperCase() === "SKILL.MD";
-        if (entry.isSymbolicLink()) {
-          const targetStat = statSync(fullPath);
-          if (targetStat.isDirectory()) {
-            parts.push(
-              `${entry.name}@(${getSkillDirectoryRevision(fullPath, visitedRealPaths)})`,
-            );
-          } else if (isSkillFile) {
-            parts.push(
-              `${entry.name}:${targetStat.mtimeMs}:${targetStat.size}`,
-            );
-          }
-          continue;
-        }
-
-        if (entry.isFile() && isSkillFile) {
-          const fileStat = statSync(fullPath);
-          parts.push(`${entry.name}:${fileStat.mtimeMs}:${fileStat.size}`);
-        }
-      } catch (error) {
-        parts.push(
-          `${entry.name}:error:${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-
-    return parts.join(",");
-  } catch (error) {
-    return `${normalizedRoot}:missing:${error instanceof Error ? error.message : String(error)}`;
-  }
-}
-
-function getSkillRootRevisions(components: {
+function getSkillRoots(components: {
   agentId: string | undefined;
   skillSources: SkillSource[];
   configuredSkillsDirectory: string | null;
@@ -186,7 +152,7 @@ function getSkillRootRevisions(components: {
     }
   }
 
-  return [...roots].map((root) => `${root}=${getSkillDirectoryRevision(root)}`);
+  return [...roots];
 }
 
 /**
@@ -211,6 +177,7 @@ function cloneResult(
  * (e.g. cwd switch, env var change, or global skill source update).
  */
 export function invalidateClientSkillsPayloadCache(): void {
+  advanceCacheGeneration();
   getCache().clear();
 }
 
@@ -224,6 +191,7 @@ export function invalidateClientSkillsPayloadCache(): void {
 export function invalidateClientSkillsPayloadCacheForAgent(
   agentId: string,
 ): void {
+  advanceCacheGeneration();
   const cache = getCache();
   for (const [k, entry] of cache) {
     // The agentId is the first component of the key before the first "|".
@@ -539,6 +507,17 @@ export async function buildClientSkillsPayload(
   const useCache = !options.discoverSkillsFn;
 
   const memorySkillsDirs = getMemorySkillsDirs(options.agentId);
+  const skillRoots = getSkillRoots({
+    agentId: options.agentId,
+    skillSources,
+    configuredSkillsDirectory,
+    legacySkillsDirectory,
+    primaryProjectSkillsDirectory,
+    memorySkillsDirs,
+  });
+  if (useCache && shouldStartSkillWatchers()) {
+    getWatcher().ensureRoots(skillRoots);
+  }
   const cacheComponents = {
     agentId: options.agentId,
     skillSources,
@@ -547,14 +526,6 @@ export async function buildClientSkillsPayload(
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     memorySkillsDirs,
-    skillRootRevisions: getSkillRootRevisions({
-      agentId: options.agentId,
-      skillSources,
-      configuredSkillsDirectory,
-      legacySkillsDirectory,
-      primaryProjectSkillsDirectory,
-      memorySkillsDirs,
-    }),
   };
   const cacheKey = computeCacheKey(cacheComponents);
 
@@ -566,6 +537,7 @@ export async function buildClientSkillsPayload(
     }
   }
 
+  const generationBeforeDiscovery = getCacheGeneration();
   const discovery = await collectClientSideSkills({
     ...options,
     configuredSkillsDirectory,
@@ -606,7 +578,7 @@ export async function buildClientSkillsPayload(
     errors,
   };
 
-  if (useCache) {
+  if (useCache && generationBeforeDiscovery === getCacheGeneration()) {
     getCache().set(cacheKey, { key: cacheKey, result: cloneResult(result) });
   }
 

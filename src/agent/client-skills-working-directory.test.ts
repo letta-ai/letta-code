@@ -120,3 +120,34 @@ test("uses the working directory in the skill cache key", async () => {
     "second-skill",
   ]);
 });
+
+test("explicit invalidation refreshes changed skill metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "letta-client-skill-refresh-"));
+  tempRoots.push(root);
+  const projectDirectory = join(root, "project");
+  await mkdir(projectDirectory, { recursive: true });
+  const skillPath = await createProjectSkill(projectDirectory, "mutable-skill");
+  const options = {
+    workingDirectory: projectDirectory,
+    skillsDirectory: join(projectDirectory, ".skills"),
+    skillSources: ["project" as const],
+  };
+  const initial = await buildClientSkillsPayload(options);
+  await writeFile(
+    skillPath,
+    [
+      "---",
+      "name: mutable-skill",
+      "description: Updated description",
+      "---",
+      "",
+      "# mutable-skill",
+    ].join("\n"),
+  );
+
+  const cached = await buildClientSkillsPayload(options);
+  expect(cached.clientSkills).toEqual(initial.clientSkills);
+  invalidateClientSkillsPayloadCache();
+  const refreshed = await buildClientSkillsPayload(options);
+  expect(refreshed.clientSkills[0]?.description).toBe("Updated description");
+});
