@@ -188,6 +188,15 @@ export function resolveModelHandleFromLlmConfig(
   if (endpointType) {
     const normalizedModel = normalizeModelHandleForRegistry(model) ?? model;
     const modelProvider = providerPrefix(normalizedModel);
+    const endpointHandleProvider =
+      modelHandleProviderForEndpointType(endpointType);
+    // A handle that already carries the provider this endpoint type maps to
+    // is already normalized. Prepending the provider again produced doubled
+    // prefixes (e.g. chatgpt-oss/chatgpt-oss/<model>) while the provider mod
+    // was still loading during agent startup.
+    if (modelProvider && modelProvider === endpointHandleProvider) {
+      return normalizeKnownModelHandle(normalizedModel);
+    }
     if (
       modelProvider &&
       isKnownModelProviderPrefix(modelProvider) &&
@@ -196,9 +205,7 @@ export function resolveModelHandleFromLlmConfig(
       return normalizeKnownModelHandle(normalizedModel);
     }
 
-    return normalizeKnownModelHandle(
-      `${modelHandleProviderForEndpointType(endpointType)}/${model}`,
-    );
+    return normalizeKnownModelHandle(`${endpointHandleProvider}/${model}`);
   }
 
   const normalizedModel = normalizeKnownModelHandle(model);
