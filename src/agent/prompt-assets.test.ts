@@ -109,6 +109,15 @@ describe("buildSystemPrompt", () => {
     expect(withoutSharedMemoryGuidance(hosted)).toBe(local);
   });
 
+  test("default prompt variants require proactive monitoring", () => {
+    for (const mode of ["standard", "memfs", "local-memfs"] as const) {
+      const result = buildSystemPrompt("letta", mode);
+
+      expect(result).toContain("MUST** be proactive in monitoring work");
+      expect(result).toContain("live in the Monitor tool description");
+    }
+  });
+
   test("throws on unknown preset", () => {
     expect(() => buildSystemPrompt("unknown-id", "standard")).toThrow(
       'Unknown preset "unknown-id"',
