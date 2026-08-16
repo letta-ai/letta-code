@@ -608,10 +608,12 @@ export async function handleApprovalStop(params: {
     },
   ]);
   let continuationBatchId = dequeuedBatchId;
+  let continuationActingUserId: string | undefined;
   const consumedQueuedTurn = consumeQueuedTurn(runtime);
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
     continuationBatchId = dequeuedBatch.batchId;
+    continuationActingUserId = queuedTurn.actingUserId;
     nextTurnInput = appendQueuedTurnToInput(nextTurnInput, queuedTurn);
     emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
   }
@@ -645,6 +647,9 @@ export async function handleApprovalStop(params: {
       nextInputWithSkillContent,
       {
         ...sendOptions,
+        ...(continuationActingUserId
+          ? { actingUserId: continuationActingUserId }
+          : {}),
         ...(imageFailureModesByMessageOtid
           ? { imageFailureModesByMessageOtid }
           : {}),
