@@ -126,6 +126,43 @@ describe("/secret command", () => {
     });
   });
 
+  test("set stores values containing spaces verbatim from the resolved input", async () => {
+    retrieveAgentMock.mockResolvedValueOnce({
+      secrets: [{ key: "CLOUDFLARE_API_TOKEN", value: "cf-token" }],
+    });
+
+    const result = await handleSecretCommand(
+      ["set", "fly", "FlyV1"],
+      "/secret set fly FlyV1 macaroon-one macaroon-two",
+    );
+
+    expect(result.output).toBe("Secret '$FLY' set.");
+    expect(updateAgentMock).toHaveBeenCalledWith(AGENT_ID, {
+      secrets: {
+        CLOUDFLARE_API_TOKEN: "cf-token",
+        FLY: "FlyV1 macaroon-one macaroon-two",
+      },
+    });
+  });
+
+  test("set preserves newlines in multi-line pasted values", async () => {
+    const localAgentId = "agent-local-secret-command";
+    installLocalSecretStorage();
+    setCurrentAgentId(localAgentId);
+    clearSecretsCache(localAgentId);
+
+    const result = await handleSecretCommand(
+      ["set", "PRIVATE_KEY"],
+      "/secret set PRIVATE_KEY -----BEGIN KEY-----\nline2\n-----END KEY-----",
+    );
+
+    expect(result.output).toBe("Secret '$PRIVATE_KEY' set.");
+    expect(updateAgentMock).not.toHaveBeenCalled();
+    expect(loadSecrets(localAgentId)).toEqual({
+      PRIVATE_KEY: "-----BEGIN KEY-----\nline2\n-----END KEY-----",
+    });
+  });
+
   test("unset refreshes before checking whether the secret exists", async () => {
     retrieveAgentMock.mockResolvedValueOnce({
       secrets: [{ key: "CLOUDFLARE_API_TOKEN", value: "cf-token" }],

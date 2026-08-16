@@ -1,6 +1,7 @@
 // src/cli/commands/registry.ts
 // Registry of available CLI commands
 
+import { resolvePlaceholders } from "@/cli/helpers/paste-registry";
 import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
 
@@ -13,6 +14,7 @@ type CommandHandlerResult =
 
 type CommandHandler = (
   args: string[],
+  rawInput?: string,
 ) => Promise<CommandHandlerResult> | CommandHandlerResult;
 
 interface Command {
@@ -365,7 +367,8 @@ export const commands: Record<string, Command> = {
     desc: "Manage secrets for shell commands",
     order: 33,
     args: "<set|list|unset> [key] [value]",
-    handler: (args: string[]) => handleSecretCommand(args),
+    handler: (args: string[], rawInput?: string) =>
+      handleSecretCommand(args, rawInput),
   },
   "/memory-repository": {
     desc: "Push this agent's memory repo to an additional git remote",
@@ -673,7 +676,12 @@ function normalizeCommandHandlerResult(result: CommandHandlerResult): {
 export async function executeCommand(
   input: string,
 ): Promise<CommandExecutionResult> {
-  const [command, ...args] = input.trim().split(/\s+/);
+  // Resolve paste placeholders up front so commands operate on the real
+  // pasted content, and keep the resolved text for handlers that need
+  // values verbatim (whitespace splitting cannot represent spaces or
+  // newlines inside a value, e.g. /secret set KEY <token with spaces>).
+  const resolvedInput = resolvePlaceholders(input).trim();
+  const [command, ...args] = resolvedInput.split(/\s+/);
 
   if (!command) {
     return {
@@ -699,7 +707,9 @@ export async function executeCommand(
   }
 
   try {
-    const result = normalizeCommandHandlerResult(await handler.handler(args));
+    const result = normalizeCommandHandlerResult(
+      await handler.handler(args, resolvedInput),
+    );
     return { success: true, ...result };
   } catch (error) {
     return {
