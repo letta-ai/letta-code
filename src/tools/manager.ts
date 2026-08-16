@@ -61,6 +61,7 @@ import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
 import { serializeClientTools } from "./client-tool-serialization";
+import { normalizeExternalToolResultContent } from "./external-tool-content";
 import { toolFilter } from "./filter";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import {
@@ -892,15 +893,9 @@ export async function executeExternalTool(
       tool ? { tool } : undefined,
     );
 
-    // Convert external tool result to ToolExecutionResult format
-    const textContent = result.content
-      .filter((c) => c.type === "text" && c.text)
-      .map((c) => c.text)
-      .join("\n");
-
     return {
       toolReturn: clampToolReturnContent(
-        textContent || JSON.stringify(result.content),
+        normalizeExternalToolResultContent(result.content),
         toolName,
       ),
       status: result.isError ? "error" : "success",
