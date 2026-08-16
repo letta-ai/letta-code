@@ -319,6 +319,40 @@ export class ChannelGateway {
     }
   }
 
+  adoptQueuedDelivery(delivery: ChannelGatewayHandoffDelivery): void {
+    const state = this.getState(delivery.runtime);
+    const sources = uniqueLifecycleSources(delivery.sources);
+    const pending = state.pendingSourcesByClientMessageId.get(
+      delivery.clientMessageId,
+    );
+    if (pending) {
+      const matches =
+        pending.disposition === "queued" &&
+        JSON.stringify(pending.sources) === JSON.stringify(sources);
+      if (matches) return;
+      throw new Error(
+        `Cannot adopt queued delivery ${delivery.clientMessageId}; conflicting metadata exists`,
+      );
+    }
+    if (
+      state.acceptedClientMessageIds.has(delivery.clientMessageId) ||
+      state.active?.batchId === `channel-${delivery.clientMessageId}`
+    ) {
+      throw new Error(
+        `Cannot adopt queued delivery ${delivery.clientMessageId}; it is not queued`,
+      );
+    }
+    state.pendingSourcesByClientMessageId.set(delivery.clientMessageId, {
+      sources,
+      disposition: "queued",
+    });
+    state.routedSources = uniqueRoutedSources([
+      ...state.routedSources,
+      ...delivery.sources,
+    ]);
+    this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
+  }
+
   async restoreRuntime(
     runtime: RuntimeScope,
     sources: ChannelTurnSource[],
@@ -482,9 +516,26 @@ export class ChannelGateway {
   async releaseRuntimeTools(
     runtime: RuntimeScope,
     routedSources: ChannelTurnSource[] = [],
+    options: { cleanupIdleRuntime?: boolean } = {},
   ): Promise<void> {
     await this.enqueueRegistration(async () => {
-      if (routedSources.length > 0 || this.states.has(runtimeKey(runtime))) {
+      const key = runtimeKey(runtime);
+      const state = this.states.get(key);
+      if (options.cleanupIdleRuntime) {
+        if (
+          routedSources.length > 0 ||
+          (state?.routedSources.length ?? 0) > 0
+        ) {
+          throw new Error("Cannot clean up a routed channel runtime");
+        }
+        if (state?.active) {
+          throw new Error("Cannot clean up an active channel runtime");
+        }
+        if ((state?.pendingSourcesByClientMessageId.size ?? 0) > 0) {
+          throw new Error("Cannot clean up a queued channel runtime");
+        }
+        this.states.delete(key);
+      } else if (routedSources.length > 0 || state) {
         return;
       }
       const response = await this.client.runtimeExternalToolsUpdate({
