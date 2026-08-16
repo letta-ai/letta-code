@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import WebSocket from "ws";
@@ -32,7 +32,14 @@ class MockSocket {
 async function makeDirectory(name: string): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), `letta-boot-cwd-${name}-`));
   tempRoots.push(root);
-  return root;
+  return realpath(root);
+}
+
+function createIsolatedRuntime(): ListenerRuntime {
+  const runtime = createRuntime();
+  runtime.workingDirectoryByConversation.clear();
+  runtime.workingDirectoryRevision = 0;
+  return runtime;
 }
 
 function makeSender(): { sent: unknown[]; safeSocketSend: SafeSocketSend } {
@@ -107,7 +114,7 @@ describe("set_boot_working_directory", () => {
     const bootA = await makeDirectory("a");
     const bootB = await makeDirectory("b");
     const explicitC = await makeDirectory("c");
-    const runtime = createRuntime();
+    const runtime = createIsolatedRuntime();
     runtime.bootWorkingDirectory = bootA;
     runtime.workingDirectoryRevision = 7;
 
@@ -123,6 +130,15 @@ describe("set_boot_working_directory", () => {
       origin: "message",
       workingDirectory: bootA,
     });
+    const pendingApproval = {} as never;
+    active.pendingApprovalResolvers.set("approval-1", pendingApproval);
+    const serviceCommandHandler = mock(
+      async () => ({ success: true }) as never,
+    ) as NonNullable<ListenerRuntime["serviceCommandHandler"]>;
+    runtime.processServicesStarted = true;
+    runtime.serviceCommandHandler = serviceCommandHandler;
+    runtime.serviceCommandTypes.add("channels_list");
+    const serviceCommandTypesBefore = runtime.serviceCommandTypes;
     const cwdMapBefore = Object.fromEntries(
       runtime.workingDirectoryByConversation,
     );
@@ -150,6 +166,13 @@ describe("set_boot_working_directory", () => {
     );
     expect(active.activeWorkingDirectory).toBe(bootA);
     expect(active.turnLifecycle.isCurrent(activeLease)).toBe(true);
+    expect(active.pendingApprovalResolvers.get("approval-1")).toBe(
+      pendingApproval,
+    );
+    expect(runtime.processServicesStarted).toBe(true);
+    expect(runtime.serviceCommandHandler).toBe(serviceCommandHandler);
+    expect(runtime.serviceCommandTypes).toBe(serviceCommandTypesBefore);
+    expect(runtime.serviceCommandTypes.has("channels_list")).toBe(true);
     expect(buildDeviceStatus(runtime).boot_working_directory).toBe(bootB);
     expect(buildDeviceStatus(active).current_working_directory).toBe(bootA);
     expect(buildDeviceStatus(explicit).current_working_directory).toBe(
@@ -178,7 +201,7 @@ describe("set_boot_working_directory", () => {
     const bootA = path.join(root, "a");
     const bootB = path.join(root, "b");
     await Promise.all([mkdir(bootA), mkdir(bootB)]);
-    const runtime = createRuntime();
+    const runtime = createIsolatedRuntime();
     runtime.bootWorkingDirectory = bootA;
     runtime.workingDirectoryRevision = 2;
     const { sent, safeSocketSend } = makeSender();
@@ -203,7 +226,7 @@ describe("set_boot_working_directory", () => {
   test("sends each active scope an updated status", async () => {
     const bootA = await makeDirectory("status-a");
     const bootB = await makeDirectory("status-b");
-    const runtime = createRuntime();
+    const runtime = createIsolatedRuntime();
     runtime.bootWorkingDirectory = bootA;
     createConversationRuntime(runtime, "agent-1", "conv-1");
     createConversationRuntime(runtime, "agent-2", "conv-2");
@@ -263,7 +286,7 @@ describe("set_boot_working_directory", () => {
     const filePath = path.join(fileRoot, "not-a-directory");
     const missingPath = path.join(fileRoot, "missing");
     await writeFile(filePath, "x");
-    const runtime = createRuntime();
+    const runtime = createIsolatedRuntime();
     runtime.bootWorkingDirectory = bootA;
     runtime.workingDirectoryRevision = 3;
     const { sent, safeSocketSend } = makeSender();
@@ -320,7 +343,7 @@ describe("set_boot_working_directory", () => {
     const root = await makeDirectory("no-op");
     const boot = path.join(root, "boot");
     await mkdir(boot);
-    const runtime = createRuntime();
+    const runtime = createIsolatedRuntime();
     runtime.bootWorkingDirectory = boot;
     runtime.workingDirectoryRevision = 4;
     const { sent, safeSocketSend } = makeSender();
