@@ -394,7 +394,21 @@ export class ChannelGateway {
           ...delivery,
           content: "",
         });
+        if (state.active !== active) return;
+        active.richDraft =
+          this.hooks.createRichDraft?.({
+            batchId,
+            sources: routingSources,
+          }) ?? null;
+        await this.enqueueHook(state, () =>
+          this.hooks.onLifecycle({
+            type: "processing",
+            batchId,
+            sources: active.lifecycleSources,
+          }),
+        );
       } catch (error) {
+        active.richDraft?.dispose();
         if (state.active === active) state.active = null;
         state.routedSources = previousRoutedSources;
         if (!wasAccepted) {
@@ -403,17 +417,6 @@ export class ChannelGateway {
         if (!stateExisted && state.active === null) this.states.delete(key);
         throw error;
       }
-      if (state.active !== active) return;
-      active.richDraft =
-        this.hooks.createRichDraft?.({ batchId, sources: routingSources }) ??
-        null;
-      void this.enqueueHook(state, () =>
-        this.hooks.onLifecycle({
-          type: "processing",
-          batchId,
-          sources: active.lifecycleSources,
-        }),
-      );
     });
   }
 

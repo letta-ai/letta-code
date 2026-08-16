@@ -166,6 +166,31 @@ test("routes approval replay that arrives during destination registration", asyn
   gateway.close();
 });
 
+test("adoption waits for processing ownership to be recorded", async () => {
+  const client = new FakeClient();
+  let releaseProcessing: (() => void) | undefined;
+  let processingRecorded = false;
+  const gateway = new ChannelGateway(
+    client,
+    makeHooks({
+      onLifecycle: async () => {
+        await new Promise<void>((resolve) => {
+          releaseProcessing = resolve;
+        });
+        processingRecorded = true;
+      },
+    }).hooks,
+  );
+
+  const adoption = gateway.adoptActiveDelivery(makeHandoff());
+  await Bun.sleep(0);
+  expect(processingRecorded).toBe(false);
+  releaseProcessing?.();
+  await adoption;
+  expect(processingRecorded).toBe(true);
+  gateway.close();
+});
+
 test("repeated adoption and original delivery retries stay idempotent", async () => {
   const client = new FakeClient();
   const collector = makeHooks();

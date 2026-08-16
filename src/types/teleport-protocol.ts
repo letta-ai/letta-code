@@ -57,6 +57,7 @@ export interface TeleportReadyMessage {
   teleport_id: string;
   runtime: RuntimeScope;
   success: boolean;
+  active_turn: boolean;
   mode?: "standard" | "acceptEdits" | "unrestricted" | "strict";
   continuation?: TeleportContinuation;
   error?: string;
