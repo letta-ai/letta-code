@@ -8,6 +8,7 @@ export { ChannelControlRequestCoordinator } from "./channels/control-request-coo
 export type {
   ChannelGatewayClient,
   ChannelGatewayDelivery,
+  ChannelGatewayHandoffDelivery,
   ChannelGatewayHooks,
   ChannelGatewayModelStatus,
   ChannelGatewayRichDraft,

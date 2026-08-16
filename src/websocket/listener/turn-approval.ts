@@ -578,6 +578,7 @@ export async function handleApprovalStop(params: {
     listener: runtime.listener,
     agentId,
     conversationId,
+    activeTurn: true,
     continuation: { approvals: persistedExecutionResults },
   });
   if (pendingTeleport) {

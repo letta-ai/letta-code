@@ -294,6 +294,7 @@ describe("listener turn lifecycle integration", () => {
 
     expect(result.kind).toBe("teleport");
     if (result.kind === "teleport") {
+      expect(result.pendingTeleport.activeTurn).toBe(true);
       expect(result.pendingTeleport.continuation?.approvals).toEqual([
         {
           type: "tool",

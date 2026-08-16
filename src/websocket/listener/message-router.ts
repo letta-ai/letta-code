@@ -65,8 +65,10 @@ import {
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import {
+  clearPriorReadyTeleports,
   handleTeleportProbe,
   handleTeleportRequest,
+  isRuntimeTeleportPending,
   takeFailedTeleport,
 } from "./teleport";
 import type { ListenerTransport } from "./transport";
@@ -443,6 +445,12 @@ export function createListenerMessageHandler(
         }
 
         if (parsed.payload.kind === "teleport_continue") {
+          clearPriorReadyTeleports({
+            listener: runtime,
+            agentId: parsed.runtime.agent_id,
+            conversationId: parsed.runtime.conversation_id,
+            currentTeleportId: parsed.payload.teleport_id,
+          });
           const scopedRuntime = getOrCreateScopedRuntime(
             runtime,
             parsed.runtime.agent_id,
@@ -589,13 +597,6 @@ export function createListenerMessageHandler(
 
         if (shouldQueueInboundMessage(incoming)) {
           const stampedIncoming = stampInboundUserMessageOtids(incoming);
-          if (
-            shouldProcessInboundMessageDirectly(scopedRuntime, stampedIncoming)
-          ) {
-            processIncomingMessageDirectly(stampedIncoming);
-            return;
-          }
-
           const clientMessageId = getInboundClientMessageId(stampedIncoming);
           const acceptedDisposition = getAcceptedInputDisposition(
             scopedRuntime,
@@ -605,6 +606,23 @@ export function createListenerMessageHandler(
             acknowledgeInput(true, undefined, acceptedDisposition);
             return;
           }
+          if (
+            isRuntimeTeleportPending(
+              runtime,
+              scopedRuntime.agentId,
+              scopedRuntime.conversationId,
+            )
+          ) {
+            acknowledgeInput(false, "Conversation is switching computers");
+            return;
+          }
+          if (
+            shouldProcessInboundMessageDirectly(scopedRuntime, stampedIncoming)
+          ) {
+            processIncomingMessageDirectly(stampedIncoming);
+            return;
+          }
+
           const enqueued = enqueueInboundUserMessage(
             scopedRuntime,
             stampedIncoming,

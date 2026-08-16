@@ -54,6 +54,57 @@ function findPendingTeleportForRuntime(
   return null;
 }
 
+export function isRuntimeTeleportPending(
+  runtime: ListenerRuntime,
+  agentId: string | null,
+  conversationId: string,
+): boolean {
+  if (!agentId) return false;
+  return [...(runtime.pendingTeleports?.values() ?? [])].some(
+    (pending) =>
+      !pending.error &&
+      pending.agentId === agentId &&
+      pending.conversationId === conversationId,
+  );
+}
+
+export function clearPriorReadyTeleports(params: {
+  listener: ListenerRuntime;
+  agentId: string;
+  conversationId: string;
+  currentTeleportId: string;
+}): void {
+  const pendingTeleports = params.listener.pendingTeleports;
+  if (!pendingTeleports) return;
+  for (const [teleportId, pending] of pendingTeleports) {
+    if (
+      teleportId === params.currentTeleportId ||
+      pending.readyAt === undefined
+    ) {
+      continue;
+    }
+    if (
+      pending.agentId === params.agentId &&
+      pending.conversationId === params.conversationId
+    ) {
+      pendingTeleports.delete(teleportId);
+    }
+  }
+}
+
+function hasAcceptedInputsWaiting(
+  runtime: ConversationRuntime,
+  includeQueuePump: boolean,
+): boolean {
+  return (
+    runtime.queueRuntime.length > 0 ||
+    runtime.pendingTurns > 0 ||
+    runtime.queuedMessagesByItemId.size > 0 ||
+    (includeQueuePump &&
+      (runtime.queuePumpActive || runtime.queuePumpScheduled))
+  );
+}
+
 function sendTeleportReady(
   runtime: ListenerRuntime,
   pending: PendingTeleport,
@@ -75,6 +126,7 @@ function sendTeleportReady(
       conversation_id: pending.conversationId,
     },
     success: input.success,
+    active_turn: pending.activeTurn,
     mode,
     ...(pending.continuation ? { continuation: pending.continuation } : {}),
     ...(input.error ? { error: input.error } : {}),
@@ -114,6 +166,7 @@ export function handleTeleportProbe(
       request_id: command.request_id,
       runtime: command.runtime,
       supported: true,
+      drains_accepted_inputs: true,
     },
     "teleport_probe_response",
     "teleport_probe",
@@ -130,7 +183,10 @@ export function handleTeleportRequest(params: {
   const existing = pendingTeleports.get(command.teleport_id);
   if (existing) {
     if (existing.readyAt !== undefined) {
-      sendTeleportReady(listener, existing, { success: true });
+      sendTeleportReady(listener, existing, {
+        success: existing.error === undefined,
+        error: existing.error,
+      });
     }
     return;
   }
@@ -141,6 +197,8 @@ export function handleTeleportRequest(params: {
     agentId: command.runtime.agent_id,
     conversationId: command.runtime.conversation_id,
     requestedAt: Date.now(),
+    drainAcceptedInputs: false,
+    activeTurn: false,
   };
   const conflicting = findPendingTeleportForRuntime(
     listener,
@@ -150,9 +208,10 @@ export function handleTeleportRequest(params: {
   if (conflicting) {
     pendingTeleports.set(pending.teleportId, pending);
     pending.readyAt = Date.now();
+    pending.error = "Conversation already has a teleport pending";
     sendTeleportReady(listener, pending, {
       success: false,
-      error: "Conversation already has a teleport pending",
+      error: pending.error,
     });
     retainTeleportForRecovery(listener, pending);
     return;
@@ -164,7 +223,10 @@ export function handleTeleportRequest(params: {
     pending.agentId,
     pending.conversationId,
   );
-  if (!conversationRuntime?.isProcessing) {
+  pending.drainAcceptedInputs = conversationRuntime
+    ? hasAcceptedInputsWaiting(conversationRuntime, true)
+    : false;
+  if (!conversationRuntime?.isProcessing && !pending.drainAcceptedInputs) {
     if (sendTeleportReady(listener, pending, { success: true })) {
       pending.readyAt = Date.now();
       retainTeleportForRecovery(listener, pending);
@@ -176,6 +238,7 @@ export function claimPendingTeleportAtBoundary(params: {
   listener: ListenerRuntime;
   agentId: string;
   conversationId: string;
+  activeTurn: boolean;
   continuation?: TeleportContinuation;
 }): PendingTeleport | null {
   const pending = findPendingTeleportForRuntime(
@@ -184,9 +247,19 @@ export function claimPendingTeleportAtBoundary(params: {
     params.conversationId,
   );
   if (!pending) return null;
+  if (pending.drainAcceptedInputs) {
+    if (params.activeTurn) return null;
+    const runtime = getConversationRuntime(
+      params.listener,
+      params.agentId,
+      params.conversationId,
+    );
+    if (runtime && hasAcceptedInputsWaiting(runtime, false)) return null;
+  }
   const connection = params.listener.connections.get(pending.connectionId);
   if (!connection || !isListenerTransportOpen(connection.writer)) return null;
   pending.readyAt = Date.now();
+  pending.activeTurn = params.activeTurn;
   pending.continuation = params.continuation;
   return pending;
 }
@@ -218,13 +291,25 @@ export function finishTeleport(
 }
 
 export function finishPendingTeleport(runtime: ConversationRuntime): void {
-  if (runtime.lastStopReason !== "end_turn" || !runtime.agentId) return;
-  const pending = claimPendingTeleportAtBoundary({
+  if (!runtime.agentId) return;
+  const pending = findPendingTeleportForRuntime(
+    runtime.listener,
+    runtime.agentId,
+    runtime.conversationId,
+  );
+  if (
+    !pending ||
+    (runtime.lastStopReason !== "end_turn" && !pending.drainAcceptedInputs)
+  ) {
+    return;
+  }
+  const claimed = claimPendingTeleportAtBoundary({
     listener: runtime.listener,
     agentId: runtime.agentId,
     conversationId: runtime.conversationId,
+    activeTurn: false,
   });
-  if (pending) emitClaimedTeleportReady(runtime.listener, pending);
+  if (claimed) emitClaimedTeleportReady(runtime.listener, claimed);
 }
 
 export function takeFailedTeleport(params: {
