@@ -406,11 +406,17 @@ export async function sendMessageStreamWithBackend(
         });
       })();
   const { clientTools, contextId } = preparedToolContext;
+  const executionRuntimeContext = getExecutionContextById(
+    preparedToolContext.contextId,
+  )?.runtimeContext;
   const { clientSkills, errors: clientSkillDiscoveryErrors } =
     await buildClientSkillsPayload({
       agentId: opts.agentId,
-      skillsDirectory: getExecutionContextById(preparedToolContext.contextId)
-        ?.runtimeContext.skillsDirectory,
+      workingDirectory:
+        opts.workingDirectory ??
+        executionRuntimeContext?.workingDirectory ??
+        undefined,
+      skillsDirectory: executionRuntimeContext?.skillsDirectory,
       skillSources: opts.skillSources ?? getSkillSources(),
     });
 

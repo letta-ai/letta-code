@@ -373,8 +373,8 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "Bash",
   "Monitor",
   "TaskOutput",
-  "EnterWorktree",
-  "ExitWorktree",
+  ...WORKTREE_TOOL_NAMES,
+  "SetWorkingDirectory",
   "Edit",
   "TaskStop",
   // "MultiEdit",
@@ -408,8 +408,8 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "glob_gemini",
   "search_file_content",
   "memory",
-  "EnterWorktree",
-  "ExitWorktree",
+  ...WORKTREE_TOOL_NAMES,
+  "SetWorkingDirectory",
   "replace",
   "write_file_gemini",
   "write_todos",
@@ -422,8 +422,8 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
 export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
-  "EnterWorktree",
-  "ExitWorktree",
+  ...WORKTREE_TOOL_NAMES,
+  "SetWorkingDirectory",
   "memory_apply_patch",
   "Task",
   "Monitor",
@@ -441,8 +441,8 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
-  "EnterWorktree",
-  "ExitWorktree",
+  ...WORKTREE_TOOL_NAMES,
+  "SetWorkingDirectory",
   "memory",
   "Skill",
   "Task",
