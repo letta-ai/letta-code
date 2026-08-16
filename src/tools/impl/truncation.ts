@@ -44,6 +44,8 @@ export interface TruncationOptions {
   toolName?: string;
   /** Whether to use middle truncation (keep beginning and end) */
   useMiddleTruncation?: boolean;
+  /** Secret values available to this tool invocation */
+  secrets?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -73,6 +75,7 @@ export function truncateByChars(
         text,
         options.workingDirectory,
         options.toolName ?? toolName,
+        options.secrets,
       );
     } catch (error) {
       // Silently fail if overflow file creation fails
@@ -176,6 +179,7 @@ export function truncateByLines(
         text,
         options.workingDirectory,
         options.toolName ?? toolName,
+        options.secrets,
       );
     } catch (error) {
       // Silently fail if overflow file creation fails
@@ -259,6 +263,7 @@ export function truncateArray<T>(
         fullContent,
         options.workingDirectory,
         options.toolName ?? toolName,
+        options.secrets,
       );
     } catch (error) {
       // Silently fail if overflow file creation fails

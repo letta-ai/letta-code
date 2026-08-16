@@ -61,6 +61,7 @@ import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
 import { serializeClientTools } from "./client-tool-serialization";
+import { normalizeExternalToolResultContent } from "./external-tool-content";
 import { toolFilter } from "./filter";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import {
@@ -892,15 +893,9 @@ export async function executeExternalTool(
       tool ? { tool } : undefined,
     );
 
-    // Convert external tool result to ToolExecutionResult format
-    const textContent = result.content
-      .filter((c) => c.type === "text" && c.text)
-      .map((c) => c.text)
-      .join("\n");
-
     return {
       toolReturn: clampToolReturnContent(
-        textContent || JSON.stringify(result.content),
+        normalizeExternalToolResultContent(result.content),
         toolName,
       ),
       status: result.isError ? "error" : "success",
@@ -1765,36 +1760,30 @@ function scrubInvocationSecretRedactions(
 
 function scrubModToolString(
   input: string,
-  agentId: string | undefined,
   redactions: InvocationSecretRedactions,
 ): string {
-  return scrubInvocationSecretRedactions(
-    scrubSecretsFromString(input, agentId),
-    redactions,
-  );
+  return scrubInvocationSecretRedactions(input, redactions);
 }
 
 function scrubModToolReturnContent(
   content: ToolReturnContent,
-  agentId: string | undefined,
   redactions: InvocationSecretRedactions,
 ): ToolReturnContent {
   if (typeof content === "string") {
-    return scrubModToolString(content, agentId, redactions);
+    return scrubModToolString(content, redactions);
   }
   return content.map((block) =>
     block.type === "text"
-      ? { ...block, text: scrubModToolString(block.text, agentId, redactions) }
+      ? { ...block, text: scrubModToolString(block.text, redactions) }
       : block,
   );
 }
 
 function scrubModToolLines(
   lines: string[] | undefined,
-  agentId: string | undefined,
   redactions: InvocationSecretRedactions,
 ): string[] | undefined {
-  return lines?.map((line) => scrubModToolString(line, agentId, redactions));
+  return lines?.map((line) => scrubModToolString(line, redactions));
 }
 
 function createScrubbedError(error: unknown, message: string): Error {
@@ -2208,13 +2197,7 @@ async function executeModTool(
           ? {
               onOutput: (chunk: string, stream: "stdout" | "stderr") => {
                 options.onOutput?.(
-                  stripAnsi(
-                    scrubModToolString(
-                      chunk,
-                      options.scopedAgentId,
-                      redactions,
-                    ),
-                  ),
+                  stripAnsi(scrubModToolString(chunk, redactions)),
                   stream,
                 );
               },
@@ -2245,21 +2228,15 @@ async function executeModTool(
       const recordResult = isRecord(result) ? result : undefined;
       const stdout = scrubModToolLines(
         isStringArray(recordResult?.stdout) ? recordResult.stdout : undefined,
-        options.scopedAgentId,
         redactions,
       );
       const stderr = scrubModToolLines(
         isStringArray(recordResult?.stderr) ? recordResult.stderr : undefined,
-        options.scopedAgentId,
         redactions,
       );
       const toolStatus = getModToolStatus(result);
       const flattenedResponse = clampToolReturnContent(
-        scrubModToolReturnContent(
-          flattenToolResponse(result),
-          options.scopedAgentId,
-          redactions,
-        ),
+        scrubModToolReturnContent(flattenToolResponse(result), redactions),
         toolName,
       );
       const responseSize =
@@ -2325,7 +2302,6 @@ async function executeModTool(
           : error instanceof Error
             ? error.message
             : String(error),
-        options.scopedAgentId,
         redactions,
       );
 
@@ -2612,8 +2588,18 @@ async function executeToolInner(
     try {
       // Inject options for tools that support them without altering schemas
       let enhancedArgs = args;
+      let invocationSecrets: Record<string, string> = {};
 
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
+        // Keep secret values out of shell interpolation and only redact values
+        // that this invocation can access.
+        const command = enhancedArgs.command ?? enhancedArgs.cmd;
+        invocationSecrets =
+          typeof command === "string" ||
+          (Array.isArray(command) &&
+            command.every((part) => typeof part === "string"))
+            ? extractSecretEnvFromCommand(command, scopedAgentId)
+            : {};
         if (options?.signal) {
           enhancedArgs = { ...enhancedArgs, signal: options.signal };
         }
@@ -2622,22 +2608,14 @@ async function executeToolInner(
             ...enhancedArgs,
             onOutput: (chunk: string, stream: "stdout" | "stderr") => {
               options.onOutput?.(
-                stripAnsi(scrubSecretsFromString(chunk, scopedAgentId)),
+                stripAnsi(scrubSecretsFromString(chunk, invocationSecrets)),
                 stream,
               );
             },
           };
         }
-        // Keep secret values out of shell interpolation.
-        const command = enhancedArgs.command ?? enhancedArgs.cmd;
-        const secretEnv =
-          typeof command === "string" ||
-          (Array.isArray(command) &&
-            command.every((part) => typeof part === "string"))
-            ? extractSecretEnvFromCommand(command, scopedAgentId)
-            : {};
-        if (Object.keys(secretEnv).length > 0) {
-          enhancedArgs = { ...enhancedArgs, secretEnv };
+        if (Object.keys(invocationSecrets).length > 0) {
+          enhancedArgs = { ...enhancedArgs, secretEnv: invocationSecrets };
         }
         if (options?.parentScope) {
           enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
@@ -2718,7 +2696,7 @@ async function executeToolInner(
       // don't leak into agent context or render as garbage in downstream UIs.
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
         const sanitize = (text: string) =>
-          stripAnsi(scrubSecretsFromString(text, scopedAgentId));
+          stripAnsi(scrubSecretsFromString(text, invocationSecrets));
         if (typeof flattenedResponse === "string") {
           flattenedResponse = sanitize(flattenedResponse);
         } else if (Array.isArray(flattenedResponse)) {

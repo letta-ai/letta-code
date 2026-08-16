@@ -6,7 +6,7 @@
  * platform-specific communication, and a routing table that maps
  * platform chat IDs to agent+conversation pairs.
  */
-
+import type { ChannelUserMention } from "@/channels/message-references";
 import type { WhatsAppMessagePrefixConfig } from "@/channels/whatsapp/message-prefix-config-types";
 import type { PermissionMode } from "@/permissions/mode";
 import type {
@@ -16,7 +16,6 @@ import type {
 } from "@/types/protocol_v2";
 import type { WhatsAppAttachmentPolicyConfig } from "./whatsapp/attachment-policy-types";
 import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
-
 /**
  * Vendor-neutral model-picker payload produced by the generic channel
  * `/model` handler. Adapters decide how (or whether) to render it.
@@ -31,14 +30,12 @@ export type ChannelModelPickerData = {
   availableHandles?: string[] | null;
   recentHandles?: string[];
 };
-
 /**
  * Default channel id used for wire compatibility when WS clients omit
  * `channel_id` on channel commands. Early protocol versions predate
  * multi-channel support, when Telegram was the only bundled channel.
  */
 export const LEGACY_DEFAULT_CHANNEL_ID = "telegram";
-
 /**
  * Per-turn rich draft streaming policy derived from a channel account's
  * generic opt-in fields. Returns null when the account has not opted in.
@@ -49,7 +46,6 @@ export const LEGACY_DEFAULT_CHANNEL_ID = "telegram";
 export type ChannelRichDraftStreamingPolicy = {
   richPrivateChatDefault: boolean;
 };
-
 export function getRichDraftStreamingPolicy(
   account: unknown,
 ): ChannelRichDraftStreamingPolicy | null {
@@ -120,33 +116,31 @@ export interface ChannelMessageAttachment {
   /** Best-effort reason voice memo transcription failed. */
   transcriptionError?: string;
 }
-
 export interface ChannelReactionNotification {
   action: "added" | "removed";
   emoji: string;
   targetMessageId: string;
   targetSenderId?: string;
 }
-
 export interface ChannelThreadContextEntry {
   messageId?: string;
   senderId?: string;
   senderName?: string;
   text: string;
+  userMentions?: ChannelUserMention[];
   attachments?: ChannelMessageAttachment[];
 }
-
 export interface ChannelThreadContext {
   label?: string;
   starter?: ChannelThreadContextEntry;
   history?: ChannelThreadContextEntry[];
 }
-
 export interface ChannelReplyContext {
   messageId?: string;
   senderId?: string;
   senderName?: string;
   text?: string;
+  userMentions?: ChannelUserMention[];
 }
 
 export interface ChannelTurnSource {
@@ -388,6 +382,8 @@ export interface InboundChannelMessage {
   chatLabel?: string;
   /** Message text content. */
   text: string;
+  /** Platform-verified user mentions within text. */
+  userMentions?: ChannelUserMention[];
   /** Unix timestamp (ms) of the message. */
   timestamp: number;
   /** Platform message ID for threading/replies. */
@@ -398,8 +394,10 @@ export interface InboundChannelMessage {
   raw?: unknown;
   /** Broad chat surface type used for routing/pairing decisions. */
   chatType?: ChannelChatType;
-  /** Whether this inbound message was explicitly addressed to the bot. */
+  /** Legacy route-eligibility signal; may include implicit agent-owned threads. */
   isMention?: boolean;
+  /** Adapter routing provenance for this delivered event. */
+  routedBy?: "mention" | "dm" | "thread";
   /** Whether this message is policy-permitted ambient traffic in an open channel. */
   isOpenChannel?: boolean;
   /** For platform channel threads, the parent channel ID (e.g. Discord guild channel). */

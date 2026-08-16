@@ -36,6 +36,7 @@ import type {
 } from "./app-server-info";
 import type { BackgroundProcessSummary } from "./background-process-protocol";
 import type { ConversationForkBody } from "./conversation-fork-protocol";
+import type * as CwdProtocol from "./cwd-protocol";
 import type {
   ExternalToolCallRequestMessage,
   ExternalToolCallResponseCommand,
@@ -48,6 +49,7 @@ import type { CronRunLogPage, CronTask } from "./schedule-protocol";
 import type * as TeleportProtocol from "./teleport-protocol";
 
 export type * from "./background-process-protocol";
+export type * from "./cwd-protocol";
 export type * from "./external-tool-protocol";
 export type * from "./runtime-scope";
 export type * from "./schedule-protocol";
@@ -1852,23 +1854,6 @@ export interface ConversationCompactCommand {
   body?: MessageCompactParams;
 }
 
-export interface GetCwdMapCommand {
-  type: "get_cwd_map";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-}
-
-export interface GetCwdMapResponseMessage {
-  type: "get_cwd_map_response";
-  request_id: string;
-  success: boolean;
-  /** Persisted per-conversation CWD overrides, keyed by listener scope key. */
-  cwd_map: Record<string, string>;
-  /** Listener boot CWD used when a conversation has no entry in cwd_map. */
-  boot_working_directory: string | null;
-  error?: string;
-}
-
 export interface GetReflectionSettingsCommand {
   type: "get_reflection_settings";
   /** Echoed back in the response for request correlation. */
@@ -2743,7 +2728,8 @@ export type WsProtocolCommand =
   | ConversationForkCommand
   | ConversationMessagesListCommand
   | ConversationCompactCommand
-  | GetCwdMapCommand
+  | CwdProtocol.SetBootWorkingDirectoryCommand
+  | CwdProtocol.GetCwdMapCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
   | GetExperimentsCommand
@@ -2877,7 +2863,8 @@ export type WsProtocolMessage =
   | ChannelPairingsUpdatedMessage
   | ChannelRoutesUpdatedMessage
   | ChannelTargetsUpdatedMessage
-  | GetCwdMapResponseMessage
+  | CwdProtocol.SetBootWorkingDirectoryResponseMessage
+  | CwdProtocol.GetCwdMapResponseMessage
   | SearchBranchesResponse
   | CheckoutBranchResponse
   | SecretListResponse

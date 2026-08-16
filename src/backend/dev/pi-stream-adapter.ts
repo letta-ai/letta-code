@@ -49,6 +49,7 @@ import type {
 import {
   contextTokensFromUsage,
   estimateProviderContextTokens,
+  estimateProviderPromptFloorTokens,
   providerLettaChunk,
   providerLocalMessage,
   providerStreamPart,
@@ -371,6 +372,48 @@ function withAnthropicOutputEffort(
   };
 }
 
+/**
+ * Reject a turn whose irreducible prompt cannot fit the serving context window.
+ *
+ * Local engines truncate oversized prompts silently rather than erroring, so
+ * the failure mode is an agent that answers with its memory and persona
+ * quietly missing. Compaction cannot help here — the system prompt and tool
+ * definitions are not history — so surface it as an actionable error instead of
+ * shipping a request we know will be clipped.
+ */
+function assertPromptFloorFitsContextWindow(
+  input: ProviderTurnInput,
+  model: { id: string; provider?: string; contextWindow?: number },
+): void {
+  const contextWindow = model.contextWindow;
+  if (
+    typeof contextWindow !== "number" ||
+    !Number.isFinite(contextWindow) ||
+    contextWindow <= 0
+  ) {
+    return;
+  }
+  const floorTokens = estimateProviderPromptFloorTokens(input);
+  if (floorTokens <= contextWindow) return;
+
+  const remedy =
+    model.provider === "ollama"
+      ? `Raise the served window (for example OLLAMA_CONTEXT_LENGTH=${nextPowerOfTwoAtLeast(floorTokens)} ollama serve)`
+      : "Raise the engine's context window";
+  throw new Error(
+    `The system prompt and tool definitions need about ${floorTokens.toLocaleString()} tokens, ` +
+      `but "${model.id}" is served with a ${contextWindow.toLocaleString()}-token context window. ` +
+      `The engine would silently truncate the prompt, dropping memory and persona before the model sees them. ` +
+      `${remedy}, or reduce what the prompt carries (fewer installed skills, a smaller toolset).`,
+  );
+}
+
+function nextPowerOfTwoAtLeast(value: number): number {
+  let size = 8192;
+  while (size < value && size < 1_048_576) size *= 2;
+  return size;
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -548,6 +591,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       {
         localProviderAuthStorageDir: this.localProviderAuthStorageDir,
         modelsRuntime: this.modelsRuntime,
+        ...(this.abortSignal ? { abortSignal: this.abortSignal } : {}),
       },
     );
     const contextWindow = resolved.model.contextWindow;
@@ -579,8 +623,10 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       {
         localProviderAuthStorageDir: this.localProviderAuthStorageDir,
         modelsRuntime: this.modelsRuntime,
+        ...(this.abortSignal ? { abortSignal: this.abortSignal } : {}),
       },
     );
+    assertPromptFloorFitsContextWindow(input, resolved.model);
     const context: Context = {
       systemPrompt: input.systemPrompt ?? input.agent.system,
       messages: toPiMessages(input.uiMessages),

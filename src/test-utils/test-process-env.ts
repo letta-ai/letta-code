@@ -13,6 +13,9 @@ export function createIsolatedCliTestEnv(
   });
 
   applyEnvOverrides(env, extraEnv);
+  if (extraEnv.HOME !== undefined && extraEnv.USERPROFILE === undefined) {
+    env.USERPROFILE = extraEnv.HOME;
+  }
   return env;
 }
 

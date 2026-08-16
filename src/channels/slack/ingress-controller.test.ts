@@ -51,6 +51,7 @@ test("slack adapter forwards DM messages as direct channel input", async () => {
       messageId: "1712800000.000100",
       threadId: null,
       chatType: "direct",
+      routedBy: "dm",
     }),
   );
 });
@@ -140,6 +141,7 @@ test("slack adapter normalizes mentioned DM text", async () => {
       messageId: "1712800000.000100",
       chatType: "direct",
       isMention: true,
+      routedBy: "mention",
     }),
   );
 });
@@ -187,7 +189,41 @@ test("slack adapter forwards app mentions in mention-only channels", async () =>
       threadId: "1712790000.000050",
       chatType: "channel",
       isMention: true,
+      routedBy: "mention",
     }),
+  );
+});
+
+test("slack adapter preserves a human mention after its routing mention", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.eventHandlers.get("app_mention");
+  if (!handler) throw new Error("Expected app_mention handler");
+
+  await handler({
+    event: {
+      channel: "C123",
+      user: "U123",
+      text: "<@U0AS42PTEAX> <@UALICE> please review",
+      ts: "1712800000.000100",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ text: "<@UALICE> please review" }),
   );
 });
 
@@ -286,6 +322,7 @@ test("slack adapter auto-routes unmentioned replies in agent-participated thread
       threadId: "1712790000.000050",
       chatType: "channel",
       isMention: true,
+      routedBy: "thread",
     }),
   );
 });

@@ -290,6 +290,8 @@ export async function resolveStaleApprovals(
     getResumeData?: typeof getResumeDataFromBackend;
     retrieveAgent?: RetrieveAgent;
     prepareToolExecutionContext?: typeof prepareToolExecutionContextForScope;
+    sendApprovalContinuation?: typeof sendApprovalContinuationWithRetry;
+    drainRecoveryStream?: typeof drainRecoveryStreamWithEmission;
   } = {},
 ): Promise<Awaited<ReturnType<typeof drainRecoveryStreamWithEmission>> | null> {
   if (!runtime.agentId) return null;
@@ -297,6 +299,10 @@ export async function resolveStaleApprovals(
   const getResumeDataImpl = deps.getResumeData ?? getResumeDataFromBackend;
   const prepareToolExecutionContext =
     deps.prepareToolExecutionContext ?? prepareToolExecutionContextForScope;
+  const sendApprovalContinuation =
+    deps.sendApprovalContinuation ?? sendApprovalContinuationWithRetry;
+  const drainRecoveryStream =
+    deps.drainRecoveryStream ?? drainRecoveryStreamWithEmission;
   const assertCurrentTurnLease = () => {
     if (
       turnLease.signal.aborted ||
@@ -402,9 +408,11 @@ export async function resolveStaleApprovals(
           otid: crypto.randomUUID(),
         },
       ]);
+      let continuationActingUserId: string | undefined;
       const consumedQueuedTurn = consumeQueuedTurn(runtime);
       if (consumedQueuedTurn) {
         const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
+        continuationActingUserId = queuedTurn.actingUserId;
         continuationInput = appendQueuedTurnToInput(
           continuationInput,
           queuedTurn,
@@ -421,13 +429,16 @@ export async function resolveStaleApprovals(
           conversationId: recoveryConversationId,
         },
       );
-      const recoverySendResult = await sendApprovalContinuationWithRetry(
+      const recoverySendResult = await sendApprovalContinuation(
         recoveryConversationId,
         continuationMessagesWithSkillContent,
         {
           agentId: runtime.agentId ?? undefined,
           streamTokens: true,
           background: true,
+          ...(continuationActingUserId
+            ? { actingUserId: continuationActingUserId }
+            : {}),
           workingDirectory: recoveryWorkingDirectory,
           preparedToolContext: preparedToolContext.preparedToolContext,
           ...(continuationInput.imageFailureModesByMessageOtid
@@ -452,7 +463,7 @@ export async function resolveStaleApprovals(
 
       setTurnLoopStatus(runtime, turnLease, "PROCESSING_API_RESPONSE", scope);
 
-      const drainResult = await drainRecoveryStreamWithEmission(
+      const drainResult = await drainRecoveryStream(
         recoveryStream as Stream<LettaStreamingResponse>,
         socket,
         runtime,

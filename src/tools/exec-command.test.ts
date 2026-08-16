@@ -64,6 +64,39 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     expect(result.output).not.toContain("Process running with session ID");
   });
 
+  test("redacts split invocation secrets from output and transcript files", async () => {
+    const secret = "he$$o";
+    const result = await exec_command({
+      cmd: "node -e \"const value = process.env.PASSWORD ?? ''; process.stdout.write(value.slice(0, 2)); setTimeout(() => process.stdout.write(value.slice(2)), 25)\"",
+      secretEnv: { PASSWORD: secret },
+    });
+
+    expect(result.output).toContain("PASSWORD=<REDACTED>");
+    expect(result.output).not.toContain(secret);
+    const outputFile = Array.from(backgroundProcesses.values()).at(
+      -1,
+    )?.outputFile;
+    expect(fs.readFileSync(outputFile as string, "utf8")).not.toContain(secret);
+  });
+
+  test("scrubs invocation secrets before writing overflow output", async () => {
+    const secret = "he$$o";
+    const result = await exec_command({
+      cmd: "node -e \"process.stdout.write((process.env.PASSWORD ?? '') + 'x'.repeat(50000))\"",
+      secretEnv: { PASSWORD: secret },
+      max_output_tokens: 80_000,
+    });
+
+    const overflowPath = result.output.match(
+      /\[Full output written to: (.+?\.txt)\]/,
+    )?.[1];
+    expect(overflowPath).toBeString();
+    const overflow = fs.readFileSync(overflowPath as string, "utf8");
+    expect(overflow).toContain("PASSWORD=<REDACTED>");
+    expect(overflow).not.toContain(secret);
+    deleteOverflowFiles(result.output);
+  });
+
   test("caps exec_command inline output when max_output_tokens is too large", async () => {
     const result = await exec_command({
       cmd: "node -e \"process.stdout.write('x'.repeat(50000))\"",

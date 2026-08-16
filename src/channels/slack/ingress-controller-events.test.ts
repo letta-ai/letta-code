@@ -764,7 +764,7 @@ test("slack adapter preserves non-leading user mentions in app mention text", as
     event: {
       channel: "C123",
       user: "U123",
-      text: "<@U999> ask <@U555> for help",
+      text: "<@U0AS42PTEAX> ask <@U555> for help",
       ts: "1712800000.000100",
     },
   });

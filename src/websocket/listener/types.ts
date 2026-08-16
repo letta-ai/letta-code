@@ -144,7 +144,10 @@ export type PendingTeleport = {
   agentId: string;
   conversationId: string;
   requestedAt: number;
+  drainAcceptedInputs: boolean;
+  activeTurn: boolean;
   readyAt?: number;
+  error?: string;
   continuation?: TeleportContinuation;
 };
 

@@ -50,6 +50,8 @@ export interface TeleportProbeResponseMessage {
   request_id: string;
   runtime: RuntimeScope;
   supported: true;
+  drains_accepted_inputs: true;
+  idempotent_continuation: true;
 }
 
 export interface TeleportReadyMessage {
@@ -57,6 +59,7 @@ export interface TeleportReadyMessage {
   teleport_id: string;
   runtime: RuntimeScope;
   success: boolean;
+  active_turn: boolean;
   mode?: "standard" | "acceptEdits" | "unrestricted" | "strict";
   continuation?: TeleportContinuation;
   error?: string;

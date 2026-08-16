@@ -44,7 +44,6 @@ export {
 } from "./channels/slack/progress";
 export {
   normalizeSlackReactionName,
-  normalizeSlackText,
   resolveSlackChatType,
   resolveSlackOutboundThreadTs,
   slackTimestampToMillis,
@@ -65,3 +64,8 @@ export type {
   SlackStatusWriteClient,
 } from "./channels/slack/status-controller";
 export { createSlackStatusController } from "./channels/slack/status-controller";
+export {
+  resolveSlackUserMentionsInMessage,
+  sanitizeSlackUserDisplayName,
+  stripSlackBotMention,
+} from "./channels/slack/user-mentions";

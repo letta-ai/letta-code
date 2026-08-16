@@ -47,15 +47,14 @@ export function extractSecretEnvFromCommand(
 }
 
 /**
- * Scrub secret values from a string, replacing them with an explicit
- * placeholder that makes it unambiguous to the LLM that the value is hidden.
- * Used to prevent secret values from leaking into agent context via tool output.
+ * Scrub the supplied secret values from a string, replacing them with an
+ * explicit placeholder that makes it unambiguous to the LLM that the value is
+ * hidden. Callers pass only the secrets available to the current tool invocation.
  */
 export function scrubSecretsFromString(
   input: string,
-  agentId?: string,
+  secrets: Readonly<Record<string, string>>,
 ): string {
-  const secrets = loadSecrets(agentId);
   let result = input;
   // Replace longer values first to avoid partial matches
   const entries = Object.entries(secrets).sort(

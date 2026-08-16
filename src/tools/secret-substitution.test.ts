@@ -73,10 +73,12 @@ describe("scoped secret helpers", () => {
     await seedSecret(AGENT_A, SECRET_A);
     await seedSecret(AGENT_B, SECRET_B);
 
-    expect(scrubSecretsFromString(SECRET_A, AGENT_A)).toBe(
+    expect(scrubSecretsFromString(SECRET_A, { [SECRET_KEY]: SECRET_A })).toBe(
       `${SECRET_KEY}=<REDACTED>`,
     );
-    expect(scrubSecretsFromString(SECRET_B, AGENT_A)).toBe(SECRET_B);
+    expect(scrubSecretsFromString(SECRET_B, { [SECRET_KEY]: SECRET_A })).toBe(
+      SECRET_B,
+    );
   });
 });
 

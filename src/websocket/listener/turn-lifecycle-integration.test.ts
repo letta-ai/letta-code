@@ -7,6 +7,7 @@ import {
 } from "@/agent/context";
 import { openListenerConnection } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import { shouldProcessInboundMessageDirectly } from "./queue";
@@ -237,6 +238,78 @@ describe("listener turn lifecycle integration", () => {
     expect(executeApprovalBatch).toHaveBeenCalledTimes(1);
   });
 
+  test("a queued user's identity replaces the turn owner on an approval continuation", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      initialStatus: "PROCESSING_API_RESPONSE",
+    });
+    enqueueInboundUserMessage(
+      runtime,
+      {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        messages: [{ role: "user", content: "message from Charles" }],
+      },
+      "cloud-user-charles",
+    );
+    const approval = {
+      toolCallId: "call-monitor",
+      toolName: "Bash",
+      toolArgs: '{"command":"pwd"}',
+    };
+    let sentActingUserId: string | undefined;
+
+    const result = await startQuestionApproval(runtime, turnLease, {
+      approvals: [approval],
+      processOwnedTurn: true,
+      buildSendOptions: () =>
+        ({
+          agentId: "agent-1",
+          streamTokens: true,
+          background: true,
+          workingDirectory: process.cwd(),
+          actingUserId: "cloud-user-monitor-owner",
+        }) as never,
+      dependencies: {
+        classifyApprovals: async () => ({
+          autoAllowed: [{ approval, parsedArgs: {}, context: null }],
+          autoDenied: [],
+          needsUserInput: [],
+        }),
+        executeApprovalBatch: async () => [
+          {
+            type: "tool" as const,
+            tool_call_id: approval.toolCallId,
+            status: "success" as const,
+            tool_return: "/workspace",
+          },
+        ],
+        ensureSecretsHydrated: async () => {},
+        sendApprovalContinuation: async (
+          _conversationId: string,
+          _messages: unknown[],
+          options: { actingUserId?: string },
+        ) => {
+          sentActingUserId = options.actingUserId;
+          return {
+            kind: "terminal" as const,
+            drainResult: { stopReason: "end_turn" as const, apiDurationMs: 0 },
+          };
+        },
+      } as never,
+    });
+
+    expect(result.kind).toBe("terminal");
+    expect(sentActingUserId).toBe("cloud-user-charles");
+  });
+
   test("teleport yields after persisting the current tool result", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
@@ -294,6 +367,7 @@ describe("listener turn lifecycle integration", () => {
 
     expect(result.kind).toBe("teleport");
     if (result.kind === "teleport") {
+      expect(result.pendingTeleport.activeTurn).toBe(true);
       expect(result.pendingTeleport.continuation?.approvals).toEqual([
         {
           type: "tool",

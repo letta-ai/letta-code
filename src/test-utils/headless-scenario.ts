@@ -212,6 +212,18 @@ async function runCLI(args: Args): Promise<RunResult> {
     "--yolo",
     "--new-agent",
   ];
+  if (args.smoke) {
+    // This lane verifies provider discovery and one inference round-trip. Keep
+    // unrelated harness context out so CPU-only local models finish reliably.
+    cliArgs.push(
+      "--tools=",
+      "--no-skills",
+      "--no-mods",
+      "--no-system-info-reminder",
+      "--system-custom",
+      "You are a provider smoke test. Follow the requested response format exactly.",
+    );
+  }
   if (args.backend === "api") {
     // Skip the memfs pull to keep CI startup fast; agents are still
     // memfs-enabled (non-memfs agents are no longer supported).

@@ -126,6 +126,10 @@ import {
   emitHeadlessConversationOpen,
 } from "./headless-mod-adapter";
 import {
+  type HeadlessPermissionResult,
+  waitForHeadlessPermissionResponse,
+} from "./headless-permission";
+import {
   applyHeadlessReflectionOverrides,
   type ReflectionOverrides,
 } from "./headless-reflection-settings";
@@ -171,7 +175,6 @@ import { prepareToolExecutionContextForScope } from "./tools/toolset";
 import type {
   BootstrapSessionStateRequest,
   CanUseToolControlRequest,
-  CanUseToolResponse,
   ControlRequest,
   ControlResponse,
   ErrorMessage,
@@ -3947,11 +3950,7 @@ async function runBidirectionalMode(
     toolCallId: string,
     toolName: string,
     toolInput: Record<string, unknown>,
-  ): Promise<{
-    decision: "allow" | "deny";
-    reason?: string;
-    updatedInput?: Record<string, unknown> | null;
-  }> {
+  ): Promise<HeadlessPermissionResult> {
     const requestId = `perm-${toolCallId}`;
 
     // Compute diff previews for file-modifying tools
@@ -3976,66 +3975,12 @@ async function runBidirectionalMode(
 
     writeWireMessage(controlRequest);
 
-    const deferredLines: string[] = [];
-
-    // Wait for control_response
-    let result: {
-      decision: "allow" | "deny";
-      reason?: string;
-      updatedInput?: Record<string, unknown> | null;
-    } | null = null;
-
-    while (result === null) {
-      const line = await getNextLine();
-      if (line === null) {
-        result = { decision: "deny", reason: "stdin closed" };
-        break;
-      }
-      if (!line.trim()) continue;
-
-      try {
-        const msg = JSON.parse(line);
-        if (
-          msg.type === "control_response" &&
-          msg.response?.request_id === requestId
-        ) {
-          // Parse the can_use_tool response
-          const response = msg.response?.response as
-            | CanUseToolResponse
-            | undefined;
-          if (!response) {
-            result = { decision: "deny", reason: "Invalid response format" };
-            break;
-          }
-
-          if (response.behavior === "allow") {
-            result = {
-              decision: "allow",
-              updatedInput: response.updatedInput,
-            };
-          } else {
-            result = {
-              decision: "deny",
-              reason: response.message,
-              // TODO: handle interrupt flag
-            };
-          }
-          break;
-        }
-
-        // Defer other messages for the main loop without re-reading them.
-        deferredLines.push(line);
-      } catch {
-        // Defer parse errors so the main loop can surface them.
-        deferredLines.push(line);
-      }
-    }
-
-    if (deferredLines.length > 0) {
-      lineQueue.unshift(...deferredLines);
-    }
-
-    return result;
+    return waitForHeadlessPermissionResponse({
+      requestId,
+      getNextLine,
+      restoreDeferredLines: (lines) => lineQueue.unshift(...lines),
+      interruptTurn: () => currentAbortController?.abort(),
+    });
   }
 
   async function recoverPendingApprovalsFromControlRequest(
@@ -4587,7 +4532,7 @@ async function runBidirectionalMode(
         }
 
         // Approval handling loop - continue until end_turn or error
-        while (true) {
+        approvalLoop: while (true) {
           numTurns++;
 
           // Check if aborted
@@ -4858,6 +4803,10 @@ async function runBidirectionalMode(
                 ac.approval.toolName,
                 ac.parsedArgs,
               );
+
+              if (permResponse.interrupted) {
+                break approvalLoop;
+              }
 
               if (permResponse.decision === "allow") {
                 // If provided updatedInput (e.g., for AskUserQuestion with answers),

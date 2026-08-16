@@ -136,6 +136,86 @@ test("queued input activates when dequeued via update_queue", async () => {
   gateway.close();
 });
 
+test("adopts queued source metadata without submitting input again", async () => {
+  const client = new FakeClient();
+  const { hooks, lifecycleEvents } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const source = makeSource({
+    channel: "slack",
+    chatId: "C123",
+    messageId: "1700000000.000100",
+    threadId: "1700000000.000100",
+  });
+  const delivery = makeDelivery({
+    sources: [source],
+    clientMessageId: "cm-already-queued",
+  });
+
+  gateway.adoptQueuedDelivery(delivery);
+  gateway.adoptQueuedDelivery(delivery);
+  for (const changed of [
+    { chatType: "channel" },
+    { senderId: "U-other" },
+    { senderTeamId: "T-other" },
+  ] satisfies Array<Partial<ChannelTurnSource>>) {
+    expect(() =>
+      gateway.adoptQueuedDelivery({
+        ...delivery,
+        sources: [{ ...source, ...changed }],
+      }),
+    ).toThrow("conflicting metadata exists");
+  }
+  expect(client.submittedInputs).toHaveLength(0);
+  expect(client.startedRuntimes).toHaveLength(0);
+  expect(client.runtimeToolUpdates).toHaveLength(0);
+  expect(lifecycleEvents).toHaveLength(0);
+
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      { client_message_id: "cm-already-queued", disposition: "dequeued" },
+    ]),
+  );
+  await Bun.sleep(0);
+
+  expect(client.submittedInputs).toHaveLength(0);
+  expect(lifecycleEvents).toEqual([
+    {
+      type: "processing",
+      batchId: "channel-cm-already-queued",
+      sources: [source],
+    },
+  ]);
+
+  client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
+  expect(lifecycleEvents.at(-1)).toMatchObject({
+    type: "finished",
+    batchId: "channel-cm-already-queued",
+    sources: [source],
+  });
+  gateway.close();
+});
+
+test("rejects queued adoption for an active ID after accepted history ages out", async () => {
+  const client = new FakeClient();
+  const gateway = new ChannelGateway(client, makeHooks().hooks);
+  const activeDelivery = makeDelivery({
+    clientMessageId: "cm-active-aged-out",
+  });
+
+  await gateway.submit(activeDelivery);
+  for (let index = 0; index < 2_048; index += 1) {
+    gateway.adoptQueuedDelivery(
+      makeDelivery({ clientMessageId: `cm-queued-${index}` }),
+    );
+  }
+
+  expect(() => gateway.adoptQueuedDelivery(activeDelivery)).toThrow(
+    "it is not queued",
+  );
+  gateway.close();
+});
+
 test("dequeue transition survives split-stream arrival before input acceptance", async () => {
   let releaseInput!: () => void;
   const inputWait = new Promise<void>((resolve) => {
@@ -689,38 +769,80 @@ test("publishes process-owned runtime tools without retaining gateway runtimes",
   gateway.close();
 });
 
-test("does not release tools owned by a gateway runtime", async () => {
+test("idle runtime cleanup is explicit, guarded, and retryable", async () => {
   const client = new FakeClient();
-  const { hooks } = makeHooks();
-  const gateway = new ChannelGateway(client, hooks);
-
+  let failToolUpdate = true;
+  client.runtimeExternalToolsUpdate = async ({ updates }) => {
+    client.runtimeToolUpdates.push(...updates);
+    const shouldFail = failToolUpdate;
+    failToolUpdate = false;
+    return {
+      type: "runtime_external_tools_update_response",
+      request_id: "idle-cleanup",
+      success: !shouldFail,
+      ...(shouldFail ? { error: "tool update failed" } : {}),
+    };
+  };
+  let failAdoption = false;
+  const gateway = new ChannelGateway(
+    client,
+    makeHooks({
+      onLifecycle: (event) => {
+        if (failAdoption && event.type === "processing") {
+          throw new Error("adoption failed");
+        }
+      },
+    }).hooks,
+  );
+  const clean = () =>
+    gateway.releaseRuntimeTools(TEST_RUNTIME, [], { cleanupIdleRuntime: true });
   await gateway.registerRuntime(TEST_RUNTIME);
-  expect(await gateway.publishRuntimeTools(TEST_RUNTIME)).toBe(false);
   await gateway.releaseRuntimeTools(TEST_RUNTIME);
-
-  expect(client.startedRuntimes).toHaveLength(1);
-  expect(client.runtimeToolUpdates).toHaveLength(0);
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
+  failAdoption = true;
+  await expect(
+    gateway.adoptActiveDelivery(
+      makeDelivery({ sources: [], clientMessageId: "failed-adoption" }),
+    ),
+  ).rejects.toThrow("adoption failed");
+  await expect(clean()).rejects.toThrow("tool update failed");
+  expect(gateway.getKnownRuntimes()).toEqual([]);
+  await expect(clean()).resolves.toBeUndefined();
+  expect(client.runtimeToolUpdates).toHaveLength(2);
+  expect(client.runtimeToolUpdates[0]?.external_tools).toEqual([]);
+  expect(client.runtimeToolUpdates[1]?.external_tools).toEqual([]);
+  failAdoption = false;
+  await gateway.adoptActiveDelivery(
+    makeDelivery({ sources: [], clientMessageId: "active" }),
+  );
+  await expect(clean()).rejects.toThrow("active channel runtime");
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
+  gateway.releaseActiveDelivery(TEST_RUNTIME, "active");
+  gateway.adoptQueuedDelivery(
+    makeDelivery({ sources: [], clientMessageId: "queued" }),
+  );
+  await expect(clean()).rejects.toThrow("queued channel runtime");
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
   gateway.close();
 });
 
-test("does not release tools after the turn creates a routed source", async () => {
+test("routed sources block idle cleanup without clearing state or tools", async () => {
   const client = new FakeClient();
-  const { hooks } = makeHooks();
-  const gateway = new ChannelGateway(client, hooks);
-  const runtime = {
-    agent_id: "agent-1",
-    conversation_id: "conv-schedule-1",
-  };
+  const gateway = new ChannelGateway(client, makeHooks().hooks);
+  const source = makeSource();
+  const clean = (sources: ChannelTurnSource[] = []) =>
+    gateway.releaseRuntimeTools(TEST_RUNTIME, sources, {
+      cleanupIdleRuntime: true,
+    });
 
-  expect(await gateway.publishRuntimeTools(runtime)).toBe(true);
-  await gateway.releaseRuntimeTools(runtime, [
-    makeSource({
-      agentId: runtime.agent_id,
-      conversationId: runtime.conversation_id,
-    }),
-  ]);
-
-  expect(client.runtimeToolUpdates).toHaveLength(1);
+  await gateway.registerRuntime(TEST_RUNTIME);
+  await expect(clean([source])).rejects.toThrow("routed channel runtime");
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
+  gateway.setRoutedSources(TEST_RUNTIME, [source]);
+  await expect(clean()).rejects.toThrow("routed channel runtime");
+  await gateway.releaseRuntimeTools(TEST_RUNTIME, [source]);
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
+  expect(client.runtimeToolUpdates).toHaveLength(0);
   gateway.close();
 });
 

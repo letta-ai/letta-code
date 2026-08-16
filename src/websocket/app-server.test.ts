@@ -65,7 +65,6 @@ function expectWebSocketOpenFailure(
     const cleanup = () => {
       clearTimeout(timeout);
       socket.off("open", handleOpen);
-      socket.off("error", handleError);
     };
     const handleOpen = () => {
       cleanup();
@@ -74,11 +73,10 @@ function expectWebSocketOpenFailure(
     };
     const handleError = () => {
       cleanup();
-      terminateClient(socket);
       resolve();
     };
     socket.once("open", handleOpen);
-    socket.once("error", handleError);
+    socket.on("error", handleError);
   });
 }
 

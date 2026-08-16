@@ -215,9 +215,11 @@ describe("/secret command", () => {
     expect(
       extractSecretEnvFromCommand("echo $API_TOKEN", firstAgentId),
     ).toEqual({ API_TOKEN: "first-secret" });
-    expect(scrubSecretsFromString("value=first-secret", firstAgentId)).toBe(
-      "value=API_TOKEN=<REDACTED>",
-    );
+    expect(
+      scrubSecretsFromString("value=first-secret", {
+        API_TOKEN: "first-secret",
+      }),
+    ).toBe("value=API_TOKEN=<REDACTED>");
   });
 
   test("local agent secrets fall back to file storage when secure storage is unavailable", async () => {

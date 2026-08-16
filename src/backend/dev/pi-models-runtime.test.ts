@@ -22,6 +22,7 @@ interface FakeOllamaModel {
 interface FakeOllamaServer {
   url: string;
   chatBodies: Array<Record<string, unknown>>;
+  setDefaultRuntimeContext?(modelId: string, contextLength: number): void;
   stop(): void;
 }
 
@@ -58,6 +59,13 @@ function sseChatResponse(modelId: string): Response {
 
 function startFakeOllama(models: FakeOllamaModel[]): FakeOllamaServer {
   const chatBodies: Array<Record<string, unknown>> = [];
+  const runtimeContexts = new Map<string, number>();
+  const defaultRuntimeContexts = new Map(
+    models.map((model) => [
+      model.id,
+      Math.min(model.contextLength ?? 128000, 128000),
+    ]),
+  );
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -66,6 +74,21 @@ function startFakeOllama(models: FakeOllamaModel[]): FakeOllamaServer {
         return Response.json({
           models: models.map((model) => ({ name: model.id })),
         });
+      }
+      if (url.pathname === "/api/ps") {
+        return Response.json({
+          models: [...runtimeContexts].map(([name, context_length]) => ({
+            name,
+            context_length,
+          })),
+        });
+      }
+      if (url.pathname === "/api/generate") {
+        const body = (await request.json()) as Record<string, unknown>;
+        const model = models.find((entry) => entry.id === body.model);
+        if (!model) return new Response("not found", { status: 404 });
+        runtimeContexts.set(model.id, defaultRuntimeContexts.get(model.id)!);
+        return Response.json({ model: model.id, done: true });
       }
       if (url.pathname === "/api/show") {
         const body = (await request.json()) as { model: string };
@@ -94,6 +117,9 @@ function startFakeOllama(models: FakeOllamaModel[]): FakeOllamaServer {
   return {
     url: `http://localhost:${server.port}`,
     chatBodies,
+    setDefaultRuntimeContext: (modelId, contextLength) => {
+      defaultRuntimeContexts.set(modelId, contextLength);
+    },
     stop: () => server.stop(true),
   };
 }
@@ -388,8 +414,6 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       { provider_type: "anthropic" },
       { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
     );
-    // The LET-10125 target invariant holds for built-ins too: with no
-    // effective overrides, the turn model IS the runtime-published instance.
     expect(resolved.model).toBe(
       runtime.getModel("anthropic", "claude-opus-4-8")!,
     );
@@ -420,15 +444,11 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       {},
       { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
     );
-    // The turn model is the exact Model instance the provider published for
-    // listing — the LET-10125 target invariant.
     expect(resolved.model).toBe(runtime.getModel("ollama", "qwen3.6:27b")!);
     expect(resolved.model.input).toEqual(["text", "image"]);
     expect(resolved.model.reasoning).toBe(true);
     expect(resolved.model.contextWindow).toBe(128000);
 
-    // Identity survives the real selection path: settings persisted from
-    // the published model (restating its values) must not force a clone.
     const persisted = localModelSettingsForHandle(
       "ollama/qwen3.6:27b",
       runtime,
@@ -442,14 +462,30 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       runtime.getModel("ollama", "qwen3.6:27b")!,
     );
 
-    // /context-limit remains an explicit per-conversation escape hatch when
-    // the user's Ollama runtime is configured above the conservative default.
-    const resolvedWithExplicitContext = await resolvePiModelForAgent(
+    server.setDefaultRuntimeContext?.("qwen3.6:27b", 8192);
+    const resolvedAfterRuntimeChange = await resolvePiModelForAgent(
       "ollama/qwen3.6:27b",
-      { context_window_limit: 262144 },
+      persisted ?? {},
       { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
     );
-    expect(resolvedWithExplicitContext.model.contextWindow).toBe(262144);
+    expect(resolvedAfterRuntimeChange.model.contextWindow).toBe(8192);
+    expect(runtime.getModel("ollama", "qwen3.6:27b")?.contextWindow).toBe(8192);
+
+    const resolvedWithLargerContext = await resolvePiModelForAgent(
+      "ollama/qwen3.6:27b",
+      { context_window_limit: 262144, max_tokens: 32000 },
+      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+    );
+    expect(resolvedWithLargerContext.model.contextWindow).toBe(8192);
+    expect(resolvedWithLargerContext.model.maxTokens).toBe(8192);
+
+    const resolvedWithSmallerContext = await resolvePiModelForAgent(
+      "ollama/qwen3.6:27b",
+      { context_window_limit: 4096, max_tokens: 32000 },
+      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+    );
+    expect(resolvedWithSmallerContext.model.contextWindow).toBe(4096);
+    expect(resolvedWithSmallerContext.model.maxTokens).toBe(4096);
   });
 
   test("vision model with no name marker keeps base64 image_url in the request payload", async () => {
@@ -595,7 +631,6 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       "image",
     ]);
     expect(runtime.getModel("ollama", "model-a:1b")).toBeUndefined();
-    // Other providers are untouched by the Ollama connection change.
     expect(runtime.getModels("anthropic")[0]).toBe(builtinBefore[0]!);
     expect(runtime.getModels("anthropic")).toHaveLength(builtinBefore.length);
   });
@@ -650,6 +685,12 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       runtime.getModel("llama-cpp", "/models/qwen3.6-27b.gguf")!,
     );
     expect(resolved.model.input).toEqual(["text", "image"]);
+    const withLargerContext = await resolvePiModelForAgent(
+      "llama.cpp//models/qwen3.6-27b.gguf",
+      { context_window_limit: 65536 },
+      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+    );
+    expect(withLargerContext.model.contextWindow).toBe(65536);
   });
 
   test("unloaded llama.cpp router models preserve provider identity from listing through turns", async () => {
@@ -756,7 +797,7 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     expect(runtime.getModels("ollama")).toHaveLength(0);
   });
 
-  test("refresh failure retains last-known models and turns still resolve", async () => {
+  test("refresh failure retains listings but turn resolution fails closed", async () => {
     const server = startFakeOllama([
       {
         id: "qwen3.6:27b",
@@ -779,13 +820,13 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     expect(listed.some((model) => model.handle === "ollama/qwen3.6:27b")).toBe(
       true,
     );
-    // Turn resolution still finds the model without a live endpoint.
-    const resolved = await resolvePiModelForAgent(
-      "ollama/qwen3.6:27b",
-      {},
-      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
-    );
-    expect(resolved.model.input).toEqual(["text", "image"]);
+    await expect(
+      resolvePiModelForAgent(
+        "ollama/qwen3.6:27b",
+        {},
+        { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+      ),
+    ).rejects.toThrow(/Refusing to send the prompt/i);
   });
 
   test("OpenAI-compatible discovery publishes arbitrary IDs and turns use the same Model", async () => {

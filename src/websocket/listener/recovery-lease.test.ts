@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
 import { resolveRecoveredApprovalResponse } from "./recovery";
 import {
@@ -138,6 +139,55 @@ describe("recovered approval lease boundaries", () => {
     releasePermissionWrite(false);
     expect(await handled).toBe(true);
     expect(String(lifecycleKindAtDelete)).toBe("active");
+  });
+
+  test("a queued user's identity survives recovered approval continuation", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    runtime.recoveredApprovalState = createRecoveredState();
+    enqueueInboundUserMessage(
+      runtime,
+      {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        messages: [{ role: "user", content: "message from Charles" }],
+      },
+      "cloud-user-charles",
+    );
+    let receivedActingUserId: string | undefined;
+
+    const handled = await resolveRecoveredApprovalResponse(
+      runtime,
+      createTransport([]),
+      { request_id: "perm-1", decision: { behavior: "allow" } },
+      async (
+        message,
+        _socket,
+        ownerRuntime,
+        _onStatusChange,
+        _connectionId,
+        _batchId,
+        turnLease,
+      ) => {
+        receivedActingUserId = message.actingUserId;
+        if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
+      },
+      {
+        dependencies: {
+          applySuggestedPermissions: async () => false,
+          ensureSecretsHydrated: async () => {},
+          prepareToolExecutionContext: async () => createPreparedToolContext(),
+          executeApprovalBatch: async () => [],
+        },
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(receivedActingUserId).toBe("cloud-user-charles");
   });
 
   test("stale recovered tool execution emits nothing into a replacement run", async () => {

@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { InboundChannelMessage } from "@/channels/types";
-import {
-  buildChannelNotificationXml,
-  buildChannelReminderText,
-} from "@/channels/xml";
+import { buildChannelNotificationXml } from "@/channels/xml";
 
 describe("discord xml", () => {
   test("notification XML has source=discord", () => {
@@ -18,25 +15,6 @@ describe("discord xml", () => {
     };
     const xml = buildChannelNotificationXml(message);
     expect(xml).toContain('source="discord"');
-  });
-
-  test("keeps discord capability hints out of the compact reminder", () => {
-    const message: InboundChannelMessage = {
-      channel: "discord",
-      chatId: "channel-123",
-      senderId: "user-1",
-      senderName: "alice",
-      messageId: "msg-1",
-      text: "hey",
-      timestamp: Date.now(),
-    };
-    const reminder = buildChannelReminderText(message);
-    expect(reminder).toContain("External discord turn");
-    expect(reminder).toContain("scoped MessageChannel instructions");
-    expect(reminder).not.toContain("react");
-    expect(reminder).not.toContain("upload-file");
-    expect(reminder).not.toContain("native Unicode emoji");
-    expect(reminder).not.toContain("<:name:id>");
   });
 
   test("thread metadata appears in XML as thread_id", () => {
