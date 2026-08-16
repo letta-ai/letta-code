@@ -2,7 +2,7 @@ import type { Provider } from "@earendil-works/pi-ai";
 import {
   createLocalEndpointPiProvider,
   type LocalEndpointDiscover,
-  modelIdsFromOpenAICompatibleList,
+  openAICompatibleListEntries,
 } from "./pi-local-endpoint-provider";
 import { OPENAI_COMPATIBLE_PI_PROVIDER_ID } from "./pi-provider-registry";
 
@@ -15,16 +15,32 @@ export interface OpenAICompatiblePiProviderOptions {
 
 const openAICompatibleDiscover: LocalEndpointDiscover = async (context) => {
   const list = await context.fetchJson(`${context.openAIBaseURL}/models`);
-  return modelIdsFromOpenAICompatibleList(list).map(
-    (modelId) =>
-      context.lastKnown.get(modelId) ?? context.buildModel({ id: modelId }),
-  );
+  return openAICompatibleListEntries(list).map((entry) => {
+    // Optional max_input_tokens / max_output_tokens are authoritative per
+    // field; when a field is absent or malformed, fall back to the
+    // last-known model value, then to the shared harness defaults.
+    const previous = context.lastKnown.get(entry.id);
+    return context.buildModel({
+      id: entry.id,
+      ...(entry.maxInputTokens !== undefined
+        ? { contextLength: entry.maxInputTokens }
+        : previous
+          ? { contextLength: previous.contextWindow }
+          : {}),
+      ...(entry.maxOutputTokens !== undefined
+        ? { maxTokens: entry.maxOutputTokens }
+        : previous
+          ? { maxTokens: previous.maxTokens }
+          : {}),
+    });
+  });
 };
 
 /**
  * Dynamic provider for an arbitrary OpenAI-compatible Chat Completions API.
- * The endpoint's /v1/models response owns model identity; capabilities remain
- * conservative because the OpenAI model-list schema does not report them.
+ * The endpoint's /v1/models response owns model identity and, when present,
+ * its optional per-model limit metadata; capabilities stay conservative
+ * wherever the model list does not report them.
  */
 export function createOpenAICompatiblePiProvider(
   options: OpenAICompatiblePiProviderOptions,

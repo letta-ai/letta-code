@@ -82,17 +82,53 @@ export function localEndpointOpenAIBaseURL(baseURL: string): string {
   return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
 }
 
-export function modelIdsFromOpenAICompatibleList(data: unknown): string[] {
+export interface OpenAICompatibleListEntry {
+  id: string;
+  /** Provider-advertised input limit from GET /v1/models, when valid. */
+  maxInputTokens?: number;
+  /** Provider-advertised output limit from GET /v1/models, when valid. */
+  maxOutputTokens?: number;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+/**
+ * Parse an OpenAI-compatible GET /v1/models list, keeping each entry's
+ * optional limit metadata. Positive-integer limits are kept per field;
+ * malformed values (booleans, strings, zero, negatives, NaN/Infinity) are
+ * ignored so callers fall back per-field to last-known or harness defaults.
+ */
+export function openAICompatibleListEntries(
+  data: unknown,
+): OpenAICompatibleListEntry[] {
   if (!data || typeof data !== "object") return [];
   const records = (data as { data?: unknown }).data;
   if (!Array.isArray(records)) return [];
-  return records
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") return undefined;
-      const id = (entry as { id?: unknown }).id;
-      return typeof id === "string" && id.length > 0 ? id : undefined;
-    })
-    .filter((id): id is string => id !== undefined);
+  const entries: OpenAICompatibleListEntry[] = [];
+  for (const record of records) {
+    if (!record || typeof record !== "object") continue;
+    const raw = record as {
+      id?: unknown;
+      max_input_tokens?: unknown;
+      max_output_tokens?: unknown;
+    };
+    if (typeof raw.id !== "string" || raw.id.length === 0) continue;
+    const entry: OpenAICompatibleListEntry = { id: raw.id };
+    if (isPositiveInteger(raw.max_input_tokens)) {
+      entry.maxInputTokens = raw.max_input_tokens;
+    }
+    if (isPositiveInteger(raw.max_output_tokens)) {
+      entry.maxOutputTokens = raw.max_output_tokens;
+    }
+    entries.push(entry);
+  }
+  return entries;
+}
+
+export function modelIdsFromOpenAICompatibleList(data: unknown): string[] {
+  return openAICompatibleListEntries(data).map((entry) => entry.id);
 }
 
 /**
