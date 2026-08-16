@@ -254,9 +254,17 @@ export interface ZaiConnection {
   timeout: LocalProviderTimeout;
 }
 
+const ZAI_CODING_ENDPOINT = "https://api.z.ai/api/coding/paas/v4";
+
+function isZaiCodingEndpointUrl(url: string): boolean {
+  return url.includes("/api/coding/paas/v4");
+}
+
 export function resolveZaiConnection(options: {
   storageDir?: string;
   preferredProviderType?: "zai" | "zai_coding";
+  /** Base URL the catalog model publishes (e.g. the pi-ai coding endpoint). */
+  publishedBaseUrl?: string;
 }): ZaiConnection {
   const regularRecord = localProviderRecord(
     ["zai", LOCAL_ZAI_PROVIDER_NAME],
@@ -290,7 +298,7 @@ export function resolveZaiConnection(options: {
     baseURL:
       codingRecord?.base_url ??
       process.env.ZAI_CODING_BASE_URL ??
-      "https://api.z.ai/api/coding/paas/v4",
+      ZAI_CODING_ENDPOINT,
     apiKey: codingKey,
     timeout: resolveLocalProviderTimeout({
       configuredTimeout: codingRecord?.timeout,
@@ -302,6 +310,26 @@ export function resolveZaiConnection(options: {
     return codingConnection;
   }
   if (options.preferredProviderType === "zai" && regularKey) {
+    // #3840: the pi-ai catalog publishes the coding-plan endpoint for zai
+    // models. When the model publishes that endpoint and no dedicated
+    // zai_coding record or custom zai base URL exists, keep the published
+    // coding endpoint with the lone zai key instead of forcing the
+    // pay-as-you-go default, where coding-plan keys fail with 429.
+    if (
+      options.publishedBaseUrl &&
+      regularRecord &&
+      !codingRecord &&
+      !process.env.ZAI_BASE_URL &&
+      (!regularRecord.base_url ||
+        regularRecord.base_url === "https://api.z.ai/api/paas/v4") &&
+      isZaiCodingEndpointUrl(options.publishedBaseUrl)
+    ) {
+      return {
+        ...codingConnection,
+        apiKey: regularKey,
+        timeout: regularConnection.timeout,
+      };
+    }
     return regularConnection;
   }
   if (codingKey) return codingConnection;
@@ -519,6 +547,7 @@ export async function resolvePiModelForAgent(
         preferredProviderType === "zai_coding"
           ? preferredProviderType
           : undefined,
+      publishedBaseUrl: publishedModel?.baseUrl,
     });
     connection = {
       apiKey: zai.apiKey,
