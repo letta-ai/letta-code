@@ -1,0 +1,122 @@
+name: Container image
+
+on:
+  pull_request:
+    paths:
+      - docker/**
+      - .github/workflows/container.yml
+  push:
+    branches:
+      - main
+    paths:
+      - docker/**
+      - .github/workflows/container.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Build and smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build image
+        run: docker build --tag letta-code:smoke --file docker/Dockerfile .
+
+      - name: Verify CLI and runtime tools
+        run: |
+          set -euo pipefail
+          docker run --rm letta-code:smoke letta --version
+          docker run --rm letta-code:smoke letta server --help
+          docker run --rm letta-code:smoke sh -lc '
+            set -eu
+            command -v node
+            command -v npm
+            command -v git
+            command -v python
+            command -v python3
+            command -v curl
+            command -v wget
+            command -v jq
+            command -v cron
+            command -v crontab
+            command -v ps
+            command -v top
+            command -v free
+            command -v pgrep
+            command -v ip
+            command -v ss
+            command -v ping
+            command -v dig
+            command -v nslookup
+            command -v lsof
+            command -v nc
+            command -v file
+          '
+
+      - name: Verify persistent Unix cron restore
+        run: |
+          set -euo pipefail
+          cron_dir="$(mktemp -d)"
+          crontab_dir="$(mktemp -d)"
+          printf '%s\n' '* * * * * root true' > "$cron_dir/smoke"
+          printf '%s\n' '* * * * * true' > "$crontab_dir/root"
+
+          docker run --rm \
+            --volume "$cron_dir:/persistent-cron:ro" \
+            --volume "$crontab_dir:/persistent-crontab:ro" \
+            --env LETTA_SYSTEM_CRON_DIR=/persistent-cron \
+            --env LETTA_SYSTEM_ROOT_CRONTAB=/persistent-crontab/root \
+            letta-code:smoke \
+            sh -lc 'test -f /etc/cron.d/smoke && crontab -l | grep -F "* * * * * true"'
+
+      - name: Start authenticated App Server
+        run: |
+          set -euo pipefail
+          token_file="$(mktemp)"
+          printf '%s' 'container-smoke-token' > "$token_file"
+          chmod 600 "$token_file"
+
+          docker run --detach \
+            --name letta-app-server \
+            --publish 4500:4500 \
+            --volume "$token_file:/run/secrets/app-server-token:ro" \
+            letta-code:smoke \
+            letta server \
+              --backend local \
+              --listen ws://0.0.0.0:4500 \
+              --ws-auth capability-token \
+              --ws-token-file /run/secrets/app-server-token
+
+      - name: Verify App Server health and authentication
+        run: |
+          set -euo pipefail
+          for _ in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:4500/readyz >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl --fail --silent http://127.0.0.1:4500/readyz
+
+          status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            http://127.0.0.1:4500/app-server-info)"
+          test "$status" = "401"
+
+          curl --fail --silent \
+            --header 'Authorization: Bearer container-smoke-token' \
+            http://127.0.0.1:4500/app-server-info \
+            | jq --exit-status '.type == "app_server_info_response"'
+
+      - name: Show App Server logs
+        if: failure()
+        run: docker logs letta-app-server
+
+      - name: Stop App Server
+        if: always()
+        run: docker rm --force letta-app-server || true
