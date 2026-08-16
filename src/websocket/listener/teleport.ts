@@ -166,6 +166,7 @@ export function handleTeleportProbe(
       request_id: command.request_id,
       runtime: command.runtime,
       supported: true,
+      drains_accepted_inputs: true,
     },
     "teleport_probe_response",
     "teleport_probe",

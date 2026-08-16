@@ -153,6 +153,7 @@ describe("listener protocol ergonomics", () => {
       request_id: "probe-1",
       runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
       supported: true,
+      drains_accepted_inputs: true,
     });
   });
 

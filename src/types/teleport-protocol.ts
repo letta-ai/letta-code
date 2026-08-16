@@ -50,6 +50,7 @@ export interface TeleportProbeResponseMessage {
   request_id: string;
   runtime: RuntimeScope;
   supported: true;
+  drains_accepted_inputs: true;
 }
 
 export interface TeleportReadyMessage {
