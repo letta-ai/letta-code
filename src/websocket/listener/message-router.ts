@@ -315,7 +315,7 @@ export function createListenerMessageHandler(
                   {
                     type: "approval",
                     approvals,
-                    otid: crypto.randomUUID(),
+                    otid: parsed.teleport_id,
                   },
                 ],
               },
@@ -444,18 +444,19 @@ export function createListenerMessageHandler(
         }
 
         if (parsed.payload.kind === "teleport_continue") {
+          const teleportId = parsed.payload.teleport_id;
           clearPriorReadyTeleports({
             listener: runtime,
             agentId: parsed.runtime.agent_id,
             conversationId: parsed.runtime.conversation_id,
-            currentTeleportId: parsed.payload.teleport_id,
+            currentTeleportId: teleportId,
           });
           const scopedRuntime = getOrCreateScopedRuntime(
             runtime,
             parsed.runtime.agent_id,
             parsed.runtime.conversation_id,
           );
-          const acceptedKey = `teleport:${parsed.payload.teleport_id}`;
+          const acceptedKey = `teleport:${teleportId}`;
           const previousDisposition =
             scopedRuntime.acceptedInputDispositions.get(acceptedKey);
           if (previousDisposition) {
@@ -489,7 +490,7 @@ export function createListenerMessageHandler(
                   {
                     type: "approval",
                     approvals,
-                    otid: crypto.randomUUID(),
+                    otid: teleportId,
                   },
                 ],
               },
