@@ -258,7 +258,7 @@ describe("Startup Flow - Integration", () => {
   let testAgentId: string | null = null;
 
   test(
-    "--ephemeral uses saved Cloud authentication without creating an agent",
+    "--ephemeral uses saved Cloud authentication and the default model without tools",
     async () => {
       const apiKey = process.env.LETTA_API_KEY;
       if (!apiKey) {
@@ -282,11 +282,8 @@ describe("Startup Flow - Integration", () => {
         const result = await runCliJson(
           [
             "--ephemeral",
-            "-m",
-            "openai/gpt-5.6-luna",
             "-p",
             "Reply with EPHEMERAL_CLOUD_OK and nothing else",
-            "--tools=",
             "--output-format",
             "json",
           ],

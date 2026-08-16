@@ -748,10 +748,10 @@ export async function handleHeadlessCommand(
     disableModsForProcess();
   }
 
-  // Set tool filter if provided (controls which tools are loaded)
-  if (values.tools !== undefined) {
+  const enabledTools = values.ephemeral ? "" : values.tools;
+  if (enabledTools !== undefined) {
     const { toolFilter } = await import("@/tools/filter");
-    toolFilter.setEnabledTools(values.tools);
+    toolFilter.setEnabledTools(enabledTools);
   }
 
   const { cliPermissions } = await import(
@@ -1750,7 +1750,7 @@ export async function handleHeadlessCommand(
   setAgentContext(
     agent.id,
     skillsDirectory,
-    resolvedSkillSources,
+    ephemeralFlag ? [] : resolvedSkillSources,
     agent.name ?? null,
   );
 
