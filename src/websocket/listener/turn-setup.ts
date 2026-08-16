@@ -312,6 +312,7 @@ export async function prepareListenerTurn(params: {
   const availableSkills = (
     await buildClientSkillsPayload({
       agentId,
+      workingDirectory,
       skillsDirectory: listenerOptions?.skillsDirectory,
       skillSources: runtime.skillSources,
     })

@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { AvailableSkillSummary } from "@/types/protocol_v2";
 import { getSkillSources, getSkillsDirectory } from "./context";
@@ -57,8 +57,8 @@ function getCache(): ClientSkillsCache {
  *  - agentId
  *  - sorted skill sources
  *  - cwd (affects `.agents/skills` and `.skills` resolution)
- *  - legacy skills directory
- *  - primary project skills directory
+ *  - configured skills directory
+ *  - legacy and primary project skills directories
  *  - resolved memory skills dirs (scoped or env-fallback)
  *
  * This is conservative: any change in these inputs produces a cache miss,
@@ -69,6 +69,7 @@ function computeCacheKey(components: {
   agentId: string | undefined;
   skillSources: SkillSource[];
   cwd: string;
+  configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
   memorySkillsDirs: string[];
@@ -78,6 +79,7 @@ function computeCacheKey(components: {
     components.agentId ?? "",
     [...components.skillSources].sort().join(","),
     components.cwd,
+    components.configuredSkillsDirectory ?? "",
     components.legacySkillsDirectory,
     components.primaryProjectSkillsDirectory,
     [...components.memorySkillsDirs].sort().join(","),
@@ -156,6 +158,7 @@ function getSkillDirectoryRevision(
 function getSkillRootRevisions(components: {
   agentId: string | undefined;
   skillSources: SkillSource[];
+  configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
   memorySkillsDirs: string[];
@@ -164,6 +167,9 @@ function getSkillRootRevisions(components: {
   const sourceSet = new Set(components.skillSources);
 
   if (sourceSet.has("project")) {
+    if (components.configuredSkillsDirectory) {
+      roots.add(components.configuredSkillsDirectory);
+    }
     roots.add(components.legacySkillsDirectory);
     roots.add(components.primaryProjectSkillsDirectory);
   }
@@ -304,6 +310,7 @@ export type ClientSkill = NonNullable<
 
 export interface BuildClientSkillsPayloadOptions {
   agentId?: string;
+  workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
   discoverSkillsFn?: typeof discoverSkills;
@@ -332,23 +339,33 @@ function toClientSkill(skill: Skill): ClientSkill {
 function resolveSkillDiscoveryContext(
   options: BuildClientSkillsPayloadOptions,
 ): {
+  workingDirectory: string;
+  configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
+  primaryProjectSkillsDirectory: string;
   skillSources: SkillSource[];
 } {
-  const legacySkillsDirectory =
-    options.skillsDirectory ??
-    getSkillsDirectory() ??
-    join(process.cwd(), SKILLS_DIR);
+  const workingDirectory = options.workingDirectory ?? process.cwd();
+  const configuredSkillsDirectory =
+    options.skillsDirectory ?? getSkillsDirectory();
+  const legacySkillsDirectory = join(workingDirectory, SKILLS_DIR);
+  const primaryProjectSkillsDirectory = join(
+    workingDirectory,
+    PROJECT_SKILLS_DIR,
+  );
   const skillSources = options.skillSources ?? getSkillSources();
-  return { legacySkillsDirectory, skillSources };
-}
-
-function getPrimaryProjectSkillsDirectory(): string {
-  return join(process.cwd(), PROJECT_SKILLS_DIR);
+  return {
+    workingDirectory,
+    configuredSkillsDirectory,
+    legacySkillsDirectory,
+    primaryProjectSkillsDirectory,
+    skillSources,
+  };
 }
 
 export interface DiscoverClientSideSkillsOptions {
   agentId?: string;
+  workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
   discoverSkillsFn?: typeof discoverSkills;
@@ -356,6 +373,7 @@ export interface DiscoverClientSideSkillsOptions {
 
 interface CollectClientSideSkillsOptions
   extends DiscoverClientSideSkillsOptions {
+  configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
 }
@@ -373,9 +391,21 @@ async function collectClientSideSkills(
     ) ?? [];
 
   const discoveryRuns: Array<{ path: string; sources: SkillSource[] }> = [];
+  const discoveryRunKeys = new Set<string>();
+  const addDiscoveryRun = (run: {
+    path: string;
+    sources: SkillSource[];
+  }): void => {
+    const key = `${resolve(run.path)}|${[...run.sources].sort().join(",")}`;
+    if (discoveryRunKeys.has(key)) {
+      return;
+    }
+    discoveryRunKeys.add(key);
+    discoveryRuns.push(run);
+  };
 
   if (nonProjectSources.length > 0) {
-    discoveryRuns.push({
+    addDiscoveryRun({
       path: options.primaryProjectSkillsDirectory,
       sources: nonProjectSources,
     });
@@ -386,16 +416,28 @@ async function collectClientSideSkills(
 
   if (
     includeProjectSource &&
+    options.configuredSkillsDirectory &&
+    options.configuredSkillsDirectory !== options.legacySkillsDirectory &&
+    options.configuredSkillsDirectory !== options.primaryProjectSkillsDirectory
+  ) {
+    addDiscoveryRun({
+      path: options.configuredSkillsDirectory,
+      sources: ["project"],
+    });
+  }
+
+  if (
+    includeProjectSource &&
     options.legacySkillsDirectory !== options.primaryProjectSkillsDirectory
   ) {
-    discoveryRuns.push({
+    addDiscoveryRun({
       path: options.legacySkillsDirectory,
       sources: ["project"],
     });
   }
 
   if (includeProjectSource) {
-    discoveryRuns.push({
+    addDiscoveryRun({
       path: options.primaryProjectSkillsDirectory,
       sources: ["project"],
     });
@@ -450,13 +492,18 @@ async function collectClientSideSkills(
 export async function discoverClientSideSkills(
   options: DiscoverClientSideSkillsOptions = {},
 ): Promise<SkillDiscoveryResult> {
-  const { legacySkillsDirectory, skillSources } =
-    resolveSkillDiscoveryContext(options);
+  const {
+    configuredSkillsDirectory,
+    legacySkillsDirectory,
+    primaryProjectSkillsDirectory,
+    skillSources,
+  } = resolveSkillDiscoveryContext(options);
   return collectClientSideSkills({
     ...options,
+    configuredSkillsDirectory,
     legacySkillsDirectory,
     skillSources,
-    primaryProjectSkillsDirectory: getPrimaryProjectSkillsDirectory(),
+    primaryProjectSkillsDirectory,
   });
 }
 
@@ -478,27 +525,32 @@ export async function discoverClientSideSkills(
 export async function buildClientSkillsPayload(
   options: BuildClientSkillsPayloadOptions = {},
 ): Promise<BuildClientSkillsPayloadResult> {
-  const { legacySkillsDirectory, skillSources } =
-    resolveSkillDiscoveryContext(options);
+  const {
+    workingDirectory,
+    configuredSkillsDirectory,
+    legacySkillsDirectory,
+    primaryProjectSkillsDirectory,
+    skillSources,
+  } = resolveSkillDiscoveryContext(options);
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
 
   // When a custom discoverSkillsFn is provided (tests / DI), bypass the cache
   // so the injected function is always called.
   const useCache = !options.discoverSkillsFn;
 
-  const cwd = process.cwd();
-  const primaryProjectSkillsDirectory = getPrimaryProjectSkillsDirectory();
   const memorySkillsDirs = getMemorySkillsDirs(options.agentId);
   const cacheComponents = {
     agentId: options.agentId,
     skillSources,
-    cwd,
+    cwd: workingDirectory,
+    configuredSkillsDirectory,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     memorySkillsDirs,
     skillRootRevisions: getSkillRootRevisions({
       agentId: options.agentId,
       skillSources,
+      configuredSkillsDirectory,
       legacySkillsDirectory,
       primaryProjectSkillsDirectory,
       memorySkillsDirs,
@@ -516,6 +568,7 @@ export async function buildClientSkillsPayload(
 
   const discovery = await collectClientSideSkills({
     ...options,
+    configuredSkillsDirectory,
     legacySkillsDirectory,
     skillSources,
     primaryProjectSkillsDirectory,

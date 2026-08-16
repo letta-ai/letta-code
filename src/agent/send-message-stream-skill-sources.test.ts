@@ -48,11 +48,12 @@ describe("sendMessageStream skill sources", () => {
   });
 
   test("sends skills from the listener environment directory", async () => {
-    const skillsDirectory = await mkdtemp(
-      join(tmpdir(), "letta-listener-skills-"),
-    );
+    const tempRoot = await mkdtemp(join(tmpdir(), "letta-listener-skills-"));
+    const skillsDirectory = join(tempRoot, "environment-skills");
+    const workingDirectory = join(tempRoot, "workspace");
     const skillDirectory = join(skillsDirectory, "searching-and-viewing-slack");
-    await mkdir(skillDirectory);
+    await mkdir(skillDirectory, { recursive: true });
+    await mkdir(workingDirectory);
     await writeFile(
       join(skillDirectory, "SKILL.md"),
       [
@@ -81,7 +82,7 @@ describe("sendMessageStream skill sources", () => {
       } as unknown as Backend;
       const preparedToolContext =
         await prepareToolExecutionContextForSpecificTools([], {
-          runtimeContext: { skillsDirectory },
+          runtimeContext: { skillsDirectory, workingDirectory },
         });
 
       await sendMessageStreamWithBackend(
@@ -104,7 +105,7 @@ describe("sendMessageStream skill sources", () => {
         },
       ]);
     } finally {
-      await rm(skillsDirectory, { recursive: true, force: true });
+      await rm(tempRoot, { recursive: true, force: true });
     }
   });
 });

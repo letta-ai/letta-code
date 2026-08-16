@@ -285,6 +285,7 @@ describe("buildClientSkillsPayload", () => {
 
     const result = await buildClientSkillsPayload({
       agentId: "agent-1",
+      workingDirectory: "/tmp",
       skillsDirectory: "/tmp/.skills",
       skillSources: ["project"],
       discoverSkillsFn,
@@ -1108,6 +1109,7 @@ describe("client skills payload cache", () => {
 
     const result1 = await buildClientSkillsPayload({
       agentId: "bypass-agent",
+      workingDirectory: "/tmp",
       skillsDirectory: "/tmp/.skills",
       skillSources: ["project"],
       discoverSkillsFn,
@@ -1115,15 +1117,13 @@ describe("client skills payload cache", () => {
 
     const result2 = await buildClientSkillsPayload({
       agentId: "bypass-agent",
+      workingDirectory: "/tmp",
       skillsDirectory: "/tmp/.skills",
       skillSources: ["project"],
       discoverSkillsFn,
     });
 
-    // discoverSkillsFn should be called each time (no caching).
-    // With skillSources: ["project"] and a non-default skillsDirectory,
-    // there are 2 discovery runs per invocation (legacy + primary),
-    // so 2 invocations × 2 runs = 4 calls.
+    // The injected function runs twice for each uncached payload build.
     expect(callCount).toBe(4);
     // Each invocation produces incrementing ids, so first result has call-1/2, second has call-3/4
     expect(result1.clientSkills.map((s) => s.name).sort()).toEqual([
