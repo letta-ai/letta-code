@@ -1832,7 +1832,6 @@ export async function handleHeadlessCommand(
     const initialToolContext = await prepareHeadlessToolExecutionContext({
       agentId: agent.id,
       conversationId,
-      overrideModel: ephemeralFlag ? agent.llm_config?.model : undefined,
       cachedAgent: agent as AgentState,
       modContext: initialHeadlessModContext,
       modEvents: headlessModAdapter.events,
