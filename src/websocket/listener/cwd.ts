@@ -99,6 +99,24 @@ export function bumpWorkingDirectoryRevision(runtime: ListenerRuntime): number {
   return revision;
 }
 
+/**
+ * Change the fallback used by future turns without a conversation CWD.
+ * Process globals stay unchanged because active turns may still be using the
+ * directory the listener launched with.
+ */
+export function setBootWorkingDirectory(
+  runtime: ListenerRuntime,
+  workingDirectory: string,
+): boolean {
+  if (workingDirectory === getBootWorkingDirectory(runtime)) {
+    return false;
+  }
+
+  runtime.bootWorkingDirectory = workingDirectory;
+  bumpWorkingDirectoryRevision(runtime);
+  return true;
+}
+
 export function getExportedCwdMap(
   runtime: ListenerRuntime,
 ): Record<string, string> {

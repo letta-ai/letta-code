@@ -63,7 +63,6 @@ import type {
   EnableMemfsCommand,
   ExecuteCommandCommand,
   FileOpsCommand,
-  GetCwdMapCommand,
   GetExperimentsCommand,
   GetReflectionSettingsCommand,
   GetTreeCommand,
@@ -115,6 +114,10 @@ function isExperimentId(value: unknown): value is ExperimentId {
 }
 
 import { isValidApprovalResponseBody } from "./approval";
+import {
+  isGetCwdMapCommand,
+  isSetBootWorkingDirectoryCommand,
+} from "./cwd-protocol-inbound";
 import {
   isExternalToolCallResponseCommand,
   isRuntimeExternalToolsUpdateCommand,
@@ -890,12 +893,6 @@ export function isEnableMemfsCommand(
     typeof c.request_id === "string" &&
     typeof c.agent_id === "string"
   );
-}
-
-export function isGetCwdMapCommand(value: unknown): value is GetCwdMapCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as { type?: unknown; request_id?: unknown };
-  return c.type === "get_cwd_map" && typeof c.request_id === "string";
 }
 
 export function isListModelsCommand(
@@ -2194,6 +2191,7 @@ export function parseServerMessage(
       isConversationForkCommand(parsed) ||
       isConversationMessagesListCommand(parsed) ||
       isConversationCompactCommand(parsed) ||
+      isSetBootWorkingDirectoryCommand(parsed) ||
       isGetCwdMapCommand(parsed) ||
       isGetExperimentsCommand(parsed) ||
       isSetExperimentCommand(parsed) ||

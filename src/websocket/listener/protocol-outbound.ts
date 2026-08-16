@@ -225,11 +225,9 @@ export function buildDeviceStatus(
     conversationId,
   );
   const interruptedCacheActive = hasInterruptedCacheForScope(listener, scope);
-  const resolvedCwd = getConversationWorkingDirectory(
-    listener,
-    agentId,
-    conversationId,
-  );
+  const resolvedCwd =
+    conversationRuntime?.activeWorkingDirectory ??
+    getConversationWorkingDirectory(listener, agentId, conversationId);
   const reflectionSettings = (() => {
     if (!agentId) {
       return null;
