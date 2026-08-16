@@ -136,6 +136,86 @@ test("queued input activates when dequeued via update_queue", async () => {
   gateway.close();
 });
 
+test("adopts queued source metadata without submitting input again", async () => {
+  const client = new FakeClient();
+  const { hooks, lifecycleEvents } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const source = makeSource({
+    channel: "slack",
+    chatId: "C123",
+    messageId: "1700000000.000100",
+    threadId: "1700000000.000100",
+  });
+  const delivery = makeDelivery({
+    sources: [source],
+    clientMessageId: "cm-already-queued",
+  });
+
+  gateway.adoptQueuedDelivery(delivery);
+  gateway.adoptQueuedDelivery(delivery);
+  for (const changed of [
+    { chatType: "channel" },
+    { senderId: "U-other" },
+    { senderTeamId: "T-other" },
+  ] satisfies Array<Partial<ChannelTurnSource>>) {
+    expect(() =>
+      gateway.adoptQueuedDelivery({
+        ...delivery,
+        sources: [{ ...source, ...changed }],
+      }),
+    ).toThrow("conflicting metadata exists");
+  }
+  expect(client.submittedInputs).toHaveLength(0);
+  expect(client.startedRuntimes).toHaveLength(0);
+  expect(client.runtimeToolUpdates).toHaveLength(0);
+  expect(lifecycleEvents).toHaveLength(0);
+
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      { client_message_id: "cm-already-queued", disposition: "dequeued" },
+    ]),
+  );
+  await Bun.sleep(0);
+
+  expect(client.submittedInputs).toHaveLength(0);
+  expect(lifecycleEvents).toEqual([
+    {
+      type: "processing",
+      batchId: "channel-cm-already-queued",
+      sources: [source],
+    },
+  ]);
+
+  client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
+  expect(lifecycleEvents.at(-1)).toMatchObject({
+    type: "finished",
+    batchId: "channel-cm-already-queued",
+    sources: [source],
+  });
+  gateway.close();
+});
+
+test("rejects queued adoption for an active ID after accepted history ages out", async () => {
+  const client = new FakeClient();
+  const gateway = new ChannelGateway(client, makeHooks().hooks);
+  const activeDelivery = makeDelivery({
+    clientMessageId: "cm-active-aged-out",
+  });
+
+  await gateway.submit(activeDelivery);
+  for (let index = 0; index < 2_048; index += 1) {
+    gateway.adoptQueuedDelivery(
+      makeDelivery({ clientMessageId: `cm-queued-${index}` }),
+    );
+  }
+
+  expect(() => gateway.adoptQueuedDelivery(activeDelivery)).toThrow(
+    "it is not queued",
+  );
+  gateway.close();
+});
+
 test("dequeue transition survives split-stream arrival before input acceptance", async () => {
   let releaseInput!: () => void;
   const inputWait = new Promise<void>((resolve) => {

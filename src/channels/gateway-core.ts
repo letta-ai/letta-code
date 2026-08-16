@@ -319,6 +319,40 @@ export class ChannelGateway {
     }
   }
 
+  adoptQueuedDelivery(delivery: ChannelGatewayHandoffDelivery): void {
+    const state = this.getState(delivery.runtime);
+    const sources = uniqueLifecycleSources(delivery.sources);
+    const pending = state.pendingSourcesByClientMessageId.get(
+      delivery.clientMessageId,
+    );
+    if (pending) {
+      const matches =
+        pending.disposition === "queued" &&
+        JSON.stringify(pending.sources) === JSON.stringify(sources);
+      if (matches) return;
+      throw new Error(
+        `Cannot adopt queued delivery ${delivery.clientMessageId}; conflicting metadata exists`,
+      );
+    }
+    if (
+      state.acceptedClientMessageIds.has(delivery.clientMessageId) ||
+      state.active?.batchId === `channel-${delivery.clientMessageId}`
+    ) {
+      throw new Error(
+        `Cannot adopt queued delivery ${delivery.clientMessageId}; it is not queued`,
+      );
+    }
+    state.pendingSourcesByClientMessageId.set(delivery.clientMessageId, {
+      sources,
+      disposition: "queued",
+    });
+    state.routedSources = uniqueRoutedSources([
+      ...state.routedSources,
+      ...delivery.sources,
+    ]);
+    this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
+  }
+
   async restoreRuntime(
     runtime: RuntimeScope,
     sources: ChannelTurnSource[],
