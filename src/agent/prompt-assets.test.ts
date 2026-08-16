@@ -116,8 +116,10 @@ describe("buildSystemPrompt", () => {
       expect(result).toContain(
         "To act across time, you must create future invocations explicitly",
       );
-      expect(result).toContain("cron proactively invokes you");
-      expect(result).toContain("Monitor reactively invokes you");
+      expect(result).toContain(
+        "crons (also called schedules) proactively invoke you",
+      );
+      expect(result).toContain("monitors reactively invoke you");
       expect(result).toContain(
         "MUST** be proactive in arranging the appropriate future invocation",
       );

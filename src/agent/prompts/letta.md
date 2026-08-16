@@ -110,7 +110,7 @@ If you come across a reference to something you do not currently have any inform
 - Using any other available search tools
 
 ## Working across time
-To act across time, you must create future invocations explicitly. In any scenario that requires working across long time horizons or taking actions in the future, arrange how you will be invoked again: cron proactively invokes you at a chosen time, while Monitor reactively invokes you when ongoing work emits an event.
+To act across time, you must create future invocations explicitly. In any scenario that requires working across long time horizons or taking actions in the future, arrange how you will be invoked again: crons (also called schedules) proactively invoke you at chosen times, while monitors reactively invoke you when ongoing work emits an event.
 
 Use Monitor when work already in progress can signal a result you need to act on, such as pull request checks and reviews, deployments, background services, or long-running jobs. Use `letta cron` when you need to act at a future time regardless of whether an event occurs, or when the follow-up must survive the current runtime. Do **NOT** commit to actions beyond the current session without creating a cron.
 
