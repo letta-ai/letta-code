@@ -12,7 +12,10 @@ import {
   PROJECT_SKILLS_DIR,
   SKILLS_DIR,
 } from "@/agent/skills";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+} from "@/runtime-context";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import { queueSkillContent } from "./skill-content-registry";
 import { validateRequiredParams } from "./validation.js";
@@ -81,9 +84,12 @@ export async function readSkillContent(
   skillId: string,
   skillsDir: string,
   agentId?: string,
+  additionalSkillDirectories: string[] = [],
 ): Promise<{ content: string; path: string }> {
-  // 1. Try project skills directory (highest priority)
+  // 1. Try project skills directories (highest priority). Additional roots are
+  // searched in reverse because later discovery roots override earlier ones.
   const projectSkillsDirs = new Set<string>([
+    ...additionalSkillDirectories.slice().reverse(),
     join(getCurrentWorkingDirectory(), PROJECT_SKILLS_DIR),
     skillsDir,
   ]);
@@ -217,6 +223,7 @@ export async function loadRenderedSkillContent(
   options: RenderSkillContentOptions & {
     agentId?: string;
     skillsDir?: string;
+    additionalSkillDirectories?: string[];
   } = {},
 ): Promise<string> {
   const skillsDir = options.skillsDir ?? (await getResolvedSkillsDir());
@@ -224,6 +231,7 @@ export async function loadRenderedSkillContent(
     skillName,
     skillsDir,
     options.agentId,
+    options.additionalSkillDirectories,
   );
   return renderSkillContent(skillName, skillContent, skillPath, options);
 }
@@ -269,6 +277,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     const fullContent = await loadRenderedSkillContent(skillName, {
       agentId,
       skillsDir,
+      additionalSkillDirectories: getRuntimeContext()?.skillDirectories,
     });
 
     // Queue the skill content for harness-level injection as a user message part

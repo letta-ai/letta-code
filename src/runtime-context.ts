@@ -25,6 +25,7 @@ export interface RuntimeContextSnapshot {
   agentName?: string | null;
   conversationId?: string | null;
   skillsDirectory?: string | null;
+  skillDirectories?: string[];
   skillSources?: SkillSource[];
   workingDirectory?: string | null;
   /**
@@ -53,6 +54,9 @@ export function runWithRuntimeContext<T>(
     {
       ...parent,
       ...snapshot,
+      ...(snapshot.skillDirectories
+        ? { skillDirectories: [...snapshot.skillDirectories] }
+        : {}),
       ...(snapshot.skillSources
         ? { skillSources: [...snapshot.skillSources] }
         : {}),
@@ -76,6 +80,9 @@ export function updateRuntimeContext(
   Object.assign(
     current,
     update,
+    update.skillDirectories && {
+      skillDirectories: [...update.skillDirectories],
+    },
     update.skillSources && {
       skillSources: [...update.skillSources],
     },

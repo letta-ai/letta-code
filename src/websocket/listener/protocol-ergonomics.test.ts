@@ -99,6 +99,37 @@ describe("listener protocol ergonomics", () => {
     });
   });
 
+  test("parses per-turn skill directories", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          request_id: "input-with-skills",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "create_message",
+            messages: [{ role: "user", content: "list skills" }],
+            skill_directories: [
+              "/root/workspace/repo-a/.agents/skills",
+              "/root/workspace/repo-b/.agents/skills",
+            ],
+          },
+        }),
+      ),
+    );
+
+    expect(parsed).toMatchObject({
+      type: "input",
+      payload: {
+        kind: "create_message",
+        skill_directories: [
+          "/root/workspace/repo-a/.agents/skills",
+          "/root/workspace/repo-b/.agents/skills",
+        ],
+      },
+    });
+  });
+
   test("sync sends an ack response when request_id is provided", async () => {
     const runtime = __listenClientTestUtils.createListenerRuntime();
     const sent: unknown[] = [];

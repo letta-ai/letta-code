@@ -544,6 +544,7 @@ export function createListenerMessageHandler(
           clientToolAllowlist: inputPayload.client_tool_allowlist,
           clientToolset: inputPayload.client_toolset,
           externalToolScopeIds: inputPayload.external_tool_scope_ids,
+          skillDirectories: inputPayload.skill_directories,
           excludeInteractiveTools: inputPayload.exclude_interactive_tools,
           imageFailureMode: inputPayload.image_failure_mode,
           messages: inputPayload.messages,

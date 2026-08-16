@@ -72,6 +72,7 @@ function computeCacheKey(components: {
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
   memorySkillsDirs: string[];
+  additionalSkillDirectories: string[];
   skillRootRevisions: string[];
 }): string {
   return [
@@ -81,6 +82,7 @@ function computeCacheKey(components: {
     components.legacySkillsDirectory,
     components.primaryProjectSkillsDirectory,
     [...components.memorySkillsDirs].sort().join(","),
+    components.additionalSkillDirectories.join(","),
     [...components.skillRootRevisions].sort().join(","),
   ].join("|");
 }
@@ -159,6 +161,7 @@ function getSkillRootRevisions(components: {
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
   memorySkillsDirs: string[];
+  additionalSkillDirectories: string[];
 }): string[] {
   const roots = new Set<string>();
   const sourceSet = new Set(components.skillSources);
@@ -178,6 +181,10 @@ function getSkillRootRevisions(components: {
     for (const dir of components.memorySkillsDirs) {
       roots.add(dir);
     }
+  }
+
+  for (const dir of components.additionalSkillDirectories) {
+    roots.add(dir);
   }
 
   return [...roots].map((root) => `${root}=${getSkillDirectoryRevision(root)}`);
@@ -305,6 +312,7 @@ export type ClientSkill = NonNullable<
 export interface BuildClientSkillsPayloadOptions {
   agentId?: string;
   skillsDirectory?: string | null;
+  additionalSkillDirectories?: string[];
   skillSources?: SkillSource[];
   discoverSkillsFn?: typeof discoverSkills;
   logger?: (message: string) => void;
@@ -350,6 +358,7 @@ function getPrimaryProjectSkillsDirectory(): string {
 export interface DiscoverClientSideSkillsOptions {
   agentId?: string;
   skillsDirectory?: string | null;
+  additionalSkillDirectories?: string[];
   skillSources?: SkillSource[];
   discoverSkillsFn?: typeof discoverSkills;
 }
@@ -399,6 +408,16 @@ async function collectClientSideSkills(
       path: options.primaryProjectSkillsDirectory,
       sources: ["project"],
     });
+
+    const seenDirectories = new Set(discoveryRuns.map((run) => run.path));
+    for (const path of options.additionalSkillDirectories ?? []) {
+      const normalizedPath = path.trim();
+      if (!normalizedPath || seenDirectories.has(normalizedPath)) {
+        continue;
+      }
+      seenDirectories.add(normalizedPath);
+      discoveryRuns.push({ path: normalizedPath, sources: ["project"] });
+    }
   }
 
   for (const run of discoveryRuns) {
@@ -489,6 +508,13 @@ export async function buildClientSkillsPayload(
   const cwd = process.cwd();
   const primaryProjectSkillsDirectory = getPrimaryProjectSkillsDirectory();
   const memorySkillsDirs = getMemorySkillsDirs(options.agentId);
+  const additionalSkillDirectories = Array.from(
+    new Set(
+      (options.additionalSkillDirectories ?? [])
+        .map((directory) => directory.trim())
+        .filter(Boolean),
+    ),
+  );
   const cacheComponents = {
     agentId: options.agentId,
     skillSources,
@@ -496,12 +522,14 @@ export async function buildClientSkillsPayload(
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     memorySkillsDirs,
+    additionalSkillDirectories,
     skillRootRevisions: getSkillRootRevisions({
       agentId: options.agentId,
       skillSources,
       legacySkillsDirectory,
       primaryProjectSkillsDirectory,
       memorySkillsDirs,
+      additionalSkillDirectories,
     }),
   };
   const cacheKey = computeCacheKey(cacheComponents);
@@ -516,6 +544,7 @@ export async function buildClientSkillsPayload(
 
   const discovery = await collectClientSideSkills({
     ...options,
+    additionalSkillDirectories,
     legacySkillsDirectory,
     skillSources,
     primaryProjectSkillsDirectory,

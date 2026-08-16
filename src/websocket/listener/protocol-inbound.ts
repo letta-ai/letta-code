@@ -169,6 +169,20 @@ function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
   );
 }
 
+type InputPayloadCandidate = {
+  kind?: unknown;
+  messages?: unknown;
+  image_failure_mode?: unknown;
+  client_tool_allowlist?: unknown;
+  client_toolset?: unknown;
+  external_tool_scope_ids?: unknown;
+  skill_directories?: unknown;
+  exclude_interactive_tools?: unknown;
+  request_id?: unknown;
+  decision?: unknown;
+  error?: unknown;
+};
+
 function isInputCommand(value: unknown): value is InputCommand {
   if (!value || typeof value !== "object") {
     return false;
@@ -193,18 +207,7 @@ function isInputCommand(value: unknown): value is InputCommand {
     return false;
   }
 
-  const payload = candidate.payload as {
-    kind?: unknown;
-    messages?: unknown;
-    image_failure_mode?: unknown;
-    client_tool_allowlist?: unknown;
-    client_toolset?: unknown;
-    external_tool_scope_ids?: unknown;
-    exclude_interactive_tools?: unknown;
-    request_id?: unknown;
-    decision?: unknown;
-    error?: unknown;
-  };
+  const payload = candidate.payload as InputPayloadCandidate;
   if (payload.kind === "create_message") {
     return (
       Array.isArray(payload.messages) &&
@@ -217,6 +220,8 @@ function isInputCommand(value: unknown): value is InputCommand {
         isClientToolsetConfig(payload.client_toolset)) &&
       (payload.external_tool_scope_ids === undefined ||
         isStringArray(payload.external_tool_scope_ids)) &&
+      (payload.skill_directories === undefined ||
+        isStringArray(payload.skill_directories)) &&
       (payload.exclude_interactive_tools === undefined ||
         typeof payload.exclude_interactive_tools === "boolean")
     );
@@ -304,18 +309,7 @@ function getInvalidInputReason(value: unknown): {
       reason: "Protocol violation: input.payload must be an object",
     };
   }
-  const payload = candidate.payload as {
-    kind?: unknown;
-    messages?: unknown;
-    image_failure_mode?: unknown;
-    client_tool_allowlist?: unknown;
-    client_toolset?: unknown;
-    external_tool_scope_ids?: unknown;
-    exclude_interactive_tools?: unknown;
-    request_id?: unknown;
-    decision?: unknown;
-    error?: unknown;
-  };
+  const payload = candidate.payload as InputPayloadCandidate;
   if (payload.kind === "create_message") {
     if (!Array.isArray(payload.messages)) {
       return {
@@ -365,15 +359,16 @@ function getInvalidInputReason(value: unknown): {
           "Protocol violation: input.payload.exclude_interactive_tools must be boolean",
       };
     }
-    if (
-      payload.external_tool_scope_ids !== undefined &&
-      !isStringArray(payload.external_tool_scope_ids)
-    ) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.payload.external_tool_scope_ids must be string[]",
-      };
+    for (const key of [
+      "external_tool_scope_ids",
+      "skill_directories",
+    ] as const) {
+      if (payload[key] !== undefined && !isStringArray(payload[key])) {
+        return {
+          runtime: candidate.runtime,
+          reason: `Protocol violation: input.payload.${key} must be string[]`,
+        };
+      }
     }
     return null;
   }

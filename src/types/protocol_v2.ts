@@ -664,12 +664,10 @@ export interface InputCreateMessagePayload {
    * client tools before the allowlist is applied.
    */
   client_toolset?: ClientToolsetConfig;
-  /**
-   * Optional scoped external tools to expose for this turn. Runtime-start
-   * external tools with a scope_id stay hidden unless selected here; unscoped
-   * external tools for the runtime remain available normally.
-   */
+  /** Scoped external tools to expose for this turn. */
   external_tool_scope_ids?: string[];
+  /** Extra skill directories combined with the listener's configured directory. */
+  skill_directories?: string[];
   /**
    * Exclude interactive user-input tools (AskUserQuestion and friends) from
    * this turn's toolset. Intended for headless clients (SDK sessions,

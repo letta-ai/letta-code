@@ -94,6 +94,8 @@ export interface IncomingMessage {
   clientToolAllowlist?: string[];
   clientToolset?: ClientToolsetConfig;
   externalToolScopeIds?: string[];
+  /** Additional skill directories supplied for this turn. */
+  skillDirectories?: string[];
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
   messages: Array<

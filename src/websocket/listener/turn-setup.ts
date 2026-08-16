@@ -298,6 +298,7 @@ export async function prepareListenerTurn(params: {
     workingDirectory,
     permissionModeState,
     skillsDirectory: listenerOptions?.skillsDirectory,
+    skillDirectories: msg.skillDirectories,
     skillSources: runtime.skillSources,
     workspaceSandbox: runtime.workspaceSandbox,
     cachedAgent,
@@ -313,6 +314,7 @@ export async function prepareListenerTurn(params: {
     await buildClientSkillsPayload({
       agentId,
       skillsDirectory: listenerOptions?.skillsDirectory,
+      additionalSkillDirectories: msg.skillDirectories,
       skillSources: runtime.skillSources,
     })
   ).availableSkills;

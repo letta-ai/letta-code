@@ -9,6 +9,7 @@ import SkillSchema from "@/tools/schemas/Skill.json";
 
 const TEST_AGENT_ID = "agent-skill-memfs-test";
 let currentSkillsDirectory: string | null = null;
+let currentAdditionalSkillDirectories: string[] = [];
 
 const {
   readSkillContent,
@@ -23,6 +24,7 @@ function withSkillContext<T>(fn: () => Promise<T>) {
     {
       agentId: TEST_AGENT_ID,
       skillsDirectory: currentSkillsDirectory,
+      skillDirectories: currentAdditionalSkillDirectories,
     },
     fn,
   );
@@ -55,6 +57,7 @@ describe("Skill tool memory filesystem lookup", () => {
   afterEach(() => {
     consumeQueuedSkillContent();
     currentSkillsDirectory = null;
+    currentAdditionalSkillDirectories = [];
     clearTools();
 
     if (originalMemoryDir === undefined) {
@@ -103,6 +106,28 @@ describe("Skill tool memory filesystem lookup", () => {
         "agent-local-skill-test",
       ),
     ).rejects.toThrow('Skill "image-generation" not found');
+  });
+
+  test("loads skills from a per-turn skill directory", async () => {
+    const skillName = "attached-repo-skill";
+    const repoSkillsDir = join(tempRoot, "repo", ".agents", "skills");
+    const skillDir = join(repoSkillsDir, skillName);
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: attached-repo-skill\ndescription: test\n---\n\nLoaded from the attached repo.",
+      "utf8",
+    );
+    currentAdditionalSkillDirectories = [repoSkillsDir];
+
+    const result = await runScopedSkill({
+      skill: skillName,
+      toolCallId: "tc-attached-repo",
+    });
+    expect(result.message).toBe(`Launching skill: ${skillName}`);
+    expect(consumeQueuedSkillContent()[0]?.content).toContain(
+      "Loaded from the attached repo.",
+    );
   });
 
   test("loads skills from MEMORY_DIR/skills", async () => {

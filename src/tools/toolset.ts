@@ -363,6 +363,7 @@ export async function prepareToolExecutionContextForScope(params: {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   skillsDirectory?: string;
+  skillDirectories?: string[];
   skillSources?: SkillSource[];
   workspaceSandbox?: RuntimeContextSnapshot["workspaceSandbox"];
   cachedAgent?: AgentState | null;
@@ -385,6 +386,7 @@ export async function prepareToolExecutionContextForScope(params: {
     workingDirectory,
     permissionModeState,
     skillsDirectory,
+    skillDirectories,
     skillSources,
     workspaceSandbox,
     cachedAgent,
@@ -467,6 +469,7 @@ export async function prepareToolExecutionContextForScope(params: {
       conversationId: scopedConversationId,
       workingDirectory,
       ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
+      ...(skillDirectories !== undefined ? { skillDirectories } : {}),
       ...(skillSources !== undefined ? { skillSources } : {}),
       ...(workspaceSandbox !== undefined ? { workspaceSandbox } : {}),
     },
