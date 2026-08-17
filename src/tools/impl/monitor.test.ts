@@ -410,6 +410,51 @@ describe("Monitor", () => {
     }
   });
 
+  test("fails a WebSocket monitor when its output file cannot be written", async () => {
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("WebSocket test server did not expose a TCP port");
+    }
+    let sendFrame = (): void => {};
+    const connected = new Promise<void>((resolve) => {
+      server.once("connection", (socket) => {
+        sendFrame = () => socket.send("frame");
+        resolve();
+      });
+    });
+
+    try {
+      const result = await monitor({
+        description: "socket output write failure",
+        ws: { url: `ws://127.0.0.1:${address.port}` },
+      });
+      await connected;
+      const processState = backgroundProcesses.get(result.taskId);
+      expect(processState?.outputFile).toBeDefined();
+      rmSync(processState?.outputFile ?? "", { force: true });
+      mkdirSync(processState?.outputFile ?? "");
+
+      sendFrame();
+
+      await waitFor(
+        () => backgroundProcesses.get(result.taskId)?.status === "failed",
+      );
+      expect(
+        backgroundProcesses
+          .get(result.taskId)
+          ?.stderr.join("")
+          .includes("output file write failed"),
+      ).toBe(true);
+    } finally {
+      for (const client of server.clients) {
+        client.terminate();
+      }
+      server.close();
+    }
+  });
+
   test("drops oversized WebSocket frames before closing", async () => {
     const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
     await new Promise<void>((resolve) => server.once("listening", resolve));
