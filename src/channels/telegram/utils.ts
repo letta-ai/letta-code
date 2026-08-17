@@ -387,9 +387,22 @@ export function getTelegramChatLabel(
 export function getTelegramMessageThreadId(
   message: TelegramLikeMessage,
 ): string | null {
-  return message.message_thread_id !== undefined
-    ? String(message.message_thread_id)
-    : null;
+  if (message.message_thread_id === undefined) {
+    return null;
+  }
+
+  const chatType = message.chat.type;
+  // Per Telegram Bot API / TDLib, message_thread_id is a forum topic only when
+  // is_topic_message is true. Forum General can emit reply-thread IDs without
+  // that flag; treating chat.is_forum as sufficient would fragment those the
+  // same way non-forum groups used to. Private bot topics keep any thread id.
+  if (chatType === "group" || chatType === "supergroup") {
+    return message.is_topic_message === true
+      ? String(message.message_thread_id)
+      : null;
+  }
+
+  return String(message.message_thread_id);
 }
 
 export function getTelegramReplyContext(

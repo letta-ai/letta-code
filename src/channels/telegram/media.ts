@@ -19,6 +19,7 @@ const STATIC_STICKER_EXTENSIONS = new Set([".webp"]);
 export type TelegramLikeMessage = {
   media_group_id?: string;
   message_thread_id?: number | string;
+  is_topic_message?: boolean;
   message_id: number | string;
   date: number;
   text?: string;
@@ -39,6 +40,7 @@ export type TelegramLikeMessage = {
     type?: string;
     title?: string;
     username?: string;
+    is_forum?: boolean;
   };
   from?: {
     id: number | string;
