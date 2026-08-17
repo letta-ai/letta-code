@@ -54,6 +54,8 @@ describe("split stream listener lifecycle", () => {
   let connectionChannels: Array<string | null>;
   let connectionGenerations: Array<string | null>;
   let streamFrames: unknown[];
+  let delayNextControlUpgradeMs: number;
+  let readyGenerationForNextControl: string | null;
   let hangNextStreamUpgrade: boolean;
   let rejectNextStreamUpgrade: boolean;
   let streamUpgradeAttempts: number;
@@ -94,6 +96,8 @@ describe("split stream listener lifecycle", () => {
     connectionChannels = [];
     connectionGenerations = [];
     streamFrames = [];
+    delayNextControlUpgradeMs = 0;
+    readyGenerationForNextControl = null;
     hangNextStreamUpgrade = false;
     rejectNextStreamUpgrade = false;
     streamUpgradeAttempts = 0;
@@ -103,6 +107,17 @@ describe("split stream listener lifecycle", () => {
     httpServer.on("upgrade", (request, socket, head) => {
       const requestUrl = new URL(request.url ?? "/", "ws://127.0.0.1");
       const channel = requestUrl.searchParams.get("channel");
+      const completeUpgrade = () => {
+        server.handleUpgrade(request, socket, head, (upgradedSocket) => {
+          server.emit("connection", upgradedSocket, request);
+        });
+      };
+      if (channel === "control" && delayNextControlUpgradeMs > 0) {
+        const delayMs = delayNextControlUpgradeMs;
+        delayNextControlUpgradeMs = 0;
+        setTimeout(completeUpgrade, delayMs);
+        return;
+      }
       if (channel === "stream") {
         streamUpgradeAttempts += 1;
         if (hangNextStreamUpgrade) {
@@ -122,9 +137,7 @@ describe("split stream listener lifecycle", () => {
           return;
         }
       }
-      server.handleUpgrade(request, socket, head, (upgradedSocket) => {
-        server.emit("connection", upgradedSocket, request);
-      });
+      completeUpgrade();
     });
     await new Promise<void>((resolve) =>
       httpServer.listen(0, "127.0.0.1", resolve),
@@ -138,6 +151,19 @@ describe("split stream listener lifecycle", () => {
       connectionGenerations.push(
         requestUrl.searchParams.get("connectionGeneration"),
       );
+      if (
+        requestUrl.searchParams.get("channel") === "control" &&
+        readyGenerationForNextControl
+      ) {
+        const generation = readyGenerationForNextControl;
+        readyGenerationForNextControl = null;
+        socket.send(
+          JSON.stringify({
+            type: "listener_ready",
+            connection_generation: generation,
+          }),
+        );
+      }
       if (requestUrl.searchParams.get("channel") === "stream") {
         socket.on("message", (data) => {
           streamFrames.push(JSON.parse(data.toString()));
@@ -340,6 +366,25 @@ describe("split stream listener lifecycle", () => {
           (event as { type?: string }).type === "listener_ready",
       ),
     ).toBe(false);
+  });
+
+  test("listener_ready timeout starts after the control socket opens", async () => {
+    process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS = "25";
+    delayNextControlUpgradeMs = 75;
+    readyGenerationForNextControl = "generation-after-delayed-upgrade";
+    const onConnected = mock(() => {});
+
+    await startClient({
+      supportsPairedListenerGenerations: true,
+      onConnected,
+    });
+    await waitFor(
+      () => onConnected.mock.calls.length === 1,
+      "listener rejected listener_ready after a delayed control upgrade",
+    );
+
+    expect(countConnectionsForChannel("control")).toBe(1);
+    expect(streamGenerations()).toEqual(["generation-after-delayed-upgrade"]);
   });
 
   test("paired reconnect waits for a fresh listener generation", async () => {

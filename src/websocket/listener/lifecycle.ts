@@ -837,13 +837,13 @@ async function connectWithRetry(
 
   runtime.socket = socket;
   runtime.streamSocket = streamSocket;
-  const listenerReadyPromise = usesPairedListenerGenerations
-    ? waitForListenerReadyGeneration(socket)
-    : null;
   const transport = socket;
   const processQueuedTurn = createConnectionTurnProcessor(runtime);
 
   socket.on("open", () => {
+    const listenerReadyPromise = usesPairedListenerGenerations
+      ? waitForListenerReadyGeneration(socket)
+      : null;
     void (async () => {
       if (listenerReadyPromise) {
         const ready = await listenerReadyPromise;
