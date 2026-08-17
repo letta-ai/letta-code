@@ -49,6 +49,7 @@ import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
 import { subscribePiProviderRegistry } from "@/backend/dev/pi-provider-mod-registry";
 import { useConversationTitleSync } from "@/cli/app/conversation-title-sync";
+import { resolveResumedConversationSummary } from "@/cli/app/resumed-conversation-summary";
 import {
   cancelActiveConnectOperation,
   isActiveConnectOperationCancellable,
@@ -350,6 +351,7 @@ export function App({
   agentId: initialAgentId,
   agentState: initialAgentState,
   conversationId: initialConversationId,
+  conversationSummary: initialConversationSummary = null,
   loadingState = "ready",
   continueSession = false,
   startupApproval = null,
@@ -402,11 +404,10 @@ export function App({
       : ("standard" as const);
     return shouldRecommendDefaultPrompt(agentState.system, memMode);
   }, [agentState]);
-
   const projectDirectory = process.cwd();
   const [conversationId, setConversationId] = useState(initialConversationId);
-  const [conversationSummary, setConversationSummary] = useState<string | null>(
-    null,
+  const [conversationSummary, setConversationSummary] = useState(
+    initialConversationSummary,
   );
   // Keep a ref to the current agentId for use in callbacks that need the latest value
   const agentIdRef = useRef(agentId);
@@ -4527,30 +4528,29 @@ export function App({
                   agentState,
                   action.conversationId,
                 );
-
+                const resumedSummary = resolveResumedConversationSummary(
+                  resumeData.conversation,
+                );
                 setConversationIdAndRef(action.conversationId);
                 setConversationAutoTitleEligibility(false);
-
+                setConversationSummary(resumedSummary ?? null);
                 pendingConversationSwitchRef.current = {
                   origin: "resume-selector",
                   conversationId: action.conversationId,
                   isDefault: action.conversationId === "default",
                   messageCount: resumeData.messageHistory.length,
+                  summary: resumedSummary,
                   messageHistory: resumeData.messageHistory,
                 };
-
                 settingsManager.persistSession(agentId, action.conversationId);
-
                 // Reset context tokens for new conversation
                 resetContextHistory(contextTrackerRef.current);
                 resetBootstrapReminderState();
-
                 if (resumeData.pendingApprovals.length > 0) {
                   await recoverRestoredPendingApprovals(
                     resumeData.pendingApprovals,
                   );
                 }
-
                 cmd.finish(
                   `Switched to conversation (${resumeData.messageHistory.length} messages)`,
                   true,
