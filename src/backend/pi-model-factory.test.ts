@@ -191,6 +191,12 @@ describe("pi model factory", () => {
           "openai-codex/gpt-5.6-sol",
         ),
       ).toBe("max");
+      expect(
+        reasoningForSettings(
+          { reasoning: { reasoning_effort: "minimal" } },
+          "openai-codex/gpt-5.6-sol",
+        ),
+      ).toBe("none" as "low");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

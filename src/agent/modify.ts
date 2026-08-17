@@ -13,6 +13,7 @@ import { getBackend } from "@/backend";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { debugLog } from "@/utils/debug";
 import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
+import { normalizeReasoningEffortForModel } from "@/utils/openai-reasoning-effort";
 import { isRecord } from "@/utils/type-guards";
 import { getModelContextWindow } from "./available-models";
 import { getModelInfo, type ModelReasoningSelection } from "./model";
@@ -107,7 +108,12 @@ function buildModelSettings(
       (openaiSettings as Record<string, unknown>).reasoning =
         updateArgs.reasoning_effort === null
           ? null
-          : { reasoning_effort: updateArgs.reasoning_effort };
+          : {
+              reasoning_effort: normalizeReasoningEffortForModel(
+                modelHandle,
+                String(updateArgs.reasoning_effort),
+              ),
+            };
     }
     const verbosity = updateArgs?.verbosity;
     if (verbosity === "low" || verbosity === "medium" || verbosity === "high") {
@@ -244,7 +250,12 @@ function buildModelSettings(
       (openaiProxySettings as Record<string, unknown>).reasoning =
         updateArgs.reasoning_effort === null
           ? null
-          : { reasoning_effort: updateArgs.reasoning_effort };
+          : {
+              reasoning_effort: normalizeReasoningEffortForModel(
+                modelHandle,
+                String(updateArgs.reasoning_effort),
+              ),
+            };
     }
     if (typeof updateArgs?.strict === "boolean") {
       (openaiProxySettings as Record<string, unknown>).strict =

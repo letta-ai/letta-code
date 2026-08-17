@@ -11,6 +11,7 @@ import {
   type LocalProviderTimeout,
   resolveLocalProviderTimeout,
 } from "@/backend/local/local-provider-timeout";
+import { normalizeReasoningEffortForModel } from "@/utils/openai-reasoning-effort";
 import { isRecord } from "@/utils/type-guards";
 import { LocalPiModelsRuntime } from "./pi-models-runtime";
 import {
@@ -67,6 +68,9 @@ function thinkingLevelSetting(
 ): ThinkingLevel | undefined {
   const effort = settingString(value);
   if (effort === "max") return preserveMax ? "max" : "xhigh";
+  // pi-ai's public ThinkingLevel currently omits `none`, but ChatGPT GPT-5.6
+  // accepts it and rejects the legacy `minimal` alias (LET-11064).
+  if (effort === "none") return "none" as ThinkingLevel;
   return effort === "minimal" ||
     effort === "low" ||
     effort === "medium" ||
@@ -94,10 +98,16 @@ export function reasoningForSettings(
     : undefined;
   const modelId = modelHandle?.slice(modelHandle.indexOf("/") + 1);
   const preserveMax = modelId?.startsWith("gpt-5.6") === true;
-  return (
-    thinkingLevelSetting(nestedReasoning?.reasoning_effort, preserveMax) ??
-    thinkingLevelSetting(modelSettings.effort, preserveMax) ??
-    thinkingLevelSetting(modelSettings.reasoning_effort, preserveMax)
+  const rawEffort =
+    nestedReasoning?.reasoning_effort ??
+    modelSettings.effort ??
+    modelSettings.reasoning_effort;
+  return thinkingLevelSetting(
+    normalizeReasoningEffortForModel(
+      modelHandle,
+      typeof rawEffort === "string" ? rawEffort : undefined,
+    ),
+    preserveMax,
   );
 }
 

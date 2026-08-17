@@ -79,6 +79,22 @@ describe("conversation model carryover", () => {
     expect(carryover?.updateArgs?.context_window).not.toBe(128000);
   });
 
+  test("rewrites carried-over minimal reasoning for GPT-5.6 Sol", () => {
+    const carryover = buildConversationModelCarryoverUpdate({
+      rawModelHandle: "chatgpt-plus-pro/gpt-5.6-sol",
+      currentLlmConfig: {
+        model: "gpt-5.6-sol",
+        model_endpoint_type: "chatgpt_oauth",
+        reasoning_effort: "minimal",
+      } as LlmConfig,
+      activeConversationContextWindowLimit: null,
+    });
+
+    expect(carryover?.updateArgs).toMatchObject({
+      reasoning_effort: "none",
+    });
+  });
+
   test("uses centralized normalization for ChatGPT fast handles", () => {
     const carryover = buildConversationModelCarryoverUpdate({
       rawModelHandle: "chatgpt_oauth/gpt-5.5-fast",
