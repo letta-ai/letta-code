@@ -16,12 +16,10 @@ import {
   runWithRuntimeContext,
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-import {
-  enter_worktree,
-  rollbackWorktreeCreation,
-} from "@/tools/impl/enter-worktree";
+import { enter_worktree } from "@/tools/impl/enter-worktree";
 import {
   addWindowsPathLengthHint,
+  rollbackWorktreeCreation,
   withLongPaths,
 } from "@/tools/impl/worktree-git";
 import {
@@ -979,5 +977,19 @@ describe("EnterWorktree tool", () => {
         branchName: "letta/never-created-abc12345",
       }),
     ).resolves.toBeUndefined();
+  });
+
+  test("rollbackWorktreeCreation preserves a branch without the target worktree", async () => {
+    const repo = await trackRepo();
+    const branchName = "letta/concurrent-branch-test";
+    git(["branch", branchName, "HEAD"], repo);
+
+    await rollbackWorktreeCreation({
+      repoRoot: repo,
+      worktreePath: path.join(repo, ".letta", "worktrees", "never-created"),
+      branchName,
+    });
+
+    expect(git(["branch", "--list", branchName], repo).trim()).not.toBe("");
   });
 });

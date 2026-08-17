@@ -199,6 +199,69 @@ export function withLongPaths(
   return platform === "win32" ? ["-c", "core.longpaths=true", ...args] : args;
 }
 
+export async function rollbackWorktreeCreation(params: {
+  repoRoot: string;
+  worktreePath: string;
+  branchName: string;
+}): Promise<void> {
+  // Only delete the branch when this path is registered to it. A concurrent
+  // caller can create the same branch after name allocation but before add.
+  const list = await runGit(
+    ["worktree", "list", "--porcelain", "-z"],
+    params.repoRoot,
+    { allowFailure: true },
+  );
+  const targetPath = path.resolve(params.worktreePath);
+  const targetBranch = `branch refs/heads/${params.branchName}`;
+  const ownsBranch = list.stdout.split("\0\0").some((entry) => {
+    const fields = entry.split("\0");
+    const worktree = fields.find((field) => field.startsWith("worktree "));
+    return (
+      worktree !== undefined &&
+      path.resolve(worktree.slice("worktree ".length)) === targetPath &&
+      fields.includes(targetBranch)
+    );
+  });
+
+  await runGit(
+    ["worktree", "remove", "--force", params.worktreePath],
+    params.repoRoot,
+    { allowFailure: true },
+  );
+  if (ownsBranch) {
+    await runGit(["branch", "-D", params.branchName], params.repoRoot, {
+      allowFailure: true,
+    });
+  }
+}
+
+export async function addManagedWorktree(params: {
+  repoRoot: string;
+  worktreePath: string;
+  branchName: string;
+  baseRef: string;
+}): Promise<void> {
+  try {
+    // Keep long-path support scoped to this checkout. Do not change user Git
+    // configuration to make a managed worktree fit on Windows.
+    await runGit(
+      withLongPaths([
+        "worktree",
+        "add",
+        "--no-track",
+        "-b",
+        params.branchName,
+        params.worktreePath,
+        params.baseRef,
+      ]),
+      params.repoRoot,
+    );
+  } catch (error) {
+    await rollbackWorktreeCreation(params);
+    throw error;
+  }
+}
+
 export function isPathWithin(child: string, parent: string): boolean {
   const resolvedChild = path.resolve(child);
   const resolvedParent = path.resolve(parent);

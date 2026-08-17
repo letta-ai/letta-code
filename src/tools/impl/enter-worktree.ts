@@ -27,6 +27,7 @@ import {
 } from "./enter-worktree-messages.js";
 import { switchRuntimeWorkingDirectory } from "./runtime-working-directory";
 import {
+  addManagedWorktree,
   formatGitFailure,
   gitRefExists,
   gitStdout,
@@ -35,7 +36,6 @@ import {
   resolvePrimaryWorktreeRoot,
   resolveRepoRoot,
   runGit,
-  withLongPaths,
 } from "./worktree-git.js";
 
 interface EnterWorktreeArgs {
@@ -832,28 +832,6 @@ async function enterExistingWorktree(params: {
   };
 }
 
-/**
- * Removes a partially-created worktree registration and the branch that
- * `git worktree add -b` would have created. Called when checkout fails
- * mid-flight (e.g. Windows path-length errors) to avoid leaving stale git
- * state that requires manual cleanup. Both operations allow failure so that
- * missing registrations or branches are silently ignored.
- */
-export async function rollbackWorktreeCreation(params: {
-  repoRoot: string;
-  worktreePath: string;
-  branchName: string;
-}): Promise<void> {
-  await runGit(
-    ["worktree", "remove", "--force", params.worktreePath],
-    params.repoRoot,
-    { allowFailure: true },
-  );
-  await runGit(["branch", "-D", params.branchName], params.repoRoot, {
-    allowFailure: true,
-  });
-}
-
 export async function enter_worktree(
   rawArgs: Record<string, unknown>,
 ): Promise<EnterWorktreeResult> {
@@ -923,32 +901,7 @@ export async function enter_worktree(
     }
 
     await mkdir(managedDir, { recursive: true });
-    // `--no-track` keeps the new branch from adopting the base ref (e.g.
-    // origin/main) as its upstream, which would otherwise produce misleading
-    // ahead/behind status and risk an accidental push to the base branch.
-    // On Windows, `-c core.longpaths=true` is injected for this invocation
-    // only so that tracked paths near the MAX_PATH limit can be checked out
-    // without touching global git config.
-    try {
-      await runGit(
-        withLongPaths([
-          "worktree",
-          "add",
-          "--no-track",
-          "-b",
-          branchName,
-          worktreePath,
-          baseRef,
-        ]),
-        repoRoot,
-      );
-    } catch (error) {
-      // The branch and/or worktree registration may have been created before
-      // the checkout failed (common with Windows path-length errors). Roll
-      // both back so the caller starts from a clean slate.
-      await rollbackWorktreeCreation({ repoRoot, worktreePath, branchName });
-      throw error;
-    }
+    await addManagedWorktree({ repoRoot, worktreePath, branchName, baseRef });
 
     const normalizedWorktreePath = path.normalize(await realpath(worktreePath));
 
