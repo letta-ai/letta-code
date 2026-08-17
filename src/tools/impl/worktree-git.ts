@@ -186,6 +186,19 @@ export async function resolveDefaultBaseRef(repoRoot: string): Promise<string> {
     : "HEAD";
 }
 
+/**
+ * Prepends `-c core.longpaths=true` to git args on Windows so that
+ * `git worktree add` can check out repositories with long tracked paths
+ * without requiring a user-wide `core.longpaths` setting in global config.
+ * On other platforms the args are returned unchanged.
+ */
+export function withLongPaths(
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  return platform === "win32" ? ["-c", "core.longpaths=true", ...args] : args;
+}
+
 export function isPathWithin(child: string, parent: string): boolean {
   const resolvedChild = path.resolve(child);
   const resolvedParent = path.resolve(parent);

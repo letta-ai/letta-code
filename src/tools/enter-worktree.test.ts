@@ -16,8 +16,14 @@ import {
   runWithRuntimeContext,
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-import { enter_worktree } from "@/tools/impl/enter-worktree";
-import { addWindowsPathLengthHint } from "@/tools/impl/worktree-git";
+import {
+  enter_worktree,
+  rollbackWorktreeCreation,
+} from "@/tools/impl/enter-worktree";
+import {
+  addWindowsPathLengthHint,
+  withLongPaths,
+} from "@/tools/impl/worktree-git";
 import {
   clearToolsWithLock,
   executeTool,
@@ -921,5 +927,57 @@ describe("EnterWorktree tool", () => {
     );
 
     expect(message).not.toContain("Windows path-length issue");
+  });
+
+  test("withLongPaths injects -c core.longpaths=true on win32 only", () => {
+    const base = ["worktree", "add", "--no-track", "-b", "br", "/p", "HEAD"];
+    const win = withLongPaths(base, "win32");
+    expect(win).toEqual(["-c", "core.longpaths=true", ...base]);
+    const linux = withLongPaths(base, "linux");
+    expect(linux).toEqual(base);
+    const mac = withLongPaths(base, "darwin");
+    expect(mac).toEqual(base);
+  });
+
+  test("rollbackWorktreeCreation removes a registered worktree and its branch", async () => {
+    const repo = await trackRepo();
+    const worktreesDir = path.join(repo, ".letta", "worktrees");
+    await mkdir(worktreesDir, { recursive: true });
+    const worktreePath = path.join(worktreesDir, "partial");
+    const branchName = "letta/partial-rollback-test";
+    git(
+      ["worktree", "add", "--no-track", "-b", branchName, worktreePath, "HEAD"],
+      repo,
+    );
+
+    // Confirm partial state exists before rollback.
+    // git porcelain output uses forward slashes on all platforms.
+    const fwdSlash = (p: string) => p.replace(/\\/g, "/");
+    expect(git(["branch", "--list", branchName], repo).trim()).not.toBe("");
+    expect(git(["worktree", "list", "--porcelain"], repo)).toContain(
+      fwdSlash(worktreePath),
+    );
+
+    await rollbackWorktreeCreation({
+      repoRoot: repo,
+      worktreePath,
+      branchName,
+    });
+
+    expect(git(["branch", "--list", branchName], repo).trim()).toBe("");
+    expect(git(["worktree", "list", "--porcelain"], repo)).not.toContain(
+      fwdSlash(worktreePath),
+    );
+  });
+
+  test("rollbackWorktreeCreation is idempotent when nothing exists", async () => {
+    const repo = await trackRepo();
+    await expect(
+      rollbackWorktreeCreation({
+        repoRoot: repo,
+        worktreePath: path.join(repo, ".letta", "worktrees", "never-created"),
+        branchName: "letta/never-created-abc12345",
+      }),
+    ).resolves.toBeUndefined();
   });
 });
