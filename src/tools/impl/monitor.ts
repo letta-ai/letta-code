@@ -102,31 +102,43 @@ function validUtf8Prefix(buffer: Buffer, maxBytes: number): Buffer {
 class MonitorOutputWriter {
   private bytesWritten = 0;
   private truncated = false;
+  private writeFailed = false;
 
   constructor(private readonly path: string) {}
 
-  append(text: string): void {
-    if (this.truncated || !text) return;
+  append(text: string): boolean {
+    if (this.truncated || this.writeFailed || !text) return true;
     const chunk = Buffer.from(text, "utf8");
     const remaining = MONITOR_OUTPUT_FILE_BYTES - this.bytesWritten;
     if (chunk.length <= remaining) {
-      appendFileSync(this.path, chunk);
+      try {
+        appendFileSync(this.path, chunk);
+      } catch {
+        this.writeFailed = true;
+        return false;
+      }
       this.bytesWritten += chunk.length;
-      return;
+      return true;
     }
 
     const marker = Buffer.from(
       `\n[output truncated at ${MONITOR_OUTPUT_FILE_BYTES} bytes]\n`,
       "utf8",
     );
-    const content = validUtf8Prefix(
-      Buffer.concat([readFileSync(this.path), chunk]),
-      MONITOR_OUTPUT_FILE_BYTES - marker.length,
-    );
-    const truncatedOutput = Buffer.concat([content, marker]);
-    writeFileSync(this.path, truncatedOutput);
-    this.bytesWritten = truncatedOutput.length;
-    this.truncated = true;
+    try {
+      const content = validUtf8Prefix(
+        Buffer.concat([readFileSync(this.path), chunk]),
+        MONITOR_OUTPUT_FILE_BYTES - marker.length,
+      );
+      const truncatedOutput = Buffer.concat([content, marker]);
+      writeFileSync(this.path, truncatedOutput);
+      this.bytesWritten = truncatedOutput.length;
+      this.truncated = true;
+    } catch {
+      this.writeFailed = true;
+      return false;
+    }
+    return true;
   }
 }
 
@@ -413,9 +425,24 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
       if (!processState) return;
       const sanitizedText = sanitizeMonitorText(text, secrets);
       appendBackgroundProcessOutput(processState, stream, sanitizedText);
-      output.append(
+      const wrote = output.append(
         stream === "stderr" ? `[stderr] ${sanitizedText}` : sanitizedText,
       );
+      if (!wrote && processState.status === "running") {
+        appendBackgroundProcessOutput(
+          processState,
+          "stderr",
+          "[output file write failed; output may be incomplete]",
+        );
+        processState.completionNotificationSuppressed = true;
+        markMonitorFinished(taskId, processState, "failed", null);
+        try {
+          runningProcess.process.kill("SIGTERM");
+        } catch {
+          // Process may have already exited.
+        }
+        return;
+      }
       if (stream === "stdout") {
         events.onData(sanitizedText);
       }
@@ -622,7 +649,18 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
       secrets,
     );
     appendBackgroundProcessOutput(processState, "stdout", text);
-    output.append(`${text}\n`);
+    const wrote = output.append(`${text}\n`);
+    if (!wrote) {
+      appendBackgroundProcessOutput(
+        processState,
+        "stderr",
+        "[output file write failed; output may be incomplete]",
+      );
+      processState.completionNotificationSuppressed = true;
+      markMonitorFinished(taskId, processState, "failed", null);
+      closeSocket();
+      return;
+    }
     events.onData(`${text}\n`);
   });
 

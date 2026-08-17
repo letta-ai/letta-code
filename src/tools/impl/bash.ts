@@ -384,6 +384,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     noteExpectedWorktreeForLauncher(launcher, userCwd);
     const sandboxed = applyShellSandbox(launcher, userCwd, bgEnv);
     let bgProcess: BackgroundProcess;
+    let outputWriteFailed = false;
     const runningProcess = startShellProcess(sandboxed.launcher, {
       cwd: userCwd,
       env: sandboxed.env,
@@ -393,10 +394,24 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       onOutput(text, stream) {
         const sanitizedText = sanitizeOutput(text);
         appendBackgroundProcessOutput(bgProcess, stream, sanitizedText);
-        appendToOutputFile(
+        const wrote = appendToOutputFile(
           outputFile,
           stream === "stderr" ? `[stderr] ${sanitizedText}` : sanitizedText,
         );
+        if (!wrote && bgProcess.status === "running") {
+          outputWriteFailed = true;
+          appendBackgroundProcessOutput(
+            bgProcess,
+            "stderr",
+            "[output file write failed; output may be incomplete]",
+          );
+          bgProcess.status = "failed";
+          try {
+            runningProcess.process.kill("SIGTERM");
+          } catch {
+            // Process may have already exited.
+          }
+        }
       },
     });
     bgProcess = {
@@ -423,7 +438,8 @@ export async function bash(args: BashArgs): Promise<BashResult> {
 
     void runningProcess.completion.then(
       ({ exitCode }) => {
-        bgProcess.status = exitCode === 0 ? "completed" : "failed";
+        bgProcess.status =
+          exitCode === 0 && !outputWriteFailed ? "completed" : "failed";
         bgProcess.exitCode = exitCode;
         appendToOutputFile(outputFile, `\n[exit code: ${exitCode}]\n`);
         scrubCompletedBackgroundOutput(bgProcess);
@@ -433,9 +449,10 @@ export async function bash(args: BashArgs): Promise<BashResult> {
           outputFile,
           bgProcess,
           scope: notificationScope,
-          status: exitCode === 0 ? "completed" : "failed",
-          detail:
-            exitCode === null
+          status: exitCode === 0 && !outputWriteFailed ? "completed" : "failed",
+          detail: outputWriteFailed
+            ? "Output file write failed; output may be incomplete"
+            : exitCode === null
               ? "Terminated by signal before exiting"
               : `Exit code: ${exitCode}`,
         });

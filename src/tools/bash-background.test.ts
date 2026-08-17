@@ -34,7 +34,7 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     backgroundProcesses.clear();
     for (const outputFile of outputFiles) {
       if (fs.existsSync(outputFile)) {
-        fs.unlinkSync(outputFile);
+        fs.rmSync(outputFile, { recursive: true, force: true });
       }
     }
   });
@@ -54,6 +54,25 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     expect(backgroundProcesses.get(bashId ?? "")?.runtimeScope).toEqual(
       runtimeScope,
     );
+  });
+
+  test("fails a background process when its output file cannot be written", async () => {
+    const result = await bash({
+      command: "printf 'start\\n'; sleep 1; printf 'after\\n'; sleep 30",
+      description: "Test output write failure",
+      run_in_background: true,
+    });
+    const bashId = result.content[0]?.text.match(/bash_\d+/)?.[0];
+    expect(bashId).toBeDefined();
+
+    const processState = backgroundProcesses.get(bashId ?? "");
+    expect(processState?.outputFile).toBeDefined();
+    fs.rmSync(processState?.outputFile ?? "", { force: true });
+    fs.mkdirSync(processState?.outputFile ?? "");
+
+    await new Promise((resolve) => setTimeout(resolve, 1_250));
+
+    expect(backgroundProcesses.get(bashId ?? "")?.status).toBe("failed");
   });
 
   test("BashOutput retrieves output from background shell", async () => {

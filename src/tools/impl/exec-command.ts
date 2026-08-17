@@ -84,6 +84,7 @@ interface ExecSession {
   exitCode: number | null;
   tty: boolean;
   secrets: Readonly<Record<string, string>>;
+  outputWriteFailed?: boolean;
   cleanupTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -377,7 +378,24 @@ function createSessionOutputAppender(params: {
     if (bgProcess) {
       appendBackgroundProcessOutput(bgProcess, stream, sanitizedText);
     }
-    appendToOutputFile(params.outputFile, sanitizedText);
+    const wrote = appendToOutputFile(params.outputFile, sanitizedText);
+    if (!wrote && params.session.status === "running") {
+      params.session.outputWriteFailed = true;
+      appendSessionOutput(
+        params.session,
+        "\n[output file write failed; output may be incomplete]\n",
+        "stderr",
+      );
+      markSessionFailed(params.session);
+      const bgProc = backgroundProcesses.get(params.session.id);
+      if (bgProc) {
+        try {
+          bgProc.process.kill("SIGTERM");
+        } catch {
+          // Process may have already exited.
+        }
+      }
+    }
   };
 }
 
@@ -393,7 +411,8 @@ function markSessionFailed(session: ExecSession): void {
 }
 
 function markSessionClosed(session: ExecSession, code: number | null): void {
-  session.status = code === 0 ? "completed" : "failed";
+  session.status =
+    code === 0 && !session.outputWriteFailed ? "completed" : "failed";
   session.exitCode = code;
   const bgProcess = backgroundProcesses.get(session.id);
   if (bgProcess) {
@@ -523,6 +542,11 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     secrets: session.secrets,
   });
   if (session.status !== "running") {
+    try {
+      runningProcess.process.kill("SIGTERM");
+    } catch {
+      // Process may have already exited.
+    }
     scheduleBackgroundProcessCleanup(id);
   }
 
