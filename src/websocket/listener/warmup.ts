@@ -14,7 +14,7 @@ export type ListenerAgentMetadata = {
 };
 
 export type ListenerWarmupScope = {
-  agentId: string;
+  agentId: string | null;
   conversationId: string;
 };
 

@@ -68,7 +68,7 @@ export type ListenerTurnSetupResult =
 export async function prepareListenerTurn(params: {
   msg: IncomingMessage;
   runtime: ConversationRuntime;
-  agentId: string;
+  agentId: string | null;
   requestedConversationId?: string;
   conversationId: string;
   workingDirectory: string;
@@ -117,7 +117,9 @@ export async function prepareListenerTurn(params: {
 
   const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
   let queuedInterruptedToolCallIds: string[] = [];
-  const consumed = consumeInterruptQueue(runtime, agentId, conversationId);
+  const consumed = agentId
+    ? consumeInterruptQueue(runtime, agentId, conversationId)
+    : null;
   if (consumed) {
     messagesToSend.push(consumed.approvalMessage);
     queuedInterruptedToolCallIds = consumed.interruptedToolCallIds;
@@ -134,7 +136,7 @@ export async function prepareListenerTurn(params: {
     "approvals" in firstMessage;
   let cachedAgent: AgentState | null = null;
 
-  if (!isApprovalMessage) {
+  if (!isApprovalMessage && agentId) {
     try {
       try {
         cachedAgent = (await getBackend().retrieveAgent(agentId, {
@@ -226,17 +228,18 @@ export async function prepareListenerTurn(params: {
   const hasUserMessage = messagesToSend.some(
     (message) => "role" in message && message.role === "user",
   );
-  const turnStartEmission = hasUserMessage
-    ? await emitListenerTurnStart({
-        agentId,
-        conversationId,
-        input: messagesToSend,
-        runtime: runtime.listener,
-        workingDirectory,
-        permissionMode: permissionModeState.mode,
-        cachedAgent,
-      })
-    : ({ cancelled: false, handlerCount: 0, input: messagesToSend } as const);
+  const turnStartEmission =
+    hasUserMessage && agentId
+      ? await emitListenerTurnStart({
+          agentId,
+          conversationId,
+          input: messagesToSend,
+          runtime: runtime.listener,
+          workingDirectory,
+          permissionMode: permissionModeState.mode,
+          cachedAgent,
+        })
+      : ({ cancelled: false, handlerCount: 0, input: messagesToSend } as const);
   if (isInterrupted()) {
     return { kind: "interrupted" };
   }
@@ -266,15 +269,15 @@ export async function prepareListenerTurn(params: {
   if (currentInput !== messagesToSend) {
     inboundUserTranscriptLines = buildInboundUserTranscriptLines(currentInput);
   }
-  const modAdapters = await ensureListenerModAdaptersForAgent(
-    runtime.listener,
-    agentId,
-  );
-  runtime.transientChannelRuntimeTools =
-    await publishChannelRuntimeToolsForTurn(runtime.listener, {
-      agent_id: agentId,
-      conversation_id: conversationId,
-    });
+  const modAdapters = agentId
+    ? await ensureListenerModAdaptersForAgent(runtime.listener, agentId)
+    : [];
+  runtime.transientChannelRuntimeTools = agentId
+    ? await publishChannelRuntimeToolsForTurn(runtime.listener, {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      })
+    : false;
   if (isInterrupted()) {
     return { kind: "interrupted" };
   }
@@ -301,7 +304,7 @@ export async function prepareListenerTurn(params: {
     skillSources: runtime.skillSources,
     workspaceSandbox: runtime.workspaceSandbox,
     cachedAgent,
-    modContext: createListenerAgentModContext(agentId),
+    ...(agentId ? { modContext: createListenerAgentModContext(agentId) } : {}),
     modAdapters,
     modEvents: createListenerModEvents(modAdapters),
   });
@@ -311,7 +314,7 @@ export async function prepareListenerTurn(params: {
 
   const availableSkills = (
     await buildClientSkillsPayload({
-      agentId,
+      ...(agentId ? { agentId } : {}),
       workingDirectory,
       skillsDirectory: listenerOptions?.skillsDirectory,
       skillSources: runtime.skillSources,

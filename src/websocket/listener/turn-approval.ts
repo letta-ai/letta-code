@@ -151,7 +151,7 @@ export async function handleApprovalStop(params: {
   }>;
   runtime: ConversationRuntime;
   socket: ListenerTransport;
-  agentId: string;
+  agentId?: string;
   conversationId: string;
   turnWorkingDirectory: string;
   turnPermissionModeState: PermissionModeState;
@@ -574,13 +574,15 @@ export async function handleApprovalStop(params: {
     return interruptTermination();
   }
 
-  const pendingTeleport = claimPendingTeleportAtBoundary({
-    listener: runtime.listener,
-    agentId,
-    conversationId,
-    activeTurn: true,
-    continuation: { approvals: persistedExecutionResults },
-  });
+  const pendingTeleport = agentId
+    ? claimPendingTeleportAtBoundary({
+        listener: runtime.listener,
+        agentId,
+        conversationId,
+        activeTurn: true,
+        continuation: { approvals: persistedExecutionResults },
+      })
+    : null;
   if (pendingTeleport) {
     clearPendingApprovalBatchIds(
       runtime,
@@ -688,20 +690,22 @@ export async function handleApprovalStop(params: {
     runtime,
     decisions.map((decision) => decision.approval),
   );
-  await debugLogApprovalResumeState(runtime, {
-    agentId,
-    conversationId,
-    expectedToolCallIds: collectDecisionToolCallIds(
-      decisions.map((decision) => ({
-        approval: {
-          toolCallId: decision.approval.toolCallId,
-        },
-      })),
-    ),
-    sentToolCallIds: collectApprovalResultToolCallIds(
-      persistedExecutionResults,
-    ),
-  });
+  if (agentId) {
+    await debugLogApprovalResumeState(runtime, {
+      agentId,
+      conversationId,
+      expectedToolCallIds: collectDecisionToolCallIds(
+        decisions.map((decision) => ({
+          approval: {
+            toolCallId: decision.approval.toolCallId,
+          },
+        })),
+      ),
+      sentToolCallIds: collectApprovalResultToolCallIds(
+        persistedExecutionResults,
+      ),
+    });
+  }
   markAwaitingAcceptedApprovalContinuationRunId(
     runtime,
     turnLease,

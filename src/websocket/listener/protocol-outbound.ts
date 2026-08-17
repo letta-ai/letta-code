@@ -152,7 +152,7 @@ function getScopeForRuntime(
 ): PartialRuntimeScope {
   if (runtime && "listener" in runtime) {
     return {
-      agent_id: scope?.agent_id ?? runtime.agentId,
+      agent_id: scope && "agent_id" in scope ? scope.agent_id : runtime.agentId,
       conversation_id: scope?.conversation_id ?? runtime.conversationId,
     };
   }
@@ -800,7 +800,7 @@ export function emitDeviceStatusUpdateIfChanged(
 export function emitStateSync(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
-  scope: RuntimeScope,
+  scope: RuntimeScope<string | null>,
   options?: {
     forceDeviceStatus?: boolean;
     routing?: ListenerMessageRouting;
@@ -830,7 +830,7 @@ function resolveSubagentScopeForSnapshot(
     agent_id?: string | null;
     conversation_id?: string | null;
   },
-): RuntimeScope | null {
+): RuntimeScope<string | null> | null {
   const listener = getListenerRuntime(runtime);
   return resolveRuntimeScope(listener, getScopeForRuntime(runtime, scope));
 }

@@ -651,16 +651,16 @@ export const __listenClientTestUtils = {
   replaySyncStateForRuntime: (
     runtime: ListenerRuntime,
     socket: WebSocket,
-    scope: { agent_id: string; conversation_id: string },
+    scope: { agent_id: string | null; conversation_id: string },
     opts?: {
       recoverApprovals?: boolean;
       recoverApprovalStateForSync?: (
         runtime: ConversationRuntime,
-        scope: { agent_id: string; conversation_id: string },
+        scope: { agent_id: string | null; conversation_id: string },
       ) => Promise<void>;
       scheduleWarmupsAfterSync?: (
         runtime: ListenerRuntime,
-        scope: { agent_id: string; conversation_id: string },
+        scope: { agent_id: string | null; conversation_id: string },
       ) => void;
       forceDeviceStatus?: boolean;
     },

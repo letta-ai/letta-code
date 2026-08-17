@@ -19,7 +19,7 @@ import type { ConversationRuntime } from "./types";
 
 export function createTurnInputSender(params: {
   conversationId: string;
-  agentId: string;
+  agentId: string | null;
   socket: ListenerTransport;
   runtime: ConversationRuntime;
   turnLease: TurnLease;
