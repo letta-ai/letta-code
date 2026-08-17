@@ -199,6 +199,17 @@ export function withLongPaths(
   return platform === "win32" ? ["-c", "core.longpaths=true", ...args] : args;
 }
 
+async function enableRepoLongPaths(
+  repoRoot: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  if (platform === "win32") {
+    // The checkout override is not enough: later Git commands in the longer
+    // worktree must also accept the same paths. Keep the setting repo-local.
+    await runGit(["config", "--local", "core.longpaths", "true"], repoRoot);
+  }
+}
+
 export async function rollbackWorktreeCreation(params: {
   repoRoot: string;
   worktreePath: string;
@@ -241,9 +252,8 @@ export async function addManagedWorktree(params: {
   branchName: string;
   baseRef: string;
 }): Promise<void> {
+  await enableRepoLongPaths(params.repoRoot);
   try {
-    // Keep long-path support scoped to this checkout. Do not change user Git
-    // configuration to make a managed worktree fit on Windows.
     await runGit(
       withLongPaths([
         "worktree",
