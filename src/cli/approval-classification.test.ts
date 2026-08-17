@@ -115,6 +115,63 @@ describe("classifyApprovals", () => {
     expect(denied?.permission.reason).toBe(denied?.denyReason);
   });
 
+  test("flags empty arguments as dropped in transit, not omitted by the model", async () => {
+    await loadTools();
+    permissionMode.setMode("unrestricted");
+    process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_empty_args",
+          toolName: "Bash",
+          toolArgs: "{}",
+        },
+      ],
+      {
+        requireArgsForAutoApprove: true,
+        workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+      },
+    );
+
+    expect(result.autoDenied).toHaveLength(1);
+    const [denied] = result.autoDenied;
+    expect(denied?.missingRequiredArgs).toEqual(["command", "description"]);
+    expect(denied?.denyReason).toContain("arrived with empty arguments");
+    expect(denied?.denyReason).toContain("Do not resend an identical call");
+  });
+
+  test("flags unparseable arguments as truncated in transit", async () => {
+    await loadTools();
+    permissionMode.setMode("unrestricted");
+    process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+    // Shape of a payload truncated mid-string on the way to the client.
+    const truncated = '{"command":"echo hello';
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_truncated_args",
+          toolName: "Bash",
+          toolArgs: truncated,
+        },
+      ],
+      {
+        requireArgsForAutoApprove: true,
+        workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+      },
+    );
+
+    expect(result.autoDenied).toHaveLength(1);
+    const [denied] = result.autoDenied;
+    expect(denied?.parsedArgs).toEqual({});
+    expect(denied?.denyReason).toContain(
+      `The raw arguments (${truncated.length} chars) were not valid JSON`,
+    );
+    expect(denied?.denyReason).toContain("Do not resend an identical call");
+  });
+
   test("reports missing exec_command cmd as validation error before auto-allow", async () => {
     await loadSpecificTools(["exec_command"]);
     permissionMode.setMode("unrestricted");
