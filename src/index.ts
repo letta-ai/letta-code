@@ -2696,7 +2696,6 @@ async function main(): Promise<void> {
     const startupConversationTitleEligible = !isResumedConversation(
       resumeData?.conversation,
     );
-
     if (!agentId || !conversationId) {
       return React.createElement(App, {
         agentId: "loading",
@@ -2726,6 +2725,7 @@ async function main(): Promise<void> {
       agentId,
       agentState,
       conversationId,
+      conversationSummary: resumeData?.conversation?.summary?.trim() || null,
       loadingState: appLoadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,
