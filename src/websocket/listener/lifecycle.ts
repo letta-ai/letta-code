@@ -10,6 +10,7 @@ import {
 } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { loadTools } from "@/tools/manager";
+import type { RuntimeScope } from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import {
@@ -170,25 +171,23 @@ export function runDetachedListenerTask(
       error,
       `listener_${commandName}`,
     );
-    if (isDebugEnabled()) {
+    if (isDebugEnabled())
       console.error(`[Listen] ${commandName} failed:`, error);
-    }
   });
 }
-
 export async function replaySyncStateForRuntime(
   listenerRuntime: ListenerRuntime,
   socket: WebSocket,
-  scope: { agent_id: string; conversation_id: string },
+  scope: RuntimeScope<string | null>,
   opts?: {
     recoverApprovals?: boolean;
     recoverApprovalStateForSync?: (
       runtime: ConversationRuntime,
-      scope: { agent_id: string; conversation_id: string },
+      scope: RuntimeScope<string | null>,
     ) => Promise<void>;
     scheduleWarmupsAfterSync?: (
       runtime: ListenerRuntime,
-      scope: { agent_id: string; conversation_id: string },
+      scope: RuntimeScope<string | null>,
     ) => void;
     forceDeviceStatus?: boolean;
   },
@@ -227,10 +226,9 @@ export async function replaySyncStateForRuntime(
     scope,
   );
 }
-
 function getParsedRuntimeScope(
   parsed: unknown,
-): { agent_id: string; conversation_id: string } | null {
+): RuntimeScope<string | null> | null {
   if (!parsed || typeof parsed !== "object" || !("runtime" in parsed)) {
     return null;
   }
@@ -240,9 +238,11 @@ function getParsedRuntimeScope(
       runtime?: { agent_id?: unknown; conversation_id?: unknown };
     }
   ).runtime;
-  if (!runtime || typeof runtime.agent_id !== "string") {
+  if (
+    !runtime ||
+    (runtime.agent_id !== null && typeof runtime.agent_id !== "string")
+  )
     return null;
-  }
 
   return {
     agent_id: runtime.agent_id,

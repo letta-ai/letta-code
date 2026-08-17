@@ -272,7 +272,7 @@ describe("MessageChannel idempotency (gateway)", () => {
     const { hooks } = makeHooks({
       executeExternalTool: async (req, _s, scope) => {
         const rt = req.runtime;
-        if (!rt) throw new Error("runtime required");
+        if (!rt?.agent_id) throw new Error("agent runtime required");
         let result: ExternalToolCallResult;
         try {
           const text = await executeMessageChannel(req.input, {

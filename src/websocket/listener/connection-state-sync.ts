@@ -43,7 +43,7 @@ export function replaySubscribedConnectionState(
   listener: ListenerRuntime,
   transport: ListenerTransport,
   runtime: ConversationRuntime,
-  scope: RuntimeScope,
+  scope: RuntimeScope<string | null>,
   forceDeviceStatus?: boolean,
 ): void {
   const connection = findListenerConnectionByTransport(listener, transport);

@@ -37,13 +37,12 @@
   "src/settings-manager.ts": 2102,
   "src/tools/manager.ts": 2994,
   "src/tools/tool-execution-context.test.ts": 1138,
-  "src/types/protocol_v2.ts": 2876,
+  "src/types/protocol_v2.ts": 2862,
   "src/websocket/listen-client-concurrency.test.ts": 2686,
   "src/websocket/listen-client-protocol.test.ts": 5820,
   "src/websocket/listener/commands/memory.ts": 1114,
   "src/websocket/listener/file-commands.ts": 1053,
   "src/websocket/listener/lifecycle.ts": 1051,
-  "src/websocket/listener/protocol-inbound.ts": 2242,
-  "src/websocket/listener/protocol-outbound.ts": 1070,
-  "src/websocket/listener/turn.ts": 1009
+  "src/websocket/listener/protocol-inbound.ts": 2237,
+  "src/websocket/listener/protocol-outbound.ts": 1070
 }

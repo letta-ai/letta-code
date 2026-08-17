@@ -135,7 +135,7 @@ export function subscribeListenerConnection(
   scope: { agent_id?: string | null; conversation_id?: string | null },
 ): boolean {
   const connection = runtime.connections.get(connectionId);
-  if (!connection || typeof scope.agent_id !== "string") {
+  if (!connection || scope.agent_id === undefined) {
     return false;
   }
   const runtimeKey = getConversationRuntimeKey(
@@ -173,7 +173,7 @@ export function getSubscribedListenerConnections(
   runtime: ListenerRuntime,
   scope: { agent_id?: string | null; conversation_id?: string | null },
 ): ListenerConnectionState[] {
-  if (typeof scope.agent_id !== "string") {
+  if (scope.agent_id === undefined) {
     return [];
   }
   const runtimeKey = getConversationRuntimeKey(

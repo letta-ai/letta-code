@@ -41,7 +41,7 @@ export class FakeClient implements ChannelGatewayClient {
     (request: ExternalToolCallRequestMessage) => unknown
   > = [];
   readonly submittedInputs: Array<{
-    runtime: RuntimeScope;
+    runtime: RuntimeScope<string | null>;
     payload: unknown;
   }> = [];
   readonly startedRuntimes: Array<{
