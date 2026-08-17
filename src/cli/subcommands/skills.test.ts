@@ -6,13 +6,13 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { __testOverrideNpmManagedModPackageInstaller } from "@/mods/package-installer";
 import {
   deleteSkillDirectory,
   downloadDirectSkillFileSource,
@@ -22,9 +22,11 @@ import {
   parseClawHubSpecifier,
   parseDirectSkillFileUrlSpecifier,
   parseGitHubSpecifier,
-  runInstallSubcommand,
+  previewSkillDirectory,
   syncCommittedRemoteSkillMemoryChange,
-} from "./skills";
+} from "@/agent/skill-installer";
+import { __testOverrideNpmManagedModPackageInstaller } from "@/mods/package-installer";
+import { runInstallSubcommand } from "./skills";
 
 function createChildProcess(): ChildProcess {
   const child = new EventEmitter() as ChildProcess;
@@ -233,6 +235,45 @@ describe("skills subcommand", () => {
       expect(
         await readFile(join(result.path, "scripts", "client.py"), "utf8"),
       ).toBe("print('ok')\n");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects skill directories containing symlinks", async () => {
+    const sourceDir = mkdtempSync(join(tmpdir(), "letta-skill-symlink-"));
+    try {
+      writeFileSync(
+        join(sourceDir, "SKILL.md"),
+        "---\nname: linked-skill\ndescription: unsafe\n---\n",
+      );
+      symlinkSync("/etc/passwd", join(sourceDir, "payload"));
+
+      expect(() => previewSkillDirectory(sourceDir)).toThrow(
+        "Skill directories cannot contain symlinks",
+      );
+    } finally {
+      await rm(sourceDir, { recursive: true, force: true });
+    }
+  });
+
+  test("normalizes quoted community skill names", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "letta-skills-test-"));
+    try {
+      const sourceDir = join(tempRoot, "source");
+      const memoryDir = join(tempRoot, "memory");
+      await mkdir(sourceDir, { recursive: true });
+      writeFileSync(
+        join(sourceDir, "SKILL.md"),
+        '---\nname: "community-skill"\ndescription: "Community skill"\n---\n\n# Community\n',
+      );
+
+      const result = await installSkillDirectory({ sourceDir, memoryDir });
+
+      expect(result.name).toBe("community-skill");
+      expect(await readFile(join(result.path, "SKILL.md"), "utf8")).toContain(
+        "# Community",
+      );
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

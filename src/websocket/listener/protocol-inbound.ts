@@ -87,8 +87,6 @@ import type {
   SecretListCommand,
   SetExperimentCommand,
   SetReflectionSettingsCommand,
-  SkillDisableCommand,
-  SkillEnableCommand,
   SyncCommand,
   TerminalInputCommand,
   TerminalKillCommand,
@@ -102,6 +100,12 @@ import type {
   WriteMemoryFileCommand,
   WsProtocolCommand,
 } from "@/types/protocol_v2";
+import {
+  isSkillCatalogInstallCommand,
+  isSkillCatalogPreviewCommand,
+  isSkillDisableCommand,
+  isSkillEnableCommand,
+} from "@/websocket/listener/skill-protocol-inbound";
 
 const EXPERIMENT_IDS = new Set<ExperimentId>([
   "conversation_titles",
@@ -1221,38 +1225,6 @@ export function isCronDeleteAllCommand(
   );
 }
 
-export function isSkillEnableCommand(
-  value: unknown,
-): value is SkillEnableCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    skill_path?: unknown;
-  };
-  return (
-    c.type === "skill_enable" &&
-    typeof c.request_id === "string" &&
-    typeof c.skill_path === "string"
-  );
-}
-
-export function isSkillDisableCommand(
-  value: unknown,
-): value is SkillDisableCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    name?: unknown;
-  };
-  return (
-    c.type === "skill_disable" &&
-    typeof c.request_id === "string" &&
-    typeof c.name === "string"
-  );
-}
-
 export function isCreateAgentCommand(
   value: unknown,
 ): value is CreateAgentCommand {
@@ -2176,6 +2148,8 @@ export function parseServerMessage(
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
+      isSkillCatalogPreviewCommand(parsed) ||
+      isSkillCatalogInstallCommand(parsed) ||
       isAppServerInfoCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
       isAgentListCommand(parsed) ||

@@ -46,6 +46,17 @@ import type {
 } from "./external-tool-protocol";
 import type { RuntimeScope } from "./runtime-scope";
 import type { CronRunLogPage, CronTask } from "./schedule-protocol";
+import type {
+  SkillCatalogInstallCommand,
+  SkillCatalogInstallResponseMessage,
+  SkillCatalogPreviewCommand,
+  SkillCatalogPreviewResponseMessage,
+  SkillDisableCommand,
+  SkillDisableResponseMessage,
+  SkillEnableCommand,
+  SkillEnableResponseMessage,
+  SkillsUpdatedMessage,
+} from "./skill-catalog-protocol";
 import type * as TeleportProtocol from "./teleport-protocol";
 
 export type * from "./background-process-protocol";
@@ -53,6 +64,18 @@ export type * from "./cwd-protocol";
 export type * from "./external-tool-protocol";
 export type * from "./runtime-scope";
 export type * from "./schedule-protocol";
+export type {
+  CatalogSkillReferenceMessage,
+  SkillCatalogInstallCommand,
+  SkillCatalogInstallResponseMessage,
+  SkillCatalogPreviewCommand,
+  SkillCatalogPreviewResponseMessage,
+  SkillDisableCommand,
+  SkillDisableResponseMessage,
+  SkillEnableCommand,
+  SkillEnableResponseMessage,
+  SkillsUpdatedMessage,
+} from "./skill-catalog-protocol";
 export type * from "./teleport-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
@@ -1683,43 +1706,6 @@ export interface CronDeleteAllCommand {
   agent_id: string;
 }
 
-export interface SkillEnableCommand {
-  type: "skill_enable";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-  /** Absolute path to the skill directory on the local machine. */
-  skill_path: string;
-}
-
-export interface SkillEnableResponseMessage {
-  type: "skill_enable_response";
-  request_id: string;
-  success: boolean;
-  skill_name?: string;
-  error?: string;
-}
-
-export interface SkillDisableCommand {
-  type: "skill_disable";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-  /** Skill name (symlink name in ~/.letta/skills/). */
-  name: string;
-}
-
-export interface SkillDisableResponseMessage {
-  type: "skill_disable_response";
-  request_id: string;
-  success: boolean;
-  skill_name?: string;
-  error?: string;
-}
-
-export interface SkillsUpdatedMessage {
-  type: "skills_updated";
-  timestamp: number;
-}
-
 export interface CreateAgentCommand {
   type: "create_agent";
   /** Echoed back in the response for request correlation. */
@@ -2713,6 +2699,8 @@ export type WsProtocolCommand =
   | CronDeleteAllCommand
   | SkillEnableCommand
   | SkillDisableCommand
+  | SkillCatalogPreviewCommand
+  | SkillCatalogInstallCommand
   | CreateAgentCommand
   | AppServerInfoCommand
   | AgentListCommand
@@ -2817,6 +2805,8 @@ export type WsProtocolMessage =
   | CronsUpdatedMessage
   | SkillEnableResponseMessage
   | SkillDisableResponseMessage
+  | SkillCatalogPreviewResponseMessage
+  | SkillCatalogInstallResponseMessage
   | SkillsUpdatedMessage
   | CreateAgentResponseMessage
   | AppServerInfoResponseMessage

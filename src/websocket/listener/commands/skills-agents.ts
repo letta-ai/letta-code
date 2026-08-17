@@ -1,16 +1,20 @@
 import type WebSocket from "ws";
 import { resolveModel } from "@/agent/model";
 import { settingsManager } from "@/settings-manager";
+import type { CreateAgentCommand } from "@/types/protocol_v2";
 import type {
-  CreateAgentCommand,
+  SkillCatalogInstallCommand,
+  SkillCatalogPreviewCommand,
   SkillDisableCommand,
   SkillEnableCommand,
-} from "@/types/protocol_v2";
+} from "@/types/skill-catalog-protocol";
+import { isCreateAgentCommand } from "@/websocket/listener/protocol-inbound";
 import {
-  isCreateAgentCommand,
+  isSkillCatalogInstallCommand,
+  isSkillCatalogPreviewCommand,
   isSkillDisableCommand,
   isSkillEnableCommand,
-} from "@/websocket/listener/protocol-inbound";
+} from "@/websocket/listener/skill-protocol-inbound";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 export type SkillCommand = SkillEnableCommand | SkillDisableCommand;
@@ -294,6 +298,101 @@ export async function handleCreateAgentCommand(
   }
 }
 
+async function handleSkillCatalogPreviewCommand(
+  parsed: SkillCatalogPreviewCommand,
+  socket: WebSocket,
+  safeSocketSend: SafeSocketSend,
+): Promise<void> {
+  try {
+    const { previewCatalogSkill } = await import("@/agent/skill-catalog");
+    const preview = await previewCatalogSkill(parsed.skill);
+    safeSocketSend(
+      socket,
+      {
+        type: "skill_catalog_preview_response",
+        request_id: parsed.request_id,
+        success: true,
+        skill: {
+          name: preview.name,
+          ...(preview.description ? { description: preview.description } : {}),
+          skill_md: preview.skillMd,
+          source: preview.source,
+          ...(preview.sourceUrl ? { source_url: preview.sourceUrl } : {}),
+        },
+      },
+      "listener_skill_catalog_send_failed",
+      "listener_skill_catalog_preview",
+    );
+  } catch (error) {
+    safeSocketSend(
+      socket,
+      {
+        type: "skill_catalog_preview_response",
+        request_id: parsed.request_id,
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Failed to preview skill",
+      },
+      "listener_skill_catalog_send_failed",
+      "listener_skill_catalog_preview",
+    );
+  }
+}
+
+async function handleSkillCatalogInstallCommand(
+  parsed: SkillCatalogInstallCommand,
+  socket: WebSocket,
+  safeSocketSend: SafeSocketSend,
+): Promise<void> {
+  try {
+    const { installCatalogSkill } = await import("@/agent/skill-catalog");
+    const result = await installCatalogSkill({
+      reference: parsed.skill,
+      agentId: parsed.agent_id,
+    });
+    if (result.memorySync?.status === "push_failed") {
+      throw new Error(result.memorySync.summary);
+    }
+    safeSocketSend(
+      socket,
+      {
+        type: "memory_updated",
+        affected_paths: [`skills/${result.name}`],
+        timestamp: Date.now(),
+      },
+      "listener_skill_catalog_send_failed",
+      "listener_skill_catalog_install",
+    );
+    safeSocketSend(
+      socket,
+      {
+        type: "skill_catalog_install_response",
+        request_id: parsed.request_id,
+        success: true,
+        name: result.name,
+        source: result.source,
+        committed: result.committed,
+        ...(result.commitSha ? { commit_sha: result.commitSha } : {}),
+      },
+      "listener_skill_catalog_send_failed",
+      "listener_skill_catalog_install",
+    );
+  } catch (error) {
+    safeSocketSend(
+      socket,
+      {
+        type: "skill_catalog_install_response",
+        request_id: parsed.request_id,
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Failed to install skill",
+      },
+      "listener_skill_catalog_send_failed",
+      "listener_skill_catalog_install",
+    );
+  }
+}
+
 export function handleSkillAgentProtocolCommand(
   parsed: unknown,
   context: SkillAgentCommandContext,
@@ -303,6 +402,20 @@ export function handleSkillAgentProtocolCommand(
   if (isSkillEnableCommand(parsed) || isSkillDisableCommand(parsed)) {
     runDetachedListenerTask("skill_command", async () => {
       await handleSkillCommand(parsed, socket, safeSocketSend);
+    });
+    return true;
+  }
+
+  if (isSkillCatalogPreviewCommand(parsed)) {
+    runDetachedListenerTask("skill_catalog_preview", async () => {
+      await handleSkillCatalogPreviewCommand(parsed, socket, safeSocketSend);
+    });
+    return true;
+  }
+
+  if (isSkillCatalogInstallCommand(parsed)) {
+    runDetachedListenerTask("skill_catalog_install", async () => {
+      await handleSkillCatalogInstallCommand(parsed, socket, safeSocketSend);
     });
     return true;
   }
