@@ -226,7 +226,10 @@ jobs:
           name: Release ${{ steps.version.outputs.tag }}
           previous_tag: ${{ steps.version.outputs.previous_tag }}
           generate_release_notes: true
-          files: letta.js
+          files: |
+            letta.js
+            install.sh
+            install.ps1
           fail_on_unmatched_files: true
 
       - name: Create GitHub Release (no previous tag)
@@ -237,7 +240,10 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Release ${{ steps.version.outputs.tag }}
           generate_release_notes: true
-          files: letta.js
+          files: |
+            letta.js
+            install.sh
+            install.ps1
           fail_on_unmatched_files: true
 
       # Propagate the release downstream: dispatch the packaging bump
