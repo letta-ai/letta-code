@@ -23,15 +23,20 @@ export type SplitStreamOpenOutcome =
 
 type ListenerReadyOutcome =
   | { kind: "ready"; generation: string }
+  | { kind: "wrong_generation"; generation: string; expectedGeneration: string }
   | { kind: "closed" }
   | { kind: "timed_out"; timeoutMs: number };
 
 export async function waitForListenerReadyGeneration(
-  controlSocket: WebSocket,
+  socket: WebSocket,
+  options: {
+    expectedGeneration?: string;
+    startTimeoutAfterOpen?: boolean;
+  } = {},
 ): Promise<ListenerReadyOutcome> {
   if (
-    controlSocket.readyState === WebSocket.CLOSING ||
-    controlSocket.readyState === WebSocket.CLOSED
+    socket.readyState === WebSocket.CLOSING ||
+    socket.readyState === WebSocket.CLOSED
   ) {
     return { kind: "closed" };
   }
@@ -42,9 +47,10 @@ export async function waitForListenerReadyGeneration(
     let settled = false;
 
     function cleanup() {
-      controlSocket.off("message", handleMessage);
-      controlSocket.off("error", handleFailure);
-      controlSocket.off("close", handleFailure);
+      socket.off("open", startTimeout);
+      socket.off("message", handleMessage);
+      socket.off("error", handleFailure);
+      socket.off("close", handleFailure);
       if (timeout) {
         clearTimeout(timeout);
         timeout = null;
@@ -58,26 +64,85 @@ export async function waitForListenerReadyGeneration(
       resolve(result);
     }
 
+    function startTimeout() {
+      if (timeout || settled) return;
+      timeout = setTimeout(
+        () => settle({ kind: "timed_out", timeoutMs }),
+        timeoutMs,
+      );
+      timeout.unref?.();
+    }
+
     function handleMessage(data: WebSocket.RawData) {
       const message = parseServerLifecycleMessage(data);
-      if (message?.type === "listener_ready") {
-        settle({ kind: "ready", generation: message.connection_generation });
+      if (message?.type !== "listener_ready") return;
+      if (
+        options.expectedGeneration &&
+        message.connection_generation !== options.expectedGeneration
+      ) {
+        settle({
+          kind: "wrong_generation",
+          generation: message.connection_generation,
+          expectedGeneration: options.expectedGeneration,
+        });
+        return;
       }
+      settle({ kind: "ready", generation: message.connection_generation });
     }
 
-    function handleFailure() {
-      settle({ kind: "closed" });
-    }
+    const handleFailure = () => settle({ kind: "closed" });
 
-    timeout = setTimeout(
-      () => settle({ kind: "timed_out", timeoutMs }),
-      timeoutMs,
-    );
-    timeout.unref?.();
-    controlSocket.on("message", handleMessage);
-    controlSocket.once("error", handleFailure);
-    controlSocket.once("close", handleFailure);
+    socket.on("message", handleMessage);
+    socket.once("error", handleFailure);
+    socket.once("close", handleFailure);
+    if (options.startTimeoutAfterOpen) {
+      socket.once("open", startTimeout);
+      if (socket.readyState === WebSocket.OPEN) startTimeout();
+    } else {
+      startTimeout();
+    }
   });
+}
+
+export function createSplitStreamSocket(
+  url: URL,
+  apiKey: string,
+  runtime: ListenerRuntime,
+  trackListenerError: TrackListenerError,
+  generation?: string,
+) {
+  const nextUrl = new URL(url);
+  if (generation) nextUrl.searchParams.set("connectionGeneration", generation);
+  const socket = new WebSocket(nextUrl.toString(), {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  const listenerReady = generation
+    ? waitForListenerReadyGeneration(socket, {
+        expectedGeneration: generation,
+        startTimeoutAfterOpen: true,
+      })
+    : null;
+  attachSplitStreamSocketHandlers({
+    runtime,
+    streamSocket: socket,
+    trackListenerError,
+  });
+  return { socket, listenerReady };
+}
+
+export async function requireMatchingListenerReady(
+  listenerReady: ReturnType<typeof waitForListenerReadyGeneration>,
+  label: string,
+): Promise<string> {
+  const result = await listenerReady;
+  if (result.kind === "ready") return result.generation;
+  const detail =
+    result.kind === "timed_out"
+      ? `${label} listener ready message did not arrive within ${result.timeoutMs}ms`
+      : result.kind === "wrong_generation"
+        ? `${label} acknowledged generation ${result.generation} instead of ${result.expectedGeneration}`
+        : `${label} closed before its listener ready message arrived`;
+  throw new Error(`${detail}; reconnecting paired listener sockets`);
 }
 
 function terminateSocketIfOpenOrConnecting(socket: WebSocket | null): void {
@@ -252,11 +317,13 @@ export async function prepareSplitStreamTransport({
   controlSocket,
   streamSocket,
   trackListenerError,
+  publishTransport = true,
 }: {
   runtime: ListenerRuntime;
   controlSocket: WebSocket;
   streamSocket: WebSocket | null;
   trackListenerError: TrackListenerError;
+  publishTransport?: boolean;
 }): Promise<SplitStreamOpenOutcome> {
   if (!isCurrentSocketPair(runtime, controlSocket, streamSocket)) {
     return { kind: "stale" };
@@ -288,7 +355,9 @@ export async function prepareSplitStreamTransport({
     return { kind: "stale" };
   }
 
-  runtime.streamTransport = result.transport;
+  if (publishTransport) {
+    runtime.streamTransport = result.transport;
+  }
   return { kind: "ready", transport: result.transport };
 }
 

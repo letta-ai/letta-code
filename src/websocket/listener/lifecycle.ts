@@ -75,9 +75,11 @@ import {
 } from "./runtime";
 import {
   attachSplitStreamSocketHandlers,
+  createSplitStreamSocket,
   handleListenerSocketOpenFailure,
   isCurrentSocketPair,
   prepareSplitStreamTransport,
+  requireMatchingListenerReady,
   shouldHandleControlSocketClose,
   waitForListenerReadyGeneration,
 } from "./split-stream-lifecycle";
@@ -807,27 +809,14 @@ async function connectWithRetry(
   const socket = new WebSocket(url.toString(), {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
-
-  function createStreamSocket(generation?: string): WebSocket | null {
-    if (!streamUrl) return null;
-    const nextUrl = new URL(streamUrl);
-    if (generation) {
-      nextUrl.searchParams.set("connectionGeneration", generation);
-    }
-    const nextSocket = new WebSocket(nextUrl.toString(), {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    attachSplitStreamSocketHandlers({
-      runtime,
-      streamSocket: nextSocket,
-      trackListenerError,
-    });
-    return nextSocket;
-  }
-
-  let streamSocket = usesPairedListenerGenerations
-    ? null
-    : createStreamSocket();
+  let pairedStreamReadyPromise: ReturnType<
+    typeof waitForListenerReadyGeneration
+  > | null = null;
+  const initialStream =
+    streamUrl && !usesPairedListenerGenerations
+      ? createSplitStreamSocket(streamUrl, apiKey, runtime, trackListenerError)
+      : null;
+  let streamSocket = initialStream?.socket ?? null;
 
   const fileCommandSession = createFileCommandSession({
     socket,
@@ -846,21 +835,27 @@ async function connectWithRetry(
       : null;
     void (async () => {
       if (listenerReadyPromise) {
-        const ready = await listenerReadyPromise;
-        if (ready.kind !== "ready") {
-          const detail =
-            ready.kind === "timed_out"
-              ? `Listener ready message did not arrive within ${ready.timeoutMs}ms`
-              : "Control WebSocket closed before the listener ready message arrived";
-          throw new Error(`${detail}; reconnecting paired listener sockets`);
-        }
+        const generation = await requireMatchingListenerReady(
+          listenerReadyPromise,
+          "Control WebSocket",
+        );
         if (!isCurrentSocketPair(runtime, socket, null)) return;
-        const pairedStreamSocket = createStreamSocket(ready.generation);
-        if (!pairedStreamSocket) {
+        if (!streamUrl) {
           throw new Error("Paired listener stream URL was not configured");
         }
-        streamSocket = pairedStreamSocket;
-        runtime.streamSocket = pairedStreamSocket;
+        // Attach the acknowledgement listener at construction time so a relay
+        // response sent with the upgrade cannot race listener setup. Runtime
+        // startup stays blocked below until this generation is accepted.
+        const pairedStream = createSplitStreamSocket(
+          streamUrl,
+          apiKey,
+          runtime,
+          trackListenerError,
+          generation,
+        );
+        pairedStreamReadyPromise = pairedStream.listenerReady;
+        streamSocket = pairedStream.socket;
+        runtime.streamSocket = pairedStream.socket;
       }
 
       const streamOpen = await prepareSplitStreamTransport({
@@ -868,14 +863,19 @@ async function connectWithRetry(
         controlSocket: socket,
         streamSocket,
         trackListenerError,
+        publishTransport: !usesPairedListenerGenerations,
       });
       if (streamOpen.kind !== "ready") {
         return;
       }
       const streamTransport = streamOpen.transport;
-      if (!isCurrentSocketPair(runtime, socket, streamSocket)) {
-        return;
+      if (pairedStreamReadyPromise) {
+        await requireMatchingListenerReady(
+          pairedStreamReadyPromise,
+          "Paired stream",
+        );
       }
+      if (!isCurrentSocketPair(runtime, socket, streamSocket)) return;
       openListenerConnection({
         runtime,
         connectionId: opts.connectionId,

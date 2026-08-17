@@ -56,6 +56,8 @@ describe("split stream listener lifecycle", () => {
   let streamFrames: unknown[];
   let delayNextControlUpgradeMs: number;
   let readyGenerationForNextControl: string | null;
+  let nextStreamReadyGeneration: string | null | undefined;
+  let closeNextStreamBeforeReady: boolean;
   let hangNextStreamUpgrade: boolean;
   let rejectNextStreamUpgrade: boolean;
   let streamUpgradeAttempts: number;
@@ -98,6 +100,8 @@ describe("split stream listener lifecycle", () => {
     streamFrames = [];
     delayNextControlUpgradeMs = 0;
     readyGenerationForNextControl = null;
+    nextStreamReadyGeneration = undefined;
+    closeNextStreamBeforeReady = false;
     hangNextStreamUpgrade = false;
     rejectNextStreamUpgrade = false;
     streamUpgradeAttempts = 0;
@@ -168,6 +172,22 @@ describe("split stream listener lifecycle", () => {
         socket.on("message", (data) => {
           streamFrames.push(JSON.parse(data.toString()));
         });
+        const generation = requestUrl.searchParams.get("connectionGeneration");
+        if (closeNextStreamBeforeReady) {
+          closeNextStreamBeforeReady = false;
+          socket.terminate();
+          return;
+        }
+        if (generation && nextStreamReadyGeneration !== null) {
+          const readyGeneration = nextStreamReadyGeneration ?? generation;
+          nextStreamReadyGeneration = undefined;
+          socket.send(
+            JSON.stringify({
+              type: "listener_ready",
+              connection_generation: readyGeneration,
+            }),
+          );
+        }
       }
     });
   });
@@ -308,13 +328,25 @@ describe("split stream listener lifecycle", () => {
     );
   }
 
+  function sendStreamReady(generation: string): void {
+    const index = lastConnectionIndexForChannel("stream");
+    const streamSocket = connections[index];
+    if (!streamSocket) throw new Error("stream socket is not connected");
+    streamSocket.send(
+      JSON.stringify({
+        type: "listener_ready",
+        connection_generation: generation,
+      }),
+    );
+  }
+
   function streamGenerations(): Array<string | null> {
     return connectionGenerations.filter(
       (_, index) => connectionChannels[index] === "stream",
     );
   }
 
-  test("paired generations open control first and delay status until stream opens", async () => {
+  test("paired generations open control first and accept immediate stream ready", async () => {
     const onConnected = mock(() => {});
     const onWsEvent = mock(
       (
@@ -368,6 +400,37 @@ describe("split stream listener lifecycle", () => {
     ).toBe(false);
   });
 
+  test("stream open waits for matching listener_ready before initial state", async () => {
+    nextStreamReadyGeneration = null;
+    const onConnected = mock(() => {});
+    await startClient({
+      supportsPairedListenerGenerations: true,
+      onConnected,
+    });
+    await waitFor(
+      () => countConnectionsForChannel("control") === 1,
+      "paired control socket did not open",
+    );
+    const runtime = getActiveRuntime();
+    if (!runtime) throw new Error("listener runtime was not created");
+    getOrCreateScopedRuntime(runtime, "agent-1", "conv-1");
+
+    sendListenerReady("generation-1");
+    await waitFor(
+      () => countConnectionsForChannel("stream") === 1,
+      "paired stream socket did not open",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(onConnected).not.toHaveBeenCalled();
+    expect(streamFrames).toEqual([]);
+
+    sendStreamReady("generation-1");
+    await waitFor(
+      () => onConnected.mock.calls.length === 1 && streamFrames.length > 0,
+      "matching stream listener_ready did not start the listener runtime",
+    );
+  });
+
   test("listener_ready timeout starts after the control socket opens", async () => {
     process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS = "25";
     delayNextControlUpgradeMs = 75;
@@ -419,7 +482,80 @@ describe("split stream listener lifecycle", () => {
     expect(streamGenerations()).toEqual(["generation-1", "generation-2"]);
   });
 
-  test("listener_ready timeout reconnects without opening a stream", async () => {
+  test("wrong stream generation reconnects with a fresh control generation", async () => {
+    nextStreamReadyGeneration = "wrong-generation";
+    const onConnected = mock(() => {});
+    await startClient({
+      supportsPairedListenerGenerations: true,
+      onConnected,
+    });
+    await waitFor(
+      () => countConnectionsForChannel("control") === 1,
+      "initial control socket did not open",
+    );
+    sendListenerReady("generation-1");
+    await waitFor(
+      () => countConnectionsForChannel("control") === 2,
+      "wrong stream generation did not reconnect the socket pair",
+    );
+    expect(onConnected).not.toHaveBeenCalled();
+
+    sendListenerReady("generation-2");
+    await waitFor(
+      () => onConnected.mock.calls.length === 1,
+      "replacement stream did not accept its matching generation",
+    );
+    expect(streamGenerations()).toEqual(["generation-1", "generation-2"]);
+  });
+
+  test("stream listener_ready timeout reconnects the socket pair", async () => {
+    process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS = "25";
+    nextStreamReadyGeneration = null;
+    const onConnected = mock(() => {});
+    await startClient({
+      supportsPairedListenerGenerations: true,
+      onConnected,
+    });
+    await waitFor(
+      () => countConnectionsForChannel("control") === 1,
+      "initial control socket did not open",
+    );
+    sendListenerReady("generation-1");
+    await waitFor(
+      () => countConnectionsForChannel("control") === 2,
+      "stream listener_ready timeout did not reconnect the socket pair",
+    );
+    expect(streamGenerations()).toEqual(["generation-1"]);
+    expect(onConnected).not.toHaveBeenCalled();
+  });
+
+  test("stream close before listener_ready reconnects the socket pair", async () => {
+    closeNextStreamBeforeReady = true;
+    const onConnected = mock(() => {});
+    await startClient({
+      supportsPairedListenerGenerations: true,
+      onConnected,
+    });
+    await waitFor(
+      () => countConnectionsForChannel("control") === 1,
+      "initial control socket did not open",
+    );
+    sendListenerReady("generation-1");
+    await waitFor(
+      () => countConnectionsForChannel("control") === 2,
+      "stream close did not reconnect the socket pair",
+    );
+    expect(onConnected).not.toHaveBeenCalled();
+
+    sendListenerReady("generation-2");
+    await waitFor(
+      () => onConnected.mock.calls.length === 1,
+      "replacement stream did not start the listener runtime",
+    );
+    expect(streamGenerations()).toEqual(["generation-1", "generation-2"]);
+  });
+
+  test("control listener_ready timeout reconnects without opening a stream", async () => {
     process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS = "25";
     const onConnected = mock(() => {});
     const onDisconnected = mock(() => {});
