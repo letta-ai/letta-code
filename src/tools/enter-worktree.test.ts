@@ -25,6 +25,7 @@ import {
   prepareCurrentToolExecutionContext,
   releaseToolExecutionContext,
 } from "@/tools/manager";
+import EnterWorktreeSchema from "@/tools/schemas/EnterWorktree.json";
 import {
   acquireWorktreeLock,
   releaseWorktreeLock,
@@ -79,6 +80,15 @@ function toolReturnText(value: unknown): string {
   }
   return JSON.stringify(value);
 }
+
+describe("EnterWorktree schema", () => {
+  test("requires a create name or existing worktree path", () => {
+    expect(EnterWorktreeSchema.anyOf).toEqual([
+      { required: ["name"] },
+      { required: ["path"] },
+    ]);
+  });
+});
 
 describe("EnterWorktree tool", () => {
   let tempDirs: string[] = [];

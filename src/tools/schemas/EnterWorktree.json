@@ -38,6 +38,7 @@
       "description": "When entering an existing worktree (`path`), take over the cross-agent lock even if another agent currently holds it. Use only when certain that agent is no longer active. Defaults to false."
     }
   },
+  "anyOf": [{ "required": ["name"] }, { "required": ["path"] }],
   "additionalProperties": false,
   "$schema": "http://json-schema.org/draft-07/schema#"
 }
