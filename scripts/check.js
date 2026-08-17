@@ -19,6 +19,7 @@ const checks = [
   { name: "filename casing", script: ["check:filename-casing"] },
   { name: "source file size", script: ["check:file-size"] },
   { name: "module ownership", script: ["check:module-ownership"] },
+  { name: "CODEOWNERS paths", script: ["check:codeowners"] },
   { name: "test mock isolation", script: ["check:test-mock-isolation"] },
   { name: "test coverage", script: ["check:test-coverage"] },
   { name: "skill frontmatter", script: ["check:skill-frontmatter"] },

@@ -1,7 +1,8 @@
 # CODEOWNERS file for letta-code repository
 # Memory filesystem and git-backed memory
-/src/agent/memoryFilesystem.ts @letta-ai/system-prompt-owners
-/src/agent/memoryGit.ts @letta-ai/system-prompt-owners
+/src/agent/memory-filesystem.ts @letta-ai/system-prompt-owners
+/src/agent/memory-git.ts @letta-ai/system-prompt-owners
+/src/agent/memory-git-*.ts @letta-ai/system-prompt-owners
 
 # WebSocket listener and protocol code
 /src/websocket/ @cpacker @4shub @kl2806 @carenthomas @christinatong01 @jnjpng
