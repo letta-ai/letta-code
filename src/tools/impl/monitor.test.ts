@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -294,6 +295,25 @@ describe("Monitor", () => {
     expect(
       queuedMessages.some((message) => message.text.includes("Monitor event")),
     ).toBe(false);
+  });
+
+  test("fails a command monitor when its output file cannot be written", async () => {
+    const result = await monitor({
+      description: "output write failure",
+      timeout_ms: 5_000,
+      persistent: false,
+      command: nodeCommand(
+        'process.stdout.write("start\\n"); setTimeout(() => process.stdout.write("after\\n"), 1000); setTimeout(() => {}, 30000)',
+      ),
+    });
+    const processState = backgroundProcesses.get(result.taskId);
+    expect(processState?.outputFile).toBeDefined();
+    rmSync(processState?.outputFile ?? "", { force: true });
+    mkdirSync(processState?.outputFile ?? "");
+
+    await waitFor(
+      () => backgroundProcesses.get(result.taskId)?.status === "failed",
+    );
   });
 
   test("caps captured output files", async () => {
