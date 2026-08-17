@@ -1,4 +1,5 @@
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { getApiCredential } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { getLettaCodeHeaders } from "./http-headers";
 
@@ -37,7 +38,11 @@ export async function getApiRequestConfig(): Promise<ApiRequestConfig> {
       process.env.LETTA_BASE_URL ||
       settings.env?.LETTA_BASE_URL ||
       LETTA_CLOUD_API_URL,
-    apiKey: process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || "",
+    apiKey:
+      process.env.LETTA_API_KEY ||
+      getApiCredential() ||
+      settings.env?.LETTA_API_KEY ||
+      "",
   };
 }
 

@@ -39,6 +39,7 @@ export interface RuntimeContextSnapshot {
 }
 
 const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();
+const apiCredentialStorage = new AsyncLocalStorage<string>();
 
 export function getRuntimeContext(): RuntimeContextSnapshot | undefined {
   return runtimeContextStorage.getStore();
@@ -63,6 +64,19 @@ export function runWithRuntimeContext<T>(
 
 export function runOutsideRuntimeContext<T>(fn: () => T): T {
   return runtimeContextStorage.exit(fn);
+}
+
+/**
+ * Scope API work to the credential that authenticated the owning runtime.
+ * Kept separate from RuntimeContextSnapshot so secrets are never copied into
+ * tool context or diagnostics that spread the public runtime snapshot.
+ */
+export function runWithApiCredential<T>(apiKey: string, fn: () => T): T {
+  return apiCredentialStorage.run(apiKey, fn);
+}
+
+export function getApiCredential(): string | undefined {
+  return apiCredentialStorage.getStore();
 }
 
 export function updateRuntimeContext(

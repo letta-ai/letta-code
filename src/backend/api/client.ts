@@ -2,6 +2,7 @@ import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
+import { getApiCredential } from "@/runtime-context";
 import { type Settings, settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { isDebugEnabled } from "@/utils/debug";
@@ -186,16 +187,19 @@ export async function getClient() {
     },
     refreshToken: cachedTokens.refreshToken ?? baseSettings.refreshToken,
   };
+  const runtimeApiKey = getApiCredential();
   const settings =
     process.env.LETTA_API_KEY ||
+    runtimeApiKey ||
     cachedSettings.env?.LETTA_API_KEY ||
     cachedSettings.refreshToken
       ? cachedSettings
       : await settingsManager.getSettingsWithSecureTokens();
 
-  let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+  let apiKey =
+    process.env.LETTA_API_KEY || runtimeApiKey || settings.env?.LETTA_API_KEY;
 
-  if (!process.env.LETTA_API_KEY) {
+  if (!process.env.LETTA_API_KEY && !runtimeApiKey) {
     if (apiKey) {
       // Keep the in-process cache current on every successful keychain read.
       _cachedApiKey = apiKey;
@@ -210,6 +214,7 @@ export async function getClient() {
   // Check if token is expired and refresh if needed
   if (
     !process.env.LETTA_API_KEY &&
+    !runtimeApiKey &&
     settings.tokenExpiresAt &&
     settings.refreshToken
   ) {
