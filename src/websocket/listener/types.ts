@@ -42,6 +42,7 @@ export interface StartListenerOptions {
   connectionId: string;
   wsUrl: string;
   supportsSplitStatusChannels?: boolean;
+  supportsPairedListenerGenerations?: boolean;
   deviceId: string;
   connectionName: string;
   skillsDirectory?: string;
@@ -322,6 +323,8 @@ export type ListenerRuntime = {
   /** Coalesces concurrent first-loads for one agent's scoped adapter. */
   agentModAdapterLoads?: Map<string, Promise<ModAdapter | null>>;
   sessionId: string;
+  /** Increments once for every control/stream reconnect pair. */
+  nextConnectionAttempt: number;
   /** Monotonic allocator used for deterministic connection ordering. */
   nextConnectionOrdinal: number;
   /** All currently open listener transports, keyed by explicit identity. */

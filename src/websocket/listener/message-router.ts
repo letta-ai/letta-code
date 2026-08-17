@@ -64,6 +64,7 @@ import {
 } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
+import { parseListenerReadyMessage } from "./split-stream-lifecycle";
 import {
   clearPriorReadyTeleports,
   handleTeleportProbe,
@@ -209,7 +210,8 @@ export function createListenerMessageHandler(
     let parsedScope: ParsedRuntimeScope = null;
 
     try {
-      const lifecycleMessage = parseServerLifecycleMessage(data);
+      const lifecycleMessage =
+        parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
       if (lifecycleMessage) {
         // Record relay pongs so the heartbeat watchdog can detect a half-open
         // socket (no pong within the timeout) and force a reconnect.

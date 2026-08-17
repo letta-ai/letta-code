@@ -222,21 +222,25 @@ export async function handleListen(
 
     // Register with cloud, retrying transient failures with a bounded backoff.
     const registerOptions = await resolveRegisterOptions();
-    const { connectionId, wsUrl, supportsSplitStatusChannels } =
-      await registerWithCloudRetry(registerOptions, {
-        onRetry: (attempt, delayMs, error) => {
-          updateCommandResult(
-            ctx.buffersRef,
-            ctx.refreshDerived,
-            cmdId,
-            msg,
-            `Registering listener "${connectionName}"...\n` +
-              `Retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
-            true,
-            "running",
-          );
-        },
-      });
+    const {
+      connectionId,
+      wsUrl,
+      supportsSplitStatusChannels,
+      supportsPairedListenerGenerations,
+    } = await registerWithCloudRetry(registerOptions, {
+      onRetry: (attempt, delayMs, error) => {
+        updateCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          cmdId,
+          msg,
+          `Registering listener "${connectionName}"...\n` +
+            `Retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+          true,
+          "running",
+        );
+      },
+    });
 
     updateCommandResult(
       ctx.buffersRef,
@@ -260,11 +264,14 @@ export async function handleListen(
       connId: string,
       wsUrlValue: string,
       nextSupportsSplitStatusChannels: boolean,
+      nextSupportsPairedListenerGenerations: boolean,
     ): Promise<void> => {
       await startListenerClient({
         connectionId: connId,
         wsUrl: wsUrlValue,
         supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
+        supportsPairedListenerGenerations:
+          nextSupportsPairedListenerGenerations,
         deviceId,
         connectionName,
         onStatusChange: (status, id) => {
@@ -356,6 +363,7 @@ export async function handleListen(
               reregisterResult.connectionId,
               reregisterResult.wsUrl,
               reregisterResult.supportsSplitStatusChannels,
+              reregisterResult.supportsPairedListenerGenerations,
             );
           } catch (error) {
             updateCommandResult(
@@ -398,7 +406,12 @@ export async function handleListen(
       });
     };
 
-    await startClient(connectionId, wsUrl, supportsSplitStatusChannels);
+    await startClient(
+      connectionId,
+      wsUrl,
+      supportsSplitStatusChannels,
+      supportsPairedListenerGenerations,
+    );
   } catch (error) {
     updateCommandResult(
       ctx.buffersRef,
