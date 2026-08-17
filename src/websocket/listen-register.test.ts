@@ -38,6 +38,7 @@ describe("registerWithCloud", () => {
       connectionId: "conn-1",
       wsUrl: "wss://example.com",
       supportsSplitStatusChannels: false,
+      supportsPairedListenerGenerations: false,
     });
     expect(mockFetch).toHaveBeenCalledTimes(1);
 
@@ -100,6 +101,7 @@ describe("registerWithCloud", () => {
           connectionId: "conn-2",
           wsUrl: "wss://example.com",
           supportsSplitStatusChannels: true,
+          supportsPairedListenerGenerations: true,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
@@ -111,6 +113,7 @@ describe("registerWithCloud", () => {
     );
 
     expect(result.supportsSplitStatusChannels).toBe(true);
+    expect(result.supportsPairedListenerGenerations).toBe(true);
   });
 
   it("throws with body message on non-OK response with JSON error", async () => {

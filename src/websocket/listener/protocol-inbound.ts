@@ -145,9 +145,9 @@ import {
 } from "./teleport-protocol-inbound";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
-export type ServerLifecycleMessage = {
-  type: "pong";
-};
+export type ServerLifecycleMessage =
+  | { type: "pong" }
+  | { type: "listener_ready"; connection_generation: string };
 
 const TOOLSET_PREFERENCES = new Set([
   "auto",
@@ -2102,15 +2102,15 @@ export function parseServerLifecycleMessage(
   data: WebSocket.RawData,
 ): ServerLifecycleMessage | null {
   try {
-    const raw = typeof data === "string" ? data : data.toString();
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = JSON.parse(data.toString()) as unknown;
+    if (!isObjectRecord(parsed)) return null;
+    if (parsed.type === "pong") return { type: "pong" };
     if (
-      parsed &&
-      typeof parsed === "object" &&
-      (parsed as { type?: unknown }).type === "pong"
-    ) {
-      return { type: "pong" };
-    }
+      parsed.type === "listener_ready" &&
+      typeof parsed.connection_generation === "string" &&
+      parsed.connection_generation.length > 0
+    )
+      return parsed as ServerLifecycleMessage;
   } catch {
     // Non-JSON frames are handled by the regular unparseable-frame path.
   }

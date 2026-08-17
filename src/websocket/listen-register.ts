@@ -12,6 +12,7 @@ export interface RegisterResult {
   connectionId: string;
   wsUrl: string;
   supportsSplitStatusChannels: boolean;
+  supportsPairedListenerGenerations: boolean;
 }
 
 export interface RegisterOptions {
@@ -193,6 +194,8 @@ export async function registerWithCloud(
     connectionId: result.connectionId,
     wsUrl: result.wsUrl,
     supportsSplitStatusChannels: result.supportsSplitStatusChannels === true,
+    supportsPairedListenerGenerations:
+      result.supportsPairedListenerGenerations === true,
   };
 }
 

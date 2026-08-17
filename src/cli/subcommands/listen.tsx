@@ -663,19 +663,23 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       `Registering with ${registerOptions.serverUrl}/v1/environments/register`,
     );
 
-    const { connectionId, wsUrl, supportsSplitStatusChannels } =
-      await registerWithCloudRetry(registerOptions, {
-        onRetry: (attempt, delayMs, error) => {
-          sessionLog.log(
-            `Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+    const {
+      connectionId,
+      wsUrl,
+      supportsSplitStatusChannels,
+      supportsPairedListenerGenerations,
+    } = await registerWithCloudRetry(registerOptions, {
+      onRetry: (attempt, delayMs, error) => {
+        sessionLog.log(
+          `Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+        );
+        if (debugMode) {
+          console.log(
+            `[${formatTimestamp()}] Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
           );
-          if (debugMode) {
-            console.log(
-              `[${formatTimestamp()}] Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
-            );
-          }
-        },
-      });
+        }
+      },
+    });
 
     sessionLog.log(`Registered: connectionId=${connectionId}`);
     sessionLog.log(`wsUrl: ${wsUrl}`);
@@ -698,6 +702,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       connectionId: string;
       wsUrl: string;
       supportsSplitStatusChannels: boolean;
+      supportsPairedListenerGenerations: boolean;
     }> => {
       sessionLog.log("Re-registering with retry...");
       const nextRegisterOptions = await resolveListenerRegistrationOptions(
@@ -748,11 +753,14 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         connId: string,
         url: string,
         nextSupportsSplitStatusChannels: boolean,
+        nextSupportsPairedListenerGenerations: boolean,
       ): Promise<void> => {
         await startListenerClient({
           connectionId: connId,
           wsUrl: url,
           supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
+          supportsPairedListenerGenerations:
+            nextSupportsPairedListenerGenerations,
           deviceId,
           connectionName,
           skillsDirectory,
@@ -791,6 +799,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
                 result.connectionId,
                 result.wsUrl,
                 result.supportsSplitStatusChannels,
+                result.supportsPairedListenerGenerations,
               );
             } catch (error) {
               const msg =
@@ -814,7 +823,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
         });
       };
-      await startDebugClient(connectionId, wsUrl, supportsSplitStatusChannels);
+      await startDebugClient(
+        connectionId,
+        wsUrl,
+        supportsSplitStatusChannels,
+        supportsPairedListenerGenerations,
+      );
     } else {
       // Normal mode: interactive Ink UI
       console.clear();
@@ -843,11 +857,14 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         connId: string,
         url: string,
         nextSupportsSplitStatusChannels: boolean,
+        nextSupportsPairedListenerGenerations: boolean,
       ): Promise<void> => {
         await startListenerClient({
           connectionId: connId,
           wsUrl: url,
           supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
+          supportsPairedListenerGenerations:
+            nextSupportsPairedListenerGenerations,
           deviceId,
           connectionName,
           skillsDirectory,
@@ -881,6 +898,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
                 result.connectionId,
                 result.wsUrl,
                 result.supportsSplitStatusChannels,
+                result.supportsPairedListenerGenerations,
               );
             } catch (error) {
               const msg =
@@ -906,7 +924,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
         });
       };
-      await startNormalClient(connectionId, wsUrl, supportsSplitStatusChannels);
+      await startNormalClient(
+        connectionId,
+        wsUrl,
+        supportsSplitStatusChannels,
+        supportsPairedListenerGenerations,
+      );
     }
 
     // Keep process alive

@@ -42,6 +42,7 @@ export interface StartListenerOptions {
   connectionId: string;
   wsUrl: string;
   supportsSplitStatusChannels?: boolean;
+  supportsPairedListenerGenerations?: boolean;
   deviceId: string;
   connectionName: string;
   skillsDirectory?: string;

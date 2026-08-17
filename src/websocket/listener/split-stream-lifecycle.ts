@@ -1,6 +1,7 @@
 import { WebSocket } from "ws";
 import { isDebugEnabled } from "@/utils/debug";
 import { LISTENER_STREAM_OPEN_TIMEOUT_MS } from "./constants";
+import { parseServerLifecycleMessage } from "./protocol-inbound";
 import { getActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import type { ListenerRuntime } from "./types";
@@ -19,6 +20,65 @@ type StreamSocketOpenResult =
 export type SplitStreamOpenOutcome =
   | { kind: "ready"; transport: ListenerTransport | null }
   | { kind: "stale" };
+
+type ListenerReadyOutcome =
+  | { kind: "ready"; generation: string }
+  | { kind: "closed" }
+  | { kind: "timed_out"; timeoutMs: number };
+
+export async function waitForListenerReadyGeneration(
+  controlSocket: WebSocket,
+): Promise<ListenerReadyOutcome> {
+  if (
+    controlSocket.readyState === WebSocket.CLOSING ||
+    controlSocket.readyState === WebSocket.CLOSED
+  ) {
+    return { kind: "closed" };
+  }
+
+  const timeoutMs = getStreamOpenTimeoutMs();
+  return await new Promise<ListenerReadyOutcome>((resolve) => {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
+
+    function cleanup() {
+      controlSocket.off("message", handleMessage);
+      controlSocket.off("error", handleFailure);
+      controlSocket.off("close", handleFailure);
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+    }
+
+    function settle(result: ListenerReadyOutcome) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    }
+
+    function handleMessage(data: WebSocket.RawData) {
+      const message = parseServerLifecycleMessage(data);
+      if (message?.type === "listener_ready") {
+        settle({ kind: "ready", generation: message.connection_generation });
+      }
+    }
+
+    function handleFailure() {
+      settle({ kind: "closed" });
+    }
+
+    timeout = setTimeout(
+      () => settle({ kind: "timed_out", timeoutMs }),
+      timeoutMs,
+    );
+    timeout.unref?.();
+    controlSocket.on("message", handleMessage);
+    controlSocket.once("error", handleFailure);
+    controlSocket.once("close", handleFailure);
+  });
+}
 
 function terminateSocketIfOpenOrConnecting(socket: WebSocket | null): void {
   if (
@@ -87,6 +147,36 @@ export function terminateControlAfterStreamClose(
   // control tears down the paired session so its normal reconnect/bootstrap
   // flow restores one coherent connection instead of silently losing frames.
   terminateSocketIfOpenOrConnecting(runtime.socket);
+}
+
+export function attachSplitStreamSocketHandlers({
+  runtime,
+  streamSocket,
+  trackListenerError,
+}: {
+  runtime: ListenerRuntime;
+  streamSocket: WebSocket;
+  trackListenerError: TrackListenerError;
+}): void {
+  streamSocket.on("error", (error: Error) => {
+    trackListenerError(
+      "listener_stream_socket_error",
+      error,
+      "listener_stream_socket",
+    );
+    if (isDebugEnabled()) {
+      console.error("[Listen] Stream WebSocket error:", error);
+    }
+  });
+
+  streamSocket.on("close", (code: number, reason: Buffer) => {
+    if (isDebugEnabled()) {
+      console.log(
+        `[Listen] Stream WebSocket closed (code: ${code}, reason: ${reason.toString()})`,
+      );
+    }
+    terminateControlAfterStreamClose(runtime, streamSocket, code, reason);
+  });
 }
 
 function getStreamOpenTimeoutMs(): number {
