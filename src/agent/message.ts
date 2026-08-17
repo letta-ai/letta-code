@@ -20,6 +20,7 @@ import {
   waitForToolsetReady,
 } from "@/tools/manager";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
+import { isCloudApiShutdownRejection } from "@/utils/cloud-api-shutdown";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import {
   assertSupportedBase64ImageMediaTypes,
@@ -44,30 +45,7 @@ const CLOUD_API_SHUTDOWN_MAX_RETRIES = 3;
 const CLOUD_API_SHUTDOWN_DEFAULT_RETRY_DELAY_MS = 1000;
 const responseStateIdsByScope = new Map<string, string>();
 
-type APIErrorLike = {
-  status?: unknown;
-  error?: unknown;
-  headers?: unknown;
-};
-
-function isRetryableCloudApiShutdown(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-
-  const candidate = error as APIErrorLike;
-  if (candidate.status !== 503) return false;
-  if (typeof candidate.error !== "object" || candidate.error === null) {
-    return false;
-  }
-
-  const payload = candidate.error as Record<string, unknown>;
-  return (
-    payload.errorCode === "cloud_api_shutting_down" &&
-    payload.admitted === false &&
-    payload.retryable === true
-  );
-}
-
-function getCloudApiShutdownRetryDelayMs(error: APIErrorLike): number {
+function getCloudApiShutdownRetryDelayMs(error: { headers?: unknown }): number {
   const headers = error.headers;
   if (!(headers instanceof Headers)) {
     return CLOUD_API_SHUTDOWN_DEFAULT_RETRY_DELAY_MS;
@@ -554,11 +532,11 @@ export async function sendMessageStreamWithBackend(
       break;
     } catch (error) {
       if (
-        isRetryableCloudApiShutdown(error) &&
+        isCloudApiShutdownRejection(error) &&
         cloudApiShutdownRetries < CLOUD_API_SHUTDOWN_MAX_RETRIES
       ) {
         cloudApiShutdownRetries += 1;
-        const delayMs = getCloudApiShutdownRetryDelayMs(error as APIErrorLike);
+        const delayMs = getCloudApiShutdownRetryDelayMs(error);
         debugWarn(
           "send-message-stream",
           "request_retry conversation_id=%s otid=%s reason=cloud_api_shutting_down attempt=%d delay_ms=%d",
