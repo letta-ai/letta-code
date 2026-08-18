@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildSlackModelPickerBlocks,
+  collectSlackFiles,
+  fetchSlackFile,
   resolveSlackAppMentionIngressPolicy,
+  resolveSlackMessageFiles,
   resolveSlackMessageIngressPolicy,
   resolveSlackSelectedModel,
   SLACK_MODEL_SELECT_ACTION_ID,
@@ -145,6 +148,14 @@ describe("public Slack message ingress policy", () => {
     expect(stripSlackBotMention("<@UBOT> <@UALICE> hi", "UBOT")).toBe(
       "<@UALICE> hi",
     );
+  });
+});
+
+describe("public Slack attachment primitives", () => {
+  test("exports file normalization, canonical lookup, and secure fetch", () => {
+    expect(typeof collectSlackFiles).toBe("function");
+    expect(typeof resolveSlackMessageFiles).toBe("function");
+    expect(typeof fetchSlackFile).toBe("function");
   });
 });
 
