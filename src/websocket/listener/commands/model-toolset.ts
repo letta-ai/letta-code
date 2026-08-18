@@ -13,6 +13,10 @@ import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "@/agent/modify";
+import {
+  catalogHasDistinctMaxTier,
+  formatXhighEffortLabel,
+} from "@/agent/reasoning-effort-label";
 import { refreshModelCatalog } from "@/agent/remote-model-catalog";
 import { getBackend } from "@/backend";
 import {
@@ -351,22 +355,19 @@ export function resolveModelForUpdate(
 function formatEffortSuffix(
   modelLabel: string,
   updateArgs?: Record<string, unknown>,
+  modelHandle?: string,
 ): string {
   if (!updateArgs) return "";
   const effort = updateArgs.reasoning_effort;
   if (typeof effort !== "string" || effort.length === 0) return "";
-  const xhighLabel =
-    modelLabel.includes("Fable 5") ||
-    modelLabel.includes("Opus 4.7") ||
-    modelLabel.includes("Opus 4.8")
-      ? "Extra-High"
-      : "Max";
   const labels: Record<string, string> = {
     none: "No Reasoning",
     low: "Low",
     medium: "Medium",
     high: "High",
-    xhigh: xhighLabel,
+    xhigh: formatXhighEffortLabel(
+      catalogHasDistinctMaxTier({ modelLabel, modelHandle }),
+    ),
     max: "Max",
   };
   return ` (${labels[effort] ?? effort})`;
@@ -376,9 +377,10 @@ export function buildModelUpdateStatusMessage(params: {
   modelLabel: string;
   toolsetError: string | null;
   updateArgs?: Record<string, unknown>;
+  modelHandle?: string;
 }): { message: string; level: "info" | "warning" } {
-  const { modelLabel, toolsetError, updateArgs } = params;
-  let message = `Model updated to ${modelLabel}${formatEffortSuffix(modelLabel, updateArgs)}.`;
+  const { modelLabel, toolsetError, updateArgs, modelHandle } = params;
+  let message = `Model updated to ${modelLabel}${formatEffortSuffix(modelLabel, updateArgs, modelHandle)}.`;
   if (toolsetError) {
     message += ` Warning: toolset switch failed (${toolsetError}).`;
     return { message, level: "warning" };
@@ -515,6 +517,7 @@ export async function applyModelUpdateForRuntime(params: {
       modelLabel: model.label,
       toolsetError,
       updateArgs: model.updateArgs,
+      modelHandle: model.handle,
     });
 
   emitStatusDelta(socket, scopedRuntime, {

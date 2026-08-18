@@ -129,7 +129,7 @@ describe("listen-client model update status message", () => {
     expect(result.message).toBe("Model updated to Opus 4.6 (Max).");
   });
 
-  test("shows Extra-High for reasoning_effort xhigh on Fable and Opus 4.7+", () => {
+  test("shows Extra High for reasoning_effort xhigh on Fable and Opus 4.7+", () => {
     for (const modelLabel of ["Fable 5", "Opus 4.7", "Opus 4.8"]) {
       const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
         modelLabel,
@@ -138,9 +138,35 @@ describe("listen-client model update status message", () => {
       });
 
       expect(result.message).toBe(
-        `Model updated to ${modelLabel} (Extra-High).`,
+        `Model updated to ${modelLabel} (Extra High).`,
       );
     }
+  });
+
+  test("shows Extra High for reasoning_effort xhigh on GPT-5.6 Sol ChatGPT", () => {
+    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
+      modelLabel: "GPT-5.6 Sol (ChatGPT)",
+      toolsetError: null,
+      updateArgs: { reasoning_effort: "xhigh" },
+      modelHandle: "chatgpt-plus-pro/gpt-5.6-sol",
+    });
+
+    expect(result.message).toBe(
+      "Model updated to GPT-5.6 Sol (ChatGPT) (Extra High).",
+    );
+  });
+
+  test("shows Max for reasoning_effort max on GPT-5.6 Sol ChatGPT", () => {
+    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
+      modelLabel: "GPT-5.6 Sol (ChatGPT)",
+      toolsetError: null,
+      updateArgs: { reasoning_effort: "max" },
+      modelHandle: "chatgpt-plus-pro/gpt-5.6-sol",
+    });
+
+    expect(result.message).toBe(
+      "Model updated to GPT-5.6 Sol (ChatGPT) (Max).",
+    );
   });
 
   test("omits effort when updateArgs has no reasoning_effort", () => {

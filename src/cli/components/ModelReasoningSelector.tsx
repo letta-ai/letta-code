@@ -1,6 +1,7 @@
 import { Box, useInput } from "ink";
 import { useEffect, useMemo, useState } from "react";
 import type { ModelReasoningSelection } from "@/agent/model";
+import { formatXhighEffortLabel } from "@/agent/reasoning-effort-label";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import type { ModelSelectorSelection } from "./ModelSelector";
@@ -30,7 +31,7 @@ function formatEffortLabel(
 ): string {
   if (effort === null) return "Default";
   if (effort === "none") return "Off";
-  if (effort === "xhigh") return hasDistinctMaxTier ? "Extra-High" : "Max";
+  if (effort === "xhigh") return formatXhighEffortLabel(hasDistinctMaxTier);
   if (effort === "max") return "Max";
   if (effort === "minimal") return "Minimal";
   return effort.charAt(0).toUpperCase() + effort.slice(1);
