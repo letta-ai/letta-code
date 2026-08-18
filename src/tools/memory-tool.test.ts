@@ -288,6 +288,38 @@ describe("memory tool", () => {
     ).rejects.toThrow(/not system\//);
   });
 
+  test("rejects skills/ labels under memfs-v2 with a clear error", async () => {
+    const storageDir = join(tempRoot, "v2-skills-store");
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "true";
+    const backend = new LocalBackend({
+      storageDir,
+      executionMode: "deterministic",
+    });
+    const agent = await backend.createAgent({
+      name: "V2 skills writer",
+      tags: [MEMFS_V2_TAG],
+    } as Parameters<InstanceType<typeof LocalBackend>["createAgent"]>[0]);
+    __testSetBackend(backend);
+    const localMemoryDir = getLocalBackendMemoryFilesystemRoot(
+      agent.id,
+      storageDir,
+    );
+    process.env.MEMORY_DIR = localMemoryDir;
+
+    const invoke = (args: Parameters<typeof memory>[0]) =>
+      runWithRuntimeContext({ agentId: agent.id }, () => memory(args));
+
+    await expect(
+      invoke({
+        command: "create",
+        reason: "create skill file",
+        file_path: "skills/my-skill.md",
+        description: "A skill.",
+      }),
+    ).rejects.toThrow(/skill\/file tooling/);
+  });
+
   test("prefers scoped agent memory over stale MEMORY_DIR env", async () => {
     const scopedMemoryDir = memoryDir;
     const staleMemoryDir = join(tempRoot, "stale-memory");

@@ -517,6 +517,14 @@ function assertMemoryLabelAllowed(
       "memory: MemFS v2 core memory uses root Markdown files, not system/",
     );
   }
+  if (
+    memoryFormat === "memfs-v2" &&
+    (label === "skills" || label.startsWith("skills/"))
+  ) {
+    throw new Error(
+      "memory: MemFS v2 skills are managed by the skill/file tooling, not the memory tool",
+    );
+  }
 }
 
 function memoryPrefixError(memoryDir: string): string {
