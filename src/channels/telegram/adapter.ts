@@ -5,6 +5,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import type { ReactionType } from "@grammyjs/types";
 import type { Context as GrammYContext } from "grammy";
 import {
   createInboundDebouncer,
@@ -30,6 +31,7 @@ import {
   buildTelegramDebounceKey,
   resolveTelegramInboundDebounceMs,
 } from "./debounce";
+import { diffTelegramReactionUpdate } from "./ingress";
 import type {
   BufferedMediaGroup,
   GrammYModule,
@@ -71,7 +73,6 @@ import {
   getTelegramMessageThreadId,
   getTelegramReactionSenderId,
   getTelegramReactionSenderName,
-  getTelegramReactionToken,
   getTelegramReplyContext,
   parseTelegramReactionInput,
   resolveTelegramBotConstructor,
@@ -340,30 +341,7 @@ export function createTelegramAdapter(
         return;
       }
 
-      const oldTokens = new Set(
-        update.old_reaction
-          .map((reaction) => getTelegramReactionToken(reaction))
-          .filter((value): value is string => typeof value === "string"),
-      );
-      const newTokens = new Set(
-        update.new_reaction
-          .map((reaction) => getTelegramReactionToken(reaction))
-          .filter((value): value is string => typeof value === "string"),
-      );
-
-      const events: Array<{ action: "added" | "removed"; emoji: string }> = [];
-
-      for (const emoji of oldTokens) {
-        if (!newTokens.has(emoji)) {
-          events.push({ action: "removed", emoji });
-        }
-      }
-
-      for (const emoji of newTokens) {
-        if (!oldTokens.has(emoji)) {
-          events.push({ action: "added", emoji });
-        }
-      }
+      const events = diffTelegramReactionUpdate(update);
 
       for (const event of events) {
         try {
@@ -727,7 +705,7 @@ export function createTelegramAdapter(
           await telegramBot.api.setMessageReaction(
             msg.chatId,
             Number(targetMessageId),
-            [reaction],
+            [reaction as ReactionType],
           );
         } else {
           await telegramBot.api.setMessageReaction(

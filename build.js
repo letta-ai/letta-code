@@ -263,6 +263,18 @@ await Bun.build({
   },
 });
 
+await Bun.build({
+  entrypoints: ["./src/channels-telegram.ts"],
+  outdir: "./dist",
+  target: "browser",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "channels-telegram.js",
+  },
+});
+
 // Copy bundled skills to skills/ directory for shipping
 const bundledSkillsSrc = join(__dirname, "src/skills/builtin");
 const bundledSkillsDst = join(__dirname, "skills");
