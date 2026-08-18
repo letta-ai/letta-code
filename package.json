@@ -34,6 +34,8 @@
     "dist/gateway-core.js.map",
     "dist/channels-slack.js",
     "dist/channels-slack.js.map",
+    "dist/channels-telegram.js",
+    "dist/channels-telegram.js.map",
     "dist/types",
     "docs"
   ],
@@ -97,6 +99,12 @@
       "browser": "./dist/channels-slack.js",
       "import": "./dist/channels-slack.js",
       "default": "./dist/channels-slack.js"
+    },
+    "./channels/telegram": {
+      "types": "./dist/types/channels-telegram.d.ts",
+      "browser": "./dist/channels-telegram.js",
+      "import": "./dist/channels-telegram.js",
+      "default": "./dist/channels-telegram.js"
     }
   },
   "repository": {
@@ -211,6 +219,9 @@
       ],
       "channels/slack": [
         "./dist/types/channels-slack.d.ts"
+      ],
+      "channels/telegram": [
+        "./dist/types/channels-telegram.d.ts"
       ],
       "protocol": [
         "./dist/types/types/protocol.d.ts"

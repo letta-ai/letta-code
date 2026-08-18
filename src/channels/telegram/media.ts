@@ -3,6 +3,13 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { getChannelDir } from "@/channels/config";
 import type { ChannelMessageAttachment } from "@/channels/types";
+import type { TelegramLikeMessage } from "./message-shapes";
+
+export {
+  extractTelegramMessageText,
+  getTelegramSenderName,
+  type TelegramLikeMessage,
+} from "./message-shapes";
 
 export const TELEGRAM_MEDIA_GROUP_FLUSH_MS = 150;
 export const TELEGRAM_DOWNLOAD_TIMEOUT_MS = 15_000;
@@ -15,84 +22,6 @@ const VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".mov", ".webm"]);
 const AUDIO_EXTENSIONS = new Set([".mp3", ".m4a", ".wav"]);
 const VOICE_EXTENSIONS = new Set([".ogg", ".oga", ".opus"]);
 const STATIC_STICKER_EXTENSIONS = new Set([".webp"]);
-
-export type TelegramLikeMessage = {
-  media_group_id?: string;
-  message_thread_id?: number | string;
-  message_id: number | string;
-  date: number;
-  text?: string;
-  caption?: string;
-  entities?: Array<{
-    type?: string;
-    offset?: number;
-    length?: number;
-  }>;
-  caption_entities?: Array<{
-    type?: string;
-    offset?: number;
-    length?: number;
-  }>;
-  reply_to_message?: TelegramLikeMessage;
-  chat: {
-    id: number | string;
-    type?: string;
-    title?: string;
-    username?: string;
-  };
-  from?: {
-    id: number | string;
-    username?: string;
-    first_name?: string;
-    last_name?: string;
-  };
-  photo?: Array<{
-    file_id: string;
-    file_unique_id?: string;
-    file_size?: number;
-  }>;
-  document?: {
-    file_id: string;
-    file_name?: string;
-    mime_type?: string;
-    file_size?: number;
-  };
-  video?: {
-    file_id: string;
-    file_name?: string;
-    file_unique_id?: string;
-    mime_type?: string;
-    file_size?: number;
-  };
-  audio?: {
-    file_id: string;
-    file_name?: string;
-    file_unique_id?: string;
-    mime_type?: string;
-    file_size?: number;
-  };
-  voice?: {
-    file_id: string;
-    file_unique_id?: string;
-    mime_type?: string;
-    file_size?: number;
-  };
-  animation?: {
-    file_id: string;
-    file_name?: string;
-    file_unique_id?: string;
-    mime_type?: string;
-    file_size?: number;
-  };
-  sticker?: {
-    file_id: string;
-    file_unique_id?: string;
-    mime_type?: string;
-    file_size?: number;
-    is_animated?: boolean;
-    is_video?: boolean;
-  };
-};
 
 export type TelegramAttachmentCandidate = {
   fileId: string;
@@ -201,34 +130,6 @@ function inferAttachmentKind(params: {
   }
 
   return params.fallback;
-}
-
-export function extractTelegramMessageText(
-  message: TelegramLikeMessage,
-): string {
-  if (typeof message.text === "string") {
-    return message.text;
-  }
-  if (typeof message.caption === "string") {
-    return message.caption;
-  }
-  return "";
-}
-
-export function getTelegramSenderName(
-  message: TelegramLikeMessage,
-): string | undefined {
-  if (!message.from) {
-    return undefined;
-  }
-
-  return (
-    message.from.username ??
-    ([message.from.first_name, message.from.last_name]
-      .filter(Boolean)
-      .join(" ") ||
-      undefined)
-  );
 }
 
 export function collectTelegramAttachmentCandidates(

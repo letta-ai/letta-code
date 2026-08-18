@@ -19,6 +19,7 @@
     "src/channels-public.ts",
     "src/gateway-core.ts",
     "src/channels-slack.ts",
+    "src/channels-telegram.ts",
     "src/types/md.d.ts",
     "src/types/mdx.d.ts",
     "src/types/txt.d.ts"
