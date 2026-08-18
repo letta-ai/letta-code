@@ -128,3 +128,34 @@ describe("readExistingTarget / writeTarget", () => {
     expect(await readExistingTarget(target)).toBe("# Guide\n");
   });
 });
+
+describe("v2 double-escaping regression", () => {
+  test("re-rendering existing v2 frontmatter does not double-escape quotes", () => {
+    const existing =
+      '---\nname: "AGENTS"\ndescription: "Repository guidance for coding agents, maintained by letta dream."\n---\nGuidance\n';
+    const reRendered = addManagedFrontmatter(
+      existing,
+      "agents-md",
+      "memfs-v2",
+      "AGENTS.md",
+    );
+    expect(reRendered).toBe(existing);
+    expect(reRendered).toContain('name: "AGENTS"');
+    expect(reRendered).not.toContain('name: ""AGENTS""');
+  });
+});
+
+describe("v2 reserved target name", () => {
+  test("buildTargetInstruction rejects MEMORY.md case-insensitively for v2", () => {
+    expect(() =>
+      buildTargetInstruction(resolveDreamTarget("./MEMORY.md"), "memfs-v2"),
+    ).toThrow("MEMORY.md is reserved");
+    expect(() =>
+      buildTargetInstruction(resolveDreamTarget("./memory.md"), "memfs-v2"),
+    ).toThrow("MEMORY.md is reserved");
+    // v1 is unaffected.
+    expect(() =>
+      buildTargetInstruction(resolveDreamTarget("./MEMORY.md"), "memfs-v1"),
+    ).not.toThrow();
+  });
+});

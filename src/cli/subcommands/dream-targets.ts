@@ -6,12 +6,14 @@ import {
   MEMORY_SYSTEM_DIR,
 } from "@/agent/memory-filesystem";
 import {
+  assertMemfsV2MemoryPathIndexed,
   type LocalMemoryFormat,
   rootMemoryPathFromLegacyLabel,
 } from "@/agent/memory-format";
 import { commitMemoryWrite } from "@/agent/memory-git";
 import {
   defaultMemoryName,
+  parseMemoryMarkdown,
   renderMemoryMarkdown,
 } from "@/agent/memory-markdown";
 import { parseFrontmatter } from "@/utils/frontmatter";
@@ -59,9 +61,17 @@ function memfsRelPath(
   target: DreamTarget,
   memoryFormat: LocalMemoryFormat,
 ): string {
-  return memoryFormat === "memfs-v2"
-    ? rootMemoryPathFromLegacyLabel(target.fileName)
-    : `${MEMORY_SYSTEM_DIR}/${target.fileName}`;
+  if (memoryFormat === "memfs-v2") {
+    // MEMORY.md is the root index in v2; reject it (case-insensitive) so a
+    // target like `memory.md` cannot overwrite the root index on macOS.
+    if (target.fileName.toLowerCase() === "memory.md") {
+      throw new Error(
+        `Invalid --to "${target.path}": MEMORY.md is reserved as the root index and cannot be a dream target`,
+      );
+    }
+    return rootMemoryPathFromLegacyLabel(target.fileName);
+  }
+  return `${MEMORY_SYSTEM_DIR}/${target.fileName}`;
 }
 
 const MANAGED_DESCRIPTION: Record<DreamTarget["kind"], string> = {
@@ -83,16 +93,39 @@ export function addManagedFrontmatter(
   relativePath = "document.md",
 ): string {
   if (memoryFormat === "memfs-v2") {
-    const parsed = parseFrontmatter(content);
+    // If the content already carries v2 frontmatter, parse it with
+    // parseMemoryMarkdown so quoted values like name: "AGENTS" are properly
+    // unquoted before re-rendering (avoids double-escaping).  If the content
+    // does not start with frontmatter, treat it as plain body content.
+    if (/^---\r?\n/.test(content)) {
+      const parsed = parseMemoryMarkdown({
+        content,
+        relativePath,
+        format: memoryFormat,
+        errorPrefix: "dream target",
+      });
+      return renderMemoryMarkdown({
+        frontmatter: {
+          name:
+            typeof parsed.frontmatter.name === "string" && parsed.frontmatter.name
+              ? parsed.frontmatter.name
+              : defaultMemoryName(relativePath),
+          description: MANAGED_DESCRIPTION[kind],
+        },
+        body: parsed.body,
+        relativePath,
+        format: memoryFormat,
+        errorPrefix: "dream target",
+      });
+    }
+    // Plain body content without frontmatter — add managed frontmatter.
+    const { body } = parseFrontmatter(content);
     return renderMemoryMarkdown({
       frontmatter: {
-        name:
-          typeof parsed.frontmatter.name === "string"
-            ? parsed.frontmatter.name
-            : defaultMemoryName(relativePath),
+        name: defaultMemoryName(relativePath),
         description: MANAGED_DESCRIPTION[kind],
       },
-      body: parsed.body,
+      body,
       relativePath,
       format: memoryFormat,
       errorPrefix: "dream target",
@@ -216,6 +249,11 @@ export async function syncTargetIntoMemory(
   }
   const memoryDir = getScopedMemoryFilesystemRoot(agentId);
   const relPath = memfsRelPath(target, memoryFormat);
+
+  // For v2, ensure the root MEMORY.md marker exists before writing.
+  if (memoryFormat === "memfs-v2") {
+    assertMemfsV2MemoryPathIndexed(memoryDir, relPath);
+  }
 
   const committed = readMemfsHead(memoryDir, relPath);
   if (

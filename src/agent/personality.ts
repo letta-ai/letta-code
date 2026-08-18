@@ -15,6 +15,7 @@ import {
   LETTA_CODE_ORIGIN_TAG,
 } from "@/agent/agent-tags";
 import {
+  assertMemfsV2MemoryPathIndexed,
   getLocalMemoryFormat,
   type LocalMemoryFormat,
 } from "@/agent/memory-format";
@@ -416,6 +417,13 @@ export async function applyPersonalityToMemory(
       description: blockDefinitions.human.description,
     },
   ];
+
+  // For v2, ensure the root MEMORY.md marker exists before writing any files.
+  if (memoryFormat === "memfs-v2") {
+    for (const file of filesToUpdate) {
+      assertMemfsV2MemoryPathIndexed(repoDir, file.relativePath);
+    }
+  }
 
   const changedPaths = applyPersonalityFiles(filesToUpdate, memoryFormat);
 
