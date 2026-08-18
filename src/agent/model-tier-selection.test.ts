@@ -62,17 +62,6 @@ describe("getModelInfo", () => {
     });
   });
 
-  test("preserves Bedrock Opus 4.7", () => {
-    const info = getModelInfo("bedrock-opus-4.7");
-    expect(info?.handle).toBe("bedrock/us.anthropic.claude-opus-4-7");
-    expect(info?.label).toBe("Bedrock Opus 4.7");
-    expect(info?.updateArgs).toMatchObject({
-      context_window: 200000,
-      reasoning_effort: "medium",
-      enable_reasoner: true,
-    });
-  });
-
   test("resolves MiniMax M3 registry metadata", () => {
     const info = getModelInfo("minimax-m3");
     expect(info?.handle).toBe("minimax/MiniMax-M3");

@@ -29,7 +29,6 @@ import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
-  PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
@@ -47,10 +46,6 @@ import {
   emitRuntimeStateUpdates,
   emitStatusDelta,
 } from "./protocol-outbound";
-import {
-  createProviderFallbackState,
-  maybeApplyProviderFallback,
-} from "./provider-fallback";
 import {
   emitLoopErrorNotice,
   emitRecoverableRetryNotice,
@@ -270,10 +265,7 @@ async function handleIncomingMessageInner(
     }
     let turnInput = setup.turnInput;
     const inboundUserTranscriptLines = setup.inboundUserTranscriptLines;
-    const providerFallback = createProviderFallbackState(
-      setup.getCachedAgent(),
-      setup.overrideModel,
-    );
+    const overrideModel = setup.overrideModel;
     let pendingNormalizationInterruptedToolCallIds =
       setup.pendingNormalizationInterruptedToolCallIds;
     const preparedToolContext = setup.preparedToolContext;
@@ -293,9 +285,7 @@ async function handleIncomingMessageInner(
               turnInput.imageFailureModesByMessageOtid,
           }
         : {}),
-      ...(providerFallback.overrideModel
-        ? { overrideModel: providerFallback.overrideModel }
-        : {}),
+      ...(overrideModel ? { overrideModel } : {}),
       ...(msg.actingUserId ? { actingUserId: msg.actingUserId } : {}),
       ...(pendingNormalizationInterruptedToolCallIds.length > 0
         ? {
@@ -313,7 +303,6 @@ async function handleIncomingMessageInner(
       socket,
       runtime,
       turnLease,
-      providerFallback,
       buildSendOptions,
       onTerminal: noteFinalization,
       getTurnId: () => activeDequeuedBatchId,
@@ -674,21 +663,14 @@ async function handleIncomingMessageInner(
         if (retriable && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           llmApiErrorRetries += 1;
           const attempt = llmApiErrorRetries;
-          const fallbackHandle = maybeApplyProviderFallback(
-            providerFallback,
+          const delayMs = getRetryDelayMs({
+            category: "transient_provider",
             attempt,
-          );
-          const delayMs = fallbackHandle
-            ? 0
-            : getRetryDelayMs({
-                category: "transient_provider",
-                attempt,
-                detail: errorDetail,
-              });
-          const retryMessage = fallbackHandle
-            ? PROVIDER_FALLBACK_NOTICE
-            : getRetryStatusMessage(errorDetail) ||
-              `LLM API error encountered, retrying (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`;
+            detail: errorDetail,
+          });
+          const retryMessage =
+            getRetryStatusMessage(errorDetail) ||
+            `LLM API error encountered, retrying (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`;
           emitRecoverableRetryNotice(socket, runtime, {
             kind: "transient_provider_retry",
             message: retryMessage,
@@ -701,9 +683,7 @@ async function handleIncomingMessageInner(
             conversationId,
           });
 
-          if (!fallbackHandle) {
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
-          }
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
           if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
@@ -808,7 +788,6 @@ async function handleIncomingMessageInner(
         turnLease,
         processOwnedTurn: msg.processOwnedTurn === true,
         buildSendOptions,
-        providerFallback,
       });
       if (approvalResult.kind === "error") {
         const terminalRunId = runId || runtime.activeRunId;

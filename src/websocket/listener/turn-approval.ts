@@ -42,7 +42,6 @@ import {
   emitProtocolV2Message,
   emitRuntimeStateUpdates,
 } from "./protocol-outbound";
-import type { ProviderFallbackState } from "./provider-fallback";
 import { consumeQueuedTurn } from "./queue";
 import { debugLogApprovalResumeState } from "./recovery";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
@@ -167,7 +166,6 @@ export async function handleApprovalStop(params: {
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
-  providerFallback?: ProviderFallbackState;
   dependencies?: {
     classifyApprovals?: typeof classifyApprovalsWithSuggestions;
     executeApprovalBatch?: typeof executeApprovalBatch;
@@ -192,7 +190,6 @@ export async function handleApprovalStop(params: {
     turnLease,
     processOwnedTurn = false,
     buildSendOptions,
-    providerFallback,
     dependencies,
   } = params;
   const abortSignal = turnLease.signal;
@@ -660,7 +657,6 @@ export async function handleApprovalStop(params: {
       socket,
       runtime,
       turnLease,
-      { providerFallback },
     );
   } catch (error) {
     if (shouldInterrupt()) {
