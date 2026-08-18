@@ -33,6 +33,7 @@ export type ShellSpawnOptions = {
 export interface ShellProcessHandle {
   kill(signal?: string | number): unknown;
   write(input: string): void;
+  closeOutput(): void;
 }
 
 export interface ShellProcessResult {
@@ -74,6 +75,7 @@ type NodePtyModule = {
 type ProcessEvents = {
   output(data: Buffer | string, stream: ShellOutputStream): void;
   error(error: NodeJS.ErrnoException): void;
+  exit(code: number | null): void;
   close(code: number | null): void;
 };
 
@@ -96,6 +98,7 @@ process.on("SIGINT", () => child.kill("SIGINT"));
 `;
 
 const FORCE_KILL_GRACE_MS = 2000;
+const ORPHANED_STDIO_GRACE_MS = 250;
 
 function buildSpawnError(
   err: NodeJS.ErrnoException,
@@ -228,6 +231,7 @@ function spawnPipeProcess(
     events.output(chunk, "stderr");
   });
   childProcess.on("error", events.error);
+  childProcess.on("exit", events.exit);
   childProcess.on("close", events.close);
 
   return {
@@ -236,6 +240,10 @@ function spawnPipeProcess(
     },
     write(_input: string) {
       // Pipe-mode shell processes deliberately keep stdin closed.
+    },
+    closeOutput() {
+      childProcess.stdout?.destroy();
+      childProcess.stderr?.destroy();
     },
   };
 }
@@ -273,6 +281,7 @@ function spawnPtyBridgeProcess(
     events.output(chunk, "stderr");
   });
   childProcess.on("error", events.error);
+  childProcess.on("exit", events.exit);
   childProcess.on("close", events.close);
 
   return {
@@ -281,6 +290,10 @@ function spawnPtyBridgeProcess(
     },
     write(input: string) {
       childProcess.stdin?.write(input);
+    },
+    closeOutput() {
+      childProcess.stdout?.destroy();
+      childProcess.stderr?.destroy();
     },
   };
 }
@@ -316,6 +329,9 @@ function spawnNativePtyProcess(
     },
     write(input: string) {
       ptyProcess.write(input);
+    },
+    closeOutput() {
+      // Native PTY output closes with the PTY process.
     },
   };
 }
@@ -368,6 +384,8 @@ export function startShellProcess(
   let completed = false;
   let timedOut = false;
   let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+  let forceSettleTimer: ReturnType<typeof setTimeout> | undefined;
+  let orphanedStdioTimer: ReturnType<typeof setTimeout> | undefined;
   let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
   let resolveCompletion!: (result: ShellProcessResult) => void;
   let rejectCompletion!: (error: Error) => void;
@@ -385,13 +403,45 @@ export function startShellProcess(
       clearTimeout(forceKillTimer);
       forceKillTimer = undefined;
     }
+    if (forceSettleTimer) {
+      clearTimeout(forceSettleTimer);
+      forceSettleTimer = undefined;
+    }
+    if (orphanedStdioTimer) {
+      clearTimeout(orphanedStdioTimer);
+      orphanedStdioTimer = undefined;
+    }
     options.signal?.removeEventListener("abort", abortHandler);
   };
 
   let processHandle: ShellProcessHandle;
+  const finish = (code: number | null) => {
+    if (completed) return;
+    completed = true;
+    cleanup();
+    processHandle.closeOutput();
+    flushOutputDecoders();
+    void pullRequestTracker?.finish();
+    const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+    const stderr = Buffer.concat(stderrChunks).toString("utf8");
+    if (timedOut) {
+      rejectCompletion(buildTimeoutError(stdout, stderr, code));
+      return;
+    }
+    if (options.signal?.aborted) {
+      rejectCompletion(buildAbortError(stdout, stderr));
+      return;
+    }
+    resolveCompletion({ stdout, stderr, exitCode: code });
+  };
   const terminateProcess = () => {
     if (process.platform === "win32") {
       processHandle.kill("SIGKILL");
+      if (!forceSettleTimer) {
+        forceSettleTimer = setTimeout(() => {
+          finish(null);
+        }, FORCE_KILL_GRACE_MS);
+      }
       return;
     }
 
@@ -400,6 +450,9 @@ export function startShellProcess(
       forceKillTimer = setTimeout(() => {
         if (!completed) {
           processHandle.kill("SIGKILL");
+          forceSettleTimer = setTimeout(() => {
+            finish(null);
+          }, ORPHANED_STDIO_GRACE_MS);
         }
       }, FORCE_KILL_GRACE_MS);
     }
@@ -422,6 +475,7 @@ export function startShellProcess(
 
   const events: ProcessEvents = {
     output(data, stream) {
+      if (completed) return;
       const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
       if (options.captureOutput !== false) {
         if (stream === "stdout") {
@@ -440,23 +494,16 @@ export function startShellProcess(
       void pullRequestTracker?.finish();
       rejectCompletion(buildSpawnError(error, executable, options.cwd));
     },
+    exit(code) {
+      if (completed || orphanedStdioTimer) return;
+      // `close` waits for inherited stdio, which an escaped background child
+      // can retain forever after the root shell has already exited.
+      orphanedStdioTimer = setTimeout(() => {
+        finish(code);
+      }, ORPHANED_STDIO_GRACE_MS);
+    },
     close(code) {
-      if (completed) return;
-      completed = true;
-      cleanup();
-      flushOutputDecoders();
-      void pullRequestTracker?.finish();
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-      const stderr = Buffer.concat(stderrChunks).toString("utf8");
-      if (timedOut) {
-        rejectCompletion(buildTimeoutError(stdout, stderr, code));
-        return;
-      }
-      if (options.signal?.aborted) {
-        rejectCompletion(buildAbortError(stdout, stderr));
-        return;
-      }
-      resolveCompletion({ stdout, stderr, exitCode: code });
+      finish(code);
     },
   };
 

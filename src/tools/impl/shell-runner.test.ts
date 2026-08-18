@@ -28,6 +28,17 @@ function stubbornProcessTreeLauncher(): string[] {
   return [process.execPath, "-e", launcherScript, descendantScript];
 }
 
+function detachedStdioLauncher(descendantLifetimeMs: number): string[] {
+  const descendantScript = `setTimeout(() => process.exit(0), ${descendantLifetimeMs})`;
+  const launcherScript = [
+    'const { spawn } = require("node:child_process");',
+    'const descendant = spawn(process.execPath, ["-e", process.argv[1]], { detached: true, stdio: "inherit" });',
+    'process.stdout.write("descendant:" + descendant.pid + "\\n");',
+    "descendant.unref();",
+  ].join("");
+  return [process.execPath, "-e", launcherScript, descendantScript];
+}
+
 function isProcessStillRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -121,6 +132,29 @@ describe("shared shell process", () => {
     });
     expect(streamed).toBe("streamed");
   });
+
+  test.skipIf(process.platform === "win32")(
+    "settles after the root process exits when a detached descendant retains stdio",
+    async () => {
+      const startedAt = Date.now();
+      const result = await spawnWithLauncher(detachedStdioLauncher(3000), {
+        cwd: process.cwd(),
+        env: process.env,
+        timeoutMs: 0,
+      });
+
+      expect(Date.now() - startedAt).toBeLessThan(1000);
+      const descendantPid = Number(
+        result.stdout.match(/descendant:(\d+)/)?.[1],
+      );
+      expect(descendantPid).toBeGreaterThan(0);
+      try {
+        process.kill(-descendantPid, "SIGKILL");
+      } catch {
+        // Descendant may have already exited.
+      }
+    },
+  );
 
   test("tracks PR output from the shared completion path", async () => {
     let resolveUpdate!: (tags: string[]) => void;
