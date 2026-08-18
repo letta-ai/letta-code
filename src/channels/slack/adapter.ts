@@ -19,7 +19,7 @@ import {
 } from "./agent-thread-tracker";
 import { createSlackApprovalController } from "./approval-controller";
 import { downloadSlackAttachmentById } from "./attachment-download";
-import type { SlackAttachmentReadClient } from "./attachment-types";
+import type { SlackAttachmentReadClient } from "./attachment-primitives";
 import { uploadSlackFile } from "./file-upload";
 import {
   createSlackInboundDebounceController,
