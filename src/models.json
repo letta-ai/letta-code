@@ -44,7 +44,7 @@
       "id": "glm",
       "handle": "letta/glm",
       "label": "Letta GLM",
-      "description": "Route directly to Letta-hosted GLM 5.2",
+      "description": "Route directly to Letta-hosted GLM 5.3",
       "free": true,
       "updateArgs": {
         "context_window": 200000,
@@ -2592,6 +2592,20 @@
         "parallel_tool_calls": true
       },
       "isFeatured": true
+    },
+    {
+      "id": "glm-5.3",
+      "handle": "zai/glm-5.3",
+      "label": "GLM-5.3",
+      "description": "zAI's latest coding and reasoning model with 1M context (BYOK)",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 131072,
+        "enable_reasoner": true,
+        "reasoning_effort": "high",
+        "parallel_tool_calls": true
+      }
     },
     {
       "id": "glm-5.2",
