@@ -3,7 +3,10 @@ import {
   resolveModelHandleFromLlmConfig,
 } from "@/agent/model-handles";
 import { resolveRegisteredPiProviderFromModelHandle } from "@/backend/dev/pi-provider-mod-registry";
-import { isResolvablePiModelHandle } from "@/backend/dev/pi-provider-registry";
+import {
+  isResolvablePiModelHandle,
+  resolveProviderFromProviderType,
+} from "@/backend/dev/pi-provider-registry";
 import { isRecord } from "@/utils/type-guards";
 
 export function supportedModelSettingsFromBody(
@@ -43,13 +46,19 @@ export function normalizeLocalModelHandle(
   modelSettings?: Record<string, unknown>,
   legacyLlmConfig?: Record<string, unknown>,
 ): string {
-  if (
-    isResolvablePiModelHandle(model) ||
-    resolveRegisteredPiProviderFromModelHandle(model)
-  ) {
-    return model;
-  }
+  if (isResolvablePiModelHandle(model)) return model;
+
   const providerType = providerTypeFromModelSettings(modelSettings);
+  if (providerType && !resolveProviderFromProviderType(providerType)) {
+    const prefix = `${providerType}/`;
+    if (model.startsWith(`${prefix}${prefix}`)) {
+      return model.slice(prefix.length);
+    }
+    if (model.startsWith(prefix)) return model;
+  }
+
+  if (resolveRegisteredPiProviderFromModelHandle(model)) return model;
+
   const legacyEndpointType = legacyLlmConfig?.model_endpoint_type;
   return (
     resolveModelHandleFromLlmConfig({
