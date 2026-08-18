@@ -171,19 +171,12 @@ Custom prompt body`,
 
     // per-prompt operational phrases proving copied v1 guidance remains
     const opsPhrases: Record<string, string[]> = {
-      reflection: [
-        "Phase 1 — Investigate",
-        "Phase 5 — Commit",
-        "`create`",
-      ],
+      reflection: ["Phase 1 — Investigate", "Phase 5 — Commit", "`create`"],
       init: [
         "### 5. Commit (1 bash call)",
         "feat(init): initialize memory for project",
       ],
-      "history-analyzer": [
-        "### 5. Commit",
-        "Do NOT merge into main",
-      ],
+      "history-analyzer": ["### 5. Commit", "Do NOT merge into main"],
       memory: [
         "### Phase 5: Merge and Clean Up (MANDATORY)",
         "## Error Handling",

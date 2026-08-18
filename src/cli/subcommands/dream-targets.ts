@@ -107,7 +107,8 @@ export function addManagedFrontmatter(
       return renderMemoryMarkdown({
         frontmatter: {
           name:
-            typeof parsed.frontmatter.name === "string" && parsed.frontmatter.name
+            typeof parsed.frontmatter.name === "string" &&
+            parsed.frontmatter.name
               ? parsed.frontmatter.name
               : defaultMemoryName(relativePath),
           description: MANAGED_DESCRIPTION[kind],
