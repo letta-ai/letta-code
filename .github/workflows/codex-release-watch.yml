@@ -21,6 +21,7 @@ on:
 
 jobs:
   watch:
+    if: github.event_name != 'schedule' || github.repository == 'letta-ai/letta-code'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
