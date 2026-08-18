@@ -14,7 +14,7 @@ import { __headlessTestUtils } from "./headless";
 const REPRESENTATIVE_MODELS = [
   "openai/gpt-5.6-luna",
   "anthropic/claude-sonnet-4-6",
-  "google_ai/gemini-3.1-flash-lite",
+  "google_ai/gemini-3.6-flash",
 ];
 
 describe("ephemeral headless toolset selection", () => {

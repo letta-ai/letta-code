@@ -1398,7 +1398,6 @@ export function App({
   // Retry counter for transient LLM API errors (ref for synchronous access in loop)
   const llmApiErrorRetriesRef = useRef(0);
   const quotaAutoSwapAttemptedRef = useRef(false);
-  const providerFallbackAttemptedRef = useRef(false);
   const emptyResponseRetriesRef = useRef(0);
 
   // Retry counter for 409 "conversation busy" errors
@@ -3795,7 +3794,6 @@ export function App({
     precomputedDiffsRef,
     prepareScopedToolExecutionContext,
     processingConversationRef,
-    providerFallbackAttemptedRef,
     queueApprovalResults,
     queueSnapshotRef,
     quotaAutoSwapAttemptedRef,

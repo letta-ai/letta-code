@@ -189,26 +189,11 @@ export function getErrorHintForStopReason(
       ? PROVIDER_STATUS_PAGES[modelEndpointType]
       : undefined;
 
-  // Build the /model swap suggestion -- mention Bedrock Opus if applicable.
-  const bedrockOpusSuggestion =
-    modelEndpointType === "anthropic" &&
-    currentModelId?.startsWith("opus-4.7") &&
-    getModelInfo("bedrock-opus-4.7")
-      ? "Opus 4.7 via Amazon Bedrock"
-      : modelEndpointType === "anthropic" &&
-          currentModelId?.startsWith("opus-4.6") &&
-          getModelInfo("bedrock-opus-4.6")
-        ? "Opus 4.6 via Amazon Bedrock"
-        : null;
-  const modelSwapSuffix = bedrockOpusSuggestion
-    ? ` (e.g. ${bedrockOpusSuggestion})`
-    : "";
-
   if (statusInfo) {
     return [
       `Downstream provider (${statusInfo.name}) is experiencing errors — check ${statusInfo.url} for additional information`,
       `(note that the official status page may not be reliable / up-to-date).`,
-      `Use /model to swap to a model from a different provider${modelSwapSuffix}, or try again later.`,
+      `Use /model to swap to a model from a different provider, or try again later.`,
     ].join(" ");
   }
 
