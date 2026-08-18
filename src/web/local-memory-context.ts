@@ -1,5 +1,10 @@
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getLocalMemoryFormat } from "@/agent/memory-format";
 import { getBackend } from "@/backend";
-import { estimateSystemTokens } from "@/utils/system-prompt-size";
+import {
+  estimateSystemPromptTokensFromMemoryDir,
+  estimateSystemTokens,
+} from "@/utils/system-prompt-size";
 import type { ContextData, ConversationInfo, MessageInfo } from "./types";
 
 type PaginatedItems<T> = T[] | { getPaginatedItems?: () => T[] };
@@ -70,7 +75,9 @@ export async function collectLocalMemoryContextData(
   if (!backend.capabilities.localMemfs) return {};
 
   const targetConversationId = conversationId ?? "default";
-  const agent = await backend.retrieveAgent(agentId);
+  const agent = await backend.retrieveAgent(agentId, {
+    include: ["agent.tags"],
+  });
   const agentName = agent.name ?? undefined;
   const model = agent.llm_config?.model ?? agent.model ?? "unknown";
   const contextWindow = agent.llm_config?.context_window ?? 0;
@@ -109,6 +116,10 @@ export async function collectLocalMemoryContextData(
       ? estimateSystemTokens(compiledPrompt)
       : 0;
   const messageTokens = estimateStoredMessageTokens(backendMessages);
+  const coreMemoryTokens = estimateSystemPromptTokensFromMemoryDir(
+    getScopedMemoryFilesystemRoot(agentId),
+    getLocalMemoryFormat(agent.tags),
+  );
   const conversations = getPaginatedItems(
     conversationPage as PaginatedItems<ConversationListItem>,
   ).flatMap((conversation) => {
@@ -133,8 +144,8 @@ export async function collectLocalMemoryContextData(
       usedTokens: systemTokens + messageTokens,
       model,
       breakdown: {
-        system: systemTokens,
-        coreMemory: 0,
+        system: Math.max(0, systemTokens - coreMemoryTokens),
+        coreMemory: coreMemoryTokens,
         externalMemory: 0,
         summaryMemory: 0,
         tools: 0,

@@ -17,6 +17,9 @@ export const LETTA_CODE_SUBAGENT_TAG = "role:subagent";
 /** Marks an agent as using git-backed memory (MemFS). */
 export const GIT_MEMORY_ENABLED_TAG = "git-memory-enabled";
 
+/** Selects the root-first MemFS v2 prompt and directory layout. */
+export const MEMFS_V2_TAG = "memfs-v2";
+
 export interface BuildCreatedAgentTagsOptions {
   tags?: string[] | null;
   isSubagent?: boolean;

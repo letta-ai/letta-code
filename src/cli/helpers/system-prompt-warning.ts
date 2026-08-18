@@ -4,6 +4,7 @@
  */
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getLocalMemoryFormat } from "@/agent/memory-format";
 import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
 import { debugWarn } from "@/utils/debug";
 import {
@@ -55,8 +56,10 @@ export function refreshSystemPromptDoctorState(
 
     if (isActiveMemfsEnabled(agentId)) {
       const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-      estimatedSystemPromptTokens =
-        estimateSystemPromptTokensFromMemoryDir(memoryDir);
+      estimatedSystemPromptTokens = estimateSystemPromptTokensFromMemoryDir(
+        memoryDir,
+        getLocalMemoryFormat(agentState?.tags),
+      );
     } else {
       // non-memfs
       const systemPrompt = (

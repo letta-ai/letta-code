@@ -23,9 +23,11 @@ import {
 } from "@/agent/approval-recovery";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import {
+  ensureLocalMemfsCheckout,
   ensureMemoryFilesystemDirs,
   getScopedMemoryFilesystemRoot,
 } from "@/agent/memory-filesystem";
+import { isMemfsV2 } from "@/agent/memory-format";
 import {
   getActiveMemoryDirectory,
   isActiveMemfsEnabled,
@@ -1398,10 +1400,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           if (isActiveMemfsEnabled(agentId)) {
             try {
               const memoryRoot = getScopedMemoryFilesystemRoot(agentId);
-              const personaCandidates = [
-                join(memoryRoot, "system", "persona.md"),
-                join(memoryRoot, "memory", "system", "persona.md"),
-              ];
+              const personaCandidates = isMemfsV2(agentState?.tags)
+                ? [join(memoryRoot, "persona.md")]
+                : [
+                    join(memoryRoot, "system", "persona.md"),
+                    join(memoryRoot, "memory", "system", "persona.md"),
+                  ];
               const personaPath = personaCandidates.find((candidate) =>
                 existsSync(candidate),
               );
@@ -2768,15 +2772,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             if (getBackend().capabilities.localMemfs) {
               const memoryDir = getScopedMemoryFilesystemRoot(agentId);
               try {
-                const { initializeLocalMemoryRepo } = await import(
-                  "@/agent/memory-git"
-                );
-                await initializeLocalMemoryRepo({
-                  memoryDir,
-                  agentId,
-                  authorName: agentName ?? undefined,
-                  files: [],
-                });
+                await ensureLocalMemfsCheckout(agentId);
                 cmd.finish(
                   `Local backend MemFS is stored locally; no remote sync is required.\nPath: ${memoryDir}`,
                   true,
@@ -2843,15 +2839,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               renameSync(memoryDir, backupDir);
 
               if (getBackend().capabilities.localMemfs) {
-                const { initializeLocalMemoryRepo } = await import(
-                  "@/agent/memory-git"
-                );
-                await initializeLocalMemoryRepo({
-                  memoryDir,
-                  agentId,
-                  authorName: agentName ?? undefined,
-                  files: [],
-                });
+                await ensureLocalMemfsCheckout(agentId);
               } else {
                 ensureMemoryFilesystemDirs(agentId);
               }

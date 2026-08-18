@@ -14,6 +14,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import { isLocalAgentId } from "./agent-id";
+import {
+  GIT_MEMORY_ENABLED_TAG,
+  LETTA_CODE_SUBAGENT_TAG,
+  MEMFS_V2_TAG,
+} from "./agent-tags";
 import { ALL_SKILL_SOURCES, type SkillSource } from "./skill-sources";
 
 /**
@@ -79,6 +84,7 @@ export interface SkillDiscoveryResult {
 export interface SkillDiscoveryOptions {
   skipBundled?: boolean;
   sources?: SkillSource[];
+  agentTags?: readonly string[];
 }
 
 /**
@@ -158,10 +164,39 @@ const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set([
   "managing-shared-memory",
 ]);
 
+export const MEMFS_V2_MIGRATION_SKILL_ID = "upgrading-memory-filesystem";
+
+export async function resolveAgentTagsForSkills(
+  agentId?: string,
+  suppliedTags?: readonly string[],
+): Promise<readonly string[]> {
+  if (suppliedTags) return suppliedTags;
+  if (!agentId || !isLocalAgentId(agentId)) return [];
+  try {
+    const { getBackend } = await import("@/backend");
+    const agent = await getBackend().retrieveAgent(agentId, {
+      include: ["agent.tags"],
+    });
+    return agent.tags ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export function isSkillAvailableForAgent(
   skill: Skill,
   agentId?: string,
+  agentTags: readonly string[] = [],
 ): boolean {
+  if (skill.source === "bundled" && skill.id === MEMFS_V2_MIGRATION_SKILL_ID) {
+    return Boolean(
+      agentId &&
+        isLocalAgentId(agentId) &&
+        !agentTags.includes(MEMFS_V2_TAG) &&
+        agentTags.includes(GIT_MEMORY_ENABLED_TAG) &&
+        !agentTags.includes(LETTA_CODE_SUBAGENT_TAG),
+    );
+  }
   if (
     skill.source === "bundled" &&
     agentId &&
@@ -314,8 +349,14 @@ export async function discoverSkills(
     }
   }
 
+  const agentTags = await resolveAgentTagsForSkills(
+    agentId,
+    options?.agentTags,
+  );
   return {
-    skills: Array.from(skillsById.values()).sort(compareSkills),
+    skills: Array.from(skillsById.values())
+      .filter((skill) => isSkillAvailableForAgent(skill, agentId, agentTags))
+      .sort(compareSkills),
     errors: allErrors,
   };
 }

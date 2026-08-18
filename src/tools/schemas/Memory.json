@@ -20,7 +20,7 @@
     },
     "file_path": {
       "type": "string",
-      "description": "Target memory path (file or directory). Accepts relative paths like system/contacts.md or absolute paths under MEMORY_DIR"
+      "description": "Target memory path (file or directory). Accepts relative paths like reference/project.md or absolute paths under MEMORY_DIR"
     },
     "old_path": {
       "type": "string",
@@ -48,7 +48,7 @@
     },
     "description": {
       "type": "string",
-      "description": "Block description (required for create and update_description)"
+      "description": "Memory file description (required for regular-file create and update_description; unused for frontmatter-free MEMORY.md indexes)"
     },
     "file_text": {
       "type": "string",

@@ -35,6 +35,7 @@ import { getErrorMessage } from "@/utils/error";
 import { isSubagentStdoutLostError } from "@/utils/subagent-stdout-failure";
 import {
   getAllSubagentConfigs,
+  resolveSubagentConfigForMemoryFormat,
   type SubagentConfig,
   type SubagentMemoryScope,
   type SubagentResult,
@@ -817,7 +818,7 @@ export async function spawnSubagent(
   systemPromptOverride?: string,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
-  const config = allConfigs[type];
+  let config = allConfigs[type];
 
   if (!config) {
     return {
@@ -859,6 +860,17 @@ export async function spawnSubagent(
       agentId: resolvedParentAgentId,
       conversationId: resolvedParentConversationId,
     });
+  const formatConfig = resolveSubagentConfigForMemoryFormat(
+    config,
+    parentAgent?.tags,
+    activeBackend.capabilities.localMemfs,
+  );
+  const effectiveSystemPromptOverride =
+    systemPromptOverride ??
+    (formatConfig.systemPrompt !== config.systemPrompt
+      ? formatConfig.systemPrompt
+      : undefined);
+  config = formatConfig;
   const billingTier = await getCurrentBillingTier();
 
   // For existing agents, don't override model; for new agents, use provided or config default
@@ -931,7 +943,7 @@ export async function spawnSubagent(
     resolvedParentAgentId,
     transcriptPath,
     memoryScope,
-    systemPromptOverride,
+    effectiveSystemPromptOverride,
   );
 
   return result;

@@ -1,4 +1,6 @@
 import { parseArgs } from "node:util";
+import { getLocalMemoryFormat } from "@/agent/memory-format";
+import { getBackend } from "@/backend";
 import {
   type ParsedSource,
   parseFromSource,
@@ -167,6 +169,16 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     );
     return 1;
   }
+  const backend = getBackend();
+  const memoryFormat = backend.capabilities.localMemfs
+    ? getLocalMemoryFormat(
+        (
+          await backend.retrieveAgent(agentId, {
+            include: ["agent.tags"],
+          })
+        ).tags,
+      )
+    : "memfs-v1";
 
   if (!settingsManager.isMemfsEnabled(agentId)) {
     if (asJson) {
@@ -218,7 +230,7 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
   if (target) {
     const existing = await readExistingTarget(target);
     try {
-      await syncTargetIntoMemory(agentId, target, existing);
+      await syncTargetIntoMemory(agentId, target, existing, memoryFormat);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!asJson) {
@@ -227,7 +239,7 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
         );
       }
     }
-    const targetInstruction = buildTargetInstruction(target);
+    const targetInstruction = buildTargetInstruction(target, memoryFormat);
     instruction = instruction
       ? `${instruction}\n\n${targetInstruction}`
       : targetInstruction;
@@ -337,7 +349,7 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
   let targetError: string | undefined;
   if (target && outcome.success) {
     try {
-      const rendered = readTargetFromMemory(agentId, target);
+      const rendered = readTargetFromMemory(agentId, target, memoryFormat);
       if (rendered !== null) {
         await writeTarget(target, rendered);
         targetWritten = true;

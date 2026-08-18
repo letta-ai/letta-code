@@ -46,6 +46,20 @@ describe("system prompt versioning", () => {
     }
   });
 
+  test("retracks an expected prompt changed by an external activation process", () => {
+    const oldPrompt = buildSystemPrompt("default", "local-memfs");
+    const newPrompt = buildSystemPrompt("default", "local-memfs-v2");
+    const decision = decideManagedSystemPromptUpdate({
+      agent: agent(newPrompt),
+      memoryMode: "local-memfs-v2",
+      storedPreset: "default",
+      storedHash: hashSystemPrompt(oldPrompt),
+      storedVersion: "0.0.0",
+    });
+
+    expect(decision.kind).toBe("track");
+  });
+
   test("does not update when the agent prompt no longer matches the stored managed hash", () => {
     const storedPrompt = buildSystemPrompt("default", "standard");
     const modifiedPrompt = `${storedPrompt}\n\nUser customization.`;

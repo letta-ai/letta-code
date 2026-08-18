@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { MEMFS_V2_TAG } from "@/agent/agent-tags";
 import { isSkillAvailableForAgent, type Skill } from "@/agent/skills";
 
 const baseSkill: Skill = {
@@ -31,5 +32,30 @@ describe("isSkillAvailableForAgent", () => {
   test("keeps other bundled skills for local agents", () => {
     const skill: Skill = { ...baseSkill, id: "scheduling-tasks" };
     expect(isSkillAvailableForAgent(skill, "agent-local-123")).toBe(true);
+  });
+
+  test("shows the v2 migration only to untagged local agents", () => {
+    const skill: Skill = {
+      ...baseSkill,
+      id: "upgrading-memory-filesystem",
+    };
+
+    expect(isSkillAvailableForAgent(skill, "agent-local-123")).toBe(true);
+    expect(
+      isSkillAvailableForAgent(skill, "agent-local-123", [MEMFS_V2_TAG]),
+    ).toBe(false);
+    expect(isSkillAvailableForAgent(skill, "agent-123")).toBe(false);
+  });
+
+  test("keeps non-bundled migration overrides available", () => {
+    const skill: Skill = {
+      ...baseSkill,
+      id: "upgrading-memory-filesystem",
+      source: "project",
+    };
+
+    expect(
+      isSkillAvailableForAgent(skill, "agent-local-123", [MEMFS_V2_TAG]),
+    ).toBe(true);
   });
 });

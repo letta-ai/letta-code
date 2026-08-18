@@ -13,10 +13,18 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
+  getLocalMemoryFormat,
+  isCoreMemoryPath,
+  isProjectedMemoryPath,
+  type LocalMemoryFormat,
+} from "@/agent/memory-format";
+import { parseMemoryMarkdown } from "@/agent/memory-markdown";
+import {
   getFileNodes,
   readFileContent,
   scanMemoryFilesystem,
 } from "@/agent/memory-scanner";
+import { getBackend } from "@/backend";
 import { getAgentContextOverview } from "@/backend/api/agents";
 import { getClient, getServerUrl } from "@/backend/api/client";
 import { apiRequest } from "@/backend/api/request";
@@ -160,22 +168,43 @@ function parseFrontmatter(raw: string): {
 }
 
 /** Collect memory files from the working tree on disk. */
-function collectFiles(memoryRoot: string): MemoryFile[] {
+export function collectFiles(
+  memoryRoot: string,
+  memoryFormat: LocalMemoryFormat = "memfs-v1",
+): MemoryFile[] {
   const treeNodes = scanMemoryFilesystem(memoryRoot);
   const fileNodes = getFileNodes(treeNodes);
+  const allPaths = new Set(
+    fileNodes.map((node) => node.relativePath.replace(/\\/g, "/")),
+  );
 
   return fileNodes
-    .filter((n) => n.name.endsWith(".md"))
+    .filter(
+      (node) =>
+        node.name.endsWith(".md") &&
+        isProjectedMemoryPath(node.relativePath, allPaths, memoryFormat),
+    )
     .map((n) => {
       const raw = readFileContent(n.fullPath);
-      const { frontmatter, body } = parseFrontmatter(raw);
+      const parsed =
+        memoryFormat === "memfs-v2"
+          ? parseMemoryMarkdown({
+              content: raw,
+              relativePath: n.relativePath,
+              format: memoryFormat,
+              errorPrefix: "memory viewer",
+            })
+          : parseFrontmatter(raw);
+      const frontmatter = Object.fromEntries(
+        Object.entries(parsed.frontmatter).flatMap(([key, value]) =>
+          typeof value === "string" ? [[key, value]] : [],
+        ),
+      );
       return {
         path: n.relativePath,
-        isSystem:
-          n.relativePath.startsWith("system/") ||
-          n.relativePath.startsWith("system\\"),
+        isSystem: isCoreMemoryPath(n.relativePath, memoryFormat),
         frontmatter,
-        content: body,
+        content: parsed.body,
       };
     });
 }
@@ -301,7 +330,16 @@ async function collectMemoryData(
   conversationId?: string,
 ): Promise<MemoryViewerData> {
   // Filesystem scan (synchronous)
-  const files = collectFiles(memoryRoot);
+  let memoryFormat: LocalMemoryFormat = "memfs-v1";
+  try {
+    const agent = await getBackend().retrieveAgent(agentId, {
+      include: ["agent.tags"],
+    });
+    memoryFormat = getLocalMemoryFormat(agent.tags);
+  } catch {
+    // Keep the legacy default when agent metadata is unavailable.
+  }
+  const files = collectFiles(memoryRoot, memoryFormat);
 
   // Git calls (parallel)
   const [metadata, statsMap, diffsMap, totalCount] = await Promise.all([

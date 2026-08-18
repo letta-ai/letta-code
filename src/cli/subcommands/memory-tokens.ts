@@ -1,3 +1,5 @@
+import type { LocalMemoryFormat } from "@/agent/memory-format";
+import { readMemoryFormatMarker } from "@/agent/memory-git-hooks";
 import {
   estimateSystemPromptSize,
   type FileEstimate,
@@ -14,6 +16,7 @@ export interface MemoryTokensOptions {
   top: string | undefined;
   format: string | undefined;
   quiet: boolean;
+  memoryFormat?: LocalMemoryFormat;
 }
 
 function parsePositiveInt(
@@ -100,7 +103,10 @@ export async function runMemoryTokensAction(
 
   let estimate: SystemPromptSizeEstimate;
   try {
-    estimate = estimateSystemPromptSize(memoryDir);
+    estimate = estimateSystemPromptSize(
+      memoryDir,
+      options.memoryFormat ?? readMemoryFormatMarker(memoryDir) ?? "memfs-v1",
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Failed to read memory dir: ${message}`);

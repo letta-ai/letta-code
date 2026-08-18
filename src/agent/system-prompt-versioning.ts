@@ -4,7 +4,11 @@ import { getBackend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getVersion } from "@/version";
-import { LETTA_CODE_ORIGIN_TAG, LETTA_CODE_SUBAGENT_TAG } from "./agent-tags";
+import {
+  LETTA_CODE_ORIGIN_TAG,
+  LETTA_CODE_SUBAGENT_TAG,
+  MEMFS_V2_TAG,
+} from "./agent-tags";
 import {
   buildSystemPrompt,
   isKnownPreset,
@@ -70,12 +74,16 @@ export function recordManagedSystemPrompt(
   );
 }
 
-export function getMemoryPromptModeForAgent(agentId: string): MemoryPromptMode {
+export function getMemoryPromptModeForAgent(
+  agent: Pick<AgentState, "id" | "tags">,
+): MemoryPromptMode {
   const backend = getBackend();
   if (backend.capabilities.localMemfs) {
-    return "local-memfs";
+    return agent.tags?.includes(MEMFS_V2_TAG)
+      ? "local-memfs-v2"
+      : "local-memfs";
   }
-  return settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
+  return settingsManager.isReady && settingsManager.isMemfsEnabled(agent.id)
     ? "memfs"
     : "standard";
 }
@@ -140,6 +148,20 @@ export function decideManagedSystemPromptUpdate(input: {
       }
 
       if (currentHash !== storedHash) {
+        const expectedCurrentPrompt = buildSystemPrompt(
+          storedPreset,
+          memoryMode,
+        );
+        if (currentSystemPrompt === expectedCurrentPrompt) {
+          return {
+            kind: "track",
+            prompt: managedPrompt(
+              storedPreset,
+              memoryMode,
+              currentSystemPrompt,
+            ),
+          };
+        }
         return {
           kind: "custom",
           reason: "agent prompt differs from stored managed prompt hash",

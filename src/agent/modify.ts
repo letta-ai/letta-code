@@ -753,14 +753,17 @@ export async function updateAgentSystemPrompt(
     const { resolveAndBuildSystemPrompt } = await import(
       "@/agent/system-prompt-resolution"
     );
-    const { recordManagedSystemPrompt } = await import(
-      "@/agent/system-prompt-versioning"
-    );
+    const { getMemoryPromptModeForAgent, recordManagedSystemPrompt } =
+      await import("@/agent/system-prompt-versioning");
     const { settingsManager } = await import("@/settings-manager");
 
     const backend = getBackend();
     const memoryMode = backend.capabilities.localMemfs
-      ? "local-memfs"
+      ? getMemoryPromptModeForAgent(
+          await backend.retrieveAgent(agentId, {
+            include: ["agent.tags"],
+          }),
+        )
       : settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
         ? "memfs"
         : "standard";
