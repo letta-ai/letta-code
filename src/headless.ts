@@ -1618,7 +1618,7 @@ export async function handleHeadlessCommand(
     }
     scheduleManagedSystemPromptUpdate({
       agent: taggedAgent,
-      memoryMode: getMemoryPromptModeForAgent(taggedAgent.id),
+      memoryMode: getMemoryPromptModeForAgent(taggedAgent),
     });
   }
 

@@ -107,6 +107,20 @@ describe("estimateSystemPromptSize", () => {
     expect(total).toBe(1);
     expect(files).toEqual([{ path: "system/persona.md", tokens: 1 }]);
   });
+
+  test("counts only root Markdown files for MemFS v2", () => {
+    writeFileSync(join(tmpRoot, "MEMORY.md"), "abcd");
+    writeFileSync(join(tmpRoot, "persona.md"), "abcdefgh");
+    mkdirSync(join(tmpRoot, "projects"));
+    writeFileSync(join(tmpRoot, "projects", "MEMORY.md"), "a".repeat(100));
+
+    const result = estimateSystemPromptSize(tmpRoot, "memfs-v2");
+    expect(result.total).toBe(3);
+    expect(result.files).toEqual([
+      { path: "MEMORY.md", tokens: 1 },
+      { path: "persona.md", tokens: 2 },
+    ]);
+  });
 });
 
 describe("estimateSystemPromptTokensFromMemoryDir (backward-compat)", () => {

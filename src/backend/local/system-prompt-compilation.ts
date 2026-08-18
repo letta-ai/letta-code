@@ -3,6 +3,11 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { basename, dirname, relative } from "node:path";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import {
+  getLocalMemoryFormat,
+  type LocalMemoryFormat,
+} from "@/agent/memory-format";
+import { parseMemoryMarkdown } from "@/agent/memory-markdown";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import type { LocalAgentRecord } from "./local-types";
 
@@ -12,6 +17,7 @@ const MEMORY_DIR_PLACEHOLDER = "$" + "{MEMORY_DIR}";
 interface LocalMemoryFile {
   relativePath: string;
   label: string;
+  raw: string;
   value: string;
   description: string;
 }
@@ -23,6 +29,49 @@ export interface LocalCompiledSystemPrompt {
   compiledAt: string;
   rawSystemHash: string;
   memfsRevision?: string;
+  memoryFormat?: LocalMemoryFormat;
+}
+
+export function hasLocalMemoryProjectionChanged(
+  previous: Pick<LocalCompiledSystemPrompt, "memfsRevision" | "memoryFormat">,
+  next: Pick<LocalCompiledSystemPrompt, "memfsRevision" | "memoryFormat">,
+): boolean {
+  return (
+    previous.memfsRevision !== next.memfsRevision ||
+    previous.memoryFormat !== next.memoryFormat
+  );
+}
+
+export function mergeLocalMemoryProjection(
+  previous: LocalCompiledSystemPrompt,
+  next: LocalCompiledSystemPrompt,
+): LocalCompiledSystemPrompt {
+  return {
+    ...previous,
+    compiledAt: next.compiledAt,
+    coreMemory: next.coreMemory,
+    memfsRevision: next.memfsRevision,
+    memoryFormat: next.memoryFormat,
+  };
+}
+
+export function supportsMidConversationSystemMessages(
+  agent: LocalAgentRecord,
+): boolean {
+  return agent.model === "anthropic/claude-opus-4-8";
+}
+
+export function formatMidConversationMemoryUpdate(
+  compiled: LocalCompiledSystemPrompt,
+): string {
+  return [
+    "<memory_update>",
+    `The local memory filesystem has been edited and committed at revision ${compiled.memfsRevision ?? "unknown"}.`,
+    "This updates part of your persona/system memory. Treat the following freshly rendered memory context as authoritative from now on; where it conflicts with earlier memory context, this newer memory context wins.",
+    "",
+    compiled.coreMemory.trimEnd(),
+    "</memory_update>",
+  ].join("\n");
 }
 
 export interface CompileLocalSystemPromptOptions {
@@ -74,7 +123,10 @@ export function getCommittedMemfsRevision(
   }
 }
 
-function collectCommittedMemoryFiles(memoryDir: string): {
+function collectCommittedMemoryFiles(
+  memoryDir: string,
+  memoryFormat: LocalMemoryFormat,
+): {
   files: LocalMemoryFile[];
   revision?: string;
 } {
@@ -93,12 +145,27 @@ function collectCommittedMemoryFiles(memoryDir: string): {
   }
 
   for (const relativePath of paths) {
+    const shouldRead =
+      memoryFormat === "memfs-v1" ||
+      !relativePath.includes("/") ||
+      /^[^/]+\/MEMORY\.md$/.test(relativePath);
+    if (!shouldRead) {
+      files.push({
+        relativePath,
+        label: labelFromPath(relativePath),
+        raw: "",
+        value: "",
+        description: "",
+      });
+      continue;
+    }
     try {
       const raw = gitOutput(memoryDir, ["show", `HEAD:${relativePath}`]);
       const { frontmatter, body } = parseFrontmatter(raw);
       files.push({
         relativePath,
         label: labelFromPath(relativePath),
+        raw,
         value: body,
         description:
           typeof frontmatter.description === "string"
@@ -115,6 +182,78 @@ function collectCommittedMemoryFiles(memoryDir: string): {
     files: files.sort((a, b) => a.label.localeCompare(b.label)),
     revision,
   };
+}
+
+function escapeXmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#x27;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function renderMemfsV2Projection(files: LocalMemoryFile[]): string {
+  if (!files.some((file) => file.relativePath === "MEMORY.md")) {
+    throw new Error("MemFS v2 requires MEMORY.md at the memory root");
+  }
+  const rootFiles = files
+    .filter((file) => !file.relativePath.includes("/"))
+    .sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  const childIndexes = files
+    .filter(
+      (file) =>
+        /^[^/]+\/MEMORY\.md$/.test(file.relativePath) &&
+        file.relativePath !== "skills/MEMORY.md",
+    )
+    .sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  for (const file of [...rootFiles, ...childIndexes]) {
+    if (file.relativePath.endsWith("MEMORY.md")) {
+      if (file.raw.startsWith("---")) {
+        throw new Error(`${file.relativePath} must not have frontmatter`);
+      }
+      continue;
+    }
+    parseMemoryMarkdown({
+      content: file.raw,
+      relativePath: file.relativePath,
+      format: "memfs-v2",
+      errorPrefix: file.relativePath,
+    });
+  }
+
+  const lines = [
+    `<memory root="${MEMORY_DIR_PLACEHOLDER}">`,
+    "<instructions>",
+    "Root Markdown files are core memory and are already loaded below.",
+    "A child directory is memory only when it contains MEMORY.md.",
+    "Nested Markdown remains deferred. Read a child MEMORY.md before selecting deeper files.",
+    "Directories without MEMORY.md remain silent. skills/ follows the Agent Skills format.",
+    "</instructions>",
+  ];
+
+  for (const file of rootFiles) {
+    lines.push(
+      `<file name="${escapeXmlAttribute(file.relativePath)}">`,
+      file.raw.trimEnd(),
+      "</file>",
+    );
+  }
+
+  if (childIndexes.length > 0) {
+    lines.push("<deferred-memory>");
+    for (const file of childIndexes) {
+      const directory = file.relativePath.slice(0, -"/MEMORY.md".length);
+      const escaped = escapeXmlAttribute(directory);
+      lines.push(
+        `<directory path="${escaped}/" index="${escaped}/MEMORY.md" />`,
+      );
+    }
+    lines.push("</deferred-memory>");
+  }
+
+  lines.push("</memory>");
+  return lines.join("\n");
 }
 
 function renderExternalProjection(files: LocalMemoryFile[]): string {
@@ -221,11 +360,20 @@ function renderSystemTree(files: LocalMemoryFile[]): string {
   return lines.join("\n");
 }
 
-function renderMemfsProjection(memoryDir: string): {
+function renderMemfsProjection(
+  memoryDir: string,
+  memoryFormat: LocalMemoryFormat,
+): {
   content: string;
   revision?: string;
 } {
-  const { files, revision } = collectCommittedMemoryFiles(memoryDir);
+  const { files, revision } = collectCommittedMemoryFiles(
+    memoryDir,
+    memoryFormat,
+  );
+  if (memoryFormat === "memfs-v2") {
+    return { content: renderMemfsV2Projection(files), revision };
+  }
   if (files.length === 0) return { content: "", revision };
 
   const lines = [
@@ -435,10 +583,11 @@ export function compileLocalSystemPrompt(
   const compiledAt = options.now ?? new Date();
   const memoryDir =
     options.memoryDir ?? getScopedMemoryFilesystemRoot(options.agent.id);
+  const memoryFormat = getLocalMemoryFormat(options.agent.tags);
   const memfs =
     options.includeMemfs === false
       ? { content: "", revision: undefined }
-      : renderMemfsProjection(memoryDir);
+      : renderMemfsProjection(memoryDir, memoryFormat);
   const metadata = compileMemoryMetadata({
     agentId: options.agent.id,
     conversationId: options.conversationId,
@@ -454,5 +603,6 @@ export function compileLocalSystemPrompt(
     compiledAt: compiledAt.toISOString(),
     rawSystemHash: hashRawSystemPrompt(options.agent.system),
     memfsRevision: memfs.revision,
+    ...(options.includeMemfs === false ? {} : { memoryFormat }),
   };
 }

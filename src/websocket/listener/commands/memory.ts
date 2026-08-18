@@ -1,7 +1,14 @@
 import type WebSocket from "ws";
 import type { EnsureLocalMemfsCheckoutOptions } from "@/agent/memory-filesystem";
+import type { LocalMemoryFormat } from "@/agent/memory-format";
+import { isCoreMemoryPath } from "@/agent/memory-format";
+import { parseMemoryMarkdown } from "@/agent/memory-markdown";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { ListMemoryCommand } from "@/types/protocol_v2";
+import {
+  getMemoryImageMimeType,
+  isMarkdownMemoryPath,
+} from "@/utils/memory-images";
 import {
   isDeleteMemoryFileCommand,
   isEnableMemfsCommand,
@@ -12,34 +19,13 @@ import {
   isReadMemoryFileCommand,
   isWriteMemoryFileCommand,
 } from "@/websocket/listener/protocol-inbound";
+import {
+  getMarkdownMemoryLinkTargets,
+  resolveProjectedMemoryFiles,
+} from "./memory-projection";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 const WIKI_LINK_REGEX = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
-
-// Image assets the memory viewer can render inline. Must stay in sync with
-// the server-side memory files API's supported image set.
-const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
-  ".gif": "image/gif",
-  ".jpeg": "image/jpeg",
-  ".jpg": "image/jpeg",
-  ".png": "image/png",
-  ".webp": "image/webp",
-};
-
-function getLowercaseExtension(path: string): string {
-  const lastSlash = path.lastIndexOf("/");
-  const lastDot = path.lastIndexOf(".");
-  if (lastDot <= lastSlash) return "";
-  return path.slice(lastDot).toLowerCase();
-}
-
-function getMemoryImageMimeType(path: string): string | null {
-  return IMAGE_MIME_BY_EXTENSION[getLowercaseExtension(path)] ?? null;
-}
-
-function isMarkdownMemoryPath(path: string): boolean {
-  return getLowercaseExtension(path) === ".md";
-}
 
 export type ListMemoryCommandTestOverrides = {
   ensureLocalMemfsCheckout?: (
@@ -48,6 +34,7 @@ export type ListMemoryCommandTestOverrides = {
   ) => Promise<void>;
   getMemoryFilesystemRoot?: (agentId: string) => string;
   isMemfsEnabledOnServer?: (agentId: string) => Promise<boolean>;
+  memoryFormat?: LocalMemoryFormat;
 };
 
 type ListMemoryCommandContext = {
@@ -151,8 +138,9 @@ export async function handleListMemoryCommand(
       overrides.getMemoryFilesystemRoot ?? actualGetMemoryFilesystemRoot;
     const isMemfsEnabledOnServer =
       overrides.isMemfsEnabledOnServer ?? actualIsMemfsEnabledOnServer;
-    const { scanMemoryFilesystem, getFileNodes, readFileContent } =
-      await import("@/agent/memory-scanner");
+    const { scanMemoryFilesystem, readFileContent } = await import(
+      "@/agent/memory-scanner"
+    );
     const { parseFrontmatter } = await import("@/utils/frontmatter");
 
     const { existsSync, statSync } = await import("node:fs");
@@ -195,10 +183,11 @@ export async function handleListMemoryCommand(
     }
 
     const treeNodes = scanMemoryFilesystem(memoryRoot);
-    const fileNodes = getFileNodes(treeNodes).filter(
-      (n) =>
-        isMarkdownMemoryPath(n.relativePath) ||
-        getMemoryImageMimeType(n.relativePath) !== null,
+    const { fileNodes, memoryFormat } = await resolveProjectedMemoryFiles(
+      parsed.agent_id,
+      treeNodes,
+      overrides.memoryFormat ??
+        (overrides.getMemoryFilesystemRoot ? "memfs-v1" : undefined),
     );
     const includeReferences = parsed.include_references === true;
 
@@ -275,7 +264,7 @@ export async function handleListMemoryCommand(
         candidates.add(posix.normalize(posix.join(sourceDir, withExtension)));
       }
 
-      if (!withExtension.startsWith("system/")) {
+      if (memoryFormat === "memfs-v1" && !withExtension.startsWith("system/")) {
         candidates.add(posix.normalize(`system/${withExtension}`));
       }
 
@@ -292,10 +281,6 @@ export async function handleListMemoryCommand(
       body: string,
       sourcePath: string,
     ): string[] => {
-      if (!body.includes("[[")) {
-        return [];
-      }
-
       const refs = new Set<string>();
 
       for (const wikiMatch of body.matchAll(WIKI_LINK_REGEX)) {
@@ -304,6 +289,13 @@ export async function handleListMemoryCommand(
         const normalized = normalizeMemoryReference(rawTarget, sourcePath);
         if (normalized && normalized !== sourcePath) {
           refs.add(normalized);
+        }
+      }
+
+      if (memoryFormat === "memfs-v2") {
+        for (const rawTarget of getMarkdownMemoryLinkTargets(body)) {
+          const normalized = normalizeMemoryReference(rawTarget, sourcePath);
+          if (normalized && normalized !== sourcePath) refs.add(normalized);
         }
       }
 
@@ -316,9 +308,7 @@ export async function handleListMemoryCommand(
     for (let i = 0; i < total; i += CHUNK_SIZE) {
       const chunk = fileNodes.slice(i, i + CHUNK_SIZE);
       const entries = chunk.map((node) => {
-        const isSystem =
-          node.relativePath.startsWith("system/") ||
-          node.relativePath.startsWith("system\\");
+        const isSystem = isCoreMemoryPath(node.relativePath, memoryFormat);
 
         const imageMimeType = getMemoryImageMimeType(node.relativePath);
         if (imageMimeType) {
@@ -339,7 +329,15 @@ export async function handleListMemoryCommand(
         }
 
         const raw = readFileContent(node.fullPath);
-        const { frontmatter, body } = parseFrontmatter(raw);
+        const { frontmatter, body } =
+          memoryFormat === "memfs-v2"
+            ? parseMemoryMarkdown({
+                content: raw,
+                relativePath: node.relativePath,
+                format: memoryFormat,
+                errorPrefix: "list memory",
+              })
+            : parseFrontmatter(raw);
         const desc = frontmatter.description;
         return {
           relative_path: node.relativePath,

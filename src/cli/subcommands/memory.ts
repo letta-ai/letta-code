@@ -144,12 +144,28 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
   // `tokens` has its own input resolution (--memory-dir / $MEMORY_DIR first,
   // then falls back to agent id). Short-circuit before the agent-id hard check.
   if (action === "tokens") {
+    let memoryFormat:
+      | import("@/agent/memory-format").LocalMemoryFormat
+      | undefined;
+    if (agentId) {
+      try {
+        const { getBackend } = await import("@/backend");
+        const { getLocalMemoryFormat } = await import("@/agent/memory-format");
+        const agent = await getBackend().retrieveAgent(agentId, {
+          include: ["agent.tags"],
+        });
+        memoryFormat = getLocalMemoryFormat(agent.tags);
+      } catch {
+        // The token action can still read the repository's local format marker.
+      }
+    }
     return runMemoryTokensAction({
       memoryDir: parsed.values["memory-dir"],
       agentMemoryDir: agentId ? getMemoryRoot(agentId) : undefined,
       top: parsed.values.top,
       format: parsed.values.format,
       quiet: Boolean(parsed.values.quiet),
+      memoryFormat,
     });
   }
 

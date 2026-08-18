@@ -1,9 +1,5 @@
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type WebSocket from "ws";
-import {
-  estimateSystemPromptTokensFromMemoryDir,
-  setSystemPromptDoctorState,
-} from "@/cli/helpers/system-prompt-warning";
 import { settingsManager } from "@/settings-manager";
 import type {
   AbortMessageCommand,
@@ -34,6 +30,7 @@ import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
 import { subscribeListenerConnection } from "./connection";
 import { getBootWorkingDirectory } from "./cwd";
+import { refreshSystemPromptDoctorState } from "./doctor-state";
 import {
   handleExternalToolCallResponseCommand,
   updateRuntimeExternalTools,
@@ -892,12 +889,7 @@ export function createListenerMessageHandler(
           const agentId = parsed.runtime.agent_id;
           if (agentId && settingsManager.isMemfsEnabled(agentId)) {
             try {
-              const { getScopedMemoryFilesystemRoot } = await import(
-                "@/agent/memory-filesystem"
-              );
-              const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-              const tokens = estimateSystemPromptTokensFromMemoryDir(memoryDir);
-              setSystemPromptDoctorState(agentId, tokens);
+              await refreshSystemPromptDoctorState(agentId);
             } catch {
               // best-effort
             }

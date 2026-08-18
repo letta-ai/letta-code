@@ -2,6 +2,7 @@ import {
   getScopedMemoryFilesystemRoot,
   isLettaCloud,
 } from "@/agent/memory-filesystem";
+import { getLocalMemoryFormat } from "@/agent/memory-format";
 import {
   buildReflectionIntegrationMemoryScope,
   buildReflectionMemoryScope,
@@ -461,6 +462,16 @@ export async function prepareReflectionMemoryWorktreeLaunch(params: {
   reflectionPrompt: string;
 }> {
   const memoryDir = getScopedMemoryFilesystemRoot(params.agentId);
+  const backend = getBackend();
+  const memoryFormat = backend.capabilities.localMemfs
+    ? getLocalMemoryFormat(
+        (
+          await backend.retrieveAgent(params.agentId, {
+            include: ["agent.tags"],
+          })
+        ).tags,
+      )
+    : "memfs-v1";
   const worktree = await createReflectionMemoryWorktree({
     parentMemoryDir: memoryDir,
   });
@@ -472,7 +483,10 @@ export async function prepareReflectionMemoryWorktreeLaunch(params: {
       params.reflectionPromptOverride ??
       buildReflectionSubagentPrompt({
         instruction: params.instruction,
-        parentMemory: await buildParentMemorySnapshot(worktree.worktreeDir),
+        parentMemory: await buildParentMemorySnapshot(worktree.worktreeDir, {
+          memoryFormat,
+        }),
+        memoryFormat,
       });
     return { worktree, reflectionPrompt };
   } catch (error) {

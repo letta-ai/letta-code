@@ -9,6 +9,7 @@ import humanTutorialPrompt from "./prompts/human_tutorial.mdx";
 import interruptRecoveryAlert from "./prompts/interrupt_recovery_alert.txt";
 import lettaMemfsPrompt from "./prompts/letta.md";
 import lettaLocalMemfsPrompt from "./prompts/letta_local_memfs.md";
+import lettaLocalMemfsV2Memory from "./prompts/letta_local_memfs_v2_memory.md";
 import lettaNoMemfsPrompt from "./prompts/letta_no_memfs.md";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
 import onboardingPrompt from "./prompts/onboarding.mdx";
@@ -27,6 +28,40 @@ import sourceCodexPrompt from "./prompts/source_codex.md";
 import sourceGeminiPrompt from "./prompts/source_gemini.md";
 
 import stylePrompt from "./prompts/style.mdx";
+
+const LOCAL_MEMORY_SECTION_START =
+  "## Memory blocks & external memory (learning)";
+const IDENTITY_SECTION_START = "# Identity";
+const V1_IDENTITY_DESCRIPTION =
+  "The core of your identity is defined by the `<self>` memory block (projected to a local `persona.md` file), as well as other memory blocks in your system prompt (in `<memory>`).";
+const V2_IDENTITY_DESCRIPTION =
+  "The core of your identity is defined by the root `persona.md` memory file projected into your system prompt, as well as your other root memory files.";
+
+function buildLocalMemfsV2Prompt(): string {
+  const start = lettaLocalMemfsPrompt.indexOf(LOCAL_MEMORY_SECTION_START);
+  const end = lettaLocalMemfsPrompt.indexOf(IDENTITY_SECTION_START, start);
+  if (start < 0 || end < 0) {
+    throw new Error("Unable to derive the local MemFS v2 prompt");
+  }
+  return `${lettaLocalMemfsPrompt.slice(0, start)}${lettaLocalMemfsV2Memory.trim()}\n\n${lettaLocalMemfsPrompt.slice(end)}`
+    .replace(V1_IDENTITY_DESCRIPTION, V2_IDENTITY_DESCRIPTION)
+    .replace(
+      "You MUST always adhere to your self and other memory blocks:",
+      "You MUST always adhere to your persona and other core memory files:",
+    )
+    .replaceAll("self defined here", "persona defined here")
+    .replace(
+      "**Adhering to your persona/identity/self**: ALWAYS stay consistent with what is described in `self` with every token you generate.",
+      "**Adhering to your persona**: ALWAYS stay consistent with what is described in root `persona.md` with every token you generate.",
+    )
+    .replace(
+      "prefer the self you have built",
+      "prefer the persona you have built",
+    )
+    .replaceAll("memory blocks", "core memory files");
+}
+
+const lettaLocalMemfsV2Prompt = buildLocalMemfsV2Prompt();
 
 export const SYSTEM_PROMPT = lettaNoMemfsPrompt;
 
@@ -63,6 +98,7 @@ export interface SystemPromptOption {
   content: string;
   memfsContent?: string;
   localMemfsContent?: string;
+  localMemfsV2Content?: string;
   isDefault?: boolean;
   isFeatured?: boolean;
 }
@@ -75,6 +111,7 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     content: lettaNoMemfsPrompt,
     memfsContent: lettaMemfsPrompt,
     localMemfsContent: lettaLocalMemfsPrompt,
+    localMemfsV2Content: lettaLocalMemfsV2Prompt,
     isDefault: true,
     isFeatured: true,
   },
@@ -85,6 +122,7 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     content: lettaNoMemfsPrompt,
     memfsContent: lettaMemfsPrompt,
     localMemfsContent: lettaLocalMemfsPrompt,
+    localMemfsV2Content: lettaLocalMemfsV2Prompt,
     isFeatured: true,
   },
   {
@@ -107,14 +145,21 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
   },
 ];
 
-export type MemoryPromptMode = "standard" | "memfs" | "local-memfs";
+export type MemoryPromptMode =
+  | "standard"
+  | "memfs"
+  | "local-memfs"
+  | "local-memfs-v2";
 
 export function getSystemPromptVariantContents(
   prompt: SystemPromptOption,
 ): string[] {
-  return [prompt.content, prompt.memfsContent, prompt.localMemfsContent].filter(
-    (content): content is string => typeof content === "string",
-  );
+  return [
+    prompt.content,
+    prompt.memfsContent,
+    prompt.localMemfsContent,
+    prompt.localMemfsV2Content,
+  ].filter((content): content is string => typeof content === "string");
 }
 
 /**
@@ -145,11 +190,35 @@ export function buildSystemPrompt(
       preset.content
     ).trim();
   }
+  if (memoryMode === "local-memfs-v2") {
+    return (
+      preset.localMemfsV2Content ??
+      preset.localMemfsContent ??
+      preset.memfsContent ??
+      preset.content
+    ).trim();
+  }
   if (memoryMode === "memfs") {
     return (preset.memfsContent ?? preset.content).trim();
   }
 
   return preset.content.trim();
+}
+
+export function adaptManagedSystemPromptToMemoryMode(
+  currentPrompt: string,
+  memoryMode: MemoryPromptMode,
+): string {
+  for (const prompt of SYSTEM_PROMPTS) {
+    if (
+      getSystemPromptVariantContents(prompt).some(
+        (content) => content.trim() === currentPrompt.trim(),
+      )
+    ) {
+      return buildSystemPrompt(prompt.id, memoryMode);
+    }
+  }
+  return currentPrompt;
 }
 
 /**

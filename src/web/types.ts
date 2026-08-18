@@ -26,7 +26,7 @@ export interface MemoryViewerData {
 
 export interface MemoryFile {
   path: string; // e.g. "system/persona/soul.md"
-  isSystem: boolean; // under system/ directory
+  isSystem: boolean; // compiled into core memory for the active memory format
   frontmatter: Record<string, string>;
   content: string; // raw markdown body (after frontmatter)
 }

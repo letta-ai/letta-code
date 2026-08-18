@@ -40,6 +40,7 @@ export async function getPrimaryAgentModelHandle(
   agent: {
     model?: string | null;
     name?: string | null;
+    tags?: string[] | null;
     model_settings?: { provider_type?: unknown } | null;
     llm_config?: { model_endpoint_type?: string | null; model?: string | null };
   } | null;

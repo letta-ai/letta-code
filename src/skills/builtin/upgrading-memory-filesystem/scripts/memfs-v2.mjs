@@ -1,0 +1,875 @@
+#!/usr/bin/env node
+
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  access,
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+const TODO_DESCRIPTION = "TODO: Describe when this memory should be loaded.";
+const GENERATED_INDEX_NOTE =
+  "TODO: Replace this generated index with a short overview and relative links.";
+const IGNORED_ROOT_ENTRIES = new Set([".git", ".letta", ".DS_Store"]);
+
+function fail(message) {
+  throw new Error(message);
+}
+
+function normalize(relativePath) {
+  return relativePath.split(path.sep).join("/").replace(/^\.\//, "");
+}
+
+function portablePathKey(relativePath) {
+  return relativePath.normalize("NFC").toLocaleLowerCase("en-US");
+}
+
+function sha256(content) {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function listCommittedFiles(memoryDir) {
+  const output = git(memoryDir, ["ls-tree", "-rz", "--full-tree", "HEAD"]);
+  return output
+    .split("\0")
+    .filter(Boolean)
+    .map((record) => {
+      const separator = record.indexOf("\t");
+      if (separator < 0) fail(`Unexpected git ls-tree record: ${record}`);
+      const [mode, type, object] = record.slice(0, separator).split(" ");
+      const relativePath = record.slice(separator + 1);
+      if (type !== "blob" || mode === "120000") {
+        fail(`Unsupported committed entry: ${relativePath} (${type} ${mode})`);
+      }
+      return { relativePath, mode, object };
+    });
+}
+
+function readCommittedBlob(memoryDir, object) {
+  return git(memoryDir, ["cat-file", "blob", object], { encoding: null });
+}
+
+function parseArguments(argv) {
+  const [command, ...rest] = argv;
+  const values = {};
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index];
+    if (!token.startsWith("--")) fail(`Unexpected argument: ${token}`);
+    const name = token.slice(2);
+    const value = rest[index + 1];
+    if (!value || value.startsWith("--")) fail(`Missing value for --${name}`);
+    values[name] = value;
+    index += 1;
+  }
+  return { command, values };
+}
+
+async function exists(target) {
+  try {
+    await access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function assertDirectory(target, label) {
+  const info = await stat(target).catch(() => null);
+  if (!info?.isDirectory()) fail(`${label} is not a directory: ${target}`);
+}
+
+async function assertNoSymlink(target, label) {
+  const info = await lstat(target);
+  if (info.isSymbolicLink()) fail(`${label} contains a symlink: ${target}`);
+}
+
+async function walkFiles(root, options = {}) {
+  const files = [];
+  async function visit(directory, relativeDirectory) {
+    const entries = await readdir(directory, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (!relativeDirectory && options.ignoreRootEntries?.has(entry.name)) {
+        continue;
+      }
+      const fullPath = path.join(directory, entry.name);
+      const relativePath = normalize(path.join(relativeDirectory, entry.name));
+      await assertNoSymlink(fullPath, root);
+      if (entry.isDirectory()) {
+        await visit(fullPath, relativePath);
+      } else if (entry.isFile()) {
+        files.push(relativePath);
+      } else {
+        fail(`Unsupported filesystem entry: ${relativePath}`);
+      }
+    }
+  }
+  await visit(root, "");
+  return files;
+}
+
+function isSkillPath(relativePath) {
+  return relativePath === "skills" || relativePath.startsWith("skills/");
+}
+
+function isMarkdown(relativePath) {
+  return relativePath.toLowerCase().endsWith(".md");
+}
+
+function isMemoryIndex(relativePath) {
+  return path.posix.basename(relativePath) === "MEMORY.md";
+}
+
+function destinationForSource(relativePath) {
+  if (!relativePath.startsWith("system/")) return relativePath;
+  const segments = relativePath.slice("system/".length).split("/");
+  return segments.join("-");
+}
+
+function unquote(value) {
+  const trimmed = value.trim();
+  if (
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'")))
+  ) {
+    if (trimmed.startsWith('"')) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        return trimmed.slice(1, -1);
+      }
+    }
+    return trimmed.slice(1, -1).replaceAll("''", "'");
+  }
+  return trimmed;
+}
+
+function parseFrontmatter(content) {
+  const normalized = content.replaceAll("\r\n", "\n");
+  if (!normalized.startsWith("---\n")) {
+    return { body: normalized, entries: [], hasFrontmatter: false };
+  }
+  let end = normalized.indexOf("\n---\n", 4);
+  let delimiterLength = "\n---\n".length;
+  if (end < 0 && normalized.endsWith("\n---")) {
+    end = normalized.length - "\n---".length;
+    delimiterLength = "\n---".length;
+  }
+  if (end < 0) fail("Unclosed Markdown frontmatter");
+  const header = normalized.slice(4, end);
+  const entries = [];
+  for (const line of header.split("\n")) {
+    if (!line.trim() || line.trimStart().startsWith("#")) continue;
+    const match = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
+    if (match) {
+      const marker = match[2].trim();
+      const blockStyle = /^[|>][-+]?$/.test(marker) ? marker.charAt(0) : null;
+      entries.push([match[1], blockStyle ? "" : unquote(match[2]), blockStyle]);
+      continue;
+    }
+    if (/^\s+/.test(line) && entries.length > 0) {
+      const current = entries.at(-1);
+      const separator = current[2] === "|" ? "\n" : " ";
+      current[1] = `${current[1]}${current[1] ? separator : ""}${line.trim()}`;
+      continue;
+    }
+    fail(`Unsupported frontmatter line: ${line}`);
+  }
+  return {
+    body: normalized.slice(end + delimiterLength),
+    entries: entries.map(([key, value]) => [key, value]),
+    hasFrontmatter: true,
+  };
+}
+
+function readableName(relativePath) {
+  const stem = path.posix.basename(
+    relativePath,
+    path.posix.extname(relativePath),
+  );
+  return stem
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function yamlScalar(value) {
+  return JSON.stringify(value.replaceAll("\r\n", "\n").trim());
+}
+
+function mappedLinkTarget(target, sourcePath, destinationPath, pathMap) {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("#")) {
+    return null;
+  }
+  const fragmentIndex = target.search(/[?#]/);
+  const pathname = fragmentIndex >= 0 ? target.slice(0, fragmentIndex) : target;
+  const fragment = fragmentIndex >= 0 ? target.slice(fragmentIndex) : "";
+  const rootRelative = normalize(path.posix.normalize(pathname));
+  const resolvedSource = pathMap.has(rootRelative)
+    ? rootRelative
+    : normalize(
+        path.posix.normalize(
+          path.posix.join(path.posix.dirname(sourcePath), pathname),
+        ),
+      );
+  const mapped = pathMap.get(resolvedSource);
+  if (!mapped) return null;
+  let nextTarget = path.posix.relative(
+    path.posix.dirname(destinationPath),
+    mapped,
+  );
+  if (!nextTarget) nextTarget = path.posix.basename(mapped);
+  return `${nextTarget}${fragment}`;
+}
+
+function rewriteKnownLinks(body, sourcePath, destinationPath, pathMap) {
+  const inline = body.replace(
+    /\]\(([^)\s]+)([^)]*)\)/g,
+    (full, target, suffix) => {
+      const mapped = mappedLinkTarget(
+        target,
+        sourcePath,
+        destinationPath,
+        pathMap,
+      );
+      return mapped ? `](${mapped}${suffix})` : full;
+    },
+  );
+  const wiki = inline.replace(
+    /`?\[\[([^\]|#]+)(#[^\]|]+)?(?:\|([^\]]+))?\]\]`?/g,
+    (full, target, fragment = "", alias) => {
+      const mapped = mappedLinkTarget(
+        `${target}${fragment}`,
+        sourcePath,
+        destinationPath,
+        pathMap,
+      );
+      if (!mapped) return full;
+      const label =
+        alias ?? path.posix.basename(target, path.posix.extname(target));
+      return `[${label}](${mapped})`;
+    },
+  );
+  return wiki.replace(
+    /^(\s*\[[^\]]+\]:\s*)(\S+)(.*)$/gm,
+    (full, prefix, target, suffix) => {
+      const mapped = mappedLinkTarget(
+        target,
+        sourcePath,
+        destinationPath,
+        pathMap,
+      );
+      return mapped ? `${prefix}${mapped}${suffix}` : full;
+    },
+  );
+}
+
+function rewrittenMemoryMarkdown(
+  content,
+  sourcePath,
+  destinationPath,
+  pathMap,
+) {
+  const parsed = parseFrontmatter(content);
+  const metadata = new Map(parsed.entries);
+  const name = metadata.get("name") || readableName(destinationPath);
+  const description = metadata.get("description") || TODO_DESCRIPTION;
+  const body = rewriteKnownLinks(
+    parsed.body,
+    sourcePath,
+    destinationPath,
+    pathMap,
+  ).replace(/^\n+/, "");
+  return {
+    content: [
+      "---",
+      `name: ${yamlScalar(name)}`,
+      `description: ${yamlScalar(description)}`,
+      "---",
+      body,
+    ].join("\n"),
+    missingName: !metadata.get("name"),
+    missingDescription: !metadata.get("description"),
+  };
+}
+
+function rewrittenMemoryIndex(content, sourcePath, destinationPath, pathMap) {
+  const parsed = parseFrontmatter(content);
+  const body = rewriteKnownLinks(
+    parsed.body,
+    sourcePath,
+    destinationPath,
+    pathMap,
+  ).replace(/^\n+/, "");
+  return body || generatedIndex(destinationPath);
+}
+
+function generatedIndex(relativePath) {
+  const directory = path.posix.dirname(relativePath);
+  const heading = directory === "." ? "Memory" : readableName(directory);
+  return `# ${heading}\n\n${GENERATED_INDEX_NOTE}\n`;
+}
+
+function hasLocalIndexLink(body, indexPath, files) {
+  for (const match of body.matchAll(/\[[^\]]+\]\(([^)\s]+)(?:\s+[^)]*)?\)/g)) {
+    const target = match[1];
+    if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("#")) {
+      continue;
+    }
+    const pathname = target.split(/[?#]/, 1)[0];
+    let resolved = normalize(
+      path.posix.normalize(
+        path.posix.join(path.posix.dirname(indexPath), pathname),
+      ),
+    );
+    if (resolved.endsWith("/")) resolved = `${resolved}MEMORY.md`;
+    if (files.has(resolved)) return true;
+  }
+  return false;
+}
+
+function parentDirectories(relativePath) {
+  const directories = [];
+  let current = path.posix.dirname(relativePath);
+  while (current !== ".") {
+    directories.push(current);
+    current = path.posix.dirname(current);
+  }
+  directories.push("");
+  return directories;
+}
+
+async function copyWithMode(source, destination) {
+  await mkdir(path.dirname(destination), { recursive: true });
+  await copyFile(source, destination);
+  const sourceInfo = await stat(source);
+  await chmod(destination, sourceInfo.mode);
+}
+
+async function writeCommittedFile(destination, content, mode) {
+  await mkdir(path.dirname(destination), { recursive: true });
+  await writeFile(destination, content);
+  await chmod(destination, mode === "100755" ? 0o755 : 0o644);
+}
+
+async function stageTree(source, output) {
+  await assertDirectory(source, "Source");
+  if (await exists(output)) fail(`Output already exists: ${output}`);
+  const sourceReal = await realpath(source);
+  const outputParent = await realpath(path.dirname(output));
+  const outputResolved = path.join(outputParent, path.basename(output));
+  const manifestPath = `${outputResolved}.manifest.json`;
+  if (await exists(manifestPath))
+    fail(`Manifest already exists: ${manifestPath}`);
+  if (
+    outputResolved === sourceReal ||
+    outputResolved.startsWith(`${sourceReal}${path.sep}`)
+  ) {
+    fail("Output must be outside the source memory directory");
+  }
+
+  const files = listCommittedFiles(sourceReal).filter(
+    (file) =>
+      !IGNORED_ROOT_ENTRIES.has(file.relativePath.split("/").at(0) ?? ""),
+  );
+  const sourceBlobs = new Map(
+    files.map((file) => [
+      file.relativePath,
+      readCommittedBlob(sourceReal, file.object),
+    ]),
+  );
+  const pathMap = new Map();
+  const destinationSources = new Map();
+  const portableDestinations = new Map();
+  for (const file of files) {
+    const sourcePath = file.relativePath;
+    const destinationPath = destinationForSource(sourcePath);
+    const collision = destinationSources.get(destinationPath);
+    const portableCollision = portableDestinations.get(
+      portablePathKey(destinationPath),
+    );
+    if (collision || portableCollision) {
+      fail(
+        `Destination collision: ${collision?.relativePath ?? portableCollision.sourcePath} and ${sourcePath} map to ${portableCollision?.destinationPath ?? destinationPath}`,
+      );
+    }
+    pathMap.set(sourcePath, destinationPath);
+    destinationSources.set(destinationPath, file);
+    portableDestinations.set(portablePathKey(destinationPath), {
+      sourcePath,
+      destinationPath,
+    });
+  }
+
+  const memoryDirectories = new Set([""]);
+  for (const destinationPath of pathMap.values()) {
+    if (isMarkdown(destinationPath) && !isSkillPath(destinationPath)) {
+      for (const directory of parentDirectories(destinationPath)) {
+        memoryDirectories.add(directory);
+      }
+    }
+  }
+  const generatedIndexes = [];
+  for (const directory of [...memoryDirectories].sort()) {
+    const indexPath = directory ? `${directory}/MEMORY.md` : "MEMORY.md";
+    if (!destinationSources.has(indexPath)) {
+      const collision = portableDestinations.get(portablePathKey(indexPath));
+      if (collision) {
+        fail(
+          `Destination collision: generated ${indexPath} conflicts with ${collision.sourcePath}`,
+        );
+      }
+      destinationSources.set(indexPath, null);
+      portableDestinations.set(portablePathKey(indexPath), {
+        sourcePath: "<generated>",
+        destinationPath: indexPath,
+      });
+      generatedIndexes.push(indexPath);
+    }
+  }
+
+  const todoDescriptions = [];
+  const derivedNames = [];
+  const flattened = [];
+  await mkdir(outputResolved, { recursive: false });
+  for (const [destinationPath, sourceFile] of [...destinationSources].sort(
+    ([left], [right]) => left.localeCompare(right),
+  )) {
+    const destination = path.join(outputResolved, destinationPath);
+    if (sourceFile === null) {
+      await mkdir(path.dirname(destination), { recursive: true });
+      await writeFile(destination, generatedIndex(destinationPath), "utf8");
+      continue;
+    }
+    const sourcePath = sourceFile.relativePath;
+    const sourceContent = sourceBlobs.get(sourcePath);
+    if (!sourceContent) fail(`Missing committed blob for ${sourcePath}`);
+    if (sourcePath !== destinationPath) {
+      flattened.push({ from: sourcePath, to: destinationPath });
+    }
+    if (!isMarkdown(destinationPath) || isSkillPath(destinationPath)) {
+      await writeCommittedFile(destination, sourceContent, sourceFile.mode);
+      continue;
+    }
+    const content = sourceContent.toString("utf8");
+    await mkdir(path.dirname(destination), { recursive: true });
+    if (isMemoryIndex(destinationPath)) {
+      await writeFile(
+        destination,
+        rewrittenMemoryIndex(content, sourcePath, destinationPath, pathMap),
+        "utf8",
+      );
+      continue;
+    }
+    const rewritten = rewrittenMemoryMarkdown(
+      content,
+      sourcePath,
+      destinationPath,
+      pathMap,
+    );
+    if (rewritten.missingName) derivedNames.push(destinationPath);
+    if (rewritten.missingDescription) todoDescriptions.push(destinationPath);
+    await writeFile(destination, rewritten.content, "utf8");
+  }
+
+  const validation = await validateTree(outputResolved, {
+    allowPlaceholders: true,
+  });
+  await writeFile(
+    manifestPath,
+    `${JSON.stringify(
+      {
+        source: sourceReal,
+        source_head: git(sourceReal, ["rev-parse", "HEAD"]).trim(),
+        skills: files
+          .filter((file) => isSkillPath(file.relativePath))
+          .map((file) => ({
+            path: file.relativePath,
+            sha256: sha256(sourceBlobs.get(file.relativePath)),
+          }))
+          .sort((left, right) => left.path.localeCompare(right.path)),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  return {
+    source: sourceReal,
+    output: outputResolved,
+    manifest: manifestPath,
+    flattened,
+    generated_indexes: generatedIndexes,
+    derived_names: derivedNames,
+    todo_descriptions: todoDescriptions,
+    validation,
+  };
+}
+
+async function validateTree(source, options = {}) {
+  await assertDirectory(source, "Prepared tree");
+  for (const forbidden of [".git", ".letta"]) {
+    if (await exists(path.join(source, forbidden))) {
+      fail(`Prepared tree must not contain ${forbidden}`);
+    }
+  }
+  const files = await walkFiles(source);
+  const fileSet = new Set(files);
+  const hasIndexedContent = files.some(
+    (file) => isMarkdown(file) && !isSkillPath(file) && !isMemoryIndex(file),
+  );
+  if (!files.includes("MEMORY.md")) {
+    fail("Prepared tree is missing root MEMORY.md");
+  }
+  const markdownDirectories = new Set();
+  for (const relativePath of files) {
+    if (!isMarkdown(relativePath) || isSkillPath(relativePath)) continue;
+    for (const directory of parentDirectories(relativePath)) {
+      if (directory) markdownDirectories.add(directory);
+    }
+    const content = await readFile(path.join(source, relativePath), "utf8");
+    const parsed = parseFrontmatter(content);
+    if (isMemoryIndex(relativePath)) {
+      if (parsed.hasFrontmatter) {
+        fail(`${relativePath} must not have frontmatter`);
+      }
+      if (
+        !options.allowPlaceholders &&
+        parsed.body.includes(GENERATED_INDEX_NOTE)
+      ) {
+        fail(`${relativePath} still contains the generated index placeholder`);
+      }
+      if (
+        !options.allowPlaceholders &&
+        hasIndexedContent &&
+        !hasLocalIndexLink(parsed.body, relativePath, fileSet)
+      ) {
+        fail(`${relativePath} must link to at least one local memory file`);
+      }
+      continue;
+    }
+    const keys = parsed.entries.map(([key]) => key).sort();
+    if (keys.join(",") !== "description,name") {
+      fail(
+        `${relativePath} must have exactly name and description frontmatter`,
+      );
+    }
+    const metadata = new Map(parsed.entries);
+    if (!metadata.get("name")?.trim() || !metadata.get("description")?.trim()) {
+      fail(`${relativePath} has empty name or description frontmatter`);
+    }
+    if (
+      !options.allowPlaceholders &&
+      metadata.get("description") === TODO_DESCRIPTION
+    ) {
+      fail(
+        `${relativePath} still contains the generated description placeholder`,
+      );
+    }
+  }
+  for (const directory of markdownDirectories) {
+    const indexPath = `${directory}/MEMORY.md`;
+    if (!files.includes(indexPath)) {
+      fail(`${directory} contains memory Markdown but has no MEMORY.md`);
+    }
+  }
+  return {
+    files: files.length,
+    markdown_files: files.filter(
+      (file) => isMarkdown(file) && !isSkillPath(file),
+    ).length,
+  };
+}
+
+function git(memoryDir, args, options = {}) {
+  return execFileSync("git", args, {
+    cwd: memoryDir,
+    encoding: options.encoding === undefined ? "utf8" : options.encoding,
+    stdio: options.stdio ?? ["ignore", "pipe", "pipe"],
+    env: options.env ?? process.env,
+  });
+}
+
+async function assertCleanGitTree(memoryDir) {
+  git(memoryDir, ["rev-parse", "--git-dir"]);
+  const requestedRoot = await realpath(memoryDir);
+  const gitRoot = await realpath(
+    git(memoryDir, ["rev-parse", "--show-toplevel"]).trim(),
+  );
+  if (requestedRoot !== gitRoot) {
+    fail(`Memory directory must be the Git worktree root: ${gitRoot}`);
+  }
+  const statusOutput = git(memoryDir, [
+    "-c",
+    "status.renames=false",
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all",
+  ]).trim();
+  if (statusOutput) fail("Memory repository has uncommitted changes");
+}
+
+async function removeTreeContents(root, preserve = new Set()) {
+  for (const entry of await readdir(root)) {
+    if (preserve.has(entry)) continue;
+    await rm(path.join(root, entry), { recursive: true, force: true });
+  }
+}
+
+async function copyTreeContents(source, destination, options = {}) {
+  for (const relativePath of await walkFiles(source, options)) {
+    await copyWithMode(
+      path.join(source, relativePath),
+      path.join(destination, relativePath),
+    );
+  }
+}
+
+async function preparedSkillsManifest(source) {
+  const skillsRoot = path.join(source, "skills");
+  if (!(await exists(skillsRoot))) return [];
+  const files = await walkFiles(skillsRoot);
+  const manifest = await Promise.all(
+    files.map(async (relativePath) => ({
+      path: `skills/${relativePath}`,
+      sha256: sha256(await readFile(path.join(skillsRoot, relativePath))),
+    })),
+  );
+  return manifest.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function nullSeparatedGitPaths(memoryDir, args) {
+  return git(memoryDir, args).split("\0").filter(Boolean);
+}
+
+function forPathChunks(paths, run) {
+  for (let index = 0; index < paths.length; index += 200) {
+    run(paths.slice(index, index + 200));
+  }
+}
+
+function gitIdentityEnvironment() {
+  const authorId = process.env.AGENT_ID?.trim() || "letta-agent";
+  const authorName = process.env.AGENT_NAME?.trim() || authorId;
+  return {
+    ...process.env,
+    GIT_AUTHOR_NAME: authorName,
+    GIT_AUTHOR_EMAIL: `${authorId}@letta.com`,
+    GIT_COMMITTER_NAME: authorName,
+    GIT_COMMITTER_EMAIL: `${authorId}@letta.com`,
+  };
+}
+
+async function agentHasMemfsV2Tag(memoryDir, agentId) {
+  const storageDir = path.dirname(path.dirname(path.dirname(memoryDir)));
+  const recordName = `${Buffer.from(agentId).toString("base64url")}.json`;
+  try {
+    const record = JSON.parse(
+      await readFile(path.join(storageDir, "agents", recordName), "utf8"),
+    );
+    return Array.isArray(record.tags) && record.tags.includes("memfs-v2");
+  } catch {
+    return null;
+  }
+}
+
+function revertConversion(memoryDir, commit) {
+  if (git(memoryDir, ["rev-parse", "HEAD"]).trim() !== commit) {
+    fail(
+      "Activation failed and memory HEAD moved; conversion was not reverted",
+    );
+  }
+  git(memoryDir, ["revert", "--no-edit", commit], {
+    env: gitIdentityEnvironment(),
+  });
+}
+
+async function applyTree(source, memoryDir) {
+  const sourceReal = await realpath(source);
+  const memoryReal = await realpath(memoryDir);
+  if (
+    sourceReal === memoryReal ||
+    sourceReal.startsWith(`${memoryReal}${path.sep}`) ||
+    memoryReal.startsWith(`${sourceReal}${path.sep}`)
+  ) {
+    fail("Prepared tree and memory repository must not contain one another");
+  }
+  const manifestPath = `${sourceReal}.manifest.json`;
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  if (manifest.source !== memoryReal) {
+    fail("Prepared tree was staged from a different memory repository");
+  }
+  if (manifest.source_head !== git(memoryReal, ["rev-parse", "HEAD"]).trim()) {
+    fail("Memory repository changed after the review tree was staged");
+  }
+  const expectedSkills = JSON.stringify(manifest.skills ?? []);
+  const preparedSkills = JSON.stringify(
+    await preparedSkillsManifest(sourceReal),
+  );
+  if (preparedSkills !== expectedSkills) {
+    fail("Prepared skills differ from the committed source skills");
+  }
+  const validation = await validateTree(sourceReal);
+  await assertCleanGitTree(memoryReal);
+
+  const backup = await mkdtemp(path.join(tmpdir(), "memfs-v2-backup-"));
+  await copyTreeContents(memoryReal, backup, {
+    ignoreRootEntries: new Set([".git", ".letta"]),
+  });
+  let committed = false;
+  try {
+    await removeTreeContents(memoryReal, new Set([".git", ".letta"]));
+    await copyTreeContents(sourceReal, memoryReal);
+    const preparedPaths = await walkFiles(sourceReal);
+    const trackedPaths = nullSeparatedGitPaths(memoryReal, ["ls-files", "-z"]);
+    forPathChunks(preparedPaths, (paths) =>
+      git(memoryReal, ["add", "-f", "--", ...paths]),
+    );
+    forPathChunks(trackedPaths, (paths) =>
+      git(memoryReal, ["add", "-u", "--", ...paths]),
+    );
+    const paths = nullSeparatedGitPaths(memoryReal, [
+      "diff",
+      "--cached",
+      "--name-only",
+      "-z",
+    ]);
+    if (paths.length === 0) fail("Prepared tree produces no changes");
+    git(memoryReal, ["commit", "-m", "migrate memory filesystem to v2"], {
+      env: gitIdentityEnvironment(),
+    });
+    committed = true;
+    return {
+      memory_dir: memoryReal,
+      commit: git(memoryReal, ["rev-parse", "HEAD"]).trim(),
+      changed_paths: paths,
+      validation,
+    };
+  } catch (error) {
+    if (!committed) {
+      await removeTreeContents(memoryReal, new Set([".git", ".letta"]));
+      await copyTreeContents(backup, memoryReal);
+      git(memoryReal, ["reset", "--mixed", "HEAD"]);
+    }
+    throw error;
+  } finally {
+    await rm(backup, { recursive: true, force: true });
+  }
+}
+
+function activateAgent(agentId, memoryDir, memoryCommit) {
+  const command =
+    process.env.LETTA_MEMFS_V2_ACTIVATE_COMMAND ||
+    (process.platform === "win32" ? "letta.cmd" : "letta");
+  const commandArgs = process.env.LETTA_MEMFS_V2_ACTIVATE_ARGS
+    ? JSON.parse(process.env.LETTA_MEMFS_V2_ACTIVATE_ARGS)
+    : [];
+  if (
+    !Array.isArray(commandArgs) ||
+    commandArgs.some((arg) => typeof arg !== "string")
+  ) {
+    fail("LETTA_MEMFS_V2_ACTIVATE_ARGS must be a JSON array of strings");
+  }
+  const output = execFileSync(
+    command,
+    [
+      ...commandArgs,
+      "--backend",
+      "local",
+      "agents",
+      "memfs-v2",
+      "--agent",
+      agentId,
+      "--memory-dir",
+      memoryDir,
+      "--memory-commit",
+      memoryCommit,
+    ],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    },
+  );
+  try {
+    return JSON.parse(output);
+  } catch {
+    fail(`Activation command returned invalid JSON: ${output.trim()}`);
+  }
+}
+
+function printJson(value) {
+  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function main() {
+  const { command, values } = parseArguments(process.argv.slice(2));
+  if (command === "stage") {
+    if (!values.source || !values.output) {
+      fail("stage requires --source and --output");
+    }
+    await assertCleanGitTree(path.resolve(values.source));
+    printJson(
+      await stageTree(path.resolve(values.source), path.resolve(values.output)),
+    );
+    return;
+  }
+  if (command === "validate") {
+    if (!values.source) fail("validate requires --source");
+    printJson(await validateTree(path.resolve(values.source)));
+    return;
+  }
+  if (command === "apply") {
+    if (!values.source || !values["memory-dir"] || !values.agent) {
+      fail("apply requires --source, --memory-dir, and --agent");
+    }
+    const result = await applyTree(
+      path.resolve(values.source),
+      path.resolve(values["memory-dir"]),
+    );
+    try {
+      printJson({
+        ...result,
+        activation: activateAgent(
+          values.agent,
+          result.memory_dir,
+          result.commit,
+        ),
+      });
+    } catch (error) {
+      const tagged = await agentHasMemfsV2Tag(result.memory_dir, values.agent);
+      if (tagged === false) {
+        revertConversion(result.memory_dir, result.commit);
+        fail(
+          `Activation failed and the conversion commit was reverted: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      fail(
+        `Activation failed after the conversion commit. Tag status could not be safely rolled back; inspect the agent before retrying: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return;
+  }
+  fail("Usage: memfs-v2.mjs <stage|validate|apply> [options]");
+}
+
+main().catch((error) => {
+  process.stderr.write(
+    `${error instanceof Error ? error.message : String(error)}\n`,
+  );
+  process.exitCode = 1;
+});

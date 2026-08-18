@@ -65,6 +65,19 @@ describe("buildTargetInstruction", () => {
     expect(out).toContain("leave it absent");
     expect(out).toContain("placeholder");
   });
+
+  test("uses a root target with exact frontmatter for MemFS v2", () => {
+    const target = resolveDreamTarget("./AGENTS.md");
+    const instruction = buildTargetInstruction(target, "memfs-v2");
+    expect(instruction).toContain("$MEMORY_DIR/AGENTS.md");
+    expect(instruction).not.toContain("$MEMORY_DIR/system/");
+    expect(instruction).toContain("exactly `name` and `description`");
+    expect(
+      addManagedFrontmatter("Guidance\n", "agents-md", "memfs-v2", "AGENTS.md"),
+    ).toBe(
+      '---\nname: "AGENTS"\ndescription: "Repository guidance for coding agents, maintained by letta dream."\n---\nGuidance\n',
+    );
+  });
 });
 
 describe("managed frontmatter (system/ files require it)", () => {

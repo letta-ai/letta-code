@@ -2579,7 +2579,7 @@ async function main(): Promise<void> {
               setAgentState(taggedAgent);
               scheduleManagedSystemPromptUpdate({
                 agent: taggedAgent,
-                memoryMode: getMemoryPromptModeForAgent(taggedAgent.id),
+                memoryMode: getMemoryPromptModeForAgent(taggedAgent),
                 onUpdated: (updatedAgent) => {
                   setAgentState(updatedAgent);
                 },

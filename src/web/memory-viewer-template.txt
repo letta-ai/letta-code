@@ -1479,6 +1479,71 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   attachFileClickHandler(treePanelCore, filePanelCore);
   attachFileClickHandler(treePanelExternal, filePanelExternal);
 
+  function resolveMemoryLink(currentPath, href) {
+    var clean = sanitizeUrl(href);
+    if (!clean || clean.charAt(0) === '#' || clean.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(clean)) {
+      return null;
+    }
+    var pathOnly = clean.split(/[?#]/, 1)[0];
+    if (!pathOnly || pathOnly.charAt(0) === '/') return null;
+    try {
+      pathOnly = decodeURIComponent(pathOnly);
+    } catch (_) {}
+    pathOnly = pathOnly.replace(/\\/g, '/');
+    var parts = String(currentPath || '').split('/');
+    parts.pop();
+    var incoming = pathOnly.split('/');
+    for (var i = 0; i < incoming.length; i++) {
+      var part = incoming[i];
+      if (!part || part === '.') continue;
+      if (part === '..') {
+        if (parts.length === 0) return null;
+        parts.pop();
+      } else {
+        parts.push(part);
+      }
+    }
+    var resolved = parts.join('/');
+    return pathOnly.endsWith('/') ? resolved + '/MEMORY.md' : resolved;
+  }
+
+  function selectMemoryFile(path) {
+    var file = fileMap[path];
+    if (!file) return false;
+    var treePanel = file.isSystem ? treePanelCore : treePanelExternal;
+    var node = Array.prototype.find.call(
+      treePanel.querySelectorAll('.tree-item.file[data-path]'),
+      function(el) { return el.dataset.path === path; }
+    );
+    if (!node) return false;
+    var parent = node.parentElement;
+    while (parent && parent !== treePanel) {
+      if (parent.classList.contains('tree-children')) {
+        parent.classList.remove('hidden');
+        var dirPath = parent.dataset.parent;
+        Array.prototype.forEach.call(treePanel.querySelectorAll('.tree-item.dir[data-dir]'), function(el) {
+          if (el.dataset.dir === dirPath) el.classList.remove('collapsed');
+        });
+      }
+      parent = parent.parentElement;
+    }
+    activateTab(file.isSystem ? 'core' : 'external');
+    node.click();
+    node.scrollIntoView({ block: 'nearest' });
+    return true;
+  }
+
+  function attachMemoryLinkHandler(filePanel) {
+    filePanel.addEventListener('click', function(ev) {
+      var link = ev.target.closest('.file-body a[href]');
+      if (!link || !filePanel.currentFile) return;
+      var path = resolveMemoryLink(filePanel.currentFile.path, link.getAttribute('href'));
+      if (path && selectMemoryFile(path)) ev.preventDefault();
+    });
+  }
+  attachMemoryLinkHandler(filePanelCore);
+  attachMemoryLinkHandler(filePanelExternal);
+
   var firstCore = treePanelCore.querySelector('.tree-item.file[data-path]');
   if (firstCore) firstCore.click();
   var firstExternal = treePanelExternal.querySelector('.tree-item.file[data-path]');

@@ -1,10 +1,11 @@
 import { GIT_MEMORY_ENABLED_TAG } from "@/agent/agent-tags";
+import { getLocalMemoryFormat, isMemfsV2 } from "@/agent/memory-format";
+import { initializeLocalMemoryRepo } from "@/agent/memory-git";
 import {
-  type InitializeLocalMemoryRepoFile,
-  initializeLocalMemoryRepo,
-} from "@/agent/memory-git";
+  adaptManagedSystemPromptToMemoryMode,
+  buildSystemPrompt,
+} from "@/agent/prompt-assets";
 import type {
-  AgentCreateBody,
   Backend,
   BackendCapabilities,
   ConversationCreateBody,
@@ -42,6 +43,10 @@ import {
   summarizeLocalMessagesSlidingWindow,
 } from "./compaction";
 import {
+  type InitialMemoryFile,
+  initialMemoryFilesFromCreateBody,
+} from "./initial-memory";
+import {
   createLocalExecutor,
   type LocalBackendExecutionMode,
 } from "./local-executor-factory";
@@ -63,9 +68,13 @@ import {
 import {
   appendAvailableSkillsBlock,
   compileLocalSystemPrompt,
+  formatMidConversationMemoryUpdate,
   getCommittedMemfsRevision,
   hashRawSystemPrompt,
+  hasLocalMemoryProjectionChanged,
   type LocalCompiledSystemPrompt,
+  mergeLocalMemoryProjection,
+  supportsMidConversationSystemMessages,
 } from "./system-prompt-compilation";
 
 export interface LocalBackendOptions {
@@ -103,71 +112,6 @@ export interface LocalBackendModEventHooks {
   }) => void | Promise<void>;
   onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
   onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
-}
-
-function sanitizeFrontmatterValue(value: string): string {
-  return value.replace(/\r?\n/g, " ").trim();
-}
-
-function memoryBlockPath(label: string): string {
-  const normalized = label.trim().replace(/\\/g, "/").replace(/\.md$/, "");
-  if (normalized === "system" || normalized.startsWith("system/")) {
-    return `${normalized}.md`;
-  }
-  return `system/${normalized}.md`;
-}
-
-function renderInitialMemoryFile(input: {
-  label: string;
-  value: string;
-  description?: string | null;
-}): InitializeLocalMemoryRepoFile | null {
-  const relativePath = memoryBlockPath(input.label);
-  const segments = relativePath.split("/").filter(Boolean);
-  if (
-    segments.length === 0 ||
-    segments.some((segment) => segment === "." || segment === "..")
-  ) {
-    return null;
-  }
-  const description =
-    typeof input.description === "string" && input.description.trim()
-      ? input.description.trim()
-      : `Memory block ${input.label}`;
-  return {
-    relativePath: segments.join("/"),
-    content: [
-      "---",
-      `description: ${sanitizeFrontmatterValue(description)}`,
-      "---",
-      input.value,
-    ].join("\n"),
-  };
-}
-
-function initialMemoryFilesFromCreateBody(
-  body: AgentCreateBody,
-): InitializeLocalMemoryRepoFile[] {
-  const bodyRecord = body as Record<string, unknown>;
-  const blocks = Array.isArray(bodyRecord.memory_blocks)
-    ? bodyRecord.memory_blocks
-    : [];
-  const files = new Map<string, InitializeLocalMemoryRepoFile>();
-  for (const block of blocks) {
-    if (!block || typeof block !== "object") continue;
-    const record = block as Record<string, unknown>;
-    if (typeof record.label !== "string") continue;
-    const file = renderInitialMemoryFile({
-      label: record.label,
-      value: typeof record.value === "string" ? record.value : "",
-      description:
-        typeof record.description === "string" ? record.description : null,
-    });
-    if (file) files.set(file.relativePath, file);
-  }
-  return [...files.values()].sort((a, b) =>
-    a.relativePath.localeCompare(b.relativePath),
-  );
 }
 
 type LocalCompactionSettingsRecord = Record<string, unknown>;
@@ -221,25 +165,6 @@ function localCompactionSettingsForStorage(
   if (!hasLocalSetting) return undefined;
 
   return { ...settings };
-}
-
-function supportsMidConversationSystemMessages(
-  agent: LocalAgentRecord,
-): boolean {
-  return agent.model === "anthropic/claude-opus-4-8";
-}
-
-function formatMidConversationMemoryUpdate(
-  compiled: LocalCompiledSystemPrompt,
-): string {
-  return [
-    "<memory_update>",
-    `The local memory filesystem has been edited and committed at revision ${compiled.memfsRevision ?? "unknown"}.`,
-    "This updates part of your persona/system memory. Treat the following freshly rendered memory context as authoritative from now on; where it conflicts with earlier memory context, this newer memory context wins.",
-    "",
-    compiled.coreMemory.trimEnd(),
-    "</memory_update>",
-  ].join("\n");
 }
 
 export class LocalBackend extends HeadlessBackend {
@@ -408,6 +333,23 @@ export class LocalBackend extends HeadlessBackend {
         } as typeof body;
       }
     }
+    const taggedBody = body as Record<string, unknown>;
+    const bodyTags = Array.isArray(taggedBody.tags)
+      ? taggedBody.tags.filter((tag): tag is string => typeof tag === "string")
+      : [];
+    if (isMemfsV2(bodyTags)) {
+      const currentSystem =
+        typeof taggedBody.system === "string" ? taggedBody.system : undefined;
+      body = {
+        ...taggedBody,
+        system: currentSystem
+          ? adaptManagedSystemPromptToMemoryMode(
+              currentSystem,
+              "local-memfs-v2",
+            )
+          : buildSystemPrompt("default", "local-memfs-v2"),
+      } as typeof body;
+    }
     const requestedCompactionSettings = compactionSettingsRecord(
       (body as Record<string, unknown>).compaction_settings,
     );
@@ -432,6 +374,7 @@ export class LocalBackend extends HeadlessBackend {
         agent.id,
         initialMemoryFilesFromCreateBody(body),
         agent.name ?? undefined,
+        getLocalMemoryFormat(agent.tags),
       );
     }
     await this.compileAndMaybePersistSystemPrompt("default", agent.id, {
@@ -558,13 +501,15 @@ export class LocalBackend extends HeadlessBackend {
 
   private async ensureLocalMemoryRepo(
     agentId: string,
-    files: InitializeLocalMemoryRepoFile[] = [],
+    files: InitialMemoryFile[] = [],
     authorName?: string,
+    memoryFormat = getLocalMemoryFormat(undefined),
   ): Promise<void> {
     await initializeLocalMemoryRepo({
       memoryDir: this.memoryDirForAgent(agentId),
       agentId,
       authorName,
+      memoryFormat,
       files,
     });
   }
@@ -940,19 +885,27 @@ export class LocalBackend extends HeadlessBackend {
       agentId,
     );
     const rawSystemHash = hashRawSystemPrompt(agent.system);
-    const memfsRevision = this.isLocalMemfsEnabled()
+    const includeMemfs = this.isLocalMemfsEnabled();
+    const memoryFormat = includeMemfs
+      ? getLocalMemoryFormat(agent.tags)
+      : undefined;
+    const memfsRevision = includeMemfs
       ? getCommittedMemfsRevision(this.memoryDirForAgent(agentId))
       : undefined;
     if (
       existing?.rawSystemHash === rawSystemHash &&
-      existing.memfsRevision === memfsRevision
+      existing.memfsRevision === memfsRevision &&
+      existing.memoryFormat === memoryFormat
     ) {
       return existing;
     }
 
     if (
       existing?.rawSystemHash === rawSystemHash &&
-      existing.memfsRevision !== memfsRevision &&
+      hasLocalMemoryProjectionChanged(existing, {
+        memfsRevision,
+        memoryFormat,
+      }) &&
       supportsMidConversationSystemMessages(agent)
     ) {
       const compiled = await this.compileAndMaybePersistSystemPrompt(
@@ -963,15 +916,14 @@ export class LocalBackend extends HeadlessBackend {
           previousMessageCount,
         },
       );
-      if (compiled.memfsRevision !== existing.memfsRevision) {
+      if (hasLocalMemoryProjectionChanged(existing, compiled)) {
         const midConversationSystemPrompt =
           formatMidConversationMemoryUpdate(compiled);
-        this.store.setCompiledSystemPrompt(conversationId, agentId, {
-          ...existing,
-          compiledAt: compiled.compiledAt,
-          coreMemory: compiled.coreMemory,
-          memfsRevision: compiled.memfsRevision,
-        });
+        this.store.setCompiledSystemPrompt(
+          conversationId,
+          agentId,
+          mergeLocalMemoryProjection(existing, compiled),
+        );
         return { ...existing, midConversationSystemPrompt };
       }
       return existing;
@@ -991,7 +943,12 @@ export class LocalBackend extends HeadlessBackend {
     const agent = this.store.retrieveAgentRecord(agentId);
     const memfsEnabled = this.isLocalMemfsEnabled();
     if (memfsEnabled) {
-      await this.ensureLocalMemoryRepo(agentId, [], agent.name);
+      await this.ensureLocalMemoryRepo(
+        agentId,
+        [],
+        agent.name,
+        getLocalMemoryFormat(agent.tags),
+      );
     }
     const previousMessageCount =
       options.previousMessageCount ??

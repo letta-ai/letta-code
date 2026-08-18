@@ -13,6 +13,7 @@ import {
   isModelInvocableSkill,
   isSkillAvailableForAgent,
   PROJECT_SKILLS_DIR,
+  resolveAgentTagsForSkills,
   SKILLS_DIR,
   type Skill,
   type SkillDiscoveryError,
@@ -103,6 +104,7 @@ function getWatcher(): ClientSkillsWatcher {
  */
 function computeCacheKey(components: {
   agentId: string | undefined;
+  agentTags: readonly string[];
   skillSources: SkillSource[];
   cwd: string;
   configuredSkillsDirectory: string | null;
@@ -112,6 +114,7 @@ function computeCacheKey(components: {
 }): string {
   return [
     components.agentId ?? "",
+    [...components.agentTags].sort().join(","),
     [...components.skillSources].sort().join(","),
     components.cwd,
     components.configuredSkillsDirectory ?? "",
@@ -278,6 +281,7 @@ export type ClientSkill = NonNullable<
 
 export interface BuildClientSkillsPayloadOptions {
   agentId?: string;
+  agentTags?: readonly string[];
   workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
@@ -333,6 +337,7 @@ function resolveSkillDiscoveryContext(
 
 export interface DiscoverClientSideSkillsOptions {
   agentId?: string;
+  agentTags?: readonly string[];
   workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
@@ -415,10 +420,13 @@ async function collectClientSideSkills(
     try {
       const discovery = await discoverSkillsFn(run.path, options.agentId, {
         sources: run.sources,
+        agentTags: options.agentTags,
       });
       errors.push(...discovery.errors);
       for (const skill of discovery.skills) {
-        if (isSkillAvailableForAgent(skill, options.agentId)) {
+        if (
+          isSkillAvailableForAgent(skill, options.agentId, options.agentTags)
+        ) {
           skillsById.set(skill.id, skill);
         }
       }
@@ -435,7 +443,9 @@ async function collectClientSideSkills(
     const memoryDiscovery = await discoverMemorySkills(options.agentId);
     errors.push(...memoryDiscovery.errors);
     for (const skill of memoryDiscovery.skills) {
-      if (!isSkillAvailableForAgent(skill, options.agentId)) {
+      if (
+        !isSkillAvailableForAgent(skill, options.agentId, options.agentTags)
+      ) {
         continue;
       }
       const existing = skillsById.get(skill.id);
@@ -460,6 +470,10 @@ async function collectClientSideSkills(
 export async function discoverClientSideSkills(
   options: DiscoverClientSideSkillsOptions = {},
 ): Promise<SkillDiscoveryResult> {
+  const agentTags = await resolveAgentTagsForSkills(
+    options.agentId,
+    options.agentTags,
+  );
   const {
     configuredSkillsDirectory,
     legacySkillsDirectory,
@@ -468,6 +482,7 @@ export async function discoverClientSideSkills(
   } = resolveSkillDiscoveryContext(options);
   return collectClientSideSkills({
     ...options,
+    agentTags,
     configuredSkillsDirectory,
     legacySkillsDirectory,
     skillSources,
@@ -493,6 +508,10 @@ export async function discoverClientSideSkills(
 export async function buildClientSkillsPayload(
   options: BuildClientSkillsPayloadOptions = {},
 ): Promise<BuildClientSkillsPayloadResult> {
+  const agentTags = await resolveAgentTagsForSkills(
+    options.agentId,
+    options.agentTags,
+  );
   const {
     workingDirectory,
     configuredSkillsDirectory,
@@ -520,6 +539,7 @@ export async function buildClientSkillsPayload(
   }
   const cacheComponents = {
     agentId: options.agentId,
+    agentTags,
     skillSources,
     cwd: workingDirectory,
     configuredSkillsDirectory,
@@ -540,6 +560,7 @@ export async function buildClientSkillsPayload(
   const generationBeforeDiscovery = getCacheGeneration();
   const discovery = await collectClientSideSkills({
     ...options,
+    agentTags,
     configuredSkillsDirectory,
     legacySkillsDirectory,
     skillSources,
