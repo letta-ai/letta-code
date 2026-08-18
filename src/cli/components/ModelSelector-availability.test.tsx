@@ -58,19 +58,15 @@ describe("ModelSelector availability gating", () => {
     expect(shownResult.map((m) => m.handle)).toContain("letta/glm");
   });
 
-  test("includes Kimi K3 presets only when the API catalog exposes those handles", () => {
+  test("includes the Kimi K3 preset only when the API catalog exposes its handle", () => {
     const result = filterModelsByAvailabilityForSelector(
       models,
-      new Set(["moonshot/kimi-k3", "openrouter/moonshotai/kimi-k3"]),
+      new Set(["moonshot/kimi-k3"]),
       [],
     );
 
-    expect(result.map((m) => m.handle)).toEqual([
-      "moonshot/kimi-k3",
-      "openrouter/moonshotai/kimi-k3",
-    ]);
+    expect(result.map((m) => m.handle)).toEqual(["moonshot/kimi-k3"]);
     expect(result.map((m) => m.updateArgs?.reasoning_effort)).toEqual([
-      undefined,
       undefined,
     ]);
   });
