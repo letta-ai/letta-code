@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -200,9 +201,12 @@ describe("MemFS v2 migration script", () => {
   test("refuses case-only collisions on portable filesystems", async () => {
     const root = await temporaryRoot();
     const memoryDir = await createLegacyMemory(root);
-    await write(memoryDir, "Foo.md", "---\ndescription: Upper.\n---\nUpper.\n");
-    await write(memoryDir, "foo.md", "---\ndescription: Lower.\n---\nLower.\n");
-    git(memoryDir, ["add", "Foo.md", "foo.md"]);
+    await write(
+      memoryDir,
+      "Persona-Soul.md",
+      "---\ndescription: Root collision.\n---\nCollision.\n",
+    );
+    git(memoryDir, ["add", "Persona-Soul.md"]);
     git(memoryDir, ["commit", "-m", "add case collision"]);
 
     expect(() =>
@@ -355,10 +359,11 @@ describe("MemFS v2 migration script", () => {
     expect(result.changed_paths).toContain("system/persona/soul.md");
     expect(result.activation.system_prompt_updated).toBe(true);
     const activationArgs = await readFile(activateLog, "utf8");
+    const canonicalMemoryDir = await realpath(memoryDir);
     expect(activationArgs).toContain(
       "--backend local agents memfs-v2 --agent agent-local-test",
     );
-    expect(activationArgs).toContain(`--memory-dir ${memoryDir}`);
+    expect(activationArgs).toContain(`--memory-dir ${canonicalMemoryDir}`);
     expect(activationArgs).toContain(`--memory-commit ${result.commit}`);
     expect(
       await readFile(join(memoryDir, "persona-soul.md"), "utf8"),

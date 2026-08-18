@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MEMFS_V2_TAG } from "@/agent/agent-tags";
+import { GIT_MEMORY_ENABLED_TAG, MEMFS_V2_TAG } from "@/agent/agent-tags";
 import { isSkillAvailableForAgent, type Skill } from "@/agent/skills";
 
 const baseSkill: Skill = {
@@ -34,15 +34,22 @@ describe("isSkillAvailableForAgent", () => {
     expect(isSkillAvailableForAgent(skill, "agent-local-123")).toBe(true);
   });
 
-  test("shows the v2 migration only to untagged local agents", () => {
+  test("shows the v2 migration only to v1 local agents", () => {
     const skill: Skill = {
       ...baseSkill,
       id: "upgrading-memory-filesystem",
     };
 
-    expect(isSkillAvailableForAgent(skill, "agent-local-123")).toBe(true);
     expect(
-      isSkillAvailableForAgent(skill, "agent-local-123", [MEMFS_V2_TAG]),
+      isSkillAvailableForAgent(skill, "agent-local-123", [
+        GIT_MEMORY_ENABLED_TAG,
+      ]),
+    ).toBe(true);
+    expect(
+      isSkillAvailableForAgent(skill, "agent-local-123", [
+        GIT_MEMORY_ENABLED_TAG,
+        MEMFS_V2_TAG,
+      ]),
     ).toBe(false);
     expect(isSkillAvailableForAgent(skill, "agent-123")).toBe(false);
   });

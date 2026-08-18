@@ -132,7 +132,7 @@ describe("Skill tool memory filesystem lookup", () => {
       "agent-local-skill-test",
       [MEMFS_V2_TAG],
     );
-    expect(result.path).toEndWith("initializing-memory/MEMFS_V2.md");
+    expect(result.path).toEndWith(join("initializing-memory", "MEMFS_V2.md"));
     expect(result.content).toContain("Root `MEMORY.md` is required");
     expect(result.content).not.toContain("$MEMORY_DIR/system/");
   });
