@@ -71,6 +71,8 @@ function printJson(total: number, files: FileEstimate[]): void {
 
 function resolveMemoryDir(options: MemoryTokensOptions): string | null {
   if (options.memoryDir) return options.memoryDir;
+  // Match resolveScopedMemoryDir: LETTA_MEMORY_DIR takes precedence over MEMORY_DIR.
+  if (process.env.LETTA_MEMORY_DIR) return process.env.LETTA_MEMORY_DIR;
   if (process.env.MEMORY_DIR) return process.env.MEMORY_DIR;
   if (options.agentMemoryDir) return options.agentMemoryDir;
   return null;
@@ -96,7 +98,7 @@ export async function runMemoryTokensAction(
   const memoryDir = resolveMemoryDir(options);
   if (!memoryDir) {
     console.error(
-      "Missing memory dir. Set --memory-dir, --agent, $MEMORY_DIR, or $LETTA_AGENT_ID.",
+      "Missing memory dir. Set --memory-dir, --agent, $LETTA_MEMORY_DIR, $MEMORY_DIR, or $LETTA_AGENT_ID.",
     );
     return USAGE_EXIT;
   }
