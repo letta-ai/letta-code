@@ -67,6 +67,7 @@ export async function apply_patch(
   }
 
   const cwd = getCurrentWorkingDirectory();
+  verifyNoDuplicatePaths(cwd, operations);
   const affected: AffectedPaths = { added: [], modified: [], deleted: [] };
 
   for (const op of operations) {
@@ -407,6 +408,21 @@ function assertPatchPath(patchPath: string, operation: string): void {
 
 function resolvePatchPath(cwd: string, patchPath: string): string {
   return path.isAbsolute(patchPath) ? patchPath : path.resolve(cwd, patchPath);
+}
+
+function verifyNoDuplicatePaths(
+  cwd: string,
+  operations: FileOperation[],
+): void {
+  const seen = new Set<string>();
+  for (const op of operations) {
+    const patchPath = op.kind === "update" ? op.fromPath : op.path;
+    const resolved = resolvePatchPath(cwd, patchPath);
+    if (seen.has(resolved)) {
+      throw new Error(`multiple operations target ${patchPath}`);
+    }
+    seen.add(resolved);
+  }
 }
 
 async function deriveNewContentsFromChunks(
