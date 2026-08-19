@@ -87,14 +87,25 @@ jobs:
             echo '```bash'
             echo 'set -euo pipefail'
             echo 'rm -rf /tmp/letta-code-codex-watch'
-            echo 'GH_TOKEN="$GITHUB_TOKEN" gh repo clone letta-ai/letta-code /tmp/letta-code-codex-watch'
+            echo 'GH_TOKEN="$GITHUB_TOKEN" gh repo clone letta-ai/letta-code /tmp/letta-code-codex-watch -- --branch letta/codex-v148-replay-3-1a5a470c --single-branch'
             echo 'cd /tmp/letta-code-codex-watch'
             echo "printf '%s' '$ANALYSIS_ARCHIVE_BASE64' | base64 --decode | gzip --decompress > /tmp/codex-watch-analysis.json"
             echo "jq -e '.current_tag == \"$CURRENT_TAG\" and .previous_tag == \"$PREVIOUS_TAG\" and (.path_changes | type == \"array\")' /tmp/codex-watch-analysis.json > /dev/null"
             echo 'bun install --frozen-lockfile'
+            echo 'sleep 11'
             echo '```'
             echo "AMELIA_PROMPT_EOF"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Prepare source Letta Code executable
+        if: steps.detect.outputs.should_run_agent == 'true'
+        run: |
+          cat > "$RUNNER_TEMP/letta-source" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec bun "$GITHUB_WORKSPACE/src/index.ts" "$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/letta-source"
 
       - name: Ask Amelia to review actionable Codex drift
         if: steps.detect.outputs.should_run_agent == 'true'
@@ -107,4 +118,5 @@ jobs:
           track_progress: ""
           tracking_comment: "false"
           model: auto
+          path_to_letta_executable: ${{ runner.temp }}/letta-source
           prompt: ${{ steps.prompt.outputs.prompt }}

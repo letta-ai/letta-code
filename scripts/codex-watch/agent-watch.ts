@@ -27,7 +27,7 @@ import {
 } from "./tracker.ts";
 
 const DEFAULT_TRACKER_TITLE =
-  "Codex upstream drift replay 2 rust-v0.148.0 [LET-11098]";
+  "Codex upstream drift replay 3 rust-v0.148.0 [LET-11098]";
 const DEFAULT_ANALYSIS_FILE = "codex-watch-analysis.json";
 
 interface Args {
