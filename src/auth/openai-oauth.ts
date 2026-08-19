@@ -439,3 +439,32 @@ export async function exchangeCodeForTokens(
 
   return (await response.json()) as OpenAITokens;
 }
+
+/**
+ * Refresh a ChatGPT OAuth access token using a refresh token.
+ * Uses the standard OAuth 2.0 refresh_token grant (no PKCE needed).
+ */
+export async function refreshChatGPTAccessToken(
+  refreshToken: string,
+): Promise<OpenAITokens> {
+  const response = await fetch(OPENAI_OAUTH_CONFIG.tokenUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: OPENAI_OAUTH_CONFIG.clientId,
+      refresh_token: refreshToken,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `Failed to refresh ChatGPT access token (HTTP ${response.status}): ${errorText}`,
+    );
+  }
+
+  return (await response.json()) as OpenAITokens;
+}

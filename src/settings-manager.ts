@@ -111,6 +111,14 @@ export interface Settings {
     provider: "openai";
     timestamp: number;
   };
+  // ChatGPT OAuth token rotation state — stored by the harness so it can
+  // refresh the access token proactively before it expires, without relying
+  // on the Letta backend to perform the rotation.
+  chatGPTOAuth?: {
+    refreshToken: string;
+    expiresAt: number; // Unix timestamp in milliseconds
+    providerName: string;
+  };
 }
 
 export interface StartupBackendSettings {

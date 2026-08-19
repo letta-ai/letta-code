@@ -1,5 +1,6 @@
 import { getBackend } from "@/backend";
 import { refreshByokProviders } from "@/backend/api/providers";
+import { refreshChatGPTOAuthIfNeeded } from "@/providers/openai-codex-provider";
 import { isOpenAICompatibleProxyEndpoint } from "@/utils/openai-endpoint";
 import type { ModelReasoningEffort } from "./model";
 
@@ -263,6 +264,13 @@ export async function getAvailableModelHandles(options?: {
   const backend = getBackend();
   if (forceRefresh && backend.capabilities.byokProviderRefresh) {
     await refreshByokProviders();
+  }
+
+  // Proactively rotate the ChatGPT OAuth access token if it is near expiry.
+  // This runs regardless of byokProviderRefresh capability since the rotation
+  // is done entirely in the harness using the locally-stored refresh token.
+  if (forceRefresh) {
+    void refreshChatGPTOAuthIfNeeded();
   }
 
   const requestGeneration = generation;

@@ -17,6 +17,7 @@ import {
   connectedRecordsForProvider,
   uniqueProviderNames,
 } from "@/providers/provider-connections";
+import { settingsManager } from "@/settings-manager";
 
 export interface ConnectProviderField {
   key: string;
@@ -347,6 +348,16 @@ export async function disconnectProvider<TTarget extends ProviderStorageTarget>(
     : connectedRecords[0];
   if (connected) {
     await removeProviderByName(connected.name, { target: input.target });
+
+    // Clear locally-stored ChatGPT OAuth rotation state when a chatgpt_oauth
+    // provider is removed, so we don't attempt to refresh a disconnected token.
+    if (provider.providerType === "chatgpt_oauth") {
+      const storedName =
+        settingsManager.getSettings().chatGPTOAuth?.providerName;
+      if (!storedName || storedName === connected.name) {
+        settingsManager.updateSettings({ chatGPTOAuth: undefined });
+      }
+    }
   }
 
   return listConnectProviders(input.target);

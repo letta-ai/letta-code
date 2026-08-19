@@ -34,7 +34,7 @@
   "src/permissions/read-only-shell.ts": 2009,
   "src/providers/chatgpt-usage-service.ts": 1112,
   "src/settings-manager.test.ts": 1635,
-  "src/settings-manager.ts": 2102,
+  "src/settings-manager.ts": 2110,
   "src/tools/manager.ts": 2994,
   "src/tools/tool-execution-context.test.ts": 1138,
   "src/types/protocol_v2.ts": 2876,

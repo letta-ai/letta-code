@@ -4,7 +4,12 @@
  * tokens in the local provider auth file and uses a local fetch shim at runtime.
  */
 
+import {
+  extractAccountIdFromToken,
+  refreshChatGPTAccessToken,
+} from "@/auth/openai-oauth";
 import { getBalanceMetadata } from "@/backend/api/metadata";
+import { settingsManager } from "@/settings-manager";
 import {
   createProvider,
   getProviderByName,
@@ -153,6 +158,109 @@ export async function createOrUpdateOpenAICodexProvider(
   }
 
   return createOpenAICodexProvider(config, options, normalizedProviderName);
+}
+
+// Refresh the access token this many milliseconds before it actually expires.
+const CHATGPT_TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+
+// Single-flight: only one refresh attempt runs at a time across concurrent callers.
+let inFlightChatGPTRefresh: Promise<void> | null = null;
+
+/**
+ * Refresh the stored ChatGPT OAuth access token if it is about to expire.
+ *
+ * The harness stores { refreshToken, expiresAt, providerName } in settings
+ * when the user connects ChatGPT OAuth, so it can rotate the access token
+ * independently rather than relying on the Letta backend to do it.
+ *
+ * This is a no-op when no ChatGPT OAuth info is stored or when the token
+ * still has more than CHATGPT_TOKEN_REFRESH_BUFFER_MS remaining.
+ */
+export function refreshChatGPTOAuthIfNeeded(
+  options: ProviderOperationOptions = {},
+  _refresh: typeof refreshChatGPTAccessToken = refreshChatGPTAccessToken,
+): Promise<void> {
+  if (inFlightChatGPTRefresh) {
+    return inFlightChatGPTRefresh;
+  }
+  const pending = doRefreshIfNeeded(options, _refresh);
+  inFlightChatGPTRefresh = pending;
+  pending.finally(() => {
+    if (inFlightChatGPTRefresh === pending) {
+      inFlightChatGPTRefresh = null;
+    }
+  });
+  return pending;
+}
+
+async function doRefreshIfNeeded(
+  options: ProviderOperationOptions,
+  refresh: typeof refreshChatGPTAccessToken,
+): Promise<void> {
+  const settings = settingsManager.getSettings();
+  const stored = settings.chatGPTOAuth;
+  if (!stored?.refreshToken) return;
+
+  const now = Date.now();
+  if (stored.expiresAt - now > CHATGPT_TOKEN_REFRESH_BUFFER_MS) return;
+
+  let tokens: Awaited<ReturnType<typeof refreshChatGPTAccessToken>>;
+  try {
+    tokens = await refresh(stored.refreshToken);
+  } catch (error) {
+    // Best-effort: log but don't crash the caller. The Letta backend may still
+    // have a valid token, or will surface an auth error on the next turn.
+    console.error(
+      "ChatGPT OAuth token refresh failed:",
+      error instanceof Error ? error.message : String(error),
+    );
+    return;
+  }
+
+  const newExpiresAt = now + tokens.expires_in * 1000;
+  const newRefreshToken = tokens.refresh_token ?? stored.refreshToken;
+
+  // Persist updated rotation state locally.
+  settingsManager.updateSettings({
+    chatGPTOAuth: {
+      refreshToken: newRefreshToken,
+      expiresAt: newExpiresAt,
+      providerName: stored.providerName,
+    },
+  });
+
+  // Push the refreshed tokens to the Letta backend so it uses the new
+  // access token for subsequent ChatGPT API calls.
+  let accountId: string;
+  try {
+    accountId = extractAccountIdFromToken(tokens.access_token);
+  } catch {
+    // Fallback: re-use the account ID from the previous config if decoding
+    // fails (e.g. the token format changed). The provider update will still
+    // carry the new access token.
+    const existingProvider = await getOpenAICodexProvider(
+      options,
+      stored.providerName,
+    );
+    accountId =
+      existingProvider && "account_id" in existingProvider
+        ? String(
+            (existingProvider as { account_id?: unknown }).account_id ?? "",
+          )
+        : "";
+  }
+
+  await createOrUpdateOpenAICodexProvider(
+    {
+      access_token: tokens.access_token,
+      id_token: tokens.id_token,
+      refresh_token: newRefreshToken,
+      account_id: accountId,
+      expires_at: newExpiresAt,
+    },
+    options,
+    stored.providerName,
+  );
 }
 
 /**

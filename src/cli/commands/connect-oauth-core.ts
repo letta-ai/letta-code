@@ -51,6 +51,11 @@ interface OAuthFlowDeps {
   getProvider: () => Promise<unknown>;
   storeOAuthState: typeof settingsManager.storeOAuthState;
   clearOAuthState: typeof settingsManager.clearOAuthState;
+  storeChatGPTOAuthState: (
+    refreshToken: string,
+    expiresAt: number,
+    providerName: string,
+  ) => void;
 }
 
 const DEFAULT_DEPS: OAuthFlowDeps = {
@@ -77,6 +82,11 @@ const DEFAULT_DEPS: OAuthFlowDeps = {
   getProvider: getOpenAICodexProvider,
   storeOAuthState: (...args) => settingsManager.storeOAuthState(...args),
   clearOAuthState: () => settingsManager.clearOAuthState(),
+  storeChatGPTOAuthState: (refreshToken, expiresAt, providerName) => {
+    settingsManager.updateSettings({
+      chatGPTOAuth: { refreshToken, expiresAt, providerName },
+    });
+  },
 };
 
 export interface ChatGPTOAuthFlowCallbacks {
@@ -171,16 +181,27 @@ export async function runChatGPTOAuthConnectFlow(
     await callbacks.onStatus(
       `Creating ChatGPT OAuth provider '${providerName}'...`,
     );
+    const expiresAt = Date.now() + tokens.expires_in * 1000;
     await mergedDeps.createOrUpdateProvider(
       {
         access_token: tokens.access_token,
         id_token: tokens.id_token,
         refresh_token: tokens.refresh_token,
         account_id: accountId,
-        expires_at: Date.now() + tokens.expires_in * 1000,
+        expires_at: expiresAt,
       },
       providerName,
     );
+
+    // Store refresh token and expiry locally so the harness can rotate the
+    // access token proactively without relying on the Letta backend.
+    if (tokens.refresh_token) {
+      mergedDeps.storeChatGPTOAuthState(
+        tokens.refresh_token,
+        expiresAt,
+        providerName,
+      );
+    }
 
     mergedDeps.clearOAuthState();
     return { providerName };
