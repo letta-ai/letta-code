@@ -45,6 +45,10 @@ import {
 } from "./recovery";
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
+import {
+  createTurnCorrelation,
+  type TurnCorrelation,
+} from "./turn-correlation";
 import { createTurnInputState } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
@@ -403,9 +407,15 @@ export async function resolveStaleApprovals(
         },
       ]);
       let continuationActingUserId: string | undefined;
+      let recoveryTurnCorrelation: TurnCorrelation | undefined;
       const consumedQueuedTurn = consumeQueuedTurn(runtime);
       if (consumedQueuedTurn) {
         const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
+        recoveryTurnCorrelation = createTurnCorrelation(
+          runtime,
+          queuedTurn,
+          dequeuedBatch.batchId,
+        );
         continuationActingUserId = queuedTurn.actingUserId;
         continuationInput = appendQueuedTurnToInput(
           continuationInput,
@@ -465,6 +475,7 @@ export async function resolveStaleApprovals(
           agentId: runtime.agentId ?? undefined,
           conversationId: recoveryConversationId,
           turnLease,
+          turnCorrelation: recoveryTurnCorrelation,
         },
       );
       assertCurrentTurnLease();

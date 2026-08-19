@@ -62,6 +62,10 @@ import {
 } from "./runtime";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import type { ListenerTransport } from "./transport";
+import {
+  createTurnCorrelation,
+  type TurnCorrelation,
+} from "./turn-correlation";
 import { createTurnInputState } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
@@ -177,6 +181,7 @@ export async function drainRecoveryStreamWithEmission(
     agentId?: string | null;
     conversationId: string;
     turnLease: TurnLease;
+    turnCorrelation?: TurnCorrelation;
   },
 ): Promise<Awaited<ReturnType<typeof drainStreamWithResume>>> {
   let recoveryRunIdSent = false;
@@ -188,9 +193,13 @@ export async function drainRecoveryStreamWithEmission(
     params.turnLease.signal,
     undefined,
     ({ chunk, shouldOutput, errorInfo }) => {
+      if (!runtime.turnLifecycle.isCurrent(params.turnLease)) {
+        return undefined;
+      }
       const maybeRunId = (chunk as { run_id?: unknown }).run_id;
       if (typeof maybeRunId === "string") {
         runtime.turnLifecycle.setRunId(params.turnLease, maybeRunId);
+        params.turnCorrelation?.observeRun(maybeRunId);
         if (!recoveryRunIdSent) {
           recoveryRunIdSent = true;
           emitLoopStatusUpdate(socket, runtime, {
@@ -400,6 +409,7 @@ export async function resolveRecoveredApprovalResponse(
     connectionId?: string,
     dequeuedBatchId?: string,
     existingTurnLease?: TurnLease,
+    existingTurnCorrelation?: TurnCorrelation,
   ) => Promise<void>,
   opts?: {
     onStatusChange?: (
@@ -752,6 +762,7 @@ export async function resolveRecoveredApprovalResponse(
     ]);
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
     let continuationActingUserId: string | undefined;
+    let continuationCorrelation: TurnCorrelation | undefined;
     const consumedQueuedTurn = consumeQueuedTurn(runtime);
     if (consumedQueuedTurn) {
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
@@ -761,10 +772,21 @@ export async function resolveRecoveredApprovalResponse(
         continuationInput,
         queuedTurn,
       );
+      continuationCorrelation = createTurnCorrelation(
+        runtime,
+        {
+          type: "message",
+          agentId: recovered.agentId,
+          conversationId: recovered.conversationId,
+          messages: continuationInput.messages,
+        },
+        continuationBatchId,
+      );
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
     }
 
     if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+      runtime.dequeuedClientMessageIdsByBatchId.delete(continuationBatchId);
       return true;
     }
 
@@ -784,6 +806,7 @@ export async function resolveRecoveredApprovalResponse(
       opts?.connectionId,
       continuationBatchId,
       recoveryLease,
+      continuationCorrelation,
     );
 
     if (runtime.turnLifecycle.isCurrent(recoveryLease)) {

@@ -53,6 +53,7 @@ import {
 import { injectQueuedSkillContent } from "./skill-injection";
 import { claimPendingTeleportAtBoundary } from "./teleport";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
+import type { TurnCorrelation } from "./turn-correlation";
 import {
   createTurnInputState,
   type TurnInputState,
@@ -161,6 +162,7 @@ export async function handleApprovalStop(params: {
   pendingNormalizationInterruptedToolCallIds: string[];
   turnToolContextId: string | null;
   turnLease: TurnLease;
+  turnCorrelation?: TurnCorrelation;
   /** This turn's output is owned by an in-process caller, not a relay client. */
   processOwnedTurn?: boolean;
   buildSendOptions: () => Parameters<
@@ -188,6 +190,7 @@ export async function handleApprovalStop(params: {
     turnInput,
     turnToolContextId,
     turnLease,
+    turnCorrelation,
     processOwnedTurn = false,
     buildSendOptions,
     dependencies,
@@ -609,6 +612,7 @@ export async function handleApprovalStop(params: {
   const consumedQueuedTurn = consumeQueuedTurn(runtime);
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
+    turnCorrelation?.appendDequeuedBatch(dequeuedBatch.batchId);
     continuationBatchId = dequeuedBatch.batchId;
     continuationActingUserId = queuedTurn.actingUserId;
     nextTurnInput = appendQueuedTurnToInput(nextTurnInput, queuedTurn);
