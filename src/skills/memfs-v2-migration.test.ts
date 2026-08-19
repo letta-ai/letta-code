@@ -234,6 +234,24 @@ describe("MemFS v2 migration script", () => {
     expect(() => validateScript(output)).not.toThrow();
   });
 
+  test("rejects routing notes copied from file frontmatter", async () => {
+    const root = await temporaryRoot();
+    const memoryDir = await createLegacyMemory(root);
+    const output = join(root, "review");
+
+    stageScript(memoryDir, memoryDir, output);
+    await reviewPreparedTree(output);
+    await writeFile(
+      join(output, "MEMORY.md"),
+      "# Memory\n\n- [Notes](notes.md) - Useful root notes.\n- [Persona](persona-soul.md) - Who I am\n- [Projects](projects/MEMORY.md) - Project memory\n",
+      "utf8",
+    );
+
+    expect(() => validateScript(output)).toThrow(
+      "routing note for notes.md duplicates its frontmatter description",
+    );
+  });
+
   test("refuses flattening collisions", async () => {
     const root = await temporaryRoot();
     const memoryDir = await createLegacyMemory(root);

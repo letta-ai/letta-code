@@ -335,22 +335,44 @@ function generatedIndex(relativePath) {
   return `# ${heading}\n\n${GENERATED_INDEX_NOTE}\n`;
 }
 
+function resolvedLocalLink(target, indexPath, files) {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("#")) {
+    return null;
+  }
+  const pathname = target.split(/[?#]/, 1)[0];
+  let resolved = normalize(
+    path.posix.normalize(
+      path.posix.join(path.posix.dirname(indexPath), pathname),
+    ),
+  );
+  if (resolved.endsWith("/")) resolved = `${resolved}MEMORY.md`;
+  return files.has(resolved) ? resolved : null;
+}
+
 function hasLocalIndexLink(body, indexPath, files) {
   for (const match of body.matchAll(/\[[^\]]+\]\(([^)\s]+)(?:\s+[^)]*)?\)/g)) {
-    const target = match[1];
-    if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("#")) {
-      continue;
-    }
-    const pathname = target.split(/[?#]/, 1)[0];
-    let resolved = normalize(
-      path.posix.normalize(
-        path.posix.join(path.posix.dirname(indexPath), pathname),
-      ),
-    );
-    if (resolved.endsWith("/")) resolved = `${resolved}MEMORY.md`;
-    if (files.has(resolved)) return true;
+    if (resolvedLocalLink(match[1], indexPath, files)) return true;
   }
   return false;
+}
+
+function indexRoutingNotes(body, indexPath, files) {
+  const notes = [];
+  for (const match of body.matchAll(
+    /^\s*[-*]\s+\[[^\]]+\]\(([^)\s]+)(?:\s+[^)]*)?\)\s+-\s+(.+?)\s*$/gm,
+  )) {
+    const relativePath = resolvedLocalLink(match[1], indexPath, files);
+    if (relativePath) notes.push({ relativePath, summary: match[2] });
+  }
+  return notes;
+}
+
+function comparableDescription(value) {
+  return value
+    .trim()
+    .replace(/[.!?]+$/, "")
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("en-US");
 }
 
 function parentDirectories(relativePath) {
@@ -563,6 +585,20 @@ async function validateTree(source, options = {}) {
   const hasIndexedContent = files.some(
     (file) => isMarkdown(file) && !isSkillPath(file) && !isMemoryIndex(file),
   );
+  const memoryDescriptions = new Map();
+  for (const relativePath of files) {
+    if (
+      !isMarkdown(relativePath) ||
+      isSkillPath(relativePath) ||
+      isMemoryIndex(relativePath)
+    ) {
+      continue;
+    }
+    const content = await readFile(path.join(source, relativePath), "utf8");
+    const metadata = new Map(parseFrontmatter(content).entries);
+    const description = metadata.get("description")?.trim();
+    if (description) memoryDescriptions.set(relativePath, description);
+  }
   if (!files.includes("MEMORY.md")) {
     fail("Prepared tree is missing root MEMORY.md");
   }
@@ -590,6 +626,24 @@ async function validateTree(source, options = {}) {
         !hasLocalIndexLink(parsed.body, relativePath, fileSet)
       ) {
         fail(`${relativePath} must link to at least one local memory file`);
+      }
+      if (!options.allowPlaceholders) {
+        for (const note of indexRoutingNotes(
+          parsed.body,
+          relativePath,
+          fileSet,
+        )) {
+          const description = memoryDescriptions.get(note.relativePath);
+          if (
+            description &&
+            comparableDescription(note.summary) ===
+              comparableDescription(description)
+          ) {
+            fail(
+              `${relativePath} routing note for ${note.relativePath} duplicates its frontmatter description; replace it with a shorter reason to open the file`,
+            );
+          }
+        }
       }
       continue;
     }

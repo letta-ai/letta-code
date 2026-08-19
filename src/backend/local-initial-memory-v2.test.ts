@@ -29,12 +29,29 @@ describe("local MemFS v2 initialization", () => {
           description: "Who this agent is.",
           value: "Persistent and curious.",
         },
+        {
+          label: "system/human",
+          description: "Facts about the person this agent works with.",
+          value: "The person likes concise answers.",
+        },
       ],
     } as Parameters<InstanceType<typeof LocalBackend>["createAgent"]>[0]);
 
     const memoryDir = getLocalBackendMemoryFilesystemRoot(agent.id, tempDir);
     expect(readFileSync(join(memoryDir, "MEMORY.md"), "utf8")).toContain(
-      "[Persona](persona.md) - Who this agent is.",
+      "[Human](human.md) - Who I'm working with",
+    );
+    expect(readFileSync(join(memoryDir, "MEMORY.md"), "utf8")).toContain(
+      "[Persona](persona.md) - Who I am and how I act",
+    );
+    expect(readFileSync(join(memoryDir, "MEMORY.md"), "utf8")).not.toContain(
+      "Who this agent is.",
+    );
+    expect(readFileSync(join(memoryDir, "MEMORY.md"), "utf8")).not.toContain(
+      "Facts about the person this agent works with.",
+    );
+    expect(readFileSync(join(memoryDir, "human.md"), "utf8")).toBe(
+      '---\nname: "Human"\ndescription: "Facts about the person this agent works with."\n---\nThe person likes concise answers.',
     );
     expect(readFileSync(join(memoryDir, "persona.md"), "utf8")).toBe(
       '---\nname: "Persona"\ndescription: "Who this agent is."\n---\nPersistent and curious.',

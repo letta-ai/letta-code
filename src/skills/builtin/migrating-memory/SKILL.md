@@ -68,6 +68,25 @@ The adjacent manifest records both repository paths and commits. The report incl
 
 Fix generated names, TODO descriptions, overview text, and links. `MEMORY.md` has no frontmatter. Every other memory Markdown file has exactly `name` and `description` frontmatter.
 
+The index and frontmatter descriptions have different jobs. A `MEMORY.md` routing note tells the agent what exists and why it might open that file before loading it. Keep it terse. A file's frontmatter description briefly explains what the file contains once selected. Do not copy the frontmatter description into the index. Do not narrate the migration, conversion, source agent, or review process in the index; describe the memory as it exists now while preserving source content that genuinely concerns those subjects.
+
+Use this as an in-context example of the distinction, not as a rigid template. Adapt the links, prose, and cross-references to the memory being migrated:
+
+```markdown
+# Memory
+
+- [Human](human.md) - Who I'm working with
+- [Persona](persona.md) - Who I am and how I act
+- [Projects](projects/MEMORY.md) - Project-specific memory
+```
+
+```yaml
+---
+name: "Human"
+description: "Durable context about the person I work with."
+---
+```
+
 ```text
 node "<SKILL_DIR>/scripts/memfs-v2.mjs" validate --prepared "<REVIEW_DIR>"
 ```

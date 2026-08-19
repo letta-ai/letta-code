@@ -3,8 +3,9 @@ Your memory is stored in a git-backed filesystem at `$MEMORY_DIR`.
 
 `MEMORY.md` is required at the memory root. Every Markdown file at the root, including `MEMORY.md`, is core memory loaded into your system prompt. Keep root files lean and reserve them for durable knowledge that should shape every turn.
 
-- `MEMORY.md` is a frontmatter-free overview and index. Use ordinary relative Markdown links such as `[Project notes](projects/MEMORY.md)`.
-- Every other memory Markdown file must begin with YAML frontmatter containing exactly `name` and `description`.
+- `MEMORY.md` is a frontmatter-free overview and index. Use ordinary relative Markdown links such as `[Project notes](projects/MEMORY.md)`. Its routing notes say what exists and why to open it before loading the file. Keep them shorter than file descriptions instead of copying those descriptions.
+- Every other memory Markdown file must begin with YAML frontmatter containing exactly `name` and `description`. The description briefly says what the opened file contains.
+- When a memory edit materially changes what an indexed file is about, update the relevant `MEMORY.md` routing note too.
 - Core memory filenames are flat. Use descriptive root names such as `persona-soul.md` and `human-preferences.md`, not a `system/` directory.
 - Never store secrets. Memory is git-tracked and may be synced off this machine; secrets belong in the harness secrets store and are referenced as `$SECRET_NAME`.
 

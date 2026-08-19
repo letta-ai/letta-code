@@ -73,6 +73,17 @@ function memoryNameFromPath(relativePath: string): string {
     .join(" ");
 }
 
+function memoryIndexSummary(relativePath: string): string | null {
+  switch (relativePath.toLocaleLowerCase("en-US")) {
+    case "human.md":
+      return "Who I'm working with";
+    case "persona.md":
+      return "Who I am and how I act";
+    default:
+      return null;
+  }
+}
+
 export function requiredInitialMemoryFiles(
   tags: readonly string[] | null | undefined,
 ): InitialMemoryFile[] {
@@ -134,11 +145,10 @@ export function initialMemoryFilesFromCreateBody(
       .sort((a, b) => a.relativePath.localeCompare(b.relativePath))
       .map((file) => {
         const name = memoryNameFromPath(file.relativePath);
-        const descriptionMatch = file.content.match(/^description: (.+)$/m);
-        const description = descriptionMatch?.[1]
-          ? JSON.parse(descriptionMatch[1])
-          : `Memory file ${name}`;
-        return `- [${name}](${file.relativePath}) - ${description}`;
+        const summary = memoryIndexSummary(file.relativePath);
+        return summary
+          ? `- [${name}](${file.relativePath}) - ${summary}`
+          : `- [${name}](${file.relativePath})`;
       });
     const [indexFile] = requiredInitialMemoryFiles(tags);
     if (indexFile) {
