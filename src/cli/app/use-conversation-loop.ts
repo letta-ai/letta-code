@@ -31,6 +31,11 @@ import {
   shouldAttemptApprovalRecovery,
 } from "@/agent/approval-recovery";
 import { getAvailableModelHandles } from "@/agent/available-models";
+import {
+  CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN,
+  formatPlanRotationNotice,
+  rotateChatGPTPlanOnQuotaLimit,
+} from "@/agent/chatgpt-plan-rotation";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { getStreamToolContextId, sendMessageStream } from "@/agent/message";
 import { getModelInfoForLlmConfig } from "@/agent/model";
@@ -190,6 +195,7 @@ type ConversationLoopContext = {
   consumeQueuedMessages: () => QueuedMessage[] | null;
   queueModeRef: MutableRefObject<"immediate" | "defer">;
   contextTrackerRef: MutableRefObject<ContextTracker>;
+  chatgptPlanSwapsRef: MutableRefObject<number>;
   conversationBusyRetriesRef: MutableRefObject<number>;
   conversationGenerationRef: MutableRefObject<number>;
   conversationIdRef: MutableRefObject<string>;
@@ -286,6 +292,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     buffersRef,
     clearApprovalToolContext,
     closeTrajectorySegment,
+    chatgptPlanSwapsRef,
     consumeQueuedMessages,
     queueModeRef,
     contextTrackerRef,
@@ -597,6 +604,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         emptyResponseRetriesRef.current = 0;
         conversationBusyRetriesRef.current = 0;
         quotaAutoSwapAttemptedRef.current = false;
+        chatgptPlanSwapsRef.current = 0;
       }
 
       // Track last run ID for error reporting (accessible in catch block)
@@ -2358,6 +2366,39 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             // Reset interrupted flag so retry stream chunks are processed
             buffersRef.current.interrupted = false;
             continue;
+          }
+
+          // ChatGPT plan rotation: when a chatgpt_oauth BYOK plan hits its
+          // usage limit, swap the agent to the same model on a sibling
+          // connected ChatGPT plan and resend. Takes precedence over the
+          // letta/auto quota fallback below.
+          if (
+            chatgptPlanSwapsRef.current <
+            CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN
+          ) {
+            const rotation = await rotateChatGPTPlanOnQuotaLimit({
+              agentId: agentIdRef.current,
+              currentHandle: currentModelId,
+              detail: detailFromRun ?? fallbackError,
+            });
+            if (rotation) {
+              chatgptPlanSwapsRef.current += 1;
+
+              const statusId = uid("status");
+              buffersRef.current.byId.set(statusId, {
+                kind: "status",
+                id: statusId,
+                lines: [formatPlanRotationNotice(rotation)],
+              });
+              buffersRef.current.order.push(statusId);
+              refreshDerived();
+
+              currentInput = refreshInputOtidsForNewRequest(currentInput);
+              buffersRef.current.interrupted = false;
+              continue;
+            }
+            // No sibling plan available — fall through to the letta/auto
+            // quota fallback below.
           }
 
           // Quota-limit fallback: hosted Letta API can recover by switching to
