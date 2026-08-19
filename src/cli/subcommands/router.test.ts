@@ -159,6 +159,7 @@ describe("subcommand router", () => {
       expect(exitCode).toBe(0);
       expect(messages.join("\n")).toContain("letta teleport list");
       expect(messages.join("\n")).toContain("letta teleport cloud");
+      expect(messages.join("\n")).toContain("letta teleport local");
       expect(messages.join("\n")).not.toContain("letta teleport back");
     } finally {
       console.log = originalLog;
