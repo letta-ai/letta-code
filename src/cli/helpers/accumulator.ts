@@ -482,24 +482,56 @@ function markAsFinished(b: Buffers, id: string) {
   }
 }
 
-// Helper to mark previous otid's line as finished when transitioning to new otid
-function handleOtidTransition(b: Buffers, newOtid: string | undefined) {
-  // console.log(`[OTID_TRANSITION] Called with newOtid=${newOtid}, lastOtid=${b.lastOtid}`);
+// Finalize every still-streaming assistant/reasoning line. Content blocks stay
+// open across OTID switches (pi keys blocks by content index and permits
+// interleaving), so strong boundaries and stream end must sweep rather than
+// trust lastOtid.
+function finalizeOpenContentLines(b: Buffers): void {
+  for (const id of b.order) {
+    const line = b.byId.get(id);
+    if (
+      line &&
+      (line.kind === "assistant" || line.kind === "reasoning") &&
+      line.phase === "streaming"
+    ) {
+      markAsFinished(b, id);
+    }
+  }
+}
 
-  // If transitioning to a different otid (including null/undefined), finish only assistant/reasoning lines.
-  // Tool calls should finish exclusively when a tool_return arrives (merged by toolCallId).
+// A content block stays open until a strong boundary: a new block of the same
+// kind, a tool call, a user message, an event, or stream end. An OTID switch
+// to the other content kind is an interleave, not a closure.
+function handleOtidTransition(
+  b: Buffers,
+  newOtid: string | undefined,
+  incomingKind?: "assistant" | "reasoning" | "tool" | "user" | "event",
+) {
   if (b.lastOtid && b.lastOtid !== newOtid) {
     const prev = b.byId.get(b.lastOtid);
-    // console.log(`[OTID_TRANSITION] Found prev line: kind=${prev?.kind}, phase=${(prev as any)?.phase}`);
     if (prev && (prev.kind === "assistant" || prev.kind === "reasoning")) {
-      // console.log(`[OTID_TRANSITION] Marking ${b.lastOtid} as finished (was ${(prev as any).phase})`);
-      markAsFinished(b, b.lastOtid);
+      const isContent =
+        incomingKind === "assistant" || incomingKind === "reasoning";
+      if (isContent) {
+        const incoming = newOtid ? b.byId.get(newOtid) : undefined;
+        const reentersFinished =
+          incoming !== undefined &&
+          "phase" in incoming &&
+          incoming.phase === "finished";
+        if (incomingKind === prev.kind && !reentersFinished) {
+          markAsFinished(b, b.lastOtid);
+        }
+      } else if (incomingKind === "event") {
+        markAsFinished(b, b.lastOtid);
+      } else if (incomingKind === undefined) {
+        markAsFinished(b, b.lastOtid);
+      } else {
+        finalizeOpenContentLines(b);
+      }
     }
   }
 
-  // Update last otid (can be null)
   b.lastOtid = newOtid ?? null;
-  // console.log(`[OTID_TRANSITION] Updated lastOtid to ${b.lastOtid}`);
 }
 
 /**
@@ -507,19 +539,7 @@ function handleOtidTransition(b: Buffers, newOtid: string | undefined) {
  * Call this after stream completion to ensure the final line isn't stuck in "streaming" state.
  */
 export function markCurrentLineAsFinished(b: Buffers) {
-  // console.log(`[MARK_CURRENT_FINISHED] Called with lastOtid=${b.lastOtid}`);
-  if (!b.lastOtid) {
-    // console.log(`[MARK_CURRENT_FINISHED] No lastOtid, returning`);
-    return;
-  }
-  const prev = b.byId.get(b.lastOtid);
-  // console.log(`[MARK_CURRENT_FINISHED] Found line: kind=${prev?.kind}, phase=${(prev as any)?.phase}`);
-  if (prev && (prev.kind === "assistant" || prev.kind === "reasoning")) {
-    // console.log(`[MARK_CURRENT_FINISHED] Marking ${b.lastOtid} as finished`);
-    markAsFinished(b, b.lastOtid);
-  } else {
-    // console.log(`[MARK_CURRENT_FINISHED] Not marking (not assistant/reasoning or doesn't exist)`);
-  }
+  finalizeOpenContentLines(b);
 }
 
 /**
@@ -951,7 +971,7 @@ export function onChunk(
       }
 
       // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, id);
+      handleOtidTransition(b, id, "reasoning");
 
       const delta = chunk.reasoning;
       const messageId =
@@ -994,7 +1014,7 @@ export function onChunk(
       if (!id) break;
 
       // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, id);
+      handleOtidTransition(b, id, "assistant");
 
       const delta = extractTextPart(chunk.content); // NOTE: may be list of parts
       const messageId =
@@ -1042,7 +1062,7 @@ export function onChunk(
       if (!lineId) break;
 
       // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, lineId);
+      handleOtidTransition(b, lineId, "user");
 
       // Extract text content from the user message
       const rawText = extractTextPart(chunk.content);
@@ -1090,7 +1110,7 @@ export function onChunk(
     case "tool_call_message":
     case "approval_request_message": {
       // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, chunk.otid ?? undefined);
+      handleOtidTransition(b, chunk.otid ?? undefined, "tool");
 
       // Use deprecated tool_call or new tool_calls array
       const toolCall =
@@ -1463,7 +1483,7 @@ export function onChunk(
         if (!id) break;
 
         // Handle otid transition (mark previous line as finished)
-        handleOtidTransition(b, id);
+        handleOtidTransition(b, id, "event");
 
         if (eventType === "retry") {
           upsertStatusLine(b, id, formatRetryEventStatusLines(eventData));
