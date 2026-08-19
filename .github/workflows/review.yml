@@ -75,7 +75,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
 
-      - uses: letta-ai/letta-code-action@4b8e508a523ff576fee09be1432d6f39158c272c
+      - uses: letta-ai/letta-code-action@bd5cc55fcbad7be71134ce93406ca477e9fc6ec3
         id: letta_review
         if: steps.lint_wait.outputs.skipped != 'true'
         with:
@@ -205,6 +205,18 @@ jobs:
                gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "THREAD_ID"}) { thread { isResolved } } }'
                ```
             3. Only resolve threads where you are the author. Only resolve when the fix clearly addresses your original comment.
+
+          followup_prompt: |
+            Re-review PR #${{ env.PR_NUMBER }} in ${{ github.repository }} after its latest update.
+
+            Use the review process, risk criteria, voice, and inline-comment instructions established earlier in this conversation.
+
+            1. Fetch the current PR title, body, comments, and diff.
+            2. Resolve any of your previous review threads that the latest changes clearly addressed.
+            3. Review the latest diff with the same signal-only posture, focusing on real risk introduced by the current changes.
+            4. Do not repeat unresolved findings unless the latest changes introduce a distinct risk.
+            5. If nothing to flag, respond with exactly: `LGTM`
+            6. If you leave inline review comments, respond with exactly: `Left comments`
 
       - name: React based on review outcome
         if: steps.lint_wait.outputs.skipped != 'true' && steps.letta_review.outputs.execution_file != ''
