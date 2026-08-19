@@ -61,14 +61,10 @@ jobs:
         env:
           TRACKER_ISSUE: ${{ steps.detect.outputs.tracker_issue }}
           TRACKER_ISSUE_URL: ${{ steps.detect.outputs.tracker_issue_url }}
-          ANALYSIS_FILE: ${{ steps.detect.outputs.analysis_file }}
           CURRENT_TAG: ${{ steps.detect.outputs.current_tag }}
           PREVIOUS_TAG: ${{ steps.detect.outputs.previous_tag }}
           VERDICT: ${{ steps.detect.outputs.verdict }}
         run: |
-          REVIEW_ANALYSIS="$RUNNER_TEMP/codex-watch-review-analysis.json"
-          jq 'del(.release_notes_md, .changed_files)' "$ANALYSIS_FILE" > "$REVIEW_ANALYSIS"
-          ANALYSIS_ARCHIVE_BASE64=$(gzip -c "$REVIEW_ANALYSIS" | base64 -w 0)
           {
             echo "prompt<<AMELIA_PROMPT_EOF"
             cat .github/agent-prompts/codex-agent-watch.md
@@ -89,9 +85,9 @@ jobs:
             echo 'rm -rf /tmp/letta-code-codex-watch'
             echo 'GH_TOKEN="$GITHUB_TOKEN" gh repo clone letta-ai/letta-code /tmp/letta-code-codex-watch'
             echo 'cd /tmp/letta-code-codex-watch'
-            echo "printf '%s' '$ANALYSIS_ARCHIVE_BASE64' | base64 --decode | gzip --decompress > /tmp/codex-watch-analysis.json"
-            echo "jq -e '.current_tag == \"$CURRENT_TAG\" and .previous_tag == \"$PREVIOUS_TAG\" and (.path_changes | type == \"array\")' /tmp/codex-watch-analysis.json > /dev/null"
             echo 'bun install --frozen-lockfile'
+            echo "GH_TOKEN=\"\$GITHUB_TOKEN\" GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=letta-ai/letta-code GITHUB_RUN_ID=\"$GITHUB_RUN_ID\" bun scripts/codex-watch/agent-watch.ts --dry-run --since \"$PREVIOUS_TAG\" --current \"$CURRENT_TAG\" --analysis-file /tmp/codex-watch-analysis.json > /tmp/codex-watch-analysis.log"
+            echo "jq -e '.current_tag == \"$CURRENT_TAG\" and .previous_tag == \"$PREVIOUS_TAG\" and (.path_changes | type == \"array\")' /tmp/codex-watch-analysis.json > /dev/null"
             echo '```'
             echo "AMELIA_PROMPT_EOF"
           } >> "$GITHUB_OUTPUT"
