@@ -53,6 +53,12 @@ function isUserMessage(message: LettaMessage): boolean {
   return (message as { message_type?: string }).message_type === "user_message";
 }
 
+function isTaskNotificationMessage(message: LettaMessage): boolean {
+  return extractMessageText(message)
+    .trimStart()
+    .startsWith("<task-notification>");
+}
+
 function messageRunId(message: LettaMessage | undefined): string | null {
   if (!message) return null;
   const runId = (message as { run_id?: unknown }).run_id;
@@ -110,7 +116,9 @@ export async function waitForEnvironmentAssistantMessage(params: {
       });
       const nextUserSequenceId = newerMessages.reduce<number | null>(
         (closest, message) => {
-          if (!isUserMessage(message)) return closest;
+          if (!isUserMessage(message) || isTaskNotificationMessage(message)) {
+            return closest;
+          }
           const sequenceId = messageSequenceId(message);
           if (sequenceId === null) return closest;
           return closest === null || sequenceId < closest
