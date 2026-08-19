@@ -1120,7 +1120,7 @@ describe("PiStreamAdapter", () => {
           access: "access-token",
           refresh: "refresh-token",
           idToken: "id-token",
-          expires: Date.now() + 60_000,
+          expires: Date.now() + 3_600_000,
           accountId: "account-id",
         },
       });

@@ -240,7 +240,7 @@ describe("pi model factory", () => {
           id_token: "chatgpt-id-token",
           refresh_token: "chatgpt-refresh-token",
           account_id: "account-123",
-          expires_at: Date.now() + 60_000,
+          expires_at: Date.now() + 3_600_000,
         }),
       });
 
@@ -268,7 +268,7 @@ describe("pi model factory", () => {
           id_token: "chatgpt-id-token",
           refresh_token: "chatgpt-refresh-token",
           account_id: "account-123",
-          expires_at: Date.now() + 60_000,
+          expires_at: Date.now() + 3_600_000,
         }),
       });
 
@@ -309,7 +309,7 @@ describe("pi model factory", () => {
         auth: localOAuthAuthFromCredentials({
           access: "sk-ant-oat-local",
           refresh: "anthropic-refresh-token",
-          expires: Date.now() + 60_000,
+          expires: Date.now() + 3_600_000,
         }),
       });
 
@@ -338,7 +338,7 @@ describe("pi model factory", () => {
         auth: localOAuthAuthFromCredentials({
           access: "tid=1;exp=1;proxy-ep=proxy.enterprise.githubcopilot.com;",
           refresh: "copilot-refresh-token",
-          expires: Date.now() + 60_000,
+          expires: Date.now() + 3_600_000,
         }),
       });
 
@@ -578,14 +578,14 @@ describe("pi model factory", () => {
           login: async () => ({
             access: "login-token",
             refresh: "refresh-token",
-            expires: Date.now() + 60_000,
+            expires: Date.now() + 3_600_000,
           }),
           refreshToken: async (credentials) => {
             refreshes.push(credentials);
             return {
               ...credentials,
               access: "refreshed-token",
-              expires: Date.now() + 60_000,
+              expires: Date.now() + 3_600_000,
             };
           },
           getApiKey: (credentials) => `oauth:${credentials.access}`,
