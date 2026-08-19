@@ -15,7 +15,7 @@ The detector ran on a GitHub Actions runner, but your turn does not. The runner 
 Before reviewing the release, run the exact `Sandbox bootstrap` block below. It:
 
 1. Clones `letta-ai/letta-code` into `/tmp/letta-code-codex-watch`.
-2. Reconstructs the detector payload at `/tmp/codex-watch-analysis.json`.
+2. Rebuilds the detector analysis for the exact release pair at `/tmp/codex-watch-analysis.json`.
 3. Installs the repository dependencies.
 
 Perform all repository inspection, edits, tests, and tracker updates from that sandbox clone. Use the tracker issue number and tags from the `Run inputs` block directly rather than relying on environment variables.
