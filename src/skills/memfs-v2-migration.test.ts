@@ -420,7 +420,7 @@ describe("MemFS v2 migration script", () => {
     const packagedEntrypoint = join(packageRoot, "letta.js");
     await mkdir(dirname(packagedScript), { recursive: true });
     await copyFile(targetActivationPath, packagedScript);
-    await writeFile(packagedEntrypoint, "", "utf8");
+    await writeFile(packagedEntrypoint, "packaged test entrypoint\n", "utf8");
     const probe = join(root, "probe.mjs");
     await writeFile(
       probe,
@@ -435,10 +435,11 @@ describe("MemFS v2 migration script", () => {
     const invocation = JSON.parse(
       execFileSync(process.execPath, [probe], { encoding: "utf8" }),
     ) as { command: string; commandArgs: string[] };
-    expect(invocation).toEqual({
-      command: process.execPath,
-      commandArgs: [await realpath(packagedEntrypoint)],
-    });
+    expect(invocation.command).toBe(process.execPath);
+    expect(invocation.commandArgs).toHaveLength(1);
+    expect(await readFile(invocation.commandArgs[0] as string, "utf8")).toBe(
+      "packaged test entrypoint\n",
+    );
   });
 
   test("moves an exported source into a separate target repository", async () => {
