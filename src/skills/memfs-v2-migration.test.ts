@@ -437,7 +437,7 @@ describe("MemFS v2 migration script", () => {
     ) as { command: string; commandArgs: string[] };
     expect(invocation).toEqual({
       command: process.execPath,
-      commandArgs: [packagedEntrypoint],
+      commandArgs: [await realpath(packagedEntrypoint)],
     });
   });
 
