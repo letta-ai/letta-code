@@ -65,10 +65,8 @@ describe("teleport subcommand", () => {
       expect(exitCode).toBe(0);
       expect(out.messages.join("\n")).toContain("letta teleport list");
       expect(out.messages.join("\n")).toContain("letta teleport cloud");
+      expect(out.messages.join("\n")).toContain("letta teleport local");
       expect(out.messages.join("\n")).not.toContain("letta teleport back");
-      expect(out.messages.join("\n")).toContain(
-        "Desktop Local is not a teleport target yet",
-      );
     } finally {
       out.restore();
     }
@@ -261,7 +259,7 @@ describe("teleport subcommand", () => {
     }
   });
 
-  test("back explains that return teleport is not supported yet", async () => {
+  test("back directs callers to the explicit local target", async () => {
     const out = captureOutput();
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
@@ -272,7 +270,52 @@ describe("teleport subcommand", () => {
       );
 
       expect(exitCode).toBe(1);
-      expect(out.errors[0]).toContain("Teleport back is not supported yet");
+      expect(out.errors[0]).toContain("Use `letta teleport local`");
+    } finally {
+      out.restore();
+    }
+  });
+
+  test("local resolves the online Desktop lease and submits teleport", async () => {
+    const out = captureOutput();
+    const teleportCalls: Array<{ targetConnectionId: string }> = [];
+    try {
+      const exitCode = await withEnvironment(CLOUD_ENV, () =>
+        runTeleportSubcommand(["local"], {
+          initializeSettings: async () => {},
+          getLastSession: () => null,
+          resolveDesktopEnvironmentConnectionId: async () => ({
+            connectionId: "conn-desktop",
+            environment: {} as never,
+          }),
+          teleportToEnvironment: async (
+            _agentId,
+            _conversationId,
+            targetConnectionId,
+          ) => {
+            teleportCalls.push({ targetConnectionId });
+            return {
+              id: "teleport-local",
+              agentId: "agent-1",
+              conversationId: "conv-1",
+              sourceConnectionId: "conn-cloud",
+              targetConnectionId,
+              targetDeviceId: "device-desktop",
+              targetConnectionName: "Caren's Mac",
+              status: "waiting_for_source",
+              error: null,
+              createdAt: 1,
+              updatedAt: 1,
+            };
+          },
+        }),
+      );
+
+      expect(exitCode).toBe(0);
+      expect(teleportCalls).toEqual([{ targetConnectionId: "conn-desktop" }]);
+      expect(JSON.parse(out.messages[0] ?? "{}").targetConnectionId).toBe(
+        "conn-desktop",
+      );
     } finally {
       out.restore();
     }
@@ -305,7 +348,7 @@ describe("teleport subcommand", () => {
 
       expect(exitCode).toBe(1);
       expect(out.errors[0]).toContain(
-        "Desktop Local is not a teleport target yet",
+        "Desktop-local connection is not Cloud-routable",
       );
     } finally {
       out.restore();
