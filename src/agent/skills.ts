@@ -79,6 +79,7 @@ export interface SkillDiscoveryResult {
 export interface SkillDiscoveryOptions {
   skipBundled?: boolean;
   sources?: SkillSource[];
+  agentTags?: readonly string[];
 }
 
 /**
@@ -158,9 +159,27 @@ const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set([
   "managing-shared-memory",
 ]);
 
+export async function resolveAgentTagsForSkills(
+  agentId?: string,
+  suppliedTags?: readonly string[],
+): Promise<readonly string[]> {
+  if (suppliedTags) return suppliedTags;
+  if (!agentId || !isLocalAgentId(agentId)) return [];
+  try {
+    const { getBackend } = await import("@/backend");
+    const agent = await getBackend().retrieveAgent(agentId, {
+      include: ["agent.tags"],
+    });
+    return agent.tags ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export function isSkillAvailableForAgent(
   skill: Skill,
   agentId?: string,
+  _agentTags: readonly string[] = [],
 ): boolean {
   if (
     skill.source === "bundled" &&
@@ -314,8 +333,14 @@ export async function discoverSkills(
     }
   }
 
+  const agentTags = await resolveAgentTagsForSkills(
+    agentId,
+    options?.agentTags,
+  );
   return {
-    skills: Array.from(skillsById.values()).sort(compareSkills),
+    skills: Array.from(skillsById.values())
+      .filter((skill) => isSkillAvailableForAgent(skill, agentId, agentTags))
+      .sort(compareSkills),
     errors: allErrors,
   };
 }

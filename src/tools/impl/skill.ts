@@ -1,6 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { MEMFS_V2_TAG } from "@/agent/agent-tags";
 import { getCurrentAgentId, getSkillsDirectory } from "@/agent/context";
 import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
 import {
@@ -10,6 +11,7 @@ import {
   getFrontmatterBoolean,
   isSkillAvailableForAgent,
   PROJECT_SKILLS_DIR,
+  resolveAgentTagsForSkills,
   SKILLS_DIR,
 } from "@/agent/skills";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -81,6 +83,7 @@ export async function readSkillContent(
   skillId: string,
   skillsDir: string,
   agentId?: string,
+  agentTags: readonly string[] = [],
 ): Promise<{ content: string; path: string }> {
   // 1. Try project skills directory (highest priority)
   const projectSkillsDirs = new Set<string>([
@@ -135,10 +138,23 @@ export async function readSkillContent(
   // 5. Try bundled skills (lowest priority)
   const bundledSkills = await getBundledSkills();
   const bundledSkill = bundledSkills.find((s) => s.id === skillId);
-  if (bundledSkill?.path && isSkillAvailableForAgent(bundledSkill, agentId)) {
+  if (
+    bundledSkill &&
+    !isSkillAvailableForAgent(bundledSkill, agentId, agentTags)
+  ) {
+    throw new Error(
+      `Skill "${skillId}" not found. Check that the skill name is correct and that it appears in the available skills list.`,
+    );
+  }
+  if (bundledSkill?.path) {
     try {
-      const content = await readFile(bundledSkill.path, "utf-8");
-      return { content, path: bundledSkill.path };
+      const alternate =
+        agentTags.includes(MEMFS_V2_TAG) &&
+        (skillId === "initializing-memory" || skillId === "context-doctor")
+          ? join(dirname(bundledSkill.path), "MEMFS_V2.md")
+          : bundledSkill.path;
+      const content = await readFile(alternate, "utf-8");
+      return { content, path: alternate };
     } catch {
       // Bundled skill path not found, continue to legacy fallback
     }
@@ -220,10 +236,12 @@ export async function loadRenderedSkillContent(
   } = {},
 ): Promise<string> {
   const skillsDir = options.skillsDir ?? (await getResolvedSkillsDir());
+  const agentTags = await resolveAgentTagsForSkills(options.agentId);
   const { content: skillContent, path: skillPath } = await readSkillContent(
     skillName,
     skillsDir,
     options.agentId,
+    agentTags,
   );
   return renderSkillContent(skillName, skillContent, skillPath, options);
 }

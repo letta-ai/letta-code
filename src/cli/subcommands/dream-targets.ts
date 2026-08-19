@@ -5,7 +5,17 @@ import {
   getScopedMemoryFilesystemRoot,
   MEMORY_SYSTEM_DIR,
 } from "@/agent/memory-filesystem";
+import {
+  assertMemfsV2MemoryPathIndexed,
+  type LocalMemoryFormat,
+  rootMemoryPathFromLegacyLabel,
+} from "@/agent/memory-format";
 import { commitMemoryWrite } from "@/agent/memory-git";
+import {
+  defaultMemoryName,
+  parseMemoryMarkdown,
+  renderMemoryMarkdown,
+} from "@/agent/memory-markdown";
 import { parseFrontmatter } from "@/utils/frontmatter";
 
 /**
@@ -47,7 +57,20 @@ export function resolveDreamTarget(spec: string): DreamTarget {
 }
 
 /** The doc's path inside the memfs, relative to `$MEMORY_DIR`. */
-function memfsRelPath(target: DreamTarget): string {
+function memfsRelPath(
+  target: DreamTarget,
+  memoryFormat: LocalMemoryFormat,
+): string {
+  if (memoryFormat === "memfs-v2") {
+    // MEMORY.md is the root index in v2; reject it (case-insensitive) so a
+    // target like `memory.md` cannot overwrite the root index on macOS.
+    if (target.fileName.toLowerCase() === "memory.md") {
+      throw new Error(
+        `Invalid --to "${target.path}": MEMORY.md is reserved as the root index and cannot be a dream target`,
+      );
+    }
+    return rootMemoryPathFromLegacyLabel(target.fileName);
+  }
   return `${MEMORY_SYSTEM_DIR}/${target.fileName}`;
 }
 
@@ -66,7 +89,49 @@ const MANAGED_DESCRIPTION: Record<DreamTarget["kind"], string> = {
 export function addManagedFrontmatter(
   content: string,
   kind: DreamTarget["kind"],
+  memoryFormat: LocalMemoryFormat = "memfs-v1",
+  relativePath = "document.md",
 ): string {
+  if (memoryFormat === "memfs-v2") {
+    // If the content already carries v2 frontmatter, parse it with
+    // parseMemoryMarkdown so quoted values like name: "AGENTS" are properly
+    // unquoted before re-rendering (avoids double-escaping).  If the content
+    // does not start with frontmatter, treat it as plain body content.
+    if (/^---\r?\n/.test(content)) {
+      const parsed = parseMemoryMarkdown({
+        content,
+        relativePath,
+        format: memoryFormat,
+        errorPrefix: "dream target",
+      });
+      return renderMemoryMarkdown({
+        frontmatter: {
+          name:
+            typeof parsed.frontmatter.name === "string" &&
+            parsed.frontmatter.name
+              ? parsed.frontmatter.name
+              : defaultMemoryName(relativePath),
+          description: MANAGED_DESCRIPTION[kind],
+        },
+        body: parsed.body,
+        relativePath,
+        format: memoryFormat,
+        errorPrefix: "dream target",
+      });
+    }
+    // Plain body content without frontmatter — add managed frontmatter.
+    const { body } = parseFrontmatter(content);
+    return renderMemoryMarkdown({
+      frontmatter: {
+        name: defaultMemoryName(relativePath),
+        description: MANAGED_DESCRIPTION[kind],
+      },
+      body,
+      relativePath,
+      format: memoryFormat,
+      errorPrefix: "dream target",
+    });
+  }
   const { frontmatter, body } = parseFrontmatter(content);
   if (typeof frontmatter.description === "string" && frontmatter.description) {
     return content;
@@ -107,10 +172,13 @@ const GENERIC_GUIDANCE = [
  * absent (no file → no diff → no PR downstream) rather than committing a
  * "nothing learned yet" placeholder.
  */
-export function buildTargetInstruction(target: DreamTarget): string {
+export function buildTargetInstruction(
+  target: DreamTarget,
+  memoryFormat: LocalMemoryFormat = "memfs-v1",
+): string {
   const guidance =
     target.kind === "agents-md" ? AGENTS_MD_GUIDANCE : GENERIC_GUIDANCE;
-  const relPath = memfsRelPath(target);
+  const relPath = memfsRelPath(target, memoryFormat);
   return [
     `In addition to updating memory, maintain the file at $MEMORY_DIR/${relPath}.`,
     guidance,
@@ -122,7 +190,9 @@ export function buildTargetInstruction(target: DreamTarget): string {
     "",
     "If it does not exist, create it ONLY when the new experience yields",
     "durable, forward-looking guidance worth recording, and begin the file with",
-    "a YAML frontmatter block (a --- ... --- header with a short `description:`).",
+    memoryFormat === "memfs-v2"
+      ? "frontmatter containing exactly `name` and `description`."
+      : "a YAML frontmatter block (a --- ... --- header with a short `description:`).",
     "If there is nothing substantive to record yet, do NOT create the file —",
     "leave it absent rather than writing a placeholder that says nothing was",
     "learned. The file should first appear on a run that produces real guidance.",
@@ -173,12 +243,18 @@ export async function syncTargetIntoMemory(
   agentId: string,
   target: DreamTarget,
   content: string | null,
+  memoryFormat: LocalMemoryFormat = "memfs-v1",
 ): Promise<{ synced: boolean }> {
   if (content === null) {
     return { synced: false };
   }
   const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-  const relPath = memfsRelPath(target);
+  const relPath = memfsRelPath(target, memoryFormat);
+
+  // For v2, ensure the root MEMORY.md marker exists before writing.
+  if (memoryFormat === "memfs-v2") {
+    assertMemfsV2MemoryPathIndexed(memoryDir, relPath);
+  }
 
   const committed = readMemfsHead(memoryDir, relPath);
   if (
@@ -192,7 +268,7 @@ export async function syncTargetIntoMemory(
   await mkdir(dirname(absPath), { recursive: true });
   await writeFile(
     absPath,
-    addManagedFrontmatter(content, target.kind),
+    addManagedFrontmatter(content, target.kind, memoryFormat, relPath),
     "utf-8",
   );
   try {
@@ -225,9 +301,13 @@ export async function syncTargetIntoMemory(
 export function readTargetFromMemory(
   agentId: string,
   target: DreamTarget,
+  memoryFormat: LocalMemoryFormat = "memfs-v1",
 ): string | null {
   const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-  const committed = readMemfsHead(memoryDir, memfsRelPath(target));
+  const committed = readMemfsHead(
+    memoryDir,
+    memfsRelPath(target, memoryFormat),
+  );
   if (committed === null) {
     return null;
   }

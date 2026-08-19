@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { MEMFS_V2_TAG } from "@/agent/agent-tags";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
 import type { LocalAgentRecord } from "@/backend/local/local-store";
 import {
@@ -10,18 +11,32 @@ import {
   compileAvailableSkillsBlock,
   compileLocalSystemPrompt,
   hashRawSystemPrompt,
+  hasLocalMemoryProjectionChanged,
 } from "@/backend/local/system-prompt-compilation";
 
-function agent(system = "base {CORE_MEMORY}"): LocalAgentRecord {
+function agent(
+  system = "base {CORE_MEMORY}",
+  tags: string[] = [],
+): LocalAgentRecord {
   return {
     id: "agent-local-test",
     name: "Local Test",
     description: null,
     system,
-    tags: [],
+    tags,
     model: "openai/gpt-test",
     model_settings: { provider_type: "openai" },
   };
+}
+
+async function writeRawMemoryFile(
+  memoryDir: string,
+  relativePath: string,
+  content: string,
+) {
+  const fullPath = join(memoryDir, relativePath);
+  await mkdir(dirname(fullPath), { recursive: true });
+  await writeFile(fullPath, content, "utf8");
 }
 
 async function writeMemoryFile(
@@ -59,6 +74,15 @@ function initAndCommitMemory(memoryDir: string, message = "initial memory") {
 }
 
 describe("local system prompt compilation", () => {
+  test("treats a tag-only memory format change as a cache change", () => {
+    expect(
+      hasLocalMemoryProjectionChanged(
+        { memfsRevision: "same", memoryFormat: "memfs-v1" },
+        { memfsRevision: "same", memoryFormat: "memfs-v2" },
+      ),
+    ).toBe(true);
+  });
+
   test("injects MemFS system files and metadata into CORE_MEMORY", async () => {
     const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-memfs-"));
     try {
@@ -155,6 +179,88 @@ describe("local system prompt compilation", () => {
     }
   });
 
+  test("compiles root-first memory only for agents tagged memfs-v2", async () => {
+    const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-memfs-v2-"));
+    try {
+      await writeRawMemoryFile(
+        memoryDir,
+        "MEMORY.md",
+        "# Memory\n\n[Projects](projects/MEMORY.md)\n",
+      );
+      await writeRawMemoryFile(
+        memoryDir,
+        "persona.md",
+        [
+          "---",
+          "name: Persona",
+          "description: Who I am.",
+          "---",
+          "I am a local agent.",
+          "",
+        ].join("\n"),
+      );
+      await writeRawMemoryFile(
+        memoryDir,
+        "projects/MEMORY.md",
+        "# Projects\n\n[Details](details.md)\n",
+      );
+      await writeRawMemoryFile(
+        memoryDir,
+        "projects/details.md",
+        "---\nname: Details\ndescription: Deferred project details.\n---\nHidden project detail.\n",
+      );
+      await writeRawMemoryFile(
+        memoryDir,
+        "unindexed/notes.md",
+        "This directory is not memory.\n",
+      );
+      await writeRawMemoryFile(
+        memoryDir,
+        "skills/pdf/SKILL.md",
+        "---\nname: pdf\ndescription: PDFs\n---\nSkill instructions.\n",
+      );
+      initAndCommitMemory(memoryDir);
+
+      const compiled = compileLocalSystemPrompt({
+        agent: agent("hello {CORE_MEMORY}", [MEMFS_V2_TAG]),
+        conversationId: "local-conv-test",
+        memoryDir,
+      });
+
+      expect(compiled.memoryFormat).toBe("memfs-v2");
+      expect(compiled.content).toContain(`<memory root="\${MEMORY_DIR}">`);
+      expect(compiled.content).toContain('<file name="MEMORY.md">');
+      expect(compiled.content).toContain('<file name="persona.md">');
+      expect(compiled.content).toContain("name: Persona");
+      expect(compiled.content).toContain(
+        '<directory path="projects/" index="projects/MEMORY.md" />',
+      );
+      expect(compiled.content).not.toContain("Hidden project detail.");
+      expect(compiled.content).not.toContain("This directory is not memory.");
+      expect(compiled.content).not.toContain("Skill instructions.");
+    } finally {
+      await rm(memoryDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a tagged memory repo without root MEMORY.md", async () => {
+    const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-memfs-v2-"));
+    try {
+      await writeRawMemoryFile(memoryDir, "persona.md", "Missing index.\n");
+      initAndCommitMemory(memoryDir);
+
+      expect(() =>
+        compileLocalSystemPrompt({
+          agent: agent("hello {CORE_MEMORY}", [MEMFS_V2_TAG]),
+          conversationId: "local-conv-test",
+          memoryDir,
+        }),
+      ).toThrow("MemFS v2 requires MEMORY.md at the memory root");
+    } finally {
+      await rm(memoryDir, { recursive: true, force: true });
+    }
+  });
+
   test("appends memory metadata when CORE_MEMORY is missing", () => {
     const compiled = compileLocalSystemPrompt({
       agent: agent("plain base prompt"),
@@ -239,5 +345,17 @@ describe("local system prompt compilation", () => {
       "Changes you commit and push sync to the Letta server",
     );
     expect(prompt).not.toContain("git push");
+  });
+
+  test("uses root-first instructions for local MemFS v2", async () => {
+    const prompt = await resolveAndBuildSystemPrompt(
+      "default",
+      "local-memfs-v2",
+    );
+
+    expect(prompt).toContain("## Memory files (learning)");
+    expect(prompt).toContain("Every Markdown file at the root");
+    expect(prompt).toContain("exactly `name` and `description`");
+    expect(prompt).not.toContain("$MEMORY_DIR/system/");
   });
 });

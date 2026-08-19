@@ -33,6 +33,7 @@ import { debugLog, debugWarn } from "@/utils/debug";
 import { getUtf16Bom } from "@/utils/text-files";
 import { GIT_MEMORY_ENABLED_TAG } from "./agent-tags";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
+import type { LocalMemoryFormat } from "./memory-format";
 import { withSerializedGitConfigMutation } from "./memory-git-config-lock";
 import {
   installPostCommitHook,
@@ -1391,16 +1392,12 @@ export function isGitRepo(agentId: string): boolean {
   return existsSync(join(getScopedMemoryFilesystemRoot(agentId), ".git"));
 }
 
-export interface InitializeLocalMemoryRepoFile {
-  relativePath: string;
-  content: string;
-}
-
 export interface InitializeLocalMemoryRepoParams {
   memoryDir: string;
   agentId: string;
   authorName?: string;
-  files: InitializeLocalMemoryRepoFile[];
+  memoryFormat?: LocalMemoryFormat;
+  files: Array<{ relativePath: string; content: string }>;
 }
 
 async function hasMemoryHead(memoryDir: string): Promise<boolean> {
@@ -1444,6 +1441,7 @@ export async function initializeLocalMemoryRepo(
     authorEmail: `${params.agentId}@letta.com`,
   };
   await prepareLocalOnlyMemoryRepoForGitOps(params.memoryDir, author);
+  installPreCommitHook(params.memoryDir, params.memoryFormat);
 
   if (await hasMemoryHead(params.memoryDir)) {
     return;

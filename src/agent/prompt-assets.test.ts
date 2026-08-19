@@ -83,12 +83,23 @@ describe("buildSystemPrompt", () => {
     expect(result).not.toContain("Shared memory");
   });
 
+  test("v2 preserves unrelated local prompt guidance", () => {
+    const v1 = buildSystemPrompt("default", "local-memfs");
+    const v2 = buildSystemPrompt("default", "local-memfs-v2");
+    const harnessStart = "# Harness Architecture";
+    const evolutionStart = "# Self-evolution: memory, skills, and harness";
+
+    expect(v2.slice(v2.indexOf(harnessStart), v2.indexOf(evolutionStart))).toBe(
+      v1.slice(v1.indexOf(harnessStart), v1.indexOf(evolutionStart)),
+    );
+  });
+
   test("memfs prompt documents direct edit commit safeguards", () => {
     const result = buildSystemPrompt("letta", "memfs");
 
     expect(result).toContain("description:");
     expect(result).toContain("MemFS pre-commit hook");
-    expect(result).toContain('author_name="${AGENT_NAME:-$AGENT_ID}"');
+    expect(result).toContain(`author_name="\${AGENT_NAME:-$AGENT_ID}"`);
     expect(result).not.toContain('--author="$AGENT_NAME');
   });
 

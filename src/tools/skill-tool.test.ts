@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MEMFS_V2_TAG } from "@/agent/agent-tags";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { consumeQueuedSkillContent } from "@/tools/impl/skill-content-registry";
 import { clearTools, executeTool, loadSpecificTools } from "@/tools/manager";
@@ -103,6 +104,42 @@ describe("Skill tool memory filesystem lookup", () => {
         "agent-local-skill-test",
       ),
     ).rejects.toThrow('Skill "image-generation" not found');
+  });
+
+  test("loads the migration skill after local MemFS v2 activation", async () => {
+    process.env.MEMORY_DIR = join(tempRoot, "empty-memory");
+    process.env.LETTA_MEMORY_DIR = join(tempRoot, "empty-letta-memory");
+    process.env.HOME = tempRoot;
+
+    const result = await readSkillContent(
+      "migrating-memory",
+      currentSkillsDirectory ?? join(tempRoot, ".skills"),
+      "agent-local-skill-test",
+      [MEMFS_V2_TAG],
+    );
+    expect(result.path).toEndWith(join("migrating-memory", "SKILL.md"));
+    expect(result.content).toContain(
+      "source and target as independent endpoints",
+    );
+  });
+
+  test("loads v2 variants of bundled memory skills", async () => {
+    process.env.MEMORY_DIR = join(tempRoot, "empty-memory");
+    process.env.LETTA_MEMORY_DIR = join(tempRoot, "empty-letta-memory");
+    process.env.HOME = tempRoot;
+
+    const result = await readSkillContent(
+      "initializing-memory",
+      currentSkillsDirectory ?? join(tempRoot, ".skills"),
+      "agent-local-skill-test",
+      [MEMFS_V2_TAG],
+    );
+    expect(result.path).toEndWith(join("initializing-memory", "MEMFS_V2.md"));
+    expect(result.content).toContain("Root `MEMORY.md` is required");
+    expect(result.content).toContain(
+      "invoke the `migrating-memory` skill first",
+    );
+    expect(result.content).not.toContain("$MEMORY_DIR/system/");
   });
 
   test("loads skills from MEMORY_DIR/skills", async () => {

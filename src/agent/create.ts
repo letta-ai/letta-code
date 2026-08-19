@@ -7,6 +7,7 @@ import { type BackendCapabilities, getBackend } from "@/backend";
 import { apiRequest, getApiRequestConfig } from "@/backend/api/request";
 import { DEFAULT_AGENT_NAME } from "@/constants";
 import { settingsManager } from "@/settings-manager";
+import { MEMFS_V2_TAG } from "./agent-tags";
 import { getModelContextWindow } from "./available-models";
 import { buildCreateAgentRequest } from "./create-agent-request";
 import { getDefaultMemoryBlocks } from "./memory";
@@ -122,6 +123,7 @@ type MemfsCreateCapabilities = Pick<
 export interface CreatedAgentMemfsConfigOptions {
   capabilities: MemfsCreateCapabilities;
   requestedMemoryPromptMode?: MemoryPromptMode;
+  requestedTags?: readonly string[];
   isLettaCloud: boolean;
   /**
    * Subagents are ephemeral and deliberately stateless — they never get
@@ -145,11 +147,17 @@ export function resolveCreatedAgentMemfsConfig(
     options.capabilities.localMemfs ||
     (options.capabilities.remoteMemfs && options.isLettaCloud) ||
     options.requestedMemoryPromptMode === "memfs" ||
-    options.requestedMemoryPromptMode === "local-memfs";
+    options.requestedMemoryPromptMode === "local-memfs" ||
+    options.requestedMemoryPromptMode === "local-memfs-v2";
   const enableMemfs = options.isSubagent ? false : supported;
+  const requestedMemoryPromptMode =
+    options.capabilities.localMemfs &&
+    options.requestedTags?.includes(MEMFS_V2_TAG)
+      ? "local-memfs-v2"
+      : options.requestedMemoryPromptMode;
   const memoryPromptMode =
-    (options.requestedMemoryPromptMode !== "standard"
-      ? options.requestedMemoryPromptMode
+    (requestedMemoryPromptMode !== "standard"
+      ? requestedMemoryPromptMode
       : undefined) ??
     (enableMemfs
       ? options.capabilities.localMemfs
@@ -247,6 +255,7 @@ export async function createAgent(
   const memfsConfig = resolveCreatedAgentMemfsConfig({
     capabilities: backend.capabilities,
     requestedMemoryPromptMode: options.memoryPromptMode,
+    requestedTags: options.tags,
     isLettaCloud,
     isSubagent,
   });

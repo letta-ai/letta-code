@@ -14,12 +14,22 @@ import {
   GIT_MEMORY_ENABLED_TAG,
   LETTA_CODE_ORIGIN_TAG,
 } from "@/agent/agent-tags";
+import {
+  assertMemfsV2MemoryPathIndexed,
+  getLocalMemoryFormat,
+  type LocalMemoryFormat,
+} from "@/agent/memory-format";
 import { getBackend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 import { commitMemoryWrite, getMemoryRepoDir, pullMemory } from "./memory-git";
+import {
+  defaultMemoryName,
+  parseMemoryMarkdown,
+  renderMemoryMarkdown,
+} from "./memory-markdown";
 import {
   buildDefaultMemoryFile,
   buildPersonalityMemoryBlocks,
@@ -43,6 +53,8 @@ const PRIMARY_PERSONA_RELATIVE_PATH = "system/persona.md";
 const LEGACY_PERSONA_RELATIVE_PATH = "memory/system/persona.md";
 const PRIMARY_HUMAN_RELATIVE_PATH = "system/human.md";
 const LEGACY_HUMAN_RELATIVE_PATH = "memory/system/human.md";
+const V2_PERSONA_RELATIVE_PATH = "persona.md";
+const V2_HUMAN_RELATIVE_PATH = "human.md";
 
 export interface ApplyPersonalityToMemoryParams {
   agentId: string;
@@ -85,7 +97,11 @@ function getMemoryFileRelativePathForRepo(
   return primaryRelativePath;
 }
 
-function getPersonaRelativePathForRepo(repoDir: string): string {
+function getPersonaRelativePathForRepo(
+  repoDir: string,
+  memoryFormat: LocalMemoryFormat,
+): string {
+  if (memoryFormat === "memfs-v2") return V2_PERSONA_RELATIVE_PATH;
   return getMemoryFileRelativePathForRepo(
     repoDir,
     PRIMARY_PERSONA_RELATIVE_PATH,
@@ -93,7 +109,11 @@ function getPersonaRelativePathForRepo(repoDir: string): string {
   );
 }
 
-function getHumanRelativePathForRepo(repoDir: string): string {
+function getHumanRelativePathForRepo(
+  repoDir: string,
+  memoryFormat: LocalMemoryFormat,
+): string {
+  if (memoryFormat === "memfs-v2") return V2_HUMAN_RELATIVE_PATH;
   return getMemoryFileRelativePathForRepo(
     repoDir,
     PRIMARY_HUMAN_RELATIVE_PATH,
@@ -277,6 +297,7 @@ function applyPersonalityFiles(
     content: string;
     description?: string;
   }>,
+  memoryFormat: LocalMemoryFormat,
 ): string[] {
   const changedPaths: string[] = [];
 
@@ -284,15 +305,39 @@ function applyPersonalityFiles(
     const existingContent = existsSync(file.absolutePath)
       ? readFileSync(file.absolutePath, "utf-8")
       : null;
-    const nextContent = existingContent
-      ? replaceBodyPreservingFrontmatter(existingContent, file.content, {
-          description: file.description,
-        })
-      : buildDefaultMemoryFile(
-          file.templatePromptAssetName,
-          file.content,
-          file.description,
-        );
+    const nextContent =
+      memoryFormat === "memfs-v2"
+        ? renderMemoryMarkdown({
+            frontmatter: existingContent
+              ? {
+                  ...parseMemoryMarkdown({
+                    content: existingContent,
+                    relativePath: file.relativePath,
+                    format: memoryFormat,
+                    errorPrefix: "personality",
+                  }).frontmatter,
+                  description:
+                    file.description ?? `Memory file ${file.relativePath}`,
+                }
+              : {
+                  name: defaultMemoryName(file.relativePath),
+                  description:
+                    file.description ?? `Memory file ${file.relativePath}`,
+                },
+            body: file.content,
+            relativePath: file.relativePath,
+            format: memoryFormat,
+            errorPrefix: "personality",
+          })
+        : existingContent
+          ? replaceBodyPreservingFrontmatter(existingContent, file.content, {
+              description: file.description,
+            })
+          : buildDefaultMemoryFile(
+              file.templatePromptAssetName,
+              file.content,
+              file.description,
+            );
 
     if (
       existingContent !== null &&
@@ -315,6 +360,15 @@ export async function applyPersonalityToMemory(
 ): Promise<ApplyPersonalityToMemoryResult> {
   const personality = getPersonalityOption(params.personalityId);
   const isLocalMemfs = getBackend().capabilities.localMemfs;
+  const memoryFormat = isLocalMemfs
+    ? getLocalMemoryFormat(
+        (
+          await getBackend().retrieveAgent(params.agentId, {
+            include: ["agent.tags"],
+          })
+        ).tags,
+      )
+    : "memfs-v1";
   const blockDefinitions = getPersonalityBlockDefinitions(
     params.personalityId,
     isLocalMemfs ? "local" : "cloud",
@@ -339,8 +393,11 @@ export async function applyPersonalityToMemory(
     await pullMemory(params.agentId);
   }
 
-  const personaRelativePath = getPersonaRelativePathForRepo(repoDir);
-  const humanRelativePath = getHumanRelativePathForRepo(repoDir);
+  const personaRelativePath = getPersonaRelativePathForRepo(
+    repoDir,
+    memoryFormat,
+  );
+  const humanRelativePath = getHumanRelativePathForRepo(repoDir, memoryFormat);
   const personaPath = join(repoDir, personaRelativePath);
   const humanPath = join(repoDir, humanRelativePath);
 
@@ -361,7 +418,14 @@ export async function applyPersonalityToMemory(
     },
   ];
 
-  const changedPaths = applyPersonalityFiles(filesToUpdate);
+  // For v2, ensure the root MEMORY.md marker exists before writing any files.
+  if (memoryFormat === "memfs-v2") {
+    for (const file of filesToUpdate) {
+      assertMemfsV2MemoryPathIndexed(repoDir, file.relativePath);
+    }
+  }
+
+  const changedPaths = applyPersonalityFiles(filesToUpdate, memoryFormat);
 
   if (changedPaths.length === 0) {
     return {

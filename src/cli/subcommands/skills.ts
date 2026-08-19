@@ -13,6 +13,10 @@ import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { parseArgs, TextDecoder, TextEncoder } from "node:util";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { isLocalAgentId } from "@/agent/agent-id";
+import {
+  ensureLocalMemfsCheckout,
+  getScopedMemoryFilesystemRoot,
+} from "@/agent/memory-filesystem";
 import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
   type InstallLocalManagedModPackageResult,
@@ -890,18 +894,6 @@ async function installSkill(
 }
 
 async function getAgentMemoryDir(agentId: string): Promise<string> {
-  if (isLocalAgentId(agentId)) {
-    const { getLocalBackendMemoryFilesystemRoot } = await import(
-      "@/backend/local/paths"
-    );
-    const { initializeLocalMemoryRepo } = await import("@/agent/memory-git");
-    const memoryDir = getLocalBackendMemoryFilesystemRoot(agentId);
-    await initializeLocalMemoryRepo({ memoryDir, agentId, files: [] });
-    return memoryDir;
-  }
-
-  const { ensureLocalMemfsCheckout, getScopedMemoryFilesystemRoot } =
-    await import("@/agent/memory-filesystem");
   await ensureLocalMemfsCheckout(agentId);
   return getScopedMemoryFilesystemRoot(agentId);
 }

@@ -1,13 +1,32 @@
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { parseArgs } from "node:util";
-import type { AgentListParams } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  AgentListParams,
+  AgentState,
+} from "@letta-ai/letta-client/resources/agents/agents";
+import { MEMFS_V2_TAG } from "@/agent/agent-tags";
+import { invalidateClientSkillsPayloadCacheForAgent } from "@/agent/client-skills";
 import { type CreateAgentOptions, createAgent } from "@/agent/create";
+import { installPreCommitHook } from "@/agent/memory-git-hooks";
 import {
   buildCreateAgentOptionsForPersonality,
   createAgentForPersonality,
   enableMemfsForCreatedAgent,
 } from "@/agent/personality";
 import { resolvePersonalityId } from "@/agent/personality-presets";
+import {
+  buildSystemPrompt,
+  getSystemPromptVariantContents,
+  isKnownPreset,
+  SYSTEM_PROMPTS,
+} from "@/agent/prompt-assets";
+import {
+  hashSystemPrompt,
+  recordManagedSystemPrompt,
+} from "@/agent/system-prompt-versioning";
 import { getBackend } from "@/backend";
+import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
 import { listSharedAgentsForCurrentUser } from "@/cli/helpers/shared-agent-listing";
 import { settingsManager } from "@/settings-manager";
 
@@ -80,6 +99,9 @@ const AGENTS_OPTIONS = {
   agent: { type: "string" },
   conversation: { type: "string" },
   conv: { type: "string" },
+  "memory-dir": { type: "string" },
+  "memory-commit": { type: "string" },
+  preflight: { type: "boolean" },
   // Create options
   model: { type: "string" },
   personality: { type: "string" },
@@ -125,9 +147,201 @@ export async function runAgentsSubcommand(argv: string[]): Promise<number> {
     return runConfigAction(parsed.values);
   }
 
+  if (action === "memfs-v2") {
+    return runMemfsV2Action(parsed.values);
+  }
+
   console.error(`Unknown action: ${action}`);
   printUsage();
   return 1;
+}
+
+export function buildMemfsV2AgentUpdate(
+  agent: Pick<AgentState, "system" | "tags">,
+  managed?: { preset?: string; hash?: string },
+): {
+  tags: string[];
+  system?: string;
+  managedPreset?: string;
+} {
+  const tags = Array.from(new Set([...(agent.tags ?? []), MEMFS_V2_TAG]));
+  const currentSystem = agent.system ?? "";
+  let preset: string | undefined;
+
+  if (managed?.preset && isKnownPreset(managed.preset)) {
+    const managedPrompt = SYSTEM_PROMPTS.find(
+      (candidate) => candidate.id === managed.preset,
+    );
+    if (
+      (managed.hash && hashSystemPrompt(currentSystem) === managed.hash) ||
+      (managedPrompt?.id === managed.preset &&
+        getSystemPromptVariantContents(managedPrompt).some(
+          (content) => content.trim() === currentSystem.trim(),
+        ))
+    ) {
+      preset = managed.preset;
+    }
+  } else {
+    preset = SYSTEM_PROMPTS.find((candidate) =>
+      getSystemPromptVariantContents(candidate).some(
+        (content) => content.trim() === currentSystem.trim(),
+      ),
+    )?.id;
+  }
+
+  if (!preset) return { tags };
+  const system = buildSystemPrompt(preset, "local-memfs-v2");
+  return system === currentSystem
+    ? { tags, managedPreset: preset }
+    : { tags, system, managedPreset: preset };
+}
+
+function gitObjectExists(memoryDir: string, object: string): boolean {
+  try {
+    execFileSync("git", ["cat-file", "-e", object], {
+      cwd: memoryDir,
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function assertMemfsV2ActivationTarget(options: {
+  agentId: string;
+  memoryDir: string;
+  memoryCommit: string;
+  storageDir?: string;
+}): void {
+  assertMemfsV2ActivationPath(options);
+  const supplied = realpathSync(options.memoryDir);
+  const head = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: supplied,
+    encoding: "utf8",
+  }).trim();
+  if (head !== options.memoryCommit) {
+    throw new Error("Memory repository is not at the converted commit");
+  }
+  if (!gitObjectExists(supplied, "HEAD:MEMORY.md")) {
+    throw new Error("Converted memory is missing root MEMORY.md");
+  }
+  if (gitObjectExists(supplied, "HEAD:system")) {
+    throw new Error(
+      "Converted memory still contains the legacy system directory",
+    );
+  }
+}
+
+export function assertMemfsV2ActivationPath(options: {
+  agentId: string;
+  memoryDir: string;
+  storageDir?: string;
+}): void {
+  const expected = realpathSync(
+    getLocalBackendMemoryFilesystemRoot(options.agentId, options.storageDir),
+  );
+  const supplied = realpathSync(options.memoryDir);
+  const normalizePath = (value: string) =>
+    process.platform === "win32" ? value.toLocaleLowerCase("en-US") : value;
+  if (normalizePath(expected) !== normalizePath(supplied)) {
+    throw new Error("Memory directory does not belong to the requested agent");
+  }
+}
+
+async function runMemfsV2Action(
+  values: ReturnType<typeof parseAgentsArgs>["values"],
+): Promise<number> {
+  await settingsManager.initialize();
+  const backend = getBackend();
+  if (!backend.capabilities.localMemfs) {
+    console.error("memfs-v2 is available only with the local backend");
+    return 1;
+  }
+
+  const agentId =
+    (values.agent as string | undefined) ?? process.env.AGENT_ID?.trim();
+  if (!agentId) {
+    console.error("Set AGENT_ID or pass --agent <id>");
+    return 1;
+  }
+  const memoryDir = values["memory-dir"] as string | undefined;
+  const memoryCommit = values["memory-commit"] as string | undefined;
+  const preflight = values.preflight === true;
+  if (!memoryDir || (!preflight && !memoryCommit)) {
+    console.error(
+      preflight
+        ? "memfs-v2 preflight requires --memory-dir"
+        : "memfs-v2 activation requires --memory-dir and --memory-commit",
+    );
+    return 1;
+  }
+
+  try {
+    assertMemfsV2ActivationPath({
+      agentId,
+      memoryDir,
+    });
+    const agent = await backend.retrieveAgent(agentId, {
+      include: ["agent.tags"],
+    });
+    const update = buildMemfsV2AgentUpdate(agent, {
+      preset: settingsManager.getSystemPromptPreset(agentId),
+      hash: settingsManager.getSystemPromptHash(agentId),
+    });
+    if (!update.managedPreset) {
+      throw new Error(
+        "Custom system prompt must be adapted or replaced before memfs-v2 activation",
+      );
+    }
+    if (preflight) {
+      console.log(
+        JSON.stringify(
+          {
+            agent_id: agentId,
+            ready: true,
+            target_memory_dir: realpathSync(memoryDir),
+          },
+          null,
+          2,
+        ),
+      );
+      return 0;
+    }
+    assertMemfsV2ActivationTarget({
+      agentId,
+      memoryDir,
+      memoryCommit: memoryCommit as string,
+    });
+    const updated = await backend.updateAgent(agentId, {
+      tags: update.tags,
+      ...(update.system ? { system: update.system } : {}),
+    });
+    installPreCommitHook(memoryDir, "memfs-v2");
+    recordManagedSystemPrompt(
+      agentId,
+      update.managedPreset,
+      "local-memfs-v2",
+      update.system ?? agent.system ?? undefined,
+    );
+    invalidateClientSkillsPayloadCacheForAgent(agentId);
+    console.log(
+      JSON.stringify(
+        {
+          agent_id: agentId,
+          tags: updated.tags ?? update.tags,
+          system_prompt_updated: Boolean(update.system),
+          next: "Run /recompile to load the committed v2 memory tree.",
+        },
+        null,
+        2,
+      ),
+    );
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
 }
 
 async function runCreateAction(

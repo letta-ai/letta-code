@@ -1,3 +1,5 @@
+import type { LocalMemoryFormat } from "@/agent/memory-format";
+import { readMemoryFormatMarker } from "@/agent/memory-git-hooks";
 import {
   estimateSystemPromptSize,
   type FileEstimate,
@@ -14,6 +16,7 @@ export interface MemoryTokensOptions {
   top: string | undefined;
   format: string | undefined;
   quiet: boolean;
+  memoryFormat?: LocalMemoryFormat;
 }
 
 function parsePositiveInt(
@@ -68,6 +71,8 @@ function printJson(total: number, files: FileEstimate[]): void {
 
 function resolveMemoryDir(options: MemoryTokensOptions): string | null {
   if (options.memoryDir) return options.memoryDir;
+  // Match resolveScopedMemoryDir: LETTA_MEMORY_DIR takes precedence over MEMORY_DIR.
+  if (process.env.LETTA_MEMORY_DIR) return process.env.LETTA_MEMORY_DIR;
   if (process.env.MEMORY_DIR) return process.env.MEMORY_DIR;
   if (options.agentMemoryDir) return options.agentMemoryDir;
   return null;
@@ -93,14 +98,17 @@ export async function runMemoryTokensAction(
   const memoryDir = resolveMemoryDir(options);
   if (!memoryDir) {
     console.error(
-      "Missing memory dir. Set --memory-dir, --agent, $MEMORY_DIR, or $LETTA_AGENT_ID.",
+      "Missing memory dir. Set --memory-dir, --agent, $LETTA_MEMORY_DIR, $MEMORY_DIR, or $LETTA_AGENT_ID.",
     );
     return USAGE_EXIT;
   }
 
   let estimate: SystemPromptSizeEstimate;
   try {
-    estimate = estimateSystemPromptSize(memoryDir);
+    estimate = estimateSystemPromptSize(
+      memoryDir,
+      options.memoryFormat ?? readMemoryFormatMarker(memoryDir) ?? "memfs-v1",
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Failed to read memory dir: ${message}`);

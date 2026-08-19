@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { GIT_MEMORY_ENABLED_TAG, MEMFS_V2_TAG } from "@/agent/agent-tags";
 import { isSkillAvailableForAgent, type Skill } from "@/agent/skills";
 
 const baseSkill: Skill = {
@@ -31,5 +32,38 @@ describe("isSkillAvailableForAgent", () => {
   test("keeps other bundled skills for local agents", () => {
     const skill: Skill = { ...baseSkill, id: "scheduling-tasks" };
     expect(isSkillAvailableForAgent(skill, "agent-local-123")).toBe(true);
+  });
+
+  test("shows memory migration to Cloud and local target agents", () => {
+    const skill: Skill = {
+      ...baseSkill,
+      id: "migrating-memory",
+    };
+
+    expect(
+      isSkillAvailableForAgent(skill, "agent-local-123", [
+        GIT_MEMORY_ENABLED_TAG,
+      ]),
+    ).toBe(true);
+    expect(
+      isSkillAvailableForAgent(skill, "agent-local-123", [
+        GIT_MEMORY_ENABLED_TAG,
+        MEMFS_V2_TAG,
+      ]),
+    ).toBe(true);
+    expect(isSkillAvailableForAgent(skill, "agent-123")).toBe(true);
+    expect(isSkillAvailableForAgent(skill, undefined)).toBe(true);
+  });
+
+  test("keeps non-bundled migration overrides available", () => {
+    const skill: Skill = {
+      ...baseSkill,
+      id: "migrating-memory",
+      source: "project",
+    };
+
+    expect(
+      isSkillAvailableForAgent(skill, "agent-local-123", [MEMFS_V2_TAG]),
+    ).toBe(true);
   });
 });

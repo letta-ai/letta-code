@@ -22,6 +22,7 @@ import {
   getDirectoryLimits,
 } from "@/utils/directory-limits";
 import { getCurrentAgentId } from "./context";
+import { getLocalMemoryFormat } from "./memory-format";
 
 export const MEMORY_FS_ROOT = ".letta";
 export const MEMORY_FS_AGENTS_DIR = "agents";
@@ -253,10 +254,18 @@ export async function ensureLocalMemfsCheckout(
 ): Promise<void> {
   if (isLocalBackendEnvEnabled()) {
     const { initializeLocalMemoryRepo } = await import("@/agent/memory-git");
+    const { getBackend } = await import("@/backend");
+    const agent = await getBackend().retrieveAgent(agentId, {
+      include: ["agent.tags"],
+    });
+    const { requiredInitialMemoryFiles } = await import(
+      "@/backend/local/initial-memory"
+    );
     await initializeLocalMemoryRepo({
       memoryDir: getScopedMemoryFilesystemRoot(agentId),
       agentId,
-      files: [],
+      memoryFormat: getLocalMemoryFormat(agent.tags),
+      files: requiredInitialMemoryFiles(agent.tags),
     });
     return;
   }
@@ -495,17 +504,23 @@ export async function applyMemfsFlags(
   if (backend.capabilities.localMemfs) {
     const memoryDir = getScopedMemoryFilesystemRoot(agentId);
     const { initializeLocalMemoryRepo } = await import("@/agent/memory-git");
+    const { requiredInitialMemoryFiles } = await import(
+      "@/backend/local/initial-memory"
+    );
+    const agentTags =
+      options?.agentTags ??
+      (
+        await backend.retrieveAgent(agentId, {
+          include: ["agent.tags"],
+        })
+      ).tags;
     await initializeLocalMemoryRepo({
       memoryDir,
       agentId,
-      files: [],
+      memoryFormat: getLocalMemoryFormat(agentTags),
+      files: requiredInitialMemoryFiles(agentTags),
     });
-    await seedDefaultPersonalityFiles(
-      agentId,
-      memoryDir,
-      "local",
-      options?.agentTags,
-    );
+    await seedDefaultPersonalityFiles(agentId, memoryDir, "local", agentTags);
     settingsManager.setMemfsEnabled(agentId, true);
     return { action: "enabled", memoryDir };
   }

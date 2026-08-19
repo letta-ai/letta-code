@@ -2,9 +2,13 @@ import { cpSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
-import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import {
+  ensureLocalMemfsCheckout,
+  getScopedMemoryFilesystemRoot,
+} from "@/agent/memory-filesystem";
 import { getMemoryGitStatus, isGitRepo, pullMemory } from "@/agent/memory-git";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import { settingsManager } from "@/settings-manager";
 import { runMemoryTokensAction } from "./memory-tokens";
 
 function printUsage(): void {
@@ -67,6 +71,48 @@ function parseMemoryArgs(argv: string[]) {
 
 function getMemoryRoot(agentId: string): string {
   return getScopedMemoryFilesystemRoot(agentId);
+}
+
+async function materializeMemoryPullCheckout(
+  agentId: string,
+  options: {
+    hasCheckout?: boolean;
+    isLocalBackend?: boolean;
+    clone?: (agentId: string) => Promise<void>;
+  } = {},
+): Promise<"existing" | "cloned" | "missing-local"> {
+  if (options.hasCheckout ?? isGitRepo(agentId)) return "existing";
+  if (options.isLocalBackend ?? isLocalBackendEnvEnabled()) {
+    return "missing-local";
+  }
+  await (options.clone ?? ensureLocalMemfsCheckout)(agentId);
+  return "cloned";
+}
+
+export async function prepareMemoryPull(
+  agentId: string,
+  options: {
+    hasCheckout?: boolean;
+    isLocalBackend?: boolean;
+    clone?: (agentId: string) => Promise<void>;
+    initializeCloudSettings?: () => Promise<void>;
+  } = {},
+): Promise<{
+  checkout: "existing" | "cloned" | "missing-local";
+  localBackend: boolean;
+}> {
+  const localBackend = options.isLocalBackend ?? isLocalBackendEnvEnabled();
+  if (!localBackend) {
+    await (
+      options.initializeCloudSettings ?? (() => settingsManager.initialize())
+    )();
+  }
+  const checkout = await materializeMemoryPullCheckout(agentId, {
+    hasCheckout: options.hasCheckout,
+    isLocalBackend: localBackend,
+    clone: options.clone,
+  });
+  return { checkout, localBackend };
 }
 
 function getAgentRoot(agentId: string): string {
@@ -144,12 +190,28 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
   // `tokens` has its own input resolution (--memory-dir / $MEMORY_DIR first,
   // then falls back to agent id). Short-circuit before the agent-id hard check.
   if (action === "tokens") {
+    let memoryFormat:
+      | import("@/agent/memory-format").LocalMemoryFormat
+      | undefined;
+    if (agentId) {
+      try {
+        const { getBackend } = await import("@/backend");
+        const { getLocalMemoryFormat } = await import("@/agent/memory-format");
+        const agent = await getBackend().retrieveAgent(agentId, {
+          include: ["agent.tags"],
+        });
+        memoryFormat = getLocalMemoryFormat(agent.tags);
+      } catch {
+        // The token action can still read the repository's local format marker.
+      }
+    }
     return runMemoryTokensAction({
       memoryDir: parsed.values["memory-dir"],
       agentMemoryDir: agentId ? getMemoryRoot(agentId) : undefined,
       top: parsed.values.top,
       format: parsed.values.format,
       quiet: Boolean(parsed.values.quiet),
+      memoryFormat,
     });
   }
 
@@ -192,11 +254,27 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
     }
 
     if (action === "pull") {
-      if (!isGitRepo(agentId)) {
-        console.error("Not a git repo. Enable git-backed memory first.");
+      const { checkout, localBackend } = await prepareMemoryPull(agentId);
+      if (checkout === "missing-local") {
+        console.error(
+          `Local memory repository not found for agent ${agentId}.`,
+        );
         return 1;
       }
-      if (isLocalBackendEnvEnabled()) {
+      if (checkout === "cloned") {
+        console.log(
+          JSON.stringify(
+            {
+              updated: true,
+              summary: "Cloned the Cloud MemFS checkout.",
+            },
+            null,
+            2,
+          ),
+        );
+        return 0;
+      }
+      if (localBackend) {
         console.log(
           JSON.stringify(
             {

@@ -12,6 +12,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { LocalMemoryFormat } from "@/agent/memory-format";
 
 export const SYSTEM_PROMPT_BYTES_PER_TOKEN = 4;
 
@@ -68,13 +69,22 @@ function walkMarkdownFiles(dir: string): string[] {
  */
 export function estimateSystemPromptSize(
   memoryDir: string,
+  memoryFormat: LocalMemoryFormat = "memfs-v1",
 ): SystemPromptSizeEstimate {
-  const systemDir = join(memoryDir, "system");
-  if (!existsSync(systemDir)) {
-    return { total: 0, files: [] };
-  }
-
-  const files = walkMarkdownFiles(systemDir).sort();
+  const files =
+    memoryFormat === "memfs-v2"
+      ? existsSync(memoryDir)
+        ? readdirSync(memoryDir, { withFileTypes: true })
+            .filter(
+              (entry) =>
+                entry.isFile() &&
+                !entry.name.startsWith(".") &&
+                entry.name.endsWith(".md"),
+            )
+            .map((entry) => join(memoryDir, entry.name))
+            .sort()
+        : []
+      : walkMarkdownFiles(join(memoryDir, "system")).sort();
   const rows: FileEstimate[] = [];
 
   for (const filePath of files) {
@@ -92,6 +102,7 @@ export function estimateSystemPromptSize(
  */
 export function estimateSystemPromptTokensFromMemoryDir(
   memoryDir: string,
+  memoryFormat: LocalMemoryFormat = "memfs-v1",
 ): number {
-  return estimateSystemPromptSize(memoryDir).total;
+  return estimateSystemPromptSize(memoryDir, memoryFormat).total;
 }

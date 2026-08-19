@@ -65,6 +65,19 @@ describe("buildTargetInstruction", () => {
     expect(out).toContain("leave it absent");
     expect(out).toContain("placeholder");
   });
+
+  test("uses a root target with exact frontmatter for MemFS v2", () => {
+    const target = resolveDreamTarget("./AGENTS.md");
+    const instruction = buildTargetInstruction(target, "memfs-v2");
+    expect(instruction).toContain("$MEMORY_DIR/AGENTS.md");
+    expect(instruction).not.toContain("$MEMORY_DIR/system/");
+    expect(instruction).toContain("exactly `name` and `description`");
+    expect(
+      addManagedFrontmatter("Guidance\n", "agents-md", "memfs-v2", "AGENTS.md"),
+    ).toBe(
+      '---\nname: "AGENTS"\ndescription: "Repository guidance for coding agents, maintained by letta dream."\n---\nGuidance\n',
+    );
+  });
 });
 
 describe("managed frontmatter (system/ files require it)", () => {
@@ -113,5 +126,36 @@ describe("readExistingTarget / writeTarget", () => {
     const target = resolveDreamTarget(join(dir, "nested", "deep", "AGENTS.md"));
     await writeTarget(target, "# Guide\n");
     expect(await readExistingTarget(target)).toBe("# Guide\n");
+  });
+});
+
+describe("v2 double-escaping regression", () => {
+  test("re-rendering existing v2 frontmatter does not double-escape quotes", () => {
+    const existing =
+      '---\nname: "AGENTS"\ndescription: "Repository guidance for coding agents, maintained by letta dream."\n---\nGuidance\n';
+    const reRendered = addManagedFrontmatter(
+      existing,
+      "agents-md",
+      "memfs-v2",
+      "AGENTS.md",
+    );
+    expect(reRendered).toBe(existing);
+    expect(reRendered).toContain('name: "AGENTS"');
+    expect(reRendered).not.toContain('name: ""AGENTS""');
+  });
+});
+
+describe("v2 reserved target name", () => {
+  test("buildTargetInstruction rejects MEMORY.md case-insensitively for v2", () => {
+    expect(() =>
+      buildTargetInstruction(resolveDreamTarget("./MEMORY.md"), "memfs-v2"),
+    ).toThrow("MEMORY.md is reserved");
+    expect(() =>
+      buildTargetInstruction(resolveDreamTarget("./memory.md"), "memfs-v2"),
+    ).toThrow("MEMORY.md is reserved");
+    // v1 is unaffected.
+    expect(() =>
+      buildTargetInstruction(resolveDreamTarget("./MEMORY.md"), "memfs-v1"),
+    ).not.toThrow();
   });
 });

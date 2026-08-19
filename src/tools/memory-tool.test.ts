@@ -13,6 +13,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { MEMFS_V2_TAG } from "@/agent/agent-tags";
 import { runWithRuntimeContext } from "@/runtime-context";
 
 const execFile = promisify(execFileCb);
@@ -85,6 +86,11 @@ mock.module("../backend/api/client", () => ({
 }));
 
 const { memory } = await import("@/tools/impl/memory");
+const { __testSetBackend } = await import("@/backend");
+const { LocalBackend } = await import("@/backend/local");
+const { getLocalBackendMemoryFilesystemRoot } = await import(
+  "@/backend/local/paths"
+);
 
 function runScopedMemory(args: Parameters<typeof memory>[0]) {
   return runWithRuntimeContext({ agentId: TEST_AGENT_ID }, () => memory(args));
@@ -133,6 +139,8 @@ describe("memory tool", () => {
   const originalAgentId = process.env.AGENT_ID;
   const originalAgentName = process.env.AGENT_NAME;
   const originalHome = process.env.HOME;
+  const originalLocalBackendDir = process.env.LETTA_LOCAL_BACKEND_DIR;
+  const originalLocalBackendFlag = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
 
   beforeEach(async () => {
     tempRoot = mkdtempSync(join(tmpdir(), "letta-memory-tool-"));
@@ -148,6 +156,7 @@ describe("memory tool", () => {
   });
 
   afterEach(async () => {
+    __testSetBackend(null);
     if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = originalMemoryDir;
 
@@ -159,6 +168,14 @@ describe("memory tool", () => {
 
     if (originalHome === undefined) delete process.env.HOME;
     else process.env.HOME = originalHome;
+
+    if (originalLocalBackendDir === undefined)
+      delete process.env.LETTA_LOCAL_BACKEND_DIR;
+    else process.env.LETTA_LOCAL_BACKEND_DIR = originalLocalBackendDir;
+    if (originalLocalBackendFlag === undefined)
+      delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+    else
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = originalLocalBackendFlag;
 
     if (tempRoot) {
       await rm(tempRoot, { recursive: true, force: true });
@@ -214,6 +231,93 @@ describe("memory tool", () => {
       "@{u}..HEAD",
     ]);
     expect(aheadCount).toBe("1");
+  });
+
+  test("uses exact MemFS v2 frontmatter and marker-gated paths", async () => {
+    const storageDir = join(tempRoot, "v2-local-store");
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "true";
+    const backend = new LocalBackend({
+      storageDir,
+      executionMode: "deterministic",
+    });
+    const agent = await backend.createAgent({
+      name: "V2 writer",
+      tags: [MEMFS_V2_TAG],
+    } as Parameters<InstanceType<typeof LocalBackend>["createAgent"]>[0]);
+    __testSetBackend(backend);
+    const localMemoryDir = getLocalBackendMemoryFilesystemRoot(
+      agent.id,
+      storageDir,
+    );
+    process.env.MEMORY_DIR = localMemoryDir;
+
+    const invoke = (args: Parameters<typeof memory>[0]) =>
+      runWithRuntimeContext({ agentId: agent.id }, () => memory(args));
+    await invoke({
+      command: "create",
+      reason: "create human memory",
+      file_path: "human.md",
+      description: "User preferences.",
+      file_text: "Prefers concise replies.",
+    });
+    expect(await runGit(localMemoryDir, ["show", "HEAD:human.md"])).toBe(
+      '---\nname: "Human"\ndescription: "User preferences."\n---\nPrefers concise replies.',
+    );
+    await expect(
+      invoke({
+        command: "create",
+        reason: "create silent note",
+        file_path: "projects/note.md",
+        description: "Project note.",
+      }),
+    ).rejects.toThrow(/requires projects\/MEMORY\.md/);
+    await invoke({
+      command: "create",
+      reason: "create projects index",
+      file_path: "projects/MEMORY.md",
+      file_text: "# Projects",
+    });
+    await expect(
+      invoke({
+        command: "create",
+        reason: "create legacy path",
+        file_path: "system/note.md",
+        description: "Legacy path.",
+      }),
+    ).rejects.toThrow(/not system\//);
+  });
+
+  test("rejects skills/ labels under memfs-v2 with a clear error", async () => {
+    const storageDir = join(tempRoot, "v2-skills-store");
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "true";
+    const backend = new LocalBackend({
+      storageDir,
+      executionMode: "deterministic",
+    });
+    const agent = await backend.createAgent({
+      name: "V2 skills writer",
+      tags: [MEMFS_V2_TAG],
+    } as Parameters<InstanceType<typeof LocalBackend>["createAgent"]>[0]);
+    __testSetBackend(backend);
+    const localMemoryDir = getLocalBackendMemoryFilesystemRoot(
+      agent.id,
+      storageDir,
+    );
+    process.env.MEMORY_DIR = localMemoryDir;
+
+    const invoke = (args: Parameters<typeof memory>[0]) =>
+      runWithRuntimeContext({ agentId: agent.id }, () => memory(args));
+
+    await expect(
+      invoke({
+        command: "create",
+        reason: "create skill file",
+        file_path: "skills/my-skill.md",
+        description: "A skill.",
+      }),
+    ).rejects.toThrow(/skill\/file tooling/);
   });
 
   test("prefers scoped agent memory over stale MEMORY_DIR env", async () => {

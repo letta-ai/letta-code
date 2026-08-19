@@ -13,6 +13,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { MEMFS_V2_TAG } from "@/agent/agent-tags";
 import { runWithRuntimeContext } from "@/runtime-context";
 
 const execFile = promisify(execFileCb);
@@ -162,6 +163,8 @@ describe("memory_apply_patch tool", () => {
   const originalAgentId = process.env.AGENT_ID;
   const originalAgentName = process.env.AGENT_NAME;
   const originalHome = process.env.HOME;
+  const originalLocalBackendDir = process.env.LETTA_LOCAL_BACKEND_DIR;
+  const originalLocalBackendFlag = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
 
   beforeEach(async () => {
     tempRoot = mkdtempSync(join(tmpdir(), "letta-memory-apply-patch-"));
@@ -190,6 +193,13 @@ describe("memory_apply_patch tool", () => {
 
     if (originalHome === undefined) delete process.env.HOME;
     else process.env.HOME = originalHome;
+    if (originalLocalBackendDir === undefined)
+      delete process.env.LETTA_LOCAL_BACKEND_DIR;
+    else process.env.LETTA_LOCAL_BACKEND_DIR = originalLocalBackendDir;
+    if (originalLocalBackendFlag === undefined)
+      delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+    else
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = originalLocalBackendFlag;
 
     if (tempRoot) {
       await rm(tempRoot, { recursive: true, force: true });
@@ -349,6 +359,87 @@ describe("memory_apply_patch tool", () => {
         process.env.LETTA_LOCAL_BACKEND_DIR = originalLocalBackendDir;
       }
     }
+  });
+
+  test("writes MemFS v2 files and requires directory indexes", async () => {
+    const storageDir = join(tempRoot, "v2-local-store");
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "true";
+    const backend = new LocalBackend({
+      storageDir,
+      executionMode: "deterministic",
+    });
+    const agent = await backend.createAgent({
+      name: "V2 writer",
+      tags: [MEMFS_V2_TAG],
+    } as Parameters<InstanceType<typeof LocalBackend>["createAgent"]>[0]);
+    __testSetBackend(backend);
+    const localMemoryDir = getLocalBackendMemoryFilesystemRoot(
+      agent.id,
+      storageDir,
+    );
+    process.env.MEMORY_DIR = localMemoryDir;
+
+    const invoke = (input: string) =>
+      runWithRuntimeContext({ agentId: agent.id }, () =>
+        memory_apply_patch({ reason: "update v2 memory", input }),
+      );
+    await invoke(
+      "*** Begin Patch\n*** Add File: human.md\n+Prefers concise replies.\n*** End Patch",
+    );
+    expect(readFileSync(join(localMemoryDir, "human.md"), "utf8")).toBe(
+      '---\nname: "Human"\ndescription: "Memory block human"\n---\nPrefers concise replies.',
+    );
+
+    await expect(
+      invoke(
+        "*** Begin Patch\n*** Add File: projects/note.md\n+Deferred note.\n*** End Patch",
+      ),
+    ).rejects.toThrow(/requires projects\/MEMORY\.md/);
+    await invoke(
+      [
+        "*** Begin Patch",
+        "*** Add File: projects/MEMORY.md",
+        "+# Projects",
+        "*** Add File: projects/note.md",
+        "+Deferred note.",
+        "*** End Patch",
+      ].join("\n"),
+    );
+    expect(
+      readFileSync(join(localMemoryDir, "projects/MEMORY.md"), "utf8"),
+    ).toBe("# Projects\n");
+  });
+
+  test("rejects skills/ labels under memfs-v2 with a clear error", async () => {
+    const storageDir = join(tempRoot, "v2-skills-store");
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "true";
+    const backend = new LocalBackend({
+      storageDir,
+      executionMode: "deterministic",
+    });
+    const agent = await backend.createAgent({
+      name: "V2 skills writer",
+      tags: [MEMFS_V2_TAG],
+    } as Parameters<InstanceType<typeof LocalBackend>["createAgent"]>[0]);
+    __testSetBackend(backend);
+    const localMemoryDir = getLocalBackendMemoryFilesystemRoot(
+      agent.id,
+      storageDir,
+    );
+    process.env.MEMORY_DIR = localMemoryDir;
+
+    const invoke = (input: string) =>
+      runWithRuntimeContext({ agentId: agent.id }, () =>
+        memory_apply_patch({ reason: "attempt skill add", input }),
+      );
+
+    await expect(
+      invoke(
+        "*** Begin Patch\n*** Add File: skills/my-skill.md\n+Skill body.\n*** End Patch",
+      ),
+    ).rejects.toThrow(/skill\/file tooling/);
   });
 
   test("uses local-only wording for memory tool descriptions on local backend", async () => {

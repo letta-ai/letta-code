@@ -35,13 +35,16 @@ function captureConsole(): { capture: Capture; restore: () => void } {
 describe("letta memory tokens", () => {
   let tmpRoot: string;
   let priorMemoryDir: string | undefined;
+  let priorLettaMemoryDir: string | undefined;
   let priorAgentId: string | undefined;
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), "memory-tokens-"));
     priorMemoryDir = process.env.MEMORY_DIR;
+    priorLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
     priorAgentId = process.env.LETTA_AGENT_ID;
     delete process.env.MEMORY_DIR;
+    delete process.env.LETTA_MEMORY_DIR;
     delete process.env.LETTA_AGENT_ID;
   });
 
@@ -51,6 +54,11 @@ describe("letta memory tokens", () => {
       process.env.MEMORY_DIR = priorMemoryDir;
     } else {
       delete process.env.MEMORY_DIR;
+    }
+    if (priorLettaMemoryDir !== undefined) {
+      process.env.LETTA_MEMORY_DIR = priorLettaMemoryDir;
+    } else {
+      delete process.env.LETTA_MEMORY_DIR;
     }
     if (priorAgentId !== undefined) {
       process.env.LETTA_AGENT_ID = priorAgentId;
@@ -105,10 +113,11 @@ describe("letta memory tokens", () => {
     }
   });
 
-  test("--memory-dir takes precedence over $MEMORY_DIR", async () => {
-    // Populate tmpRoot (used via --memory-dir), leave the env var pointing
-    // at a nonexistent path to confirm the flag wins.
+  test("--memory-dir takes precedence over $LETTA_MEMORY_DIR and $MEMORY_DIR", async () => {
+    // Populate tmpRoot (used via --memory-dir), leave both env vars pointing
+    // at nonexistent paths to confirm the flag wins.
     writeSystemFile("persona.md", "a".repeat(8)); // 2 tokens
+    process.env.LETTA_MEMORY_DIR = "/nonexistent/does-not-exist";
     process.env.MEMORY_DIR = "/nonexistent/does-not-exist";
     const { capture, restore } = captureConsole();
     try {
@@ -118,6 +127,22 @@ describe("letta memory tokens", () => {
         tmpRoot,
         "--quiet",
       ]);
+      expect(code).toBe(0);
+      expect(capture.stdout.join("\n")).toContain("Total: 2 tokens");
+    } finally {
+      restore();
+    }
+  });
+
+  test("$LETTA_MEMORY_DIR is read and takes precedence over $MEMORY_DIR", async () => {
+    // LETTA_MEMORY_DIR points at tmpRoot (has content); MEMORY_DIR points at
+    // a nonexistent path. LETTA_MEMORY_DIR should win.
+    writeSystemFile("persona.md", "a".repeat(8)); // 2 tokens
+    process.env.LETTA_MEMORY_DIR = tmpRoot;
+    process.env.MEMORY_DIR = "/nonexistent/does-not-exist";
+    const { capture, restore } = captureConsole();
+    try {
+      const code = await runMemorySubcommand(["tokens", "--quiet"]);
       expect(code).toBe(0);
       expect(capture.stdout.join("\n")).toContain("Total: 2 tokens");
     } finally {

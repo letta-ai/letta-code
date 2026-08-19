@@ -148,7 +148,7 @@ export async function prepareListenerTurn(params: {
         cachedAgent = await ensureLettaCodeOriginTag(cachedAgent);
         scheduleManagedSystemPromptUpdate({
           agent: cachedAgent,
-          memoryMode: getMemoryPromptModeForAgent(cachedAgent.id),
+          memoryMode: getMemoryPromptModeForAgent(cachedAgent),
           onUpdated: (updatedAgent) => {
             cachedAgent = updatedAgent;
           },
@@ -312,6 +312,7 @@ export async function prepareListenerTurn(params: {
   const availableSkills = (
     await buildClientSkillsPayload({
       agentId,
+      ...(cachedAgent ? { agentTags: cachedAgent.tags ?? [] } : {}),
       workingDirectory,
       skillsDirectory: listenerOptions?.skillsDirectory,
       skillSources: runtime.skillSources,
