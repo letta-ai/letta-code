@@ -34,10 +34,10 @@ describe("isSkillAvailableForAgent", () => {
     expect(isSkillAvailableForAgent(skill, "agent-local-123")).toBe(true);
   });
 
-  test("shows the v2 migration only to v1 local agents", () => {
+  test("shows memory migration to Cloud and local target agents", () => {
     const skill: Skill = {
       ...baseSkill,
-      id: "upgrading-memory-filesystem",
+      id: "migrating-memory",
     };
 
     expect(
@@ -50,14 +50,15 @@ describe("isSkillAvailableForAgent", () => {
         GIT_MEMORY_ENABLED_TAG,
         MEMFS_V2_TAG,
       ]),
-    ).toBe(false);
-    expect(isSkillAvailableForAgent(skill, "agent-123")).toBe(false);
+    ).toBe(true);
+    expect(isSkillAvailableForAgent(skill, "agent-123")).toBe(true);
+    expect(isSkillAvailableForAgent(skill, undefined)).toBe(true);
   });
 
   test("keeps non-bundled migration overrides available", () => {
     const skill: Skill = {
       ...baseSkill,
-      id: "upgrading-memory-filesystem",
+      id: "migrating-memory",
       source: "project",
     };
 

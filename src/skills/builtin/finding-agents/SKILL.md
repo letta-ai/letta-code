@@ -95,7 +95,7 @@ Returns the raw API response with full agent details. Key fields:
 
 ## Related Skills
 
-- **migrating-memory** - Once you find an agent, use this skill to copy/share memory blocks
+- **migrating-memory** - Once you find an agent, use this skill to migrate or selectively share its memory
 - **searching-messages** - Search messages across all agents to find which agent discussed a topic. Use `--all-agents` to get `agent_id` values, then use this skill to get full agent details.
 
 ### Finding Agents by Topic

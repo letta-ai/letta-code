@@ -101,6 +101,7 @@ const AGENTS_OPTIONS = {
   conv: { type: "string" },
   "memory-dir": { type: "string" },
   "memory-commit": { type: "string" },
+  preflight: { type: "boolean" },
   // Create options
   model: { type: "string" },
   personality: { type: "string" },
@@ -213,15 +214,8 @@ export function assertMemfsV2ActivationTarget(options: {
   memoryCommit: string;
   storageDir?: string;
 }): void {
-  const expected = realpathSync(
-    getLocalBackendMemoryFilesystemRoot(options.agentId, options.storageDir),
-  );
+  assertMemfsV2ActivationPath(options);
   const supplied = realpathSync(options.memoryDir);
-  const normalizePath = (value: string) =>
-    process.platform === "win32" ? value.toLocaleLowerCase("en-US") : value;
-  if (normalizePath(expected) !== normalizePath(supplied)) {
-    throw new Error("Memory directory does not belong to the requested agent");
-  }
   const head = execFileSync("git", ["rev-parse", "HEAD"], {
     cwd: supplied,
     encoding: "utf8",
@@ -236,6 +230,22 @@ export function assertMemfsV2ActivationTarget(options: {
     throw new Error(
       "Converted memory still contains the legacy system directory",
     );
+  }
+}
+
+export function assertMemfsV2ActivationPath(options: {
+  agentId: string;
+  memoryDir: string;
+  storageDir?: string;
+}): void {
+  const expected = realpathSync(
+    getLocalBackendMemoryFilesystemRoot(options.agentId, options.storageDir),
+  );
+  const supplied = realpathSync(options.memoryDir);
+  const normalizePath = (value: string) =>
+    process.platform === "win32" ? value.toLocaleLowerCase("en-US") : value;
+  if (normalizePath(expected) !== normalizePath(supplied)) {
+    throw new Error("Memory directory does not belong to the requested agent");
   }
 }
 
@@ -257,18 +267,20 @@ async function runMemfsV2Action(
   }
   const memoryDir = values["memory-dir"] as string | undefined;
   const memoryCommit = values["memory-commit"] as string | undefined;
-  if (!memoryDir || !memoryCommit) {
+  const preflight = values.preflight === true;
+  if (!memoryDir || (!preflight && !memoryCommit)) {
     console.error(
-      "memfs-v2 activation requires --memory-dir and --memory-commit",
+      preflight
+        ? "memfs-v2 preflight requires --memory-dir"
+        : "memfs-v2 activation requires --memory-dir and --memory-commit",
     );
     return 1;
   }
 
   try {
-    assertMemfsV2ActivationTarget({
+    assertMemfsV2ActivationPath({
       agentId,
       memoryDir,
-      memoryCommit,
     });
     const agent = await backend.retrieveAgent(agentId, {
       include: ["agent.tags"],
@@ -282,6 +294,25 @@ async function runMemfsV2Action(
         "Custom system prompt must be adapted or replaced before memfs-v2 activation",
       );
     }
+    if (preflight) {
+      console.log(
+        JSON.stringify(
+          {
+            agent_id: agentId,
+            ready: true,
+            target_memory_dir: realpathSync(memoryDir),
+          },
+          null,
+          2,
+        ),
+      );
+      return 0;
+    }
+    assertMemfsV2ActivationTarget({
+      agentId,
+      memoryDir,
+      memoryCommit: memoryCommit as string,
+    });
     const updated = await backend.updateAgent(agentId, {
       tags: update.tags,
       ...(update.system ? { system: update.system } : {}),

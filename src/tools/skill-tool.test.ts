@@ -106,19 +106,21 @@ describe("Skill tool memory filesystem lookup", () => {
     ).rejects.toThrow('Skill "image-generation" not found');
   });
 
-  test("does not load the migration skill after local MemFS v2 activation", async () => {
+  test("loads the migration skill after local MemFS v2 activation", async () => {
     process.env.MEMORY_DIR = join(tempRoot, "empty-memory");
     process.env.LETTA_MEMORY_DIR = join(tempRoot, "empty-letta-memory");
     process.env.HOME = tempRoot;
 
-    await expect(
-      readSkillContent(
-        "upgrading-memory-filesystem",
-        currentSkillsDirectory ?? join(tempRoot, ".skills"),
-        "agent-local-skill-test",
-        [MEMFS_V2_TAG],
-      ),
-    ).rejects.toThrow('Skill "upgrading-memory-filesystem" not found');
+    const result = await readSkillContent(
+      "migrating-memory",
+      currentSkillsDirectory ?? join(tempRoot, ".skills"),
+      "agent-local-skill-test",
+      [MEMFS_V2_TAG],
+    );
+    expect(result.path).toEndWith(join("migrating-memory", "SKILL.md"));
+    expect(result.content).toContain(
+      "source and target as independent endpoints",
+    );
   });
 
   test("loads v2 variants of bundled memory skills", async () => {
@@ -134,6 +136,9 @@ describe("Skill tool memory filesystem lookup", () => {
     );
     expect(result.path).toEndWith(join("initializing-memory", "MEMFS_V2.md"));
     expect(result.content).toContain("Root `MEMORY.md` is required");
+    expect(result.content).toContain(
+      "invoke the `migrating-memory` skill first",
+    );
     expect(result.content).not.toContain("$MEMORY_DIR/system/");
   });
 

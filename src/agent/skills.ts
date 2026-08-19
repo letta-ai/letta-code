@@ -14,11 +14,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import { isLocalAgentId } from "./agent-id";
-import {
-  GIT_MEMORY_ENABLED_TAG,
-  LETTA_CODE_SUBAGENT_TAG,
-  MEMFS_V2_TAG,
-} from "./agent-tags";
 import { ALL_SKILL_SOURCES, type SkillSource } from "./skill-sources";
 
 /**
@@ -164,8 +159,6 @@ const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set([
   "managing-shared-memory",
 ]);
 
-export const MEMFS_V2_MIGRATION_SKILL_ID = "upgrading-memory-filesystem";
-
 export async function resolveAgentTagsForSkills(
   agentId?: string,
   suppliedTags?: readonly string[],
@@ -186,17 +179,8 @@ export async function resolveAgentTagsForSkills(
 export function isSkillAvailableForAgent(
   skill: Skill,
   agentId?: string,
-  agentTags: readonly string[] = [],
+  _agentTags: readonly string[] = [],
 ): boolean {
-  if (skill.source === "bundled" && skill.id === MEMFS_V2_MIGRATION_SKILL_ID) {
-    return Boolean(
-      agentId &&
-        isLocalAgentId(agentId) &&
-        !agentTags.includes(MEMFS_V2_TAG) &&
-        agentTags.includes(GIT_MEMORY_ENABLED_TAG) &&
-        !agentTags.includes(LETTA_CODE_SUBAGENT_TAG),
-    );
-  }
   if (
     skill.source === "bundled" &&
     agentId &&

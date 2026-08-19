@@ -19,14 +19,14 @@ afterEach(() => {
 });
 
 describe("MemFS v2 client skills", () => {
-  test("removes the migration skill from tagged local agent payloads", async () => {
+  test("keeps the migration skill available to tagged target agents", async () => {
     const discoverSkillsFn = async (): Promise<SkillDiscoveryResult> => ({
       skills: [
         {
           ...baseSkill,
-          id: "upgrading-memory-filesystem",
-          description: "Upgrade local memory",
-          path: "/tmp/bundled/upgrading-memory-filesystem/SKILL.md",
+          id: "migrating-memory",
+          description: "Migrate memory between agents",
+          path: "/tmp/bundled/migrating-memory/SKILL.md",
         },
         {
           ...baseSkill,
@@ -53,11 +53,9 @@ describe("MemFS v2 client skills", () => {
       discoverSkillsFn,
     });
 
-    expect(before.clientSkills.map((skill) => skill.name)).toContain(
-      "upgrading-memory-filesystem",
-    );
-    expect(after.clientSkills.map((skill) => skill.name)).toEqual([
-      "safe-bundled",
-    ]);
+    const beforeNames = before.clientSkills.map((skill) => skill.name);
+    const afterNames = after.clientSkills.map((skill) => skill.name);
+    expect(beforeNames).toContain("migrating-memory");
+    expect(afterNames).toEqual(beforeNames);
   });
 });

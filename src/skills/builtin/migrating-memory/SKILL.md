@@ -1,98 +1,87 @@
 ---
 name: migrating-memory
-description: Migrate memory blocks from an existing agent to the current agent. Use when the user wants to copy or share memory from another agent, or during /init when setting up a new agent that should inherit memory from an existing one.
+description: Migrate committed memory from a Cloud or local source into the current agent, or upgrade the current agent's repository to MemFS v2.
 ---
 
 # Migrating Memory
 
-This skill helps migrate memory blocks from an existing agent to a new agent, similar to macOS Migration Assistant for AI agents.
+Run this workflow from the target agent. Treat source and target as independent endpoints: each has its own backend, agent ID, and memory repository. The same process covers local to local and Cloud to local now. It will cover Cloud targets when Cloud supports MemFS v2 compilation.
 
-> **Requires Memory Filesystem (memfs)**
->
-> This workflow is memfs-first. If memfs is enabled, do **not** use the legacy block commands — they can conflict with file-based edits.
->
-> **To check:** Look for a `memory_filesystem` block in your system prompt. If it shows a tree structure starting with `/memory/` including a `system/` directory, memfs is enabled.
->
-> **To enable:** Ask the user to run `/memfs enable`, then reload the CLI.
+This migrates memory files and Agent Skills. It does not migrate conversations, credentials, provider settings, or other agent configuration.
 
-## When to Use This Skill
+The conversion workflow below is a full migration: applying it replaces the target's committed memory tree with the reviewed source tree.
 
-- User is setting up a new agent that should inherit memory from an existing one
-- User wants to share memory blocks across multiple agents
-- User is replacing an old agent with a new one
-- User mentions they have an existing agent with useful memory
+## Selective sharing
 
-## Migration Method (memfs-first)
+If the user wants only selected memories, stop before staging the conversion. Pull and export the source as described below, inspect the target's current layout, then use the memory tools to add or merge only the chosen files. Preserve the target's format and existing indexes. Do not run the converter's `apply` command for a selective migration.
 
-### Export → Copy → Sync
+## Safety rules
 
-This is the recommended flow:
-
-1. **Export the source agent's memfs to a temp directory**
-   ```bash
-   letta memory export --agent <source-agent-id> --out /tmp/letta-memory-<source-agent-id>
-   ```
-
-2. **Copy the files you want into your own memfs**
-   - `system/` = attached blocks (always loaded)
-   - root = detached blocks
-
-   Example:
-   ```bash
-   cp -r /tmp/letta-memory-agent-abc123/system/project ~/.letta/agents/$LETTA_AGENT_ID/memory/system/
-   cp /tmp/letta-memory-agent-abc123/notes.md ~/.letta/agents/$LETTA_AGENT_ID/memory/
-   ```
-
-3. **Commit and push the memory repo**
-   ```bash
-   cd ~/.letta/agents/$LETTA_AGENT_ID/memory
-   git add system/project notes.md
-   git commit -m "Import memory from source agent"
-   git push
-   ```
-
-This gives you full control over what you bring across and keeps everything consistent with memfs.
-
-## If MemFS Is Disabled
-
-The legacy block-level CLI commands have been removed. Enable MemFS first, then use the export → copy → sync workflow above.
-
-If you run into duplicate filenames while copying memory files, rename the incoming file or merge its contents manually before committing.
+- Identify the source backend, source agent ID, target backend, and target agent ID before changing files.
+- The current `$MEMORY_DIR` and `$AGENT_ID` are the target. If the intended target is another agent, open that agent before continuing.
+- Work from committed source and target repositories. Resolve dirty files before staging.
+- Stage the conversion in a separate review directory. Leave the source and target repositories unchanged during review.
+- Inspect every generated `MEMORY.md` and TODO description.
+- Inspect every added, modified, and deleted path in `target_changes`. Stop if any target deletion is unexpected.
+- Replace generated index text with short overviews and relative Markdown links before applying.
+- Keep the prepared `skills/` tree unchanged from the source.
+- Apply only after validation passes.
 
 ## Workflow
 
-### Step 1: Identify Source Agent
+### 1. Record the target
 
-Ask the user for the source agent's ID (e.g., `agent-abc123`).
-
-If they don't know the ID, invoke the **finding-agents** skill to search:
+```text
+TARGET_AGENT_ID="$AGENT_ID"
+TARGET_MEMORY_DIR="$MEMORY_DIR"
+TARGET_BACKEND="local" # or "cloud" when Cloud v2 activation is available
 ```
-Skill({ skill: "finding-agents" })
+
+A local target agent ID starts with `agent-local-`. A Cloud target uses `agent-`. Cloud sources are supported now. Stop if the target is Cloud because this release cannot compile MemFS v2 for a Cloud agent yet.
+
+### 2. Materialize the source repository
+
+If the current agent is upgrading itself, use `$MEMORY_DIR` as `SOURCE_MEMORY_DIR`.
+
+If the source agent ID or backend is unknown, invoke the `finding-agents` skill. Run its lookup with an explicit `--backend cloud` or `--backend local`; search both when the user has not said where the source lives.
+
+For another source agent, choose a new empty export directory, then pull and export through that source's backend:
+
+```text
+letta --backend "<SOURCE_BACKEND>" memory pull --agent "<SOURCE_AGENT_ID>"
+letta --backend "<SOURCE_BACKEND>" memory export --agent "<SOURCE_AGENT_ID>" --out "<SOURCE_EXPORT_DIR>"
 ```
 
-Example: "What's the ID of the agent you want to migrate memory from?"
+`SOURCE_BACKEND` is `cloud` or `local`. Use the exported directory as `SOURCE_MEMORY_DIR`. Do not infer the source backend from the target.
 
-## Example: Migrating Project Memory
+### 3. Stage a reviewed v2 tree
 
-Scenario: You're a new agent and want to inherit memory from an existing agent "ProjectX-v1".
+Choose a new absolute review directory outside both repositories, then run:
 
-1. **Get source agent ID from user:**
-   User provides: `agent-abc123`
+```text
+node "<SKILL_DIR>/scripts/memfs-v2.mjs" stage --source "<SOURCE_MEMORY_DIR>" --target "$TARGET_MEMORY_DIR" --output "<REVIEW_DIR>"
+```
 
-2. **Export their memfs:**
-   ```bash
-   letta memory export --agent agent-abc123 --out /tmp/letta-memory-agent-abc123
-   ```
+The adjacent manifest records both repository paths and commits. The report includes `target_changes` for the full replacement. Apply will refuse if either repository changes after staging or if the target contains ignored files that replacement would delete.
 
-3. **Copy the relevant files into your memfs:**
-   ```bash
-   cp -r /tmp/letta-memory-agent-abc123/system/project ~/.letta/agents/$LETTA_AGENT_ID/memory/system/
-   ```
+### 4. Review and validate
 
-4. **Commit and push:**
-   ```bash
-   cd ~/.letta/agents/$LETTA_AGENT_ID/memory
-   git add system/project
-   git commit -m "Import project memory"
-   git push
-   ```
+Fix generated names, TODO descriptions, overview text, and links. `MEMORY.md` has no frontmatter. Every other memory Markdown file has exactly `name` and `description` frontmatter.
+
+```text
+node "<SKILL_DIR>/scripts/memfs-v2.mjs" validate --prepared "<REVIEW_DIR>"
+```
+
+Read the validation output again after editing. It recalculates `target_changes`; confirm every deletion before applying.
+
+### 5. Apply to the target
+
+```text
+node "<SKILL_DIR>/scripts/memfs-v2.mjs" apply --prepared "<REVIEW_DIR>" --target "$TARGET_MEMORY_DIR" --target-agent "$TARGET_AGENT_ID" --target-backend "$TARGET_BACKEND"
+```
+
+Before changing files, apply asks the selected target backend to verify the agent, repository path, and managed prompt. It then replaces and commits the target tree and asks that backend to activate MemFS v2. Local activation adds the tag and updates a recognized managed prompt to the v2 variant. If preflight rejects a custom prompt, replace or adapt that prompt before staging a fresh review tree.
+
+### 6. Recompile the target
+
+Ask the user to run `/recompile` on the target agent. Keep the review directory and its adjacent manifest until activation and recompile succeed.

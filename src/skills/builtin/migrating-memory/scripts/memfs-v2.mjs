@@ -18,6 +18,17 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import {
+  activateAgent,
+  agentHasMemfsV2Tag,
+  normalizeBackend,
+  preflightAgent,
+  revertConversion,
+} from "./target-activation.mjs";
+import {
+  assertNoIgnoredTargetFiles,
+  describeTargetChanges,
+} from "./target-review.mjs";
 
 const TODO_DESCRIPTION = "TODO: Describe when this memory should be loaded.";
 const GENERATED_INDEX_NOTE =
@@ -366,20 +377,35 @@ async function writeCommittedFile(destination, content, mode) {
   await chmod(destination, mode === "100755" ? 0o755 : 0o644);
 }
 
-async function stageTree(source, output) {
+async function stageTree(source, target, output) {
   await assertDirectory(source, "Source");
+  await assertDirectory(target, "Target");
   if (await exists(output)) fail(`Output already exists: ${output}`);
   const sourceReal = await realpath(source);
+  const targetReal = await realpath(target);
+  if (
+    sourceReal !== targetReal &&
+    (sourceReal.startsWith(`${targetReal}${path.sep}`) ||
+      targetReal.startsWith(`${sourceReal}${path.sep}`))
+  ) {
+    fail("Source and target repositories must not contain one another");
+  }
+  assertNoIgnoredTargetFiles(targetReal);
   const outputParent = await realpath(path.dirname(output));
   const outputResolved = path.join(outputParent, path.basename(output));
   const manifestPath = `${outputResolved}.manifest.json`;
   if (await exists(manifestPath))
     fail(`Manifest already exists: ${manifestPath}`);
-  if (
-    outputResolved === sourceReal ||
-    outputResolved.startsWith(`${sourceReal}${path.sep}`)
-  ) {
-    fail("Output must be outside the source memory directory");
+  for (const [label, directory] of [
+    ["source", sourceReal],
+    ["target", targetReal],
+  ]) {
+    if (
+      outputResolved === directory ||
+      outputResolved.startsWith(`${directory}${path.sep}`)
+    ) {
+      fail(`Output must be outside the ${label} memory directory`);
+    }
   }
 
   const files = listCommittedFiles(sourceReal).filter(
@@ -489,12 +515,15 @@ async function stageTree(source, output) {
   const validation = await validateTree(outputResolved, {
     allowPlaceholders: true,
   });
+  const targetChanges = await describeTargetChanges(targetReal, outputResolved);
   await writeFile(
     manifestPath,
     `${JSON.stringify(
       {
         source: sourceReal,
         source_head: git(sourceReal, ["rev-parse", "HEAD"]).trim(),
+        target: targetReal,
+        target_head: git(targetReal, ["rev-parse", "HEAD"]).trim(),
         skills: files
           .filter((file) => isSkillPath(file.relativePath))
           .map((file) => ({
@@ -510,12 +539,14 @@ async function stageTree(source, output) {
   );
   return {
     source: sourceReal,
+    target: targetReal,
     output: outputResolved,
     manifest: manifestPath,
     flattened,
     generated_indexes: generatedIndexes,
     derived_names: derivedNames,
     todo_descriptions: todoDescriptions,
+    target_changes: targetChanges,
     validation,
   };
 }
@@ -674,96 +705,89 @@ function gitIdentityEnvironment() {
   };
 }
 
-async function agentHasMemfsV2Tag(memoryDir, agentId) {
-  const storageDir = path.dirname(path.dirname(path.dirname(memoryDir)));
-  const recordName = `${Buffer.from(agentId).toString("base64url")}.json`;
-  try {
-    const record = JSON.parse(
-      await readFile(path.join(storageDir, "agents", recordName), "utf8"),
-    );
-    return Array.isArray(record.tags) && record.tags.includes("memfs-v2");
-  } catch {
-    return null;
-  }
-}
-
-function revertConversion(memoryDir, commit) {
-  if (git(memoryDir, ["rev-parse", "HEAD"]).trim() !== commit) {
-    fail(
-      "Activation failed and memory HEAD moved; conversion was not reverted",
-    );
-  }
-  git(memoryDir, ["revert", "--no-edit", commit], {
-    env: gitIdentityEnvironment(),
-  });
-}
-
-async function applyTree(source, memoryDir) {
-  const sourceReal = await realpath(source);
-  const memoryReal = await realpath(memoryDir);
+async function prepareApply(prepared, target) {
+  const preparedReal = await realpath(prepared);
+  const targetReal = await realpath(target);
   if (
-    sourceReal === memoryReal ||
-    sourceReal.startsWith(`${memoryReal}${path.sep}`) ||
-    memoryReal.startsWith(`${sourceReal}${path.sep}`)
+    preparedReal === targetReal ||
+    preparedReal.startsWith(`${targetReal}${path.sep}`) ||
+    targetReal.startsWith(`${preparedReal}${path.sep}`)
   ) {
-    fail("Prepared tree and memory repository must not contain one another");
+    fail("Prepared tree and target repository must not contain one another");
   }
-  const manifestPath = `${sourceReal}.manifest.json`;
+  const manifestPath = `${preparedReal}.manifest.json`;
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  if (manifest.source !== memoryReal) {
-    fail("Prepared tree was staged from a different memory repository");
+  const manifestSource = await realpath(manifest.source).catch(() => null);
+  if (!manifestSource || manifestSource !== manifest.source) {
+    fail("Source repository from the staged review is unavailable");
   }
-  if (manifest.source_head !== git(memoryReal, ["rev-parse", "HEAD"]).trim()) {
-    fail("Memory repository changed after the review tree was staged");
+  await assertCleanGitTree(manifestSource);
+  if (
+    manifest.source_head !== git(manifestSource, ["rev-parse", "HEAD"]).trim()
+  ) {
+    fail("Source repository changed after the review tree was staged");
+  }
+  if (manifest.target !== targetReal) {
+    fail("Prepared tree was staged for a different target repository");
+  }
+  if (manifest.target_head !== git(targetReal, ["rev-parse", "HEAD"]).trim()) {
+    fail("Target repository changed after the review tree was staged");
   }
   const expectedSkills = JSON.stringify(manifest.skills ?? []);
   const preparedSkills = JSON.stringify(
-    await preparedSkillsManifest(sourceReal),
+    await preparedSkillsManifest(preparedReal),
   );
   if (preparedSkills !== expectedSkills) {
     fail("Prepared skills differ from the committed source skills");
   }
-  const validation = await validateTree(sourceReal);
-  await assertCleanGitTree(memoryReal);
+  const validation = await validateTree(preparedReal);
+  await assertCleanGitTree(targetReal);
+  assertNoIgnoredTargetFiles(targetReal);
+  const targetChanges = await describeTargetChanges(targetReal, preparedReal);
+  return { preparedReal, targetReal, targetChanges, validation };
+}
 
+async function commitPreparedTree(preparation) {
+  const { preparedReal, targetReal, targetChanges, validation } = preparation;
   const backup = await mkdtemp(path.join(tmpdir(), "memfs-v2-backup-"));
-  await copyTreeContents(memoryReal, backup, {
+  await copyTreeContents(targetReal, backup, {
     ignoreRootEntries: new Set([".git", ".letta"]),
   });
   let committed = false;
   try {
-    await removeTreeContents(memoryReal, new Set([".git", ".letta"]));
-    await copyTreeContents(sourceReal, memoryReal);
-    const preparedPaths = await walkFiles(sourceReal);
-    const trackedPaths = nullSeparatedGitPaths(memoryReal, ["ls-files", "-z"]);
+    await removeTreeContents(targetReal, new Set([".git", ".letta"]));
+    await copyTreeContents(preparedReal, targetReal);
+    const preparedPaths = await walkFiles(preparedReal);
+    const trackedPaths = nullSeparatedGitPaths(targetReal, ["ls-files", "-z"]);
     forPathChunks(preparedPaths, (paths) =>
-      git(memoryReal, ["add", "-f", "--", ...paths]),
+      git(targetReal, ["add", "-f", "--", ...paths]),
     );
     forPathChunks(trackedPaths, (paths) =>
-      git(memoryReal, ["add", "-u", "--", ...paths]),
+      git(targetReal, ["add", "-u", "--", ...paths]),
     );
-    const paths = nullSeparatedGitPaths(memoryReal, [
+    const paths = nullSeparatedGitPaths(targetReal, [
       "diff",
       "--cached",
       "--name-only",
       "-z",
     ]);
     if (paths.length === 0) fail("Prepared tree produces no changes");
-    git(memoryReal, ["commit", "-m", "migrate memory filesystem to v2"], {
+    git(targetReal, ["commit", "-m", "migrate memory filesystem to v2"], {
       env: gitIdentityEnvironment(),
     });
     committed = true;
     return {
-      memory_dir: memoryReal,
-      commit: git(memoryReal, ["rev-parse", "HEAD"]).trim(),
+      target_dir: targetReal,
+      commit: git(targetReal, ["rev-parse", "HEAD"]).trim(),
       changed_paths: paths,
+      target_changes: targetChanges,
       validation,
     };
   } catch (error) {
     if (!committed) {
-      await removeTreeContents(memoryReal, new Set([".git", ".letta"]));
-      await copyTreeContents(backup, memoryReal);
-      git(memoryReal, ["reset", "--mixed", "HEAD"]);
+      await removeTreeContents(targetReal, new Set([".git", ".letta"]));
+      await copyTreeContents(backup, targetReal);
+      git(targetReal, ["reset", "--mixed", "HEAD"]);
     }
     throw error;
   } finally {
@@ -771,89 +795,87 @@ async function applyTree(source, memoryDir) {
   }
 }
 
-function activateAgent(agentId, memoryDir, memoryCommit) {
-  const command =
-    process.env.LETTA_MEMFS_V2_ACTIVATE_COMMAND ||
-    (process.platform === "win32" ? "letta.cmd" : "letta");
-  const commandArgs = process.env.LETTA_MEMFS_V2_ACTIVATE_ARGS
-    ? JSON.parse(process.env.LETTA_MEMFS_V2_ACTIVATE_ARGS)
-    : [];
-  if (
-    !Array.isArray(commandArgs) ||
-    commandArgs.some((arg) => typeof arg !== "string")
-  ) {
-    fail("LETTA_MEMFS_V2_ACTIVATE_ARGS must be a JSON array of strings");
-  }
-  const output = execFileSync(
-    command,
-    [
-      ...commandArgs,
-      "--backend",
-      "local",
-      "agents",
-      "memfs-v2",
-      "--agent",
-      agentId,
-      "--memory-dir",
-      memoryDir,
-      "--memory-commit",
-      memoryCommit,
-    ],
-    {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
-    },
-  );
-  try {
-    return JSON.parse(output);
-  } catch {
-    fail(`Activation command returned invalid JSON: ${output.trim()}`);
-  }
-}
-
 function printJson(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function validateReview(prepared) {
+  const preparedReal = await realpath(prepared);
+  const manifest = JSON.parse(
+    await readFile(`${preparedReal}.manifest.json`, "utf8"),
+  );
+  const preparation = await prepareApply(preparedReal, manifest.target);
+  return {
+    ...preparation.validation,
+    target_changes: preparation.targetChanges,
+  };
 }
 
 async function main() {
   const { command, values } = parseArguments(process.argv.slice(2));
   if (command === "stage") {
-    if (!values.source || !values.output) {
-      fail("stage requires --source and --output");
+    if (!values.source || !values.target || !values.output) {
+      fail("stage requires --source, --target, and --output");
     }
     await assertCleanGitTree(path.resolve(values.source));
+    await assertCleanGitTree(path.resolve(values.target));
     printJson(
-      await stageTree(path.resolve(values.source), path.resolve(values.output)),
+      await stageTree(
+        path.resolve(values.source),
+        path.resolve(values.target),
+        path.resolve(values.output),
+      ),
     );
     return;
   }
   if (command === "validate") {
-    if (!values.source) fail("validate requires --source");
-    printJson(await validateTree(path.resolve(values.source)));
+    if (!values.prepared) fail("validate requires --prepared");
+    printJson(await validateReview(path.resolve(values.prepared)));
     return;
   }
   if (command === "apply") {
-    if (!values.source || !values["memory-dir"] || !values.agent) {
-      fail("apply requires --source, --memory-dir, and --agent");
+    if (
+      !values.prepared ||
+      !values.target ||
+      !values["target-agent"] ||
+      !values["target-backend"]
+    ) {
+      fail(
+        "apply requires --prepared, --target, --target-agent, and --target-backend",
+      );
     }
-    const result = await applyTree(
-      path.resolve(values.source),
-      path.resolve(values["memory-dir"]),
+    const targetBackend = normalizeBackend(values["target-backend"]);
+    const initialPreparation = await prepareApply(
+      path.resolve(values.prepared),
+      path.resolve(values.target),
     );
+    preflightAgent(
+      targetBackend,
+      values["target-agent"],
+      initialPreparation.targetReal,
+    );
+    const preparation = await prepareApply(
+      path.resolve(values.prepared),
+      path.resolve(values.target),
+    );
+    const result = await commitPreparedTree(preparation);
     try {
       printJson({
         ...result,
         activation: activateAgent(
-          values.agent,
-          result.memory_dir,
+          targetBackend,
+          values["target-agent"],
+          result.target_dir,
           result.commit,
         ),
       });
     } catch (error) {
-      const tagged = await agentHasMemfsV2Tag(result.memory_dir, values.agent);
+      const tagged =
+        targetBackend === "local"
+          ? await agentHasMemfsV2Tag(result.target_dir, values["target-agent"])
+          : null;
       if (tagged === false) {
-        revertConversion(result.memory_dir, result.commit);
+        revertConversion(result.target_dir, result.commit);
         fail(
           `Activation failed and the conversion commit was reverted: ${error instanceof Error ? error.message : String(error)}`,
         );

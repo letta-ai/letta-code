@@ -7,6 +7,8 @@ description: Initialize or reorganize a MemFS v2 memory repository.
 
 Initialize or reorganize the agent's memory at `$MEMORY_DIR`. Preserve existing identity and durable detail while making future retrieval easier.
 
+If the user wants this agent to inherit another agent's memory, invoke the `migrating-memory` skill first. Let that workflow identify and convert the source rather than rebuilding its memory by hand.
+
 ## Layout
 
 - Root `MEMORY.md` is required, has no frontmatter, and uses ordinary relative Markdown links.

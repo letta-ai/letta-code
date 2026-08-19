@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { buildSystemPrompt } from "@/agent/prompt-assets";
 import { hashSystemPrompt } from "@/agent/system-prompt-versioning";
 import {
+  assertMemfsV2ActivationPath,
   assertMemfsV2ActivationTarget,
   buildAgentConfigReport,
   buildMemfsV2AgentUpdate,
@@ -203,6 +204,13 @@ describe("assertMemfsV2ActivationTarget", () => {
         encoding: "utf8",
       }).trim();
 
+      expect(() =>
+        assertMemfsV2ActivationPath({
+          agentId,
+          memoryDir,
+          storageDir: root,
+        }),
+      ).not.toThrow();
       expect(() =>
         assertMemfsV2ActivationTarget({
           agentId,
