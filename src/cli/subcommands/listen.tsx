@@ -562,7 +562,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
           onUnexpectedExit: (error) => {
             console.error(`[${formatTimestamp()}] ${error.message}`);
-            void exitWithTelemetry(1, "listener_channel_gateway_exited");
+            if (values.channels) {
+              void exitWithTelemetry(1, "listener_channel_gateway_exited");
+            }
           },
           onServiceEvent: (event) => {
             if (event.kind === "protocol") {

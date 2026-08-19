@@ -111,8 +111,10 @@ export class FakeSlackApp {
   readonly init = mock(async () => {});
   readonly start = mock(async () => {});
   readonly stop = mock(async () => {});
+  readonly options: Record<string, unknown>;
 
-  constructor(_options: Record<string, unknown>) {
+  constructor(options: Record<string, unknown>) {
+    this.options = options;
     FakeSlackApp.instances.push(this);
   }
 
@@ -139,6 +141,7 @@ export class FakeSlackApp {
 
 export class FakeSlackWriteClient {
   static instances: FakeSlackWriteClient[] = [];
+  static authorizationError: Error | null = null;
   static setStatusHandler:
     | ((args: Record<string, unknown>) => Promise<{ ok: boolean }>)
     | null = null;
@@ -149,6 +152,18 @@ export class FakeSlackWriteClient {
   readonly options: Record<string, unknown> | undefined;
   readonly streamModesByTs = new Map<string, "chunks" | "markdown_text">();
   startStreamCount = 0;
+  readonly auth = {
+    test: mock(async () => {
+      if (FakeSlackWriteClient.authorizationError) {
+        throw FakeSlackWriteClient.authorizationError;
+      }
+      return {
+        team: "Test Workspace",
+        user_id: "U0AS42PTEAX",
+        bot_id: "B0AS42PTEAX",
+      };
+    }),
+  };
   readonly chat = {
     postMessage: mock(async () => ({ ts: "1712800000.000100" })),
     update: mock(async () => ({ ts: "1712800000.000100" })),
@@ -346,6 +361,7 @@ export function installSlackAdapterTestHooks(): void {
   beforeEach(() => {
     FakeSlackApp.instances.length = 0;
     FakeSlackWriteClient.instances.length = 0;
+    FakeSlackWriteClient.authorizationError = null;
     FakeSlackWriteClient.disableStartStream = false;
     FakeSlackWriteClient.distinctStreamTs = false;
     FakeSlackWriteClient.setStatusHandler = null;
@@ -390,6 +406,7 @@ export function installSlackAdapterTestHooks(): void {
       instance.stop.mockClear();
     }
     for (const instance of FakeSlackWriteClient.instances) {
+      instance.auth.test.mockClear();
       instance.chat.postMessage.mockClear();
       instance.chat.update.mockClear();
       instance.chat.startStream?.mockClear();
