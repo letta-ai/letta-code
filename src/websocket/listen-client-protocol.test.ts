@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -28,6 +28,7 @@ import { appendCronRunLog, getCronRunLogPath } from "@/cron";
 import type { MessageQueueItem } from "@/queue/queue-runtime";
 import type { LocalProjectSettings, Settings } from "@/settings-manager";
 import { settingsManager } from "@/settings-manager";
+import { installRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
 import {
   backgroundProcesses,
   backgroundTasks,
@@ -120,6 +121,7 @@ class MockSocket {
   }
 }
 
+beforeEach(installRuntimeModelCatalogFixture);
 afterEach(() => {
   __testSetBackend(null);
   clearExternalTools();
@@ -2039,7 +2041,7 @@ describe("listen-client parseServerMessage", () => {
 });
 
 describe("listen-client model command helpers", () => {
-  test("buildListModelsEntries reflects models.json metadata", () => {
+  test("buildListModelsEntries reflects runtime catalog metadata", () => {
     const entries = __listenClientTestUtils.buildListModelsEntries();
 
     expect(entries.length).toBe(models.length);
@@ -2088,9 +2090,7 @@ describe("listen-client model command helpers", () => {
     });
 
     expect(resolved).not.toBeNull();
-    // Handle must be the explicit BYOK handle, not the base static handle
     expect(resolved?.handle).toBe(byokHandle);
-    // But id/label/updateArgs still come from the model_id entry
     expect(resolved?.id).toBe(models[0]?.id);
     expect(resolved?.label).toBe(models[0]?.label);
   });
@@ -2102,7 +2102,6 @@ describe("listen-client model command helpers", () => {
     });
 
     expect(resolved).not.toBeNull();
-    // Should resolve handle from the static entry, not from an explicit override
     expect(resolved?.handle).toBe(models[0]?.handle);
   });
 });

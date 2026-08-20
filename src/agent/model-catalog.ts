@@ -34,37 +34,70 @@ const BUILTIN_MODEL_ALIASES = new Map([
   ["auto-fast", "letta/auto-fast"],
 ]);
 
-/** Resolve a model by ID or handle. */
-export function resolveModel(modelIdentifier: string): string | null {
+function resolveEstablishedCliAlias(
+  modelIdentifier: string,
+): CatalogModel | null {
+  if (modelIdentifier === "haiku") {
+    return (
+      models.find((model) => model.handle.includes("claude-haiku-4-5")) ?? null
+    );
+  }
+  if (modelIdentifier === "sonnet-4.6-low") {
+    const matchingModels = models.filter((model) =>
+      model.handle.includes("claude-sonnet-4-6"),
+    );
+    const lowEffortModel = matchingModels.find(
+      (model) => model.updateArgs?.reasoning_effort === "low",
+    );
+    if (lowEffortModel) return lowEffortModel;
+    const baseModel = matchingModels[0];
+    return baseModel
+      ? {
+          ...baseModel,
+          id: modelIdentifier,
+          updateArgs: {
+            ...baseModel.updateArgs,
+            reasoning_effort: "low",
+            enable_reasoner: true,
+          },
+        }
+      : null;
+  }
+  return null;
+}
+
+/** Resolve a model catalog entry by runtime ID, handle, or CLI alias. */
+export function resolveCatalogModel(
+  modelIdentifier: string,
+): CatalogModel | null {
   const byId = models.find((model) => model.id === modelIdentifier);
-  if (byId) return byId.handle;
+  if (byId) return byId;
 
   const byHandle = models.find((model) => model.handle === modelIdentifier);
-  if (byHandle) return byHandle.handle;
+  if (byHandle) return byHandle;
+
+  const cliAlias = resolveEstablishedCliAlias(modelIdentifier);
+  if (cliAlias) return cliAlias;
+
+  // Runtime catalogs use provider-native model IDs as their short names.
+  // Resolve one only when it identifies exactly one handle.
+  const matches = models.filter(
+    (model) => model.handle.split("/").slice(1).join("/") === modelIdentifier,
+  );
+  const matchingHandles = new Set(matches.map((model) => model.handle));
+  return matchingHandles.size === 1 ? (matches[0] ?? null) : null;
+}
+
+/** Resolve a model by ID or handle. */
+export function resolveModel(modelIdentifier: string): string | null {
+  const entry = resolveCatalogModel(modelIdentifier);
+  if (entry) return entry.handle;
 
   const builtinHandle = BUILTIN_MODEL_ALIASES.get(modelIdentifier);
   if (builtinHandle) return builtinHandle;
 
-  // Local pi-ai catalogs use provider-native model IDs as their short names.
-  // Resolve one only when it identifies exactly one handle.
-  const matchingHandles = new Set(
-    models
-      .filter(
-        (model) =>
-          model.handle.split("/").slice(1).join("/") === modelIdentifier,
-      )
-      .map((model) => model.handle),
-  );
-  if (matchingHandles.size === 1) {
-    return matchingHandles.values().next().value ?? null;
-  }
-
   // Runtime/custom catalogs can contain handles not known before startup.
-  if (modelIdentifier.includes("/")) {
-    return modelIdentifier;
-  }
-
-  return null;
+  return modelIdentifier.includes("/") ? modelIdentifier : null;
 }
 
 /** Get the default model handle from the active catalog. */

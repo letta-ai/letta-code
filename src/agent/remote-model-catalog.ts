@@ -15,9 +15,11 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   type AvailableModel,
+  clearAvailableModelsCache,
   getAvailableModelHandles,
 } from "@/agent/available-models";
 import { type CatalogModel, models } from "@/agent/model-catalog";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { apiFetch, getApiRequestConfig } from "@/backend/api/request";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { debugLog, debugWarn } from "@/utils/debug";
@@ -294,8 +296,8 @@ function reasoningEffortForThinkingLevel(level: string): string {
   return level === "off" ? "none" : level;
 }
 
-/** Project local pi-ai inventory into the shared runtime catalog shape. */
-export function toLocalCatalogModels(
+/** Project backend model inventory into the shared runtime catalog shape. */
+export function toRuntimeCatalogModels(
   entries: readonly AvailableModel[],
 ): CatalogModel[] {
   const ids = uniqueLocalModelIds(entries);
@@ -334,24 +336,34 @@ export function toLocalCatalogModels(
   return catalog;
 }
 
-async function refreshLocalModelCatalog(options?: {
-  force?: boolean;
-}): Promise<boolean> {
-  const sourceChanged = activeCatalogSource !== LOCAL_CATALOG_SOURCE;
-  activateCatalogSource(LOCAL_CATALOG_SOURCE);
+async function refreshRuntimeModelCatalog(
+  source: string,
+  options?: { force?: boolean },
+): Promise<boolean> {
+  const sourceChanged = activeCatalogSource !== source;
+  activateCatalogSource(source);
+  if (sourceChanged) clearAvailableModelsCache();
   try {
     const available = await getAvailableModelHandles(
-      options?.force || sourceChanged ? { forceRefresh: true } : undefined,
+      options?.force ? { forceRefresh: true } : undefined,
     );
-    return applyCatalogModels(toLocalCatalogModels(available.models), {
+    return applyCatalogModels(toRuntimeCatalogModels(available.models), {
       requireManagedDefault: false,
     });
   } catch (error) {
-    debugLog("remote-model-catalog", "local pi-ai catalog refresh errored", {
+    debugLog("remote-model-catalog", "runtime catalog refresh errored", {
+      source,
       error: String(error),
     });
     return false;
   }
+}
+
+function isCloudCatalogSource(source: string): boolean {
+  return (
+    normalizeCatalogSource(source) ===
+    normalizeCatalogSource(LETTA_CLOUD_API_URL)
+  );
 }
 
 /**
@@ -365,11 +377,14 @@ export async function refreshModelCatalog(options?: {
   force?: boolean;
 }): Promise<boolean> {
   if (resolveBackendMode() !== "api") {
-    return refreshLocalModelCatalog(options);
+    return refreshRuntimeModelCatalog(LOCAL_CATALOG_SOURCE, options);
   }
 
   const requestConfig = await getApiRequestConfig();
   const source = normalizeCatalogSource(requestConfig.baseUrl);
+  if (!isCloudCatalogSource(source)) {
+    return refreshRuntimeModelCatalog(source, options);
+  }
   const requestGeneration = activateCatalogSource(source);
   if (persistedCacheSource !== source) {
     persistedCacheSource = source;
@@ -437,15 +452,17 @@ export async function refreshModelCatalog(options?: {
   return request;
 }
 
-/** Initialize the active catalog and fail if API mode has no usable source. */
+/** Initialize the catalog after startup has selected its backend mode. */
 export async function initializeModelCatalog(): Promise<void> {
   await refreshModelCatalog();
-  requireModelCatalog();
+  if (resolveBackendMode() !== "api") return;
+  const { baseUrl } = await getApiRequestConfig();
+  requireModelCatalog(baseUrl);
 }
 
-/** Fail when API mode has neither a valid cache nor a reachable catalog. */
-export function requireModelCatalog(): void {
-  if (resolveBackendMode() === "api" && models.length === 0) {
+/** Fail only when Cloud has neither a valid cache nor a reachable catalog. */
+export function requireModelCatalog(baseUrl = LETTA_CLOUD_API_URL): void {
+  if (isCloudCatalogSource(baseUrl) && models.length === 0) {
     throw new Error(
       "Model catalog is unavailable. GET /v1/models/catalog failed and no valid cache exists. Restore network access and retry.",
     );

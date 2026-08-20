@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { getDefaultModel, models, resolveModel } from "@/agent/model-catalog";
+import {
+  getDefaultModel,
+  models,
+  resolveCatalogModel,
+  resolveModel,
+} from "@/agent/model-catalog";
 import * as agentPresets from "@/agent-presets";
 
 afterEach(() => {
@@ -36,6 +41,32 @@ describe("runtime model catalog", () => {
     expect(resolveModel("claude-sonnet-4-6")).toBe(
       "anthropic/claude-sonnet-4-6",
     );
+  });
+
+  test("resolves established Anthropic CLI aliases from runtime entries", () => {
+    models.push(
+      {
+        id: "claude-sonnet-4-6-low",
+        handle: "anthropic/claude-sonnet-4-6",
+        label: "Claude Sonnet 4.6",
+        description: "",
+        updateArgs: { context_window: 200000 },
+      },
+      {
+        id: "claude-haiku-4-5",
+        handle: "anthropic/claude-haiku-4-5",
+        label: "Claude Haiku 4.5",
+        description: "",
+      },
+    );
+
+    expect(resolveModel("sonnet-4.6-low")).toBe("anthropic/claude-sonnet-4-6");
+    expect(resolveCatalogModel("sonnet-4.6-low")?.updateArgs).toMatchObject({
+      context_window: 200000,
+      reasoning_effort: "low",
+      enable_reasoner: true,
+    });
+    expect(resolveModel("haiku")).toBe("anthropic/claude-haiku-4-5");
   });
 
   test("does not ship a static catalog or export model presets", () => {

@@ -2,7 +2,12 @@
  * Model resolution and handling utilities
  */
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-constants";
-import { getDefaultModel, models, resolveModel } from "./model-catalog";
+import {
+  getDefaultModel,
+  models,
+  resolveCatalogModel,
+  resolveModel,
+} from "./model-catalog";
 import {
   CHATGPT_OAUTH_LLM_CONFIG_PROVIDER,
   LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX,
@@ -276,14 +281,11 @@ export function formatAvailableModels(): string {
  * @returns The model info if found, null otherwise
  */
 export function getModelInfo(modelIdentifier: string) {
-  const byId = models.find((m) => m.id === modelIdentifier);
-  if (byId) return byId;
+  const direct = resolveCatalogModel(modelIdentifier);
+  if (direct) return direct;
 
   const normalizedHandle = normalizeModelHandleForRegistry(modelIdentifier);
-  const byHandle = models.find((m) => m.handle === normalizedHandle);
-  if (byHandle) return byHandle;
-
-  return null;
+  return normalizedHandle ? resolveCatalogModel(normalizedHandle) : null;
 }
 
 /**
