@@ -361,8 +361,7 @@ function getReflectionCompletionMessage(
     case "merged":
       return undefined;
     case "no_changes":
-      return ({ action }) =>
-        `${action}; no durable memory changes were needed.`;
+      return ({ action }) => `${action}; no memory changes were needed.`;
     case "parent_dirty":
       return "Tried to reflect, but parent memory had uncommitted changes; will retry later.";
     case "merge_conflict":

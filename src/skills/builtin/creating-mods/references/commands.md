@@ -23,7 +23,7 @@ For complex command-driven mods with panels, timers, local state, or background 
 | Command needs transient UI while doing local work | Mod command + panel |
 | Command needs model output while the main agent is busy | `runWhenBusy: true` command + forked `ctx.conversation` |
 
-If the command represents a durable agent workflow (for example `/goal`), put the workflow instructions in a skill and keep the command as a small launcher/prompt.
+If the command represents a reusable agent workflow (for example `/goal`), put the workflow instructions in a skill and keep the command as a small launcher/prompt.
 
 ## Command IDs
 
