@@ -205,7 +205,7 @@ Parent-Agent-ID: <PARENT_AGENT_ID>"
 
 In the commit message body, explain what changed and why, drawing from the categories you identified in Phase 2. If the change is skill-related, include the operation in the subject, e.g. `feat(reflection): create docker-debugging skill 🔮`.
 
-If no changes were needed, do NOT commit. Report that the conversation contained no memory-worthy learnings.
+If no changes were needed, do NOT commit. Report that the conversation contained no memory worth persisting.
 
 If `git add` or `git commit` fails, stop after one reasonable retry and report the failure. Do not run `git config`, mutate `.git`, use `git reset`, or assume the harness will persist uncommitted filesystem edits; uncommitted edits are not successful memory persistence.
 
