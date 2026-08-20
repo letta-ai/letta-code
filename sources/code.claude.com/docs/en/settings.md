@@ -685,7 +685,7 @@ The helper writes a JSON envelope to stdout. Put the settings under a `managedSe
 }
 ```
 
-When the helper emits `managedSettings`, that object becomes the only managed settings source for the run: Claude Code ignores remote, MDM, and file-based sources, reads the [cross-source keys](#precedence-within-the-managed-tier) from the helper's output alone, and never merges [parent settings](#parent-settings-from-embedding-hosts). A helper that exits 0 without emitting `managedSettings` contributes no managed settings, and the other sources apply as usual. When the helper exits non-zero at startup, Claude Code prints the error and refuses to start, so a helper that needs outage resilience should serve from its own cache and exit `0`.
+Claude Code reads `policyHelper` only from the source that wins [precedence within the managed tier](#precedence-within-the-managed-tier), so a helper configured in MDM or a managed settings file does not run while server-managed settings deliver a non-empty configuration. When the helper runs and emits `managedSettings`, that object becomes the only managed settings source for the run: Claude Code ignores the MDM and file-based sources, reads the [cross-source keys](#precedence-within-the-managed-tier) from the helper's output alone, and never merges [parent settings](#parent-settings-from-embedding-hosts). A helper that exits 0 without emitting `managedSettings` contributes no managed settings, and the other sources apply as usual. When the helper exits non-zero at startup, Claude Code prints the error and refuses to start, so a helper that needs outage resilience should serve from its own cache and exit `0`.
 
 ### Settings precedence
 
@@ -734,7 +734,7 @@ A host platform that embeds Claude Code and sets [`CLAUDE_CODE_PROVIDER_MANAGED_
 
 #### Precedence within the managed tier
 
-A [`policyHelper`](#compute-managed-settings-with-a-policy-helper) can replace every source in this list; that section says when. Otherwise, apart from the cross-source keys listed after the ranking, Claude Code uses the first of these sources that delivers a non-empty configuration and ignores the rest rather than merging them:
+Apart from the cross-source keys listed after the ranking, Claude Code uses the first of these sources that delivers a non-empty configuration and ignores the rest rather than merging them. When that winning source is an MDM policy or managed settings file that configures a [`policyHelper`](#compute-managed-settings-with-a-policy-helper), the helper's output then replaces it; that section says how. Claude Code checks the sources in this order:
 
 1. Remote settings, delivered from claude.ai as [server-managed settings](/docs/en/server-managed-settings) or by a [Claude apps gateway](/docs/en/claude-apps-gateway)
 2. MDM or OS-level policies
