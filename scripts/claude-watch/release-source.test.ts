@@ -142,6 +142,31 @@ describe("selectClaudeReleaseCandidate", () => {
     expect(candidate?.release_notes_md).toBe("notes 1.2.0");
   });
 
+  test("validation can replay exact npm versions omitted from the GitHub feed", () => {
+    expect(() =>
+      selectClaudeReleaseCandidate({
+        githubReleases: [github("1.2.0", 2)],
+        npmMetadata: npm(),
+        previousVersion: "1.0.0",
+        currentVersion: "1.1.0",
+      }),
+    ).toThrow(ClaudeReleaseSourceDisagreementError);
+
+    const candidate = selectClaudeReleaseCandidate({
+      githubReleases: [github("1.2.0", 2)],
+      npmMetadata: npm(),
+      previousVersion: "1.0.0",
+      currentVersion: "1.1.0",
+      allowNpmOnlyExactVersions: true,
+    });
+
+    expect(candidate?.version).toBe("1.1.0");
+    expect(candidate?.release_url).toBe(
+      "https://github.com/anthropics/claude-code/releases",
+    );
+    expect(candidate?.release_notes_md).toContain("validation-only npm replay");
+  });
+
   test("returns null after the latest terminal version", () => {
     expect(
       selectClaudeReleaseCandidate({

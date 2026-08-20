@@ -219,6 +219,7 @@ async function selectCandidate(
     npmMetadata,
     previousVersion: args.previousVersion ?? state?.package_version ?? null,
     currentVersion: args.currentVersion,
+    allowNpmOnlyExactVersions: args.validationOnly,
   });
   if (selected) return selected;
   const latest = selectClaudeReleaseCandidate({

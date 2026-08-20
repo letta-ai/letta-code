@@ -26,6 +26,7 @@ export interface ReleaseSelectionOptions {
   processedPackageVersions?: string[];
   previousVersion?: string | null;
   currentVersion?: string | null;
+  allowNpmOnlyExactVersions?: boolean;
 }
 
 export class ClaudeReleaseSourceDisagreementError extends Error {
@@ -217,13 +218,16 @@ export function selectClaudeReleaseCandidate(
   const currentVersion = options.currentVersion ?? null;
   const terminalVersion =
     options.previousVersion ?? options.processedPackageVersions?.at(-1) ?? null;
+  const allowNpmOnlyExactVersions =
+    options.allowNpmOnlyExactVersions === true && currentVersion !== null;
 
   if (
     options.previousVersion &&
-    (!githubReleases.some(
-      ({ tag_name }) => tag_name === options.previousVersion,
-    ) ||
-      !npmByVersion.has(options.previousVersion))
+    (!npmByVersion.has(options.previousVersion) ||
+      (!allowNpmOnlyExactVersions &&
+        !githubReleases.some(
+          ({ tag_name }) => tag_name === options.previousVersion,
+        )))
   ) {
     throw new ClaudeReleaseSourceDisagreementError(
       githubReleases.at(-1)?.tag_name ?? null,
@@ -237,12 +241,24 @@ export function selectClaudeReleaseCandidate(
     release = githubReleases.find(
       ({ tag_name }) => tag_name === currentVersion,
     );
-    if (!release || !npmByVersion.has(currentVersion)) {
+    const npmVersion = npmByVersion.get(currentVersion);
+    if (!npmVersion || (!release && !allowNpmOnlyExactVersions)) {
       throw new ClaudeReleaseSourceDisagreementError(
         githubReleases.at(-1)?.tag_name ?? null,
         options.npmMetadata.dist_tags.latest,
         `Explicit current version ${currentVersion} is not present in both sources.`,
       );
+    }
+    if (!release) {
+      return {
+        ...npmVersion,
+        release_url: "https://github.com/anthropics/claude-code/releases",
+        release_notes_md:
+          `Historical validation-only npm replay for ${currentVersion}; ` +
+          "this exact version is not retained in the GitHub release feed.",
+        release_published_at: npmVersion.published_at,
+        dist_tags: options.npmMetadata.dist_tags,
+      };
     }
   } else if (!terminalVersion) {
     release = githubReleases.find(
