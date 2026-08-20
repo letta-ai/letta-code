@@ -806,10 +806,9 @@ export async function captureClaudeRuntime(
       }
     }
     const doctorResult = await runner(sandboxed(plan.doctor));
-    if (doctorResult.timedOut || doctorResult.truncated)
-      checkResult(doctorResult, plan.doctor.label);
+    if (doctorResult.truncated) checkResult(doctorResult, plan.doctor.label);
     const autoResult = await runner(sandboxed(plan.autoModeDefaults));
-    if (autoResult.timedOut || autoResult.truncated)
+    if (autoResult.truncated)
       checkResult(autoResult, plan.autoModeDefaults.label);
 
     let init: ClaudeRuntimeSnapshot["init"] = null;
@@ -875,13 +874,15 @@ export async function captureClaudeRuntime(
       help_hash: hash(normalizedHelp),
       doctor: {
         exit_code: doctorResult.exitCode ?? -1,
-        summary: normalizeDoctorVersion(
-          doctorSummary(doctorResult, plan.doctor.env),
-          options.version,
-        ),
+        summary: doctorResult.timedOut
+          ? "timed_out"
+          : normalizeDoctorVersion(
+              doctorSummary(doctorResult, plan.doctor.env),
+              options.version,
+            ),
       },
       auto_mode_defaults:
-        autoResult.exitCode === 0
+        !autoResult.timedOut && autoResult.exitCode === 0
           ? extractAutoModeDefaults(autoResult.stdout)
           : null,
       init,
