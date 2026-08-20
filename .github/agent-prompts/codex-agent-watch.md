@@ -98,7 +98,7 @@ If you create a PR:
 - create a new branch from the checked-out branch
 - use `GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}"` for GitHub CLI commands so the sandbox injects the watcher-specific GitHub credentials
 - verify the created PR author matches the Expected GitHub login from the run inputs; if it does not, close the PR instead of reporting success
-- before the tracker update, request every comma-separated GitHub reviewer from the run inputs with `GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}" gh pr edit "$PR_URL" --add-reviewer <login>`; skip this only when the configured value is `none`
+- before the tracker update, request every comma-separated GitHub reviewer from the run inputs with `GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}" gh api --method POST "repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers" -f "reviewers[]=<login>"`; skip this only when the configured value is `none`
 - keep the diff minimal and focused on this Codex release
 - do not include unrelated cleanup
 - use a Conventional Commit PR title, for example `chore(tools): align Codex schema wording`

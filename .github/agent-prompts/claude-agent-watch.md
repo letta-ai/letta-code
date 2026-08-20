@@ -110,7 +110,7 @@ If a local change is required:
 - use a Conventional Commit title
 - open the PR as a draft
 - immediately verify `draft: true` and that the PR author matches the Expected GitHub login from the run inputs; if either is wrong, fix or close it instead of reporting success
-- before the tracker update, request every comma-separated GitHub reviewer from the run inputs with `GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}" gh pr edit "$PR_URL" --add-reviewer <login>`; skip this only when the configured value is `none`
+- before the tracker update, request every comma-separated GitHub reviewer from the run inputs with `GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}" gh api --method POST "repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers" -f "reviewers[]=<login>"`; skip this only when the configured value is `none`
 - include `Claude-watch: <candidate-id>`, package version, release URL, docs/runtime evidence, and validation in the body
 - never commit generated snapshots or analysis files to the parity branch
 
