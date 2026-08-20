@@ -103,9 +103,7 @@ export function upsertTrackerEntry(
 export function renderTrackerBody(state: TrackerState): string {
   const normalized = normalizeState(state);
   const parts: string[] = [
-    "Central tracker for the Amelia-driven Codex upstream drift watch experiment.",
-    "",
-    "The legacy per-release `codex-release-watch.yml` issue workflow is still enabled as the baseline while this tracker bakes off the new automation path.",
+    "Central tracker for Amelia-driven Codex upstream drift monitoring.",
     "",
     renderLastChecked(normalized),
     "",

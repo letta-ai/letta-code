@@ -9,7 +9,6 @@ import {
   type ModelsJson,
   type Verdict,
 } from "./diff-models-json.ts";
-import type { PathChangeSummary, RenderInput } from "./render-issue.ts";
 
 export const CODEX_REPO = "openai/codex";
 export const DEFAULT_TARGET_REPO =
@@ -37,9 +36,22 @@ export interface AnalyzeCodexReleaseOptions {
   currentTag: string | null;
 }
 
-export interface CodexWatchAnalysis extends RenderInput {
+export interface PathChangeSummary {
+  path: string;
+  commits: string[];
+}
+
+export interface CodexWatchAnalysis {
+  previous_tag: string;
+  current_tag: string;
+  release_url: string;
+  release_notes_md: string;
   verdict: Verdict;
   models_diff: ModelsDiff | null;
+  prompt_md_changed: boolean;
+  prompt_md_diff_preview: string | null;
+  path_changes: PathChangeSummary[];
+  workflow_run_url: string;
   compare_url: string;
   changed_files: string[];
 }
