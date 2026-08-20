@@ -501,6 +501,25 @@ describe("capture orchestration", () => {
     ).toBe(false);
   });
 
+  test("captures optional diagnostic timeouts without losing runtime evidence", async () => {
+    const root = await temporaryRoot();
+    const base = successfulRunner();
+    const runner: CommandRunner = async (spec) =>
+      spec.label === "doctor" || spec.label === "auto-mode-defaults"
+        ? result("", { exitCode: null, timedOut: true, signal: "SIGTERM" })
+        : base(spec);
+    const captured = await captureClaudeRuntime({
+      version: "1.2.3",
+      tempDir: root,
+      env: { PATH: process.env.PATH },
+      runner,
+      requireAuth: false,
+    });
+
+    expect(captured?.doctor).toEqual({ exit_code: -1, summary: "timed_out" });
+    expect(captured?.auto_mode_defaults).toBeNull();
+  });
+
   test("nonzero authenticated stream fails safely", async () => {
     const root = await temporaryRoot();
     const base = successfulRunner();
