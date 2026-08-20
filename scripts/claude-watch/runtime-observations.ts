@@ -45,28 +45,36 @@ export function evaluateProbe(
     const list = calls.find(
       (call, index) => call.name === "TaskList" && index > deletedIndex,
     );
+    const metadataUpdate = calls.find(
+      (call) =>
+        call.name === "TaskUpdate" &&
+        record(call.input)?.metadata !== undefined,
+    );
     const resultFor = (id: string | null | undefined) =>
       parsed.toolResults.find((candidate) => candidate.toolUseId === id);
     const beforeResult = resultFor(beforeGet?.id);
     const afterResult = resultFor(afterGet?.id);
     const listResult = resultFor(list?.id);
-    const metadata = findMetadata(parseJsonResult(beforeResult?.content ?? ""));
+    const metadataResult = resultFor(metadataUpdate?.id);
+    const metadata = record(record(metadataUpdate?.input)?.metadata);
     return {
       complete:
         calls.some((call) => call.name === "TaskCreate") &&
         calls.some((call) => call.name === "TaskUpdate") &&
         deletedIndex >= 0 &&
+        metadataResult !== undefined &&
         beforeResult !== undefined &&
         afterResult !== undefined &&
         listResult !== undefined,
       assertions: {
-        metadata_arbitrary_values:
+        metadata_arbitrary_values_accepted:
           metadata?.count === 3 &&
           Array.isArray(metadata.flags) &&
           metadata.flags[0] === "ready" &&
-          record(metadata.details)?.source === "claude-watch",
-        metadata_null_deleted:
-          metadata?.keep === "yes" && !("probe" in (metadata ?? {})),
+          record(metadata.details)?.source === "claude-watch" &&
+          metadataResult?.isError === false,
+        metadata_null_update_accepted:
+          metadata?.probe === null && metadataResult?.isError === false,
         deleted_task_get_errors:
           afterResult?.isError === true ||
           /not[ -]?found|does not exist|deleted/iu.test(
@@ -81,35 +89,6 @@ export function evaluateProbe(
     complete: parsed.toolCalls.length > 0 && parsed.toolResults.length > 0,
     assertions: {},
   };
-}
-
-function parseJsonResult(content: string): unknown {
-  try {
-    return JSON.parse(content);
-  } catch {
-    const start = content.indexOf("{");
-    const end = content.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(content.slice(start, end + 1));
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
-}
-
-function findMetadata(value: unknown): Record<string, unknown> | null {
-  const object = record(value);
-  if (!object) return null;
-  const metadata = record(object.metadata);
-  if (metadata) return metadata;
-  for (const child of Object.values(object)) {
-    const found = findMetadata(child);
-    if (found) return found;
-  }
-  return null;
 }
 
 function record(value: unknown): Record<string, unknown> | null {

@@ -280,7 +280,15 @@ describe("stream parsing and normalization", () => {
         {
           id: "metadata",
           name: "TaskUpdate",
-          input: { taskId: "1", metadata: { probe: null } },
+          input: {
+            taskId: "1",
+            metadata: {
+              probe: null,
+              count: 3,
+              flags: ["ready"],
+              details: { source: "claude-watch" },
+            },
+          },
         },
         { id: "before", name: "TaskGet", input: { taskId: "1" } },
         {
@@ -322,8 +330,8 @@ describe("stream parsing and normalization", () => {
     expect(evaluation).toEqual({
       complete: true,
       assertions: {
-        metadata_arbitrary_values: true,
-        metadata_null_deleted: true,
+        metadata_arbitrary_values_accepted: true,
+        metadata_null_update_accepted: true,
         deleted_task_get_errors: true,
         deleted_task_absent: true,
       },
