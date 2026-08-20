@@ -12,7 +12,10 @@ import {
   materializeStateFiles,
   resolveStateBranchTip,
 } from "./state-branch.ts";
-import type { ClaudeWatchStateSnapshot } from "./types.ts";
+import {
+  CLAUDE_WATCH_STATE_SCHEMA_VERSION,
+  type ClaudeWatchStateSnapshot,
+} from "./types.ts";
 
 function git(cwd: string, ...args: string[]): string {
   const result = spawnSync("git", ["-C", cwd, ...args], {
@@ -33,7 +36,7 @@ function git(cwd: string, ...args: string[]): string {
 
 function snapshot(candidateId: string): ClaudeWatchStateSnapshot {
   return {
-    schema_version: 1,
+    schema_version: CLAUDE_WATCH_STATE_SCHEMA_VERSION,
     candidate_id: candidateId,
     package_version: candidateId,
     npm_integrity: `sha512-${candidateId}`,
@@ -54,6 +57,7 @@ function snapshot(candidateId: string): ClaudeWatchStateSnapshot {
     fetched_at: "2026-08-01T00:00:00Z",
     workflow_run_url: "https://example.test/actions/1",
     state_commit_parent: null,
+    analysis_parent_sha: null,
   };
 }
 
@@ -137,6 +141,7 @@ describe("Claude state branch", () => {
       ).toMatchObject({
         candidate_id: "2.2.0",
         state_commit_parent: first.commitSha,
+        analysis_parent_sha: null,
       });
       expect(git(repo.clone, "rev-parse", "main")).toBe(mainBefore);
       expect(git(repo.clone, "branch", "--show-current")).toBe("main");

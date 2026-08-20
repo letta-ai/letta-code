@@ -1,3 +1,5 @@
+export const CLAUDE_WATCH_STATE_SCHEMA_VERSION = 2;
+
 export type ClaudeWatchVerdict =
   | "no-op"
   | "prompt review needed"
@@ -150,7 +152,10 @@ export interface ClaudeWatchStateSnapshot {
   runtime: ClaudeRuntimeSnapshot | null;
   fetched_at: string;
   workflow_run_url: string;
+  /** Physical parent on the durable state branch. */
   state_commit_parent: string | null;
+  /** Snapshot used for semantic diffing; undefined legacy snapshots use the physical parent. */
+  analysis_parent_sha?: string | null;
 }
 
 export interface ClaudeWatchAnalysis {

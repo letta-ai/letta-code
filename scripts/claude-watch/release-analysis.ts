@@ -4,13 +4,14 @@ import {
   loadStateFilesAtCommit,
   loadStateSnapshotAtCommit,
 } from "./state-branch.ts";
-import type {
-  ClaudeDocsSnapshot,
-  ClaudeReleaseCandidate,
-  ClaudeRuntimeSnapshot,
-  ClaudeWatchAnalysis,
-  ClaudeWatchStateSnapshot,
-  ClaudeWatchVerdict,
+import {
+  CLAUDE_WATCH_STATE_SCHEMA_VERSION,
+  type ClaudeDocsSnapshot,
+  type ClaudeReleaseCandidate,
+  type ClaudeRuntimeSnapshot,
+  type ClaudeWatchAnalysis,
+  type ClaudeWatchStateSnapshot,
+  type ClaudeWatchVerdict,
 } from "./types.ts";
 
 export interface AnalyzeClaudeCandidateOptions {
@@ -43,7 +44,7 @@ export function buildClaudeStateSnapshot(
   runtime: ClaudeRuntimeSnapshot | null,
 ): ClaudeWatchStateSnapshot {
   return {
-    schema_version: 1,
+    schema_version: CLAUDE_WATCH_STATE_SCHEMA_VERSION,
     candidate_id: analysis.candidate_id,
     package_version: analysis.current_version,
     npm_integrity: analysis.npm_integrity,
@@ -57,6 +58,7 @@ export function buildClaudeStateSnapshot(
     fetched_at: new Date().toISOString(),
     workflow_run_url: analysis.workflow_run_url,
     state_commit_parent: analysis.state_base_sha,
+    analysis_parent_sha: analysis.state_base_sha,
   };
 }
 
@@ -120,12 +122,16 @@ export function rebuildClaudeAnalysisFromState(
   if (!current) {
     throw new Error(`No valid Claude state snapshot at ${stateCommitSha}`);
   }
-  const previous = current.state_commit_parent
-    ? loadStateSnapshotAtCommit(repoPath, current.state_commit_parent)
+  const analysisParentSha =
+    current.analysis_parent_sha === undefined
+      ? current.state_commit_parent
+      : current.analysis_parent_sha;
+  const previous = analysisParentSha
+    ? loadStateSnapshotAtCommit(repoPath, analysisParentSha)
     : null;
   const currentFiles = loadStateFilesAtCommit(repoPath, stateCommitSha);
-  const previousFiles = current.state_commit_parent
-    ? loadStateFilesAtCommit(repoPath, current.state_commit_parent)
+  const previousFiles = analysisParentSha
+    ? loadStateFilesAtCommit(repoPath, analysisParentSha)
     : {};
   const candidate: ClaudeReleaseCandidate = {
     version: current.package_version,
@@ -145,7 +151,7 @@ export function rebuildClaudeAnalysisFromState(
     currentSources: sourceFiles(currentFiles),
     currentRuntime: current.runtime,
     workflowRunUrl: current.workflow_run_url,
-    stateBaseSha: current.state_commit_parent,
+    stateBaseSha: analysisParentSha,
   });
   if (analysis.candidate_id !== current.candidate_id) {
     throw new Error(
