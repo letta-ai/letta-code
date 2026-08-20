@@ -2,6 +2,11 @@ import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import { fetchRunErrorInfo } from "@/agent/approval-recovery";
+import {
+  CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN,
+  formatPlanRotationNotice,
+  rotateChatGPTPlanOnQuotaLimit,
+} from "@/agent/chatgpt-plan-rotation";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import {
   getStreamToolContextId,
@@ -154,6 +159,7 @@ async function handleIncomingMessageInner(
   let postStopApprovalRecoveryRetries = 0,
     llmApiErrorRetries = 0,
     emptyResponseRetries = 0,
+    chatgptPlanSwaps = 0,
     lastApprovalContinuationAccepted = false,
     activeDequeuedBatchId = dequeuedBatchId;
   const turnCorrelation =
@@ -661,6 +667,70 @@ async function handleIncomingMessageInner(
             stream as Stream<LettaStreamingResponse>,
           );
           continue;
+        }
+
+        // ChatGPT plan rotation: quota-limit errors are non-retryable, so
+        // handle them before the transient-retry classification by swapping
+        // the agent to the same model on a sibling connected ChatGPT plan.
+        if (chatgptPlanSwaps < CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN) {
+          const rotation = await rotateChatGPTPlanOnQuotaLimit({
+            agentId,
+            currentHandle: null,
+            detail: errorDetail,
+          });
+          if (rotation) {
+            chatgptPlanSwaps += 1;
+            emitRecoverableRetryNotice(socket, runtime, {
+              kind: "transient_provider_retry",
+              message: formatPlanRotationNotice(rotation),
+              reason: "llm_api_error",
+              attempt: chatgptPlanSwaps,
+              maxAttempts: CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN,
+              delayMs: 0,
+              runId: lastRunId || undefined,
+              agentId,
+              conversationId,
+            });
+
+            if (turnAbortSignal.aborted) {
+              throw new Error("Cancelled by user");
+            }
+            turnInput = refreshTurnInputOtidsForNewRequest(turnInput);
+            setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
+              agent_id: agentId,
+              conversation_id: conversationId,
+            });
+            const retryInputWithSkillContent = injectQueuedSkillContent(
+              turnInput.messages,
+              { socket, runtime, agentId, conversationId },
+            );
+            const retrySendResult = await turnInputSender.send(
+              retryInputWithSkillContent,
+            );
+            turnInput = updateTurnInputMessagesPreservingOtids(
+              turnInput,
+              retryInputWithSkillContent,
+            );
+            const retryStream = turnInputSender.accept(retrySendResult);
+            if (!retryStream) {
+              return;
+            }
+            stream = retryStream;
+            pendingNormalizationInterruptedToolCallIds = [];
+            markAwaitingAcceptedApprovalContinuationRunId(
+              runtime,
+              turnLease,
+              turnInput.messages,
+            );
+            setTurnLoopStatus(runtime, turnLease, "PROCESSING_API_RESPONSE", {
+              agent_id: agentId,
+              conversation_id: conversationId,
+            });
+            turnToolContextId = getStreamToolContextId(
+              stream as Stream<LettaStreamingResponse>,
+            );
+            continue;
+          }
         }
 
         const retriable = await isRetriablePostStopError(

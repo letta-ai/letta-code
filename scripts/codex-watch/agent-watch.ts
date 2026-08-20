@@ -2,8 +2,8 @@
 /**
  * Amelia-driven Codex release watcher entrypoint.
  *
- * This runs alongside the legacy per-release issue workflow. It uses a central
- * tracker issue for state and only asks Amelia to review non-noop releases.
+ * Uses a central tracker issue for state and only asks Amelia to review
+ * non-noop releases.
  */
 
 import { appendFileSync, writeFileSync } from "node:fs";

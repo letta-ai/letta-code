@@ -1,9 +1,33 @@
 import { describe, expect, test } from "bun:test";
+import type {
+  EnvironmentConnection,
+  listEnvironments,
+} from "@/backend/api/environments";
 import {
   createAgentSandbox,
+  resolveDesktopEnvironmentConnectionId,
   teleportToEnvironment,
 } from "@/backend/api/environments";
 import type { apiRequest } from "@/backend/api/request";
+
+function environment(
+  overrides: Partial<EnvironmentConnection> = {},
+): EnvironmentConnection {
+  const now = Date.now();
+  return {
+    id: "env-1",
+    connectionId: "conn-1",
+    deviceId: "device-1",
+    connectionName: "Environment",
+    organizationId: "org-1",
+    podId: "pod-1",
+    connectedAt: now,
+    lastHeartbeat: now,
+    lastSeenAt: now,
+    firstSeenAt: now,
+    ...overrides,
+  };
+}
 
 describe("Cloud sandbox environment resolution", () => {
   test("sends conversationId in the create request body", async () => {
@@ -54,6 +78,74 @@ describe("Cloud sandbox environment resolution", () => {
     await createAgentSandbox("agent-1", { conversationId: "default" }, request);
 
     expect(bodies).toEqual([{}]);
+  });
+});
+
+describe("Desktop environment resolution", () => {
+  test("resolves the one online Desktop listener to its Cloud lease", async () => {
+    const list = (async (options) => {
+      expect(options).toEqual({ limit: 100, onlineOnly: true });
+      return {
+        connections: [
+          environment({
+            connectionId: "conn-desktop",
+            listenerInstanceId: "desktop-direct-cloud:install-1",
+            connectionName: "Caren's Mac",
+          }),
+          environment({
+            id: "env-server",
+            connectionId: "conn-server",
+            listenerInstanceId: "desktop-primary:install-1",
+          }),
+        ],
+        hasNextPage: false,
+      };
+    }) as typeof listEnvironments;
+
+    const result = await resolveDesktopEnvironmentConnectionId(list);
+
+    expect(result.connectionId).toBe("conn-desktop");
+    expect(result.environment.connectionName).toBe("Caren's Mac");
+  });
+
+  test("requires Desktop Remote Access to be online", async () => {
+    const list = (async () => ({
+      connections: [
+        environment({
+          connectionId: null,
+          listenerInstanceId: "desktop-direct-cloud:install-1",
+          lastHeartbeat: null,
+        }),
+      ],
+      hasNextPage: false,
+    })) as typeof listEnvironments;
+
+    await expect(resolveDesktopEnvironmentConnectionId(list)).rejects.toThrow(
+      "enable Remote Access",
+    );
+  });
+
+  test("requires an explicit target when several Desktops are online", async () => {
+    const list = (async () => ({
+      connections: [
+        environment({
+          connectionId: "conn-desktop-1",
+          listenerInstanceId: "desktop-direct-cloud:install-1",
+          connectionName: "MacBook",
+        }),
+        environment({
+          id: "env-2",
+          connectionId: "conn-desktop-2",
+          listenerInstanceId: "desktop-direct-cloud:install-2",
+          connectionName: "Mac Mini",
+        }),
+      ],
+      hasNextPage: false,
+    })) as typeof listEnvironments;
+
+    await expect(resolveDesktopEnvironmentConnectionId(list)).rejects.toThrow(
+      "Multiple Desktop environments are online",
+    );
   });
 });
 

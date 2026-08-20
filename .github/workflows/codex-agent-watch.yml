@@ -61,7 +61,6 @@ jobs:
         env:
           TRACKER_ISSUE: ${{ steps.detect.outputs.tracker_issue }}
           TRACKER_ISSUE_URL: ${{ steps.detect.outputs.tracker_issue_url }}
-          ANALYSIS_FILE: ${{ steps.detect.outputs.analysis_file }}
           CURRENT_TAG: ${{ steps.detect.outputs.current_tag }}
           PREVIOUS_TAG: ${{ steps.detect.outputs.previous_tag }}
           VERDICT: ${{ steps.detect.outputs.verdict }}
@@ -73,36 +72,34 @@ jobs:
             echo "## Run inputs"
             echo
             echo "- Tracker issue: #$TRACKER_ISSUE ($TRACKER_ISSUE_URL)"
-            echo "- Analysis file: $ANALYSIS_FILE"
             echo "- Current tag: $CURRENT_TAG"
             echo "- Previous tag: $PREVIOUS_TAG"
             echo "- Detector verdict: $VERDICT"
             echo
-            echo "The same values are available in the environment as TRACKER_ISSUE, TRACKER_ISSUE_URL, ANALYSIS_FILE, CURRENT_TAG, PREVIOUS_TAG, and VERDICT."
+            echo "## Sandbox bootstrap"
             echo
-            echo "## Analysis JSON"
+            echo "Run this exact block before reviewing the release:"
             echo
-            echo '```json'
-            cat "$ANALYSIS_FILE"
+            echo '```bash'
+            echo 'set -euo pipefail'
+            echo 'rm -rf /tmp/letta-code-codex-watch'
+            echo 'GH_TOKEN="$GITHUB_TOKEN" gh repo clone letta-ai/letta-code /tmp/letta-code-codex-watch'
+            echo 'cd /tmp/letta-code-codex-watch'
+            echo 'bun install --frozen-lockfile'
+            echo "GH_TOKEN=\"\$GITHUB_TOKEN\" GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=letta-ai/letta-code GITHUB_RUN_ID=\"$GITHUB_RUN_ID\" bun scripts/codex-watch/agent-watch.ts --dry-run --since \"$PREVIOUS_TAG\" --current \"$CURRENT_TAG\" --analysis-file /tmp/codex-watch-analysis.json > /tmp/codex-watch-analysis.log"
+            echo "jq -e '.current_tag == \"$CURRENT_TAG\" and .previous_tag == \"$PREVIOUS_TAG\" and (.path_changes | type == \"array\")' /tmp/codex-watch-analysis.json > /dev/null"
             echo '```'
             echo "AMELIA_PROMPT_EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Ask Amelia to review actionable Codex drift
         if: steps.detect.outputs.should_run_agent == 'true'
-        uses: letta-ai/letta-code-action@daa80f29e345315623ff759f5ecf5018946bbc15
-        env:
-          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
-          TRACKER_ISSUE: ${{ steps.detect.outputs.tracker_issue }}
-          TRACKER_ISSUE_URL: ${{ steps.detect.outputs.tracker_issue_url }}
-          ANALYSIS_FILE: ${{ steps.detect.outputs.analysis_file }}
-          CURRENT_TAG: ${{ steps.detect.outputs.current_tag }}
-          PREVIOUS_TAG: ${{ steps.detect.outputs.previous_tag }}
-          VERDICT: ${{ steps.detect.outputs.verdict }}
+        uses: letta-ai/letta-code-action@4b8e508a523ff576fee09be1432d6f39158c272c
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
           github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
           agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
+          environment: cloud
           track_progress: ""
           tracking_comment: "false"
           model: auto

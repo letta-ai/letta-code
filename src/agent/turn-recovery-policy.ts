@@ -526,3 +526,127 @@ export function shouldAttemptApprovalRecovery(opts: {
 }): boolean {
   return opts.approvalPendingDetected && opts.retries < opts.maxRetries;
 }
+
+// ── ChatGPT plan quota rotation ─────────────────────────────────────
+
+const CHATGPT_USAGE_LIMIT_FRAGMENT = "usage_limit_reached";
+const CHATGPT_OAUTH_PROVIDER_TYPE = "chatgpt_oauth";
+const BYOK_PROVIDER_CATEGORY = "byok";
+
+export interface ChatGPTUsageLimitDetail {
+  planType: string | null;
+  /** Absolute reset time in ms since epoch, when the server reported one. */
+  resetsAt: number | null;
+}
+
+/**
+ * Best-effort parse of a ChatGPT usage-limit error detail string, e.g.
+ * `ChatGPT rate limit exceeded: {"error":{"type":"usage_limit_reached",
+ * "plan_type":"plus","resets_at":1700000000,"resets_in_seconds":3600}}`.
+ * Returns null unless the detail is a string containing
+ * `usage_limit_reached` (case-insensitive); reset fields are optional and
+ * parse failures degrade to `{ planType: null, resetsAt: null }`.
+ */
+export function parseChatGPTUsageLimitDetail(
+  detail: unknown,
+): ChatGPTUsageLimitDetail | null {
+  if (typeof detail !== "string") return null;
+  if (!detail.toLowerCase().includes(CHATGPT_USAGE_LIMIT_FRAGMENT)) {
+    return null;
+  }
+
+  const fallback: ChatGPTUsageLimitDetail = { planType: null, resetsAt: null };
+
+  const jsonStart = detail.indexOf("{");
+  const jsonEnd = detail.lastIndexOf("}");
+  if (jsonStart === -1 || jsonEnd <= jsonStart) return fallback;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(detail.slice(jsonStart, jsonEnd + 1));
+  } catch {
+    return fallback;
+  }
+  if (typeof parsed !== "object" || parsed === null) return fallback;
+
+  const errorField = (parsed as Record<string, unknown>).error;
+  const errorObj =
+    typeof errorField === "object" && errorField !== null
+      ? (errorField as Record<string, unknown>)
+      : (parsed as Record<string, unknown>);
+
+  const planType =
+    typeof errorObj.plan_type === "string" && errorObj.plan_type.length > 0
+      ? errorObj.plan_type
+      : null;
+
+  let resetsAt: number | null = null;
+  if (typeof errorObj.resets_at === "number" && errorObj.resets_at > 0) {
+    resetsAt = errorObj.resets_at * 1000;
+  } else if (
+    typeof errorObj.resets_in_seconds === "number" &&
+    errorObj.resets_in_seconds > 0
+  ) {
+    resetsAt = Date.now() + errorObj.resets_in_seconds * 1000;
+  }
+
+  return { planType, resetsAt };
+}
+
+export interface ChatGPTFailoverModelEntry {
+  handle: string;
+  providerType?: string;
+  providerCategory?: string;
+}
+
+function isChatGPTByokModel(model: ChatGPTFailoverModelEntry): boolean {
+  return (
+    model.providerType === CHATGPT_OAUTH_PROVIDER_TYPE &&
+    model.providerCategory === BYOK_PROVIDER_CATEGORY
+  );
+}
+
+/**
+ * Pick a sibling ChatGPT plan handle to fail over to when the current plan
+ * hits its usage limit. The current handle must itself resolve to a
+ * chatgpt_oauth BYOK model in `models` (otherwise returns null). Siblings
+ * share the same model suffix (after the first `/`) under a different
+ * provider prefix, are chatgpt_oauth + byok, and are not in
+ * `exhaustedProviders`. One sibling is chosen uniformly at random.
+ */
+export function selectChatGPTQuotaFailoverHandle(params: {
+  currentHandle: string;
+  models: ChatGPTFailoverModelEntry[];
+  exhaustedProviders: ReadonlySet<string>;
+  random?: () => number;
+}): string | null {
+  const { currentHandle, models, exhaustedProviders } = params;
+  const random = params.random ?? Math.random;
+
+  const slashIndex = currentHandle.indexOf("/");
+  if (slashIndex <= 0) return null;
+  const currentProvider = currentHandle.slice(0, slashIndex);
+  const modelSuffix = currentHandle.slice(slashIndex + 1);
+  if (!modelSuffix) return null;
+
+  const currentEntry = models.find((m) => m.handle === currentHandle);
+  if (!currentEntry || !isChatGPTByokModel(currentEntry)) return null;
+
+  const candidates = models.filter((m) => {
+    if (!isChatGPTByokModel(m)) return false;
+    const idx = m.handle.indexOf("/");
+    if (idx <= 0) return false;
+    const provider = m.handle.slice(0, idx);
+    if (provider === currentProvider) return false;
+    if (exhaustedProviders.has(provider)) return false;
+    return m.handle.slice(idx + 1) === modelSuffix;
+  });
+
+  if (candidates.length === 0) return null;
+
+  const index = Math.min(
+    Math.floor(random() * candidates.length),
+    candidates.length - 1,
+  );
+  return candidates[index]?.handle ?? null;
+}

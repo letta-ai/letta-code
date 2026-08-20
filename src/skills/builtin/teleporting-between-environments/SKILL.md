@@ -1,6 +1,6 @@
 ---
 name: teleporting-between-environments
-description: Moves the current agent conversation to Cloud or a Cloud-registered remote environment while coordinating machine-local files and setup. Use when the user says "let's continue this task on cloud", asks to continue or move work on another connected computer, wants to teleport between environments, or needs to upload or download artifacts before a handoff.
+description: Moves the current agent conversation to Cloud, Desktop Local, or another Cloud-registered environment while coordinating machine-local files and setup. Use when the user says "let's continue this task on cloud", asks to continue or move work on another connected computer, wants to teleport between environments, or needs to upload or download artifacts before a handoff.
 ---
 
 # Teleporting Between Environments
@@ -19,17 +19,16 @@ Teleport the current agent and conversation without losing conversational memory
 ```bash
 letta teleport list
 letta teleport cloud
+letta teleport local
 letta teleport <environment>
 ```
 
-- `list`: show accessible online remote targets. Desktop Local is excluded.
+- `list`: show accessible online Cloud-registered targets.
 - `cloud`: create or resume this conversation’s managed Cloud sandbox.
+- `local`: target the one online Letta Desktop environment. Desktop Remote Access must be enabled. If several Desktop environments are online, use `list` and target one explicitly.
 - `<environment>`: target a listed remote environment by its friendly selector.
 
-Teleport cannot target Desktop Local yet. Once the conversation runs in Cloud,
-the agent cannot programmatically return to Desktop Local. The user can still
-switch manually with Desktop's environment picker. Do not run or recommend
-`letta teleport back`.
+Do not run or recommend `letta teleport back`; return to Desktop with `local`.
 
 Transfer files with the existing sandbox commands:
 
@@ -80,9 +79,24 @@ If the command reports an offline, stale, unsupported, same-source, or startup e
 
 ### Return to Desktop Local
 
-The agent cannot initiate this transition. Retain the next local action and ask
-the user to select Local from Desktop's environment picker. After continuation
-locally, resume the task from the retained context.
+1. Retain the next local action and any setup the Desktop environment needs.
+2. Confirm Desktop is open with Remote Access enabled. If more than one Desktop environment is online, use `letta teleport list` and choose one explicitly.
+3. As the final action, run:
+
+   ```bash
+   letta teleport local
+   ```
+
+### Run a separate headless turn on an environment
+
+Use `--environment` when a separate headless invocation, rather than the current conversation handoff, should execute on Cloud or another online environment:
+
+```bash
+letta -p --conversation <id> --environment cloud "<prompt>"
+letta -p --conversation <id> --environment <name|device-id|connection-id> "<prompt>"
+```
+
+This routes that headless message only. Use `letta teleport ...` to move the currently executing conversation.
 
 ### Continue on another connected computer
 
