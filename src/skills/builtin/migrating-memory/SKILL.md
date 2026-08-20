@@ -21,6 +21,7 @@ If the user wants only selected memories, stop before staging the conversion. Pu
 - The current `$MEMORY_DIR` and `$AGENT_ID` are the target. If the intended target is another agent, open that agent before continuing.
 - Work from committed source and target repositories. Resolve dirty files before staging.
 - Stage the conversion in a separate review directory. Leave the source and target repositories unchanged during review.
+- Review the prepared memory in order: flatten `system/` and repair its cross-links first, then write the `MEMORY.md` indexes for the resulting layout.
 - Inspect every generated `MEMORY.md` and TODO description.
 - Inspect every added, modified, and deleted path in `target_changes`. Stop if any target deletion is unexpected.
 - Replace generated index text with short overviews and relative Markdown links before applying.
@@ -66,7 +67,21 @@ The adjacent manifest records both repository paths and commits. The report incl
 
 ### 4. Review and validate
 
-Fix generated names, TODO descriptions, overview text, and links. `MEMORY.md` has no frontmatter. Every other memory Markdown file has exactly `name` and `description` frontmatter.
+Review the prepared tree in this order. Do not write the indexes against the old `system/` layout and then flatten it afterward.
+
+#### 4a. Flatten `system/` and repair links
+
+Inspect every entry in the stage report's `flattened` list. Confirm that every committed file under `system/` has a corresponding root-level destination and that no source file was omitted. Treat the prepared flattened files as the canonical layout for all remaining review work.
+
+Review links after the move. Update every relative Markdown link, reference-style link, and wiki link that pointed into `system/` so it points to the flattened destination. Also update links between moved files when their relative locations changed. Do not leave old `system/...` paths behind unless they are literal historical examples rather than navigational links.
+
+Fix generated names and TODO descriptions on the flattened tree before generating index content. Every memory Markdown file other than `MEMORY.md` has exactly `name` and `description` frontmatter.
+
+#### 4b. Generate the `MEMORY.md` hierarchy
+
+Only after the flattened paths and cross-links are final, replace every generated `MEMORY.md` placeholder with the index for that directory's final contents. `MEMORY.md` has no frontmatter.
+
+Every memory file must be represented by a link in the nearest `MEMORY.md`: a root file belongs in root `MEMORY.md`, while a nested file belongs in the `MEMORY.md` in its containing directory. Every child memory directory must likewise be represented in its parent's `MEMORY.md` by a link to the child's `MEMORY.md`. This is exhaustive inventory, not a curated subset. `skills/` is excluded because Agent Skills are discovered separately and its prepared contents must remain unchanged.
 
 The index and frontmatter descriptions have different jobs. A `MEMORY.md` routing note tells the agent what exists and why it might open that file before loading it. Keep it terse. A file's frontmatter description briefly explains what the file contains once selected. Do not copy the frontmatter description into the index. Do not narrate the migration, conversion, source agent, or review process in the index; describe the memory as it exists now while preserving source content that genuinely concerns those subjects.
 
@@ -86,6 +101,20 @@ name: "Human"
 description: "Durable context about the person I work with."
 ---
 ```
+
+#### 4c. Verify the complete tree
+
+Before running the validator, inspect the entire prepared tree and verify all of the following:
+
+- Every memory directory, including the root and every nested directory outside `skills/`, contains a `MEMORY.md`.
+- Every memory Markdown file is linked exactly once from the nearest `MEMORY.md`.
+- Every child memory directory is linked from its parent index through the child's `MEMORY.md`.
+- Every local Markdown link, reference-style link, and wiki link resolves to a real prepared file after accounting for its source file's directory. There are no stale `system/` destinations.
+- Every original committed `system/` file appears in the `flattened` report and exists at the reported destination.
+- Every non-skill Markdown file has valid V2 frontmatter, while every `MEMORY.md` has none.
+- The prepared `skills/` tree is byte-for-byte unchanged from the committed source.
+
+If any check fails, fix the prepared tree and repeat the complete verification. Do not apply a migration with an incomplete index or a broken local cross-link.
 
 ```text
 node "<SKILL_DIR>/scripts/memfs-v2.mjs" validate --prepared "<REVIEW_DIR>"
