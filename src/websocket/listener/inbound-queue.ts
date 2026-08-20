@@ -4,10 +4,19 @@ import type { ConversationRuntime, IncomingMessage } from "./types";
 export function getInboundClientMessageId(
   incoming: IncomingMessage,
 ): string | undefined {
-  return incoming.messages.find(
-    (payload): payload is MessageCreate & { client_message_id?: string } =>
-      "content" in payload,
-  )?.client_message_id;
+  return getInboundClientMessageIds(incoming)[0];
+}
+
+export function getInboundClientMessageIds(
+  incoming: IncomingMessage,
+): string[] {
+  return incoming.messages.flatMap((payload) => {
+    if (!("content" in payload)) return [];
+    const clientMessageId = (
+      payload as MessageCreate & { client_message_id?: string }
+    ).client_message_id;
+    return clientMessageId ? [clientMessageId] : [];
+  });
 }
 
 export function enqueueInboundUserMessage(

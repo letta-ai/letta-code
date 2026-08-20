@@ -9,6 +9,7 @@ import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
 import { getInboundImageFailureMode } from "./image-policy";
+import { getInboundClientMessageIds } from "./inbound-queue";
 import {
   emitDequeuedUserMessage,
   emitLoopStatusUpdate,
@@ -216,6 +217,27 @@ function buildQueuedTurnMessage(
   };
 }
 
+function getDequeuedClientMessageIds(
+  runtime: ConversationRuntime,
+  batch: DequeuedBatch,
+): string[] {
+  const clientMessageIds = new Set<string>();
+  for (const item of batch.items) {
+    const queuedMessage = runtime.queuedMessagesByItemId.get(item.id);
+    const inboundClientMessageIds = queuedMessage
+      ? getInboundClientMessageIds(queuedMessage)
+      : [];
+    for (const clientMessageId of inboundClientMessageIds.length > 0
+      ? inboundClientMessageIds
+      : item.clientMessageId
+        ? [item.clientMessageId]
+        : []) {
+      clientMessageIds.add(clientMessageId);
+    }
+  }
+  return [...clientMessageIds];
+}
+
 export function shouldQueueInboundMessage(parsed: IncomingMessage): boolean {
   return parsed.messages.some((payload) => "content" in payload);
 }
@@ -345,9 +367,16 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     return null;
   }
 
+  const clientMessageIds = getDequeuedClientMessageIds(runtime, dequeuedBatch);
   const queuedTurn = buildQueuedTurnMessage(runtime, dequeuedBatch);
   if (!queuedTurn) {
     return null;
+  }
+  if (clientMessageIds.length > 0) {
+    runtime.dequeuedClientMessageIdsByBatchId.set(
+      dequeuedBatch.batchId,
+      clientMessageIds,
+    );
   }
 
   return {

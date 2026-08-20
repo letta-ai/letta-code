@@ -78,6 +78,10 @@ import { runListenerTurnCleanup } from "./turn-cleanup";
 import { completeSuccessfulListenerTurn } from "./turn-completion";
 import { releaseListenerTurnContext } from "./turn-context";
 import {
+  createTurnCorrelation,
+  type TurnCorrelation,
+} from "./turn-correlation";
+import {
   rebuildTurnInputWithFreshDenials,
   refreshTurnInputOtidsForNewRequest,
   updateTurnInputMessagesPreservingOtids,
@@ -102,6 +106,7 @@ export async function handleIncomingMessage(
   connectionId?: string,
   dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
   existingTurnLease?: TurnLease,
+  existingTurnCorrelation?: TurnCorrelation,
 ): Promise<void> {
   // Notify OTID-keyed observers around the complete turn.
   notifyTurnStarted(msg);
@@ -114,6 +119,7 @@ export async function handleIncomingMessage(
       connectionId,
       dequeuedBatchId,
       existingTurnLease,
+      existingTurnCorrelation,
     );
   } finally {
     notifyTurnFinished(msg);
@@ -132,6 +138,7 @@ async function handleIncomingMessageInner(
   connectionId?: string,
   dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
   existingTurnLease?: TurnLease,
+  existingTurnCorrelation?: TurnCorrelation,
 ): Promise<void> {
   const agentId = msg.agentId;
   const requestedConversationId = msg.conversationId || undefined;
@@ -155,6 +162,9 @@ async function handleIncomingMessageInner(
     chatgptPlanSwaps = 0,
     lastApprovalContinuationAccepted = false,
     activeDequeuedBatchId = dequeuedBatchId;
+  const turnCorrelation =
+    existingTurnCorrelation ??
+    createTurnCorrelation(runtime, msg, activeDequeuedBatchId);
   const msgRunIds: string[] = [];
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
@@ -364,6 +374,7 @@ async function handleIncomingMessageInner(
           if (typeof maybeRunId === "string") {
             runId = maybeRunId;
             runtime.turnLifecycle.setRunId(turnLease, maybeRunId);
+            turnCorrelation.observeRun(maybeRunId);
             if (!runIdSent) {
               runIdSent = true;
               msgRunIds.push(maybeRunId);
@@ -856,6 +867,7 @@ async function handleIncomingMessageInner(
         pendingNormalizationInterruptedToolCallIds,
         turnToolContextId,
         turnLease,
+        turnCorrelation,
         processOwnedTurn: msg.processOwnedTurn === true,
         buildSendOptions,
       });

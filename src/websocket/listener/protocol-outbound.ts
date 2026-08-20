@@ -45,8 +45,12 @@ import {
 } from "./device-status-cache";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 import { listListenerModCommands } from "./mod-command-registry";
-import { enqueueOutboundFrame, type OutboundFrameClass } from "./outbound-wire";
+import { enqueueOutboundFrame } from "./outbound-wire";
 import { getConversationPermissionModeState } from "./permission-mode";
+import {
+  classifyOutboundFrame,
+  isStreamChannelMessage,
+} from "./protocol-outbound-routing";
 import {
   getConversationRuntime,
   getPendingControlRequests,
@@ -61,6 +65,7 @@ import {
 } from "./scope";
 import { notifyStreamObservers } from "./stream-observers";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
+import { buildTurnCorrelationSnapshot } from "./turn-correlation";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -334,6 +339,11 @@ export function buildLoopStatus(
         : conversationRuntime?.activeRunId
           ? [conversationRuntime.activeRunId]
           : [],
+    ...buildTurnCorrelationSnapshot(
+      listener,
+      scopedAgentId,
+      scopedConversationId,
+    ),
     // Gate on the *reported* status so downgrades (interrupted cache) also
     // clear the executing set, and stale runtime state never leaks into
     // frames emitted while the loop is not executing tools.
@@ -370,45 +380,12 @@ export function buildQueueSnapshot(
   }));
 }
 
-/** Message types that belong on the stream channel.
- *  These are high-frequency runtime emissions that should be separated
- *  from control/command-response traffic on the control channel. */
-const STREAM_CHANNEL_MESSAGE_TYPES: ReadonlySet<string> = new Set([
-  "stream_delta",
-  "update_device_status",
-  "update_loop_status",
-  "update_queue",
-  "update_subagent_state",
-]);
-
-function isStreamChannelMessage(type: string): boolean {
-  return STREAM_CHANNEL_MESSAGE_TYPES.has(type);
-}
-
-/** Snapshot-style messages: a newer frame for the same scope supersedes a queued one. */
-const COALESCABLE_STATUS_MESSAGE_TYPES: ReadonlySet<string> = new Set([
-  "update_device_status",
-  "update_loop_status",
-  "update_queue",
-  "update_subagent_state",
-]);
-
 type OutboundProtocolMessage = WsProtocolMessage extends infer TMessage
   ? TMessage extends WsProtocolMessage
     ? Omit<TMessage, "runtime" | "event_seq" | "emitted_at" | "idempotency_key">
     : never
   : never;
 
-function classifyOutboundFrame(
-  message: OutboundProtocolMessage,
-): OutboundFrameClass {
-  if (message.type === "update_queue" && (message.removed?.length ?? 0) > 0) {
-    return "critical";
-  }
-  return COALESCABLE_STATUS_MESSAGE_TYPES.has(message.type)
-    ? "status"
-    : "critical";
-}
 export function emitProtocolV2Message(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,

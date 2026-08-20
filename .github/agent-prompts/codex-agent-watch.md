@@ -4,9 +4,9 @@ Your job is to review one stable `openai/codex` release against the local Letta 
 
 ## Context
 
-The legacy `.github/workflows/codex-release-watch.yml` issue workflow is still enabled as the baseline. This new workflow must keep its own state in the central tracker issue and must not rely on per-release `codex-watch` issues for dedupe.
+The central tracker issue is the source of truth for release dedupe and terminal outcomes.
 
-The detector already compared the latest stable Codex release to the previous stable release. Use the reconstructed analysis file as your starting point.
+The detector already compared the latest stable Codex release to the previous stable release. Use the rebuilt analysis file as your starting point.
 
 ## Sandbox setup
 
@@ -15,8 +15,8 @@ The detector ran on a GitHub Actions runner, but your turn does not. The runner 
 Before reviewing the release, run the exact `Sandbox bootstrap` block below. It:
 
 1. Clones `letta-ai/letta-code` into `/tmp/letta-code-codex-watch`.
-2. Rebuilds the detector analysis for the exact release pair at `/tmp/codex-watch-analysis.json`.
-3. Installs the repository dependencies.
+2. Installs the repository dependencies.
+3. Rebuilds the detector analysis for the exact release pair at `/tmp/codex-watch-analysis.json`.
 
 Perform all repository inspection, edits, tests, and tracker updates from that sandbox clone. Use the tracker issue number and tags from the `Run inputs` block directly rather than relying on environment variables.
 
@@ -28,7 +28,7 @@ Perform all repository inspection, edits, tests, and tracker updates from that s
 4. If a local mirror should change, make the minimal local fix, run targeted validation, push a branch, and open a PR.
 5. If no local mirror should change, do not open a PR. Record `no_local_impact` in the tracker.
 6. If you are blocked or not confident, do not guess. Record `needs_human_review` in the tracker with a concise reason.
-7. Do not update PRs after creation, wait for CI, merge PRs, or disable the old workflow. That is out of scope for this experiment.
+7. Do not update PRs after creation, wait for CI, or merge PRs. Those follow-ups are handled outside release review.
 
 ## Local mirrors to check
 
@@ -49,7 +49,7 @@ The prompt provides:
 
 - tracker issue number
 - tracker issue URL
-- reconstructed analysis at `/tmp/codex-watch-analysis.json`
+- rebuilt analysis at `/tmp/codex-watch-analysis.json`
 
 Always update the tracker before your final response.
 

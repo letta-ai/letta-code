@@ -114,7 +114,13 @@ describe("pre-stream recovery lease boundaries", () => {
         type: "message",
         agentId: "agent-1",
         conversationId: "conv-1",
-        messages: [{ role: "user", content: "message from Charles" }],
+        messages: [
+          {
+            role: "user",
+            content: "message from Charles",
+            client_message_id: "cm-charles",
+          },
+        ],
       },
       "cloud-user-charles",
     );
@@ -145,12 +151,19 @@ describe("pre-stream recovery lease boundaries", () => {
           sentActingUserId = options?.actingUserId;
           return { kind: "stream" as const, stream: {} as never };
         },
-        drainRecoveryStream: async () =>
-          ({ stopReason: "end_turn", apiDurationMs: 0 }) as never,
+        drainRecoveryStream: async (_stream, _socket, _runtime, params) => {
+          params.turnCorrelation?.observeRun("run-recovery");
+          return { stopReason: "end_turn", apiDurationMs: 0 } as never;
+        },
       },
     );
 
     expect(result?.stopReason).toBe("end_turn");
     expect(sentActingUserId).toBe("cloud-user-charles");
+    expect(
+      runtime.listener.clientMessageIdsByRunIdByConversation
+        ?.get(runtime.key)
+        ?.get("run-recovery"),
+    ).toEqual(["cm-charles"]);
   });
 });

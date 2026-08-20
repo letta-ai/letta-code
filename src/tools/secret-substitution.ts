@@ -5,10 +5,15 @@
 import { loadSecrets } from "@/utils/secrets-store";
 
 /**
- * Pattern to match $SECRET_NAME where SECRET_NAME is uppercase with underscores.
- * Examples: $API_KEY, $MY_SECRET, $DB_PASSWORD_123
+ * Pattern to match $SECRET_NAME references where SECRET_NAME is uppercase with
+ * underscores, including braced shell forms.
+ * Examples: $API_KEY, ${API_KEY}, ${API_KEY:-}, ${#API_KEY}, ${!API_KEY}
+ *
+ * Braced forms matter: `${NAME}` and the set -u safe `"${NAME:-}"` are
+ * standard shell, and an agent that writes them would otherwise get an empty
+ * value and conclude the secret is unset even though it exists.
  */
-const SECRET_PATTERN = /\$([A-Z_][A-Z0-9_]*)/g;
+const SECRET_PATTERN = /\$(?:\{[#!]?)?([A-Z_][A-Z0-9_]*)/g;
 
 /**
  * Scan a command string or command-argument array for `$SECRET_NAME`
