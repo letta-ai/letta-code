@@ -3,6 +3,7 @@ import type {
   OAuthPrompt,
   OAuthSelectPrompt,
 } from "@earendil-works/pi-ai/oauth";
+import { clearAvailableModelsCache } from "@/agent/available-models";
 import { getProviderOAuthAuth } from "@/backend/dev/pi-oauth";
 import {
   localOAuthAuthFromCredentials,
@@ -131,6 +132,7 @@ export async function runLocalOAuthConnectFlow(
     baseURL: callbacks.baseURL,
     timeout: callbacks.timeout,
   });
+  clearAvailableModelsCache();
 
   return { providerName: provider.providerName };
 }
