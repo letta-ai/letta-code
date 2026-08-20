@@ -134,7 +134,7 @@ describe("ProviderSelector validation", () => {
       );
     }, "Cloud provider list");
     stdout.reset();
-    for (let index = 0; index < 3; index += 1) {
+    for (let index = 0; index < 4; index += 1) {
       stdin.push("\u001b[B");
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
