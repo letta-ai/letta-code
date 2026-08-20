@@ -75,6 +75,7 @@ const allTestFiles = [
   ...findTestFiles("src/channels"),
   ...findRootTestFiles("src"),
   ...findTestFiles("scripts/codex-watch"),
+  ...findTestFiles("scripts/claude-watch"),
   "scripts/unit-test-impact.test.cjs",
 ].sort();
 const discoveredPaths = new Set(allTestFiles);
