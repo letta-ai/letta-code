@@ -15,7 +15,7 @@ The detector ran on a GitHub Actions runner, but your turn does not. The runner 
 Before reviewing the release, run the exact `Sandbox bootstrap` block below. It:
 
 1. Clones `letta-ai/letta-code` into `/tmp/letta-code-codex-watch`.
-2. Reconstructs the detector payload at `/tmp/codex-watch-analysis.json`.
+2. Rebuilds the detector analysis for the exact release pair at `/tmp/codex-watch-analysis.json`.
 3. Installs the repository dependencies.
 
 Perform all repository inspection, edits, tests, and tracker updates from that sandbox clone. Use the tracker issue number and tags from the `Run inputs` block directly rather than relying on environment variables.
@@ -23,11 +23,12 @@ Perform all repository inspection, edits, tests, and tracker updates from that s
 ## Required behavior
 
 1. Inspect the analysis payload and upstream compare URL.
-2. Review the watched upstream changes against local Letta Code mirrors.
-3. If a local mirror should change, make the minimal local fix, run targeted validation, push a branch, and open a PR.
-4. If no local mirror should change, do not open a PR. Record `no_local_impact` in the tracker.
-5. If you are blocked or not confident, do not guess. Record `needs_human_review` in the tracker with a concise reason.
-6. Do not update PRs after creation, wait for CI, merge PRs, or disable the old workflow. That is out of scope for this experiment.
+2. Open the actual upstream diff for every changed watched path. Do not classify a change from its commit subject alone.
+3. Review each upstream change against the corresponding local Letta Code mirror and account for it in the tracker note.
+4. If a local mirror should change, make the minimal local fix, run targeted validation, push a branch, and open a PR.
+5. If no local mirror should change, do not open a PR. Record `no_local_impact` in the tracker.
+6. If you are blocked or not confident, do not guess. Record `needs_human_review` in the tracker with a concise reason.
+7. Do not update PRs after creation, wait for CI, merge PRs, or disable the old workflow. That is out of scope for this experiment.
 
 ## Local mirrors to check
 
@@ -40,6 +41,8 @@ Use judgment, but start with these mirrors from the current watcher:
 
 Many upstream Codex tool changes are upstream-only: MCP/plugin internals, Responses-hosted tools, multi-agent internals, service-tier routing, and Codex-specific runtime planner details often do not map to Letta Code. Close those out as `no_local_impact` with a specific note.
 
+When Codex and Letta Code implement the same tool contract, implementation behavior is part of the mirror. Compare parsing, path resolution, mutation ordering, and failure semantics even when schemas and descriptions are unchanged. If the upstream diff introduces behavior that the local mirror lacks, treat it as `local_change_required` unless you can show that the difference is intentionally inapplicable locally. Do not dismiss it as a minor implementation improvement.
+
 ## Tracker updates
 
 The prompt provides:
@@ -49,6 +52,8 @@ The prompt provides:
 - reconstructed analysis at `/tmp/codex-watch-analysis.json`
 
 Always update the tracker before your final response.
+
+Use `scripts/codex-watch/update-tracker.ts` for the terminal outcome. Do not substitute a normal issue comment. The review is incomplete until the tracker hidden state records `no_local_impact`, `pr_created`, or `needs_human_review` for the current tag.
 
 For no local impact:
 
