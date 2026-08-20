@@ -14,6 +14,10 @@ Do not invent or rely on a private prompt dump, schema dump, `--list-tools`, or 
 
 The detector has already captured and committed the normalized candidate snapshot on `claude-watch-state`. Use the rebuilt analysis from the exact state commit as your starting point.
 
+## GitHub authentication
+
+Before running the sandbox bootstrap, resolve the watcher credential identity with `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh api user --jq .login`. It must exactly match the Expected GitHub login from the run inputs. If the secret is missing or the identities differ, stop without modifying GitHub or the tracker.
+
 ## Sandbox setup
 
 The detector ran on a GitHub Actions runner, but your turn does not. Runner files and environment variables are unavailable here. The run inputs and an exact bootstrap block are appended to this prompt.
@@ -33,7 +37,8 @@ Immediately after the block succeeds, use `SetWorkingDirectory` to select `/tmp/
 7. If public evidence is incomplete or a probe is inconclusive, do not guess. Record `needs_human_review` with the exact uncertainty.
 8. Search open and closed PRs for the exact `Claude-watch: <candidate-id>` marker before creating a PR. A retry must never duplicate a PR.
 9. Verify that the state branch's current snapshot has the exact candidate ID before recording a terminal outcome.
-10. Do not merge, disable another workflow, wait for CI, or update the parity PR after creation.
+10. Use only `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN"` for GitHub operations. Never use the agent's general `$GITHUB_TOKEN` secret.
+11. Do not merge, disable another workflow, wait for CI, or update the parity PR after creation.
 
 If the exact candidate marker already exists on a parity PR, treat it as a recovered partial run: verify that PR, record `pr_created` with its URL, and do not create or modify another PR.
 
@@ -64,7 +69,7 @@ Always update the central tracker before returning. Use `scripts/claude-watch/up
 No local impact:
 
 ```bash
-GH_TOKEN="$GITHUB_TOKEN" bun scripts/claude-watch/update-tracker.ts \
+test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" bun scripts/claude-watch/update-tracker.ts \
   --tracker-issue <tracker-issue> \
   --analysis-file /tmp/claude-watch-analysis.json \
   --state-commit-sha <state-commit-sha> \
@@ -75,7 +80,7 @@ GH_TOKEN="$GITHUB_TOKEN" bun scripts/claude-watch/update-tracker.ts \
 PR created:
 
 ```bash
-GH_TOKEN="$GITHUB_TOKEN" bun scripts/claude-watch/update-tracker.ts \
+test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" bun scripts/claude-watch/update-tracker.ts \
   --tracker-issue <tracker-issue> \
   --analysis-file /tmp/claude-watch-analysis.json \
   --state-commit-sha <state-commit-sha> \
@@ -87,7 +92,7 @@ GH_TOKEN="$GITHUB_TOKEN" bun scripts/claude-watch/update-tracker.ts \
 Uncertain or blocked:
 
 ```bash
-GH_TOKEN="$GITHUB_TOKEN" bun scripts/claude-watch/update-tracker.ts \
+test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" bun scripts/claude-watch/update-tracker.ts \
   --tracker-issue <tracker-issue> \
   --analysis-file /tmp/claude-watch-analysis.json \
   --state-commit-sha <state-commit-sha> \
@@ -100,17 +105,34 @@ GH_TOKEN="$GITHUB_TOKEN" bun scripts/claude-watch/update-tracker.ts \
 If a local change is required:
 
 - create a fresh branch from current `main`
-- use `GH_TOKEN="$GITHUB_TOKEN"` for every GitHub CLI operation
+- use `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN"` for every GitHub CLI operation
 - make the minimum mirror change and focused tests only; do not include watcher implementation changes
 - use a Conventional Commit title
 - open the PR as a draft
-- immediately verify `draft: true` and `author.login: carenthomas`; if either is wrong, fix or close it instead of reporting success
+- immediately verify `draft: true` and that the PR author matches the Expected GitHub login from the run inputs; if either is wrong, fix or close it instead of reporting success
+- before the tracker update, GET `repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers` with the same explicit Amelia credential, then request each configured reviewer that is not already present with `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh api --method POST "repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers" -f "reviewers[]=<login>"`; skip this only when the configured value is `none`
 - include `Claude-watch: <candidate-id>`, package version, release URL, docs/runtime evidence, and validation in the body
 - never commit generated snapshots or analysis files to the parity branch
 
+## Slack notification
+
+Only for a `pr_created` outcome, after the tracker update succeeds, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"` to send exactly one message. Do not use `curl` or another Slack API client.
+
+Use this message shape with the exact URLs from the run inputs and created PR. Convert each comma-separated Slack owner ID from the run inputs to a `<@USER_ID>` mention on the Owners line; omit that line when the configured value is `none`.
+
+```text
+Claude watcher created a parity PR for <candidate-id>.
+Owners: <owner-mentions>
+PR: <pr-url>
+Tracker: <tracker-issue-url>
+Workflow: <workflow-run-url>
+```
+
+The notification creates the Slack thread route back to this watcher conversation. Do not send a Slack notification for `no_local_impact` or `needs_human_review`.
+
 ## Final response
 
-After the tracker update succeeds, respond with exactly one line:
+After the tracker update and any required Slack notification succeed, respond with exactly one line:
 
 - `PR_CREATED <url>`
 - `NO_LOCAL_IMPACT <candidate-id>`

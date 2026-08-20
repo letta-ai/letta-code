@@ -2,7 +2,7 @@ name: Codex Agent Watch
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "0 */2 * * *"
   workflow_dispatch:
     inputs:
       since_tag:
@@ -55,6 +55,15 @@ jobs:
           fi
           bun scripts/codex-watch/agent-watch.ts "${ARGS[@]}"
 
+      - name: Resolve Amelia GitHub identity
+        id: github-identity
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+        run: |
+          login=$(gh api user --jq .login)
+          echo "login=$login" >> "$GITHUB_OUTPUT"
+          echo "Authenticated GitHub login: $login"
+
       - name: Build Amelia prompt
         id: prompt
         if: steps.detect.outputs.should_run_agent == 'true'
@@ -64,6 +73,9 @@ jobs:
           CURRENT_TAG: ${{ steps.detect.outputs.current_tag }}
           PREVIOUS_TAG: ${{ steps.detect.outputs.previous_tag }}
           VERDICT: ${{ steps.detect.outputs.verdict }}
+          EXPECTED_GITHUB_LOGIN: ${{ steps.github-identity.outputs.login }}
+          GITHUB_REVIEWERS: ${{ vars.CODEX_WATCH_GITHUB_REVIEWERS }}
+          SLACK_OWNER_IDS: ${{ vars.CODEX_WATCH_SLACK_OWNER_IDS }}
         run: |
           {
             echo "prompt<<AMELIA_PROMPT_EOF"
@@ -72,6 +84,10 @@ jobs:
             echo "## Run inputs"
             echo
             echo "- Tracker issue: #$TRACKER_ISSUE ($TRACKER_ISSUE_URL)"
+            echo "- Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "- Expected GitHub login: $EXPECTED_GITHUB_LOGIN"
+            echo "- GitHub reviewers: ${GITHUB_REVIEWERS:-none}"
+            echo "- Slack owner IDs: ${SLACK_OWNER_IDS:-none}"
             echo "- Current tag: $CURRENT_TAG"
             echo "- Previous tag: $PREVIOUS_TAG"
             echo "- Detector verdict: $VERDICT"
@@ -83,14 +99,15 @@ jobs:
             echo '```bash'
             echo 'set -euo pipefail'
             echo 'rm -rf /tmp/letta-code-codex-watch'
-            echo 'GH_TOKEN="$GITHUB_TOKEN" gh repo clone letta-ai/letta-code /tmp/letta-code-codex-watch'
+            echo 'test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh repo clone letta-ai/letta-code /tmp/letta-code-codex-watch'
             echo 'cd /tmp/letta-code-codex-watch'
             echo 'bun install --frozen-lockfile'
-            echo "GH_TOKEN=\"\$GITHUB_TOKEN\" GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=letta-ai/letta-code GITHUB_RUN_ID=\"$GITHUB_RUN_ID\" bun scripts/codex-watch/agent-watch.ts --dry-run --since \"$PREVIOUS_TAG\" --current \"$CURRENT_TAG\" --analysis-file /tmp/codex-watch-analysis.json > /tmp/codex-watch-analysis.log"
+            echo "test -n \"\$AMELIA_GITHUB_TOKEN\" && GITHUB_TOKEN= GH_TOKEN=\"\$AMELIA_GITHUB_TOKEN\" GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=letta-ai/letta-code GITHUB_RUN_ID=\"$GITHUB_RUN_ID\" bun scripts/codex-watch/agent-watch.ts --dry-run --since \"$PREVIOUS_TAG\" --current \"$CURRENT_TAG\" --analysis-file /tmp/codex-watch-analysis.json > /tmp/codex-watch-analysis.log"
             echo "jq -e '.current_tag == \"$CURRENT_TAG\" and .previous_tag == \"$PREVIOUS_TAG\" and (.path_changes | type == \"array\")' /tmp/codex-watch-analysis.json > /dev/null"
             echo '```'
             echo "AMELIA_PROMPT_EOF"
           } >> "$GITHUB_OUTPUT"
+          echo "conversation_name=$GITHUB_WORKFLOW $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
       - name: Ask Amelia to review actionable Codex drift
         if: steps.detect.outputs.should_run_agent == 'true'
@@ -100,6 +117,8 @@ jobs:
           github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
           agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
           environment: cloud
+          letta_args: >-
+            --new --name "${{ steps.prompt.outputs.conversation_name }}"
           track_progress: ""
           tracking_comment: "false"
           model: auto
