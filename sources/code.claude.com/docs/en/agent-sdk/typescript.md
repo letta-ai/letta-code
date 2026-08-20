@@ -2630,7 +2630,7 @@ Creates and manages a structured task list for tracking progress.
 
   On other models, Claude Code provides the Task tools by default and `TodoWrite` only when you set `CLAUDE_CODE_ENABLE_TASKS=0`.
 
-  See [Model availability](/docs/en/agent-sdk/todo-tracking#model-availability) to opt in and [Migrate to Task tools](/docs/en/agent-sdk/todo-tracking#migrate-to-task-tools) to update your monitoring code.
+  See [Model availability](/docs/en/agent-sdk/todo-tracking#model-availability) to opt in.
 </Note>
 
 ### TaskCreate
@@ -3562,7 +3562,7 @@ Returns the previous and updated task lists.
 
   On other models, Claude Code provides the Task tools by default and `TodoWrite` only when you set `CLAUDE_CODE_ENABLE_TASKS=0`.
 
-  See [Model availability](/docs/en/agent-sdk/todo-tracking#model-availability) to opt in and [Migrate to Task tools](/docs/en/agent-sdk/todo-tracking#migrate-to-task-tools) to update your monitoring code.
+  See [Model availability](/docs/en/agent-sdk/todo-tracking#model-availability) to opt in.
 </Note>
 
 ### TaskCreate
