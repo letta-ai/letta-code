@@ -98,7 +98,7 @@ If you create a PR:
 - create a new branch from the checked-out branch
 - use `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN"` for GitHub CLI commands so the sandbox injects the watcher-specific GitHub credentials
 - verify the created PR author matches the Expected GitHub login from the run inputs; if it does not, close the PR instead of reporting success
-- before the tracker update, GET `repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers` with the same explicit Amelia credential, then request each configured reviewer that is not already present with `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh api --method POST "repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers" -f "reviewers[]=<login>"`; skip this only when the configured value is `none`
+- before the tracker update, GET `repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers` with the same explicit Amelia credential, then request each configured reviewer that is not already present with `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh api --method POST "repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers" -f "reviewers[]=<login>"`
 - keep the diff minimal and focused on this Codex release
 - do not include unrelated cleanup
 - use a Conventional Commit PR title, for example `chore(tools): align Codex schema wording`
@@ -110,17 +110,13 @@ If you create a PR:
 
 Only for a `pr_created` outcome, after the tracker update succeeds, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"` to send exactly one message. Do not use `curl` or another Slack API client.
 
-Use this message shape with the exact URLs from the run inputs and created PR. Convert each comma-separated Slack owner ID from the run inputs to a `<@USER_ID>` mention on the Owners line; omit that line when the configured value is `none`.
+Use the selected Slack owner ID from the run inputs and the created PR URL. Send exactly one line in this form:
 
 ```text
-Codex watcher created a parity PR for <tag>.
-Owners: <owner-mentions>
-PR: <pr-url>
-Tracker: <tracker-issue-url>
-Workflow: <workflow-run-url>
+<@U079W8F9Z7G> https://github.com/letta-ai/letta-code/pull/1234
 ```
 
-The notification creates the Slack thread route back to this watcher conversation. Do not send a Slack notification for `no_local_impact` or `needs_human_review`.
+Replace the example values with the selected owner and created PR. Do not include a watcher prefix, tracker URL, workflow URL, or any other text. The notification creates the Slack thread route back to this watcher conversation. Do not send a Slack notification for `no_local_impact` or `needs_human_review`.
 
 ## Final response
 
