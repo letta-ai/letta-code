@@ -168,6 +168,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if bun scripts/claude-watch/update-tracker.ts \
+            --tracker-issue "${{ steps.detect.outputs.tracker_issue }}" \
+            --candidate-id "${{ steps.detect.outputs.candidate_id }}" \
+            --state-commit-sha "${{ steps.detect.outputs.state_commit_sha }}" \
+            --assert-terminal; then
+            echo "The agent recorded a terminal outcome before its action failed"
+            exit 0
+          fi
           bun scripts/claude-watch/update-tracker.ts \
             --tracker-issue "${{ steps.detect.outputs.tracker_issue }}" \
             --analysis-file "$RUNNER_TEMP/claude-watch-analysis.json" \
