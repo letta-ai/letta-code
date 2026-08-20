@@ -20,6 +20,8 @@ The detector ran on a GitHub Actions runner, but your turn does not. Runner file
 
 Run that exact block before reviewing. It clones current `letta-ai/letta-code`, installs dependencies, fetches the state branch, and rebuilds the sanitized analysis from the exact state commit and its parent. Perform all inspection, edits, tests, state checks, and tracker updates from that clone.
 
+Immediately after the block succeeds, use `SetWorkingDirectory` to select `/tmp/letta-code-claude-watch`. A shell `cd` applies only to that one command and does not move later tool calls. If `SetWorkingDirectory` is unavailable, pass that absolute directory as `workdir` for every command.
+
 ## Required review behavior
 
 1. Read the complete analysis JSON, release notes, official source URLs, every focused docs diff, runtime inventory diff, and probe observation.
