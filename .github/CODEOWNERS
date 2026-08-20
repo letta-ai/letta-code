@@ -16,6 +16,9 @@
 /.github/workflows/codex-agent-watch.yml @kl2806
 /.github/agent-prompts/codex-agent-watch.md @kl2806
 /scripts/codex-watch/ @kl2806
+/.github/workflows/claude-agent-watch.yml @kl2806
+/.github/agent-prompts/claude-agent-watch.md @kl2806
+/scripts/claude-watch/ @kl2806
 /src/agent/prompts/source_codex.md @kl2806
 
 # TUI/CLI runtime and UI
