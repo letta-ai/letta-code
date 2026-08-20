@@ -17,9 +17,8 @@ import {
   normalizeModelHandleForRegistry,
 } from "./model-handles";
 
-// Pure catalog lookups live in model-catalog.ts (bundled into the
-// agent-presets package export); re-exported here so CLI code keeps a single
-// import surface for model utilities.
+// Pure lookups over the runtime-populated catalog live in model-catalog.ts;
+// re-exported here so CLI code keeps a single import surface for model utilities.
 export { getDefaultModel, models, resolveModel };
 export {
   mapModelHandleToLlmConfigPatch,
@@ -616,13 +615,13 @@ function findModelByHandle(handle: string): (typeof models)[number] | null {
   if (exactMatch) return exactMatch;
 
   // For handles like "bedrock/claude-opus-4-5-20251101" where the API returns without
-  // vendor prefix or version suffix, but models.json has
+  // vendor prefix or version suffix, but the runtime catalog has
   // "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0", try fuzzy matching
   const [provider, ...rest] = registryHandle.split("/");
   if (provider && rest.length > 0) {
     const modelPortion = rest.join("/");
-    // Find models with the same provider where the model portion is contained
-    // in the models.json handle (handles vendor prefixes and version suffixes)
+    // Find catalog entries with the same provider where the model portion is
+    // contained in the catalog handle (handles vendor prefixes and version suffixes)
     const providerMatches = models.filter((m) => {
       if (!m.handle.startsWith(`${provider}/`)) return false;
       const mModelPortion = m.handle.slice(provider.length + 1);
@@ -636,7 +635,7 @@ function findModelByHandle(handle: string): (typeof models)[number] | null {
     if (providerMatch) return providerMatch;
 
     // Cross-provider fallback by model suffix. This helps when llm_config reports
-    // provider_type=openai for BYOK models that are represented in models.json
+    // provider_type=openai for BYOK models represented in the runtime catalog
     // under a different provider prefix (e.g. chatgpt-plus-pro/*).
     const suffixMatches = models.filter((m) =>
       m.handle.endsWith(`/${modelPortion}`),

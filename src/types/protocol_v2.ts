@@ -1514,7 +1514,7 @@ export interface ChatGPTUsageReadResponseMessage {
 }
 
 export interface UpdateModelPayload {
-  /** Preferred model identifier from models.json (e.g. "sonnet") */
+  /** Preferred runtime catalog model identifier (e.g. "sonnet") */
   model_id?: string;
   /** Optional direct handle override (e.g. "anthropic/claude-sonnet-4-6") */
   model_handle?: string;

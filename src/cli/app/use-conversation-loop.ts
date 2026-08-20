@@ -1255,7 +1255,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   if (modelInfo) {
                     setCurrentModelId(modelInfo.id);
                   } else {
-                    // Model not in models.json (e.g., BYOK model) - use handle as ID
+                    // Model not in the runtime catalog (e.g., BYOK model) - use handle as ID
                     setCurrentModelId(agentModelHandle || null);
                   }
                   setCurrentModelHandle(agentModelHandle || null);

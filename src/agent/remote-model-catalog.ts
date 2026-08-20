@@ -1,13 +1,13 @@
 /**
  * Live model catalog refresh from the cloud catalog endpoint (LET-9792).
  *
- * API backends load curated presets from GET /v1/models/catalog. Local
- * backends project their pi-ai inventory into the same CatalogModel shape.
+ * Hosted API backends load curated presets from GET /v1/models/catalog.
+ * Custom API backends and local backends project their model inventory into
+ * the same CatalogModel shape.
  *
- * API catalogs are persisted at ~/.letta/cache/model-catalog.json so a
+ * Hosted catalogs are persisted at ~/.letta/cache/model-catalog.json so a
  * temporary endpoint failure keeps the last successful catalog. There is no
- * bundled catalog: cloud is canonical for API mode and pi-ai is canonical for
- * local mode.
+ * bundled catalog: the hosted endpoint or active backend runtime is canonical.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
