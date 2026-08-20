@@ -99,10 +99,10 @@ jobs:
             echo '```bash'
             echo 'set -euo pipefail'
             echo 'rm -rf /tmp/letta-code-codex-watch'
-            echo 'GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}" gh repo clone letta-ai/letta-code /tmp/letta-code-codex-watch'
+            echo 'test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh repo clone letta-ai/letta-code /tmp/letta-code-codex-watch'
             echo 'cd /tmp/letta-code-codex-watch'
             echo 'bun install --frozen-lockfile'
-            echo "GITHUB_TOKEN= GH_TOKEN=\"\${AMELIA_GITHUB_TOKEN:?}\" GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=letta-ai/letta-code GITHUB_RUN_ID=\"$GITHUB_RUN_ID\" bun scripts/codex-watch/agent-watch.ts --dry-run --since \"$PREVIOUS_TAG\" --current \"$CURRENT_TAG\" --analysis-file /tmp/codex-watch-analysis.json > /tmp/codex-watch-analysis.log"
+            echo "test -n \"\$AMELIA_GITHUB_TOKEN\" && GITHUB_TOKEN= GH_TOKEN=\"\$AMELIA_GITHUB_TOKEN\" GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=letta-ai/letta-code GITHUB_RUN_ID=\"$GITHUB_RUN_ID\" bun scripts/codex-watch/agent-watch.ts --dry-run --since \"$PREVIOUS_TAG\" --current \"$CURRENT_TAG\" --analysis-file /tmp/codex-watch-analysis.json > /tmp/codex-watch-analysis.log"
             echo "jq -e '.current_tag == \"$CURRENT_TAG\" and .previous_tag == \"$PREVIOUS_TAG\" and (.path_changes | type == \"array\")' /tmp/codex-watch-analysis.json > /dev/null"
             echo '```'
             echo "AMELIA_PROMPT_EOF"

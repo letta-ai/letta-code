@@ -144,11 +144,11 @@ jobs:
             echo '```bash'
             echo 'set -euo pipefail'
             echo 'rm -rf /tmp/letta-code-claude-watch'
-            echo 'GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}" gh repo clone letta-ai/letta-code /tmp/letta-code-claude-watch'
+            echo 'test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh repo clone letta-ai/letta-code /tmp/letta-code-claude-watch'
             echo 'cd /tmp/letta-code-claude-watch'
             echo 'bun install --frozen-lockfile'
             echo 'git fetch origin claude-watch-state'
-            echo "GITHUB_TOKEN= GH_TOKEN=\"\${AMELIA_GITHUB_TOKEN:?}\" GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=letta-ai/letta-code GITHUB_RUN_ID=\"$GITHUB_RUN_ID\" bun scripts/claude-watch/agent-watch.ts --dry-run --rebuild-state-commit \"$STATE_COMMIT_SHA\" --analysis-file /tmp/claude-watch-analysis.json > /tmp/claude-watch-analysis.log"
+            echo "test -n \"\$AMELIA_GITHUB_TOKEN\" && GITHUB_TOKEN= GH_TOKEN=\"\$AMELIA_GITHUB_TOKEN\" GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=letta-ai/letta-code GITHUB_RUN_ID=\"$GITHUB_RUN_ID\" bun scripts/claude-watch/agent-watch.ts --dry-run --rebuild-state-commit \"$STATE_COMMIT_SHA\" --analysis-file /tmp/claude-watch-analysis.json > /tmp/claude-watch-analysis.log"
             echo "jq -e --arg candidate \"$CANDIDATE_ID\" --arg current \"$CURRENT_VERSION\" '.candidate_id == \$candidate and .current_version == \$current and (.docs_diff | type == \"object\")' /tmp/claude-watch-analysis.json > /dev/null"
             echo '```'
             echo "AMELIA_PROMPT_EOF"

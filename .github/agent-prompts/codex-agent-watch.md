@@ -10,7 +10,7 @@ The detector already compared the latest stable Codex release to the previous st
 
 ## GitHub authentication
 
-Before running the sandbox bootstrap, resolve the watcher credential identity with `GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}" gh api user --jq .login`. It must exactly match the Expected GitHub login from the run inputs. If the secret is missing or the identities differ, stop without modifying GitHub or the tracker.
+Before running the sandbox bootstrap, resolve the watcher credential identity with `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh api user --jq .login`. It must exactly match the Expected GitHub login from the run inputs. If the secret is missing or the identities differ, stop without modifying GitHub or the tracker.
 
 ## Sandbox setup
 
@@ -32,7 +32,7 @@ Perform all repository inspection, edits, tests, and tracker updates from that s
 4. If a local mirror should change, make the minimal local fix, run targeted validation, push a branch, and open a PR.
 5. If no local mirror should change, do not open a PR. Record `no_local_impact` in the tracker.
 6. If you are blocked or not confident, do not guess. Record `needs_human_review` in the tracker with a concise reason.
-7. Use only `GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}"` for GitHub operations. Never use the agent's general `$GITHUB_TOKEN` secret.
+7. Use only `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN"` for GitHub operations. Never use the agent's general `$GITHUB_TOKEN` secret.
 8. Do not update PRs after creation, wait for CI, or merge PRs. Those follow-ups are handled outside release review.
 
 ## Local mirrors to check
@@ -63,7 +63,7 @@ Use `scripts/codex-watch/update-tracker.ts` for the terminal outcome. Do not sub
 For no local impact:
 
 ```bash
-GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}" bun scripts/codex-watch/update-tracker.ts \
+test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" bun scripts/codex-watch/update-tracker.ts \
   --tracker-issue <tracker-issue> \
   --analysis-file /tmp/codex-watch-analysis.json \
   --outcome no_local_impact \
@@ -73,7 +73,7 @@ GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}" bun scripts/codex-watch/update
 For a PR:
 
 ```bash
-GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}" bun scripts/codex-watch/update-tracker.ts \
+test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" bun scripts/codex-watch/update-tracker.ts \
   --tracker-issue <tracker-issue> \
   --analysis-file /tmp/codex-watch-analysis.json \
   --outcome pr_created \
@@ -84,7 +84,7 @@ GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}" bun scripts/codex-watch/update
 For blocked/uncertain:
 
 ```bash
-GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}" bun scripts/codex-watch/update-tracker.ts \
+test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" bun scripts/codex-watch/update-tracker.ts \
   --tracker-issue <tracker-issue> \
   --analysis-file /tmp/codex-watch-analysis.json \
   --outcome needs_human_review \
@@ -96,9 +96,9 @@ GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}" bun scripts/codex-watch/update
 If you create a PR:
 
 - create a new branch from the checked-out branch
-- use `GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}"` for GitHub CLI commands so the sandbox injects the watcher-specific GitHub credentials
+- use `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN"` for GitHub CLI commands so the sandbox injects the watcher-specific GitHub credentials
 - verify the created PR author matches the Expected GitHub login from the run inputs; if it does not, close the PR instead of reporting success
-- before the tracker update, request every comma-separated GitHub reviewer from the run inputs with `GITHUB_TOKEN= GH_TOKEN="${AMELIA_GITHUB_TOKEN:?}" gh api --method POST "repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers" -f "reviewers[]=<login>"`; skip this only when the configured value is `none`
+- before the tracker update, request every comma-separated GitHub reviewer from the run inputs with `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh api --method POST "repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers" -f "reviewers[]=<login>"`; skip this only when the configured value is `none`
 - keep the diff minimal and focused on this Codex release
 - do not include unrelated cleanup
 - use a Conventional Commit PR title, for example `chore(tools): align Codex schema wording`
