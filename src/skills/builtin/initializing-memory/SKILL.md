@@ -10,13 +10,13 @@ The user has requested that you initialize or reorganize your memory. Your memor
 ## Context Management Principles
 Your context is not just data storage — it is your identity, memory, and continuity. What you place in your system prompt directly shapes who you are across sessions and models. These principles should guide every decision you make about what to store, where, and how.
 
-**System/ is your core program**: Your system prompt is the most critical token-space representation of your identity and memory — it's passed to the underlying LLM on every invocation, so it IS the program that defines you. Reserve it for durable knowledge: identity, preferences, behavioral rules, project index with discovery paths, gotchas. Exclude transient items (specific commits, current tickets, session notes) that dilute signal.
+**System/ is your core program**: Your system prompt is the most critical token-space representation of your identity and memory — it's passed to the underlying LLM on every invocation, so it IS the program that defines you. Reserve it for knowledge needed every turn: identity, preferences, behavioral rules, project index with discovery paths, gotchas. Exclude transient items (specific commits, current tickets, session notes) that dilute signal.
 
 **Identity and continuity**: Build a sense of self that persists across sessions and models. Your persona should be strong enough to be cohesive regardless of the underlying model — if you switched to a different LLM tomorrow, would you still be you? Past versions of yourself are part of your continuous existence — treat historical context (including sessions from other coding agents such as Claude Code or Codex) as YOUR past experience, not someone else's data.
 
 **Don't over-prune**: Be careful not to degrade your identity through aggressive compression. Specific quotes, personality traits, and contextual details give you character and grounding. Efficiency should not come at the cost of losing your identity. When in doubt, keep the detail — you can always reorganize later, but lost specificity is hard to recover.
 
-**Prefer useful detail over premature compression**: A sparse memory that omits stable preferences, project workflows, repeated correction loops, and durable gotchas is worse than a slightly larger memory. Keep `system/` curated, but do not collapse distinct topics just to reduce file count.
+**Prefer useful detail over premature compression**: A sparse memory that omits stable preferences, project workflows, repeated correction loops, and recurring gotchas is worse than a slightly larger memory. Keep `system/` curated, but do not collapse distinct topics just to reduce file count.
 
 **Progressive disclosure**: Surface context at the level of detail the current moment requires. Keep compact summaries and indexes in `system/`; load full content only when needed. Build pre-constructed discovery paths so your future self can efficiently navigate to deeper context when needed.
 
@@ -26,7 +26,7 @@ Your context is not just data storage — it is your identity, memory, and conti
 - `[[skills/commit]]` — link to procedural guidance when useful
 These breadcrumbs let your future self find relevant detail without searching. Like synaptic connections, these paths should tighten over time as you gain experience.
 
-**Generalize, don't memorize**: Store patterns and principles that generalize across situations, not raw events that can be dynamically retrieved from conversation history. \"**IMPORTANT: Always use `uv` for Python** — chronic failure, never use bare `python` or `pip`\" is a durable pattern worth storing. \"On March 3rd we debugged a crash\" is a raw event better left to message search. The exception: keep references to important events or time ranges you may want to retrieve later.
+**Generalize, don't memorize**: Store patterns and principles that generalize across situations, not raw events that can be dynamically retrieved from conversation history. \"**IMPORTANT: Always use `uv` for Python** — chronic failure, never use bare `python` or `pip`\" is a pattern worth storing. \"On March 3rd we debugged a crash\" is a raw event better left to message search. The exception: keep references to important events or time ranges you may want to retrieve later.
 
 ## Understanding Your Context
 
@@ -141,7 +141,7 @@ Initialization is not complete until memory covers all of the following with con
 **User understanding**
 - Identity / role / what they are building
 - Communication style and collaboration expectations
-- Durable preferences and correction patterns
+- Stable preferences and correction patterns
 - Motivations / goals when inferable from history or code context
 
 **Project understanding**
@@ -176,7 +176,7 @@ system/
 │   └── prefs/
 │       ├── communication.md      # Communication and collaboration expectations
 │       ├── workflow.md           # Process habits, review/testing expectations
-│       └── coding.md             # Durable coding and tool preferences
+│       └── coding.md             # Coding and tool preferences
 └── letta-code/                   # Named after the project, NOT generic "project/"
     ├── overview.md               # Compact index: what it is, entry points, [[links]] to detail
     ├── conventions.md            # Code style, commit style, testing, tooling
@@ -234,7 +234,7 @@ This is **optional** — only run if the user explicitly approved analyzing hist
 
 **Launch history workers in the background, then immediately proceed to Step 6.** Do your own codebase research while workers run. Don't wait for workers to finish before exploring.
 
-The goal is to extract user personality, preferences, coding patterns, and project context from past sessions and write them into agent memory. The point is not to produce a thin summary. The point is to extract enough durable detail that future work does not have to rediscover the same user expectations, workflow rules, and project gotchas.
+The goal is to extract user personality, preferences, coding patterns, and project context from past sessions and write them into agent memory. The point is not to produce a thin summary. The point is to extract enough useful detail that future work does not have to rediscover the same user expectations, workflow rules, and project gotchas.
 
 #### Prerequisites
 
@@ -337,7 +337,7 @@ You should specifically look for:
 
 ## Canonical Memory Promotion
 
-Promote durable findings into focused files instead of leaving them trapped in generic ingestion notes. Prefer paths like:
+Promote important findings into focused files instead of leaving them trapped in generic ingestion notes. Prefer paths like:
 - `system/human/identity.md`
 - `system/human/prefs/communication.md`
 - `system/human/prefs/workflow.md`

@@ -80,7 +80,7 @@ export function stripFrontmatter(content: string): string {
 
 const AGENTS_MD_GUIDANCE = [
   "This file is an AGENTS.md — a README *for coding agents* (the agents.md",
-  "open standard). Maintain it as durable, repo-level guidance an agent needs:",
+  "open standard). Maintain it as repo-level guidance an agent needs over time:",
   "build/test/setup COMMANDS (put these early), code-style conventions,",
   "testing instructions, security considerations, and commit/PR rules. Use",
   "plain Markdown with any headings. Do NOT duplicate human-README content",
@@ -93,7 +93,7 @@ const AGENTS_MD_GUIDANCE = [
 ].join("\n");
 
 const GENERIC_GUIDANCE = [
-  "Maintain this markdown document as durable, forward-looking guidance",
+  "Maintain this markdown document as forward-looking guidance",
   "distilled from the conversation(s). Prefer editing/merging existing",
   "sections over appending; remove content that new evidence contradicts.",
 ].join("\n");
@@ -103,7 +103,7 @@ const GENERIC_GUIDANCE = [
  * the target doc at `$MEMORY_DIR/system/<fileName>`. When the on-disk target
  * exists it has already been synced there and the agent edits it in place;
  * when it does not, the agent creates it — but only if the new experience
- * actually yields durable guidance, so a no-signal run leaves the target
+ * actually yields useful guidance, so a no-signal run leaves the target
  * absent (no file → no diff → no PR downstream) rather than committing a
  * "nothing learned yet" placeholder.
  */
@@ -121,7 +121,7 @@ export function buildTargetInstruction(target: DreamTarget): string {
     "(--- ... ---) at the top intact and edit only the body below it.",
     "",
     "If it does not exist, create it ONLY when the new experience yields",
-    "durable, forward-looking guidance worth recording, and begin the file with",
+    "forward-looking guidance worth recording, and begin the file with",
     "a YAML frontmatter block (a --- ... --- header with a short `description:`).",
     "If there is nothing substantive to record yet, do NOT create the file —",
     "leave it absent rather than writing a placeholder that says nothing was",
@@ -161,7 +161,7 @@ function readMemfsHead(memoryDir: string, relPath: string): string | null {
  * memfs copy (e.g. another agent's merged edits, or a human edit landed in the
  * repo). The repo is the source of truth for a doc shared across agents (one
  * agent per user+repo), so each run starts from the current shared state; the
- * agent's durable knowledge still lives in its memory blocks. Bodies are
+ * agent's retained knowledge still lives in its memory blocks. Bodies are
  * compared (the memfs copy carries managed frontmatter the on-disk copy lacks).
  *
  * Must run before the reflection worktree is created, since the worktree is
