@@ -295,7 +295,10 @@ function isStateSnapshot(value: unknown): value is ClaudeWatchStateSnapshot {
     typeof value.fetched_at === "string" &&
     typeof value.workflow_run_url === "string" &&
     (typeof value.state_commit_parent === "string" ||
-      value.state_commit_parent === null)
+      value.state_commit_parent === null) &&
+    (value.analysis_parent_sha === undefined ||
+      typeof value.analysis_parent_sha === "string" ||
+      value.analysis_parent_sha === null)
   );
 }
 

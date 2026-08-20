@@ -45,12 +45,13 @@ import {
   recordAnalysis,
   renderTrackerBody,
 } from "./tracker.ts";
-import type {
-  ClaudeReleaseCandidate,
-  ClaudeRuntimeSnapshot,
-  ClaudeWatchAnalysis,
-  ClaudeWatchOutcome,
-  ClaudeWatchStateSnapshot,
+import {
+  CLAUDE_WATCH_STATE_SCHEMA_VERSION,
+  type ClaudeReleaseCandidate,
+  type ClaudeRuntimeSnapshot,
+  type ClaudeWatchAnalysis,
+  type ClaudeWatchOutcome,
+  type ClaudeWatchStateSnapshot,
 } from "./types.ts";
 
 const DEFAULT_REPO = "letta-ai/letta-code";
@@ -393,12 +394,16 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const probeContractStale = state?.runtime
     ? !isClaudeProbeContractCurrent(state.runtime)
     : false;
+  const stateContractStale =
+    state !== null &&
+    state.schema_version !== CLAUDE_WATCH_STATE_SCHEMA_VERSION;
+  const comparisonBaselineStale = probeContractStale || stateContractStale;
 
   if (
     !args.validationOnly &&
     stateTip &&
     state &&
-    !probeContractStale &&
+    !comparisonBaselineStale &&
     !hasProcessedCandidate(tracker.state, state.candidate_id)
   ) {
     const analysis = rebuildClaudeAnalysisFromState(repoPath, stateTip);
@@ -457,10 +462,13 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       candidate,
       state,
       args,
-      packageChanged || docsChanged || !state?.runtime || probeContractStale,
+      packageChanged ||
+        docsChanged ||
+        !state?.runtime ||
+        comparisonBaselineStale,
     );
     currentRuntime = runtime.currentRuntime;
-    if (probeContractStale) {
+    if (comparisonBaselineStale) {
       previousForAnalysis = null;
     } else if (args.previousVersion && runtime.previousRuntime) {
       previousForAnalysis = {
@@ -486,13 +494,13 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       candidate,
       previous: previousForAnalysis,
       currentDocs: docsCapture.snapshot,
-      previousSources: probeContractStale
+      previousSources: comparisonBaselineStale
         ? {}
         : stateSources(repoPath, stateTip),
       currentSources: docsCapture.sources,
       currentRuntime,
       workflowRunUrl: workflowRunUrl(),
-      stateBaseSha: probeContractStale ? null : stateTip,
+      stateBaseSha: comparisonBaselineStale ? null : stateTip,
     });
   } catch (error) {
     analysis = buildErrorAnalysis(error, state);
