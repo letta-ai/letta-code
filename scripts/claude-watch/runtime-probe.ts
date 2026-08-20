@@ -119,7 +119,7 @@ const PROBES: ProbeDefinition[] = [
     name: "task-metadata-delete-contract",
     allowedTools: ["TaskCreate", "TaskGet", "TaskUpdate", "TaskList"],
     prompt:
-      'Exercise only the task tools and continue through every step even if one call reports an error. Create one task named "probe-task" with metadata {"probe":"remove","keep":"yes"}; update metadata with {"probe":null,"count":3,"flags":["ready"],"details":{"source":"claude-watch"}}; get it to observe metadata; permanently delete it with TaskUpdate status "deleted"; get the deleted ID again expecting a not-found error; then list tasks to confirm it is absent. Do not perform other work or use other tools.',
+      'Exercise only the task tools and continue through every step even if one call reports an error. Create one task named "probe-task" with metadata {"probe":"remove","keep":"yes"}; update metadata with {"probe":null,"count":3,"flags":["ready"],"details":{"source":"claude-watch"}}; get the resulting task record; permanently delete it with TaskUpdate status "deleted"; get the deleted ID again expecting a not-found error; then list tasks to confirm it is absent. Do not perform other work or use other tools.',
   },
 ];
 
