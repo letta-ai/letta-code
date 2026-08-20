@@ -1,9 +1,8 @@
 name: Claude Agent Watch
 
 on:
-  # Enable after the manual bootstrap/dedupe/docs-only/failure/no-impact bake:
-  # schedule:
-  #   - cron: "17 * * * *"
+  schedule:
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       previous_version:
