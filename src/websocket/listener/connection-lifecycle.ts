@@ -39,6 +39,9 @@ export function createConnectionTurnProcessor(
     }
     const connection = runtime.connections.get(queuedTurn.connectionId);
     if (!connection || connection.cancellation.signal.aborted) {
+      scopedRuntime.dequeuedClientMessageIdsByBatchId.delete(
+        dequeuedBatch.batchId,
+      );
       return;
     }
     await handleIncomingMessage(

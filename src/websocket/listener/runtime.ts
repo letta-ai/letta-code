@@ -283,6 +283,7 @@ export function createConversationRuntime(
     },
     queueRuntime: null as unknown as ConversationRuntime["queueRuntime"],
     queuedMessagesByItemId: new Map(),
+    dequeuedClientMessageIdsByBatchId: new Map(),
     queuePumpActive: false,
     queuePumpScheduled: false,
     pendingTurns: 0,
@@ -366,6 +367,7 @@ export function clearConversationRuntimeState(
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
+  runtime.dequeuedClientMessageIdsByBatchId.clear();
   runtime.continuationEpoch += 1;
   runtime.pendingTurns = 0;
   runtime.queuePumpActive = false;

@@ -13,18 +13,16 @@ class MockSocket {
   }
 }
 
-function queuedMessage(clientMessageId: string) {
+function queuedMessage(...clientMessageIds: string[]) {
   return {
     type: "message" as const,
     agentId: "agent-1",
     conversationId: "conv-1",
-    messages: [
-      {
-        role: "user" as const,
-        content: clientMessageId,
-        client_message_id: clientMessageId,
-      },
-    ],
+    messages: clientMessageIds.map((clientMessageId) => ({
+      role: "user" as const,
+      content: clientMessageId,
+      client_message_id: clientMessageId,
+    })),
   };
 }
 
@@ -42,10 +40,17 @@ test("active continuation dequeue emits exact message identities", async () => {
     workingDirectory: "/tmp/queue-update-transitions",
   });
 
-  expect(enqueueInboundUserMessage(runtime, queuedMessage("cm-1"))).toBe(true);
+  expect(
+    enqueueInboundUserMessage(runtime, queuedMessage("cm-1", "cm-1b")),
+  ).toBe(true);
   expect(enqueueInboundUserMessage(runtime, queuedMessage("cm-2"))).toBe(true);
   const consumed = consumeQueuedTurn(runtime);
   expect(consumed?.dequeuedBatch.items).toHaveLength(2);
+  expect(
+    runtime.dequeuedClientMessageIdsByBatchId.get(
+      consumed?.dequeuedBatch.batchId ?? "missing",
+    ),
+  ).toEqual(["cm-1", "cm-1b", "cm-2"]);
 
   await Promise.resolve();
   const updates = socket.sentPayloads
@@ -87,4 +92,35 @@ test("explicit queue removal emits cancellation rather than dequeue", async () =
     queue: [],
     removed: [{ client_message_id: "cm-cancel", disposition: "cancelled" }],
   });
+});
+
+test("dequeue correlates the queue id generated for a payload without one", () => {
+  const listener = __listenClientTestUtils.createListenerRuntime();
+  const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conv-1",
+  );
+  expect(
+    enqueueInboundUserMessage(runtime, {
+      type: "message",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      messages: [{ role: "user", content: "hello" }],
+    }),
+  ).toBe(true);
+  const generatedClientMessageId =
+    runtime.queueRuntime.peek()[0]?.clientMessageId;
+  if (!generatedClientMessageId) {
+    throw new Error("expected a generated client message id");
+  }
+
+  const consumed = consumeQueuedTurn(runtime);
+
+  expect(generatedClientMessageId).toStartWith("cm-submit-");
+  expect(
+    runtime.dequeuedClientMessageIdsByBatchId.get(
+      consumed?.dequeuedBatch.batchId ?? "missing",
+    ),
+  ).toEqual([generatedClientMessageId]);
 });

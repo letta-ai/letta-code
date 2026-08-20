@@ -228,6 +228,8 @@ export type ConversationRuntime = {
   readonly cancelRequested: boolean;
   queueRuntime: QueueRuntime;
   queuedMessagesByItemId: Map<string, IncomingMessage>;
+  /** Exact send identities carried by each batch removed from the queue. */
+  dequeuedClientMessageIdsByBatchId: Map<string, string[]>;
   queuePumpActive: boolean;
   queuePumpScheduled: boolean;
   pendingTurns: number;
@@ -374,6 +376,8 @@ export type ListenerRuntime = {
   connectionId: string | null;
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
+  /** Recent run-to-send snapshots survive idle conversation runtime eviction. */
+  clientMessageIdsByRunIdByConversation?: Map<string, Map<string, string[]>>;
   /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */
   worktreeWatcherByConversation: Map<
     string,

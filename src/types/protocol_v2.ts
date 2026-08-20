@@ -44,6 +44,7 @@ import type {
   RuntimeExternalToolsUpdateResponseMessage,
   RuntimeStartExternalToolsGroup,
 } from "./external-tool-protocol";
+import type { LoopState } from "./loop-status-protocol";
 import type { RuntimeScope } from "./runtime-scope";
 import type { CronRunLogPage, CronTask } from "./schedule-protocol";
 import type * as TeleportProtocol from "./teleport-protocol";
@@ -51,6 +52,7 @@ import type * as TeleportProtocol from "./teleport-protocol";
 export type * from "./background-process-protocol";
 export type * from "./cwd-protocol";
 export type * from "./external-tool-protocol";
+export type * from "./loop-status-protocol";
 export type * from "./runtime-scope";
 export type * from "./schedule-protocol";
 export type * from "./teleport-protocol";
@@ -398,16 +400,6 @@ export interface ModCommandInfo {
   args?: string;
 }
 
-export type LoopStatus =
-  | "SENDING_API_REQUEST"
-  | "WAITING_FOR_API_RESPONSE"
-  | "RETRYING_API_REQUEST"
-  | "PROCESSING_API_RESPONSE"
-  | "EXECUTING_CLIENT_SIDE_TOOL"
-  | "EXECUTING_COMMAND"
-  | "WAITING_ON_APPROVAL"
-  | "WAITING_ON_INPUT";
-
 export type QueueMessageKind =
   | "message"
   | "task_notification"
@@ -431,25 +423,6 @@ export interface QueueMessage {
   source: QueueMessageSource;
   content: MessageCreate["content"] | string;
   enqueued_at: string;
-}
-
-/**
- * Loop state is intentionally small and finite.
- * Message-level details are projected from runtime deltas.
- *
- * Queue state is delivered separately via `update_queue` messages.
- */
-export interface LoopState {
-  status: LoopStatus;
-  active_run_ids: string[];
-  /**
-   * Tool call ids currently executing client-side. Populated only while
-   * `status` is `EXECUTING_CLIENT_SIDE_TOOL`; empty otherwise. Lets
-   * observer UIs render an authoritative executing set that self-heals on
-   * every status frame instead of pairing client_tool_start/end lifecycle
-   * events, which are unrecoverable if a frame is lost.
-   */
-  executing_tool_call_ids: string[];
 }
 
 export interface DeviceStatusUpdateMessage extends RuntimeEnvelope {
