@@ -1,6 +1,7 @@
 // src/cli/commands/connect.ts
 // Command handlers for provider connection management in TUI slash commands
 
+import { clearAvailableModelsCache } from "@/agent/available-models";
 import {
   formatLocalProviderTimeout,
   type LocalProviderTimeout,
@@ -22,7 +23,10 @@ import {
   OPENAI_CODEX_PROVIDER_NAME,
 } from "@/providers/openai-codex-provider";
 import { getErrorMessage } from "@/utils/error";
-import { runLocalOAuthConnectFlow } from "./connect-local-oauth";
+import {
+  getLocalOAuthCredentials,
+  runLocalOAuthConnectFlow,
+} from "./connect-local-oauth";
 import {
   defaultConnectApiKey,
   isConnectApiKeyProvider,
@@ -476,6 +480,102 @@ async function handleConnectChatGPT(
   }
 }
 
+async function handleConnectCloudOAuthProvider(
+  ctx: ConnectCommandContext,
+  msg: string,
+  provider: ResolvedConnectProvider,
+): Promise<void> {
+  const existingProvider = await getProviderByName(
+    provider.byokProvider.providerName,
+    { target: "api" },
+  );
+  if (existingProvider) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      `Already connected to ${provider.byokProvider.displayName}.\n\nOpen /connect and select it in the Cloud tab to disconnect or re-authenticate.`,
+      false,
+    );
+    return;
+  }
+
+  ctx.setCommandRunning(true);
+  const abortController = new AbortController();
+  setActiveConnectAbortController(abortController);
+  const cmdId = addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    `Starting ${provider.byokProvider.displayName} login...`,
+    true,
+    "running",
+  );
+
+  try {
+    const credential = await getLocalOAuthCredentials(provider.byokProvider, {
+      signal: abortController.signal,
+      onStatus: (status) =>
+        updateCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          cmdId,
+          msg,
+          status,
+          true,
+          "running",
+        ),
+    });
+    const serialized = JSON.stringify(credential);
+    await checkProviderApiKey(
+      provider.byokProvider.providerType,
+      serialized,
+      undefined,
+      undefined,
+      undefined,
+      { target: "api" },
+    );
+    await createOrUpdateProvider(
+      provider.byokProvider.providerType,
+      provider.byokProvider.providerName,
+      serialized,
+      undefined,
+      undefined,
+      undefined,
+      {},
+      { target: "api" },
+    );
+    clearAvailableModelsCache();
+
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `✓ Successfully connected to ${provider.byokProvider.displayName}!\n\n` +
+        `Provider '${provider.byokProvider.providerName}' saved in Letta Cloud.`,
+      true,
+      "finished",
+    );
+  } catch (error) {
+    const isCancelled = error instanceof Error && error.name === "AbortError";
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      isCancelled
+        ? `Cancelled ${provider.byokProvider.displayName} connection.`
+        : `✗ Failed to connect ${provider.byokProvider.displayName}: ${getErrorMessage(error)}`,
+      false,
+      "finished",
+    );
+  } finally {
+    setActiveConnectAbortController(null);
+    ctx.setCommandRunning(false);
+  }
+}
+
 async function handleConnectLocalOAuthProvider(
   ctx: ConnectCommandContext,
   msg: string,
@@ -802,7 +902,7 @@ export async function handleConnect(
   if (isConnectOAuthProvider(provider)) {
     if (provider.target === "local") {
       await handleConnectLocalOAuthProvider(ctx, msg, provider);
-    } else {
+    } else if (provider.byokProvider.providerType === "chatgpt_oauth") {
       const parsed = parseChatGPTArgs(parts.slice(2));
       if (parsed.error) {
         addCommandResult(
@@ -815,6 +915,8 @@ export async function handleConnect(
         return;
       }
       await handleConnectChatGPT(ctx, msg, parsed.providerName);
+    } else {
+      await handleConnectCloudOAuthProvider(ctx, msg, provider);
     }
     return;
   }

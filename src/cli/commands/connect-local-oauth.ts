@@ -1,4 +1,8 @@
-import type { AuthInteraction, AuthPrompt } from "@earendil-works/pi-ai";
+import type {
+  AuthInteraction,
+  AuthPrompt,
+  OAuthCredential,
+} from "@earendil-works/pi-ai";
 import type {
   OAuthPrompt,
   OAuthSelectPrompt,
@@ -55,10 +59,10 @@ function waitForPromptCancellation(prompt: AuthPrompt): Promise<string> {
   });
 }
 
-export async function runLocalOAuthConnectFlow(
+export async function getLocalOAuthCredentials(
   provider: ByokProvider,
   callbacks: LocalOAuthConnectCallbacks,
-): Promise<{ providerName: string }> {
+): Promise<OAuthCredential> {
   const providerId = localOAuthProviderId(provider);
   const oauth = getProviderOAuthAuth(providerId);
   if (!oauth) {
@@ -123,7 +127,14 @@ export async function runLocalOAuthConnectFlow(
     },
   };
 
-  const credential = await oauth.login(interaction);
+  return oauth.login(interaction);
+}
+
+export async function runLocalOAuthConnectFlow(
+  provider: ByokProvider,
+  callbacks: LocalOAuthConnectCallbacks,
+): Promise<{ providerName: string }> {
+  const credential = await getLocalOAuthCredentials(provider, callbacks);
 
   setLocalOAuthProvider({
     providerName: provider.providerName,
