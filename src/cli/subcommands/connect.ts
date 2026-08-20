@@ -3,6 +3,7 @@ import { Writable } from "node:stream";
 import { parseArgs } from "node:util";
 import { parseLocalProviderTimeout } from "@/backend/local/local-provider-timeout";
 import {
+  getLocalOAuthCredentials,
   type LocalOAuthConnectCallbacks,
   runLocalOAuthConnectFlow,
 } from "@/cli/commands/connect-local-oauth";
@@ -78,6 +79,10 @@ interface ConnectSubcommandDeps {
   runChatGPTOAuthConnectFlow: (
     callbacks: ChatGPTOAuthFlowCallbacks,
   ) => Promise<unknown>;
+  getLocalOAuthCredentials: (
+    provider: Parameters<typeof getLocalOAuthCredentials>[0],
+    callbacks: LocalOAuthConnectCallbacks,
+  ) => ReturnType<typeof getLocalOAuthCredentials>;
   runLocalOAuthConnectFlow: (
     provider: Parameters<typeof runLocalOAuthConnectFlow>[0],
     callbacks: LocalOAuthConnectCallbacks,
@@ -108,6 +113,7 @@ const DEFAULT_DEPS: ConnectSubcommandDeps = {
         getOpenAICodexProvider({}, providerName ?? OPENAI_CODEX_PROVIDER_NAME),
     }),
   runChatGPTOAuthConnectFlow,
+  getLocalOAuthCredentials,
   runLocalOAuthConnectFlow,
   providerStorageTargetLabel,
 };
@@ -252,7 +258,10 @@ export async function runConnectSubcommand(
 
   if (isConnectOAuthProvider(provider)) {
     try {
-      if (provider.target !== "local") {
+      if (
+        provider.target !== "local" &&
+        provider.byokProvider.providerType === "chatgpt_oauth"
+      ) {
         await io.ensureSettingsReady();
         let providerName: string;
         try {
@@ -290,7 +299,7 @@ export async function runConnectSubcommand(
         io.stderr(getErrorMessage(error));
         return 1;
       }
-      await io.runLocalOAuthConnectFlow(provider.byokProvider, {
+      const oauthCallbacks: LocalOAuthConnectCallbacks = {
         baseURL: connectionOptions.baseURL,
         timeout: connectionOptions.timeout,
         onStatus: (status) => io.stdout(status),
@@ -321,10 +330,33 @@ export async function runConnectSubcommand(
           // Default to the provider's first (default) option, e.g. browser login.
           return prompt.options[0]?.id;
         },
-      });
+      };
+
+      if (provider.target === "local") {
+        await io.runLocalOAuthConnectFlow(
+          provider.byokProvider,
+          oauthCallbacks,
+        );
+      } else {
+        await io.ensureSettingsReady();
+        const credential = await io.getLocalOAuthCredentials(
+          provider.byokProvider,
+          oauthCallbacks,
+        );
+        const serialized = JSON.stringify(credential);
+        await io.checkProviderApiKey(
+          provider.byokProvider.providerType,
+          serialized,
+        );
+        await io.createOrUpdateProvider(
+          provider.byokProvider.providerType,
+          provider.byokProvider.providerName,
+          serialized,
+        );
+      }
 
       io.stdout(
-        `Successfully connected to ${provider.byokProvider.displayName}.`,
+        `Successfully connected to ${provider.byokProvider.displayName} in ${io.providerStorageTargetLabel()}.`,
       );
       return 0;
     } catch (error) {

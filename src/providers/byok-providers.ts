@@ -123,6 +123,15 @@ export const CLOUD_BYOK_PROVIDERS: readonly ByokProvider[] = [
     isOAuth: true,
   },
   {
+    id: "grok",
+    displayName: "Grok plan",
+    description: "Connect your xAI Grok subscription",
+    providerType: "xai",
+    providerName: "lc-xai",
+    oauthProviderId: "xai",
+    isOAuth: true,
+  },
+  {
     id: "anthropic",
     displayName: "Claude API",
     description: "Connect an Anthropic API key",

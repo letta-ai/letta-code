@@ -50,6 +50,21 @@ describe("connect provider normalization", () => {
     expect(isConnectOAuthProvider(resolved)).toBe(true);
   });
 
+  test("resolves Grok as cloud xAI OAuth", () => {
+    const resolved = resolveConnectProvider("grok", "api");
+
+    if (!resolved) {
+      throw new Error("Expected Grok cloud provider to resolve");
+    }
+    expect(resolved.byokProvider).toMatchObject({
+      providerType: "xai",
+      providerName: "lc-xai",
+      oauthProviderId: "xai",
+      isOAuth: true,
+    });
+    expect(isConnectOAuthProvider(resolved)).toBe(true);
+  });
+
   test("resolves standard api-key providers", () => {
     const anthropic = resolveConnectProvider("anthropic", "api");
     const openrouter = resolveConnectProvider("openrouter", "api");
@@ -167,7 +182,7 @@ describe("connect provider normalization", () => {
       oauthProviderId: "xai",
     });
     expect(listConnectProviderTokens("local")).toContain("grok");
-    expect(listConnectProviderTokens("api")).not.toContain("grok");
+    expect(listConnectProviderTokens("api")).toContain("grok");
   });
 
   test("uses environment keys before API-key optional defaults", () => {

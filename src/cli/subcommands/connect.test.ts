@@ -38,6 +38,17 @@ function createIoDeps() {
       runChatGPTOAuthConnectFlow: mock(() =>
         Promise.resolve({ providerName: "chatgpt-plus-pro" }),
       ),
+      getLocalOAuthCredentials: mock(() =>
+        Promise.resolve({
+          type: "oauth" as const,
+          access: "oauth-access",
+          refresh: "oauth-refresh",
+          expires: Date.now() + 60_000,
+        }),
+      ),
+      runLocalOAuthConnectFlow: mock(() =>
+        Promise.resolve({ providerName: "local-oauth" }),
+      ),
       providerStorageTargetLabel: () => "test storage",
     },
   };
@@ -134,6 +145,45 @@ describe("connect subcommand", () => {
       expect.objectContaining({ providerName: "chatgpt-work" }),
     );
     expect(stdout.join("\n")).toContain("Provider 'chatgpt-work' saved.");
+  });
+
+  test("stores Pi xAI OAuth credentials in the cloud provider", async () => {
+    const { stdout, deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(["grok"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(deps.ensureSettingsReady).toHaveBeenCalledTimes(1);
+    expect(deps.getLocalOAuthCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerType: "xai",
+        oauthProviderId: "xai",
+      }),
+      expect.objectContaining({ onStatus: expect.any(Function) }),
+    );
+    const createCalls = deps.createOrUpdateProvider.mock
+      .calls as unknown as Array<[string, string, string]>;
+    const storedCredential = createCalls[0]?.[2];
+    if (typeof storedCredential !== "string") {
+      throw new Error("Expected a serialized OAuth credential");
+    }
+    expect(JSON.parse(storedCredential)).toMatchObject({
+      type: "oauth",
+      access: "oauth-access",
+      refresh: "oauth-refresh",
+    });
+    expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
+      "xai",
+      storedCredential,
+    );
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "xai",
+      "lc-xai",
+      storedCredential,
+    );
+    expect(stdout.join("\n")).toContain(
+      "Successfully connected to Grok plan in test storage.",
+    );
   });
 
   test("connects API key provider from positional key", async () => {
