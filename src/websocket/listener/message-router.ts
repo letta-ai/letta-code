@@ -750,13 +750,13 @@ export function createListenerMessageHandler(
           "remove_queue_item_response",
           "remove_queue_item",
         );
-        // Broadcast the updated queue so all connected clients see the change
-        if (removed !== null) {
-          emitQueueUpdateIfOpen(runtime, {
-            agent_id: parsed.runtime.agent_id,
-            conversation_id: parsed.runtime.conversation_id,
-          });
-        }
+        // Broadcast the authoritative queue snapshot even when the item was
+        // NOT found: a consumer removing an already-drained item is holding
+        // a stale queue copy, and this snapshot repairs it. (LET-11174)
+        emitQueueUpdateIfOpen(runtime, {
+          agent_id: parsed.runtime.agent_id,
+          conversation_id: parsed.runtime.conversation_id,
+        });
         return;
       }
 
