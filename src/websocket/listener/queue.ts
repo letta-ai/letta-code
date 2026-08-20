@@ -10,7 +10,11 @@ import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
 import { getInboundImageFailureMode } from "./image-policy";
 import { getInboundClientMessageIds } from "./inbound-queue";
-import { emitDequeuedUserMessage } from "./protocol-outbound";
+import {
+  emitDequeuedUserMessage,
+  emitLoopStatusUpdate,
+  emitQueueUpdate,
+} from "./protocol-outbound";
 import {
   emitListenerStatus,
   evictConversationRuntimeIfIdle,
@@ -396,6 +400,30 @@ function computeListenerQueueBlockedReason(
   );
 }
 
+/**
+ * Turn-boundary status re-emit (LET-11174). Queue frames are emitted only on
+ * change and loop frames only on transition, so one lost frame leaves
+ * downstream status consumers stale until the next change happens to land.
+ * Re-sending the full snapshot at turn start and turn end bounds any silent
+ * frame loss to a single turn. Both frames coalesce as status-class snapshots
+ * on the outbound wire, so unchanged re-emits cost at most one extra frame
+ * each per boundary.
+ */
+function emitTurnBoundaryStatus(
+  runtime: ConversationRuntime,
+  socket: ListenerTransport,
+): void {
+  if (!isListenerTransportOpen(socket)) {
+    return;
+  }
+  const scope = {
+    agent_id: runtime.agentId,
+    conversation_id: runtime.conversationId,
+  };
+  emitQueueUpdate(socket, runtime, scope);
+  emitLoopStatusUpdate(socket, runtime, scope);
+}
+
 async function drainQueuedMessages(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
@@ -432,6 +460,8 @@ async function drainQueuedMessages(
 
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
+      // Turn start boundary: unconditional snapshot even when nothing changed.
+      emitTurnBoundaryStatus(runtime, socket);
 
       const preTurnStatus =
         getListenerStatus(runtime.listener) === "processing"
@@ -450,6 +480,9 @@ async function drainQueuedMessages(
         opts.onStatusChange,
         opts.connectionId,
       );
+      // Turn end boundary: repair any queue/loop frame the turn's own
+      // change-driven emissions failed to deliver.
+      emitTurnBoundaryStatus(runtime, socket);
       evictConversationRuntimeIfIdle(runtime);
     }
   } finally {
