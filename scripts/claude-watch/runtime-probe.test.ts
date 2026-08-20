@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { evaluateProbe } from "./runtime-observations.ts";
 import {
+  CLAUDE_PROBE_CONTRACT_VERSION,
   captureClaudeRuntime,
   createClaudeRuntimeCommandPlan,
   diffClaudeRuntime,
+  isClaudeProbeContractCurrent,
   normalizeVolatile,
   parseClaudeStream,
 } from "./runtime-probe.ts";
@@ -54,6 +56,7 @@ function snapshot(
   overrides: Partial<ClaudeRuntimeSnapshot> = {},
 ): ClaudeRuntimeSnapshot {
   return {
+    probe_contract_version: CLAUDE_PROBE_CONTRACT_VERSION,
     version: "1.2.3",
     version_output: "1.2.3 (Claude Code)",
     help_text: "--permission-mode auto",
@@ -74,6 +77,16 @@ function snapshot(
 }
 
 describe("command planning", () => {
+  test("invalidates cached probes when their observation contract changes", () => {
+    expect(isClaudeProbeContractCurrent(snapshot())).toBe(true);
+    expect(
+      isClaudeProbeContractCurrent(
+        snapshot({ probe_contract_version: CLAUDE_PROBE_CONTRACT_VERSION - 1 }),
+      ),
+    ).toBe(false);
+    expect(isClaudeProbeContractCurrent(undefined)).toBe(false);
+  });
+
   test("uses an exact local package install and a constrained inert command", () => {
     const plan = createClaudeRuntimeCommandPlan("1.2.3", "/tmp/supplied/root", {
       env: { PATH: "/bin", ANTHROPIC_API_KEY: "secret" },

@@ -28,6 +28,7 @@ import {
 import {
   captureClaudeRuntime,
   createClaudeRuntimeCommandPlan,
+  isClaudeProbeContractCurrent,
 } from "./runtime-probe.ts";
 import {
   fetchStateBranchTip,
@@ -389,11 +390,15 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (stateTip && !state) {
     throw new Error(`Invalid Claude state snapshot at ${stateTip}`);
   }
+  const probeContractStale = state?.runtime
+    ? !isClaudeProbeContractCurrent(state.runtime)
+    : false;
 
   if (
     !args.validationOnly &&
     stateTip &&
     state &&
+    !probeContractStale &&
     !hasProcessedCandidate(tracker.state, state.candidate_id)
   ) {
     const analysis = rebuildClaudeAnalysisFromState(repoPath, stateTip);
@@ -452,10 +457,12 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       candidate,
       state,
       args,
-      packageChanged || docsChanged || !state?.runtime,
+      packageChanged || docsChanged || !state?.runtime || probeContractStale,
     );
     currentRuntime = runtime.currentRuntime;
-    if (args.previousVersion && runtime.previousRuntime) {
+    if (probeContractStale) {
+      previousForAnalysis = null;
+    } else if (args.previousVersion && runtime.previousRuntime) {
       previousForAnalysis = {
         schema_version: 1,
         candidate_id: `manual-replay@${args.previousVersion}`,
@@ -479,11 +486,13 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       candidate,
       previous: previousForAnalysis,
       currentDocs: docsCapture.snapshot,
-      previousSources: stateSources(repoPath, stateTip),
+      previousSources: probeContractStale
+        ? {}
+        : stateSources(repoPath, stateTip),
       currentSources: docsCapture.sources,
       currentRuntime,
       workflowRunUrl: workflowRunUrl(),
-      stateBaseSha: stateTip,
+      stateBaseSha: probeContractStale ? null : stateTip,
     });
   } catch (error) {
     analysis = buildErrorAnalysis(error, state);

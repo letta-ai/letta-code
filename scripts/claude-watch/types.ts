@@ -101,6 +101,7 @@ export interface ClaudeProbeObservation {
 }
 
 export interface ClaudeRuntimeSnapshot {
+  probe_contract_version: number;
   version: string;
   version_output: string;
   help_text: string;

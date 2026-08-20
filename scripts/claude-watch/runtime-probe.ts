@@ -23,6 +23,7 @@ import type {
 } from "./types.ts";
 
 const PACKAGE_NAME = "@anthropic-ai/claude-code";
+export const CLAUDE_PROBE_CONTRACT_VERSION = 1;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_OUTPUT_CAP = 2 * 1024 * 1024;
 const AUTH_ENV_KEYS = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] as const;
@@ -100,6 +101,12 @@ export interface ParsedClaudeStream {
     content: string;
     isError: boolean;
   }>;
+}
+
+export function isClaudeProbeContractCurrent(
+  runtime: ClaudeRuntimeSnapshot | null | undefined,
+): boolean {
+  return runtime?.probe_contract_version === CLAUDE_PROBE_CONTRACT_VERSION;
 }
 
 interface ProbeDefinition {
@@ -869,6 +876,7 @@ export async function captureClaudeRuntime(
     }
 
     const snapshotWithoutDigest = {
+      probe_contract_version: CLAUDE_PROBE_CONTRACT_VERSION,
       version: options.version,
       version_output: normalizeText(versionResult.stdout),
       help_text: normalizedHelp,
