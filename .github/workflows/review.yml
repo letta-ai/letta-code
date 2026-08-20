@@ -50,7 +50,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
 
-      - uses: letta-ai/letta-code-action@bd5cc55fcbad7be71134ce93406ca477e9fc6ec3
+      - uses: letta-ai/letta-code-action@244cc9e80c77cfebdb3ec8e146e018a5fe0af027
         id: letta_review
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
