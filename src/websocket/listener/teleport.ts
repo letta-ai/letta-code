@@ -16,6 +16,7 @@ import { isListenerTransportOpen } from "./transport";
 import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
 import type {
   ConversationRuntime,
+  IncomingMessage,
   ListenerConnectionId,
   ListenerRuntime,
   PendingTeleport,
@@ -29,6 +30,25 @@ type SafeSocketSend = (
 ) => boolean;
 
 const TELEPORT_RECOVERY_TTL_MS = 5 * 60_000;
+
+export function buildTeleportContinuationMessages(params: {
+  teleportId: string;
+  approvals: NonNullable<TeleportContinuation["approvals"]>;
+}): IncomingMessage["messages"] {
+  return [
+    {
+      type: "approval",
+      approvals: params.approvals,
+      otid: params.teleportId,
+    },
+    {
+      role: "system",
+      content:
+        "<system-reminder>Teleportation to this environment is complete. Continue the existing task from this environment now.</system-reminder>",
+      otid: `${params.teleportId}:continue`,
+    },
+  ];
+}
 
 function getPendingTeleports(
   runtime: ListenerRuntime,

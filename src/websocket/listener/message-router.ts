@@ -66,6 +66,7 @@ import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import { parseListenerReadyMessage } from "./split-stream-lifecycle";
 import {
+  buildTeleportContinuationMessages,
   clearPriorReadyTeleports,
   handleTeleportProbe,
   handleTeleportRequest,
@@ -489,13 +490,10 @@ export function createListenerMessageHandler(
                 connectionId,
                 agentId: parsed.runtime.agent_id,
                 conversationId: parsed.runtime.conversation_id,
-                messages: [
-                  {
-                    type: "approval",
-                    approvals,
-                    otid: teleportId,
-                  },
-                ],
+                messages: buildTeleportContinuationMessages({
+                  teleportId,
+                  approvals,
+                }),
               },
               socket,
               scopedRuntime,
