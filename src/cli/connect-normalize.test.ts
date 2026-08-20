@@ -5,6 +5,7 @@ import {
   isConnectBedrockProvider,
   isConnectOAuthProvider,
   listConnectProvidersForHelp,
+  listConnectProviderTokens,
   resolveConnectProvider,
 } from "@/cli/commands/connect-normalize";
 
@@ -147,8 +148,9 @@ describe("connect provider normalization", () => {
   test("resolves local subscription providers from the pi OAuth catalog", () => {
     const anthropicOAuth = resolveConnectProvider("anthropic-oauth", "local");
     const githubCopilot = resolveConnectProvider("github-copilot", "local");
+    const grok = resolveConnectProvider("grok", "local");
 
-    if (!anthropicOAuth || !githubCopilot) {
+    if (!anthropicOAuth || !githubCopilot || !grok) {
       throw new Error("Expected local OAuth providers to resolve");
     }
 
@@ -156,6 +158,16 @@ describe("connect provider normalization", () => {
     expect(anthropicOAuth.byokProvider.oauthProviderId).toBe("anthropic");
     expect(isConnectOAuthProvider(githubCopilot)).toBe(true);
     expect(githubCopilot.byokProvider.oauthProviderId).toBe("github-copilot");
+    expect(grok.canonical).toBe("xai");
+    expect(grok.byokProvider).toMatchObject({
+      displayName: "xAI (Grok/X subscription)",
+      providerType: "xai",
+      providerName: "xai",
+      isOAuth: true,
+      oauthProviderId: "xai",
+    });
+    expect(listConnectProviderTokens("local")).toContain("grok");
+    expect(listConnectProviderTokens("api")).not.toContain("grok");
   });
 
   test("uses environment keys before API-key optional defaults", () => {

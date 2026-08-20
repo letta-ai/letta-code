@@ -24,6 +24,7 @@ const ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
 
 const LOCAL_ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
   gemini: "google",
+  grok: "xai",
   "kimi-code": "kimi-coding",
   moonshot: "moonshotai",
   bedrock: "amazon-bedrock",
@@ -109,7 +110,11 @@ export function listConnectProvidersForHelp(
 export function listConnectProviderTokens(
   target: ProviderStorageTarget = defaultProviderStorageTarget(),
 ): string[] {
-  return [...listConnectProvidersForHelp(target), "codex"];
+  return [
+    ...listConnectProvidersForHelp(target),
+    "codex",
+    ...(target === "local" ? ["grok"] : []),
+  ];
 }
 
 export function isConnectOAuthProvider(
