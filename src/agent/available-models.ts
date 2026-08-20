@@ -13,7 +13,9 @@ export type AvailableModel = {
   providerType?: string;
   providerCategory?: string;
   modelEndpoint?: string;
+  modelId?: string;
   openAICompatibleProxy?: boolean;
+  reasoningLevels?: string[];
 };
 
 export type ReasoningCapabilities = {
@@ -167,6 +169,15 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
         (typeof model.name === "string" && model.name) ||
         (typeof model.model === "string" && model.model) ||
         model.handle;
+      const modelId =
+        typeof modelRecord.model_id === "string"
+          ? modelRecord.model_id
+          : undefined;
+      const reasoningLevels = Array.isArray(modelRecord.reasoning_levels)
+        ? modelRecord.reasoning_levels.filter(
+            (level): level is string => typeof level === "string",
+          )
+        : undefined;
       const availableModel = {
         handle: model.handle,
         label,
@@ -179,7 +190,9 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
         ...(providerType ? { providerType } : {}),
         ...(providerCategory ? { providerCategory } : {}),
         ...(modelEndpoint ? { modelEndpoint } : {}),
+        ...(modelId ? { modelId } : {}),
         ...(isOpenAICompatibleProxy ? { openAICompatibleProxy: true } : {}),
+        ...(reasoningLevels ? { reasoningLevels } : {}),
       };
       if (!modelsByHandle.has(model.handle)) {
         modelsByHandle.set(model.handle, availableModel);

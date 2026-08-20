@@ -369,9 +369,8 @@ export function App({
   systemInfoReminderEnabled = true,
   modsDisabled = false,
 }: AppProps) {
-  // Warm the model-access cache in the background so /model is fast on first
-  // open, and refresh the curated catalog from the cloud endpoint (bundled
-  // models.json stays as the offline/failure fallback).
+  // Warm model availability so /model is fast on first open, and refresh the
+  // runtime catalog. API mode keeps its persisted catalog on temporary failures.
   useEffect(() => {
     prefetchAvailableModelHandles();
     prefetchModelCatalog();

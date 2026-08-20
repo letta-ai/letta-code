@@ -35,6 +35,7 @@ describe("local model catalog", () => {
         handle: "opencode/deepseek-v4-flash-free",
         max_context_window: 200000,
         max_tokens: 128000,
+        model_id: "deepseek-v4-flash-free",
         model_endpoint_type: "opencode",
         name: "DeepSeek V4 Flash Free",
         provider_type: "opencode",
@@ -86,8 +87,10 @@ describe("local model catalog", () => {
           handle: "lmstudio/gemma-4-26B-A4B-it-oQ6",
           max_context_window: 256000,
           max_tokens: 8192,
+          model_id: "gemma-4-26B-A4B-it-oQ6",
           model_endpoint_type: "lmstudio",
           provider_type: "lmstudio",
+          reasoning_levels: ["off", "minimal", "low", "medium", "high"],
         }),
       );
       expect(models.map((model) => model.handle)).not.toContain(
