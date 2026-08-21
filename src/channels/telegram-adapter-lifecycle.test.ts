@@ -370,6 +370,76 @@ test("telegram adapter deduplicates lifecycle error replies", async () => {
   expect(bot?.api.sendMessage).toHaveBeenCalledTimes(1);
 });
 
+test("telegram adapter deduplicates coalesced sources by run and destination", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = (
+    messageId: string,
+    options: { chatId?: string; threadId?: string | null } = {},
+  ) => ({
+    channel: "telegram" as const,
+    accountId: "telegram-test-account",
+    chatId: options.chatId ?? "123",
+    chatType: "direct" as const,
+    messageId,
+    threadId: options.threadId ?? null,
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  });
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "error",
+    stopReason: "error",
+    error: "Usage limit reached.",
+    runId: "run-1",
+    sources: [
+      source("77"),
+      source("78"),
+      source("88", { chatId: "456" }),
+      source("90", { threadId: "42" }),
+      source("91", { threadId: "43" }),
+    ],
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-2",
+    outcome: "error",
+    stopReason: "error",
+    error: "Retry failed.",
+    runId: "run-2",
+    sources: [source("79")],
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot?.api.sendMessage).toHaveBeenCalledTimes(5);
+  expect(bot?.api.sendMessage).toHaveBeenCalledWith(
+    "123",
+    "Turn failed:\nUsage limit reached.\n\nRun ID: run-1",
+    expect.objectContaining({ reply_parameters: { message_id: 77 } }),
+  );
+  expect(bot?.api.sendMessage).toHaveBeenCalledWith(
+    "123",
+    "Turn failed:\nRetry failed.\n\nRun ID: run-2",
+    expect.objectContaining({ reply_parameters: { message_id: 79 } }),
+  );
+  expect(
+    bot?.api.sendMessage.mock.calls.map(
+      (call) =>
+        ((call as unknown[])[2] as { message_thread_id?: number } | undefined)
+          ?.message_thread_id,
+    ),
+  ).toEqual([undefined, undefined, 42, 43, undefined]);
+});
+
 test("telegram adapter forwards reaction updates through onMessage", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,

@@ -1,5 +1,5 @@
 import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
-import type { ChannelTurnSource } from "@/channels/types";
+import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
 import type {
   GrammYModule,
   TelegramBotConstructor,
@@ -63,14 +63,22 @@ export function resolveTelegramInputFileConstructor(
 
 export function getTelegramLifecycleErrorReplyKey(
   source: ChannelTurnSource,
+  options: {
+    accountId: string;
+    batchId: string;
+    outcome: ChannelTurnOutcome;
+    runId?: string | null;
+  },
 ): string | null {
   if (source.channel !== "telegram" || !source.chatId) {
     return null;
   }
   return [
+    options.accountId,
     source.chatId,
-    source.threadId ?? source.messageId ?? "",
-    source.conversationId,
+    source.threadId?.trim() ?? "",
+    options.runId?.trim() || options.batchId,
+    options.outcome,
   ].join(":");
 }
 
