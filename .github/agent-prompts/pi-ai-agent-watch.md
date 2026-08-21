@@ -19,9 +19,10 @@ The rebuilt `/tmp/pi-ai-watch-analysis.json` is the source of truth for the exac
 3. Run `npm diff` for the two exact package versions when generated declarations, exports, catalogs, or shipped JavaScript matter. The npm artifacts, not only the monorepo source, define the dependency Letta Code consumes.
 4. Compare the release against every implicated Letta Code integration surface. Check types, runtime behavior, cancellation, auth, provider catalogs, model defaults, message/stream semantics, error handling, standalone bundling, and tests as applicable.
 5. If the installed version is older than the Previous release in the run inputs, also inspect the cumulative installed-to-current changelog and source/package diff before opening a PR. A skipped release must not create a migration gap later.
-6. Decide whether the release is worth adopting now:
-   - Upgrade when it fixes or improves provider behavior Letta Code uses, changes a consumed contract, adds support we should expose, resolves a security/reliability issue, or is needed to keep the integration current.
-   - Record `no_upgrade` when the release is genuinely irrelevant to Letta Code and staying on the installed version is intentional for now.
+6. Default to `no_upgrade`. A newer published version, routine catalog churn, or general dependency freshness is not a reason to upgrade by itself.
+   - Upgrade only when you can name a concrete Letta Code benefit or avoided risk and connect it to both the upstream diff and a local callsite. Examples include fixing a bug or security/reliability problem in a path Letta Code uses, adapting a consumed contract that otherwise breaks local behavior, or integrating a feature with a current product need.
+   - Do not upgrade for unsupported-provider changes, speculative future usefulness, generic maintenance, or upstream fixes that do not affect Letta Code.
+   - Record `no_upgrade` when no concrete local reason clears that bar. Staying on the installed version is the expected outcome, not a failure to keep current.
    - Record `needs_human_review` when impact or product policy is unclear. Do not guess.
 7. If upgrading, update the dependency and lockfile to the Current release and make all required application changes in the same PR. Do not leave compile breaks, runtime contract gaps, provider catalog drift, or missing feature wiring for a follow-up.
 8. Keep pi-ai as the owner of provider runtime behavior. Do not duplicate image filtering, provider capability checks, request-format fixups, model catalog data, or retry logic inside Letta Code when the new pi-ai version already owns it.
