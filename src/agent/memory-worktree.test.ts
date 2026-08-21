@@ -150,6 +150,46 @@ describe("reflection memory worktrees", () => {
     ).toBe("");
   });
 
+  test("refreshes remote memory before merging reflection changes", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    const otherDir = join(tempDir, "other");
+    git(tempDir, ["init", "--bare", remoteDir]);
+    git(memoryDir, ["remote", "add", "origin", remoteDir]);
+    git(memoryDir, ["push", "-u", "origin", "main"]);
+
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    writeFileSync(
+      join(worktree.worktreeDir, "persona.md"),
+      "reflection\n",
+      "utf-8",
+    );
+    git(worktree.worktreeDir, ["add", "persona.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
+
+    git(tempDir, ["clone", "--branch", "main", remoteDir, otherDir]);
+    writeFileSync(join(otherDir, "persona.md"), "remote\n", "utf-8");
+    git(otherDir, ["add", "persona.md"]);
+    git(otherDir, ["commit", "-m", "remote"]);
+    git(otherDir, ["push", "origin", "main"]);
+
+    const result = await finalizeReflectionMemoryWorktree(worktree, {
+      shouldMerge: true,
+    });
+
+    expect(result.status).toBe("merge_conflict");
+    expect(reflectionIntegrationConsumesTranscript(result)).toBe(false);
+    expect(readFileSync(join(memoryDir, "persona.md"), "utf-8")).toBe(
+      "remote\n",
+    );
+    expect(git(memoryDir, ["status", "--porcelain"]).trim()).toBe("");
+    expect(git(memoryDir, ["rev-parse", "HEAD"]).trim()).toBe(
+      git(memoryDir, ["rev-parse", "origin/main"]).trim(),
+    );
+    expect(existsSync(worktree.worktreeDir)).toBe(false);
+  });
+
   test("cleans up a no-op reflection worktree", async () => {
     const worktree = await createReflectionMemoryWorktree({
       parentMemoryDir: memoryDir,
