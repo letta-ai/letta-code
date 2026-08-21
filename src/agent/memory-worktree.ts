@@ -265,6 +265,47 @@ async function getHead(cwd: string): Promise<string | undefined> {
   return head || undefined;
 }
 
+async function refreshParentFromOrigin(parentMemoryDir: string): Promise<void> {
+  const origin = await tryRunGit(parentMemoryDir, [
+    "remote",
+    "get-url",
+    "origin",
+  ]);
+  if (!origin) {
+    return;
+  }
+
+  await runGit(parentMemoryDir, ["fetch", "origin", "main"]);
+
+  const remoteIsAncestor = await tryRunGit(parentMemoryDir, [
+    "merge-base",
+    "--is-ancestor",
+    "origin/main",
+    "HEAD",
+  ]);
+  if (remoteIsAncestor) {
+    return;
+  }
+
+  const localIsAncestor = await tryRunGit(parentMemoryDir, [
+    "merge-base",
+    "--is-ancestor",
+    "HEAD",
+    "origin/main",
+  ]);
+  if (localIsAncestor) {
+    await runGit(parentMemoryDir, ["merge", "--ff-only", "origin/main"]);
+    return;
+  }
+
+  try {
+    await runGit(parentMemoryDir, ["rebase", "origin/main"]);
+  } catch (error) {
+    await tryRunGit(parentMemoryDir, ["rebase", "--abort"]);
+    throw error;
+  }
+}
+
 export interface ReflectionMemoryWorktreeState {
   commitCount: number;
   dirty: boolean;
@@ -442,6 +483,39 @@ async function finalizeReflectionMemoryWorktreeImpl(
       summary:
         "Reflection produced memory updates, but the parent memory repo had uncommitted changes; the worktree was cleaned up so the transcript can be retried.",
     };
+  }
+
+  if (!options.requireAlreadyMerged) {
+    try {
+      await refreshParentFromOrigin(worktree.parentMemoryDir);
+    } catch (error) {
+      await cleanupWorktreeAndBranch(
+        worktree.parentMemoryDir,
+        worktree.worktreeDir,
+        worktree.branchName,
+        { force: true },
+      );
+      const message = error instanceof Error ? error.message : String(error);
+      debugLog(
+        "memfs-git",
+        "reflection finalized id=%s status=failed phase=parent_refresh commitCount=%d cleanedUp=true retryable=true error=%s",
+        worktree.id,
+        commitCount,
+        message,
+      );
+      return {
+        status: "failed",
+        parentMemoryDir: worktree.parentMemoryDir,
+        reflectionWorktreeDir: worktree.worktreeDir,
+        reflectionBranch: worktree.branchName,
+        commitCount,
+        head,
+        failurePhase: "integration",
+        error: message,
+        summary:
+          "Reflection produced memory updates, but the parent memory repo could not be refreshed; the worktree was cleaned up so the transcript can be retried.",
+      };
+    }
   }
 
   if (options.requireAlreadyMerged) {
