@@ -1,0 +1,174 @@
+name: pi-ai Agent Watch
+
+on:
+  schedule:
+    - cron: "34 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      previous_version:
+        description: "Previous exact stable pi-ai version"
+        required: false
+        type: string
+      current_version:
+        description: "Current exact stable pi-ai version"
+        required: false
+        type: string
+      dry_run:
+        description: "Build analysis only; do not update the tracker or invoke Amelia"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: pi-ai-agent-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Detect next stable pi-ai release
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_VERSION: ${{ inputs.previous_version }}
+          CURRENT_VERSION: ${{ inputs.current_version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          ARGS=(--analysis-file "$RUNNER_TEMP/pi-ai-watch-analysis.json")
+          if [ -n "$PREVIOUS_VERSION" ]; then
+            ARGS+=(--previous-version "$PREVIOUS_VERSION")
+          fi
+          if [ -n "$CURRENT_VERSION" ]; then
+            ARGS+=(--current-version "$CURRENT_VERSION")
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          bun scripts/pi-ai-watch/agent-watch.ts "${ARGS[@]}"
+
+      - name: Resolve Amelia GitHub identity
+        id: github-identity
+        if: steps.detect.outputs.should_run_agent == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+        run: |
+          login=$(gh api user --jq .login)
+          echo "login=$login" >> "$GITHUB_OUTPUT"
+          echo "Authenticated GitHub login: $login"
+
+      - name: Build Amelia prompt
+        id: prompt
+        if: steps.detect.outputs.should_run_agent == 'true'
+        env:
+          TRACKER_ISSUE: ${{ steps.detect.outputs.tracker_issue }}
+          TRACKER_ISSUE_URL: ${{ steps.detect.outputs.tracker_issue_url }}
+          INSTALLED_VERSION: ${{ steps.detect.outputs.installed_version }}
+          PREVIOUS_VERSION: ${{ steps.detect.outputs.previous_version }}
+          CURRENT_VERSION: ${{ steps.detect.outputs.current_version }}
+          EXPECTED_GITHUB_LOGIN: ${{ steps.github-identity.outputs.login }}
+          OWNERS: ${{ vars.PI_AI_WATCH_OWNERS }}
+        run: |
+          jq -e '
+            type == "array" and length > 0 and
+            all(.[];
+              ((.github | type) == "string" and (.github | length) > 0) and
+              ((.slack | type) == "string" and (.slack | test("^U[A-Z0-9]+$")))
+            )
+          ' <<< "$OWNERS" > /dev/null
+          owner_count=$(jq 'length' <<< "$OWNERS")
+          selected_owner=$(jq --argjson index "$((RANDOM % owner_count))" '.[$index]' <<< "$OWNERS")
+          github_reviewer=$(jq -r '.github' <<< "$selected_owner")
+          slack_owner_id=$(jq -r '.slack' <<< "$selected_owner")
+          {
+            echo "prompt<<AMELIA_PROMPT_EOF"
+            cat .github/agent-prompts/pi-ai-agent-watch.md
+            echo
+            echo "## Run inputs"
+            echo
+            echo "- Tracker issue: #$TRACKER_ISSUE ($TRACKER_ISSUE_URL)"
+            echo "- Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "- Expected GitHub login: $EXPECTED_GITHUB_LOGIN"
+            echo "- GitHub reviewer: $github_reviewer"
+            echo "- Slack owner ID: $slack_owner_id"
+            echo "- Installed package: @earendil-works/pi-ai@$INSTALLED_VERSION"
+            echo "- Previous release: $PREVIOUS_VERSION"
+            echo "- Current release: $CURRENT_VERSION"
+            echo
+            echo "## Sandbox bootstrap"
+            echo
+            echo "Run this exact block before reviewing the release:"
+            echo
+            echo '```bash'
+            echo 'set -euo pipefail'
+            echo 'rm -rf /tmp/letta-code-pi-ai-watch'
+            echo 'test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh repo clone letta-ai/letta-code /tmp/letta-code-pi-ai-watch'
+            echo 'cd /tmp/letta-code-pi-ai-watch'
+            echo 'bun install --frozen-lockfile'
+            echo "test -n \"\$AMELIA_GITHUB_TOKEN\" && GITHUB_TOKEN= GH_TOKEN=\"\$AMELIA_GITHUB_TOKEN\" GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=letta-ai/letta-code GITHUB_RUN_ID=\"$GITHUB_RUN_ID\" bun scripts/pi-ai-watch/agent-watch.ts --dry-run --previous-version \"$PREVIOUS_VERSION\" --current-version \"$CURRENT_VERSION\" --analysis-file /tmp/pi-ai-watch-analysis.json > /tmp/pi-ai-watch-analysis.log"
+            echo "jq -e '.previous_version == \"$PREVIOUS_VERSION\" and .current_version == \"$CURRENT_VERSION\" and .installed_version == \"$INSTALLED_VERSION\" and (.changed_files | type == \"array\")' /tmp/pi-ai-watch-analysis.json > /dev/null"
+            echo '```'
+            echo "AMELIA_PROMPT_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "conversation_name=$GITHUB_WORKFLOW $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Ask Amelia to review pi-ai release
+        if: steps.detect.outputs.should_run_agent == 'true'
+        uses: letta-ai/letta-code-action@244cc9e80c77cfebdb3ec8e146e018a5fe0af027
+        with:
+          letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
+          github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
+          environment: cloud
+          letta_args: >-
+            --new --name "${{ steps.prompt.outputs.conversation_name }}"
+          track_progress: ""
+          tracking_comment: "false"
+          model: auto
+          prompt: ${{ steps.prompt.outputs.prompt }}
+
+      - name: Verify recorded outcome
+        if: steps.detect.outputs.should_run_agent == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bun scripts/pi-ai-watch/update-tracker.ts \
+            --tracker-issue "${{ steps.detect.outputs.tracker_issue }}" \
+            --previous-version "${{ steps.detect.outputs.previous_version }}" \
+            --current-version "${{ steps.detect.outputs.current_version }}" \
+            --assert-recorded
+
+      - name: Record failed review attempt
+        if: failure() && steps.detect.outputs.should_run_agent == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if bun scripts/pi-ai-watch/update-tracker.ts \
+            --tracker-issue "${{ steps.detect.outputs.tracker_issue }}" \
+            --previous-version "${{ steps.detect.outputs.previous_version }}" \
+            --current-version "${{ steps.detect.outputs.current_version }}" \
+            --assert-recorded; then
+            echo "The agent recorded an outcome before its action failed"
+            exit 0
+          fi
+          bun scripts/pi-ai-watch/update-tracker.ts \
+            --tracker-issue "${{ steps.detect.outputs.tracker_issue }}" \
+            --analysis-file "$RUNNER_TEMP/pi-ai-watch-analysis.json" \
+            --outcome error \
+            --notes "Amelia review failed before recording an outcome; retry this release"
