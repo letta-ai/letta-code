@@ -74,7 +74,7 @@ describe("local OAuth provider storage", () => {
         access_token: "old-access-token",
         id_token: "old-id-token",
         account_id: "account-123",
-        expires_at: Date.now() + 60_000,
+        expires_at: Date.now() + 3_600_000,
       }),
       baseURL: "https://proxy.example.test/backend-api",
       timeout: 30_000,

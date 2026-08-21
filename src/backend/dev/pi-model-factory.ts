@@ -80,6 +80,23 @@ function thinkingLevelSetting(
     : undefined;
 }
 
+function modelIdFromHandle(modelHandle?: string): string | undefined {
+  if (!modelHandle) return undefined;
+  return modelHandle.slice(modelHandle.indexOf("/") + 1);
+}
+
+// zAI GLM-5.3 (and sibling always-on GLM-5 variants) reject
+// `thinking: {type: "disabled"}` with code 1210. pi-ai sends that whenever
+// `options.reasoning` is absent, so these models need a concrete effort even
+// when Letta has no explicit reasoning setting.
+function alwaysOnZaiThinking(modelId?: string): boolean {
+  return (
+    modelId === "glm-5.3" ||
+    modelId === "glm-5-turbo" ||
+    modelId === "glm-5.2-highspeed"
+  );
+}
+
 // Maps Letta model settings to a pi-ai ThinkingLevel. Every pi-ai Anthropic
 // call against a reasoning-capable model must pass this when available:
 // pi-ai sends `thinking: {type: "disabled"}` for reasoning models when
@@ -92,23 +109,30 @@ export function reasoningForSettings(
   const thinking = isRecord(modelSettings.thinking)
     ? modelSettings.thinking
     : undefined;
-  if (thinking?.type === "disabled") return undefined;
+  const modelId = modelIdFromHandle(modelHandle);
+  const preserveMax = modelId?.startsWith("gpt-5.6") === true;
   const nestedReasoning = isRecord(modelSettings.reasoning)
     ? modelSettings.reasoning
     : undefined;
-  const modelId = modelHandle?.slice(modelHandle.indexOf("/") + 1);
-  const preserveMax = modelId?.startsWith("gpt-5.6") === true;
   const rawEffort =
     nestedReasoning?.reasoning_effort ??
     modelSettings.effort ??
     modelSettings.reasoning_effort;
-  return thinkingLevelSetting(
+  const explicit = thinkingLevelSetting(
     normalizeReasoningEffortForModel(
       modelHandle,
       typeof rawEffort === "string" ? rawEffort : undefined,
     ),
     preserveMax,
   );
+  if (alwaysOnZaiThinking(modelId)) {
+    // API accepts low / high / max; low is the cheapest always-on default.
+    return explicit === "medium" || explicit === "minimal"
+      ? "low"
+      : (explicit ?? "low");
+  }
+  if (thinking?.type === "disabled") return undefined;
+  return explicit;
 }
 
 export interface PiModelSettings {
@@ -264,9 +288,19 @@ export interface ZaiConnection {
   timeout: LocalProviderTimeout;
 }
 
+function isZaiCodingBaseURL(baseURL: string | undefined): boolean {
+  return typeof baseURL === "string" && baseURL.includes("/coding/");
+}
+
 export function resolveZaiConnection(options: {
   storageDir?: string;
   preferredProviderType?: "zai" | "zai_coding";
+  /**
+   * Catalog/published model URL. Current GLM models publish the coding-plan
+   * endpoint; a lone stored `zai` key should reuse that instead of being
+   * forced onto pay-as-you-go `/api/paas/v4`.
+   */
+  publishedBaseURL?: string;
 }): ZaiConnection {
   const regularRecord = localProviderRecord(
     ["zai", LOCAL_ZAI_PROVIDER_NAME],
@@ -307,15 +341,32 @@ export function resolveZaiConnection(options: {
       providerIds: [LOCAL_ZAI_CODING_PROVIDER_NAME, "zai-coding"],
     }),
   };
+  const reuseRegularKeyOnCodingEndpoint = (): ZaiConnection => ({
+    ...codingConnection,
+    apiKey: regularKey,
+    timeout: regularConnection.timeout,
+  });
+  const publishedWantsCoding = isZaiCodingBaseURL(options.publishedBaseURL);
+  const hasDedicatedCodingRecord = Boolean(codingKey);
 
   if (options.preferredProviderType === "zai_coding" && codingKey) {
     return codingConnection;
   }
   if (options.preferredProviderType === "zai" && regularKey) {
+    // /model zai/glm-* stores provider_type=zai even for coding-plan models.
+    // Only stay on pay-as-you-go when a dedicated coding record exists or the
+    // catalog model itself is not a coding endpoint.
+    if (!hasDedicatedCodingRecord && publishedWantsCoding) {
+      return reuseRegularKeyOnCodingEndpoint();
+    }
     return regularConnection;
   }
   if (codingKey) return codingConnection;
-  if (regularKey) return regularConnection;
+  if (regularKey) {
+    return publishedWantsCoding
+      ? reuseRegularKeyOnCodingEndpoint()
+      : regularConnection;
+  }
   return codingConnection;
 }
 
@@ -529,6 +580,7 @@ export async function resolvePiModelForAgent(
         preferredProviderType === "zai_coding"
           ? preferredProviderType
           : undefined,
+      publishedBaseURL: publishedModel?.baseUrl,
     });
     connection = {
       apiKey: zai.apiKey,

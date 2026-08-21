@@ -40,7 +40,7 @@ describe("createLocalPiCredentialStore", () => {
       auth: localOAuthAuthFromCredentials({
         access: "a",
         refresh: "r",
-        expires: Date.now() + 60_000,
+        expires: Date.now() + 3_600_000,
         enterpriseUrl: "https://ghe.example.com",
         accountId: "acct",
       } as never),
@@ -103,7 +103,7 @@ describe("createLocalPiCredentialStore", () => {
         auth: localOAuthAuthFromCredentials({
           access: "chatgpt-access",
           refresh: "chatgpt-refresh",
-          expires: Date.now() + 60_000,
+          expires: Date.now() + 3_600_000,
         }),
       });
       const store = createLocalPiCredentialStore(storageDir);
@@ -188,7 +188,7 @@ describe("createLocalPiCredentialStore", () => {
         type: "oauth",
         access: "fresh-access",
         refresh: "refresh-token",
-        expires: Date.now() + 60_000,
+        expires: Date.now() + 3_600_000,
       };
     });
 

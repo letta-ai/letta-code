@@ -185,9 +185,9 @@ export function createLocalEndpointPiProvider(
   async function fetchModels(
     context: RefreshModelsContext,
   ): Promise<readonly LocalEndpointModel[]> {
-    // Last-known models come solely from the pi-ai store (the same entry
-    // createProvider restores and persists); no parallel model cache.
-    const stored = (await context.store.read())?.models ?? [];
+    // Last-known models come solely from the pi-ai stored snapshot (the same
+    // entry createProvider restores and persists); no parallel model cache.
+    const stored = context.stored?.models ?? [];
     const lastKnown = new Map(
       stored
         .filter((model) => model.provider === options.id)
