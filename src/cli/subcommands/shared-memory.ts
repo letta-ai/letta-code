@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { isLocalAgentId } from "@/agent/agent-id";
+import { invalidateClientSkillsPayloadCacheForAgent } from "@/agent/client-skills";
 import {
   getRepositoryMountDir,
   syncAttachedAgentRepositories,
@@ -348,6 +349,7 @@ export async function runSharedMemorySubcommand(
           return 1;
         }
         const sync = await syncRepositories(agentId);
+        invalidateClientSkillsPayloadCacheForAgent(agentId);
         const recompileError = await recompileAndReportFailure(
           recompileAgent,
           agentId,
@@ -381,6 +383,7 @@ export async function runSharedMemorySubcommand(
         "DELETE",
         `/v1/agents/${encodeURIComponent(agentId)}/repositories/${encodeURIComponent(repository.id)}`,
       );
+      invalidateClientSkillsPayloadCacheForAgent(agentId);
       const detachRecompileError = await recompileAndReportFailure(
         recompileAgent,
         agentId,

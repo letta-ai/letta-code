@@ -257,7 +257,7 @@ export function getRepositoryMountDir(
   return join(dirname(getMemoryRepoDir(agentId)), repositoryName);
 }
 
-function validateAgentRepositoryName(name: string): string {
+export function validateAgentRepositoryName(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) {
     throw new Error("repository name is required");
@@ -1511,7 +1511,7 @@ export interface SyncAgentRepositoriesResult {
   summaries: string[];
 }
 
-async function listAttachedAgentRepositories(
+export async function listAttachedAgentRepositories(
   agentId: string,
 ): Promise<AttachedAgentRepository[]> {
   const response = await apiRequest<AgentRepositoryResponse>(
