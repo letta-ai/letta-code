@@ -231,3 +231,14 @@ also rejects staged parent-relative imports (`../`); use the `@/` alias.
 - **`new URL("./path.ts", import.meta.url)` in tests** is not a static import and is not caught by the `@/` import codemod. Scan for `new URL(` manually when moving source files.
 - **grep exits 1 on no matches** — pre-commit hooks use `|| true` on grep pipes to prevent false failures on clean commits.
 - **macOS case-insensitive FS** — `existsSync("bash.ts")` returns `true` when `Bash.ts` exists. Rename scripts that use `existsSync` to check kebab-case targets will silently skip single-word PascalCase files. Use `git mv` for renames.
+
+---
+
+## Cursor Cloud specific instructions
+
+These notes are for cloud agents running in the pre-provisioned VM. Standard commands live in the **Reference** section above; only non-obvious caveats are captured here.
+
+- **Runtime is Bun, not Node.** `bun` is pre-installed (v1.3.0, symlinked at `/usr/local/bin/bun`) and the startup update script runs `bun install`. The base image's `node` is 22.14.0, below `engines.node >=22.19.0`, but this does **not** block dev/lint/test/run because everything goes through Bun. Don't waste time "fixing" the Node version.
+- **No OS keychain / secret-service.** The VM is headless, so the CLI logs `[secrets] WARN: System secrets not available - using fallback storage` on every run. This is expected. Credentials come from env vars/secrets (`LETTA_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`), not the keychain.
+- **`node scripts/run-unit-tests.cjs` does not finish cleanly here.** ~11 environment-sensitive tests time out or hang — those that spawn CLI/bun subprocesses or do git-worktree ops (hooks e2e, headless-subagent, reflection worktrees, `assertMemoryRepoCleanForWrite`, `memory_apply_patch`) or hit the OS keychain (`src/utils/secrets.test.ts`). ~3900+ other tests pass. For a fast, reliable green signal run specific leaf suites, e.g. `bun test src/permissions src/types src/reminders`. Failures in those spawn/keychain suites are env artifacts, not regressions.
+- **End-to-end sanity check** (needs `LETTA_API_KEY`, connects to Letta Cloud): `bun run dev --new-agent --personality tutorial -p "hello" --output-format text` creates an agent and prints its reply. The interactive TUI is `bun run dev`.
