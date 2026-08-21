@@ -325,6 +325,70 @@ describe("Discord adapter open-channel ingress", () => {
 // ── Discord adapter auto-thread-on-mention gating ───────────────────────
 
 describe("Discord adapter auto-thread-on-mention gating", () => {
+  test("forwards a bare mention from an existing thread for route recovery", async () => {
+    const { client, deliveries } = await startAdapterWithMentionConfig({
+      allowedChannels: { "parent-channel": "mention-only" },
+    });
+
+    await client.emitMessageCreate(
+      createGuildMessage({
+        id: "msg-bare-thread-mention",
+        channelId: "existing-thread",
+        content: "<@bot-user>",
+        parentChannelId: "parent-channel",
+        isThread: true,
+        mentioned: true,
+      }),
+    );
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({
+      chatId: "existing-thread",
+      threadId: "existing-thread",
+      parentChannelId: "parent-channel",
+      text: "",
+      isMention: true,
+    });
+  });
+
+  test("keeps a bare parent-channel mention inert when auto-threading is disabled", async () => {
+    const { client, deliveries } = await startAdapterWithMentionConfig({
+      allowedChannels: { "parent-channel": "mention-only" },
+      autoThreadOnMention: false,
+    });
+
+    const message = createGuildMessage({
+      id: "msg-bare-parent-mention",
+      channelId: "parent-channel",
+      content: "<@bot-user>",
+      mentioned: true,
+    });
+
+    await client.emitMessageCreate(message);
+
+    expect(message.startThread).not.toHaveBeenCalled();
+    expect(deliveries).toHaveLength(0);
+  });
+
+  test("still drops unrelated empty messages", async () => {
+    const { client, deliveries } = await startAdapterWithMentionConfig({
+      allowedChannels: { "parent-channel": "open" },
+    });
+
+    await client.emitMessageCreate(
+      createGuildMessage({
+        id: "msg-empty-thread",
+        channelId: "existing-thread",
+        content: "",
+        parentChannelId: "parent-channel",
+        isThread: true,
+        mentioned: false,
+      }),
+    );
+
+    expect(deliveries).toHaveLength(0);
+  });
+
   test("does not create a thread when autoThreadOnMention is disabled (default)", async () => {
     const { client, deliveries } = await startAdapterWithMentionConfig({
       allowedChannels: { "channel-mention": "mention-only" },
