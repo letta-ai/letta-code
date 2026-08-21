@@ -1,0 +1,4 @@
+{
+  "name": "letta-code",
+  "install": "bash .cursor/install.sh"
+}
