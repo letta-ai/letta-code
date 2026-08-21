@@ -7,11 +7,36 @@ This file explains how to work effectively in this repo. It covers the rules enf
 ## Workflow
 
 1. **Create a worktree** for any non-trivial change — especially if another agent may be working concurrently.
-2. **Make your change**, then run `bun run check` and fix all failures before opening a PR.
+2. **Make your change**, run focused tests for the behavior you changed, then run `bun run check` and fix all failures before opening a PR.
 3. **Do not commit or push** until explicitly asked to. Caren will say when she's ready.
 4. **One PR per logical change.** Don't bundle unrelated changes — harder to revert if something breaks.
 5. **Never amend commits.** Always create a new commit.
 6. **Check the current branch** before editing files. If in doubt, ask.
+7. **Read the closest `AGENTS.md` before editing a directory.** Nested files supplement this file and take precedence when guidance conflicts.
+8. **Report the checks you ran.** If a relevant path was not tested, call it unverified instead of describing the change as fully green.
+
+---
+
+## Manual Validation
+
+These paths need judgment beyond the checks enforced below.
+
+### Validate every runtime that owns the behavior
+
+Development commands run under Bun, but the published package runs the bundled
+`letta.js` under Node. Production code that uses a Bun-only API needs a Node path
+or proof that the bundled runtime cannot reach it.
+
+The TUI, headless mode, and websocket listener also have separate orchestration
+paths. Changes to streaming, approvals, cancellation, tools, or transcript state
+must identify and test every path they affect.
+
+### Test startup changes from a clean home
+
+Changes that run before normal setup, including startup, auth, local store
+migration, and early subcommands, should include a clean-`HOME` smoke test when
+practical. A configured developer machine can hide first-run failures and
+startup side effects.
 
 ---
 
@@ -224,10 +249,7 @@ also rejects staged parent-relative imports (`../`); use the `@/` alias.
 
 ### Known Gotchas
 
-- **`react-dom` is not installed.** Ink does not use it. Do not import `unstable_batchedUpdates` or anything else from `react-dom`.
 - **Prettier is not used.** Biome is the sole formatter. Do not add Prettier — they conflict.
-- **Ink uses legacy React mode (mode 0).** React 18 automatic batching does not apply in async contexts. Move state updates before any `await` to batch them naturally.
-- **`<Static>` items never re-render.** Once committed to `staticItems`, a Ink `<Static>` item's props are frozen. Force a re-render by changing the `<Static key>` prop — but only key on values that change infrequently (not every tool call).
 - **`new URL("./path.ts", import.meta.url)` in tests** is not a static import and is not caught by the `@/` import codemod. Scan for `new URL(` manually when moving source files.
 - **grep exits 1 on no matches** — pre-commit hooks use `|| true` on grep pipes to prevent false failures on clean commits.
 - **macOS case-insensitive FS** — `existsSync("bash.ts")` returns `true` when `Bash.ts` exists. Rename scripts that use `existsSync` to check kebab-case targets will silently skip single-word PascalCase files. Use `git mv` for renames.
