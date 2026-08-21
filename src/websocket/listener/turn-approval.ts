@@ -216,6 +216,17 @@ export async function handleApprovalStop(params: {
 
   clearPendingApprovalBatchIds(runtime, approvals);
   rememberPendingApprovalBatchIds(runtime, approvals, dequeuedBatchId);
+  // Publish the approval boundary before classification or transport recovery.
+  // If the listener disappears during either phase, runtime-status history can
+  // distinguish an orphaned approval from a run still processing model output.
+  setTurnLoopStatus(runtime, turnLease, "WAITING_ON_APPROVAL", {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  });
+  emitRuntimeStateUpdates(runtime, {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  });
 
   const { autoAllowed, autoDenied, needsUserInput } = await classifyApprovals(
     approvals,
