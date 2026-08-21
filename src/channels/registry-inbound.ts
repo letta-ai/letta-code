@@ -250,6 +250,24 @@ export function createChannelInboundRouter(deps: {
         }
       }
 
+      // Route lookup and provisioning above must run before we consume this
+      // recovery signal. Do not turn the empty mention into an agent turn.
+      const isBareThreadMention =
+        msg.isMention === true &&
+        !!msg.threadId &&
+        msg.text.trim().length === 0 &&
+        (!msg.attachments || msg.attachments.length === 0);
+      if (isBareThreadMention) {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          discordResult.isFirstRouteTurn
+            ? "This thread is connected now. Send a message here to continue."
+            : "This thread is already connected. Send a message here to continue.",
+          buildDirectReplyOptions(msg),
+        );
+        return;
+      }
+
       const preparedMessage = adapter.prepareInboundMessage
         ? await adapter.prepareInboundMessage(msg, {
             isFirstRouteTurn: discordResult.isFirstRouteTurn,
