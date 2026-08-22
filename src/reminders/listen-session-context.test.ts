@@ -6,6 +6,7 @@ import {
 import { buildListenReminderContext } from "@/reminders/listen-context";
 import {
   createSharedReminderState,
+  markPostCompactionContextRemindersPending,
   resetSharedReminderState,
   type SharedReminderState,
 } from "@/reminders/state";
@@ -130,6 +131,23 @@ describe("listen-mode session context", () => {
       const result = await buildSharedReminderParts(ctx);
       expect(result.appliedReminderIds).toContain("session-context");
       expect(result.appliedReminderIds).toContain("agent-info");
+    }),
+  );
+
+  test(
+    "compaction re-arms session-context and agent-info",
+    withStubbedProviders(async () => {
+      const state = createSharedReminderState();
+      const ctx = listenContext(state);
+
+      await buildSharedReminderParts(ctx);
+      markPostCompactionContextRemindersPending(state);
+
+      const result = await buildSharedReminderParts(ctx);
+
+      expect(result.appliedReminderIds).toContain("session-context");
+      expect(result.appliedReminderIds).toContain("agent-info");
+      expect(state.pendingSessionContextReason).toBeUndefined();
     }),
   );
 

@@ -8,6 +8,7 @@ import {
 } from "@/reminders/engine";
 import {
   createSharedReminderState,
+  markPostCompactionContextRemindersPending,
   markSecretsInfoReminderPending,
 } from "@/reminders/state";
 import {
@@ -150,5 +151,29 @@ describe("secrets info reminders", () => {
     expect(text).toContain("$PLAYGROUND_AGENT_ID");
     expect(state.hasSentSecretsInfo).toBe(true);
     expect(state.pendingSecretsInfoRefresh).toBe(false);
+  });
+
+  test("re-emits existing secret names after compaction", async () => {
+    await initSecretsFromServer(SECRETS_AGENT_ID, {
+      secrets: [{ key: "PLAYGROUND_AGENT_ID", value: "agent-123" }],
+    });
+    const state = createSharedReminderState();
+    state.hasSentAgentInfo = true;
+    state.hasSentSessionContext = true;
+    state.hasSentSecretsInfo = true;
+    state.lastSentSecretNamesKey = "PLAYGROUND_AGENT_ID";
+    state.lastNotifiedPermissionMode = permissionMode.getMode();
+
+    markPostCompactionContextRemindersPending(state);
+
+    const result = await buildSecretsTestReminderParts(state);
+
+    const text = result.parts.map((part) => part.text).join("\n");
+    expect(result.appliedReminderIds).toContain("secrets-info");
+    expect(text).toContain(
+      "The following secrets are set on your agent and available for use",
+    );
+    expect(text).not.toContain("The agent secrets were updated");
+    expect(text).toContain("$PLAYGROUND_AGENT_ID");
   });
 });

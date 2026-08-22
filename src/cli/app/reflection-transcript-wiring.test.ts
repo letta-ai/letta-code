@@ -38,12 +38,26 @@ describe("interactive reflection transcript wiring", () => {
     expect(reflectionIndex).toBeGreaterThan(appendIndex);
   });
 
-  test("manual /compact launches compaction reflection directly", () => {
+  test("manual /compact restores context before launching reflection", () => {
     const submitHandlerPath = fileURLToPath(
       new URL("./use-submit-handler.ts", import.meta.url),
     );
     const source = readFileSync(submitHandlerPath, "utf-8");
+    const compactIndex = source.indexOf(
+      "const result = await getBackend().compactConversationMessages(",
+    );
+    const reminderIndex = source.indexOf(
+      "markPostCompactionContextRemindersPending(",
+      compactIndex,
+    );
+    const reflectionIndex = source.indexOf(
+      "// Manual /compact bypasses stream compaction events",
+      compactIndex,
+    );
 
+    expect(compactIndex).toBeGreaterThanOrEqual(0);
+    expect(reminderIndex).toBeGreaterThan(compactIndex);
+    expect(reflectionIndex).toBeGreaterThan(reminderIndex);
     expect(source).toContain('triggerSource: "compaction-event"');
     expect(source).not.toContain("queuePendingReflectionWorktreeReminders");
     expect(source).not.toContain("pendingReflectionTrigger = true");

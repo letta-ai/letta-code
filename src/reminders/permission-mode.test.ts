@@ -4,7 +4,10 @@ import {
   type SharedReminderContext,
   sharedReminderProviders,
 } from "@/reminders/engine";
-import { createSharedReminderState } from "@/reminders/state";
+import {
+  createSharedReminderState,
+  markPostCompactionContextRemindersPending,
+} from "@/reminders/state";
 
 function baseContext(
   mode: SharedReminderContext["mode"],
@@ -60,5 +63,22 @@ describe("shared permission-mode reminder", () => {
     const provider = sharedReminderProviders["permission-mode"];
     const reminder = await provider(baseContext("interactive"));
     expect(reminder).toContain("Permission mode active: acceptEdits");
+  });
+
+  test("re-emits a non-default mode after compaction", async () => {
+    permissionMode.setMode("acceptEdits");
+    const provider = sharedReminderProviders["permission-mode"];
+    const context = baseContext("interactive");
+
+    expect(await provider(context)).toContain(
+      "Permission mode active: acceptEdits",
+    );
+    expect(await provider(context)).toBeNull();
+
+    markPostCompactionContextRemindersPending(context.state);
+
+    expect(await provider(context)).toContain(
+      "Permission mode active: acceptEdits",
+    );
   });
 });
