@@ -8,6 +8,10 @@ import {
   commitMemoryWrite,
   type MemoryWriteSyncMode,
 } from "@/agent/memory-git";
+import {
+  ensureAgentMemoryIndexes,
+  isLocalAgentMemoryEnabled,
+} from "@/utils/local-agent-memory";
 import { readUtf8TextStrict, writeUtf8Text } from "@/utils/text-files";
 import { validateRequiredParams } from "./validation";
 
@@ -43,7 +47,7 @@ async function getMemoryWriteSyncMode(): Promise<MemoryWriteSyncMode> {
 
 interface ParsedMemoryFile {
   frontmatter: {
-    description: string;
+    description?: string;
     read_only?: string;
   };
   body: string;
@@ -124,6 +128,7 @@ export async function memory_apply_patch(
   await assertMemoryRepoCleanForWrite(memoryDir);
 
   const pathspecs = await applyMemoryPatch(memoryDir, input);
+  pathspecs.push(...(await ensureAgentMemoryIndexes(memoryDir, pathspecs)));
   if (pathspecs.length === 0) {
     throw new Error(
       "memory_apply_patch made no changes: the patch produced no changed paths. " +
@@ -644,6 +649,9 @@ async function loadEditableMemoryFile(
 function parseMemoryFile(content: string): ParsedMemoryFile {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!match) {
+    if (isLocalAgentMemoryEnabled()) {
+      return { frontmatter: {}, body: content };
+    }
     throw new Error(
       "memory_apply_patch: target file is missing required frontmatter",
     );
@@ -669,7 +677,7 @@ function parseMemoryFile(content: string): ParsedMemoryFile {
     }
   }
 
-  if (!description || !description.trim()) {
+  if ((!description || !description.trim()) && !isLocalAgentMemoryEnabled()) {
     throw new Error(
       "memory_apply_patch: target file frontmatter is missing 'description'",
     );
@@ -685,10 +693,17 @@ function parseMemoryFile(content: string): ParsedMemoryFile {
 }
 
 function renderMemoryFile(
-  frontmatter: { description: string; read_only?: string },
+  frontmatter: { description?: string; read_only?: string },
   body: string,
 ): string {
-  const description = frontmatter.description.trim();
+  const description = frontmatter.description?.trim() ?? "";
+  if (
+    isLocalAgentMemoryEnabled() &&
+    !description &&
+    frontmatter.read_only === undefined
+  ) {
+    return body;
+  }
   if (!description) {
     throw new Error("memory_apply_patch: 'description' must not be empty");
   }

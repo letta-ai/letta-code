@@ -48,7 +48,7 @@
     },
     "description": {
       "type": "string",
-      "description": "Block description (required for create and update_description)"
+      "description": "Block description (required for legacy MemFS create and update_description; optional for Agent Memory create)"
     },
     "file_text": {
       "type": "string",

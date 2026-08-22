@@ -27,7 +27,7 @@ import {
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
 import { resolvePersonalityId } from "./agent/personality-presets";
-import type { MemoryPromptMode } from "./agent/prompt-assets";
+import { localMemoryMode, type MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "./auth/oauth";
 import {
@@ -2180,7 +2180,7 @@ async function main(): Promise<void> {
             shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
           const effectiveMemoryMode: MemoryPromptMode | undefined = backend
             .capabilities.localMemfs
-            ? "local-memfs"
+            ? localMemoryMode()
             : (requestedMemoryPromptMode ??
               (willAutoEnableMemfs ? "memfs" : undefined));
 

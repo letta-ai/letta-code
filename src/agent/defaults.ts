@@ -13,7 +13,7 @@ import { type CreateAgentOptions, createAgent } from "./create";
 import { parseMdxFrontmatter } from "./memory";
 import { getDefaultModel, resolveModel } from "./model";
 import { buildCreateAgentOptionsForPersonality } from "./personality";
-import { MEMORY_PROMPTS } from "./prompt-assets";
+import { localMemoryMode, MEMORY_PROMPTS } from "./prompt-assets";
 
 // Tags used to identify default agents
 export const MEMO_TAG = "default:memo";
@@ -180,7 +180,7 @@ export async function ensureDefaultAgents(
     const willAutoEnableMemfs =
       backend.capabilities.remoteMemfs && (await isLettaCloud());
     const memoryPromptMode = backend.capabilities.localMemfs
-      ? "local-memfs"
+      ? localMemoryMode()
       : willAutoEnableMemfs
         ? "memfs"
         : undefined;

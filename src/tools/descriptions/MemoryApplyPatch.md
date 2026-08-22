@@ -22,9 +22,10 @@ Path rules:
 
 Memory rules:
 - Operates on markdown memory files (`.md`)
-- Updated/deleted files must be valid memory files with frontmatter
+- Agent Memory accepts plain Markdown and creates missing directory indexes automatically
+- Legacy MemFS updated/deleted files must have valid memory frontmatter
 - `read_only: true` files cannot be modified
-- If adding a file without frontmatter, frontmatter is created automatically
+- In legacy MemFS, adding a file without frontmatter creates frontmatter automatically
 
 Git behavior:
 - Stages changed memory paths
@@ -37,7 +38,7 @@ Example:
 memory_apply_patch(
   reason="Refine coding preferences",
   input="""*** Begin Patch
-*** Update File: system/human/prefs/coding.md
+*** Update File: workflow.md
 @@
 -Use broad abstractions
 +Prefer small focused helpers

@@ -143,6 +143,29 @@ Custom prompt body`,
     expect(configs.reflection?.systemPrompt).not.toContain("git push");
   });
 
+  test("switches all memory subagents to Agent Memory prompts together", async () => {
+    const previous = process.env.LETTA_LOCAL_AGENT_MEMORY;
+    process.env.LETTA_LOCAL_AGENT_MEMORY = "1";
+    __testSetBackend({
+      capabilities: { localMemfs: true },
+    } as unknown as Backend);
+    clearSubagentConfigCache();
+    try {
+      const configs = await getAllSubagentConfigs();
+      for (const name of ["init", "memory", "history-analyzer", "reflection"]) {
+        expect(configs[name]?.systemPrompt).toContain("Agent Memory");
+        expect(configs[name]?.systemPrompt).not.toContain(
+          "Files under `system/`",
+        );
+      }
+      expect(configs.reflection?.systemPrompt).toContain("$MEMORY_DIR/skills/");
+    } finally {
+      if (previous === undefined) delete process.env.LETTA_LOCAL_AGENT_MEMORY;
+      else process.env.LETTA_LOCAL_AGENT_MEMORY = previous;
+      clearSubagentConfigCache();
+    }
+  });
+
   test("keeps API-backed built-in prompts free of local backend wording", async () => {
     const configs = await getAllSubagentConfigs();
 

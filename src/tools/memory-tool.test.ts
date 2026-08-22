@@ -8,7 +8,13 @@ import {
   test,
 } from "bun:test";
 import { execFile as execFileCb } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -133,6 +139,7 @@ describe("memory tool", () => {
   const originalAgentId = process.env.AGENT_ID;
   const originalAgentName = process.env.AGENT_NAME;
   const originalHome = process.env.HOME;
+  const originalAgentMemory = process.env.LETTA_LOCAL_AGENT_MEMORY;
 
   beforeEach(async () => {
     tempRoot = mkdtempSync(join(tmpdir(), "letta-memory-tool-"));
@@ -145,6 +152,7 @@ describe("memory tool", () => {
     process.env.MEMORY_DIR = memoryDir;
     process.env.AGENT_ID = TEST_AGENT_ID;
     process.env.AGENT_NAME = TEST_AGENT_NAME;
+    delete process.env.LETTA_LOCAL_AGENT_MEMORY;
   });
 
   afterEach(async () => {
@@ -159,6 +167,10 @@ describe("memory tool", () => {
 
     if (originalHome === undefined) delete process.env.HOME;
     else process.env.HOME = originalHome;
+
+    if (originalAgentMemory === undefined)
+      delete process.env.LETTA_LOCAL_AGENT_MEMORY;
+    else process.env.LETTA_LOCAL_AGENT_MEMORY = originalAgentMemory;
 
     if (tempRoot) {
       await rm(tempRoot, { recursive: true, force: true });
@@ -177,6 +189,29 @@ describe("memory tool", () => {
         description: "test desc",
       } as Parameters<typeof memory>[0]),
     ).rejects.toThrow(/missing required parameter/i);
+  });
+
+  test("writes plain Agent Memory and creates parent indexes", async () => {
+    process.env.LETTA_LOCAL_AGENT_MEMORY = "1";
+
+    await runScopedMemory({
+      command: "create",
+      reason: "Add project note",
+      file_path: "projects/one/note.md",
+      file_text: "Plain nested memory.",
+    });
+
+    expect(readFileSync(join(memoryDir, "projects/one/note.md"), "utf8")).toBe(
+      "Plain nested memory.",
+    );
+    expect(existsSync(join(memoryDir, "MEMORY.md"))).toBe(true);
+    expect(existsSync(join(memoryDir, "projects", "MEMORY.md"))).toBe(true);
+    expect(existsSync(join(memoryDir, "projects", "one", "MEMORY.md"))).toBe(
+      true,
+    );
+    expect(
+      readFileSync(join(memoryDir, "projects/one/note.md"), "utf8"),
+    ).not.toStartWith("---");
   });
 
   test("uses reason as commit message and agent identity as commit author", async () => {
