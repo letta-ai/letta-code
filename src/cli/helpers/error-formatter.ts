@@ -1,5 +1,9 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 import {
+  CLOUD_API_UNAVAILABLE_MESSAGE,
+  isCloudApiShutdownRejection,
+} from "@/utils/cloud-api-shutdown";
+import {
   formatConversationBusyErrorMessage,
   isConversationBusyErrorText,
 } from "@/utils/conversation-busy-error";
@@ -701,6 +705,10 @@ export function formatErrorDetails(
   const surface = options.surface ?? "terminal";
   const fallback = (raw: string): string =>
     options.unclassifiedFallback === "generic" ? GENERIC_ERROR_MESSAGE : raw;
+
+  if (isCloudApiShutdownRejection(e)) {
+    return CLOUD_API_UNAVAILABLE_MESSAGE;
+  }
 
   // Check for OpenAI encrypted content org mismatch before anything else
   const encryptedContentMsg = checkEncryptedContentError(e);

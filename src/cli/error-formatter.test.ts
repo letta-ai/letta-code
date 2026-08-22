@@ -488,6 +488,29 @@ describe("formatErrorDetails", () => {
     expect(message).not.toContain("OpenAI");
   });
 
+  test("hides the machine-readable Cloud API shutdown code", () => {
+    const error = new APIError(
+      503,
+      {
+        error: "Service temporarily unavailable. Please retry your request.",
+        errorCode: "cloud_api_shutting_down",
+        admitted: false,
+        retryable: true,
+      },
+      undefined,
+      new Headers({ "Retry-After": "1" }),
+    );
+
+    const message = formatErrorDetails(error);
+
+    expect(message).toBe(
+      "Service temporarily unavailable. Please retry your request.",
+    );
+    expect(message).not.toContain("cloud_api_shutting_down");
+    expect(message).not.toContain("admitted");
+    expect(message).not.toContain("retryable");
+  });
+
   test("formats conversation-busy conflicts with user-facing copy", () => {
     const error = new APIError(
       409,
