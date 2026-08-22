@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getRepositoryMountDir } from "@/agent/memory-git";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { consumeQueuedSkillContent } from "@/tools/impl/skill-content-registry";
 import { clearTools, executeTool, loadSpecificTools } from "@/tools/manager";
@@ -241,6 +242,46 @@ describe("Skill tool memory filesystem lookup", () => {
     const queued = consumeQueuedSkillContent();
     expect(queued).toHaveLength(1);
     expect(queued[0]?.content).toContain("Loaded from agent memory fallback.");
+  });
+
+  test("loads and queues an attached shared-memory skill", async () => {
+    const skillName = "attached-shared-skill";
+    const repositoryName = "shared-team";
+    process.env.HOME = tempRoot;
+    delete process.env.MEMORY_DIR;
+    delete process.env.LETTA_MEMORY_DIR;
+
+    const repositoryMount = getRepositoryMountDir(
+      TEST_AGENT_ID,
+      repositoryName,
+    );
+    const skillDir = join(repositoryMount, "skills", skillName);
+    mkdirSync(join(repositoryMount, ".git"), { recursive: true });
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: attached-shared-skill\ndescription: test\n---\n\nLoaded from attached shared memory.",
+      "utf8",
+    );
+
+    const result = await withSkillContext(() =>
+      skill(
+        { skill: skillName, toolCallId: "tc-attached-shared" },
+        {
+          attachedRepositories: [
+            { id: "repo-shared-team", name: repositoryName },
+          ],
+        },
+      ),
+    );
+
+    expect(result.message).toBe(`Launching skill: ${skillName}`);
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toEqual({
+      toolCallId: "tc-attached-shared",
+      content: expect.stringContaining("Loaded from attached shared memory."),
+    });
   });
 
   test("does not load legacy ~/.letta/agents/<id>/skills entries", async () => {
