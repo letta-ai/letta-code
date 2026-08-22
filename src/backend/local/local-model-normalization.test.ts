@@ -85,6 +85,16 @@ describe("local model normalization", () => {
     }
   });
 
+  test("does not double-prefix a handle already carrying the endpoint provider", () => {
+    // Regression for #3844: before the mod registers the provider, the
+    // endpoint-type normalization prepended the provider a second time.
+    expect(
+      normalizeLocalModelHandle("chatgpt-oss/gpt-5.6-sol", {
+        provider_type: "chatgpt-oss",
+      }),
+    ).toBe("chatgpt-oss/gpt-5.6-sol");
+  });
+
   test("preserves handles owned by registered provider mods", () => {
     registerPiProvider("custom-provider", {
       baseUrl: "http://localhost:8000/v1",
