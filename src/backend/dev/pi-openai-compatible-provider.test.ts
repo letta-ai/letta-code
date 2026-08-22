@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { testRefreshContext } from "@/test-utils/pi-refresh-context";
-import { createOpenAICompatiblePiProvider } from "./pi-openai-compatible-provider";
+import {
+  createOpenAICompatiblePiProvider,
+  openAICompatibleTokenLimitRecord,
+  setOpenAICompatibleTokenLimits,
+} from "./pi-openai-compatible-provider";
+import { OPENAI_COMPATIBLE_PI_PROVIDER_ID } from "./pi-provider-registry";
 
 interface FakeOpenAIState {
   models?: unknown[];
@@ -161,5 +166,70 @@ describe("createOpenAICompatiblePiProvider", () => {
     expect(
       provider.getModels().find((m) => m.id === "changing")?.maxTokens,
     ).toBe(40000);
+  });
+});
+
+describe("openai-compatible token-limit sidecar", () => {
+  const PROVIDER_ID = OPENAI_COMPATIBLE_PI_PROVIDER_ID;
+
+  function makeProvider(models: unknown[]) {
+    return createOpenAICompatiblePiProvider({
+      baseURL: "http://127.0.0.1:9999",
+      fetchImpl: fakeOpenAIFetch({ models }),
+    });
+  }
+
+  test("exposes advertised and effective limits side by side", async () => {
+    setOpenAICompatibleTokenLimits(PROVIDER_ID, []);
+    const provider = makeProvider([
+      {
+        id: "oversized-272k",
+        object: "model",
+        max_input_tokens: 272000,
+        max_output_tokens: 200000,
+      },
+    ]);
+    await provider.refreshModels?.(testRefreshContext());
+    const record = openAICompatibleTokenLimitRecord(
+      PROVIDER_ID,
+      "oversized-272k",
+    );
+    // The caller can tell the endpoint reported 272k/200k while the harness
+    // ceiling produced the effective 128k window and cap.
+    expect(record?.advertisedContextLength).toBe(272000);
+    expect(record?.effectiveContextWindow).toBe(128000);
+    expect(record?.advertisedMaxOutputTokens).toBe(200000);
+    expect(record?.effectiveMaxTokens).toBe(128000);
+  });
+
+  test("keeps unadvertised fields undefined instead of inventing them", async () => {
+    setOpenAICompatibleTokenLimits(PROVIDER_ID, []);
+    const provider = makeProvider([{ id: "bare", object: "model" }]);
+    await provider.refreshModels?.(testRefreshContext());
+    const record = openAICompatibleTokenLimitRecord(PROVIDER_ID, "bare");
+    expect(record?.advertisedContextLength).toBeUndefined();
+    expect(record?.advertisedMaxOutputTokens).toBeUndefined();
+    // Effective values still exist — the harness defaults the Model ships with.
+    expect(record?.effectiveContextWindow).toBe(128000);
+    expect(typeof record?.effectiveMaxTokens).toBe("number");
+  });
+
+  test("refresh drops records for models the endpoint no longer lists", async () => {
+    setOpenAICompatibleTokenLimits(PROVIDER_ID, []);
+    const provider = makeProvider([
+      { id: "kept", object: "model" },
+      { id: "dropped", object: "model" },
+    ]);
+    await provider.refreshModels?.(testRefreshContext());
+    expect(
+      openAICompatibleTokenLimitRecord(PROVIDER_ID, "dropped"),
+    ).toBeDefined();
+
+    const second = makeProvider([{ id: "kept", object: "model" }]);
+    await second.refreshModels?.(testRefreshContext());
+    expect(openAICompatibleTokenLimitRecord(PROVIDER_ID, "kept")).toBeDefined();
+    expect(
+      openAICompatibleTokenLimitRecord(PROVIDER_ID, "dropped"),
+    ).toBeUndefined();
   });
 });
