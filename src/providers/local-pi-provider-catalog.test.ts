@@ -128,6 +128,16 @@ describe("local pi provider catalog", () => {
     }
   });
 
+  test("OpenRouter attribution includes all Letta app categories", () => {
+    const openRouter = PI_PROVIDER_SPECS.find(
+      (provider) => provider.id === "openrouter",
+    );
+
+    expect(openRouter?.headers?.()).toMatchObject({
+      "X-OpenRouter-Categories": "cloud-agent,cli-agent,personal-agent",
+    });
+  });
+
   test("pi-ai providers without Pi TUI defaults are explicit", () => {
     const defaultedProviders = new Set(Object.keys(PI_TUI_DEFAULT_MODEL_IDS));
 
