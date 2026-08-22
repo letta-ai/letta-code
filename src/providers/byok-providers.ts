@@ -371,13 +371,13 @@ function byokProviderFromPiSpec(provider: string): ByokProvider | undefined {
   };
 }
 
-// Pi TUI exposes Anthropic in both subscription and API-key login flows.
-// Other OAuth providers are subscription-only in the Pi TUI.
-const PI_TUI_API_KEY_OAUTH_PROVIDER_IDS = new Set(["anthropic"]);
+// Providers that support both OAuth and API-key authentication need distinct
+// local /connect entries for each method.
+const LOCAL_DUAL_AUTH_PROVIDER_IDS = new Set(["anthropic", "openrouter"]);
 
 function localOAuthConfigId(providerId: string): string {
   if (providerId === "openai-codex") return "openai-codex-oauth";
-  if (PI_TUI_API_KEY_OAUTH_PROVIDER_IDS.has(providerId)) {
+  if (LOCAL_DUAL_AUTH_PROVIDER_IDS.has(providerId)) {
     return `${providerId}-oauth`;
   }
   return providerId;
@@ -420,7 +420,7 @@ function localApiKeyProviderIds(): string[] {
   return getBuiltinProviders().filter(
     (provider) =>
       !oauthProviderIds.has(provider) ||
-      PI_TUI_API_KEY_OAUTH_PROVIDER_IDS.has(provider),
+      LOCAL_DUAL_AUTH_PROVIDER_IDS.has(provider),
   );
 }
 

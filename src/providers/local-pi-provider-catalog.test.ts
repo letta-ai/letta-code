@@ -233,14 +233,23 @@ describe("local pi provider catalog", () => {
     }
   });
 
-  test("local /connect API-key providers mirror Pi TUI OAuth split", () => {
+  test("local /connect exposes both API-key and OAuth entries for dual-auth providers", () => {
+    const providers = getProviderConfigs("local");
     const localApiKeyProviderIds = new Set(
-      getProviderConfigs("local")
+      providers
         .filter((provider) => !provider.isOAuth)
+        .map((provider) => provider.id),
+    );
+    const localOAuthProviderIds = new Set(
+      providers
+        .filter((provider) => provider.isOAuth)
         .map((provider) => provider.id),
     );
 
     expect(localApiKeyProviderIds.has("anthropic")).toBe(true);
+    expect(localOAuthProviderIds.has("anthropic-oauth")).toBe(true);
+    expect(localApiKeyProviderIds.has("openrouter")).toBe(true);
+    expect(localOAuthProviderIds.has("openrouter-oauth")).toBe(true);
     expect(localApiKeyProviderIds.has("openai-codex")).toBe(false);
     expect(localApiKeyProviderIds.has("github-copilot")).toBe(false);
   });
