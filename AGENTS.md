@@ -160,6 +160,20 @@ Practical rules:
 
 ---
 
+## Directory Guides
+
+Some directories carry their own binding `AGENTS.md` with rules that override
+generic instincts. Read the local guide before changing code there:
+
+- `src/websocket/listener/AGENTS.md` — turn lifecycle, leases, approvals, queue
+  gating, and where listener tests belong.
+- `src/channels/AGENTS.md` — gateway policy placement and the pure-logic
+  package subpaths shared with remote hosts.
+- `src/channels/slack/AGENTS.md` — Slack module ownership, the progress
+  contract, and live verification requirements.
+
+---
+
 ## Placing New Files
 
 | What you're adding | Where it goes |
@@ -221,6 +235,12 @@ also rejects staged parent-relative imports (`../`); use the `@/` alias.
 | `LETTA_DEBUG=0` | Suppress debug output even in dev mode |
 | `LETTA_LOCAL_BACKEND_EXPERIMENTAL=1` | Enable local in-process backend |
 | `LETTA_LOCAL_BACKEND_EXECUTOR=deterministic` | Use fake deterministic executor (for tests) |
+| `LETTA_LOCAL_BACKEND_DIR` | Local-backend storage root (defaults to `~/.letta/lc-local-backend`) |
+
+When manually smoke-testing the local backend (`letta --backend local` or
+`bun run dev --backend local`), set `LETTA_LOCAL_BACKEND_DIR` to a temporary
+directory first. Otherwise the run reads and mutates your real
+`~/.letta/lc-local-backend` provider, auth, and transcript state.
 
 ### Known Gotchas
 
@@ -231,3 +251,8 @@ also rejects staged parent-relative imports (`../`); use the `@/` alias.
 - **`new URL("./path.ts", import.meta.url)` in tests** is not a static import and is not caught by the `@/` import codemod. Scan for `new URL(` manually when moving source files.
 - **grep exits 1 on no matches** — pre-commit hooks use `|| true` on grep pipes to prevent false failures on clean commits.
 - **macOS case-insensitive FS** — `existsSync("bash.ts")` returns `true` when `Bash.ts` exists. Rename scripts that use `existsSync` to check kebab-case targets will silently skip single-word PascalCase files. Use `git mv` for renames.
+- **Native modules can behave differently under Bun and Node.** The published package runs the bundled `letta.js` under Node (>= 22.19), while `bun run dev` runs the source under Bun. Example: `node-pty` is loaded directly under Node but through a Node bridge process under Bun, because its native handles do not integrate reliably with Bun's event loop (`src/tools/impl/shell-runner.ts`). Test runtime-sensitive code on both paths.
+- **`setTimeout(fn, 0)` fires on the next tick, not never.** For "no timeout" behavior, check the timeout value before scheduling the timer instead of passing 0.
+- **Extend `@letta-ai/letta-client` types instead of redeclaring them.** Use the SDK's `ToolCall`, `StopReasonType`, and similar wire types directly; do not duplicate wire shapes or cast with `as any`.
+- **Package subpath entrypoints use relative imports and dedicated entry files.** Library entries (`src/agent-presets.ts`, `src/channels-*.ts`, `src/app-server-client.ts`) are bundled separately and their emitted `.d.ts` files go through an alias rewrite in `build.js`; anything reachable from a browser-targeted entry must stay free of node builtins and backend/provider imports. Consumers on `moduleResolution: "node"` resolve subpath types through `typesVersions` in `package.json`, so new subpaths need entries there too.
+- **When changing a function from swallowing errors to throwing**, check every caller; each may need different handling.
