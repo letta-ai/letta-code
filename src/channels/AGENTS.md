@@ -44,3 +44,20 @@ Only a channel's `plugin.ts` and test harness may import its `adapter.ts`
 (enforced by `scripts/check-module-ownership.js`). Import helpers from the
 module that defines them, and add new pure logic in its own module rather than
 growing the adapter.
+
+## Lifecycle errors go through `lifecycle-error.ts`
+
+Never post raw internal errors to a channel: stop reasons ("Unexpected stop
+reason: error"), backend CONFLICT/approval JSON, or terminal-only formatting
+such as OSC8 hyperlinks from `src/cli/helpers/errorFormatter.ts`. Route
+user-visible failure text through `formatChannelLifecycleErrorMessage` in
+`lifecycle-error.ts` and normalize new raw payload shapes there, not in one
+adapter.
+
+## Channel-origin continuity bugs span backends
+
+When an agent stops replying through `MessageChannel` after compaction or a
+context transition, first map which backends are affected: cloud-backed,
+containerized, or local. A local-backend prompt tweak is not a production fix
+for cloud agents. Prefer backend-agnostic channel-origin metadata or shared
+compaction contracts over per-backend patches.
