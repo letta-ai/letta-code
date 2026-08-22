@@ -86,6 +86,8 @@ Usage:
   letta cron delete --all [--agent <id>] [--runner local|cloud]
 
 Add options:
+  --name <name>          Schedule name (required)
+  --description <desc>   Schedule description (required)
   --prompt <text>        Prompt to send to the agent (required)
   --every <interval>     Recurring interval (e.g. 5m, 2h, 1d)
   --at <time>            Scheduled time (e.g. "3:00pm", "in 45m")
