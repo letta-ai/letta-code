@@ -31,6 +31,7 @@ import {
 } from "@/constants";
 import { runPreCompactHooks } from "@/hooks";
 import type { ModCommand } from "@/mods/types";
+import { markPostCompactionContextRemindersPending } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
@@ -544,6 +545,9 @@ async function handleCompactCommand(
     const result = await backend.compactConversationMessages(
       conversationRuntime.conversationId,
       compactBody,
+    );
+    markPostCompactionContextRemindersPending(
+      conversationRuntime.reminderState,
     );
 
     // Launching reflection is best-effort — never fail the /compact itself.

@@ -140,6 +140,7 @@ import {
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import {
   enqueueMemoryGitSyncReminder,
+  markPostCompactionContextRemindersPending,
   markSecretsInfoReminderPending,
   type SharedReminderState,
 } from "@/reminders/state";
@@ -2233,8 +2234,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               return { submitted: true };
             }
 
-            // Build compaction settings if mode was specified
-            // On server side, if mode changed, summarize function will use corresponding default prompt for new mode
+            // If mode changed, server compaction uses that mode's default prompt.
             const compactParams = modeArg
               ? {
                   compaction_settings: {
@@ -2258,21 +2258,19 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               compactConversationId,
               compactBody,
             );
-
-            // Format success message with before/after counts and summary
+            markPostCompactionContextRemindersPending(
+              sharedReminderStateRef.current,
+            );
             const outputLines = [
               `Compaction completed${modeDisplay}. Message buffer length reduced from ${result.num_messages_before} to ${result.num_messages_after}.`,
               "",
               `Summary: ${result.summary}`,
             ];
-
-            // Update command with success
             cmd.finish(outputLines.join("\n"), true);
 
             // Manual /compact bypasses stream compaction events, so launch
-            // post-compaction reflection directly instead of waiting for the
-            // next turn's post-turn trigger evaluation. Best-effort — never
-            // fail the /compact itself.
+            // reflection directly instead of waiting for post-turn evaluation.
+            // Best-effort — never fail the /compact itself.
             try {
               if (
                 getReflectionSettings(agentId).trigger === "compaction-event" &&
