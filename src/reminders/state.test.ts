@@ -47,7 +47,7 @@ describe("post-compaction context reminders", () => {
     expect(state.lastSentSecretNamesKey).toBe("API_KEY");
     expect(state.hasSentConversationBootstrap).toBe(true);
     expect(state.pendingConversationBootstrap).toBe(true);
-    expect(state.lastNotifiedPermissionMode).toBe("standard");
+    expect(state.lastNotifiedPermissionMode).toBeNull();
     expect(state.turnCount).toBe(7);
     expect(state.pendingReflectionTrigger).toBe(true);
     expect(state.pendingMemoryGitSyncReminders).toBe(memoryQueue);

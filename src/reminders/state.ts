@@ -79,6 +79,7 @@ export function markPostCompactionContextRemindersPending(
   state.hasSentSessionContext = false;
   state.pendingSessionContextReason ??= "post_compaction";
   state.hasSentSecretsInfo = false;
+  state.lastNotifiedPermissionMode = null;
 }
 
 export function syncReminderStateFromContextTracker(
