@@ -22,7 +22,10 @@ import {
   OPENAI_CODEX_PROVIDER_NAME,
 } from "@/providers/openai-codex-provider";
 import { getErrorMessage } from "@/utils/error";
-import { runLocalOAuthConnectFlow } from "./connect-local-oauth";
+import {
+  runCloudOAuthConnectFlow,
+  runLocalOAuthConnectFlow,
+} from "./connect-local-oauth";
 import {
   defaultConnectApiKey,
   isConnectApiKeyProvider,
@@ -559,6 +562,80 @@ async function handleConnectLocalOAuthProvider(
   }
 }
 
+async function handleConnectCloudOAuthProvider(
+  ctx: ConnectCommandContext,
+  msg: string,
+  provider: ResolvedConnectProvider,
+): Promise<void> {
+  const existingProvider = await getProviderByName(
+    provider.byokProvider.providerName,
+    { target: "api" },
+  );
+  if (existingProvider) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      `Already connected to ${provider.byokProvider.displayName}. Open /connect to disconnect or re-authenticate.`,
+      false,
+    );
+    return;
+  }
+
+  ctx.setCommandRunning(true);
+  const abortController = new AbortController();
+  setActiveConnectAbortController(abortController);
+  const cmdId = addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    `Starting ${provider.byokProvider.displayName} login...`,
+    true,
+    "running",
+  );
+
+  try {
+    const result = await runCloudOAuthConnectFlow(provider.byokProvider, {
+      signal: abortController.signal,
+      onStatus: (status) =>
+        updateCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          cmdId,
+          msg,
+          status,
+          true,
+          "running",
+        ),
+    });
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `✓ Successfully connected to ${provider.byokProvider.displayName}!\n\nProvider '${result.providerName}' saved in ${providerStorageTargetLabel("api")}.`,
+      true,
+      "finished",
+    );
+  } catch (error) {
+    const isCancelled = error instanceof Error && error.name === "AbortError";
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      isCancelled
+        ? `Cancelled ${provider.byokProvider.displayName} connection.`
+        : `✗ Failed to connect ${provider.byokProvider.displayName}: ${getErrorMessage(error)}`,
+      false,
+      "finished",
+    );
+  } finally {
+    setActiveConnectAbortController(null);
+    ctx.setCommandRunning(false);
+  }
+}
+
 async function handleConnectApiKeyProvider(
   ctx: ConnectCommandContext,
   msg: string,
@@ -802,6 +879,11 @@ export async function handleConnect(
   if (isConnectOAuthProvider(provider)) {
     if (provider.target === "local") {
       await handleConnectLocalOAuthProvider(ctx, msg, provider);
+    } else if (
+      provider.byokProvider.oauthProviderId !== "openai-codex" &&
+      provider.byokProvider.providerType !== "chatgpt_oauth"
+    ) {
+      await handleConnectCloudOAuthProvider(ctx, msg, provider);
     } else {
       const parsed = parseChatGPTArgs(parts.slice(2));
       if (parsed.error) {

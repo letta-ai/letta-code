@@ -201,6 +201,15 @@ export const CLOUD_BYOK_PROVIDERS: readonly ByokProvider[] = [
     providerName: "lc-openrouter",
   },
   {
+    id: "openrouter-oauth",
+    displayName: "OpenRouter OAuth",
+    description: "Connect an OpenRouter account",
+    providerType: "openrouter",
+    providerName: "openrouter-oauth",
+    isOAuth: true,
+    oauthProviderId: "openrouter",
+  },
+  {
     id: "bedrock",
     displayName: "AWS Bedrock",
     description: "Connect to Claude on Amazon Bedrock",
