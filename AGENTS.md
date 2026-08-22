@@ -15,6 +15,21 @@ This file explains how to work effectively in this repo. It covers the rules enf
 
 ---
 
+## Runtime Validation
+
+Development and distribution use different runtimes. `bun run dev` runs the
+TypeScript source with Bun, while the published package exposes a Node-targeted
+`letta.js` bundle and requires Node 22.19 or newer. When behavior depends on the
+runtime, test both the Bun source path and the built Node artifact.
+
+The interactive TUI, headless mode, and websocket listener also have separate
+orchestration paths. Changes to shared turn, tool, approval, permission, or
+transcript behavior must identify and run the focused tests for every affected
+path. `bun run check` is always required, but it does not replace those behavior
+tests.
+
+---
+
 ## Rules and Why They Exist
 
 These are the rules enforced by CI and the pre-commit hook, with the reasoning behind each. Understanding the *why* lets you make good decisions in ambiguous cases the rules don't explicitly cover.
@@ -224,10 +239,7 @@ also rejects staged parent-relative imports (`../`); use the `@/` alias.
 
 ### Known Gotchas
 
-- **`react-dom` is not installed.** Ink does not use it. Do not import `unstable_batchedUpdates` or anything else from `react-dom`.
 - **Prettier is not used.** Biome is the sole formatter. Do not add Prettier — they conflict.
-- **Ink uses legacy React mode (mode 0).** React 18 automatic batching does not apply in async contexts. Move state updates before any `await` to batch them naturally.
-- **`<Static>` items never re-render.** Once committed to `staticItems`, a Ink `<Static>` item's props are frozen. Force a re-render by changing the `<Static key>` prop — but only key on values that change infrequently (not every tool call).
 - **`new URL("./path.ts", import.meta.url)` in tests** is not a static import and is not caught by the `@/` import codemod. Scan for `new URL(` manually when moving source files.
 - **grep exits 1 on no matches** — pre-commit hooks use `|| true` on grep pipes to prevent false failures on clean commits.
 - **macOS case-insensitive FS** — `existsSync("bash.ts")` returns `true` when `Bash.ts` exists. Rename scripts that use `existsSync` to check kebab-case targets will silently skip single-word PascalCase files. Use `git mv` for renames.
