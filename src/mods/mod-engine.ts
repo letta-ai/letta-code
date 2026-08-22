@@ -33,6 +33,7 @@ import {
 } from "@/mods/deprecated-api";
 import { isTypeScriptModFileExtension } from "@/mods/file-extensions";
 import * as modInvocationContext from "@/mods/invocation-context";
+import { createModChangeBatcher } from "@/mods/mod-change-batcher";
 import {
   appendModDiagnostic,
   recordModDiagnostic,
@@ -1453,31 +1454,30 @@ export async function loadLocalMods(
         )) as LocalModModule;
         const factory = getModFactory(module);
         failurePhase = "activate";
-
         if (typeof factory !== "function") {
           throw new Error(
             "Mod must export a default function or activate() function",
           );
         }
-
-        const dispose = await (factory as LettaModFactory)(
-          createLettaModApi(
-            registry,
-            owner,
-            capabilities,
-            getConfiguredClient,
-            onChange,
-            options.onDiagnostic,
-            options.onNotification,
-            builtinCommandIds,
-            reservedToolNames,
-            abortController.signal,
-          ),
+        const changes = createModChangeBatcher(onChange);
+        const api = createLettaModApi(
+          registry,
+          owner,
+          capabilities,
+          getConfiguredClient,
+          changes.notify,
+          options.onDiagnostic,
+          options.onNotification,
+          builtinCommandIds,
+          reservedToolNames,
+          abortController.signal,
         );
+        const activate = factory as LettaModFactory;
+        const dispose = await changes.run(() => activate(api));
         if (typeof dispose === "function") {
           registry.disposers.push({
             abortController,
-            dispose,
+            dispose: () => changes.runSync(dispose),
             owner,
           });
         }
