@@ -1,8 +1,17 @@
 import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { getCurrentAgentId, getSkillsDirectory } from "@/agent/context";
+import {
+  getCurrentAgentId,
+  getSkillSources,
+  getSkillsDirectory,
+} from "@/agent/context";
 import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
+import type { AttachedAgentRepository } from "@/agent/memory-git";
+import {
+  discoverSharedMemorySkills,
+  resolveSharedMemorySkillsContext,
+} from "@/agent/shared-memory-skills";
 import {
   GLOBAL_SKILLS_DIR,
   getAgentSkillsDir,
@@ -27,6 +36,10 @@ interface SkillArgs {
 
 interface SkillResult {
   message: string;
+}
+
+export interface ReadSkillContentOptions {
+  attachedRepositories?: readonly AttachedAgentRepository[];
 }
 
 function getMemorySkillsDirs(agentId?: string): string[] {
@@ -74,13 +87,15 @@ function hasAdditionalFiles(skillMdPath: string): boolean {
  * 1. Project skills (.agents/skills/, then legacy .skills/ fallback)
  * 2. Agent memory skills (~/.letta/agents/{id}/memory/skills/)
  * 3. Agent memory skills fallback ($MEMORY_DIR/skills/)
- * 4. Global skills (~/.letta/skills/)
- * 5. Bundled skills
+ * 4. Attached shared-memory skills
+ * 5. Global skills (~/.letta/skills/)
+ * 6. Bundled skills
  */
 export async function readSkillContent(
   skillId: string,
   skillsDir: string,
   agentId?: string,
+  options: ReadSkillContentOptions = {},
 ): Promise<{ content: string; path: string }> {
   // 1. Try project skills directory (highest priority)
   const projectSkillsDirs = new Set<string>([
@@ -123,7 +138,28 @@ export async function readSkillContent(
     }
   }
 
-  // 4. Try global skills directory
+  // 4. Try attached shared-memory repositories
+  const sharedMemoryContext = await resolveSharedMemorySkillsContext({
+    agentId,
+    skillSources: getSkillSources(),
+    attachedRepositories: options.attachedRepositories,
+  });
+  const sharedMemoryDiscovery = await discoverSharedMemorySkills(
+    sharedMemoryContext.skillsDirs,
+  );
+  const sharedSkill = sharedMemoryDiscovery.skills.find(
+    (candidate) => candidate.id === skillId,
+  );
+  if (sharedSkill) {
+    try {
+      const content = await readFile(sharedSkill.path, "utf-8");
+      return { content, path: sharedSkill.path };
+    } catch {
+      // Shared skill disappeared after discovery, continue
+    }
+  }
+
+  // 5. Try global skills directory
   const globalSkillPath = join(GLOBAL_SKILLS_DIR, skillId, "SKILL.md");
   try {
     const content = await readFile(globalSkillPath, "utf-8");
@@ -132,7 +168,7 @@ export async function readSkillContent(
     // Not in global, continue
   }
 
-  // 5. Try bundled skills (lowest priority)
+  // 6. Try bundled skills (lowest priority)
   const bundledSkills = await getBundledSkills();
   const bundledSkill = bundledSkills.find((s) => s.id === skillId);
   if (bundledSkill?.path && isSkillAvailableForAgent(bundledSkill, agentId)) {
@@ -214,16 +250,18 @@ export function renderSkillContent(
 
 export async function loadRenderedSkillContent(
   skillName: string,
-  options: RenderSkillContentOptions & {
-    agentId?: string;
-    skillsDir?: string;
-  } = {},
+  options: RenderSkillContentOptions &
+    ReadSkillContentOptions & {
+      agentId?: string;
+      skillsDir?: string;
+    } = {},
 ): Promise<string> {
   const skillsDir = options.skillsDir ?? (await getResolvedSkillsDir());
   const { content: skillContent, path: skillPath } = await readSkillContent(
     skillName,
     skillsDir,
     options.agentId,
+    options,
   );
   return renderSkillContent(skillName, skillContent, skillPath, options);
 }
@@ -252,7 +290,10 @@ export function wrapSkillPrompt(
   return userRequest ? `${wrappedSkill}\n\n${userRequest}` : wrappedSkill;
 }
 
-export async function skill(args: SkillArgs): Promise<SkillResult> {
+export async function skill(
+  args: SkillArgs,
+  dependencies: ReadSkillContentOptions = {},
+): Promise<SkillResult> {
   validateRequiredParams(args, ["skill"], "Skill");
   const { skill: skillName, toolCallId } = args;
 
@@ -267,6 +308,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     const skillsDir = await getResolvedSkillsDir();
 
     const fullContent = await loadRenderedSkillContent(skillName, {
+      ...dependencies,
       agentId,
       skillsDir,
     });
