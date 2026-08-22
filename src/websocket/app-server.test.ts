@@ -537,22 +537,27 @@ describe("app-server native websocket", () => {
     }
   });
 
-  test("terminates sockets that exceed the pong timeout", async () => {
+  test("terminates sockets only after an unanswered heartbeat probe", async () => {
     let handle: AppServerHandle | null = null;
     let stream: WebSocket | null = null;
     try {
-      // A 1ms pong timeout means the seeded connect timestamp is already stale
-      // by the first interval tick, so the watchdog reaps the socket.
       handle = await startAppServer({
         listen: "ws://127.0.0.1:0",
         heartbeatIntervalMs: 25,
         pongTimeoutMs: 1,
+        shouldRecordPong: () => false,
       });
       stream = new WebSocket(handle.controlUrl);
+      const ping = waitForClientPing(stream);
       await waitForOpen(stream);
-
-      await waitForClientClose(stream);
-      expect(stream.readyState).not.toBe(WebSocket.OPEN);
+      const close = waitForClientClose(stream);
+      const firstEvent = await Promise.race([
+        ping.then(() => "ping"),
+        close.then(() => "close"),
+      ]);
+      expect(firstEvent).toBe("ping");
+      expect(stream.readyState).toBe(WebSocket.OPEN);
+      await close;
     } finally {
       closeClient(stream);
       await handle?.close();
