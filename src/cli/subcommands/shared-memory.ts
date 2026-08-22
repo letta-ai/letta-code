@@ -38,13 +38,14 @@ interface AgentRepositorySummary {
   is_primary: boolean;
 }
 
-type SharedMemorySubcommandDeps = {
+export interface SharedMemorySubcommandDependencies {
   initializeSettings?: () => Promise<void>;
   request?: typeof apiRequest;
   syncRepositories?: typeof syncAttachedAgentRepositories;
+  invalidateClientSkills?: typeof invalidateClientSkillsPayloadCacheForAgent;
   recompileAgent?: (agentId: string) => Promise<void>;
   attachPoll?: { intervalMs: number; attempts: number };
-};
+}
 
 function printUsage(): void {
   console.log(
@@ -225,7 +226,7 @@ function requireAgentId(parsed: {
 
 export async function runSharedMemorySubcommand(
   argv: string[],
-  deps: SharedMemorySubcommandDeps = {},
+  deps: SharedMemorySubcommandDependencies = {},
 ): Promise<number> {
   let parsed: ReturnType<typeof parseSharedMemoryArgs>;
   try {
@@ -253,6 +254,8 @@ export async function runSharedMemorySubcommand(
   const request = deps.request ?? apiRequest;
   const syncRepositories =
     deps.syncRepositories ?? syncAttachedAgentRepositories;
+  const invalidateClientSkills =
+    deps.invalidateClientSkills ?? invalidateClientSkillsPayloadCacheForAgent;
   const recompileAgent = deps.recompileAgent ?? defaultRecompileAgent;
 
   try {
@@ -349,7 +352,7 @@ export async function runSharedMemorySubcommand(
           return 1;
         }
         const sync = await syncRepositories(agentId);
-        invalidateClientSkillsPayloadCacheForAgent(agentId);
+        invalidateClientSkills(agentId);
         const recompileError = await recompileAndReportFailure(
           recompileAgent,
           agentId,
@@ -383,7 +386,7 @@ export async function runSharedMemorySubcommand(
         "DELETE",
         `/v1/agents/${encodeURIComponent(agentId)}/repositories/${encodeURIComponent(repository.id)}`,
       );
-      invalidateClientSkillsPayloadCacheForAgent(agentId);
+      invalidateClientSkills(agentId);
       const detachRecompileError = await recompileAndReportFailure(
         recompileAgent,
         agentId,
