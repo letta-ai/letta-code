@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
 import { getNewAgentReasoningOptions } from "./profile-selection";
+
+setupRuntimeModelCatalogFixture();
 
 describe("new-agent model reasoning options", () => {
   test("offers provider Default for an OpenAI-compatible proxy", () => {

@@ -10,7 +10,9 @@ import {
   configureBackendMode,
   configureEphemeralLocalBackend,
 } from "@/backend";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
 
+setupRuntimeModelCatalogFixture();
 describe("ephemeral conversation creation", () => {
   afterEach(() => {
     configureBackendMode("api");

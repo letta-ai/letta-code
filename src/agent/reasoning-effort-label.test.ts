@@ -3,6 +3,9 @@ import {
   catalogHasDistinctMaxTier,
   formatXhighEffortLabel,
 } from "@/agent/reasoning-effort-label";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
+
+setupRuntimeModelCatalogFixture();
 
 describe("catalogHasDistinctMaxTier", () => {
   test("is true for GPT-5.6 Sol ChatGPT which has a max tier", () => {

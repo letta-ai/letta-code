@@ -155,14 +155,14 @@ describe("provider mod selector refresh", () => {
     );
     renderedInstances.add(instance);
 
-    await waitForOutput(stdout, "baseline/model");
-    expect(stdout.read()).toContain("baseline/model");
+    await waitForOutput(stdout, "Baseline Model");
+    expect(stdout.read()).toContain("Baseline Model");
     stdout.reset();
 
     registerTestProvider();
-    await waitForOutput(stdout, "late-provider/late-model");
+    await waitForOutput(stdout, "Late Model");
 
-    expect(stdout.read()).toContain("late-provider/late-model");
+    expect(stdout.read()).toContain("Late Model");
   });
 
   test("preserves OAuth provider identity for custom aliases in the All category", async () => {
@@ -202,7 +202,7 @@ describe("provider mod selector refresh", () => {
     );
     renderedInstances.add(instance);
 
-    await waitForOutput(stdout, handle);
+    await waitForOutput(stdout, "gpt-5.6-sol");
     stdin.push("\r");
     const selection = await selected;
 

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { models } from "@/agent/model";
 import { filterModelsByAvailabilityForSelector } from "@/cli/components/ModelSelector";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
+
+setupRuntimeModelCatalogFixture();
 
 type StubModel = { handle: string; label: string };
 

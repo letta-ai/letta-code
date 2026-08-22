@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -28,7 +28,7 @@ import { appendCronRunLog, getCronRunLogPath } from "@/cron";
 import type { MessageQueueItem } from "@/queue/queue-runtime";
 import type { LocalProjectSettings, Settings } from "@/settings-manager";
 import { settingsManager } from "@/settings-manager";
-import { installRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
 import {
   backgroundProcesses,
   backgroundTasks,
@@ -121,7 +121,7 @@ class MockSocket {
   }
 }
 
-beforeEach(installRuntimeModelCatalogFixture);
+setupRuntimeModelCatalogFixture();
 afterEach(() => {
   __testSetBackend(null);
   clearExternalTools();

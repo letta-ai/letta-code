@@ -6,6 +6,9 @@ import {
   toSelectorModelForHandle,
   usesBackendModelCatalog,
 } from "@/cli/components/ModelSelector";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
+
+setupRuntimeModelCatalogFixture();
 
 describe("getModelCategories", () => {
   test("uses the same hosted category order for free and paid tiers", () => {
