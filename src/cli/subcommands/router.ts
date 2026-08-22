@@ -9,6 +9,7 @@ import { runListenSubcommand } from "./listen.tsx";
 import { runLocalBackendSubcommand } from "./local-backend";
 import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
+import { runModelsSubcommand } from "./models";
 import { runModsSubcommand } from "./mods";
 import { runSandboxSubcommand } from "./sandbox";
 import { asLegacyAppServerCommand, runServerSubcommand } from "./server";
@@ -46,6 +47,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "memfs":
     case "memory":
     case "messages":
+    case "models":
     case "mods":
     case "remote":
     case "sandbox":
@@ -84,6 +86,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runServerSubcommand(asLegacyAppServerCommand(rest));
     case "messages":
       return runMessagesSubcommand(rest);
+    case "models":
+      return runModelsSubcommand(rest);
     case "environments":
     case "envs":
       return runEnvironmentsSubcommand(rest);

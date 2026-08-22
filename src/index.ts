@@ -183,6 +183,7 @@ USAGE
   letta environments ... List available remote environments (JSON-only)
   letta teleport ...    Move the current conversation between environments
   letta messages ...    Messages subcommands (JSON-only)
+  letta models          List available models (JSON by default)
   letta mods ...        List and manage local mods
   letta sandbox ...     Transfer files to or from the current Cloud sandbox
   letta server ...      Run a remote environment, channels, or the App Server
@@ -212,6 +213,7 @@ SUBCOMMANDS
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
+  letta models [--format json|text] [--provider-type <type>] [--provider-category <base|byok>]
   letta mods list [--agent <id>]
   letta mods package <mod-file> --name <package-name> [--out <dir>]
   letta mods enable <package-spec>
@@ -224,7 +226,6 @@ SUBCOMMANDS
   letta skills delete <skill_name> --agent <id>
   letta backend [cloud|local]
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
-
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
   - If profiles exist, you'll be prompted to select one or create a new agent
@@ -235,7 +236,6 @@ BEHAVIOR
 
   If no credentials are configured, you'll be prompted to authenticate via
   Letta Cloud OAuth on first run.
-
 EXAMPLES
   # when installed as an executable
   letta                    # Show profile selector or create new
