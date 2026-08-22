@@ -1350,7 +1350,7 @@ async function main(): Promise<void> {
     specifiedAgentId = resolved.id;
     nameResolvedAgent = resolved.agent;
   }
-  await (await import("@/agent/remote-model-catalog")).refreshModelCatalog();
+  await (await import("@/agent/remote-model-catalog")).initializeModelCatalog();
   // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
     const { toolFilter } = await import("@/tools/filter");

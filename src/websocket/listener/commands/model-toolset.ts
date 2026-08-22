@@ -660,8 +660,8 @@ export async function buildListModelsResponse(
       options.forceRefresh === true ? { forceRefresh: true } : undefined,
     ),
     listProviders(),
-    // Refresh the curated catalog alongside availability so preset entries
-    // reflect cloud-canon data (best-effort; bundled snapshot on failure).
+    // Refresh the runtime catalog alongside availability. API mode keeps the
+    // persisted cloud catalog on temporary failures; local mode projects pi-ai.
     refreshModelCatalog(
       options.forceRefresh === true ? { force: true } : undefined,
     ),

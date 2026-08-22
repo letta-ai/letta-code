@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { buildConversationModelCarryoverUpdate } from "@/agent/conversation-model-carryover";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
+
+setupRuntimeModelCatalogFixture();
 
 describe("conversation model carryover", () => {
   test("seeds new conversations with the model preset context window before stale llm_config", () => {

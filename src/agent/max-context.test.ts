@@ -15,7 +15,9 @@ import {
   type ConversationCreateBody,
 } from "@/backend";
 import { LocalBackend } from "@/backend/local";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
 
+setupRuntimeModelCatalogFixture();
 afterEach(() => {
   __testSetBackend(null);
 });

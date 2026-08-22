@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   DEFAULT_AGENT_CONFIGS,
   selectDefaultAgentModel,
@@ -7,6 +7,13 @@ import {
   getPersonalityContent,
   getPersonalityHumanContent,
 } from "@/agent/personality-presets";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
+
+beforeEach(installRuntimeModelCatalogFixture);
+afterEach(clearRuntimeModelCatalogFixture);
 
 describe("selectDefaultAgentModel", () => {
   test("uses the caller's preferred model when it is available on self-hosted", () => {

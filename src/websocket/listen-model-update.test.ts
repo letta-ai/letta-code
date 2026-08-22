@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -18,6 +18,10 @@ import {
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import { LocalBackend } from "@/backend/local";
 import { settingsManager } from "@/settings-manager";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { applyToolsetUpdateForRuntime } from "@/websocket/listener/commands/model-toolset";
@@ -74,7 +78,10 @@ class NativeChatGptCatalogBackend extends FakeHeadlessBackend {
   }
 }
 
+beforeEach(installRuntimeModelCatalogFixture);
+
 afterEach(async () => {
+  clearRuntimeModelCatalogFixture();
   clearAvailableModelsCache();
   __testSetBackend(null);
   await settingsManager.reset();

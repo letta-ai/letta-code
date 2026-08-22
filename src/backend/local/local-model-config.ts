@@ -1,4 +1,9 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import {
+  type Api,
+  getSupportedThinkingLevels,
+  type Model,
+  type ModelThinkingLevel,
+} from "@earendil-works/pi-ai";
 import {
   DEFAULT_PI_PROVIDER,
   isUnselectedLocalModelHandle,
@@ -45,9 +50,11 @@ interface LocalModelListEntry {
   max_context_window?: number;
   max_tokens?: number;
   model: string;
+  model_id?: string;
   model_endpoint_type: string;
   name: string;
   provider_type: string;
+  reasoning_levels?: ModelThinkingLevel[];
 }
 
 interface ListLocalModelsOptions {
@@ -58,6 +65,12 @@ interface ListLocalModelsOptions {
    * /model and turn execution always read provider-published Model objects.
    */
   modelsRuntime?: LocalPiModelsRuntime;
+}
+
+function supportedThinkingLevelsForRegistration(
+  model: Pick<Model<Api>, "reasoning" | "thinkingLevelMap">,
+): ModelThinkingLevel[] {
+  return getSupportedThinkingLevels(model as Model<Api>);
 }
 
 function localProviderNamesFromRecords(
@@ -277,6 +290,7 @@ export async function listLocalModels(
       maxOutputTokens?: number;
       modelEndpointType?: string;
       name?: string;
+      reasoningLevels?: ModelThinkingLevel[];
     } = {},
   ) => {
     const handle =
@@ -312,15 +326,20 @@ export async function listLocalModels(
     const providerType =
       options.modelEndpointType ?? localProviderTypeForModelConfig(provider);
     const name = options.name ?? catalogModel?.name ?? modelId;
+    const reasoningLevels =
+      options.reasoningLevels ??
+      (catalogModel ? getSupportedThinkingLevels(catalogModel) : undefined);
     models.push({
       display_name: name,
       handle,
       ...(maxContextWindow ? { max_context_window: maxContextWindow } : {}),
       ...(maxOutputTokens ? { max_tokens: maxOutputTokens } : {}),
       model: handle,
+      model_id: modelId,
       model_endpoint_type: providerType,
       name,
       provider_type: providerType,
+      ...(reasoningLevels ? { reasoning_levels: reasoningLevels } : {}),
     });
   };
 
@@ -398,6 +417,7 @@ export async function listLocalModels(
         maxContextWindow: model.contextWindow,
         maxOutputTokens: model.maxTokens,
         name: model.name,
+        reasoningLevels: supportedThinkingLevelsForRegistration(model),
       });
     }
   }

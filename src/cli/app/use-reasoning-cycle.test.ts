@@ -6,6 +6,9 @@ import {
   resolveReasoningCycleTierLookupHandle,
   serviceTierForReasoningCycle,
 } from "@/cli/app/use-reasoning-cycle";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
+
+setupRuntimeModelCatalogFixture();
 
 describe("resolveReasoningCycleModelHandle", () => {
   test("preserves local model handles from llm_config", () => {

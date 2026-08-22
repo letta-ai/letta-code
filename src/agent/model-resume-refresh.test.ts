@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { getModelUpdateArgs, getResumeRefreshArgs } from "@/agent/model";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
+
+setupRuntimeModelCatalogFixture();
 
 describe("getResumeRefreshArgs", () => {
   test("preserves an explicit output limit while refreshing parallel tool calls", () => {

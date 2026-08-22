@@ -233,7 +233,7 @@ export async function createAgent(
     }
     modelHandle = resolved;
   } else {
-    // Use default model from models.json
+    // Use the default model from the runtime catalog
     modelHandle = getDefaultModel();
   }
 
@@ -369,7 +369,7 @@ export async function createAgent(
   );
 
   // Apply updateArgs if provided (e.g., context_window, reasoning_effort, verbosity, etc.).
-  // Also apply tier defaults from models.json when the caller explicitly selected a model.
+  // Also apply tier defaults from the catalog entry when the caller explicitly selected a model.
   //
   // Note: we intentionally pass context_window through so updateAgentLLMConfig can set
   // context_window_limit using the latest server API, avoiding any fallback.

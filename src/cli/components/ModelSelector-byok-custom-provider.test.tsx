@@ -10,6 +10,9 @@ import {
   toByokSelectorModel,
   withProviderMetadataForSelector,
 } from "@/cli/components/ModelSelector";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
+
+setupRuntimeModelCatalogFixture();
 
 describe("ModelSelector custom BYOK provider detection", () => {
   test("treats connected custom OpenAI providers as BYOK", () => {

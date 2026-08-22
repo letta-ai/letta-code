@@ -1,21 +1,13 @@
 /**
- * The static model catalog (models.json) and pure handle resolution.
+ * The runtime model catalog and pure handle resolution.
  *
- * Split from `model.ts` so the catalog can be bundled into the browser-safe
- * `@letta-ai/letta-code/agent-presets` package export without dragging in
- * provider/backend modules. CLI code should keep importing from
- * `@/agent/model`, which re-exports this module.
+ * Cloud mode hydrates this catalog from GET /v1/models/catalog. Local mode
+ * hydrates it from the active backend's pi-ai model inventory. Keeping the
+ * array identity stable lets synchronous consumers observe source changes
+ * without bundling a second model registry.
  */
 
-import modelsData from "@/models.json";
-
-/**
- * A curated model catalog entry in the bundled models.json shape.
- *
- * The same shape is produced by the cloud catalog endpoint
- * (GET /v1/models/catalog, mapped in `@/agent/remote-model-catalog`), so the
- * bundled snapshot and live remote data are interchangeable.
- */
+/** A model catalog entry shared by cloud presets and local pi-ai models. */
 export interface CatalogModel {
   id: string;
   handle: string;
@@ -29,78 +21,98 @@ export interface CatalogModel {
 }
 
 /**
- * The live model catalog. Seeded from the bundled models.json snapshot at
- * module load; on cloud (API) backends the array contents are refreshed in
- * place from GET /v1/models/catalog (see `@/agent/remote-model-catalog`), so
- * consumers that read at call time pick up live data without going async.
- * Do not capture long-lived copies of the array contents.
+ * The live model catalog. Startup initializes it before model resolution:
+ * cloud backends use GET /v1/models/catalog and local backends use pi-ai.
+ * Source changes replace the contents in place, so consumers that read at
+ * call time pick up current data without capturing a stale array reference.
  */
-export const models: CatalogModel[] = modelsData.models;
+export const models: CatalogModel[] = [];
 
-/**
- * Browser-safe presentation metadata for a curated Letta Code model preset.
- *
- * This is deliberately not an availability contract: connected providers,
- * local/custom models, and organization-specific hosted inventory remain
- * runtime concerns. Consumers may use presets for labels, descriptions,
- * ordering, and known settings while live API/device inventory decides what
- * is actually selectable.
- */
-export interface ModelPreset {
-  readonly id: string;
-  readonly handle: string;
-  readonly label: string;
-  readonly description: string;
-  readonly shortLabel?: string;
-  readonly isDefault?: boolean;
-  readonly isFeatured?: boolean;
-  readonly free?: boolean;
-  readonly updateArgs?: Readonly<Record<string, unknown>>;
-}
+const BUILTIN_MODEL_ALIASES = new Map([
+  ["auto", "letta/auto"],
+  ["auto-chat", "letta/auto-chat"],
+  ["auto-fast", "letta/auto-fast"],
+]);
 
-/**
- * Curated model presentation presets bundled with Letta Code.
- *
- * Runtime model inventory is authoritative for availability. This export is
- * a readonly view over the same catalog used by the CLI's model resolver.
- */
-export const MODEL_PRESETS: readonly ModelPreset[] = models;
-
-/**
- * Resolve a model by ID or handle
- * @param modelIdentifier - Can be either a model ID (e.g., "opus-4.5") or a full handle (e.g., "anthropic/claude-opus-4-5")
- * @returns The model handle if found, null otherwise
- */
-export function resolveModel(modelIdentifier: string): string | null {
-  const byId = models.find((m) => m.id === modelIdentifier);
-  if (byId) return byId.handle;
-
-  const byHandle = models.find((m) => m.handle === modelIdentifier);
-  if (byHandle) return byHandle.handle;
-
-  // For self-hosted servers: if it looks like a handle (contains /), pass it through
-  // This allows using models not in models.json (e.g., from server's /v1/models)
-  if (modelIdentifier.includes("/")) {
-    return modelIdentifier;
+function resolveEstablishedCliAlias(
+  modelIdentifier: string,
+): CatalogModel | null {
+  if (modelIdentifier === "haiku") {
+    return (
+      models.find((model) => model.handle.includes("claude-haiku-4-5")) ?? null
+    );
   }
-
+  if (modelIdentifier === "sonnet-4.6-low") {
+    const matchingModels = models.filter((model) =>
+      model.handle.includes("claude-sonnet-4-6"),
+    );
+    const lowEffortModel = matchingModels.find(
+      (model) => model.updateArgs?.reasoning_effort === "low",
+    );
+    if (lowEffortModel) return lowEffortModel;
+    const baseModel = matchingModels[0];
+    return baseModel
+      ? {
+          ...baseModel,
+          id: modelIdentifier,
+          updateArgs: {
+            ...baseModel.updateArgs,
+            reasoning_effort: "low",
+            enable_reasoner: true,
+          },
+        }
+      : null;
+  }
   return null;
 }
 
-/**
- * Get the default model handle
- */
-export function getDefaultModel(): string {
-  // Prefer Auto when available in models.json.
-  const autoModel = resolveModel("auto");
-  if (autoModel) return autoModel;
+/** Resolve a model catalog entry by runtime ID, handle, or CLI alias. */
+export function resolveCatalogModel(
+  modelIdentifier: string,
+): CatalogModel | null {
+  const byId = models.find((model) => model.id === modelIdentifier);
+  if (byId) return byId;
 
-  const defaultModel = models.find((m) => m.isDefault);
+  const byHandle = models.find((model) => model.handle === modelIdentifier);
+  if (byHandle) return byHandle;
+
+  const cliAlias = resolveEstablishedCliAlias(modelIdentifier);
+  if (cliAlias) return cliAlias;
+
+  // Runtime catalogs use provider-native model IDs as their short names.
+  // Resolve one only when it identifies exactly one handle.
+  const matches = models.filter(
+    (model) => model.handle.split("/").slice(1).join("/") === modelIdentifier,
+  );
+  const matchingHandles = new Set(matches.map((model) => model.handle));
+  return matchingHandles.size === 1 ? (matches[0] ?? null) : null;
+}
+
+/** Resolve a model by ID or handle. */
+export function resolveModel(modelIdentifier: string): string | null {
+  const entry = resolveCatalogModel(modelIdentifier);
+  if (entry) return entry.handle;
+
+  const builtinHandle = BUILTIN_MODEL_ALIASES.get(modelIdentifier);
+  if (builtinHandle) return builtinHandle;
+
+  // Runtime/custom catalogs can contain handles not known before startup.
+  return modelIdentifier.includes("/") ? modelIdentifier : null;
+}
+
+/** Get the default model handle from the active catalog. */
+export function getDefaultModel(): string {
+  if (models.length === 0) return "letta/auto";
+
+  const autoModel = models.find((model) => model.id === "auto");
+  if (autoModel) return autoModel.handle;
+
+  const defaultModel = models.find((model) => model.isDefault);
   if (defaultModel) return defaultModel.handle;
 
   const firstModel = models[0];
   if (!firstModel) {
-    throw new Error("No models available in models.json");
+    throw new Error("Model catalog is unavailable.");
   }
   return firstModel.handle;
 }
