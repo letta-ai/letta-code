@@ -128,12 +128,14 @@ describe("local pi provider catalog", () => {
     }
   });
 
-  test("OpenRouter attribution includes all Letta app categories", () => {
+  test("OpenRouter attribution includes leaderboard headers and app categories", () => {
     const openRouter = PI_PROVIDER_SPECS.find(
       (provider) => provider.id === "openrouter",
     );
 
-    expect(openRouter?.headers?.()).toMatchObject({
+    expect(openRouter?.headers?.()).toEqual({
+      "HTTP-Referer": "https://letta.com",
+      "X-OpenRouter-Title": "Letta Code",
       "X-OpenRouter-Categories": "cloud-agent,cli-agent,personal-agent",
     });
   });
