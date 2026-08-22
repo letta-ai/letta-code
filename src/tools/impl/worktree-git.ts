@@ -186,6 +186,92 @@ export async function resolveDefaultBaseRef(repoRoot: string): Promise<string> {
     : "HEAD";
 }
 
+/**
+ * Prepends `-c core.longpaths=true` to git args on Windows so that
+ * `git worktree add` can check out repositories with long tracked paths
+ * without requiring a user-wide `core.longpaths` setting in global config.
+ * On other platforms the args are returned unchanged.
+ */
+export function withLongPaths(
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  return platform === "win32" ? ["-c", "core.longpaths=true", ...args] : args;
+}
+
+async function enableRepoLongPaths(
+  repoRoot: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  if (platform === "win32") {
+    // The checkout override is not enough: later Git commands in the longer
+    // worktree must also accept the same paths. Keep the setting repo-local.
+    await runGit(["config", "--local", "core.longpaths", "true"], repoRoot);
+  }
+}
+
+export async function rollbackWorktreeCreation(params: {
+  repoRoot: string;
+  worktreePath: string;
+  branchName: string;
+}): Promise<void> {
+  // Only delete the branch when this path is registered to it. A concurrent
+  // caller can create the same branch after name allocation but before add.
+  const list = await runGit(
+    ["worktree", "list", "--porcelain", "-z"],
+    params.repoRoot,
+    { allowFailure: true },
+  );
+  const targetPath = path.resolve(params.worktreePath);
+  const targetBranch = `branch refs/heads/${params.branchName}`;
+  const ownsBranch = list.stdout.split("\0\0").some((entry) => {
+    const fields = entry.split("\0");
+    const worktree = fields.find((field) => field.startsWith("worktree "));
+    return (
+      worktree !== undefined &&
+      path.resolve(worktree.slice("worktree ".length)) === targetPath &&
+      fields.includes(targetBranch)
+    );
+  });
+
+  await runGit(
+    ["worktree", "remove", "--force", params.worktreePath],
+    params.repoRoot,
+    { allowFailure: true },
+  );
+  if (ownsBranch) {
+    await runGit(["branch", "-D", params.branchName], params.repoRoot, {
+      allowFailure: true,
+    });
+  }
+}
+
+export async function addManagedWorktree(params: {
+  repoRoot: string;
+  worktreePath: string;
+  branchName: string;
+  baseRef: string;
+}): Promise<void> {
+  await enableRepoLongPaths(params.repoRoot);
+  try {
+    await runGit(
+      withLongPaths([
+        "worktree",
+        "add",
+        "--no-track",
+        "-b",
+        params.branchName,
+        params.worktreePath,
+        params.baseRef,
+      ]),
+      params.repoRoot,
+    );
+  } catch (error) {
+    await rollbackWorktreeCreation(params);
+    throw error;
+  }
+}
+
 export function isPathWithin(child: string, parent: string): boolean {
   const resolvedChild = path.resolve(child);
   const resolvedParent = path.resolve(parent);

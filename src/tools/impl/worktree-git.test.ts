@@ -4,8 +4,10 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  addManagedWorktree,
   buildNonInteractiveGitEnv,
   formatGitFailure,
+  rollbackWorktreeCreation,
   runGit,
 } from "@/tools/impl/worktree-git";
 
@@ -139,5 +141,81 @@ describe("worktree Git runner", () => {
       expect(Date.now() - startedAt).toBeLessThan(2000);
       await expectGitDescendantExited(failure);
     },
+  );
+
+  test.skipIf(process.platform !== "win32")(
+    "checks out tracked Windows paths beyond MAX_PATH",
+    async () => {
+      const repo = await mkdtemp(path.join(tmpdir(), "letta-longpaths-repo-"));
+      const worktreePath = await mkdtemp(
+        path.join(tmpdir(), "letta-longpaths-worktree-"),
+      );
+      await rm(worktreePath, { recursive: true });
+      tempDirs.push(repo, worktreePath);
+
+      await runGit(["init", "--quiet"], repo);
+      await runGit(["config", "user.email", "test@example.com"], repo);
+      await runGit(["config", "user.name", "Test User"], repo);
+      await writeFile(path.join(repo, "seed"), "long path");
+      const blob = (
+        await runGit(["hash-object", "-w", "seed"], repo)
+      ).stdout.trim();
+      const trackedPath = `${Array.from(
+        { length: 5 },
+        (_, index) => `segment-${index}-${"x".repeat(48)}`,
+      ).join("/")}/tracked.txt`;
+      await runGit(
+        [
+          "update-index",
+          "--add",
+          "--cacheinfo",
+          `100644,${blob},${trackedPath}`,
+        ],
+        repo,
+      );
+      const tree = (await runGit(["write-tree"], repo)).stdout.trim();
+      const commit = (
+        await runGit(["commit-tree", tree, "-m", "seed"], repo)
+      ).stdout.trim();
+      await runGit(["update-ref", "refs/heads/main", commit], repo);
+      await runGit(["config", "--local", "core.longpaths", "false"], repo);
+
+      let baseFailure = "";
+      try {
+        await runGit(
+          ["worktree", "add", "-b", "base-failure", worktreePath, "main"],
+          repo,
+        );
+      } catch (error) {
+        baseFailure = formatGitFailure(error);
+      }
+      expect(baseFailure).toContain("Filename too long");
+      await rollbackWorktreeCreation({
+        repoRoot: repo,
+        worktreePath,
+        branchName: "base-failure",
+      });
+
+      await addManagedWorktree({
+        repoRoot: repo,
+        worktreePath,
+        branchName: "fixed-checkout",
+        baseRef: "main",
+      });
+      expect((await runGit(["status", "--short"], worktreePath)).stdout).toBe(
+        "",
+      );
+      expect(
+        (
+          await runGit(["config", "--local", "--get", "core.longpaths"], repo)
+        ).stdout.trim(),
+      ).toBe("true");
+      await rollbackWorktreeCreation({
+        repoRoot: repo,
+        worktreePath,
+        branchName: "fixed-checkout",
+      });
+    },
+    30_000,
   );
 });
