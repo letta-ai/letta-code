@@ -79,6 +79,7 @@ import {
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 import { TOOL_PERMISSIONS } from "./tool-permissions";
+import { toolReturnText } from "./tool-return-text";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 
@@ -2861,9 +2862,8 @@ export async function executeTool(
     ? getExecutionContextById(options.toolContextId)
     : undefined;
   const modEvents = context?.modEvents;
-  if (!modEvents || typeof res.toolReturn !== "string") {
-    return res;
-  }
+  const textOutput = toolReturnText(res.toolReturn);
+  if (!modEvents || textOutput === null) return res;
 
   const executionScope = context?.runtimeContext
     ? buildExecutionRuntimeContextSnapshot({
@@ -2890,7 +2890,7 @@ export async function executeTool(
     toolCallId: options?.toolCallId,
     toolName: name,
     status: res.status,
-    output: res.toolReturn,
+    output: textOutput,
   });
 
   return override
