@@ -360,87 +360,85 @@ async function handleIncomingMessageInner(
     seedInboundUserTranscriptLines(buffers, inboundUserTranscriptLines);
     while (true) {
       runIdSent = false;
-      const latestErrorInfoRef = { current: null as ErrorInfo | null },
-        result = await drainStreamWithResume(
-          stream as Stream<LettaStreamingResponse>,
-          buffers,
-          () => {},
-          turnAbortSignal,
-          undefined,
-          ({ chunk, shouldOutput, errorInfo }) => {
-            if (turnAbortSignal.aborted) {
-              return undefined;
+      const latestErrorInfoRef = { current: null as ErrorInfo | null };
+      const result = await drainStreamWithResume(
+        stream as Stream<LettaStreamingResponse>,
+        buffers,
+        () => {},
+        turnAbortSignal,
+        undefined,
+        ({ chunk, shouldOutput, errorInfo }) => {
+          if (turnAbortSignal.aborted) {
+            return undefined;
+          }
+          const maybeRunId = (chunk as { run_id?: unknown }).run_id;
+          if (typeof maybeRunId === "string") {
+            runId = maybeRunId;
+            runtime.turnLifecycle.setRunId(turnLease, maybeRunId);
+            turnCorrelation.observeRun(maybeRunId);
+            if (!runIdSent) {
+              runIdSent = true;
+              msgRunIds.push(maybeRunId);
+              emitLoopStatusUpdate(socket, runtime, {
+                agent_id: agentId,
+                conversation_id: conversationId,
+              });
             }
-            const maybeRunId = (chunk as { run_id?: unknown }).run_id;
-            if (typeof maybeRunId === "string") {
-              runId = maybeRunId;
-              runtime.turnLifecycle.setRunId(turnLease, maybeRunId);
-              turnCorrelation.observeRun(maybeRunId);
-              if (!runIdSent) {
-                runIdSent = true;
-                msgRunIds.push(maybeRunId);
-                emitLoopStatusUpdate(socket, runtime, {
+          }
+          if (errorInfo) {
+            const recoverableApprovalErrorText =
+              getApprovalToolCallDesyncErrorText(errorInfo);
+            latestErrorInfoRef.current = recoverableApprovalErrorText
+              ? { ...errorInfo, detail: recoverableApprovalErrorText }
+              : errorInfo;
+            if (!recoverableApprovalErrorText) {
+              emitLoopErrorNotice(socket, runtime, {
+                message: errorInfo.message || "Stream error",
+                stopReason: normalizeStreamErrorTypeToStopReason(
+                  errorInfo.error_type,
+                ),
+                isTerminal: false,
+                runId: runId || errorInfo.run_id,
+                agentId,
+                conversationId,
+                errorInfo,
+                cancelRequested: turnAbortSignal.aborted,
+                abortSignal: turnAbortSignal,
+              });
+            } else {
+              debugLog(
+                "recovery",
+                "Suppressing streamed approval conflict while post-stop recovery runs: %s",
+                recoverableApprovalErrorText,
+              );
+            }
+          }
+          if (shouldOutput) {
+            const normalizedChunk =
+              normalizeCloudRetryWireMessage(chunk) ??
+              normalizeToolReturnWireMessage(
+                chunk as unknown as Record<string, unknown>,
+              );
+            if (normalizedChunk) {
+              emitCanonicalMessageDelta(
+                socket,
+                runtime,
+                {
+                  ...normalizedChunk,
+                  type: "message",
+                } as StreamDelta,
+                {
                   agent_id: agentId,
                   conversation_id: conversationId,
-                });
-              }
+                },
+              );
             }
+          }
 
-            if (errorInfo) {
-              const recoverableApprovalErrorText =
-                getApprovalToolCallDesyncErrorText(errorInfo);
-              latestErrorInfoRef.current = recoverableApprovalErrorText
-                ? { ...errorInfo, detail: recoverableApprovalErrorText }
-                : errorInfo;
-              if (!recoverableApprovalErrorText) {
-                emitLoopErrorNotice(socket, runtime, {
-                  message: errorInfo.message || "Stream error",
-                  stopReason: normalizeStreamErrorTypeToStopReason(
-                    errorInfo.error_type,
-                  ),
-                  isTerminal: false,
-                  runId: runId || errorInfo.run_id,
-                  agentId,
-                  conversationId,
-                  errorInfo,
-                  cancelRequested: turnAbortSignal.aborted,
-                  abortSignal: turnAbortSignal,
-                });
-              } else {
-                debugLog(
-                  "recovery",
-                  "Suppressing streamed approval conflict while post-stop recovery runs: %s",
-                  recoverableApprovalErrorText,
-                );
-              }
-            }
-
-            if (shouldOutput) {
-              const normalizedChunk =
-                normalizeCloudRetryWireMessage(chunk) ??
-                normalizeToolReturnWireMessage(
-                  chunk as unknown as Record<string, unknown>,
-                );
-              if (normalizedChunk) {
-                emitCanonicalMessageDelta(
-                  socket,
-                  runtime,
-                  {
-                    ...normalizedChunk,
-                    type: "message",
-                  } as StreamDelta,
-                  {
-                    agent_id: agentId,
-                    conversation_id: conversationId,
-                  },
-                );
-              }
-            }
-
-            return undefined;
-          },
-          runtime.contextTracker,
-        );
+          return undefined;
+        },
+        runtime.contextTracker,
+      );
 
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
@@ -503,20 +501,22 @@ async function handleIncomingMessageInner(
       }
 
       if (stopReason !== "requires_approval") {
-        const lastRunId = runId || msgRunIds[msgRunIds.length - 1] || null,
-          runErrorInfo = lastRunId ? await fetchRunErrorInfo(lastRunId) : null;
+        const lastRunId = runId || msgRunIds[msgRunIds.length - 1] || null;
+        const runErrorInfo = lastRunId
+          ? await fetchRunErrorInfo(lastRunId)
+          : null;
         if (finishIfInterrupted(lastRunId || runtime.activeRunId)) {
           break;
         }
-        const latestErrorInfo = latestErrorInfoRef.current,
-          errorDetail =
-            latestErrorInfo?.detail ||
-            latestErrorInfo?.message ||
-            runErrorInfo?.detail ||
-            runErrorInfo?.message ||
-            fallbackError ||
-            null,
-          quotaError = latestErrorInfo ?? runErrorInfo ?? errorDetail;
+        const latestErrorInfo = latestErrorInfoRef.current;
+        const errorDetail =
+          latestErrorInfo?.detail ||
+          latestErrorInfo?.message ||
+          runErrorInfo?.detail ||
+          runErrorInfo?.message ||
+          fallbackError ||
+          null;
+        const quotaError = latestErrorInfo ?? runErrorInfo ?? errorDetail;
         if (
           shouldAttemptPostStopApprovalRecovery({
             stopReason,
