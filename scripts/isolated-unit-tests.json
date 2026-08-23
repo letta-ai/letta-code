@@ -186,6 +186,11 @@
       "reason": "Mutates HOME and the remote-settings singleton while exercising cwd recovery persistence."
     },
     {
+      "path": "src/websocket/listener/commands/model-toolset.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates the backend singleton and shared model catalog cache while asserting backend-native catalog metadata."
+    },
+    {
       "path": "src/websocket/listener/protocol-ergonomics.test.ts",
       "timeoutMs": 15000,
       "reason": "Mutates HOME and the remote-settings singleton while verifying durable cwd-map pruning."
