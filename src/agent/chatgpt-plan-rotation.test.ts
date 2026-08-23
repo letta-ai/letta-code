@@ -33,6 +33,26 @@ describe("parseChatGPTUsageLimitDetail", () => {
     ).toEqual({ planType: null, resetsAt: null });
   });
 
+  test("parses structured Cloud error fields", () => {
+    expect(
+      parseChatGPTUsageLimitDetail({
+        detail: "ChatGPT rate limit exceeded:",
+        error_code: "usage_limit_reached",
+      }),
+    ).toEqual({ planType: null, resetsAt: null });
+    expect(
+      parseChatGPTUsageLimitDetail({
+        raw: {
+          error: {
+            type: "usage_limit_reached",
+            plan_type: "pro",
+            resets_at: 1787803152,
+          },
+        },
+      }),
+    ).toEqual({ planType: "pro", resetsAt: 1787803152 * 1000 });
+  });
+
   test("falls back to resets_in_seconds when resets_at is absent", () => {
     const before = Date.now();
     const parsed = parseChatGPTUsageLimitDetail(
