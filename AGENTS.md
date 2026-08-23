@@ -8,10 +8,9 @@ This file explains how to work effectively in this repo. It covers the rules enf
 
 1. **Create a worktree** for any non-trivial change — especially if another agent may be working concurrently.
 2. **Make your change**, then run `bun run check` and fix all failures before opening a PR.
-3. **Do not commit or push** until explicitly asked to. Caren will say when she's ready.
-4. **One PR per logical change.** Don't bundle unrelated changes — harder to revert if something breaks.
-5. **Never amend commits.** Always create a new commit.
-6. **Check the current branch** before editing files. If in doubt, ask.
+3. **One PR per logical change.** Don't bundle unrelated changes — harder to revert if something breaks.
+4. **Never amend commits.** Always create a new commit.
+5. **Check the current branch** before editing files. If in doubt, ask.
 
 ---
 
