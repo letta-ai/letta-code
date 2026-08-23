@@ -544,6 +544,37 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
 });
 
 describe("pullMemory recovery", () => {
+  test("repairs multiple upstream branches before pulling", async () => {
+    const remote = makeBareGitRepo();
+    const source = cloneRepo(remote);
+    commitFile(source, "remote.md", "remote memory");
+    git(source, "push -u origin main");
+
+    const agentId = `agent-test-${Date.now()}`;
+    const agentRoot = getAgentRootDir(agentId);
+    tempDirs.push(agentRoot);
+    mkdirSync(agentRoot, { recursive: true });
+    const memoryDir = getMemoryRepoDir(agentId);
+    execFileSync("git", ["clone", remote, memoryDir], { stdio: "ignore" });
+    git(memoryDir, "config --add branch.main.merge refs/heads/other");
+
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({
+      _options: { apiKey: "test-token" },
+    }));
+
+    const result = await pullMemory(agentId);
+
+    expect(result.updated).toBe(false);
+    expect(result.summary).toBe("Already up to date");
+    expect(git(memoryDir, "config --get-all branch.main.merge").trim()).toBe(
+      "refs/heads/main",
+    );
+    expect(git(memoryDir, "config --get-all branch.main.remote").trim()).toBe(
+      "origin",
+    );
+  });
+
   test("recovers clean unrelated local memory history by resetting to origin/main", async () => {
     const remote = makeBareGitRepo();
     const source = cloneRepo(remote);
