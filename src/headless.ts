@@ -28,7 +28,7 @@ import type { ApprovalResult } from "./agent/approval-execution";
 import {
   buildFreshDenialApprovals,
   extractConflictDetail,
-  fetchRunErrorDetail,
+  fetchRunErrorInfo,
   getPreStreamErrorAction,
   getRetryDelayMs,
   isApprovalPendingError,
@@ -2882,8 +2882,8 @@ ${SYSTEM_REMINDER_CLOSE}
         }
       }
 
-      // Fetch run error detail for invalid tool call ID detection
-      const detailFromRun = await fetchRunErrorDetail(lastRunId);
+      const runErrorInfo = await fetchRunErrorInfo(lastRunId),
+        detailFromRun = runErrorInfo?.detail ?? runErrorInfo?.message;
 
       // ChatGPT plan rotation: when a chatgpt_oauth BYOK plan hits its usage
       // limit, swap to the same model on a sibling ChatGPT plan and resend.
@@ -2891,7 +2891,7 @@ ${SYSTEM_REMINDER_CLOSE}
         const rotation = await rotateChatGPTPlanOnQuotaLimit({
           agentId: agent.id,
           currentHandle: null,
-          detail: detailFromRun ?? latestErrorText,
+          error: runErrorInfo ?? detailFromRun ?? latestErrorText,
         });
         if (rotation) {
           chatgptPlanSwaps += 1;

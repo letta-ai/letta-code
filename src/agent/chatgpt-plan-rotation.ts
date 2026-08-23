@@ -89,11 +89,11 @@ async function resolveAgentModelHandle(
 export async function rotateChatGPTPlanOnQuotaLimit(params: {
   agentId: string;
   currentHandle: string | null;
-  detail: unknown;
+  error: unknown;
 }): Promise<ChatGPTPlanRotationResult | null> {
-  const { agentId, detail } = params;
+  const { agentId, error } = params;
 
-  const parsedDetail = parseChatGPTUsageLimitDetail(detail);
+  const parsedDetail = parseChatGPTUsageLimitDetail(error);
   if (!parsedDetail) return null;
 
   let models = getCachedAvailableModels();

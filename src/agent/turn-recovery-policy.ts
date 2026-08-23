@@ -539,41 +539,36 @@ export interface ChatGPTUsageLimitDetail {
   resetsAt: number | null;
 }
 
-/**
- * Best-effort parse of a ChatGPT usage-limit error detail string, e.g.
- * `ChatGPT rate limit exceeded: {"error":{"type":"usage_limit_reached",
- * "plan_type":"plus","resets_at":1700000000,"resets_in_seconds":3600}}`.
- * Returns null unless the detail is a string containing
- * `usage_limit_reached` (case-insensitive); reset fields are optional and
- * parse failures degrade to `{ planType: null, resetsAt: null }`.
- */
-export function parseChatGPTUsageLimitDetail(
-  detail: unknown,
-): ChatGPTUsageLimitDetail | null {
-  if (typeof detail !== "string") return null;
-  if (!detail.toLowerCase().includes(CHATGPT_USAGE_LIMIT_FRAGMENT)) {
+export interface ChatGPTUsageLimitErrorInput {
+  message?: unknown;
+  detail?: unknown;
+  errorCode?: unknown;
+  error_code?: unknown;
+  raw?: unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isUsageLimitCode(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value.toLowerCase() === CHATGPT_USAGE_LIMIT_FRAGMENT
+  );
+}
+
+function parseUsageLimitRecord(value: unknown): ChatGPTUsageLimitDetail | null {
+  if (!isRecord(value)) return null;
+
+  const errorObj = isRecord(value.error) ? value.error : value;
+  if (
+    !isUsageLimitCode(errorObj.type) &&
+    !isUsageLimitCode(errorObj.errorCode) &&
+    !isUsageLimitCode(errorObj.error_code)
+  ) {
     return null;
   }
-
-  const fallback: ChatGPTUsageLimitDetail = { planType: null, resetsAt: null };
-
-  const jsonStart = detail.indexOf("{");
-  const jsonEnd = detail.lastIndexOf("}");
-  if (jsonStart === -1 || jsonEnd <= jsonStart) return fallback;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(detail.slice(jsonStart, jsonEnd + 1));
-  } catch {
-    return fallback;
-  }
-  if (typeof parsed !== "object" || parsed === null) return fallback;
-
-  const errorField = (parsed as Record<string, unknown>).error;
-  const errorObj =
-    typeof errorField === "object" && errorField !== null
-      ? (errorField as Record<string, unknown>)
-      : (parsed as Record<string, unknown>);
 
   const planType =
     typeof errorObj.plan_type === "string" && errorObj.plan_type.length > 0
@@ -591,6 +586,57 @@ export function parseChatGPTUsageLimitDetail(
   }
 
   return { planType, resetsAt };
+}
+
+function parseUsageLimitString(value: unknown): ChatGPTUsageLimitDetail | null {
+  if (typeof value !== "string") return null;
+  if (!value.toLowerCase().includes(CHATGPT_USAGE_LIMIT_FRAGMENT)) return null;
+
+  const fallback: ChatGPTUsageLimitDetail = { planType: null, resetsAt: null };
+  const jsonStart = value.indexOf("{");
+  const jsonEnd = value.lastIndexOf("}");
+  if (jsonStart === -1 || jsonEnd <= jsonStart) return fallback;
+
+  try {
+    return (
+      parseUsageLimitRecord(JSON.parse(value.slice(jsonStart, jsonEnd + 1))) ??
+      fallback
+    );
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Parse a ChatGPT usage-limit error from the structured Cloud error event or
+ * from the older embedded-JSON detail string. Reset fields are best-effort.
+ */
+export function parseChatGPTUsageLimitDetail(
+  error: unknown,
+): ChatGPTUsageLimitDetail | null {
+  const stringDetail = parseUsageLimitString(error);
+  if (stringDetail) return stringDetail;
+  if (!isRecord(error)) return null;
+
+  const structured = error as ChatGPTUsageLimitErrorInput;
+  const rawDetail =
+    parseUsageLimitRecord(structured.raw) ??
+    parseUsageLimitString(structured.raw);
+  if (rawDetail) return rawDetail;
+
+  const detail = parseUsageLimitString(structured.detail);
+  if (detail) return detail;
+  const message = parseUsageLimitString(structured.message);
+  if (message) return message;
+
+  if (
+    isUsageLimitCode(structured.errorCode) ||
+    isUsageLimitCode(structured.error_code)
+  ) {
+    return { planType: null, resetsAt: null };
+  }
+
+  return null;
 }
 
 export interface ChatGPTFailoverModelEntry {

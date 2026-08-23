@@ -26,6 +26,7 @@ import {
 } from "@/cli/helpers/accumulator";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
+import type { ErrorInfo } from "@/cli/helpers/stream-processor";
 import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
@@ -359,7 +360,7 @@ async function handleIncomingMessageInner(
     seedInboundUserTranscriptLines(buffers, inboundUserTranscriptLines);
     while (true) {
       runIdSent = false;
-      let latestErrorText: string | null = null;
+      const latestErrorInfoRef = { current: null as ErrorInfo | null };
       const result = await drainStreamWithResume(
         stream as Stream<LettaStreamingResponse>,
         buffers,
@@ -384,15 +385,12 @@ async function handleIncomingMessageInner(
               });
             }
           }
-
           if (errorInfo) {
             const recoverableApprovalErrorText =
               getApprovalToolCallDesyncErrorText(errorInfo);
-            latestErrorText =
-              recoverableApprovalErrorText ||
-              errorInfo.detail ||
-              errorInfo.message ||
-              latestErrorText;
+            latestErrorInfoRef.current = recoverableApprovalErrorText
+              ? { ...errorInfo, detail: recoverableApprovalErrorText }
+              : errorInfo;
             if (!recoverableApprovalErrorText) {
               emitLoopErrorNotice(socket, runtime, {
                 message: errorInfo.message || "Stream error",
@@ -415,7 +413,6 @@ async function handleIncomingMessageInner(
               );
             }
           }
-
           if (shouldOutput) {
             const normalizedChunk =
               normalizeCloudRetryWireMessage(chunk) ??
@@ -511,20 +508,23 @@ async function handleIncomingMessageInner(
         if (finishIfInterrupted(lastRunId || runtime.activeRunId)) {
           break;
         }
+        const latestErrorInfo = latestErrorInfoRef.current;
         const errorDetail =
-          latestErrorText ||
+          latestErrorInfo?.detail ||
+          latestErrorInfo?.message ||
           runErrorInfo?.detail ||
           runErrorInfo?.message ||
           fallbackError ||
           null;
-
+        const quotaError = latestErrorInfo ?? runErrorInfo ?? errorDetail;
         if (
           shouldAttemptPostStopApprovalRecovery({
             stopReason,
             runIdsSeen: msgRunIds.length,
             retries: postStopApprovalRecoveryRetries,
             runErrorDetail: errorDetail,
-            latestErrorText,
+            latestErrorText:
+              latestErrorInfo?.detail ?? latestErrorInfo?.message ?? null,
             fallbackError,
           })
         ) {
@@ -676,7 +676,7 @@ async function handleIncomingMessageInner(
           const rotation = await rotateChatGPTPlanOnQuotaLimit({
             agentId,
             currentHandle: null,
-            detail: errorDetail,
+            error: quotaError,
           });
           if (rotation) {
             chatgptPlanSwaps += 1;

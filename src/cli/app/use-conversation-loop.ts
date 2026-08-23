@@ -17,7 +17,7 @@ import {
 import { executeAutoAllowedTools } from "@/agent/approval-execution";
 import {
   extractConflictDetail,
-  fetchRunErrorDetail,
+  fetchRunErrorInfo,
   getPreStreamErrorAction,
   getRetryDelayMs,
   isApprovalPendingError,
@@ -2235,9 +2235,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
           }
 
-          // Check for "Invalid tool call IDs" error - server HAS pending approvals but with different IDs.
-          // Fetch the actual pending approvals and show them to the user.
-          const detailFromRun = await fetchRunErrorDetail(lastRunId);
+          // Fetch run error metadata for recovery decisions.
+          const runErrorInfo = await fetchRunErrorInfo(lastRunId),
+            detailFromRun = runErrorInfo?.detail ?? runErrorInfo?.message;
           const invalidIdsDetected =
             isInvalidToolCallIdsError(detailFromRun) ||
             isInvalidToolCallIdsError(latestErrorText);
@@ -2379,7 +2379,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             const rotation = await rotateChatGPTPlanOnQuotaLimit({
               agentId: agentIdRef.current,
               currentHandle: currentModelId,
-              detail: detailFromRun ?? fallbackError,
+              error: runErrorInfo ?? detailFromRun ?? fallbackError,
             });
             if (rotation) {
               chatgptPlanSwapsRef.current += 1;
