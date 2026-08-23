@@ -1,4 +1,5 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import { getModelProviderType } from "@/agent/available-models";
 import { resolveModel } from "@/agent/model";
 import { resolveModelHandleFromLlmConfig } from "@/agent/model-handles";
 import type { SkillSource } from "@/agent/skill-sources";
@@ -400,12 +401,7 @@ export async function prepareToolExecutionContextForScope(params: {
     overrideModel && overrideModel.length > 0
       ? (resolveModel(overrideModel) ?? overrideModel)
       : null;
-  let effectiveProviderType =
-    overrideProviderType !== undefined
-      ? overrideProviderType
-      : providerTypeFromModelSettings(
-          (agent as { model_settings?: unknown }).model_settings,
-        );
+  let effectiveProviderType = overrideProviderType ?? null;
 
   if (
     !effectiveModel &&
@@ -418,17 +414,34 @@ export async function prepareToolExecutionContextForScope(params: {
   if (!effectiveModel && conversationId && conversationId !== "default") {
     const conversation = await backend.retrieveConversation(conversationId);
     const conversationModel = (conversation as { model?: string | null }).model;
+    const conversationProviderType = providerTypeFromModelSettings(
+      (conversation as { model_settings?: unknown }).model_settings,
+    );
     if (typeof conversationModel === "string" && conversationModel.length > 0) {
       effectiveModel = resolveModel(conversationModel) ?? conversationModel;
+      // A conversation model replaces the agent model. Do not retain provider
+      // metadata from the agent when the conversation omits model_settings.
+      effectiveProviderType = conversationProviderType;
+    } else if (conversationProviderType) {
+      effectiveProviderType = conversationProviderType;
     }
-    effectiveProviderType =
-      providerTypeFromModelSettings(
-        (conversation as { model_settings?: unknown }).model_settings,
-      ) ?? effectiveProviderType;
   }
 
   if (!effectiveModel) {
     effectiveModel = getPreferredAgentModelHandle(agent);
+    effectiveProviderType ??= providerTypeFromModelSettings(
+      (agent as { model_settings?: unknown }).model_settings,
+    );
+  }
+
+  if (effectiveModel && !effectiveProviderType) {
+    try {
+      effectiveProviderType =
+        (await getModelProviderType(effectiveModel)) ?? null;
+    } catch {
+      // Model metadata is best-effort. Handle-based classification remains
+      // available when the provider inventory cannot be fetched.
+    }
   }
 
   const toolsetPreference = (() => {
