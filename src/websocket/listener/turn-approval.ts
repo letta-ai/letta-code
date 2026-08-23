@@ -8,6 +8,7 @@ import { computeDiffPreviews } from "@/helpers/diff-preview";
 import { formatPermissionDenial } from "@/permissions/format-denial";
 import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
+import type { ApprovalClassificationEndMessage } from "@/types/approval-classification-protocol";
 import type {
   ApprovalResponseBody,
   ApprovalResponseDecision,
@@ -38,6 +39,8 @@ import {
   normalizeExecutionResultsForInterruptParity,
 } from "./interrupts";
 import {
+  createLifecycleMessageBase,
+  emitCanonicalMessageDelta,
   emitDequeuedUserMessage,
   emitProtocolV2Message,
   emitRuntimeStateUpdates,
@@ -216,6 +219,12 @@ export async function handleApprovalStop(params: {
 
   clearPendingApprovalBatchIds(runtime, approvals);
   rememberPendingApprovalBatchIds(runtime, approvals, dequeuedBatchId);
+  const classificationRunId =
+    runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
+  const classificationScope = {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  };
   const { autoAllowed, autoDenied, needsUserInput } = await classifyApprovals(
     approvals,
     {
@@ -228,6 +237,27 @@ export async function handleApprovalStop(params: {
       agentId,
       toolContextId: turnToolContextId ?? undefined,
     },
+  );
+  const classificationEnd: ApprovalClassificationEndMessage = {
+    ...createLifecycleMessageBase(
+      "approval_classification_end",
+      classificationRunId,
+    ),
+    auto_allowed_tool_call_ids: autoAllowed.map(
+      (entry) => entry.approval.toolCallId,
+    ),
+    auto_denied_tool_call_ids: autoDenied.map(
+      (entry) => entry.approval.toolCallId,
+    ),
+    user_input_tool_call_ids: needsUserInput.map(
+      (entry) => entry.approval.toolCallId,
+    ),
+  };
+  emitCanonicalMessageDelta(
+    socket,
+    runtime,
+    classificationEnd,
+    classificationScope,
   );
   const continuationWasFullyAutoHandled = needsUserInput.length === 0;
 
