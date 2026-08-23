@@ -16,7 +16,7 @@ describe("listener tool prep metadata reuse", () => {
     expect(source).toContain("cachedAgent?: AgentState | null;");
     expect(source).toContain("cachedEffectiveModel?: string | null;");
     expect(source).toContain("cachedAgent ??");
-    expect(source).toContain("resolveModel(cachedEffectiveModel)");
+    expect(source).toContain("normalizeModelHandle(cachedEffectiveModel)");
   });
 
   test("listener turn passes cached agent metadata into reflection and tool prep", () => {
