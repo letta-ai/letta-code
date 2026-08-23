@@ -164,6 +164,9 @@ type AppViewProps = {
   expandedToolCallId: string | null;
   lastShellToolCallId: string | null;
   handleCtrlO: () => void;
+  showAllReasoning: boolean;
+  lastFinishedReasoningId: string | null;
+  handleCtrlT: () => void;
   queueMode: "immediate" | "defer";
   deferModeSupported: boolean;
   handleCtrlD: () => void;
@@ -382,6 +385,9 @@ export function AppView(props: AppViewProps) {
     expandedToolCallId,
     lastShellToolCallId,
     handleCtrlO,
+    showAllReasoning,
+    lastFinishedReasoningId,
+    handleCtrlT,
     queueMode,
     deferModeSupported,
     handleCtrlD,
@@ -501,6 +507,8 @@ export function AppView(props: AppViewProps) {
         precomputedDiffs={precomputedDiffsRef.current}
         hiddenToolCallId={expandedToolCallId ?? undefined}
         lastShellToolCallId={lastShellToolCallId ?? undefined}
+        showAllReasoning={showAllReasoning}
+        lastFinishedReasoningId={lastFinishedReasoningId ?? undefined}
       />
 
       <Box flexDirection="column">
@@ -601,7 +609,14 @@ export function AppView(props: AppViewProps) {
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} prompt={statusLinePrompt} />
                         ) : ln.kind === "reasoning" ? (
-                          <ReasoningMessage line={ln} />
+                          <ReasoningMessage
+                            line={ln}
+                            display={{
+                              expanded: showAllReasoning,
+                              lastFinishedId:
+                                lastFinishedReasoningId ?? undefined,
+                            }}
+                          />
                         ) : ln.kind === "assistant" ? (
                           <AssistantMessage line={ln} />
                         ) : ln.kind === "tool_call" &&
@@ -751,6 +766,7 @@ export function AppView(props: AppViewProps) {
                 onExit={handleExit}
                 onInterrupt={handleInterrupt}
                 onCtrlO={handleCtrlO}
+                onCtrlT={handleCtrlT}
                 onCtrlD={handleCtrlD}
                 queueMode={queueMode}
                 deferModeSupported={deferModeSupported}

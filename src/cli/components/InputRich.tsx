@@ -898,6 +898,7 @@ export function Input({
   onExit,
   onInterrupt,
   onCtrlO,
+  onCtrlT,
   onCtrlD,
   queueMode = "immediate",
   deferModeSupported = false,
@@ -948,6 +949,7 @@ export function Input({
   onExit?: () => void;
   onInterrupt?: () => void;
   onCtrlO?: () => void;
+  onCtrlT?: () => void;
   onCtrlD?: () => void;
   queueMode?: "immediate" | "defer";
   deferModeSupported?: boolean;
@@ -1381,6 +1383,12 @@ export function Input({
     // Handle CTRL-O to expand/collapse the last tool call output
     if (input === "o" && key.ctrl) {
       if (onCtrlO) onCtrlO();
+      return;
+    }
+
+    // Handle CTRL-T to expand/collapse all reasoning blocks
+    if (input === "t" && key.ctrl) {
+      if (onCtrlT) onCtrlT();
       return;
     }
 

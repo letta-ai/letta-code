@@ -151,6 +151,8 @@ export type Line =
       id: string;
       text: string;
       phase: "streaming" | "finished";
+      startedAt?: number; // wall-clock ms when the first chunk arrived (spoiler timer)
+      endedAt?: number; // wall-clock ms when the block was marked finished
       isContinuation?: boolean; // true for split continuation lines (no header)
       messageId?: string; // canonical backend message.id when known
     }
@@ -456,6 +458,7 @@ function markAsFinished(b: Buffers, id: string) {
             ...line,
             text: trimFinishedReasoningText(line.text),
             phase: "finished" as const,
+            endedAt: Date.now(),
           }
         : { ...line, phase: "finished" as const };
     b.byId.set(id, updatedLine);
@@ -961,6 +964,7 @@ export function onChunk(
         id,
         text: "",
         phase: "streaming",
+        startedAt: Date.now(),
         messageId,
       }));
       if (delta) {

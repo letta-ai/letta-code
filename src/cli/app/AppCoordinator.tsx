@@ -4666,6 +4666,29 @@ export function App({
     }
   }, [lastShellToolCallId, handleToggleExpandedToolCall]);
 
+  // ctrl+t toggles ALL reasoning blocks between spoiler line and full text.
+  // Global flag (not per-id) so a whole turn's thoughts are readable at once.
+  const [showAllReasoning, setShowAllReasoning] = useState(false);
+
+  // The ID of the last finished reasoning block — used for the ctrl+t hint.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: lines triggers recompute when buffer changes
+  const lastFinishedReasoningId = useMemo(() => {
+    const order = buffersRef.current.order;
+    for (let i = order.length - 1; i >= 0; i--) {
+      const id = order[i];
+      if (!id) continue;
+      const ln = buffersRef.current.byId.get(id);
+      if (ln?.kind === "reasoning" && ln.phase === "finished" && ln.text) {
+        return id;
+      }
+    }
+    return null;
+  }, [lines]);
+
+  const handleCtrlT = useCallback(() => {
+    setShowAllReasoning((prev) => !prev);
+  }, []);
+
   // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
   const handlePermissionModeChange = useCallback(
     (mode: PermissionMode) => {
@@ -5068,6 +5091,9 @@ export function App({
         expandedToolCallId={expandedToolCallId}
         lastShellToolCallId={lastShellToolCallId}
         handleCtrlO={handleCtrlO}
+        showAllReasoning={showAllReasoning}
+        lastFinishedReasoningId={lastFinishedReasoningId}
+        handleCtrlT={handleCtrlT}
         queueMode={queueMode}
         deferModeSupported={deferModeSupported}
         handleCtrlD={handleCtrlD}
