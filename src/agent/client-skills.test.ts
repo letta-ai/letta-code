@@ -56,11 +56,11 @@ describe("buildClientSkillsPayload", () => {
       ],
       errors: [],
     });
-
     const result = await buildClientSkillsPayload({
       agentId: "agent-1",
       skillsDirectory: "/tmp/.skills",
       skillSources: ["project", "bundled"],
+      attachedRepositories: [],
       discoverSkillsFn,
     });
 
@@ -282,12 +282,12 @@ describe("buildClientSkillsPayload", () => {
         errors: [],
       };
     };
-
     const result = await buildClientSkillsPayload({
       agentId: "agent-1",
       workingDirectory: "/tmp",
       skillsDirectory: "/tmp/.skills",
       skillSources: ["project"],
+      attachedRepositories: [],
       discoverSkillsFn,
     });
 
