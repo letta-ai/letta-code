@@ -34,6 +34,10 @@ import type {
   AppServerInfoCommand,
   AppServerInfoResponseMessage,
 } from "./app-server-info";
+import type {
+  ApprovalClassificationEndMessage,
+  UmiLifecycleMessageBase,
+} from "./approval-classification-protocol";
 import type { BackgroundProcessSummary } from "./background-process-protocol";
 import type { ConversationForkBody } from "./conversation-fork-protocol";
 import type * as CwdProtocol from "./cwd-protocol";
@@ -49,6 +53,7 @@ import type { RuntimeScope } from "./runtime-scope";
 import type { CronRunLogPage, CronTask } from "./schedule-protocol";
 import type * as TeleportProtocol from "./teleport-protocol";
 
+export type * from "./approval-classification-protocol";
 export type * from "./background-process-protocol";
 export type * from "./cwd-protocol";
 export type * from "./external-tool-protocol";
@@ -450,13 +455,6 @@ export interface QueueUpdateMessage extends RuntimeEnvelope {
  */
 export type MessageDelta = { type: "message" } & LettaStreamingResponse;
 
-export interface UmiLifecycleMessageBase {
-  id: string;
-  date: string;
-  message_type: string;
-  run_id?: string;
-}
-
 export interface ClientToolStartMessage extends UmiLifecycleMessageBase {
   message_type: "client_tool_start";
   tool_call_id: string;
@@ -531,6 +529,7 @@ export interface LoopErrorMessage extends UmiLifecycleMessageBase {
 
 export type StreamDelta =
   | MessageDelta
+  | ApprovalClassificationEndMessage
   | ClientToolStartMessage
   | ClientToolEndMessage
   | CommandStartMessage
