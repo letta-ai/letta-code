@@ -15,12 +15,18 @@ import { createStreamStallReconciler } from "@/cli/helpers/stream-stall-reconcil
  */
 
 const originalInterval = process.env.LETTA_STREAM_STALL_RECONCILE_MS;
+const originalStatusTimeout = process.env.LETTA_STREAM_STALL_STATUS_TIMEOUT_MS;
 
 afterEach(() => {
   if (originalInterval === undefined) {
     delete process.env.LETTA_STREAM_STALL_RECONCILE_MS;
   } else {
     process.env.LETTA_STREAM_STALL_RECONCILE_MS = originalInterval;
+  }
+  if (originalStatusTimeout === undefined) {
+    delete process.env.LETTA_STREAM_STALL_STATUS_TIMEOUT_MS;
+  } else {
+    process.env.LETTA_STREAM_STALL_STATUS_TIMEOUT_MS = originalStatusTimeout;
   }
 });
 
@@ -88,24 +94,55 @@ describe("createStreamStallReconciler", () => {
     harness.reconciler.clear();
   });
 
-  test("keeps waiting when the status lookup fails", async () => {
+  test("reconnects when the status lookup fails", async () => {
     process.env.LETTA_STREAM_STALL_RECONCILE_MS = "20";
     const harness = makeReconciler({ runId: "run-1", statusError: true });
     harness.reconciler.arm();
-    await waitMs(70);
-    expect(harness.aborts()).toBe(0);
-    expect(harness.statusCalls()).toBeGreaterThanOrEqual(2);
+    await waitMs(50);
+    expect(harness.aborts()).toBe(1);
+    expect(harness.statusCalls()).toBe(1);
     harness.reconciler.clear();
   });
 
-  test("keeps waiting when no run_id has arrived yet", async () => {
+  test("reconnects when no run_id has arrived yet", async () => {
     process.env.LETTA_STREAM_STALL_RECONCILE_MS = "20";
     const harness = makeReconciler({ runId: null, status: "completed" });
     harness.reconciler.arm();
-    await waitMs(60);
-    expect(harness.aborts()).toBe(0);
+    await waitMs(50);
+    expect(harness.aborts()).toBe(1);
     expect(harness.statusCalls()).toBe(0);
     harness.reconciler.clear();
+  });
+
+  test("times out a hung status lookup before reconnecting", async () => {
+    process.env.LETTA_STREAM_STALL_RECONCILE_MS = "10";
+    process.env.LETTA_STREAM_STALL_STATUS_TIMEOUT_MS = "15";
+    let abortCount = 0;
+    let statusSignalAborted = false;
+    const reconciler = createStreamStallReconciler({
+      getRunId: () => "run-1",
+      getStopReason: () => null,
+      retrieveRunStatus: async (_runId, signal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              statusSignalAborted = true;
+              reject(signal.reason);
+            },
+            { once: true },
+          );
+        }),
+      abortHttpRead: () => {
+        abortCount += 1;
+      },
+    });
+
+    reconciler.arm();
+    await waitMs(50);
+    expect(statusSignalAborted).toBe(true);
+    expect(abortCount).toBe(1);
+    reconciler.clear();
   });
 
   test("defers to the terminal-EOF guard once stop_reason arrived", async () => {

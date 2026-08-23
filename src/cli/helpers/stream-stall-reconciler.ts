@@ -21,15 +21,16 @@ import { debugWarn } from "@/utils/debug";
  * drainStream return and drainStreamWithResume replay the lost tail
  * (including any approval request) from the run's persisted stream.
  *
- * Fail-safe by construction: if the run is still active server-side, or its
- * status cannot be determined (no run_id yet, lookup error), the reconciler
- * re-arms and keeps waiting. It never aborts a stream the server considers
- * live.
+ * If the server confirms that the run is still active, the reconciler waits
+ * through another silence window. If status cannot be determined, it aborts
+ * only the client read and lets the resume path reconnect. Aborting the client
+ * read does not cancel the server run.
  */
 
 // 3x the server keepalive interval (~20s): one missed ping could be jitter,
 // three in a row is a dead stream.
 const DEFAULT_STREAM_STALL_RECONCILE_MS = 60_000;
+const DEFAULT_STREAM_STALL_STATUS_TIMEOUT_MS = 5_000;
 
 function getStallReconcileMs(): number {
   const raw = process.env.LETTA_STREAM_STALL_RECONCILE_MS;
@@ -40,6 +41,17 @@ function getStallReconcileMs(): number {
     }
   }
   return DEFAULT_STREAM_STALL_RECONCILE_MS;
+}
+
+function getStatusLookupTimeoutMs(): number {
+  const raw = process.env.LETTA_STREAM_STALL_STATUS_TIMEOUT_MS;
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return DEFAULT_STREAM_STALL_STATUS_TIMEOUT_MS;
 }
 
 /** Run statuses under which the stream may still legitimately produce data. */
@@ -63,13 +75,37 @@ export function createStreamStallReconciler(context: {
   getRunId: () => string | null;
   getStopReason: () => string | null;
   /** Fetch the run's current server-side status; may throw. */
-  retrieveRunStatus: (runId: string) => Promise<string | null | undefined>;
+  retrieveRunStatus: (
+    runId: string,
+    signal: AbortSignal,
+  ) => Promise<string | null | undefined>;
   abortHttpRead: () => void;
 }): StreamStallReconciler {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let fired = false;
   let cleared = false;
   let reconciling = false;
+
+  const abortDeadRead = (runId: string | null, status: string | null) => {
+    fired = true;
+    const reason = status
+      ? `run ${runId} is ${status} server-side`
+      : runId
+        ? `run ${runId} status could not be checked`
+        : "no run id arrived";
+    debugWarn(
+      "drainStream",
+      "Stall reconciler fired: %s and the stream went silent before its terminal sequence - aborting HTTP read to trigger resume",
+      reason,
+    );
+    telemetry.trackError(
+      "stream_stall_reconciler_fired",
+      `Stream went silent before its terminal sequence; ${reason}; aborted the dead read to resume`,
+      "stream_drain",
+      runId ? { runId } : undefined,
+    );
+    context.abortHttpRead();
+  };
 
   const arm = () => {
     if (cleared || fired) {
@@ -92,46 +128,46 @@ export function createStreamStallReconciler(context: {
     }
     const runId = context.getRunId();
     if (!runId) {
-      // Stalled before any run_id-bearing chunk: nothing to reconcile
-      // against yet. Keep waiting.
-      arm();
+      abortDeadRead(null, null);
       return;
     }
     reconciling = true;
     void (async () => {
       let status: string | null | undefined;
+      const statusAbortController = new AbortController();
+      let lookupTimeout: ReturnType<typeof setTimeout> | null = null;
       try {
-        status = await context.retrieveRunStatus(runId);
-      } catch {
-        // Server unreachable or lookup failed: keep waiting and retry on
-        // the next silence window.
+        status = await Promise.race([
+          context.retrieveRunStatus(runId, statusAbortController.signal),
+          new Promise<never>((_resolve, reject) => {
+            lookupTimeout = setTimeout(() => {
+              statusAbortController.abort();
+              reject(new Error("Run status lookup timed out"));
+            }, getStatusLookupTimeoutMs());
+          }),
+        ]);
+      } catch (error) {
         status = undefined;
+        telemetry.trackError(
+          "stream_stall_status_lookup_failed",
+          error instanceof Error ? error.message : String(error),
+          "stream_drain",
+          { runId },
+        );
+      } finally {
+        if (lookupTimeout) {
+          clearTimeout(lookupTimeout);
+        }
       }
       reconciling = false;
       if (cleared || fired || context.getStopReason() !== null) {
         return;
       }
-      if (status == null || ACTIVE_RUN_STATUSES.has(status)) {
+      if (status != null && ACTIVE_RUN_STATUSES.has(status)) {
         arm();
         return;
       }
-      // The run already ended server-side but this stream never delivered
-      // the tail: the read is dead. Abort it so the resume path can replay
-      // the missing chunks from the persisted run stream.
-      fired = true;
-      debugWarn(
-        "drainStream",
-        "Stall reconciler fired: run %s is %s server-side but the stream went silent before its terminal sequence - aborting HTTP read to trigger resume",
-        runId,
-        status,
-      );
-      telemetry.trackError(
-        "stream_stall_reconciler_fired",
-        `Stream went silent while run reached server-side status ${status}; aborted the dead read to resume`,
-        "stream_drain",
-        { runId },
-      );
-      context.abortHttpRead();
+      abortDeadRead(runId, status ?? null);
     })();
   };
 

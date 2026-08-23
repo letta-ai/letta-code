@@ -75,7 +75,7 @@ const cancelRunMock = mock(
     "run-1": "cancelled",
   }),
 );
-const retrieveRunMock = mock(async (_runId: string) => ({
+const retrieveRunMock = mock(async (_runId: string, _options?: unknown) => ({
   id: "run-1",
   metadata: {},
 }));
@@ -233,7 +233,9 @@ describe("APIBackend", () => {
     await backend.streamConversationMessages("conv-1", streamBody);
     await backend.cancelConversation("conv-1");
     await backend.cancelRun("agent-1", "run-1");
-    await backend.retrieveRun("run-1");
+    await backend.retrieveRun("run-1", {
+      headers: { "X-Letta-Acting-User-Id": "user-1" },
+    });
     await backend.streamRunMessages("run-1", runStreamBody);
     await backend.forkConversation("conv-1", { agentId: "agent-1" });
 
@@ -286,7 +288,9 @@ describe("APIBackend", () => {
     expect(cancelRunMock).toHaveBeenCalledWith("agent-1", {
       run_ids: ["run-1"],
     });
-    expect(retrieveRunMock).toHaveBeenCalledWith("run-1");
+    expect(retrieveRunMock).toHaveBeenCalledWith("run-1", {
+      headers: { "X-Letta-Acting-User-Id": "user-1" },
+    });
     expect(streamRunMessagesMock).toHaveBeenCalledWith(
       "run-1",
       runStreamBody,
