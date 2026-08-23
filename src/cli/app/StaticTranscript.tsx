@@ -1,4 +1,8 @@
 import { Box, Static } from "ink";
+import {
+  useReasoningDisplay,
+  useReasoningDisplayHotkey,
+} from "@/cli/app/use-reasoning-display";
 import { ApprovalPreview } from "@/cli/components/ApprovalPreview";
 import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
 import { BashCommandMessage } from "@/cli/components/BashCommandMessage";
@@ -25,8 +29,6 @@ export function StaticTranscript({
   precomputedDiffs,
   hiddenToolCallId,
   lastShellToolCallId,
-  showAllReasoning,
-  lastFinishedReasoningId,
 }: {
   renderEpoch: number;
   items: StaticItem[];
@@ -41,17 +43,14 @@ export function StaticTranscript({
    *  and may be stale on older items (minor cosmetic issue, much better than
    *  remounting on every tool call and re-printing history). */
   lastShellToolCallId?: string;
-  /** When true, committed reasoning blocks render full text instead of the
-   *  spoiler line. Included in the Static key so toggling ctrl+t repaints. */
-  showAllReasoning: boolean;
-  /** Used to show ctrl+t hint on the last committed reasoning block.
-   *  Intentionally NOT included in the Static key (same trade-off as
-   *  lastShellToolCallId). */
-  lastFinishedReasoningId?: string;
 }) {
+  // Mounts the ctrl+t listener once; subscribing also rekeys <Static> on
+  // toggle so committed reasoning blocks repaint between spoiler and text.
+  useReasoningDisplayHotkey();
+  const reasoningExpanded = useReasoningDisplay();
   return (
     <Static
-      key={`${renderEpoch}-${hiddenToolCallId ?? ""}-${showAllReasoning ? "r1" : "r0"}`}
+      key={`${renderEpoch}-${hiddenToolCallId ?? ""}-${reasoningExpanded ? "r1" : "r0"}`}
       items={items}
       style={{ flexDirection: "column" }}
     >
@@ -64,13 +63,7 @@ export function StaticTranscript({
               ) : item.kind === "user" ? (
                 <UserMessage line={item} prompt={statusLinePrompt} />
               ) : item.kind === "reasoning" ? (
-                <ReasoningMessage
-                  line={item}
-                  display={{
-                    expanded: showAllReasoning,
-                    lastFinishedId: lastFinishedReasoningId,
-                  }}
-                />
+                <ReasoningMessage line={item} />
               ) : item.kind === "assistant" ? (
                 <AssistantMessage line={item} />
               ) : item.kind === "tool_call" ? (

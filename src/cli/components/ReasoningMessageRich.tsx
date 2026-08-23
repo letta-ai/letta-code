@@ -1,5 +1,6 @@
 import { Box } from "ink";
 import { memo, useEffect, useState } from "react";
+import { useReasoningDisplay } from "@/cli/app/use-reasoning-display";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { Text } from "./Text";
@@ -20,13 +21,6 @@ type ReasoningLine = {
   startedAt?: number;
   endedAt?: number;
   isContinuation?: boolean;
-};
-
-export type ReasoningDisplayState = {
-  /** When true, reasoning blocks render their full text instead of the spoiler line. */
-  expanded: boolean;
-  /** ID of the last finished reasoning block — the only one that shows the ctrl+t hint. */
-  lastFinishedId?: string;
 };
 
 function formatElapsed(ms: number): string {
@@ -66,71 +60,20 @@ function Elapsed({
  *
  * Streaming and finished reasoning blocks render as a single dim line
  * ("thinking"/"thinked" + elapsed time) so long thought streams don't flood
- * the transcript. The full markdown text is shown when expanded (ctrl+t
- * toggles all blocks).
+ * the transcript. ctrl+t (see use-reasoning-display.ts) expands every block
+ * into its full markdown text.
  */
-export const ReasoningMessage = memo(
-  ({
-    line,
-    display,
-  }: {
-    line: ReasoningLine;
-    display?: ReasoningDisplayState;
-  }) => {
-    const columns = useTerminalWidth();
-    const contentWidth = Math.max(0, columns - 2);
+export const ReasoningMessage = memo(({ line }: { line: ReasoningLine }) => {
+  const columns = useTerminalWidth();
+  const contentWidth = Math.max(0, columns - 2);
+  const expanded = useReasoningDisplay();
 
-    // Continuation lines are split-off tails of a block; they only carry
-    // visible content in expanded mode.
-    if (line.isContinuation) {
-      if (!display?.expanded) return null;
-      return (
-        <Box flexDirection="row">
-          <Box width={2} flexShrink={0}>
-            <Text> </Text>
-          </Box>
-          <Box flexGrow={1} width={contentWidth}>
-            <MarkdownDisplay text={normalize(line.text)} dimColor={true} />
-          </Box>
-        </Box>
-      );
-    }
+  // Continuation lines are split-off tails of a block; they only carry
+  // visible content in expanded mode.
+  if (line.isContinuation && !expanded) return null;
 
-    const isLast =
-      display?.lastFinishedId !== undefined &&
-      display.lastFinishedId === line.id;
-    const hint = isLast ? (
-      <Text dimColor> (ctrl+t to {display.expanded ? "collapse" : "expand"})</Text>
-    ) : null;
-
-    const expanded = display?.expanded === true;
-    if (expanded) {
-      return (
-        <Box flexDirection="column">
-          <Box flexDirection="row">
-            <Box width={2} flexShrink={0}>
-              <Text dimColor>✻</Text>
-            </Box>
-            <Box flexGrow={1} width={contentWidth}>
-              <Text dimColor>thinking</Text>
-              <Elapsed {...line} />
-              {hint}
-            </Box>
-          </Box>
-          <Box height={1} />
-          <Box flexDirection="row">
-            <Box width={2} flexShrink={0}>
-              <Text> </Text>
-            </Box>
-            <Box flexGrow={1} width={contentWidth}>
-              <MarkdownDisplay text={normalize(line.text)} dimColor={true} />
-            </Box>
-          </Box>
-        </Box>
-      );
-    }
-
-    return (
+  return (
+    <Box flexDirection="column">
       <Box flexDirection="row">
         <Box width={2} flexShrink={0}>
           <Text dimColor>✻</Text>
@@ -140,11 +83,37 @@ export const ReasoningMessage = memo(
             {line.phase === "streaming" ? "thinking" : "thinked"}{" "}
           </Text>
           <Elapsed {...line} />
-          {hint}
         </Box>
       </Box>
-    );
-  },
-);
+      {expanded ? (
+        <>
+          <ToggleHint expanded={true} />
+          <Box height={1} />
+          <Box flexDirection="row">
+            <Box width={2} flexShrink={0}>
+              <Text> </Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <MarkdownDisplay text={normalize(line.text)} dimColor={true} />
+            </Box>
+          </Box>
+        </>
+      ) : (
+        <ToggleHint expanded={false} />
+      )}
+    </Box>
+  );
+});
+
+function ToggleHint({ expanded }: { expanded: boolean }) {
+  return (
+    <Box flexDirection="row">
+      <Box width={2} flexShrink={0}>
+        <Text> </Text>
+      </Box>
+      <Text dimColor>(ctrl+t to {expanded ? "collapse" : "expand"})</Text>
+    </Box>
+  );
+}
 
 ReasoningMessage.displayName = "ReasoningMessage";

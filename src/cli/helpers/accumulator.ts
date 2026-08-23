@@ -450,7 +450,6 @@ export function upsertStatusLine(
 // Mark a line as finished if it has a phase (immutable update)
 function markAsFinished(b: Buffers, id: string) {
   const line = b.byId.get(id);
-  // console.log(`[MARK_FINISHED] Called for ${id}, line exists: ${!!line}, kind: ${line?.kind}, phase: ${(line as any)?.phase}`);
   if (line && "phase" in line && line.phase === "streaming") {
     const updatedLine =
       line.kind === "reasoning"
@@ -462,7 +461,6 @@ function markAsFinished(b: Buffers, id: string) {
           }
         : { ...line, phase: "finished" as const };
     b.byId.set(id, updatedLine);
-    // console.log(`[MARK_FINISHED] Successfully marked ${id} as finished`);
 
     // Track last reasoning content for hooks (PostToolUse and Stop will include it)
     if (
@@ -480,29 +478,22 @@ function markAsFinished(b: Buffers, id: string) {
     ) {
       b.lastAssistantMessage = updatedLine.text;
     }
-  } else {
-    // console.log(`[MARK_FINISHED] Did NOT mark ${id} as finished (conditions not met)`);
   }
 }
 
 // Helper to mark previous otid's line as finished when transitioning to new otid
 function handleOtidTransition(b: Buffers, newOtid: string | undefined) {
-  // console.log(`[OTID_TRANSITION] Called with newOtid=${newOtid}, lastOtid=${b.lastOtid}`);
-
   // If transitioning to a different otid (including null/undefined), finish only assistant/reasoning lines.
   // Tool calls should finish exclusively when a tool_return arrives (merged by toolCallId).
   if (b.lastOtid && b.lastOtid !== newOtid) {
     const prev = b.byId.get(b.lastOtid);
-    // console.log(`[OTID_TRANSITION] Found prev line: kind=${prev?.kind}, phase=${(prev as any)?.phase}`);
     if (prev && (prev.kind === "assistant" || prev.kind === "reasoning")) {
-      // console.log(`[OTID_TRANSITION] Marking ${b.lastOtid} as finished (was ${(prev as any).phase})`);
       markAsFinished(b, b.lastOtid);
     }
   }
 
   // Update last otid (can be null)
   b.lastOtid = newOtid ?? null;
-  // console.log(`[OTID_TRANSITION] Updated lastOtid to ${b.lastOtid}`);
 }
 
 /**
@@ -510,18 +501,12 @@ function handleOtidTransition(b: Buffers, newOtid: string | undefined) {
  * Call this after stream completion to ensure the final line isn't stuck in "streaming" state.
  */
 export function markCurrentLineAsFinished(b: Buffers) {
-  // console.log(`[MARK_CURRENT_FINISHED] Called with lastOtid=${b.lastOtid}`);
   if (!b.lastOtid) {
-    // console.log(`[MARK_CURRENT_FINISHED] No lastOtid, returning`);
     return;
   }
   const prev = b.byId.get(b.lastOtid);
-  // console.log(`[MARK_CURRENT_FINISHED] Found line: kind=${prev?.kind}, phase=${(prev as any)?.phase}`);
   if (prev && (prev.kind === "assistant" || prev.kind === "reasoning")) {
-    // console.log(`[MARK_CURRENT_FINISHED] Marking ${b.lastOtid} as finished`);
     markAsFinished(b, b.lastOtid);
-  } else {
-    // console.log(`[MARK_CURRENT_FINISHED] Not marking (not assistant/reasoning or doesn't exist)`);
   }
 }
 
