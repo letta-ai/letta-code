@@ -44,6 +44,7 @@ const {
   getCachedAvailableModels,
   getCachedModelHandles,
   getCachedOpenAICompatibleProxyHandles,
+  getModelProviderType,
 } = await import("@/agent/available-models");
 
 function deferred<T>() {
@@ -123,6 +124,26 @@ describe("available-models cache semantics", () => {
     const forced = await getAvailableModelHandles({ forceRefresh: true });
     expect(forced.source).toBe("network");
     expect([...forced.handles]).toEqual(["openai/gpt-4o", "zai/glm-4.6"]);
+  });
+
+  test("provider lookup refreshes stale catalog data", async () => {
+    const realDateNow = Date.now;
+    let now = 1_000_000;
+    Date.now = () => now;
+    try {
+      listModelsImpl = async () => [
+        { handle: "custom/model", provider_type: "anthropic" },
+      ];
+      expect(await getModelProviderType("custom/model")).toBe("anthropic");
+
+      now += 5 * 60 * 1000 + 1;
+      listModelsImpl = async () => [
+        { handle: "custom/model", provider_type: "chatgpt_oauth" },
+      ];
+      expect(await getModelProviderType("custom/model")).toBe("chatgpt_oauth");
+    } finally {
+      Date.now = realDateNow;
+    }
   });
 
   test("carries backend model descriptors for catalog rendering", async () => {

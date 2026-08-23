@@ -139,9 +139,8 @@ export function deriveToolsetFromModel(
   return isOpenAIModel(resolvedModel) ? "codex" : "default";
 }
 
-type ScopeModelCarrier = Pick<
-  AgentState,
-  "model" | "llm_config" | "model_settings"
+type ScopeModelCarrier = Partial<
+  Pick<AgentState, "model" | "llm_config" | "model_settings">
 >;
 
 function providerTypeFromModelSettings(modelSettings: unknown): string | null {
@@ -188,6 +187,36 @@ function getPreferredAgentModelHandle(
     return agent.model;
   }
   return resolveModelHandleFromLlmConfig(agent.llm_config);
+}
+
+type ModelTarget = {
+  model: string | null;
+  providerType: string | null;
+};
+
+function normalizeModelHandle(model: string | null | undefined): string | null {
+  return model && model.length > 0 ? (resolveModel(model) ?? model) : null;
+}
+
+function modelTargetFromCarrier(
+  carrier: ScopeModelCarrier | null | undefined,
+): ModelTarget {
+  return {
+    model: normalizeModelHandle(getPreferredAgentModelHandle(carrier)),
+    providerType: providerTypeFromModelSettings(carrier?.model_settings),
+  };
+}
+
+function providerForMatchingModel(
+  model: string,
+  targets: ModelTarget[],
+): string | null {
+  for (const target of targets) {
+    if (target.model === model && target.providerType) {
+      return target.providerType;
+    }
+  }
+  return null;
 }
 
 function getToolNamesForToolset(toolsetName: ToolsetName): ToolName[] {
@@ -397,52 +426,34 @@ export async function prepareToolExecutionContextForScope(params: {
   const backend = getBackend();
   const agent = (cachedAgent ??
     (await backend.retrieveAgent(agentId))) as ScopeModelCarrier;
-  let effectiveModel =
-    overrideModel && overrideModel.length > 0
-      ? (resolveModel(overrideModel) ?? overrideModel)
-      : null;
-  let effectiveProviderType = overrideProviderType ?? null;
+  const agentTarget = modelTargetFromCarrier(agent);
+  const conversationTarget =
+    conversationId && conversationId !== "default"
+      ? modelTargetFromCarrier(
+          (await backend.retrieveConversation(
+            conversationId,
+          )) as ScopeModelCarrier,
+        )
+      : { model: null, providerType: null };
 
-  if (
-    !effectiveModel &&
-    cachedEffectiveModel &&
-    cachedEffectiveModel.length > 0
-  ) {
-    effectiveModel = resolveModel(cachedEffectiveModel) ?? cachedEffectiveModel;
-  }
-
-  if (!effectiveModel && conversationId && conversationId !== "default") {
-    const conversation = await backend.retrieveConversation(conversationId);
-    const conversationModel = (conversation as { model?: string | null }).model;
-    const conversationProviderType = providerTypeFromModelSettings(
-      (conversation as { model_settings?: unknown }).model_settings,
-    );
-    if (typeof conversationModel === "string" && conversationModel.length > 0) {
-      effectiveModel = resolveModel(conversationModel) ?? conversationModel;
-      // A conversation model replaces the agent model. Do not retain provider
-      // metadata from the agent when the conversation omits model_settings.
-      effectiveProviderType = conversationProviderType;
-    } else if (conversationProviderType) {
-      effectiveProviderType = conversationProviderType;
-    }
-  }
-
-  if (!effectiveModel) {
-    effectiveModel = getPreferredAgentModelHandle(agent);
-    effectiveProviderType ??= providerTypeFromModelSettings(
-      (agent as { model_settings?: unknown }).model_settings,
-    );
-  }
-
-  if (effectiveModel && !effectiveProviderType) {
-    try {
-      effectiveProviderType =
-        (await getModelProviderType(effectiveModel)) ?? null;
-    } catch {
-      // Model metadata is best-effort. Handle-based classification remains
-      // available when the provider inventory cannot be fetched.
-    }
-  }
+  const explicitModel = normalizeModelHandle(overrideModel);
+  const cachedModel = normalizeModelHandle(cachedEffectiveModel);
+  const effectiveModel =
+    explicitModel ??
+    cachedModel ??
+    conversationTarget.model ??
+    agentTarget.model;
+  let effectiveProviderType = explicitModel
+    ? (overrideProviderType ??
+      providerForMatchingModel(explicitModel, [
+        conversationTarget,
+        agentTarget,
+      ]))
+    : cachedModel
+      ? providerForMatchingModel(cachedModel, [conversationTarget, agentTarget])
+      : conversationTarget.model
+        ? conversationTarget.providerType
+        : agentTarget.providerType;
 
   const toolsetPreference = (() => {
     try {
@@ -454,6 +465,21 @@ export async function prepareToolExecutionContextForScope(params: {
       return "auto" as const;
     }
   })();
+  const effectiveToolsetPreference = clientToolset?.base ?? toolsetPreference;
+
+  if (
+    effectiveModel &&
+    !effectiveProviderType &&
+    effectiveToolsetPreference === "auto"
+  ) {
+    try {
+      effectiveProviderType =
+        (await getModelProviderType(effectiveModel)) ?? null;
+    } catch {
+      // Model metadata is best-effort. Handle-based classification remains
+      // available when the provider inventory cannot be fetched.
+    }
+  }
 
   const scopedConversationId = conversationId ?? "default";
 
