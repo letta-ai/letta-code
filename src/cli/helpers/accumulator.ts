@@ -18,7 +18,6 @@ import type { ContextTracker } from "./context-tracker";
 import { MAX_CONTEXT_HISTORY } from "./context-tracker";
 import { findLastSafeSplitPoint } from "./markdown-split";
 import { trimFinishedReasoningText } from "./reasoning-text";
-import { stripSkillContentBlocks } from "./skill-content-display";
 import { isShellOutputTool } from "./tool-name-mapping";
 import { extractUnifiedExecRunningSessionId } from "./unified-exec-output";
 
@@ -1063,26 +1062,19 @@ export function onChunk(
         markCompactionCompleted(ctx);
         break;
       }
-      const displayText = stripSkillContentBlocks(rawText);
-      if (!displayText) break;
+      // User input is rendered optimistically before the request. Only consume
+      // echoed user messages that reconcile one of those existing rows; other
+      // echoes are harness-injected context, not new user-visible input.
+      if (!mappedLineId) break;
 
-      const line = ensure(b, lineId, () => ({
-        kind: "user",
-        id: lineId,
-        text: displayText,
-        messageId,
-        otid,
-      }));
-      if (line.kind === "user") {
-        b.byId.set(lineId, {
+      const line = b.byId.get(mappedLineId);
+      if (line?.kind === "user") {
+        b.byId.set(mappedLineId, {
           ...line,
-          text: line.text || displayText,
+          text: line.text || rawText,
           messageId: messageId ?? line.messageId,
           otid: otid ?? line.otid,
         });
-      }
-      if (otid) {
-        b.userLineIdByOtid.set(otid, lineId);
       }
       break;
     }

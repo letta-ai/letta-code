@@ -232,33 +232,44 @@ describe("accumulator usage statistics", () => {
     expect(tracker.pendingConversationDescriptionRegeneration).toBe(true);
   });
 
-  test("hides injected skill content user messages", () => {
+  test("ignores user message echoes without an optimistic row", () => {
     const buffers = createBuffers();
 
     onChunk(buffers, {
       message_type: "user_message",
-      id: "skill-content-1",
-      content:
-        '<skill_content name="review-pr">\n---\ndescription: Review a PR\n---\nInstructions\n</skill_content>',
+      id: "untracked-user-message-1",
+      otid: "untracked-user-otid-1",
+      content: "Harness-injected context",
     } as unknown as LettaStreamingResponse);
 
-    expect(buffers.byId.get("skill-content-1")).toBeUndefined();
+    expect(buffers.byId.get("untracked-user-message-1")).toBeUndefined();
+    expect(buffers.byId.get("untracked-user-otid-1")).toBeUndefined();
     expect(buffers.order).toHaveLength(0);
   });
 
-  test("preserves user text alongside injected skill content", () => {
+  test("keeps optimistic user text when its echo includes synthetic context", () => {
     const buffers = createBuffers();
+    buffers.byId.set("user-local-skill-1", {
+      kind: "user",
+      id: "user-local-skill-1",
+      text: "Review PR 123",
+      otid: "user-skill-otid-1",
+    });
+    buffers.userLineIdByOtid.set("user-skill-otid-1", "user-local-skill-1");
+    buffers.order.push("user-local-skill-1");
 
     onChunk(buffers, {
       message_type: "user_message",
-      id: "skill-content-with-text-1",
+      id: "message-user-skill-1",
+      otid: "user-skill-otid-1",
       content:
         '<skill_content name="review-pr">\nInstructions\n</skill_content>\n\nReview PR 123',
     } as unknown as LettaStreamingResponse);
 
-    expect(buffers.byId.get("skill-content-with-text-1")).toMatchObject({
+    expect(buffers.byId.get("user-local-skill-1")).toMatchObject({
       kind: "user",
       text: "Review PR 123",
+      messageId: "message-user-skill-1",
     });
   });
 
