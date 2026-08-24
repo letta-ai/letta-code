@@ -6,12 +6,18 @@ type ShellLaunchOptions = {
   login?: boolean;
   env?: NodeJS.ProcessEnv;
   powershellEnvAliases?: string[];
+  preservePowerShellExitCode?: boolean;
 };
 
 export const STRICT_SHELL_ENV_VAR = "LETTA_BASH_STRICT";
 export const STRICT_SHELL_PRELUDE = "set -euo pipefail";
 export const POWERSHELL_UTF8_OUTPUT_PREFIX =
   "try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n";
+export const POWERSHELL_EXIT_CODE_SUFFIX =
+  "\n$__lettaCommandSucceeded = $?; " +
+  "if ($__lettaCommandSucceeded) { exit 0 }; " +
+  "if (($null -ne $LASTEXITCODE) -and ($LASTEXITCODE -ne 0)) { exit $LASTEXITCODE }; " +
+  "exit 1";
 
 const POWERSHELL_ENV_ALIASES = [
   "MEMORY_DIR",
@@ -90,6 +96,7 @@ function stripPowerShellUtf8OutputPrefix(command: string): string {
 export function buildPowerShellCommand(
   command: string,
   envAliases: string[] = [],
+  preserveExitCode = false,
 ): string {
   const powerShellCommand = stripPowerShellUtf8OutputPrefix(
     normalizePowerShellCommand(command),
@@ -100,20 +107,29 @@ export function buildPowerShellCommand(
   const aliasPrelude = aliases
     .map((name) => `$${name} = $env:${name}`)
     .join("; ");
+  const exitCodePrefix = preserveExitCode
+    ? "$global:LASTEXITCODE = $null; "
+    : "";
+  const exitCodeSuffix = preserveExitCode ? POWERSHELL_EXIT_CODE_SUFFIX : "";
   return prefixPowerShellCommandWithUtf8Output(
-    `${aliasPrelude}; ${powerShellCommand}`,
+    `${aliasPrelude}; ${exitCodePrefix}${powerShellCommand}${exitCodeSuffix}`,
   );
 }
 
 function windowsLaunchers(
   command: string,
   envAliases: string[] = [],
+  preserveExitCode = false,
 ): string[][] {
   const trimmed = command.trim();
   if (!trimmed) return [];
   const launchers: string[][] = [];
   const seen = new Set<string>();
-  const powerShellCommand = buildPowerShellCommand(trimmed, envAliases);
+  const powerShellCommand = buildPowerShellCommand(
+    trimmed,
+    envAliases,
+    preserveExitCode,
+  );
 
   // Match Codex's PowerShell order: prefer PowerShell Core (`pwsh`) when
   // available, then fall back to Windows PowerShell.
@@ -291,6 +307,10 @@ export function buildShellLaunchers(
   const login = options?.login ?? false;
   const commandToRun = withStrictShellPrelude(command, options?.env);
   return process.platform === "win32"
-    ? windowsLaunchers(commandToRun, options?.powershellEnvAliases)
+    ? windowsLaunchers(
+        commandToRun,
+        options?.powershellEnvAliases,
+        options?.preservePowerShellExitCode,
+      )
     : unixLaunchers(commandToRun, login);
 }

@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import {
   buildPowerShellCommand,
   buildShellLaunchers,
+  POWERSHELL_EXIT_CODE_SUFFIX,
   POWERSHELL_UTF8_OUTPUT_PREFIX,
+  selectAvailableShellLauncher,
 } from "@/tools/impl/shell-launchers";
 
 describe("Shell Launchers", () => {
@@ -59,6 +62,15 @@ describe("Shell Launchers", () => {
     ).toBe(true);
   });
 
+  test("PowerShell exit preservation is opt-in", () => {
+    const defaultCommand = buildPowerShellCommand("node hook.mjs");
+    const hookCommand = buildPowerShellCommand("node hook.mjs", [], true);
+
+    expect(defaultCommand).not.toContain(POWERSHELL_EXIT_CODE_SUFFIX);
+    expect(hookCommand).toContain("$global:LASTEXITCODE = $null");
+    expect(hookCommand.endsWith(POWERSHELL_EXIT_CODE_SUFFIX)).toBe(true);
+  });
+
   test("Windows launchers match Codex PowerShell order", () => {
     const originalPlatform = Object.getOwnPropertyDescriptor(
       process,
@@ -82,6 +94,12 @@ describe("Shell Launchers", () => {
       expect(launchers[1]?.at(-1)).toContain(POWERSHELL_UTF8_OUTPUT_PREFIX);
       expect(launchers[2]?.at(-1)).toContain(POWERSHELL_UTF8_OUTPUT_PREFIX);
       expect(launchers[3]?.at(-1)).toContain(POWERSHELL_UTF8_OUTPUT_PREFIX);
+      expect(launchers[0]?.at(-1)).not.toContain(POWERSHELL_EXIT_CODE_SUFFIX);
+
+      const hookLaunchers = buildShellLaunchers("node hook.mjs", {
+        preservePowerShellExitCode: true,
+      });
+      expect(hookLaunchers[0]?.at(-1)).toContain(POWERSHELL_EXIT_CODE_SUFFIX);
     } finally {
       if (originalPlatform) {
         Object.defineProperty(process, "platform", originalPlatform);
@@ -91,6 +109,19 @@ describe("Shell Launchers", () => {
 
   if (process.platform === "win32") {
     describe("Windows-specific", () => {
+      function runPowerShellHook(command: string): number | null {
+        const launcher = selectAvailableShellLauncher(
+          buildShellLaunchers(command, {
+            preservePowerShellExitCode: true,
+          }),
+        );
+        expect(launcher?.[0]?.toLowerCase()).toMatch(/pwsh|powershell/);
+        if (!launcher?.[0]) return null;
+        return spawnSync(launcher[0], launcher.slice(1), {
+          encoding: "utf8",
+        }).status;
+      }
+
       test("PowerShell is tried before cmd.exe", () => {
         const launchers = buildShellLaunchers("echo test");
 
@@ -135,6 +166,24 @@ describe("Shell Launchers", () => {
         expect(powershellLauncher).toBeDefined();
         expect(powershellLauncher).toContain("-NoProfile");
         expect(powershellLauncher).toContain("-Command");
+      });
+
+      test("preserves native and explicit hook exit codes", () => {
+        expect(runPowerShellHook('node -e "process.exit(0)"')).toBe(0);
+        expect(runPowerShellHook('node -e "process.exit(1)"')).toBe(1);
+        expect(runPowerShellHook('node -e "process.exit(2)"')).toBe(2);
+        expect(runPowerShellHook("exit 7")).toBe(7);
+      });
+
+      test("preserves final PowerShell statement semantics", () => {
+        expect(
+          runPowerShellHook(
+            "Get-Item -LiteralPath 'Z:\\\\missing-letta-hook-path' -ErrorAction SilentlyContinue # trailing comment",
+          ),
+        ).toBe(1);
+        expect(
+          runPowerShellHook('node -e "process.exit(2)"; Write-Output handled'),
+        ).toBe(0);
       });
     });
   } else {
