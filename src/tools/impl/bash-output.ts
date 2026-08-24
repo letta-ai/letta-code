@@ -14,6 +14,7 @@ interface GetTaskOutputArgs {
   task_id: string;
   block?: boolean;
   timeout?: number;
+  signal?: AbortSignal;
   filter?: string;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   runningMessageWhenNonBlocking?: boolean;
@@ -25,6 +26,29 @@ interface GetTaskOutputResult {
 }
 
 const POLL_INTERVAL_MS = 100;
+
+function waitForNextPoll(signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    return sleep(POLL_INTERVAL_MS);
+  }
+
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      signal.removeEventListener("abort", onAbort);
+      reject(new DOMException("The operation was aborted", "AbortError"));
+    };
+    const timeoutId = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, POLL_INTERVAL_MS);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+    }
+  });
+}
 
 function readOutputFile(filePath?: string): {
   content: string | null;
@@ -157,6 +181,7 @@ export async function getTaskOutput(
     task_id,
     block = false,
     timeout = 30000,
+    signal,
     filter,
     onOutput,
     runningMessageWhenNonBlocking = false,
@@ -170,6 +195,7 @@ export async function getTaskOutput(
       proc,
       block,
       timeout,
+      signal,
       filter,
       onOutput,
       runningMessageWhenNonBlocking,
@@ -184,6 +210,7 @@ export async function getTaskOutput(
       task,
       block,
       timeout,
+      signal,
       filter,
       onOutput,
       runningMessageWhenNonBlocking,
@@ -201,6 +228,7 @@ async function getProcessOutput(
   proc: typeof backgroundProcesses extends Map<string, infer V> ? V : never,
   block: boolean,
   timeout: number,
+  signal?: AbortSignal,
   filter?: string,
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void,
   runningMessageWhenNonBlocking?: boolean,
@@ -226,7 +254,7 @@ async function getProcessOutput(
         break;
       }
 
-      await sleep(POLL_INTERVAL_MS);
+      await waitForNextPoll(signal);
     }
 
     const finalProc = backgroundProcesses.get(task_id);
@@ -305,6 +333,7 @@ async function getBackgroundTaskOutput(
   task: typeof backgroundTasks extends Map<string, infer V> ? V : never,
   block: boolean,
   timeout: number,
+  signal?: AbortSignal,
   filter?: string,
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void,
   runningMessageWhenNonBlocking?: boolean,
@@ -337,7 +366,7 @@ async function getBackgroundTaskOutput(
         break;
       }
 
-      await sleep(POLL_INTERVAL_MS);
+      await waitForNextPoll(signal);
     }
 
     const finalTask = backgroundTasks.get(task_id);
