@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { basename, dirname, relative } from "node:path";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import type { LocalAgentRecord } from "./local-types";
@@ -303,37 +302,11 @@ function stringField(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function skillRootAndRelativePath(
-  name: string,
-  location: string,
-): {
-  root: string;
-  relativePath: string;
-} {
-  const normalized = normalizePath(location.trim());
-  if (normalized.endsWith("/SKILL.md")) {
-    const skillDir = dirname(normalized);
-    const root = dirname(skillDir);
-    const relativePath = normalizePath(relative(root, normalized));
-    if (basename(skillDir) === name.split("/").at(-1)) {
-      return { root: normalizePath(root), relativePath };
-    }
-  }
-  return {
-    root: normalizePath(dirname(normalized)),
-    relativePath: basename(normalized),
-  };
-}
-
 export function compileAvailableSkillsBlock(
   clientSkills: unknown[] = [],
 ): string {
   const seen = new Set<string>();
-  const entries: Array<{
-    root: string;
-    relativePath: string;
-    description: string;
-  }> = [];
+  const entries: Array<{ name: string; description: string }> = [];
 
   for (const skill of clientSkills) {
     if (!skill || typeof skill !== "object") continue;
@@ -341,80 +314,21 @@ export function compileAvailableSkillsBlock(
     const name = stringField(record.name);
     if (!name || seen.has(name)) continue;
     seen.add(name);
-    const description =
-      stringField(record.description)?.trim().split("\n")[0] ?? "";
-    const location =
-      stringField(record.location)?.trim() ||
-      `${MEMORY_DIR_PLACEHOLDER}/skills/${name}/SKILL.md`;
     entries.push({
-      ...skillRootAndRelativePath(name, location),
-      description,
+      name,
+      description: stringField(record.description)?.trim().split("\n")[0] ?? "",
     });
   }
 
   if (entries.length === 0) return "";
 
-  const grouped = new Map<
-    string,
-    Array<{ relativePath: string; description: string }>
-  >();
-  for (const entry of entries) {
-    const group = grouped.get(entry.root) ?? [];
-    group.push({
-      relativePath: entry.relativePath,
-      description: entry.description,
-    });
-    grouped.set(entry.root, group);
-  }
-
   const lines = ["<available_skills>"];
-  const roots = [...grouped.keys()].sort((a, b) => a.localeCompare(b));
-  for (const [rootIndex, root] of roots.entries()) {
-    lines.push(root);
-    type Tree = Map<string, Tree | string>;
-    const tree: Tree = new Map();
-    for (const entry of (grouped.get(root) ?? []).sort((a, b) =>
-      a.relativePath.localeCompare(b.relativePath),
-    )) {
-      const parts = entry.relativePath.split("/").filter(Boolean);
-      let node = tree;
-      for (const part of parts.slice(0, -1)) {
-        const existing = node.get(part);
-        if (existing instanceof Map) {
-          node = existing;
-        } else {
-          const child: Tree = new Map();
-          node.set(part, child);
-          node = child;
-        }
-      }
-      const leaf = parts.at(-1);
-      if (leaf) node.set(leaf, entry.description);
-    }
-
-    const render = (node: Tree, prefix = "") => {
-      const entries = [...node.entries()].sort(
-        ([aName, aValue], [bName, bValue]) => {
-          const aDir = aValue instanceof Map;
-          const bDir = bValue instanceof Map;
-          if (aDir !== bDir) return aDir ? -1 : 1;
-          return aName.localeCompare(bName);
-        },
-      );
-      for (const [index, [name, value]] of entries.entries()) {
-        const isLast = index === entries.length - 1;
-        const connector = isLast ? "└── " : "├── ";
-        if (value instanceof Map) {
-          lines.push(`${prefix}${connector}${name}/`);
-          render(value, `${prefix}${isLast ? "    " : "│   "}`);
-        } else {
-          const suffix = value.trim() ? ` (${value.trim()})` : "";
-          lines.push(`${prefix}${connector}${name}${suffix}`);
-        }
-      }
-    };
-    render(tree);
-    if (rootIndex !== roots.length - 1) lines.push("");
+  for (const entry of entries.sort((left, right) =>
+    left.name.localeCompare(right.name),
+  )) {
+    lines.push(
+      `- \`${entry.name}\`${entry.description ? `: ${entry.description}` : ""}`,
+    );
   }
   lines.push("</available_skills>");
   return lines.join("\n");
