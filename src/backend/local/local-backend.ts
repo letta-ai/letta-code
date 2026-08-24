@@ -816,7 +816,7 @@ export class LocalBackend extends HeadlessBackend {
       {
         ...settings,
         mode: "all",
-        prompt: settings.mode === "all" ? settings.prompt : undefined,
+        prompt: settings.prompt, // not a user mode switch: keep it (#3955)
       },
     );
     await this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
