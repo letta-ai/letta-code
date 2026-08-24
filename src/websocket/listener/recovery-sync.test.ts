@@ -1,10 +1,29 @@
 import { describe, expect, test } from "bun:test";
 import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+} from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
-import { createRuntime } from "./lifecycle";
+import { createRuntime, replaySyncStateForRuntime } from "./lifecycle";
 import { recoverApprovalStateForSync } from "./recovery-sync";
 import { getPendingControlRequests } from "./runtime";
-import type { ConversationRuntime } from "./types";
+import type { LocalTransport } from "./transport";
+import type { ConversationRuntime, StartListenerOptions } from "./types";
+
+class MockTransport implements LocalTransport {
+  readonly kind = "local" as const;
+  readonly bufferedAmount = 0;
+  readonly sent: string[] = [];
+
+  isOpen(): boolean {
+    return true;
+  }
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+}
 
 function createScopedRuntime(): ConversationRuntime {
   return getOrCreateScopedRuntime(createRuntime(), "agent-1", "conv-1");
@@ -54,7 +73,83 @@ const bashApproval = {
   toolArgs: '{"command":"pwd"}',
 };
 
+function connectRuntime(runtime: ConversationRuntime): MockTransport {
+  const transport = new MockTransport();
+  const options: StartListenerOptions = {
+    connectionId: "cloud-relay",
+    wsUrl: "local://cloud-relay",
+    deviceId: "test-device",
+    connectionName: "cloud-relay",
+    onConnected: () => {},
+    onDisconnected: () => {},
+    onError: () => {},
+  };
+  openListenerConnection({
+    runtime: runtime.listener,
+    connectionId: options.connectionId,
+    writer: transport,
+    options,
+  });
+  markListenerConnectionInitialized(runtime.listener, options.connectionId);
+  return transport;
+}
+
 describe("recoverApprovalStateForSync restart recovery", () => {
+  test("sync publishes a recovered question as a control request", async () => {
+    const runtime = createScopedRuntime();
+    const transport = connectRuntime(runtime);
+
+    await replaySyncStateForRuntime(
+      runtime.listener,
+      transport as never,
+      scope,
+      {
+        recoverApprovalStateForSync: async (scopedRuntime, recoveredScope) => {
+          await recoverApprovalStateForSync(
+            scopedRuntime,
+            recoveredScope,
+            createDeps([askUserQuestionApproval]),
+          );
+        },
+        forceDeviceStatus: true,
+      },
+    );
+
+    const frames = transport.sent.map((payload) => JSON.parse(payload));
+    expect(frames.map((frame) => frame.type)).toEqual([
+      "control_request",
+      "update_device_status",
+      "update_loop_status",
+      "update_queue",
+      "update_subagent_state",
+    ]);
+    expect(frames[0]).toMatchObject({
+      type: "control_request",
+      request_id: "perm-call-ask-1",
+      runtime: scope,
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "AskUserQuestion",
+        tool_call_id: "call-ask-1",
+        input: JSON.parse(askUserQuestionApproval.toolArgs),
+      },
+    });
+
+    transport.sent.length = 0;
+    await replaySyncStateForRuntime(
+      runtime.listener,
+      transport as never,
+      scope,
+      {
+        recoverApprovals: false,
+        forceDeviceStatus: true,
+      },
+    );
+    expect(transport.sent.map((payload) => JSON.parse(payload).type)).toContain(
+      "control_request",
+    );
+  });
+
   test("re-presents a pending AskUserQuestion as a live control request", async () => {
     const runtime = createScopedRuntime();
 
