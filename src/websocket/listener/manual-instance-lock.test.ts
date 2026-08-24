@@ -21,10 +21,12 @@ const SCOPE: ManualListenerLockScope = {
 describe("manual listener instance lock", () => {
   let lockRoot: string;
   let alivePids: Set<number>;
+  let processStartTicks: Map<number, string>;
 
   beforeEach(async () => {
     lockRoot = await mkdtemp(path.join(tmpdir(), "letta-listener-lock-"));
     alivePids = new Set();
+    processStartTicks = new Map();
   });
 
   afterEach(async () => {
@@ -37,11 +39,24 @@ describe("manual listener instance lock", () => {
     ownerToken: string,
   ) {
     alivePids.add(processId);
+    if (!processStartTicks.has(processId)) {
+      processStartTicks.set(processId, `start-${processId}`);
+    }
     return acquireManualListenerLock(scope, {
       lockRoot,
       processId,
       ownerToken,
       isProcessAlive: (pid) => alivePids.has(pid),
+      readProcessIdentity: (pid) => {
+        const startTicks = processStartTicks.get(pid);
+        return startTicks
+          ? {
+              startTicks,
+              bootId: "boot-test",
+              pidNamespace: "namespace-test",
+            }
+          : null;
+      },
     });
   }
 
@@ -133,18 +148,131 @@ describe("manual listener instance lock", () => {
     await replacement.release();
   });
 
+  test("reclaims a reused live PID after a container process generation changes", async () => {
+    processStartTicks.set(1, "container-generation-a");
+    const stale = await acquire(SCOPE, 1, "owner-generation-a");
+
+    processStartTicks.set(1, "container-generation-b");
+    const replacement = await acquire(SCOPE, 1, "owner-generation-b");
+    await stale.release();
+
+    await expect(acquire(SCOPE, 1, "owner-third")).rejects.toEqual(
+      expect.objectContaining({ holderPid: 1 }),
+    );
+    await replacement.release();
+  });
+
+  test("does not steal a fresh lease from a live overlapping PID namespace", async () => {
+    const incumbent = await acquireManualListenerLock(SCOPE, {
+      lockRoot,
+      processId: 1,
+      ownerToken: "container-a",
+      isProcessAlive: () => true,
+      readProcessIdentity: () => ({
+        startTicks: "container-a-start",
+        bootId: "boot-test",
+        pidNamespace: "container-a-namespace",
+      }),
+    });
+
+    const containerBDeps = {
+      lockRoot,
+      processId: 1,
+      isProcessAlive: () => true,
+      readProcessIdentity: () => ({
+        startTicks: "container-b-start",
+        bootId: "boot-test",
+        pidNamespace: "container-b-namespace",
+      }),
+    };
+    await expect(
+      acquireManualListenerLock(SCOPE, {
+        ...containerBDeps,
+        ownerToken: "container-b-overlap",
+      }),
+    ).rejects.toBeInstanceOf(ManualListenerAlreadyRunningError);
+
+    const replacement = await acquireManualListenerLock(SCOPE, {
+      ...containerBDeps,
+      ownerToken: "container-b-after-expiry",
+      isOwnerHeartbeatFresh: async () => false,
+    });
+    await incumbent.release();
+
+    await expect(
+      acquireManualListenerLock(SCOPE, {
+        ...containerBDeps,
+        ownerToken: "container-b-third",
+      }),
+    ).rejects.toBeInstanceOf(ManualListenerAlreadyRunningError);
+    await replacement.release();
+  });
+
+  test("abandons recovery when an owner renews before unlink", async () => {
+    const incumbent = await acquire(SCOPE, 101, "owner-renewing");
+    let heartbeatChecks = 0;
+
+    await expect(
+      acquireManualListenerLock(SCOPE, {
+        lockRoot,
+        processId: 202,
+        ownerToken: "recovery-contender",
+        isProcessAlive: () => true,
+        readProcessIdentity: () => ({
+          startTicks: "other-process",
+          bootId: "boot-test",
+          pidNamespace: "other-namespace",
+        }),
+        isOwnerHeartbeatFresh: async () => {
+          heartbeatChecks += 1;
+          return heartbeatChecks > 1;
+        },
+      }),
+    ).rejects.toBeInstanceOf(ManualListenerLockUnavailableError);
+
+    expect(heartbeatChecks).toBe(2);
+    expect(JSON.parse(await readFile(incumbent.lockPath, "utf-8"))).toEqual(
+      expect.objectContaining({ ownerToken: "owner-renewing" }),
+    );
+    await incumbent.release();
+  });
+
+  test("keeps legacy locks without process identity fail-closed", async () => {
+    const incumbent = await acquireManualListenerLock(SCOPE, {
+      lockRoot,
+      processId: 1,
+      ownerToken: "legacy-owner",
+      isProcessAlive: () => true,
+      readProcessIdentity: () => null,
+    });
+    const legacyRecord = JSON.parse(
+      await readFile(incumbent.lockPath, "utf-8"),
+    ) as Record<string, unknown>;
+    delete legacyRecord.leaseVersion;
+    delete legacyRecord.processStartTicks;
+    delete legacyRecord.bootId;
+    delete legacyRecord.pidNamespace;
+    await writeFile(incumbent.lockPath, JSON.stringify(legacyRecord), "utf-8");
+    processStartTicks.set(1, "replacement-generation");
+
+    await expect(acquire(SCOPE, 1, "replacement-owner")).rejects.toEqual(
+      expect.objectContaining({ holderPid: 1 }),
+    );
+    await incumbent.release();
+  });
+
   test("fails closed on a corrupt incumbent record", async () => {
     const scopeHash = getManualListenerScopeHash(SCOPE);
     const listenersDir = path.join(lockRoot, "listeners");
-    await acquireManualListenerLock(SCOPE, {
+    const incumbent = await acquireManualListenerLock(SCOPE, {
       lockRoot,
       processId: 101,
       ownerToken: "owner-initial",
       isProcessAlive: () => true,
-    }).then(async (handle) => {
-      await unlink(handle.lockPath);
-      await writeFile(handle.lockPath, "not-json", "utf-8");
     });
+    await unlink(incumbent.lockPath);
+    await writeFile(incumbent.lockPath, "not-json", "utf-8");
+    await incumbent.release();
 
     await expect(acquire(SCOPE, 202, "owner-202")).rejects.toBeInstanceOf(
       ManualListenerLockUnavailableError,
