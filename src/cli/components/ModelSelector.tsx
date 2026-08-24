@@ -20,6 +20,7 @@ import {
   CHATGPT_FAST_SERVICE_TIER,
   getChatGptFastRegistryHandleForModelHandle,
   models,
+  normalizeModelHandleForRegistry,
 } from "@/agent/model";
 import { refreshModelCatalog } from "@/agent/remote-model-catalog";
 import {
@@ -37,7 +38,6 @@ import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import {
   baseHandleForByokAlias,
-  catalogHandleForModelLookup,
   filterModelsByAvailabilityForSelector,
   includeUnknownBackendHandleInRecommended,
   labelForBackendModel,
@@ -336,7 +336,7 @@ export function ModelSelector({
 
   const pickPreferredStaticModel = useCallback(
     (handle: string, contextWindow?: number): UiModel | undefined => {
-      const registryHandle = catalogHandleForModelLookup(handle);
+      const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
       const staticCandidates = typedModels.filter(
         (m) =>
           m.handle === registryHandle &&
