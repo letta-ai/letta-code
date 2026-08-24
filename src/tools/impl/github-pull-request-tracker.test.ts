@@ -298,4 +298,45 @@ describe("GitHub pull request tag copying", () => {
       "github:pull-request:letta-ai:letta-code:3852",
     ]);
   });
+
+  test("stops an in-flight tag copy when its Agent turn is interrupted", async () => {
+    const abortController = new AbortController();
+    let targetReadStarted = false;
+    let updateCalled = false;
+    const backend: ConversationTagBackend = {
+      retrieveConversation: async (conversationId, options) => {
+        expect(options?.signal).toBe(abortController.signal);
+        if (conversationId === "conv-child") {
+          return {
+            tags: ["github:pull-request:letta-ai:letta-code:3995"],
+          };
+        }
+        targetReadStarted = true;
+        return await new Promise((_, reject) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason),
+            { once: true },
+          );
+        });
+      },
+      updateConversation: async () => {
+        updateCalled = true;
+        return {};
+      },
+    };
+
+    const copy = copyGitHubPullRequestTags(
+      "conv-child",
+      "conv-parent",
+      backend,
+      abortController.signal,
+    );
+    await Bun.sleep(0);
+    expect(targetReadStarted).toBe(true);
+    abortController.abort();
+
+    await expect(copy).rejects.toMatchObject({ name: "AbortError" });
+    expect(updateCalled).toBe(false);
+  });
 });

@@ -743,6 +743,7 @@ export async function task(args: TaskArgs): Promise<string> {
       const forkedConv = await getBackend().forkConversation(parentConvId, {
         ...(parentConvId === "default" ? { agentId: parentAgentId } : {}),
         hidden: true,
+        signal,
       });
       await inheritForkToolset(parentAgentId, parentConvId, forkedConv.id);
       effectiveAgentId = parentAgentId;
@@ -827,6 +828,8 @@ export async function task(args: TaskArgs): Promise<string> {
     await copyGitHubPullRequestTags(
       result.conversationId,
       resolvedParentScope?.conversationId,
+      undefined,
+      signal,
     );
 
     // Mark subagent as completed in state store

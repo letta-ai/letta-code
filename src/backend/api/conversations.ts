@@ -6,6 +6,7 @@ export interface ForkConversationOptions {
   messageId?: string;
   /** Extra headers forwarded on the request (e.g. acting-user echo). */
   headers?: Record<string, string>;
+  signal?: AbortSignal;
 }
 
 export type ConversationDescriptionUpdateBody = Record<string, unknown> & {
@@ -35,7 +36,11 @@ export async function forkConversation(
     "POST",
     `/v1/conversations/${encodeURIComponent(conversationId)}/fork`,
     undefined,
-    { query, ...(options.headers ? { headers: options.headers } : {}) },
+    {
+      query,
+      ...(options.headers ? { headers: options.headers } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+    },
   );
 }
 
