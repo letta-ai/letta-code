@@ -208,7 +208,7 @@ SUBCOMMANDS
   letta agents list [--query <text> | --name <name> | --tags <tags>]
   letta environments list [--online-only]
   letta environments current
-  letta teleport list|cloud|<environment>
+  letta teleport list|cloud|local|<environment>
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
@@ -1350,7 +1350,7 @@ async function main(): Promise<void> {
     specifiedAgentId = resolved.id;
     nameResolvedAgent = resolved.agent;
   }
-  await (await import("@/agent/remote-model-catalog")).refreshModelCatalog();
+  await (await import("@/agent/remote-model-catalog")).initializeModelCatalog();
   // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
     const { toolFilter } = await import("@/tools/filter");

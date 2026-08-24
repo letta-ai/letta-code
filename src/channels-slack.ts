@@ -1,3 +1,16 @@
+export type {
+  SlackAttachmentReadClient,
+  SlackFetchedFile,
+  SlackFileFetcher,
+  SlackFileLike,
+  SlackFileMetadata,
+} from "./channels/slack/attachment-primitives";
+export {
+  collectSlackFiles,
+  fetchSlackFile,
+  resolveSlackFileMetadata,
+  resolveSlackMessageFiles,
+} from "./channels/slack/attachment-primitives";
 export {
   isOwnSlackBotInboundMessage,
   isSlackBotAuthoredInboundMessage,

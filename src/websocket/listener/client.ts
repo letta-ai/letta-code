@@ -122,6 +122,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   connectionId: string | null;
   connectionName: string | null;
   sessionId: string;
+  nextConnectionAttempt: number;
   nextConnectionOrdinal: number;
   connections: ListenerRuntime["connections"];
   connectionIdsByRuntimeKey: ListenerRuntime["connectionIdsByRuntimeKey"];
@@ -173,6 +174,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     connectionId: string | null;
     connectionName: string | null;
     sessionId: string;
+    nextConnectionAttempt: number;
     nextConnectionOrdinal: number;
     connections: ListenerRuntime["connections"];
     connectionIdsByRuntimeKey: ListenerRuntime["connectionIdsByRuntimeKey"];
@@ -280,6 +282,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.sessionId,
       set: (value: string) => {
         listener.sessionId = value;
+      },
+    },
+    nextConnectionAttempt: {
+      get: () => listener.nextConnectionAttempt,
+      set: (value: number) => {
+        listener.nextConnectionAttempt = value;
       },
     },
     nextConnectionOrdinal: {

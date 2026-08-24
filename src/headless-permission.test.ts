@@ -5,7 +5,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { waitForHeadlessPermissionResponse } from "@/headless-permission";
+import runtimeModelCatalog from "@/test-utils/fixtures/runtime-model-catalog.json";
 import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 
 const childProcesses = new Set<ChildProcessWithoutNullStreams>();
@@ -183,10 +185,20 @@ async function runDenyLifecycleScenario(): Promise<HeadlessEvent[]> {
   const tempRoot = await mkdtemp(join(tmpdir(), "letta-deny-interrupt-"));
   tempRoots.push(tempRoot);
   const homeDir = join(tempRoot, "home");
-  mkdirSync(join(homeDir, ".letta"), { recursive: true });
+  const cacheDir = join(homeDir, ".letta", "cache");
+  mkdirSync(cacheDir, { recursive: true });
   writeFileSync(
     join(homeDir, ".letta", "settings.json"),
     JSON.stringify({ permissions: { alwaysAsk: ["Bash"] } }),
+  );
+  writeFileSync(
+    join(cacheDir, "model-catalog.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      source: LETTA_CLOUD_API_URL,
+      fetchedAt: Date.now(),
+      models: runtimeModelCatalog.models,
+    }),
   );
 
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");

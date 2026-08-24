@@ -6,6 +6,7 @@ import {
 } from "@/tools/manager";
 import { CHANNEL_SERVICE_COMMAND_TYPES } from "@/types/service-protocol";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
 import { scheduleQueuePump } from "./queue";
@@ -355,6 +356,174 @@ describe("listener message router ownership handoff", () => {
         disposition: "started",
       }),
     );
+  });
+
+  test("remove_queue_item broadcasts the queue snapshot even when the item is not found", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socket = new MockSocket();
+    listener.socket = socket as unknown as WebSocket;
+    const sent: unknown[] = [];
+    setActiveRuntime(listener);
+
+    const handleMessage = createListenerMessageHandler({
+      runtime: listener,
+      socket: socket as unknown as WebSocket,
+      opts: makeListenerOptions(),
+      processQueuedTurn: async () => {},
+      fileCommandSession: { handle: () => false },
+      getParsedRuntimeScope: () => null,
+      replaySyncStateForRuntime: async () => {},
+      getOrCreateScopedRuntime: () => runtime,
+      handleApprovalResponseInput: async () => false,
+      handleChangeDeviceStateInput: async () => false,
+      handleAbortMessageInput: async () => false,
+      stampInboundUserMessageOtids: (incoming) => incoming,
+      safeSocketSend: (_target, payload) => {
+        sent.push(payload);
+        return true;
+      },
+      runDetachedListenerTask: () => {},
+      trackListenerError: () => {},
+      processIncomingMessage: async () => {},
+    });
+
+    // A queued item exists locally, but the removal targets a DIFFERENT id —
+    // the stale-consumer case: the requested item already drained into a turn.
+    expect(
+      enqueueInboundUserMessage(runtime, {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        messages: [
+          {
+            role: "user",
+            content: "still queued",
+            client_message_id: "cm-still-queued",
+          },
+        ],
+      }),
+    ).toBe(true);
+    // Flush the enqueue's own scheduled broadcast so the assertion below
+    // isolates the removal handler's emit.
+    await Promise.resolve();
+    socket.sentPayloads.length = 0;
+
+    await handleMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "remove_queue_item",
+          request_id: "remove-missing",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          item_id: "item-already-drained",
+        }),
+      ),
+    );
+
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        type: "remove_queue_item_response",
+        request_id: "remove-missing",
+        success: false,
+        item_id: "item-already-drained",
+      }),
+    );
+    // The authoritative snapshot must still broadcast so a consumer holding
+    // a stale queue copy is repaired. (LET-11174)
+    const updates = socket.sentPayloads
+      .map((payload) => JSON.parse(payload) as { type: string })
+      .filter((payload) => payload.type === "update_queue");
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      queue: [
+        expect.objectContaining({ client_message_id: "cm-still-queued" }),
+      ],
+      removed: [],
+    });
+    // Local queue state is untouched.
+    expect(runtime.queueRuntime.length).toBe(1);
+  });
+
+  test("remove_queue_item for an existing item removes it and broadcasts the change", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socket = new MockSocket();
+    listener.socket = socket as unknown as WebSocket;
+    const sent: unknown[] = [];
+    setActiveRuntime(listener);
+
+    const handleMessage = createListenerMessageHandler({
+      runtime: listener,
+      socket: socket as unknown as WebSocket,
+      opts: makeListenerOptions(),
+      processQueuedTurn: async () => {},
+      fileCommandSession: { handle: () => false },
+      getParsedRuntimeScope: () => null,
+      replaySyncStateForRuntime: async () => {},
+      getOrCreateScopedRuntime: () => runtime,
+      handleApprovalResponseInput: async () => false,
+      handleChangeDeviceStateInput: async () => false,
+      handleAbortMessageInput: async () => false,
+      stampInboundUserMessageOtids: (incoming) => incoming,
+      safeSocketSend: (_target, payload) => {
+        sent.push(payload);
+        return true;
+      },
+      runDetachedListenerTask: () => {},
+      trackListenerError: () => {},
+      processIncomingMessage: async () => {},
+    });
+
+    expect(
+      enqueueInboundUserMessage(runtime, {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        messages: [
+          {
+            role: "user",
+            content: "remove me",
+            client_message_id: "cm-to-remove",
+          },
+        ],
+      }),
+    ).toBe(true);
+    const enqueued = runtime.queueRuntime.peek()[0];
+    expect(enqueued).toBeDefined();
+
+    await handleMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "remove_queue_item",
+          request_id: "remove-existing",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          item_id: enqueued?.id,
+        }),
+      ),
+    );
+    // The onRemoved callback schedules its own emit on a microtask.
+    await Promise.resolve();
+
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        type: "remove_queue_item_response",
+        request_id: "remove-existing",
+        success: true,
+        item_id: enqueued?.id,
+      }),
+    );
+    const updates = socket.sentPayloads
+      .map(
+        (payload) => JSON.parse(payload) as { type: string; queue?: unknown[] },
+      )
+      .filter((payload) => payload.type === "update_queue");
+    expect(updates.length).toBeGreaterThanOrEqual(1);
+    // Every broadcast snapshot reflects the post-removal queue.
+    for (const update of updates) {
+      expect(update.queue).toEqual([]);
+    }
+    expect(runtime.queueRuntime.length).toBe(0);
   });
 
   test("delegates registered service commands and returns their protocol messages", async () => {

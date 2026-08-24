@@ -12,10 +12,14 @@ export type ShellSourceCommand = string | readonly string[];
 type OutputStream = "stdout" | "stderr";
 
 export type ConversationTagBackend = {
-  retrieveConversation(conversationId: string): Promise<unknown>;
+  retrieveConversation(
+    conversationId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<unknown>;
   updateConversation(
     conversationId: string,
     body: ConversationUpdateBody,
+    options?: { signal?: AbortSignal },
   ): Promise<unknown>;
 };
 
@@ -27,6 +31,7 @@ export interface GitHubPullRequestOutputTracker {
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=.*/;
 const GITHUB_PR_URL =
   /^https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/([1-9]\d*)\/?$/i;
+const GITHUB_PR_TAG_PREFIX = "github:pull-request:";
 const HEREDOC_AT_LINE_END =
   /<<(-?)\s*(?:'([^']+)'|"([^"]+)"|([^\s'"`<>|&;]+))\s*$/;
 const MAX_TRACKED_OUTPUT_CHARS = 30_000;
@@ -34,6 +39,16 @@ const MAX_TRACKED_OUTPUT_CHARS = 30_000;
 const GH_GLOBAL_FLAGS_WITH_VALUES = new Set(["--hostname", "--repo", "-R"]);
 
 const conversationTagUpdateTails = new Map<string, Promise<void>>();
+
+function conversationTags(conversation: unknown): string[] {
+  const tags =
+    typeof conversation === "object" && conversation !== null
+      ? Reflect.get(conversation, "tags")
+      : undefined;
+  return Array.isArray(tags)
+    ? tags.filter((tag): tag is string => typeof tag === "string")
+    : [];
+}
 
 function executableName(value: string): string {
   return value.replaceAll("\\", "/").split("/").pop()?.toLowerCase() ?? "";
@@ -212,7 +227,7 @@ function tagFromOutputLine(line: string): string | undefined {
   if (!owner || !repo || !number) {
     return undefined;
   }
-  return `github:pull-request:${owner.toLowerCase()}:${repo.toLowerCase()}:${number}`;
+  return `${GITHUB_PR_TAG_PREFIX}${owner.toLowerCase()}:${repo.toLowerCase()}:${number}`;
 }
 
 function appendOutputTail(
@@ -229,47 +244,103 @@ async function appendConversationTags(
   backend: ConversationTagBackend,
   conversationId: string,
   tags: readonly string[],
+  signal?: AbortSignal,
 ): Promise<void> {
-  const conversation = await backend.retrieveConversation(conversationId);
-  const currentTags =
-    typeof conversation === "object" && conversation !== null
-      ? Reflect.get(conversation, "tags")
-      : undefined;
-  const existingTags = Array.isArray(currentTags)
-    ? currentTags.filter((tag): tag is string => typeof tag === "string")
-    : [];
+  signal?.throwIfAborted();
+  const conversation = await backend.retrieveConversation(conversationId, {
+    signal,
+  });
+  const existingTags = conversationTags(conversation);
   const missingTags = tags.filter((tag) => !existingTags.includes(tag));
   if (missingTags.length === 0) {
     return;
   }
 
-  await backend.updateConversation(conversationId, {
-    tags: [...new Set([...existingTags, ...missingTags])],
-  } as ConversationUpdateBody);
+  await backend.updateConversation(
+    conversationId,
+    {
+      tags: [...new Set([...existingTags, ...missingTags])],
+    } as ConversationUpdateBody,
+    { signal },
+  );
 }
 
 function queueConversationTagUpdate(
   backend: ConversationTagBackend,
   conversationId: string,
   tags: readonly string[],
+  signal?: AbortSignal,
 ): Promise<void> {
   const previous = conversationTagUpdateTails.get(conversationId);
   const update = (previous ?? Promise.resolve())
-    .then(() => appendConversationTags(backend, conversationId, tags))
+    .then(() => appendConversationTags(backend, conversationId, tags, signal))
     .catch((error: unknown) => {
+      if (signal?.aborted) {
+        signal.throwIfAborted();
+      }
       debugLog(
         "github-pr-tracking",
         `Failed to tag conversation ${conversationId}`,
         error,
       );
     });
-  conversationTagUpdateTails.set(conversationId, update);
-  void update.finally(() => {
-    if (conversationTagUpdateTails.get(conversationId) === update) {
-      conversationTagUpdateTails.delete(conversationId);
-    }
-  });
+  const tail = update.catch(() => {});
+  conversationTagUpdateTails.set(conversationId, tail);
+  void tail
+    .finally(() => {
+      if (conversationTagUpdateTails.get(conversationId) === tail) {
+        conversationTagUpdateTails.delete(conversationId);
+      }
+    })
+    .catch(() => {});
   return update;
+}
+
+/** Copy PRs opened in an Agent conversation onto its launching conversation. */
+export async function copyGitHubPullRequestTags(
+  sourceConversationId: string | undefined,
+  targetConversationId: string | undefined,
+  backend?: ConversationTagBackend,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (
+    !sourceConversationId ||
+    !targetConversationId ||
+    sourceConversationId === "default" ||
+    targetConversationId === "default" ||
+    sourceConversationId === targetConversationId
+  ) {
+    return;
+  }
+
+  try {
+    const activeBackend = backend ?? getBackend();
+    const sourceConversation = await activeBackend.retrieveConversation(
+      sourceConversationId,
+      { signal },
+    );
+    const pullRequestTags = conversationTags(sourceConversation).filter((tag) =>
+      tag.startsWith(GITHUB_PR_TAG_PREFIX),
+    );
+    if (pullRequestTags.length === 0) {
+      return;
+    }
+    await queueConversationTagUpdate(
+      activeBackend,
+      targetConversationId,
+      pullRequestTags,
+      signal,
+    );
+  } catch (error) {
+    if (signal?.aborted) {
+      signal.throwIfAborted();
+    }
+    debugLog(
+      "github-pr-tracking",
+      `Failed to copy PR tags from ${sourceConversationId} to ${targetConversationId}`,
+      error,
+    );
+  }
 }
 
 export function createGitHubPullRequestOutputTracker(

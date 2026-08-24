@@ -2,15 +2,21 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { models } from "@/agent/model-catalog";
+import { clearAvailableModelsCache } from "@/agent/available-models";
+import { models, resolveModel } from "@/agent/model-catalog";
 import {
   __testResetRemoteModelCatalog,
   applyCatalogModels,
+  initializeModelCatalog,
   loadPersistedModelCatalog,
   refreshModelCatalog,
+  requireModelCatalog,
   toCatalogModel,
+  toRuntimeCatalogModels,
 } from "@/agent/remote-model-catalog";
+import { __testSetBackend } from "@/backend";
 import { setConfiguredBackendMode } from "@/backend/backend-mode";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import { settingsManager } from "@/settings-manager";
 
 await settingsManager.initialize();
@@ -18,10 +24,8 @@ await settingsManager.initialize();
 /**
  * Remote catalog refresh semantics (LET-9792).
  *
- * The bundled models.json snapshot must survive every failure mode: non-API
- * backends, HTTP errors, malformed payloads, and payloads that fail the
- * sanity gate (empty / no default entry). Only a valid payload may replace
- * the live catalog contents — in place, so existing `models` imports see it.
+ * Cloud mode accepts only a valid endpoint/cache payload. Local mode projects
+ * pi-ai inventory into the same live array, preserving array identity.
  */
 
 const originalFetch = globalThis.fetch;
@@ -60,12 +64,21 @@ function mockCatalogResponse(body: unknown, status = 200) {
   ) as unknown as typeof fetch;
 }
 
+function runtimeCatalogBackend(): FakeHeadlessBackend {
+  return new FakeHeadlessBackend(
+    "agent-runtime-catalog",
+    undefined,
+    {},
+    { modelHandle: "anthropic/claude-haiku-4-5" },
+  );
+}
+
 let cacheDir: string;
 
 beforeEach(() => {
   __testResetRemoteModelCatalog();
   setConfiguredBackendMode("api");
-  process.env.LETTA_BASE_URL = "http://localhost:9999";
+  process.env.LETTA_BASE_URL = "https://api.letta.com";
   process.env.LETTA_API_KEY = "test-key";
   cacheDir = mkdtempSync(join(tmpdir(), "lc-model-catalog-test-"));
   process.env.LETTA_MODEL_CATALOG_CACHE_DIR = cacheDir;
@@ -74,6 +87,8 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   restoreSnapshot();
+  clearAvailableModelsCache();
+  __testSetBackend(null);
   setConfiguredBackendMode("api");
   delete process.env.LETTA_MODEL_CATALOG_CACHE_DIR;
   rmSync(cacheDir, { recursive: true, force: true });
@@ -142,7 +157,7 @@ describe("toCatalogModel", () => {
 describe("applyCatalogModels", () => {
   test("rejects empty payloads", () => {
     expect(applyCatalogModels([])).toBe(false);
-    expect(models.length).toBeGreaterThan(0);
+    expect(models).toEqual([]);
   });
 
   test("rejects payloads without a default/auto entry", () => {
@@ -187,13 +202,77 @@ describe("applyCatalogModels", () => {
 });
 
 describe("refreshModelCatalog", () => {
-  test("no-ops on the local backend", async () => {
+  test("fails clearly when API mode has no endpoint or cached catalog", () => {
+    expect(requireModelCatalog).toThrow(
+      "GET /v1/models/catalog failed and no valid cache exists",
+    );
+  });
+
+  test("accepts a valid cached API catalog when the endpoint is unavailable", () => {
+    expect(
+      applyCatalogModels([
+        {
+          id: "auto",
+          handle: "letta/auto",
+          label: "Auto",
+          description: "",
+          isDefault: true,
+        },
+      ]),
+    ).toBe(true);
+    expect(requireModelCatalog).not.toThrow();
+  });
+
+  test("local startup uses runtime inventory without requesting the Cloud catalog", async () => {
     setConfiguredBackendMode("local");
-    const fetchMock = mock(() => Promise.resolve(new Response("{}")));
+    __testSetBackend(runtimeCatalogBackend());
+    const fetchMock = mock(() => Promise.reject(new Error("unexpected fetch")));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    expect(await refreshModelCatalog({ force: true })).toBe(false);
+    await expect(initializeModelCatalog()).resolves.toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(resolveModel("haiku")).toBe("anthropic/claude-haiku-4-5");
+  });
+
+  test("custom API startup uses runtime model inventory", async () => {
+    process.env.LETTA_BASE_URL = "http://localhost:8283";
+    __testSetBackend(runtimeCatalogBackend());
+    const fetchMock = mock(() => Promise.reject(new Error("unexpected fetch")));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(initializeModelCatalog()).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(resolveModel("haiku")).toBe("anthropic/claude-haiku-4-5");
+    expect(() => requireModelCatalog("http://localhost:8283")).not.toThrow();
+  });
+
+  test("projects runtime metadata without requiring a managed default", () => {
+    const projected = toRuntimeCatalogModels([
+      {
+        handle: "anthropic/claude-sonnet-4-6",
+        modelId: "claude-sonnet-4-6",
+        label: "Claude Sonnet 4.6",
+        maxContextWindow: 200000,
+        maxOutputTokens: 128000,
+        providerType: "anthropic",
+        reasoningLevels: ["off", "medium", "high"],
+      },
+    ]);
+
+    expect(projected.map((model) => model.id)).toEqual([
+      "claude-sonnet-4-6-none",
+      "claude-sonnet-4-6-medium",
+      "claude-sonnet-4-6-high",
+    ]);
+    expect(
+      applyCatalogModels(projected, { requireManagedDefault: false }),
+    ).toBe(true);
+    expect(models[2]?.updateArgs).toMatchObject({
+      context_window: 200000,
+      max_output_tokens: 128000,
+      provider_type: "anthropic",
+      reasoning_effort: "high",
+    });
   });
 
   test("applies a valid remote catalog", async () => {
@@ -231,7 +310,7 @@ describe("refreshModelCatalog", () => {
 
     expect(await refreshModelCatalog({ force: true })).toBe(false);
     expect(models.length).toBe(before);
-    expect(models[0]?.id).toBe("auto");
+    expect(models[0]).toBeUndefined();
   });
 
   test("rejects rows with invalid required mapping metadata", async () => {
@@ -274,10 +353,10 @@ describe("refreshModelCatalog", () => {
     });
     expect(await refreshModelCatalog({ force: true })).toBe(true);
 
-    restoreSnapshot(); // simulate a fresh process with only the bundled snapshot
+    restoreSnapshot(); // simulate a fresh process before cache hydration
     expect(models.find((m) => m.id === "persisted-model")).toBeUndefined();
 
-    expect(loadPersistedModelCatalog("http://localhost:9999")).toBe(true);
+    expect(loadPersistedModelCatalog("https://api.letta.com")).toBe(true);
     expect(models.find((m) => m.id === "persisted-model")?.label).toBe("GPT-9");
   });
 
@@ -322,7 +401,7 @@ describe("refreshModelCatalog", () => {
 
     expect(await refreshModelCatalog({ force: true })).toBe(false);
     expect(models.some((model) => model.id === "server-a-model")).toBe(false);
-    expect(models.length).toBe(snapshot.length);
+    expect(models).toEqual([]);
   });
 
   test("does not let an old server's late response overwrite the active catalog", async () => {
@@ -335,7 +414,7 @@ describe("refreshModelCatalog", () => {
       markServerAStarted = resolve;
     });
     globalThis.fetch = mock((input: Parameters<typeof fetch>[0]) => {
-      if (String(input).startsWith("http://localhost:9999/")) {
+      if (String(input).startsWith("https://api.letta.com/")) {
         markServerAStarted();
         return serverAResponse;
       }
@@ -360,6 +439,7 @@ describe("refreshModelCatalog", () => {
     const serverARefresh = refreshModelCatalog({ force: true });
     await serverAStarted;
     process.env.LETTA_BASE_URL = "http://localhost:9998";
+    __testSetBackend(runtimeCatalogBackend());
     expect(await refreshModelCatalog({ force: true })).toBe(true);
 
     releaseServerA(
@@ -380,7 +460,7 @@ describe("refreshModelCatalog", () => {
     );
     expect(await serverARefresh).toBe(false);
     expect(models.some((model) => model.id === "server-a-model")).toBe(false);
-    expect(models.some((model) => model.id === "server-b-model")).toBe(true);
+    expect(models.some((model) => model.id === "claude-haiku-4-5")).toBe(true);
   });
 
   test("attaches a timeout signal to the catalog request", async () => {

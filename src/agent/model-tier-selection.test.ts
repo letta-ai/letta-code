@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
   getByokOpenAIReasoningTierOptions,
@@ -11,6 +11,13 @@ import {
   shouldPreserveContextWindowForModelSelection,
   withReasoningEffortUpdateArg,
 } from "@/agent/model";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
+
+beforeEach(installRuntimeModelCatalogFixture);
+afterEach(clearRuntimeModelCatalogFixture);
 
 describe("getModelInfo", () => {
   test("points opus alias at Opus 4.8 high", () => {
@@ -59,17 +66,6 @@ describe("getModelInfo", () => {
   ])("sets an explicit 200k context window for %s", (modelId) => {
     expect(getModelInfo(modelId)?.updateArgs).toMatchObject({
       context_window: 200000,
-    });
-  });
-
-  test("preserves Bedrock Opus 4.7", () => {
-    const info = getModelInfo("bedrock-opus-4.7");
-    expect(info?.handle).toBe("bedrock/us.anthropic.claude-opus-4-7");
-    expect(info?.label).toBe("Bedrock Opus 4.7");
-    expect(info?.updateArgs).toMatchObject({
-      context_window: 200000,
-      reasoning_effort: "medium",
-      enable_reasoner: true,
     });
   });
 
@@ -186,7 +182,7 @@ describe("getModelInfoForLlmConfig", () => {
   test("falls back to first handle match when effort missing", () => {
     const handle = "openai/gpt-5.4";
     const info = getModelInfoForLlmConfig(handle, null);
-    // models.json order currently lists gpt-5.4-none first.
+    // the fixture order lists gpt-5.4-none first.
     expect(info?.id).toBe("gpt-5.4-none");
   });
 

@@ -44,6 +44,7 @@ const {
   getCachedAvailableModels,
   getCachedModelHandles,
   getCachedOpenAICompatibleProxyHandles,
+  getModelProviderType,
 } = await import("@/agent/available-models");
 
 function deferred<T>() {
@@ -125,14 +126,36 @@ describe("available-models cache semantics", () => {
     expect([...forced.handles]).toEqual(["openai/gpt-4o", "zai/glm-4.6"]);
   });
 
+  test("provider lookup refreshes stale catalog data", async () => {
+    const realDateNow = Date.now;
+    let now = 1_000_000;
+    Date.now = () => now;
+    try {
+      listModelsImpl = async () => [
+        { handle: "custom/model", provider_type: "anthropic" },
+      ];
+      expect(await getModelProviderType("custom/model")).toBe("anthropic");
+
+      now += 5 * 60 * 1000 + 1;
+      listModelsImpl = async () => [
+        { handle: "custom/model", provider_type: "chatgpt_oauth" },
+      ];
+      expect(await getModelProviderType("custom/model")).toBe("chatgpt_oauth");
+    } finally {
+      Date.now = realDateNow;
+    }
+  });
+
   test("carries backend model descriptors for catalog rendering", async () => {
     listModelsImpl = async () => [
       {
         handle: "opencode/deepseek-v4-flash-free",
         display_name: "DeepSeek V4 Flash Free",
+        model_id: "deepseek-v4-flash-free",
         max_context_window: 200000,
         max_tokens: 32000,
         provider_type: "opencode",
+        reasoning_levels: ["off", "medium", "high"],
       },
     ];
 
@@ -142,9 +165,11 @@ describe("available-models cache semantics", () => {
       {
         handle: "opencode/deepseek-v4-flash-free",
         label: "DeepSeek V4 Flash Free",
+        modelId: "deepseek-v4-flash-free",
         maxContextWindow: 200000,
         maxOutputTokens: 32000,
         providerType: "opencode",
+        reasoningLevels: ["off", "medium", "high"],
       },
     ]);
     expect(getCachedAvailableModels()).toEqual(result.models);

@@ -1044,11 +1044,8 @@ export function onChunk(
       // Handle otid transition (mark previous line as finished)
       handleOtidTransition(b, lineId);
 
-      // Extract text content from the user message
       const rawText = extractTextPart(chunk.content);
       if (!rawText) break;
-
-      // Check if this is a compaction summary message (old format embedded in user_message)
       const compactionSummary = extractCompactionSummary(rawText);
       if (compactionSummary) {
         // Render as a finished compaction event
@@ -1065,24 +1062,19 @@ export function onChunk(
         markCompactionCompleted(ctx);
         break;
       }
+      // User input is rendered optimistically before the request. Only consume
+      // echoed user messages that reconcile one of those existing rows; other
+      // echoes are harness-injected context, not new user-visible input.
+      if (!mappedLineId) break;
 
-      const line = ensure(b, lineId, () => ({
-        kind: "user",
-        id: lineId,
-        text: rawText,
-        messageId,
-        otid,
-      }));
-      if (line.kind === "user") {
-        b.byId.set(lineId, {
+      const line = b.byId.get(mappedLineId);
+      if (line?.kind === "user") {
+        b.byId.set(mappedLineId, {
           ...line,
           text: line.text || rawText,
           messageId: messageId ?? line.messageId,
           otid: otid ?? line.otid,
         });
-      }
-      if (otid) {
-        b.userLineIdByOtid.set(otid, lineId);
       }
       break;
     }

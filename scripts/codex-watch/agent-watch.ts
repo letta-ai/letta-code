@@ -2,8 +2,8 @@
 /**
  * Amelia-driven Codex release watcher entrypoint.
  *
- * This runs alongside the legacy per-release issue workflow. It uses a central
- * tracker issue for state and only asks Amelia to review non-noop releases.
+ * Uses a central tracker issue for state and only asks Amelia to review
+ * non-noop releases.
  */
 
 import { appendFileSync, writeFileSync } from "node:fs";
@@ -17,13 +17,19 @@ import {
 import {
   analyzeCodexRelease,
   DEFAULT_TARGET_REPO,
+  findNextStableRelease,
+  listStableReleases,
+  type Release,
 } from "./release-analysis.ts";
 import {
+  advanceCodexAuditCursor,
   emptyTrackerState,
-  hasProcessedTag,
+  getCodexAuditCursorTag,
+  hasProcessedRange,
   parseTrackerState,
   recordAnalysis,
   renderTrackerBody,
+  validateLegacyCodexAuditCursor,
 } from "./tracker.ts";
 
 const DEFAULT_TRACKER_TITLE = "Codex upstream drift tracker";
@@ -77,14 +83,49 @@ function parseArgs(argv: string[]): Args {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const tracker = ensureTrackerIssue(args);
+  let state = parseTrackerState(tracker.body);
+  let sinceTag = args.sinceTag;
+  let currentTag = args.currentTag;
+  let stableReleases: Release[] | undefined;
+
+  if (!state.audit_cursor_validated) {
+    stableReleases = await listStableReleases();
+    state = validateLegacyCodexAuditCursor(
+      state,
+      stableReleases.map((release) => release.tag_name),
+    );
+    if (!args.dryRun) {
+      editIssueBody(args.repo, tracker.number, renderTrackerBody(state));
+    }
+  }
+
+  if (!sinceTag && !currentTag) {
+    const cursorTag = getCodexAuditCursorTag(state);
+    if (cursorTag) {
+      stableReleases ??= await listStableReleases();
+      const nextRelease = findNextStableRelease(stableReleases, cursorTag);
+      if (!nextRelease) {
+        console.log(`No stable release after ${cursorTag}; nothing to do.`);
+        writeOutput("tracker_issue", String(tracker.number));
+        writeOutput("tracker_issue_url", tracker.url);
+        writeOutput("current_tag", cursorTag);
+        writeOutput("previous_tag", cursorTag);
+        writeOutput("verdict", "no-op");
+        writeOutput("should_run_agent", "false");
+        return;
+      }
+      sinceTag = cursorTag;
+      currentTag = nextRelease.tag_name;
+    }
+  }
+
   const analysis = await analyzeCodexRelease({
-    sinceTag: args.sinceTag,
-    currentTag: args.currentTag,
+    sinceTag,
+    currentTag,
+    stableReleases,
   });
   writeFileSync(args.analysisFile, `${JSON.stringify(analysis, null, 2)}\n`);
-
-  const tracker = ensureTrackerIssue(args);
-  const state = parseTrackerState(tracker.body);
 
   writeOutput("tracker_issue", String(tracker.number));
   writeOutput("tracker_issue_url", tracker.url);
@@ -93,8 +134,22 @@ async function main() {
   writeOutput("previous_tag", analysis.previous_tag);
   writeOutput("verdict", analysis.verdict);
 
-  if (!args.dryRun && hasProcessedTag(state, analysis.current_tag)) {
-    console.log(`Already processed ${analysis.current_tag}; nothing to do.`);
+  if (
+    !args.dryRun &&
+    hasProcessedRange(state, analysis.previous_tag, analysis.current_tag)
+  ) {
+    const next = advanceCodexAuditCursor(
+      state,
+      analysis.previous_tag,
+      analysis.current_tag,
+      analysis.is_adjacent_release,
+    );
+    if (next !== state) {
+      editIssueBody(args.repo, tracker.number, renderTrackerBody(next));
+    }
+    console.log(
+      `Already processed ${analysis.previous_tag}...${analysis.current_tag}; nothing to do.`,
+    );
     writeOutput("should_run_agent", "false");
     return;
   }

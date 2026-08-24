@@ -8,10 +8,24 @@ This file explains how to work effectively in this repo. It covers the rules enf
 
 1. **Create a worktree** for any non-trivial change — especially if another agent may be working concurrently.
 2. **Make your change**, then run `bun run check` and fix all failures before opening a PR.
-3. **Do not commit or push** until explicitly asked to. Caren will say when she's ready.
-4. **One PR per logical change.** Don't bundle unrelated changes — harder to revert if something breaks.
-5. **Never amend commits.** Always create a new commit.
-6. **Check the current branch** before editing files. If in doubt, ask.
+3. **One PR per logical change.** Don't bundle unrelated changes — harder to revert if something breaks.
+4. **Never amend commits.** Always create a new commit.
+5. **Check the current branch** before editing files. If in doubt, ask.
+
+---
+
+## Runtime Validation
+
+Development and distribution use different runtimes. `bun run dev` runs the
+TypeScript source with Bun, while the published package exposes a Node-targeted
+`letta.js` bundle and requires Node 22.19 or newer. When behavior depends on the
+runtime, test both the Bun source path and the built Node artifact.
+
+The interactive TUI, headless mode, and websocket listener also have separate
+orchestration paths. Changes to shared turn, tool, approval, permission, or
+transcript behavior must identify and run the focused tests for every affected
+path. `bun run check` is always required, but it does not replace those behavior
+tests.
 
 ---
 
@@ -160,6 +174,22 @@ Practical rules:
 
 ---
 
+## Directory Guides
+
+Some directories carry their own binding `AGENTS.md` with rules that override
+generic instincts. Read the local guide before changing code there:
+
+- `src/cli/AGENTS.md` — Ink rendering, approvals, and interactive input rules
+  for the TUI.
+- `src/websocket/listener/AGENTS.md` — turn lifecycle, leases, approvals, queue
+  gating, and where listener tests belong.
+- `src/channels/AGENTS.md` — gateway policy placement and the pure-logic
+  package subpaths shared with remote hosts.
+- `src/channels/slack/AGENTS.md` — Slack module ownership, the progress
+  contract, and live verification requirements.
+
+---
+
 ## Placing New Files
 
 | What you're adding | Where it goes |
@@ -221,13 +251,21 @@ also rejects staged parent-relative imports (`../`); use the `@/` alias.
 | `LETTA_DEBUG=0` | Suppress debug output even in dev mode |
 | `LETTA_LOCAL_BACKEND_EXPERIMENTAL=1` | Enable local in-process backend |
 | `LETTA_LOCAL_BACKEND_EXECUTOR=deterministic` | Use fake deterministic executor (for tests) |
+| `LETTA_LOCAL_BACKEND_DIR` | Local-backend storage root (defaults to `~/.letta/lc-local-backend`) |
+
+When manually smoke-testing the local backend (`letta --backend local` or
+`bun run dev --backend local`), set `LETTA_LOCAL_BACKEND_DIR` to a temporary
+directory first. Otherwise the run reads and mutates your real
+`~/.letta/lc-local-backend` provider, auth, and transcript state.
 
 ### Known Gotchas
 
-- **`react-dom` is not installed.** Ink does not use it. Do not import `unstable_batchedUpdates` or anything else from `react-dom`.
 - **Prettier is not used.** Biome is the sole formatter. Do not add Prettier — they conflict.
-- **Ink uses legacy React mode (mode 0).** React 18 automatic batching does not apply in async contexts. Move state updates before any `await` to batch them naturally.
-- **`<Static>` items never re-render.** Once committed to `staticItems`, a Ink `<Static>` item's props are frozen. Force a re-render by changing the `<Static key>` prop — but only key on values that change infrequently (not every tool call).
 - **`new URL("./path.ts", import.meta.url)` in tests** is not a static import and is not caught by the `@/` import codemod. Scan for `new URL(` manually when moving source files.
 - **grep exits 1 on no matches** — pre-commit hooks use `|| true` on grep pipes to prevent false failures on clean commits.
 - **macOS case-insensitive FS** — `existsSync("bash.ts")` returns `true` when `Bash.ts` exists. Rename scripts that use `existsSync` to check kebab-case targets will silently skip single-word PascalCase files. Use `git mv` for renames.
+- **Native modules can behave differently under Bun and Node.** The published package runs the bundled `letta.js` under Node (>= 22.19), while `bun run dev` runs the source under Bun. Example: `node-pty` is loaded directly under Node but through a Node bridge process under Bun, because its native handles do not integrate reliably with Bun's event loop (`src/tools/impl/shell-runner.ts`). Test runtime-sensitive code on both paths.
+- **`setTimeout(fn, 0)` fires on the next tick, not never.** For "no timeout" behavior, check the timeout value before scheduling the timer instead of passing 0.
+- **Extend `@letta-ai/letta-client` types instead of redeclaring them.** Use the SDK's `ToolCall`, `StopReasonType`, and similar wire types directly; do not duplicate wire shapes or cast with `as any`.
+- **Package subpath entrypoints use relative imports and dedicated entry files.** Library entries (`src/agent-presets.ts`, `src/channels-*.ts`, `src/app-server-client.ts`) are bundled separately and their emitted `.d.ts` files go through an alias rewrite in `build.js`; anything reachable from a browser-targeted entry must stay free of node builtins and backend/provider imports. Consumers on `moduleResolution: "node"` resolve subpath types through `typesVersions` in `package.json`, so new subpaths need entries there too.
+- **When changing a function from swallowing errors to throwing**, check every caller; each may need different handling.

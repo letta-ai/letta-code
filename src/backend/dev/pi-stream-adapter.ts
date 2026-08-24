@@ -635,6 +635,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     const reasoning = reasoningForSettings(
       input.agent.model_settings,
       input.agent.model,
+      resolved.model,
     );
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,

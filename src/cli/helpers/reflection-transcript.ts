@@ -199,7 +199,7 @@ export function buildReflectionSubagentPrompt(
     'Review the conversation transcript payload and update memory files. The payload path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `wc -c "$TRANSCRIPT_PATH"`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit `file_path` is literal and does NOT expand env vars.',
     "",
     'The payload may be either a JSON message array for one conversation or a `multi_transcript_reflection_payload` manifest. If it is a manifest, read each `payload_path` listed in `transcripts` and synthesize across all conversations. Entries with `mode: "replay"` were already reflected before and are included intentionally for re-review/deduplication; do not ignore them just because they are replay slices.',
-    "When reviewing multiple transcripts, prefer durable patterns and latest evidence across sessions. Resolve contradictions by updating stale memory at the source, deduplicate repeated facts, and avoid storing one-off task state.",
+    "When reviewing multiple transcripts, prefer recurring patterns and the latest evidence across sessions. Resolve contradictions by updating stale memory at the source, deduplicate repeated facts, and avoid storing one-off task state.",
     "",
     "The primary agent's memory filesystem is available through the `$MEMORY_DIR` environment variable.",
     "Run git add or git commit commands only from $MEMORY_DIR; the harness handles integration after your commit. If these fail, stop reflecting and report the failure. All other git commands are out of your purview.",
@@ -214,7 +214,7 @@ export function buildReflectionSubagentPrompt(
       "Additional user-provided reflection instruction:",
       input.instruction.trim(),
       "",
-      "Use this instruction to focus what you look for, but still only persist durable memory-worthy learnings and do not store transient task state.",
+      "Use this instruction to focus what you look for, but still only persist memory-worthy learnings and do not store transient task state.",
       "",
     );
   }
@@ -248,12 +248,12 @@ export function buildReflectionSelectorPrompt(options?: {
   lines.push(
     "If the candidates payload includes `user_instruction`, use it as the requested focus for selection.",
     "",
-    "Select up to `max_selected` conversations. Prefer candidates likely to contain durable memory updates: explicit user corrections, repeated preferences, coding/review/commit style preferences, repo or workflow gotchas, durable facts about people/projects, contradictions with current memory, or repeated agent failures.",
+    "Select up to `max_selected` conversations. Prefer candidates likely to contain useful memory updates: explicit user corrections, repeated preferences, coding/review/commit style preferences, repo or workflow gotchas, facts about people/projects that will matter later, contradictions with current memory, or repeated agent failures.",
     "Avoid one-off debugging, transient task status, duplicated/redundant candidates, and conversations already fully reflected unless they are useful for deduplication or contradiction resolution.",
     "Treat summaries/descriptions as weak internal metadata, not confirmed facts. The final reflection pass will verify against the actual transcript before writing memory.",
     "",
     "Return strict JSON as your final response with this shape:",
-    '{"selected_conversations":[{"conversation_id":"conv-...","reason":"durable reason for selecting this transcript","priority":"high"}]}',
+    '{"selected_conversations":[{"conversation_id":"conv-...","reason":"reason for selecting this transcript","priority":"high"}]}',
     'Use priority values `high`, `medium`, or `low`. If nothing looks memory-worthy, write `{"selected_conversations":[]}`.',
   );
 
@@ -1214,7 +1214,7 @@ const REFLECTION_AUTO_QUERIES = [
   {
     id: "user-corrections",
     query:
-      "user corrections and preferences repeated mistakes durable feedback",
+      "user corrections and preferences repeated mistakes recurring feedback",
   },
   {
     id: "coding-style",
@@ -1223,11 +1223,11 @@ const REFLECTION_AUTO_QUERIES = [
   {
     id: "collaboration",
     query:
-      "collaboration communication style team preferences durable workflow",
+      "collaboration communication style team preferences recurring workflow",
   },
   {
     id: "repo-gotchas",
-    query: "repo conventions project gotchas durable implementation details",
+    query: "repo conventions project gotchas important implementation details",
   },
   {
     id: "long-term-facts",
@@ -1513,7 +1513,7 @@ export async function buildReflectionAutoPayload(options: {
     max_selected: maxSelected,
     user_instruction: instruction?.trim() || undefined,
     instructions:
-      "Choose conversations likely to contain durable memory updates. Prefer explicit corrections, repeated preferences, project conventions, and contradictions; avoid one-off debugging and transient task state.",
+      "Choose conversations likely to contain useful memory updates. Prefer explicit corrections, repeated preferences, project conventions, and contradictions; avoid one-off debugging and transient task state.",
     candidates: sortedCandidates,
   };
   const candidatesPath = buildPayloadPath(payloadRoot, "candidates");

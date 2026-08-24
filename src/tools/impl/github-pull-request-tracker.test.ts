@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ConversationUpdateBody } from "@/backend";
 import {
   type ConversationTagBackend,
+  copyGitHubPullRequestTags,
   createGitHubPullRequestOutputTracker,
   isGitHubPullRequestCreateCommand,
 } from "./github-pull-request-tracker";
@@ -32,6 +33,35 @@ class FakeConversationTagBackend implements ConversationTagBackend {
       : [];
     this.updates.push([...this.tags]);
     return { id: _conversationId, tags: [...this.tags] };
+  }
+}
+
+class MultiConversationTagBackend implements ConversationTagBackend {
+  readonly tagsByConversation = new Map<string, string[]>();
+
+  constructor(conversations: Record<string, string[]>) {
+    for (const [conversationId, tags] of Object.entries(conversations)) {
+      this.tagsByConversation.set(conversationId, [...tags]);
+    }
+  }
+
+  async retrieveConversation(conversationId: string): Promise<unknown> {
+    return {
+      id: conversationId,
+      tags: [...(this.tagsByConversation.get(conversationId) ?? [])],
+    };
+  }
+
+  async updateConversation(
+    conversationId: string,
+    body: ConversationUpdateBody,
+  ): Promise<unknown> {
+    const tags = Reflect.get(body, "tags");
+    const nextTags = Array.isArray(tags)
+      ? tags.filter((tag): tag is string => typeof tag === "string")
+      : [];
+    this.tagsByConversation.set(conversationId, nextTags);
+    return { id: conversationId, tags: [...nextTags] };
   }
 }
 
@@ -224,5 +254,89 @@ describe("GitHub pull request output tracking", () => {
     );
 
     await expect(tracker?.finish()).resolves.toBeUndefined();
+  });
+});
+
+describe("GitHub pull request tag copying", () => {
+  test("copies only PR tags from an Agent conversation to its parent", async () => {
+    const backend = new MultiConversationTagBackend({
+      "conv-child": [
+        "origin:subagent",
+        "github:pull-request:letta-ai:letta-code:3851",
+        "github:pull-request:letta-ai:letta-code:3853",
+      ],
+      "conv-parent": [
+        "channel:slack",
+        "github:pull-request:letta-ai:letta-code:3852",
+      ],
+    });
+
+    await copyGitHubPullRequestTags("conv-child", "conv-parent", backend);
+
+    expect(backend.tagsByConversation.get("conv-parent")).toEqual([
+      "channel:slack",
+      "github:pull-request:letta-ai:letta-code:3852",
+      "github:pull-request:letta-ai:letta-code:3851",
+      "github:pull-request:letta-ai:letta-code:3853",
+    ]);
+  });
+
+  test("serializes PR tags copied from parallel Agent conversations", async () => {
+    const backend = new MultiConversationTagBackend({
+      "conv-child-a": ["github:pull-request:letta-ai:letta-code:3851"],
+      "conv-child-b": ["github:pull-request:letta-ai:letta-code:3852"],
+      "conv-parent": [],
+    });
+
+    await Promise.all([
+      copyGitHubPullRequestTags("conv-child-a", "conv-parent", backend),
+      copyGitHubPullRequestTags("conv-child-b", "conv-parent", backend),
+    ]);
+
+    expect(backend.tagsByConversation.get("conv-parent")).toEqual([
+      "github:pull-request:letta-ai:letta-code:3851",
+      "github:pull-request:letta-ai:letta-code:3852",
+    ]);
+  });
+
+  test("stops an in-flight tag copy when its Agent turn is interrupted", async () => {
+    const abortController = new AbortController();
+    let targetReadStarted = false;
+    let updateCalled = false;
+    const backend: ConversationTagBackend = {
+      retrieveConversation: async (conversationId, options) => {
+        expect(options?.signal).toBe(abortController.signal);
+        if (conversationId === "conv-child") {
+          return {
+            tags: ["github:pull-request:letta-ai:letta-code:3995"],
+          };
+        }
+        targetReadStarted = true;
+        return await new Promise((_, reject) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason),
+            { once: true },
+          );
+        });
+      },
+      updateConversation: async () => {
+        updateCalled = true;
+        return {};
+      },
+    };
+
+    const copy = copyGitHubPullRequestTags(
+      "conv-child",
+      "conv-parent",
+      backend,
+      abortController.signal,
+    );
+    await Bun.sleep(0);
+    expect(targetReadStarted).toBe(true);
+    abortController.abort();
+
+    await expect(copy).rejects.toMatchObject({ name: "AbortError" });
+    expect(updateCalled).toBe(false);
   });
 });

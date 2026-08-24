@@ -20,9 +20,14 @@ export interface ApprovalRequest {
 export interface ErrorInfo {
   message: string;
   error_type?: string;
+  error_code?: string;
   detail?: string;
   run_id?: string;
 }
+
+type StructuredLettaErrorMessage = LettaStreamingResponse.LettaErrorMessage & {
+  error_code?: string;
+};
 
 export interface ChunkProcessingResult {
   /** Whether this chunk should be output to the user */
@@ -87,11 +92,12 @@ export class StreamProcessor {
     // Detect mid-stream errors
     // Case 1: LettaErrorMessage from the API (has message_type: "error_message")
     if ("message_type" in chunk && chunk.message_type === "error_message") {
-      // This is a LettaErrorMessage
-      const apiError = chunk as LettaStreamingResponse.LettaErrorMessage;
+      // Cloud may send structured fields that predate the generated SDK type.
+      const apiError = chunk as StructuredLettaErrorMessage;
       errorInfo = {
         message: apiError.message,
         error_type: apiError.error_type,
+        error_code: apiError.error_code,
         detail: apiError.detail,
         run_id: this.lastRunId || undefined,
       };

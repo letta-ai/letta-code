@@ -14,7 +14,7 @@ letta.capabilities.ui.panels
 
 ## Persistent transcript notifications
 
-Use `letta.ui.notify(message)` for a durable TUI-only event line such as a model auto-swap or background-work completion. It uses the same transcript visual as `Dreamed; no durable memory changes were needed.` and is not sent to the model or added to agent context. Guard calls with `letta.capabilities.ui.panels`; Desktop/listener cannot render them.
+Use `letta.ui.notify(message)` for a persistent TUI-only event line such as a model auto-swap or background-work completion. It uses the same transcript visual as `Dreamed; no memory changes were needed.` and is not sent to the model or added to agent context. Guard calls with `letta.capabilities.ui.panels`; Desktop/listener cannot render them.
 
 ```ts
 if (letta.capabilities.ui.panels) {

@@ -1,0 +1,211 @@
+name: Claude Agent Watch
+
+on:
+  schedule:
+    - cron: "17 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      previous_version:
+        description: "Previous exact Claude Code npm version"
+        required: false
+        type: string
+      current_version:
+        description: "Current exact Claude Code npm version"
+        required: false
+        type: string
+      force_docs_scan:
+        description: "Fetch and hash every page in the official docs index"
+        required: false
+        default: false
+        type: boolean
+      dry_run:
+        description: "Detect only; do not write shared state or invoke Amelia"
+        required: false
+        default: false
+        type: boolean
+      validation_only:
+        description: "Run exact probes for historical validation without writing shared state"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: claude-agent-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Detect Claude Code drift
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANTHROPIC_API_KEY: ${{ inputs.dry_run != true && secrets.ANTHROPIC_API_KEY || '' }}
+          PREVIOUS_VERSION: ${{ inputs.previous_version }}
+          CURRENT_VERSION: ${{ inputs.current_version }}
+          FORCE_DOCS_SCAN: ${{ inputs.force_docs_scan }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          VALIDATION_ONLY: ${{ inputs.validation_only }}
+        run: |
+          ARGS=(--analysis-file "$RUNNER_TEMP/claude-watch-analysis.json")
+          if [ -n "$PREVIOUS_VERSION" ]; then
+            ARGS+=(--previous-version "$PREVIOUS_VERSION")
+          fi
+          if [ -n "$CURRENT_VERSION" ]; then
+            ARGS+=(--current-version "$CURRENT_VERSION")
+          fi
+          if [ "$FORCE_DOCS_SCAN" = "true" ]; then
+            ARGS+=(--force-docs-scan)
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          if [ "$VALIDATION_ONLY" = "true" ]; then
+            ARGS+=(--validation-only)
+          fi
+          bun scripts/claude-watch/agent-watch.ts "${ARGS[@]}"
+
+      - name: Upload validation analysis
+        if: inputs.validation_only == true
+        uses: actions/upload-artifact@v6
+        with:
+          name: claude-watch-validation-${{ github.run_id }}
+          path: ${{ runner.temp }}/claude-watch-analysis.json
+          retention-days: 3
+
+      - name: Resolve Amelia GitHub identity
+        id: github-identity
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+        run: |
+          login=$(gh api user --jq .login)
+          echo "login=$login" >> "$GITHUB_OUTPUT"
+          echo "Authenticated GitHub login: $login"
+
+      - name: Build Amelia prompt
+        id: prompt
+        if: steps.detect.outputs.should_run_agent == 'true'
+        env:
+          TRACKER_ISSUE: ${{ steps.detect.outputs.tracker_issue }}
+          TRACKER_ISSUE_URL: ${{ steps.detect.outputs.tracker_issue_url }}
+          CANDIDATE_ID: ${{ steps.detect.outputs.candidate_id }}
+          CURRENT_VERSION: ${{ steps.detect.outputs.current_version }}
+          PREVIOUS_VERSION: ${{ steps.detect.outputs.previous_version }}
+          VERDICT: ${{ steps.detect.outputs.verdict }}
+          STATE_COMMIT_SHA: ${{ steps.detect.outputs.state_commit_sha }}
+          EXPECTED_GITHUB_LOGIN: ${{ steps.github-identity.outputs.login }}
+          OWNERS: ${{ vars.CLAUDE_WATCH_OWNERS }}
+        run: |
+          jq -e '
+            type == "array" and length > 0 and
+            all(.[];
+              ((.github | type) == "string" and (.github | length) > 0) and
+              ((.slack | type) == "string" and (.slack | test("^U[A-Z0-9]+$")))
+            )
+          ' <<< "$OWNERS" > /dev/null
+          github_reviewers=$(jq -r 'map(.github) | join(",")' <<< "$OWNERS")
+          owner_count=$(jq 'length' <<< "$OWNERS")
+          slack_owner_id=$(jq -r --argjson index "$((RANDOM % owner_count))" '.[$index].slack' <<< "$OWNERS")
+          {
+            echo "prompt<<AMELIA_PROMPT_EOF"
+            cat .github/agent-prompts/claude-agent-watch.md
+            echo
+            echo "## Run inputs"
+            echo
+            echo "- Tracker issue: #$TRACKER_ISSUE ($TRACKER_ISSUE_URL)"
+            echo "- Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "- Expected GitHub login: $EXPECTED_GITHUB_LOGIN"
+            echo "- GitHub reviewers: $github_reviewers"
+            echo "- Slack owner ID: $slack_owner_id"
+            echo "- Candidate ID: $CANDIDATE_ID"
+            echo "- Current package: @anthropic-ai/claude-code@$CURRENT_VERSION"
+            echo "- Previous package: @anthropic-ai/claude-code@$PREVIOUS_VERSION"
+            echo "- Detector verdict: $VERDICT"
+            echo "- State commit SHA: $STATE_COMMIT_SHA"
+            echo
+            echo "## Sandbox bootstrap"
+            echo
+            echo "Run this exact block before reviewing the candidate:"
+            echo
+            echo '```bash'
+            echo 'set -euo pipefail'
+            echo 'rm -rf /tmp/letta-code-claude-watch'
+            echo 'test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh repo clone letta-ai/letta-code /tmp/letta-code-claude-watch'
+            echo 'cd /tmp/letta-code-claude-watch'
+            echo 'bun install --frozen-lockfile'
+            echo 'git fetch origin claude-watch-state'
+            echo "test -n \"\$AMELIA_GITHUB_TOKEN\" && GITHUB_TOKEN= GH_TOKEN=\"\$AMELIA_GITHUB_TOKEN\" GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=letta-ai/letta-code GITHUB_RUN_ID=\"$GITHUB_RUN_ID\" bun scripts/claude-watch/agent-watch.ts --dry-run --rebuild-state-commit \"$STATE_COMMIT_SHA\" --analysis-file /tmp/claude-watch-analysis.json > /tmp/claude-watch-analysis.log"
+            echo "jq -e --arg candidate \"$CANDIDATE_ID\" --arg current \"$CURRENT_VERSION\" '.candidate_id == \$candidate and .current_version == \$current and (.docs_diff | type == \"object\")' /tmp/claude-watch-analysis.json > /dev/null"
+            echo '```'
+            echo "AMELIA_PROMPT_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "conversation_name=$GITHUB_WORKFLOW $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Ask Amelia to review Claude Code drift
+        if: steps.detect.outputs.should_run_agent == 'true'
+        uses: letta-ai/letta-code-action@4b8e508a523ff576fee09be1432d6f39158c272c
+        with:
+          letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
+          github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
+          environment: cloud
+          letta_args: >-
+            --new --name "${{ steps.prompt.outputs.conversation_name }}"
+          track_progress: ""
+          tracking_comment: "false"
+          model: auto
+          prompt: ${{ steps.prompt.outputs.prompt }}
+
+      - name: Verify terminal outcome
+        if: steps.detect.outputs.should_run_agent == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bun scripts/claude-watch/update-tracker.ts \
+            --tracker-issue "${{ steps.detect.outputs.tracker_issue }}" \
+            --candidate-id "${{ steps.detect.outputs.candidate_id }}" \
+            --state-commit-sha "${{ steps.detect.outputs.state_commit_sha }}" \
+            --assert-terminal
+
+      - name: Record failed review attempt
+        if: failure() && steps.detect.outputs.should_run_agent == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if bun scripts/claude-watch/update-tracker.ts \
+            --tracker-issue "${{ steps.detect.outputs.tracker_issue }}" \
+            --candidate-id "${{ steps.detect.outputs.candidate_id }}" \
+            --state-commit-sha "${{ steps.detect.outputs.state_commit_sha }}" \
+            --assert-terminal; then
+            echo "The agent recorded a terminal outcome before its action failed"
+            exit 0
+          fi
+          bun scripts/claude-watch/update-tracker.ts \
+            --tracker-issue "${{ steps.detect.outputs.tracker_issue }}" \
+            --analysis-file "$RUNNER_TEMP/claude-watch-analysis.json" \
+            --state-commit-sha "${{ steps.detect.outputs.state_commit_sha }}" \
+            --outcome error \
+            --notes "Amelia review failed before recording a terminal outcome; retry this candidate"

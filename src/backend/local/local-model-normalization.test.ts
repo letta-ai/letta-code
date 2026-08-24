@@ -17,6 +17,7 @@ import {
   localLlmConfigModelPatch,
   normalizeLocalModelHandle,
 } from "@/backend/local/local-model-normalization";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
 
 function localConversationDir(
   storageDir: string,
@@ -29,6 +30,7 @@ function localConversationDir(
   );
 }
 
+setupRuntimeModelCatalogFixture();
 describe("local model normalization", () => {
   afterEach(() => {
     clearRegisteredPiProviders();

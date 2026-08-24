@@ -194,7 +194,7 @@ describe("local system prompt compilation", () => {
     }
   });
 
-  test("renders available skills as request-scoped prompt content", () => {
+  test("renders exact skill IDs without exposing client filesystem locations", () => {
     const skillsBlock = compileAvailableSkillsBlock([
       {
         name: "pdf",
@@ -208,15 +208,14 @@ describe("local system prompt compilation", () => {
       },
     ]);
 
-    expect(skillsBlock).toContain("<available_skills>");
-    expect(skillsBlock).toContain("/home/user/.letta/skills");
-    expect(skillsBlock).toContain(
-      "└── linear-cli/\n    └── SKILL.md (Manage Linear issues)",
+    expect(skillsBlock).toBe(
+      "<available_skills>\n" +
+        "- `linear-cli`: Manage Linear issues\n" +
+        "- `pdf`: Read and write PDFs\n" +
+        "</available_skills>",
     );
-    expect(skillsBlock).toContain("/repo/skills");
-    expect(skillsBlock).toContain(
-      "└── pdf/\n    └── SKILL.md (Read and write PDFs)",
-    );
+    expect(skillsBlock).not.toContain("/home/user");
+    expect(skillsBlock).not.toContain("/repo");
 
     expect(appendAvailableSkillsBlock("compiled", [])).toBe("compiled");
     expect(

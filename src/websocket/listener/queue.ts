@@ -9,7 +9,12 @@ import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
 import { getInboundImageFailureMode } from "./image-policy";
-import { emitDequeuedUserMessage } from "./protocol-outbound";
+import { getInboundClientMessageIds } from "./inbound-queue";
+import {
+  emitDequeuedUserMessage,
+  emitLoopStatusUpdate,
+  emitQueueUpdate,
+} from "./protocol-outbound";
 import {
   emitListenerStatus,
   evictConversationRuntimeIfIdle,
@@ -212,6 +217,27 @@ function buildQueuedTurnMessage(
   };
 }
 
+function getDequeuedClientMessageIds(
+  runtime: ConversationRuntime,
+  batch: DequeuedBatch,
+): string[] {
+  const clientMessageIds = new Set<string>();
+  for (const item of batch.items) {
+    const queuedMessage = runtime.queuedMessagesByItemId.get(item.id);
+    const inboundClientMessageIds = queuedMessage
+      ? getInboundClientMessageIds(queuedMessage)
+      : [];
+    for (const clientMessageId of inboundClientMessageIds.length > 0
+      ? inboundClientMessageIds
+      : item.clientMessageId
+        ? [item.clientMessageId]
+        : []) {
+      clientMessageIds.add(clientMessageId);
+    }
+  }
+  return [...clientMessageIds];
+}
+
 export function shouldQueueInboundMessage(parsed: IncomingMessage): boolean {
   return parsed.messages.some((payload) => "content" in payload);
 }
@@ -341,9 +367,16 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     return null;
   }
 
+  const clientMessageIds = getDequeuedClientMessageIds(runtime, dequeuedBatch);
   const queuedTurn = buildQueuedTurnMessage(runtime, dequeuedBatch);
   if (!queuedTurn) {
     return null;
+  }
+  if (clientMessageIds.length > 0) {
+    runtime.dequeuedClientMessageIdsByBatchId.set(
+      dequeuedBatch.batchId,
+      clientMessageIds,
+    );
   }
 
   return {
@@ -365,6 +398,30 @@ function computeListenerQueueBlockedReason(
       ? getPendingControlRequestCount(runtime.listener, activeScope)
       : 0,
   );
+}
+
+/**
+ * Turn-boundary status re-emit (LET-11174). Queue frames are emitted only on
+ * change and loop frames only on transition, so one lost frame leaves
+ * downstream status consumers stale until the next change happens to land.
+ * Re-sending the full snapshot at turn start and turn end bounds any silent
+ * frame loss to a single turn. Both frames coalesce as status-class snapshots
+ * on the outbound wire, so unchanged re-emits cost at most one extra frame
+ * each per boundary.
+ */
+function emitTurnBoundaryStatus(
+  runtime: ConversationRuntime,
+  socket: ListenerTransport,
+): void {
+  if (!isListenerTransportOpen(socket)) {
+    return;
+  }
+  const scope = {
+    agent_id: runtime.agentId,
+    conversation_id: runtime.conversationId,
+  };
+  emitQueueUpdate(socket, runtime, scope);
+  emitLoopStatusUpdate(socket, runtime, scope);
 }
 
 async function drainQueuedMessages(
@@ -403,6 +460,8 @@ async function drainQueuedMessages(
 
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
+      // Turn start boundary: unconditional snapshot even when nothing changed.
+      emitTurnBoundaryStatus(runtime, socket);
 
       const preTurnStatus =
         getListenerStatus(runtime.listener) === "processing"
@@ -421,6 +480,9 @@ async function drainQueuedMessages(
         opts.onStatusChange,
         opts.connectionId,
       );
+      // Turn end boundary: repair any queue/loop frame the turn's own
+      // change-driven emissions failed to deliver.
+      emitTurnBoundaryStatus(runtime, socket);
       evictConversationRuntimeIfIdle(runtime);
     }
   } finally {

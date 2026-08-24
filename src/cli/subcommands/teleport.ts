@@ -5,6 +5,7 @@ import {
   isEnvironmentOnline,
   listEnvironments,
   resolveAgentSandboxConnectionId,
+  resolveDesktopEnvironmentConnectionId,
   resolveEnvironmentConnectionId,
   teleportToEnvironment,
 } from "@/backend/api/environments";
@@ -17,6 +18,7 @@ interface TeleportSubcommandDeps {
   listEnvironments?: typeof listEnvironments;
   resolveEnvironmentConnectionId?: typeof resolveEnvironmentConnectionId;
   resolveAgentSandboxConnectionId?: typeof resolveAgentSandboxConnectionId;
+  resolveDesktopEnvironmentConnectionId?: typeof resolveDesktopEnvironmentConnectionId;
   teleportToEnvironment?: typeof teleportToEnvironment;
 }
 
@@ -30,6 +32,7 @@ function printUsage(): void {
 Usage:
   letta teleport list
   letta teleport cloud
+  letta teleport local
   letta teleport <environment>
 
 Notes:
@@ -39,10 +42,10 @@ Notes:
   - Requires a Letta Cloud agent and a non-virtual conversation.
   - list: prints accessible online remote environments as JSON.
   - cloud: teleports to the agent's Cloud sandbox.
+  - local: teleports to the one online Desktop environment. Desktop Remote
+    Access must be enabled; if several are online, choose one explicitly.
   - <environment>: teleports to a specific remote environment by name,
     device-id, connection-id, or environment id.
-  - Desktop Local is not a teleport target yet. Use the Desktop environment
-    picker to switch back to Local.
   - Output is JSON only.
 `.trim(),
   );
@@ -147,7 +150,7 @@ function assertTeleportableRemoteEnvironment(
 ): void {
   if (!isTeleportableRemoteEnvironment(environment)) {
     throw new Error(
-      "Desktop Local is not a teleport target yet. Use the Desktop environment picker to switch back to Local.",
+      "The Desktop-local connection is not Cloud-routable. Use `letta teleport local` to resolve its Remote Access environment.",
     );
   }
 }
@@ -210,9 +213,15 @@ export async function runTeleportSubcommand(
         conversationId: session.conversationId,
       });
       targetConnectionId = result.connectionId;
+    } else if (action === "local") {
+      const resolve =
+        deps.resolveDesktopEnvironmentConnectionId ??
+        resolveDesktopEnvironmentConnectionId;
+      const result = await resolve();
+      targetConnectionId = result.connectionId;
     } else if (action === "back") {
       throw new Error(
-        "Teleport back is not supported yet. Use the Desktop environment picker to switch back to Local.",
+        "Teleport back is not supported. Use `letta teleport local` or choose an explicit environment.",
       );
     } else {
       const resolve =

@@ -1,4 +1,11 @@
-import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
+import {
+  type Api,
+  clampThinkingLevel,
+  type Model,
+  type ModelThinkingLevel,
+  type ThinkingLevel,
+  type ThinkingLevelMap,
+} from "@earendil-works/pi-ai";
 import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 import { localNamesForProviderId } from "@/backend/local/local-pi-credential-store";
 import {
@@ -11,6 +18,7 @@ import {
   type LocalProviderTimeout,
   resolveLocalProviderTimeout,
 } from "@/backend/local/local-provider-timeout";
+import { normalizeReasoningEffortForModel } from "@/utils/openai-reasoning-effort";
 import { isRecord } from "@/utils/type-guards";
 import { LocalPiModelsRuntime } from "./pi-models-runtime";
 import {
@@ -67,6 +75,9 @@ function thinkingLevelSetting(
 ): ThinkingLevel | undefined {
   const effort = settingString(value);
   if (effort === "max") return preserveMax ? "max" : "xhigh";
+  // pi-ai's public ThinkingLevel currently omits `none`, but ChatGPT GPT-5.6
+  // accepts it and rejects the legacy `minimal` alias (LET-11064).
+  if (effort === "none") return "none" as ThinkingLevel;
   return effort === "minimal" ||
     effort === "low" ||
     effort === "medium" ||
@@ -74,6 +85,86 @@ function thinkingLevelSetting(
     effort === "xhigh"
     ? effort
     : undefined;
+}
+
+function modelIdFromHandle(modelHandle?: string): string | undefined {
+  if (!modelHandle) return undefined;
+  return modelHandle.slice(modelHandle.indexOf("/") + 1);
+}
+
+// zAI GLM-5.3 (and sibling always-on GLM-5 variants) reject
+// `thinking: {type: "disabled"}` with code 1210. pi-ai sends that whenever
+// `options.reasoning` is absent, so these models need a concrete effort even
+// when Letta has no explicit reasoning setting.
+function alwaysOnZaiThinking(modelId?: string): boolean {
+  return (
+    modelId === "glm-5.3" ||
+    modelId === "glm-5-turbo" ||
+    modelId === "glm-5.2-highspeed"
+  );
+}
+
+/**
+ * TEMPORARY PI-AI COMPATIBILITY PATCH. ADDED 2026-08-24.
+ *
+ * REMOVE THIS ENTIRE BLOCK after letta-code upgrades to a pi-ai release whose
+ * generated OpenRouter catalog translates `reasoning.mandatory` and
+ * `reasoning.supported_efforts` into `Model.thinkingLevelMap`.
+ *
+ * Upstream issue: https://github.com/earendil-works/pi/issues/8454
+ *
+ * pi-ai 0.84.2 marks these models as reasoning-capable but omits their
+ * `thinkingLevelMap`. Its OpenRouter adapter therefore sends
+ * `reasoning: { effort: "none" }` when Letta has no selected reasoning level,
+ * and these endpoints reject the request because reasoning is mandatory.
+ * `off: null` tells pi-ai to omit that field. The other nulls and strings let
+ * pi-ai's own `getSupportedThinkingLevels()` and `clampThinkingLevel()` own
+ * selector visibility and saved-level clamping.
+ *
+ * Keep this as model metadata only. Do not add OpenRouter request building,
+ * effort ordering, or custom clamping here. Those behaviors belong to pi-ai.
+ */
+const TEMPORARY_PI_AI_OPENROUTER_THINKING_LEVEL_MAPS: Readonly<
+  Record<string, ThinkingLevelMap>
+> = {
+  "stealth/ox-alpha": {
+    off: null,
+    minimal: null,
+    low: "low",
+    medium: null,
+    high: "high",
+    xhigh: null,
+    max: "max",
+  },
+  "google/gemini-3.7-flash": {
+    off: null,
+    minimal: null,
+    low: "low",
+    medium: "medium",
+    high: "high",
+    xhigh: null,
+    max: null,
+  },
+  "google/gemini-3.7-flash:batch": {
+    off: null,
+    minimal: null,
+    low: "low",
+    medium: "medium",
+    high: "high",
+    xhigh: null,
+    max: null,
+  },
+};
+
+export function patchTemporaryPiAiOpenRouterThinkingMap<TApi extends Api>(
+  model: Model<TApi>,
+): Model<TApi> {
+  if (model.provider !== "openrouter" || model.thinkingLevelMap) return model;
+  const thinkingLevelMap =
+    TEMPORARY_PI_AI_OPENROUTER_THINKING_LEVEL_MAPS[model.id];
+  return thinkingLevelMap
+    ? { ...model, reasoning: true, thinkingLevelMap }
+    : model;
 }
 
 // Maps Letta model settings to a pi-ai ThinkingLevel. Every pi-ai Anthropic
@@ -84,21 +175,43 @@ function thinkingLevelSetting(
 export function reasoningForSettings(
   modelSettings: Record<string, unknown>,
   modelHandle?: string,
+  model?: Model<Api>,
 ): ThinkingLevel | undefined {
   const thinking = isRecord(modelSettings.thinking)
     ? modelSettings.thinking
     : undefined;
-  if (thinking?.type === "disabled") return undefined;
+  const modelId = modelIdFromHandle(modelHandle);
+  const preserveMax = modelId?.startsWith("gpt-5.6") === true;
   const nestedReasoning = isRecord(modelSettings.reasoning)
     ? modelSettings.reasoning
     : undefined;
-  const modelId = modelHandle?.slice(modelHandle.indexOf("/") + 1);
-  const preserveMax = modelId?.startsWith("gpt-5.6") === true;
-  return (
-    thinkingLevelSetting(nestedReasoning?.reasoning_effort, preserveMax) ??
-    thinkingLevelSetting(modelSettings.effort, preserveMax) ??
-    thinkingLevelSetting(modelSettings.reasoning_effort, preserveMax)
+  const rawEffort =
+    nestedReasoning?.reasoning_effort ??
+    modelSettings.effort ??
+    modelSettings.reasoning_effort;
+  const explicit = thinkingLevelSetting(
+    normalizeReasoningEffortForModel(
+      modelHandle,
+      typeof rawEffort === "string" ? rawEffort : undefined,
+    ),
+    preserveMax,
   );
+  if (alwaysOnZaiThinking(modelId)) {
+    // API accepts low / high / max; low is the cheapest always-on default.
+    return explicit === "medium" || explicit === "minimal"
+      ? "low"
+      : (explicit ?? "low");
+  }
+  if (
+    model?.provider === "openrouter" &&
+    model.thinkingLevelMap?.off === null
+  ) {
+    if (!explicit || explicit === ("none" as ThinkingLevel)) return undefined;
+    const clamped = clampThinkingLevel(model, explicit as ModelThinkingLevel);
+    return clamped === "off" ? undefined : clamped;
+  }
+  if (thinking?.type === "disabled") return undefined;
+  return explicit;
 }
 
 export interface PiModelSettings {
@@ -254,9 +367,19 @@ export interface ZaiConnection {
   timeout: LocalProviderTimeout;
 }
 
+function isZaiCodingBaseURL(baseURL: string | undefined): boolean {
+  return typeof baseURL === "string" && baseURL.includes("/coding/");
+}
+
 export function resolveZaiConnection(options: {
   storageDir?: string;
   preferredProviderType?: "zai" | "zai_coding";
+  /**
+   * Catalog/published model URL. Current GLM models publish the coding-plan
+   * endpoint; a lone stored `zai` key should reuse that instead of being
+   * forced onto pay-as-you-go `/api/paas/v4`.
+   */
+  publishedBaseURL?: string;
 }): ZaiConnection {
   const regularRecord = localProviderRecord(
     ["zai", LOCAL_ZAI_PROVIDER_NAME],
@@ -297,15 +420,32 @@ export function resolveZaiConnection(options: {
       providerIds: [LOCAL_ZAI_CODING_PROVIDER_NAME, "zai-coding"],
     }),
   };
+  const reuseRegularKeyOnCodingEndpoint = (): ZaiConnection => ({
+    ...codingConnection,
+    apiKey: regularKey,
+    timeout: regularConnection.timeout,
+  });
+  const publishedWantsCoding = isZaiCodingBaseURL(options.publishedBaseURL);
+  const hasDedicatedCodingRecord = Boolean(codingKey);
 
   if (options.preferredProviderType === "zai_coding" && codingKey) {
     return codingConnection;
   }
   if (options.preferredProviderType === "zai" && regularKey) {
+    // /model zai/glm-* stores provider_type=zai even for coding-plan models.
+    // Only stay on pay-as-you-go when a dedicated coding record exists or the
+    // catalog model itself is not a coding endpoint.
+    if (!hasDedicatedCodingRecord && publishedWantsCoding) {
+      return reuseRegularKeyOnCodingEndpoint();
+    }
     return regularConnection;
   }
   if (codingKey) return codingConnection;
-  if (regularKey) return regularConnection;
+  if (regularKey) {
+    return publishedWantsCoding
+      ? reuseRegularKeyOnCodingEndpoint()
+      : regularConnection;
+  }
   return codingConnection;
 }
 
@@ -519,6 +659,7 @@ export async function resolvePiModelForAgent(
         preferredProviderType === "zai_coding"
           ? preferredProviderType
           : undefined,
+      publishedBaseURL: publishedModel?.baseUrl,
     });
     connection = {
       apiKey: zai.apiKey,
@@ -543,13 +684,14 @@ export async function resolvePiModelForAgent(
 
   // Mod product hook: per-credential model transformation. Deep-copied so a
   // mutating mod cannot corrupt the provider-published instance.
-  const hookedModel =
+  const hookedModel = patchTemporaryPiAiOpenRouterThinkingMap(
     oauthCredentials && registeredProvider?.config.oauth?.modifyModels
       ? (registeredProvider.config.oauth.modifyModels(
           [structuredClone(publishedModel)],
           oauthCredentials,
         )[0] ?? publishedModel)
-      : publishedModel;
+      : publishedModel,
+  );
 
   // Effective-value overrides only: with none, the turn model IS the
   // runtime-published instance — persisted selection settings that merely

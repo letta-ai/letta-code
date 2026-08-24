@@ -42,6 +42,7 @@ export interface StartListenerOptions {
   connectionId: string;
   wsUrl: string;
   supportsSplitStatusChannels?: boolean;
+  supportsPairedListenerGenerations?: boolean;
   deviceId: string;
   connectionName: string;
   skillsDirectory?: string;
@@ -227,6 +228,8 @@ export type ConversationRuntime = {
   readonly cancelRequested: boolean;
   queueRuntime: QueueRuntime;
   queuedMessagesByItemId: Map<string, IncomingMessage>;
+  /** Exact send identities carried by each batch removed from the queue. */
+  dequeuedClientMessageIdsByBatchId: Map<string, string[]>;
   queuePumpActive: boolean;
   queuePumpScheduled: boolean;
   pendingTurns: number;
@@ -322,6 +325,8 @@ export type ListenerRuntime = {
   /** Coalesces concurrent first-loads for one agent's scoped adapter. */
   agentModAdapterLoads?: Map<string, Promise<ModAdapter | null>>;
   sessionId: string;
+  /** Increments once for every control/stream reconnect pair. */
+  nextConnectionAttempt: number;
   /** Monotonic allocator used for deterministic connection ordering. */
   nextConnectionOrdinal: number;
   /** All currently open listener transports, keyed by explicit identity. */
@@ -371,6 +376,8 @@ export type ListenerRuntime = {
   connectionId: string | null;
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
+  /** Recent run-to-send snapshots survive idle conversation runtime eviction. */
+  clientMessageIdsByRunIdByConversation?: Map<string, Map<string, string[]>>;
   /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */
   worktreeWatcherByConversation: Map<
     string,

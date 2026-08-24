@@ -86,7 +86,7 @@ export interface SubagentConfig {
   systemPrompt: string;
   /** Allowed tools - specific list or "all" (invalid names are ignored at runtime) */
   allowedTools: string[] | "all";
-  /** Recommended model - any model ID from models.json or full handle */
+  /** Recommended model - any runtime catalog ID or full handle */
   recommendedModel: string;
   /** Whether the recommended model came from bundled defaults or user config. */
   recommendedModelSource?: SubagentRecommendedModelSource;

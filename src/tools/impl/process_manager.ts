@@ -365,9 +365,20 @@ export function createBackgroundOutputFile(id: string): string {
 
 /**
  * Append content to a background output file.
+ *
+ * Returns `true` on success, `false` on failure such as ENOSPC. The function
+ * never throws so that callers inside event callbacks (stdout/stderr data
+ * handlers) do not propagate the exception and crash the host process.
+ * Callers should check the return value and degrade the affected session or
+ * background process instead of pretending the write succeeded.
  */
-export function appendToOutputFile(filePath: string, content: string): void {
-  appendFileSync(filePath, content);
+export function appendToOutputFile(filePath: string, content: string): boolean {
+  try {
+    appendFileSync(filePath, content);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function scrubCompletedBackgroundOutput(

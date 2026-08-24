@@ -30,6 +30,7 @@ import {
   formatTaskNotification,
   resolveNotificationScope,
 } from "@/utils/task-notifications.js";
+import { copyGitHubPullRequestTags } from "./github-pull-request-tracker.js";
 import {
   appendToOutputFile,
   assertBackgroundTaskCapacity,
@@ -154,6 +155,7 @@ export interface SpawnBackgroundSubagentTaskResult {
 
 interface SpawnBackgroundSubagentTaskDeps {
   spawnSubagentImpl: typeof spawnSubagent;
+  copyGitHubPullRequestTagsImpl: typeof copyGitHubPullRequestTags;
   addToMessageQueueImpl: typeof addToMessageQueue;
   formatTaskNotificationImpl: typeof formatTaskNotification;
   runSubagentStopHooksImpl: typeof runSubagentStopHooks;
@@ -366,6 +368,8 @@ export function spawnBackgroundSubagentTask(
   const resolvedParentScope = resolveNotificationScope(parentScope);
 
   const spawnSubagentFn = deps?.spawnSubagentImpl ?? spawnSubagent;
+  const copyGitHubPullRequestTagsFn =
+    deps?.copyGitHubPullRequestTagsImpl ?? copyGitHubPullRequestTags;
   const addToMessageQueueFn = deps?.addToMessageQueueImpl ?? addToMessageQueue;
   const formatTaskNotificationFn =
     deps?.formatTaskNotificationImpl ?? formatTaskNotification;
@@ -436,6 +440,11 @@ export function spawnBackgroundSubagentTask(
     systemPromptOverride,
   )
     .then(async (result) => {
+      await copyGitHubPullRequestTagsFn(
+        result.conversationId,
+        resolvedParentScope?.conversationId,
+      );
+
       bgTask.status = result.success ? "completed" : "failed";
       if (result.error) {
         bgTask.error = result.error;
@@ -734,6 +743,7 @@ export async function task(args: TaskArgs): Promise<string> {
       const forkedConv = await getBackend().forkConversation(parentConvId, {
         ...(parentConvId === "default" ? { agentId: parentAgentId } : {}),
         hidden: true,
+        signal,
       });
       await inheritForkToolset(parentAgentId, parentConvId, forkedConv.id);
       effectiveAgentId = parentAgentId;
@@ -813,6 +823,13 @@ export async function task(args: TaskArgs): Promise<string> {
       parentAgentIdForSpawn,
       undefined,
       resolvedParentScope?.conversationId,
+    );
+
+    await copyGitHubPullRequestTags(
+      result.conversationId,
+      resolvedParentScope?.conversationId,
+      undefined,
+      signal,
     );
 
     // Mark subagent as completed in state store

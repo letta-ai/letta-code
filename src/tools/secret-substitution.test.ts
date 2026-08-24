@@ -56,6 +56,35 @@ describe("scoped secret helpers", () => {
     );
   });
 
+  test("extracts env vars from braced shell references", async () => {
+    await seedSecret(AGENT_A, SECRET_A);
+
+    const expected = { [SECRET_KEY]: SECRET_A };
+    expect(
+      extractSecretEnvFromCommand(`echo "\${${SECRET_KEY}}"`, AGENT_A),
+    ).toEqual(expected);
+    expect(
+      extractSecretEnvFromCommand(`[ -z "\${${SECRET_KEY}:-}" ]`, AGENT_A),
+    ).toEqual(expected);
+    expect(
+      extractSecretEnvFromCommand(`echo "\${#${SECRET_KEY}}"`, AGENT_A),
+    ).toEqual(expected);
+    expect(
+      extractSecretEnvFromCommand(`echo "\${!${SECRET_KEY}}"`, AGENT_A),
+    ).toEqual(expected);
+  });
+
+  test("ignores text without a secret reference", async () => {
+    await seedSecret(AGENT_A, SECRET_A);
+
+    expect(
+      extractSecretEnvFromCommand(`printenv ${SECRET_KEY}`, AGENT_A),
+    ).toEqual({});
+    expect(extractSecretEnvFromCommand(`echo \${lowercase}`, AGENT_A)).toEqual(
+      {},
+    );
+  });
+
   test("extracts env vars from command arrays", async () => {
     await seedSecret(AGENT_A, SECRET_A);
 

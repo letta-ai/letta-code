@@ -34,6 +34,10 @@ import type {
   AppServerInfoCommand,
   AppServerInfoResponseMessage,
 } from "./app-server-info";
+import type {
+  ApprovalClassificationEndMessage,
+  UmiLifecycleMessageBase,
+} from "./approval-classification-protocol";
 import type { BackgroundProcessSummary } from "./background-process-protocol";
 import type { ConversationForkBody } from "./conversation-fork-protocol";
 import type * as CwdProtocol from "./cwd-protocol";
@@ -44,6 +48,7 @@ import type {
   RuntimeExternalToolsUpdateResponseMessage,
   RuntimeStartExternalToolsGroup,
 } from "./external-tool-protocol";
+import type { LoopState } from "./loop-status-protocol";
 import type {
   AgentRuntimeScope,
   ConversationRuntimeScope,
@@ -56,9 +61,11 @@ import type {
 import type { CronRunLogPage, CronTask } from "./schedule-protocol";
 import type * as TeleportProtocol from "./teleport-protocol";
 
+export type * from "./approval-classification-protocol";
 export type * from "./background-process-protocol";
 export type * from "./cwd-protocol";
 export type * from "./external-tool-protocol";
+export type * from "./loop-status-protocol";
 export type * from "./runtime-scope";
 export type * from "./runtime-start-protocol";
 export type * from "./schedule-protocol";
@@ -407,16 +414,6 @@ export interface ModCommandInfo {
   args?: string;
 }
 
-export type LoopStatus =
-  | "SENDING_API_REQUEST"
-  | "WAITING_FOR_API_RESPONSE"
-  | "RETRYING_API_REQUEST"
-  | "PROCESSING_API_RESPONSE"
-  | "EXECUTING_CLIENT_SIDE_TOOL"
-  | "EXECUTING_COMMAND"
-  | "WAITING_ON_APPROVAL"
-  | "WAITING_ON_INPUT";
-
 export type QueueMessageKind =
   | "message"
   | "task_notification"
@@ -440,25 +437,6 @@ export interface QueueMessage {
   source: QueueMessageSource;
   content: MessageCreate["content"] | string;
   enqueued_at: string;
-}
-
-/**
- * Loop state is intentionally small and finite.
- * Message-level details are projected from runtime deltas.
- *
- * Queue state is delivered separately via `update_queue` messages.
- */
-export interface LoopState {
-  status: LoopStatus;
-  active_run_ids: string[];
-  /**
-   * Tool call ids currently executing client-side. Populated only while
-   * `status` is `EXECUTING_CLIENT_SIDE_TOOL`; empty otherwise. Lets
-   * observer UIs render an authoritative executing set that self-heals on
-   * every status frame instead of pairing client_tool_start/end lifecycle
-   * events, which are unrecoverable if a frame is lost.
-   */
-  executing_tool_call_ids: string[];
 }
 
 export interface DeviceStatusUpdateMessage extends RuntimeEnvelope {
@@ -485,13 +463,6 @@ export interface QueueUpdateMessage extends RuntimeEnvelope {
  * Standard Letta message delta forwarded through the stream channel.
  */
 export type MessageDelta = { type: "message" } & LettaStreamingResponse;
-
-export interface UmiLifecycleMessageBase {
-  id: string;
-  date: string;
-  message_type: string;
-  run_id?: string;
-}
 
 export interface ClientToolStartMessage extends UmiLifecycleMessageBase {
   message_type: "client_tool_start";
@@ -567,6 +538,7 @@ export interface LoopErrorMessage extends UmiLifecycleMessageBase {
 
 export type StreamDelta =
   | MessageDelta
+  | ApprovalClassificationEndMessage
   | ClientToolStartMessage
   | ClientToolEndMessage
   | CommandStartMessage
@@ -1500,7 +1472,7 @@ export interface ChatGPTUsageReadResponseMessage {
 }
 
 export interface UpdateModelPayload {
-  /** Preferred model identifier from models.json (e.g. "sonnet") */
+  /** Preferred runtime catalog model identifier (e.g. "sonnet") */
   model_id?: string;
   /** Optional direct handle override (e.g. "anthropic/claude-sonnet-4-6") */
   model_handle?: string;

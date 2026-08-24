@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -18,6 +18,10 @@ import {
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import { LocalBackend } from "@/backend/local";
 import { settingsManager } from "@/settings-manager";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { applyToolsetUpdateForRuntime } from "@/websocket/listener/commands/model-toolset";
@@ -74,7 +78,10 @@ class NativeChatGptCatalogBackend extends FakeHeadlessBackend {
   }
 }
 
+beforeEach(installRuntimeModelCatalogFixture);
+
 afterEach(async () => {
+  clearRuntimeModelCatalogFixture();
   clearAvailableModelsCache();
   __testSetBackend(null);
   await settingsManager.reset();
@@ -129,7 +136,7 @@ describe("listen-client model update status message", () => {
     expect(result.message).toBe("Model updated to Opus 4.6 (Max).");
   });
 
-  test("shows Extra-High for reasoning_effort xhigh on Fable and Opus 4.7+", () => {
+  test("shows Extra High for reasoning_effort xhigh on Fable and Opus 4.7+", () => {
     for (const modelLabel of ["Fable 5", "Opus 4.7", "Opus 4.8"]) {
       const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
         modelLabel,
@@ -138,9 +145,35 @@ describe("listen-client model update status message", () => {
       });
 
       expect(result.message).toBe(
-        `Model updated to ${modelLabel} (Extra-High).`,
+        `Model updated to ${modelLabel} (Extra High).`,
       );
     }
+  });
+
+  test("shows Extra High for reasoning_effort xhigh on GPT-5.6 Sol ChatGPT", () => {
+    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
+      modelLabel: "GPT-5.6 Sol (ChatGPT)",
+      toolsetError: null,
+      updateArgs: { reasoning_effort: "xhigh" },
+      modelHandle: "chatgpt-plus-pro/gpt-5.6-sol",
+    });
+
+    expect(result.message).toBe(
+      "Model updated to GPT-5.6 Sol (ChatGPT) (Extra High).",
+    );
+  });
+
+  test("shows Max for reasoning_effort max on GPT-5.6 Sol ChatGPT", () => {
+    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
+      modelLabel: "GPT-5.6 Sol (ChatGPT)",
+      toolsetError: null,
+      updateArgs: { reasoning_effort: "max" },
+      modelHandle: "chatgpt-plus-pro/gpt-5.6-sol",
+    });
+
+    expect(result.message).toBe(
+      "Model updated to GPT-5.6 Sol (ChatGPT) (Max).",
+    );
   });
 
   test("omits effort when updateArgs has no reasoning_effort", () => {
@@ -420,6 +453,38 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
       }
       await rm(storageDir, { recursive: true, force: true });
     }
+  });
+
+  test("resolves provider metadata for conversation model overrides", async () => {
+    const backend = new NativeChatGptCatalogBackend(
+      "agent-conversation-toolset",
+      undefined,
+      {},
+      { modelHandle: "anthropic/claude-sonnet-4-6" },
+    );
+    __testSetBackend(backend);
+    const agent = await backend.retrieveAgent("agent-conversation-toolset");
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+      model: "chatgpt-jin/gpt-5.6-sol-fast",
+    } as ConversationCreateBody);
+
+    const prepared = await prepareToolExecutionContextForScope({
+      agentId: agent.id,
+      conversationId: conversation.id,
+      cachedAgent: {
+        ...agent,
+        model: "anthropic/claude-sonnet-4-6",
+        model_settings: { provider_type: "anthropic" },
+      },
+    });
+
+    expect(prepared.toolsetPreference).toBe("auto");
+    expect(prepared.toolset).toBe("codex");
+    expect(prepared.preparedToolContext.loadedToolNames).toContain(
+      "ApplyPatch",
+    );
+    expect(prepared.preparedToolContext.loadedToolNames).not.toContain("Edit");
   });
 
   test("switches BYOK Opus 4.8 max update from stale ChatGPT provider state to default toolset", async () => {

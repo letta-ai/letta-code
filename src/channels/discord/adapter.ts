@@ -516,7 +516,13 @@ export function createDiscordAdapter(
         const normalizedText = wasMentioned
           ? normalizeDiscordMentionText(content, botUserId)
           : content;
-        if (!normalizedText && (!attachments || attachments.length === 0))
+        // A bare mention inside a Discord thread can recover a thread whose
+        // route provisioning failed. Other empty guild messages stay inert.
+        if (
+          !normalizedText &&
+          (!attachments || attachments.length === 0) &&
+          (!wasMentioned || !effectiveThreadId)
+        )
           return;
 
         const inbound: InboundChannelMessage = {

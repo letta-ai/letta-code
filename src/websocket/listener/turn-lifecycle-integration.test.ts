@@ -118,6 +118,47 @@ describe("listener turn lifecycle integration", () => {
     setConversationId(null);
   });
 
+  test("publishes classification outcome before waiting for user approval", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      initialStatus: "PROCESSING_API_RESPONSE",
+    });
+    runtime.turnLifecycle.setRunId(turnLease, "run-1");
+    const sentPayloads: string[] = [];
+
+    const approvalResultPromise = startQuestionApproval(runtime, turnLease, {
+      socket: createOpenTransport(sentPayloads),
+      runId: "run-1",
+    });
+    await waitForPendingApproval(runtime);
+
+    const classificationEvents = sentPayloads
+      .map((payload) => JSON.parse(payload) as Record<string, unknown>)
+      .filter(
+        (message) =>
+          message.type === "stream_delta" &&
+          (message.delta as Record<string, unknown> | undefined)
+            ?.message_type === "approval_classification_end",
+      );
+    expect(classificationEvents).toEqual([
+      expect.objectContaining({
+        runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+        delta: expect.objectContaining({
+          run_id: "run-1",
+          auto_allowed_tool_call_ids: [],
+          auto_denied_tool_call_ids: [],
+          user_input_tool_call_ids: ["call-1"],
+        }),
+      }),
+    ]);
+
+    clearConversationRuntimeState(runtime);
+    expect((await approvalResultPromise).kind).toBe("interrupted");
+  });
+
   test("disconnect cleanup during a live approval cannot leave stale processing ownership", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");

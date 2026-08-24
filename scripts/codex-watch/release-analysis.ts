@@ -9,7 +9,6 @@ import {
   type ModelsJson,
   type Verdict,
 } from "./diff-models-json.ts";
-import type { PathChangeSummary, RenderInput } from "./render-issue.ts";
 
 export const CODEX_REPO = "openai/codex";
 export const DEFAULT_TARGET_REPO =
@@ -35,11 +34,26 @@ export interface Release {
 export interface AnalyzeCodexReleaseOptions {
   sinceTag: string | null;
   currentTag: string | null;
+  stableReleases?: Release[];
 }
 
-export interface CodexWatchAnalysis extends RenderInput {
+export interface PathChangeSummary {
+  path: string;
+  commits: string[];
+}
+
+export interface CodexWatchAnalysis {
+  previous_tag: string;
+  current_tag: string;
+  is_adjacent_release: boolean;
+  release_url: string;
+  release_notes_md: string;
   verdict: Verdict;
   models_diff: ModelsDiff | null;
+  prompt_md_changed: boolean;
+  prompt_md_diff_preview: string | null;
+  path_changes: PathChangeSummary[];
+  workflow_run_url: string;
   compare_url: string;
   changed_files: string[];
 }
@@ -47,7 +61,7 @@ export interface CodexWatchAnalysis extends RenderInput {
 export async function analyzeCodexRelease(
   options: AnalyzeCodexReleaseOptions,
 ): Promise<CodexWatchAnalysis> {
-  const stables = await listStableReleases();
+  const stables = options.stableReleases ?? (await listStableReleases());
   if (stables.length === 0) throw new Error("No stable Codex releases found");
 
   const current = options.currentTag
@@ -125,6 +139,11 @@ export async function analyzeCodexRelease(
     return {
       previous_tag: previous.tag_name,
       current_tag: current.tag_name,
+      is_adjacent_release: areAdjacentStableReleases(
+        stables,
+        previous.tag_name,
+        current.tag_name,
+      ),
       release_url: current.html_url,
       release_notes_md: current.body ?? "",
       verdict,
@@ -186,6 +205,27 @@ function findPreviousStable(
   const idx = stables.findIndex((r) => r.tag_name === currentTag);
   if (idx <= 0) return null;
   return stables[idx - 1] ?? null;
+}
+
+export function areAdjacentStableReleases(
+  stables: Release[],
+  previousTag: string,
+  currentTag: string,
+): boolean {
+  return findPreviousStable(stables, currentTag)?.tag_name === previousTag;
+}
+
+export function findNextStableRelease(
+  stables: Release[],
+  terminalTag: string,
+): Release | null {
+  const terminalIndex = stables.findIndex(
+    (release) => release.tag_name === terminalTag,
+  );
+  if (terminalIndex < 0) {
+    throw new Error(`Could not find terminal release ${terminalTag}`);
+  }
+  return stables[terminalIndex + 1] ?? null;
 }
 
 function cloneCodex(tmp: string): string {

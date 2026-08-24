@@ -23,7 +23,10 @@ export interface MemoryGitSyncReminder {
   text: string;
 }
 
-export type SessionContextReason = "initial_attach" | "cwd_changed";
+export type SessionContextReason =
+  | "initial_attach"
+  | "cwd_changed"
+  | "post_compaction";
 
 export interface SharedReminderState {
   hasSentAgentInfo: boolean;
@@ -65,11 +68,26 @@ export function resetSharedReminderState(state: SharedReminderState): void {
   Object.assign(state, createSharedReminderState());
 }
 
+/**
+ * Re-arm one-shot execution-context reminders that compaction can evict.
+ * Preserve queued reminders and change-specific refresh state.
+ */
+export function markPostCompactionContextRemindersPending(
+  state: SharedReminderState,
+): void {
+  state.hasSentAgentInfo = false;
+  state.hasSentSessionContext = false;
+  state.pendingSessionContextReason ??= "post_compaction";
+  state.hasSentSecretsInfo = false;
+  state.lastNotifiedPermissionMode = null;
+}
+
 export function syncReminderStateFromContextTracker(
   state: SharedReminderState,
   contextTracker: ContextTracker,
 ): void {
   if (contextTracker.pendingReflectionTrigger) {
+    markPostCompactionContextRemindersPending(state);
     state.pendingReflectionTrigger = true;
     contextTracker.pendingReflectionTrigger = false;
   }

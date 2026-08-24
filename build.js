@@ -114,6 +114,10 @@ await Bun.build({
   naming: {
     entry: "image-resize-worker.js",
   },
+  // The Electron-safe build loads a patched native addon and its adjacent
+  // libvips shared library. Keep its package boundary intact so those files
+  // resolve from node_modules at runtime.
+  external: ["@janhapke/sharp-electron"],
 });
 
 // Add shebang to output file
@@ -260,6 +264,18 @@ await Bun.build({
   sourcemap: "external",
   naming: {
     entry: "channels-slack.js",
+  },
+});
+
+await Bun.build({
+  entrypoints: ["./src/channels-telegram.ts"],
+  outdir: "./dist",
+  target: "browser",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "channels-telegram.js",
   },
 });
 

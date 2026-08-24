@@ -121,6 +121,34 @@ export function describeEnvironment(
   return `${environment.connectionName} (${environment.deviceId}, ${status})`;
 }
 
+export async function resolveDesktopEnvironmentConnectionId(
+  list: typeof listEnvironments = listEnvironments,
+): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
+  const response = await list({ limit: 100, onlineOnly: true });
+  const matches = response.connections.filter(
+    (environment) =>
+      environment.listenerInstanceId?.startsWith("desktop-direct-cloud:") ===
+        true && isEnvironmentOnline(environment),
+  );
+
+  if (matches.length === 0) {
+    throw new Error(
+      "Desktop Local is unavailable. Open Letta Desktop, enable Remote Access, and wait for its environment to come online.",
+    );
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `Multiple Desktop environments are online. Run \`letta teleport list\` and choose one by name, device ID, or connection ID. Matched: ${matches.map(describeEnvironment).join(", ")}`,
+    );
+  }
+
+  const environment = matches[0];
+  if (!environment?.connectionId) {
+    throw new Error("Desktop Local has no active connection id");
+  }
+  return { connectionId: environment.connectionId, environment };
+}
+
 export async function resolveEnvironmentConnectionId(
   selector: string,
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {

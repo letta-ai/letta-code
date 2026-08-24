@@ -75,11 +75,15 @@ import {
   setActiveRuntime,
 } from "./runtime";
 import {
+  applyListenerPairIdentity,
+  attachSplitStreamSocketHandlers,
+  createListenerPairIdentity,
   handleListenerSocketOpenFailure,
   isCurrentSocketPair,
+  parseListenerReadyMessage,
+  preparePairedListenerTransport,
   prepareSplitStreamTransport,
   shouldHandleControlSocketClose,
-  terminateControlAfterStreamClose,
 } from "./split-stream-lifecycle";
 import { notifyStreamObserversRuntimeStopped } from "./stream-observers";
 import {
@@ -297,6 +301,7 @@ export function createRuntime(): ListenerRuntime {
     hasSuccessfulConnection: false,
     everConnected: false,
     sessionId: `listen-${crypto.randomUUID()}`,
+    nextConnectionAttempt: 0,
     nextConnectionOrdinal: 0,
     connections: new Map(),
     connectionIdsByRuntimeKey: new Map(),
@@ -605,25 +610,10 @@ export async function attachOpenListenerSocket(
   });
 
   if (streamSocket) {
-    streamSocket.on("error", (error: Error) => {
-      trackListenerError(
-        "listener_stream_socket_error",
-        error,
-        "listener_stream_socket",
-      );
-      if (isDebugEnabled()) {
-        console.error("[Listen] Stream WebSocket error:", error);
-      }
-    });
-
-    streamSocket.on("close", (code: number, reason: Buffer) => {
-      if (isDebugEnabled()) {
-        console.log(
-          `[Listen] Stream WebSocket closed (code: ${code}, reason: ${reason.toString()})`,
-        );
-      }
-
-      terminateControlAfterStreamClose(runtime, streamSocket, code, reason);
+    attachSplitStreamSocketHandlers({
+      runtime,
+      streamSocket,
+      trackListenerError,
     });
   }
 
@@ -804,31 +794,22 @@ async function connectWithRetry(
   url.searchParams.set("connectionName", opts.connectionName);
 
   const supportsSplitStatusChannels = opts.supportsSplitStatusChannels === true;
-  if (supportsSplitStatusChannels) {
-    url.searchParams.set("channel", "control");
-  }
+  const pairIdentity =
+    supportsSplitStatusChannels &&
+    opts.supportsPairedListenerGenerations === true
+      ? createListenerPairIdentity(runtime)
+      : null;
+  if (supportsSplitStatusChannels) url.searchParams.set("channel", "control");
+  if (pairIdentity) applyListenerPairIdentity(url, pairIdentity);
 
-  let streamUrl: URL | null = null;
-  if (supportsSplitStatusChannels) {
-    streamUrl = new URL(opts.wsUrl);
-    streamUrl.searchParams.set("deviceId", opts.deviceId);
-    streamUrl.searchParams.set("connectionName", opts.connectionName);
-    streamUrl.searchParams.set("channel", "stream");
-  }
-
-  const socket = new WebSocket(url.toString(), {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
-  });
-
-  const streamSocket = streamUrl
-    ? new WebSocket(streamUrl.toString(), {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-        },
-      })
-    : null;
+  const streamUrl = supportsSplitStatusChannels ? new URL(url) : null;
+  if (streamUrl) streamUrl.searchParams.set("channel", "stream");
+  const headers = { Authorization: `Bearer ${apiKey}` };
+  const socket = new WebSocket(url.toString(), { headers });
+  let streamSocket =
+    streamUrl && !pairIdentity
+      ? new WebSocket(streamUrl.toString(), { headers })
+      : null;
 
   const fileCommandSession = createFileCommandSession({
     socket,
@@ -840,22 +821,65 @@ async function connectWithRetry(
   runtime.streamSocket = streamSocket;
   const transport = socket;
   const processQueuedTurn = createConnectionTurnProcessor(runtime);
+  const handleMessage = createListenerMessageHandler({
+    runtime,
+    socket,
+    connectionId: opts.connectionId,
+    opts,
+    processQueuedTurn,
+    fileCommandSession,
+    getParsedRuntimeScope,
+    replaySyncStateForRuntime,
+    getOrCreateScopedRuntime,
+    handleApprovalResponseInput,
+    handleChangeDeviceStateInput,
+    handleAbortMessageInput,
+    stampInboundUserMessageOtids,
+    safeSocketSend,
+    runDetachedListenerTask,
+    trackListenerError,
+  });
+  let pairedStartupReady = pairIdentity === null;
+  const pendingStartupFrames: WebSocket.RawData[] = [];
+  if (streamSocket) {
+    attachSplitStreamSocketHandlers({
+      runtime,
+      streamSocket,
+      trackListenerError,
+    });
+  }
 
   socket.on("open", () => {
     void (async () => {
-      const streamOpen = await prepareSplitStreamTransport({
-        runtime,
-        controlSocket: socket,
-        streamSocket,
-        trackListenerError,
-      });
-      if (streamOpen.kind !== "ready") {
-        return;
-      }
+      const streamOpen = pairIdentity
+        ? await preparePairedListenerTransport({
+            runtime,
+            controlSocket: socket,
+            identity: pairIdentity,
+            createStreamSocket: () => {
+              if (!streamUrl) throw new Error("Paired stream URL is missing");
+              streamSocket = new WebSocket(streamUrl.toString(), { headers });
+              return streamSocket;
+            },
+            trackListenerError,
+          })
+        : await prepareSplitStreamTransport({
+            runtime,
+            controlSocket: socket,
+            streamSocket,
+            trackListenerError,
+          });
+      if (streamOpen.kind !== "ready") return;
       const streamTransport = streamOpen.transport;
-      if (!isCurrentSocketPair(runtime, socket, streamSocket)) {
-        return;
+      if (streamOpen.streamSocket) {
+        streamSocket = streamOpen.streamSocket;
+        attachSplitStreamSocketHandlers({
+          runtime,
+          streamSocket: streamOpen.streamSocket,
+          trackListenerError,
+        });
       }
+      if (!isCurrentSocketPair(runtime, socket, streamSocket)) return;
       openListenerConnection({
         runtime,
         connectionId: opts.connectionId,
@@ -874,6 +898,10 @@ async function connectWithRetry(
           streamTransport,
         },
       );
+      pairedStartupReady = true;
+      for (const frame of pendingStartupFrames.splice(0)) {
+        await handleMessage(frame);
+      }
     })().catch((error) => {
       handleListenerSocketOpenFailure({
         runtime,
@@ -885,27 +913,17 @@ async function connectWithRetry(
     });
   });
 
-  socket.on(
-    "message",
-    createListenerMessageHandler({
-      runtime,
-      socket,
-      connectionId: opts.connectionId,
-      opts,
-      processQueuedTurn,
-      fileCommandSession,
-      getParsedRuntimeScope,
-      replaySyncStateForRuntime,
-      getOrCreateScopedRuntime,
-      handleApprovalResponseInput,
-      handleChangeDeviceStateInput,
-      handleAbortMessageInput,
-      stampInboundUserMessageOtids,
-      safeSocketSend,
-      runDetachedListenerTask,
-      trackListenerError,
-    }),
-  );
+  socket.on("message", (data: WebSocket.RawData) => {
+    if (
+      pairIdentity &&
+      !pairedStartupReady &&
+      !parseListenerReadyMessage(data)
+    ) {
+      pendingStartupFrames.push(data);
+      return;
+    }
+    void handleMessage(data);
+  });
 
   socket.on("close", (code: number, reason: Buffer) => {
     if (!shouldHandleControlSocketClose(runtime, socket, opts.connectionId)) {
@@ -946,7 +964,9 @@ async function connectWithRetry(
     killAllTerminals();
     clearListenerWarmState(runtime);
     if (streamSocket) {
-      streamSocket.removeAllListeners();
+      streamSocket.removeAllListeners("message");
+      streamSocket.removeAllListeners("open");
+      streamSocket.removeAllListeners("close");
       if (
         streamSocket.readyState === WebSocket.OPEN ||
         streamSocket.readyState === WebSocket.CONNECTING
@@ -1004,29 +1024,6 @@ async function connectWithRetry(
     }
     // Error triggers close(), which handles retry logic.
   });
-
-  if (streamSocket) {
-    streamSocket.on("error", (error: Error) => {
-      trackListenerError(
-        "listener_stream_socket_error",
-        error,
-        "listener_stream_socket",
-      );
-      if (isDebugEnabled()) {
-        console.error("[Listen] Stream WebSocket error:", error);
-      }
-    });
-
-    streamSocket.on("close", (code: number, reason: Buffer) => {
-      if (isDebugEnabled()) {
-        console.log(
-          `[Listen] Stream WebSocket closed (code: ${code}, reason: ${reason.toString()})`,
-        );
-      }
-
-      terminateControlAfterStreamClose(runtime, streamSocket, code, reason);
-    });
-  }
 }
 
 /**

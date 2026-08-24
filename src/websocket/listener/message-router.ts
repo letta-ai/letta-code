@@ -64,7 +64,9 @@ import {
 } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
+import { parseListenerReadyMessage } from "./split-stream-lifecycle";
 import {
+  buildTeleportContinuationMessages,
   clearPriorReadyTeleports,
   handleTeleportProbe,
   handleTeleportRequest,
@@ -209,7 +211,8 @@ export function createListenerMessageHandler(
     let parsedScope: ParsedRuntimeScope = null;
 
     try {
-      const lifecycleMessage = parseServerLifecycleMessage(data);
+      const lifecycleMessage =
+        parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
       if (lifecycleMessage) {
         // Record relay pongs so the heartbeat watchdog can detect a half-open
         // socket (no pong within the timeout) and force a reconnect.
@@ -491,13 +494,10 @@ export function createListenerMessageHandler(
                 connectionId,
                 agentId: teleportAgentId,
                 conversationId: parsed.runtime.conversation_id,
-                messages: [
-                  {
-                    type: "approval",
-                    approvals,
-                    otid: teleportId,
-                  },
-                ],
+                messages: buildTeleportContinuationMessages({
+                  teleportId,
+                  approvals,
+                }),
               },
               socket,
               scopedRuntime,
@@ -751,13 +751,13 @@ export function createListenerMessageHandler(
           "remove_queue_item_response",
           "remove_queue_item",
         );
-        // Broadcast the updated queue so all connected clients see the change
-        if (removed !== null) {
-          emitQueueUpdateIfOpen(runtime, {
-            agent_id: parsed.runtime.agent_id,
-            conversation_id: parsed.runtime.conversation_id,
-          });
-        }
+        // Broadcast the authoritative queue snapshot even when the item was
+        // NOT found: a consumer removing an already-drained item is holding
+        // a stale queue copy, and this snapshot repairs it. (LET-11174)
+        emitQueueUpdateIfOpen(runtime, {
+          agent_id: parsed.runtime.agent_id,
+          conversation_id: parsed.runtime.conversation_id,
+        });
         return;
       }
 

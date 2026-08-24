@@ -369,9 +369,8 @@ export function App({
   systemInfoReminderEnabled = true,
   modsDisabled = false,
 }: AppProps) {
-  // Warm the model-access cache in the background so /model is fast on first
-  // open, and refresh the curated catalog from the cloud endpoint (bundled
-  // models.json stays as the offline/failure fallback).
+  // Warm model availability so /model is fast on first open, and refresh the
+  // runtime catalog. API mode keeps its persisted catalog on temporary failures.
   useEffect(() => {
     prefetchAvailableModelHandles();
     prefetchModelCatalog();
@@ -1398,8 +1397,9 @@ export function App({
   // Retry counter for transient LLM API errors (ref for synchronous access in loop)
   const llmApiErrorRetriesRef = useRef(0);
   const quotaAutoSwapAttemptedRef = useRef(false);
-  const providerFallbackAttemptedRef = useRef(false);
   const emptyResponseRetriesRef = useRef(0);
+  // Per-turn ChatGPT plan rotation counter (max swaps per turn)
+  const chatgptPlanSwapsRef = useRef(0);
 
   // Retry counter for 409 "conversation busy" errors
   const conversationBusyRetriesRef = useRef(0);
@@ -3766,6 +3766,7 @@ export function App({
     autoAllowedExecutionRef,
     buffersRef,
     clearApprovalToolContext,
+    chatgptPlanSwapsRef,
     closeTrajectorySegment,
     consumeQueuedMessages,
     queueModeRef,
@@ -3795,7 +3796,6 @@ export function App({
     precomputedDiffsRef,
     prepareScopedToolExecutionContext,
     processingConversationRef,
-    providerFallbackAttemptedRef,
     queueApprovalResults,
     queueSnapshotRef,
     quotaAutoSwapAttemptedRef,

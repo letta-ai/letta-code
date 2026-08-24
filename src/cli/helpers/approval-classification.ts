@@ -1,6 +1,7 @@
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { checkToolPermission, getToolSchema } from "@/tools/manager";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
+import { debugWarn } from "@/utils/debug";
 import { safeJsonParseOr } from "./safe-json-parse";
 import type { ApprovalRequest } from "./stream-processor";
 
@@ -56,12 +57,69 @@ function formatMissingRequiredArgsReason(
   toolName: string,
   parsedArgs: Record<string, unknown>,
   missingRequiredArgs: string[],
+  argsParse?: ParsedToolArgs,
 ): string {
   const received = Object.keys(parsedArgs).join(", ");
-  return (
+  const base =
     `${toolName} tool missing required parameter${missingRequiredArgs.length > 1 ? "s" : ""}: ` +
-    `${missingRequiredArgs.join(", ")}. Received parameters: ${received}`
-  );
+    `${missingRequiredArgs.join(", ")}. Received parameters: ${received}`;
+
+  // No arguments at all reached the client. That is almost never the model
+  // omitting them: the payload was dropped or truncated in transit. Say so,
+  // otherwise the model "fixes" a call that was already correct and retries
+  // byte-identically until it burns the turn budget.
+  if (argsParse?.parseFailed) {
+    return (
+      `${base}. The raw arguments (${argsParse.rawLength} chars) were not valid JSON, ` +
+      `so they were lost or truncated in transit. Do not resend an identical call - ` +
+      `re-issue it with the arguments restructured (e.g. write long payloads to a file first).`
+    );
+  }
+  if (argsParse?.argsEmpty) {
+    return (
+      `${base}. The tool call arrived with empty arguments, which usually means they were ` +
+      `dropped in transit rather than omitted by you. Do not resend an identical call - ` +
+      `re-issue it with the arguments restructured (e.g. write long payloads to a file first).`
+    );
+  }
+  return base;
+}
+
+type ParsedToolArgs = {
+  parsedArgs: Record<string, unknown>;
+  /** Raw arguments were non-empty but could not be parsed as JSON. */
+  parseFailed: boolean;
+  /** Raw arguments were absent, empty, or parsed to an object with no keys. */
+  argsEmpty: boolean;
+  rawLength: number;
+};
+
+function parseToolArgs(rawArgs: string | undefined): ParsedToolArgs {
+  const raw = rawArgs ?? "";
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return {
+      parsedArgs: {},
+      parseFailed: false,
+      argsEmpty: true,
+      rawLength: 0,
+    };
+  }
+  const parsed = safeJsonParseOr<Record<string, unknown> | null>(trimmed, null);
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {
+      parsedArgs: {},
+      parseFailed: true,
+      argsEmpty: false,
+      rawLength: raw.length,
+    };
+  }
+  return {
+    parsedArgs: parsed,
+    parseFailed: false,
+    argsEmpty: Object.keys(parsed).length === 0,
+    rawLength: raw.length,
+  };
 }
 
 export async function classifyApprovals<TContext = ApprovalContext | null>(
@@ -89,10 +147,15 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
       continue;
     }
 
-    const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-      approval.toolArgs || "{}",
-      {},
-    );
+    const argsParse = parseToolArgs(approval.toolArgs);
+    const parsedArgs = argsParse.parsedArgs;
+    if (argsParse.parseFailed) {
+      debugWarn(
+        "approval-classification",
+        `Tool call ${approval.toolCallId} (${toolName}) had unparseable arguments ` +
+          `(${argsParse.rawLength} chars); treating as empty`,
+      );
+    }
 
     if (opts.requireArgsForAutoApprove) {
       const missingRequiredArgs = await getMissingRequiredArgs(
@@ -107,6 +170,7 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
               toolName,
               parsedArgs,
               missingRequiredArgs,
+              argsParse,
             );
         autoDenied.push({
           approval,

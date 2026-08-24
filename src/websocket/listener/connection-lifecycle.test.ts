@@ -7,7 +7,9 @@ import {
 import {
   cleanupListenerConnection,
   closeListenerRuntimeConnections,
+  createConnectionTurnProcessor,
 } from "./connection-lifecycle";
+import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
 import type { StartListenerOptions } from "./types";
 
@@ -46,6 +48,34 @@ function makeOptions(connectionId: string): StartListenerOptions {
 }
 
 describe("listener connection lifecycle", () => {
+  test("a disconnected queued turn drops its unconsumed correlation", async () => {
+    const runtime = createRuntime();
+    const scopedRuntime = getOrCreateScopedRuntime(
+      runtime,
+      "agent-1",
+      "conversation-1",
+    );
+    scopedRuntime.dequeuedClientMessageIdsByBatchId.set("batch-1", ["cm-1"]);
+
+    await createConnectionTurnProcessor(runtime)(
+      {
+        type: "message",
+        connectionId: "missing",
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        messages: [{ role: "user", content: "hello" }],
+      },
+      {
+        batchId: "batch-1",
+        items: [],
+        mergedCount: 1,
+        queueLenAfter: 0,
+      },
+    );
+
+    expect(scopedRuntime.dequeuedClientMessageIdsByBatchId.size).toBe(0);
+  });
+
   test("connection cleanup preserves other subscribers", () => {
     const runtime = createRuntime();
     const socketA = new MockSocket();

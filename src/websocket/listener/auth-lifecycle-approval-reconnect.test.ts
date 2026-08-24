@@ -373,6 +373,7 @@ describe("listener approval reconnect timing", () => {
     });
 
     await new Promise((resolve) => setTimeout(resolve, 75));
+    expect(conversationRuntime.loopStatus).toBe("PROCESSING_API_RESPONSE");
     expect(deps.executeApprovalBatch).toHaveBeenCalledTimes(0);
     expect(deps.ensureSecretsHydrated).toHaveBeenCalledTimes(0);
     expect(deps.sendApprovalContinuation).toHaveBeenCalledTimes(0);

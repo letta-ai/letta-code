@@ -27,6 +27,7 @@ import type { AppServerHandle } from "@/websocket/app-server";
 import { RemoteSessionLog } from "@/websocket/listen-log";
 import {
   type RegisterOptions,
+  type RegisterResult,
   registerWithCloudRetry,
 } from "@/websocket/listen-register";
 import {
@@ -561,7 +562,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
           onUnexpectedExit: (error) => {
             console.error(`[${formatTimestamp()}] ${error.message}`);
-            void exitWithTelemetry(1, "listener_channel_gateway_exited");
+            if (values.channels) {
+              void exitWithTelemetry(1, "listener_channel_gateway_exited");
+            }
           },
           onServiceEvent: (event) => {
             if (event.kind === "protocol") {
@@ -663,19 +666,23 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       `Registering with ${registerOptions.serverUrl}/v1/environments/register`,
     );
 
-    const { connectionId, wsUrl, supportsSplitStatusChannels } =
-      await registerWithCloudRetry(registerOptions, {
-        onRetry: (attempt, delayMs, error) => {
-          sessionLog.log(
-            `Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+    const {
+      connectionId,
+      wsUrl,
+      supportsSplitStatusChannels,
+      supportsPairedListenerGenerations,
+    } = await registerWithCloudRetry(registerOptions, {
+      onRetry: (attempt, delayMs, error) => {
+        sessionLog.log(
+          `Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+        );
+        if (debugMode) {
+          console.log(
+            `[${formatTimestamp()}] Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
           );
-          if (debugMode) {
-            console.log(
-              `[${formatTimestamp()}] Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
-            );
-          }
-        },
-      });
+        }
+      },
+    });
 
     sessionLog.log(`Registered: connectionId=${connectionId}`);
     sessionLog.log(`wsUrl: ${wsUrl}`);
@@ -694,11 +701,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     // Re-register helper with retry for transient errors (e.g. 521).
     // Uses exponential backoff so a temporary server outage doesn't
     // permanently kill the connection.
-    const reregister = async (): Promise<{
-      connectionId: string;
-      wsUrl: string;
-      supportsSplitStatusChannels: boolean;
-    }> => {
+    const reregister = async (): Promise<RegisterResult> => {
       sessionLog.log("Re-registering with retry...");
       const nextRegisterOptions = await resolveListenerRegistrationOptions(
         deviceId,
@@ -748,11 +751,14 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         connId: string,
         url: string,
         nextSupportsSplitStatusChannels: boolean,
+        nextSupportsPairedListenerGenerations: boolean,
       ): Promise<void> => {
         await startListenerClient({
           connectionId: connId,
           wsUrl: url,
           supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
+          supportsPairedListenerGenerations:
+            nextSupportsPairedListenerGenerations,
           deviceId,
           connectionName,
           skillsDirectory,
@@ -791,6 +797,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
                 result.connectionId,
                 result.wsUrl,
                 result.supportsSplitStatusChannels,
+                result.supportsPairedListenerGenerations,
               );
             } catch (error) {
               const msg =
@@ -814,7 +821,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
         });
       };
-      await startDebugClient(connectionId, wsUrl, supportsSplitStatusChannels);
+      await startDebugClient(
+        connectionId,
+        wsUrl,
+        supportsSplitStatusChannels,
+        supportsPairedListenerGenerations,
+      );
     } else {
       // Normal mode: interactive Ink UI
       console.clear();
@@ -843,11 +855,14 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         connId: string,
         url: string,
         nextSupportsSplitStatusChannels: boolean,
+        nextSupportsPairedListenerGenerations: boolean,
       ): Promise<void> => {
         await startListenerClient({
           connectionId: connId,
           wsUrl: url,
           supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
+          supportsPairedListenerGenerations:
+            nextSupportsPairedListenerGenerations,
           deviceId,
           connectionName,
           skillsDirectory,
@@ -881,6 +896,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
                 result.connectionId,
                 result.wsUrl,
                 result.supportsSplitStatusChannels,
+                result.supportsPairedListenerGenerations,
               );
             } catch (error) {
               const msg =
@@ -906,7 +922,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
         });
       };
-      await startNormalClient(connectionId, wsUrl, supportsSplitStatusChannels);
+      await startNormalClient(
+        connectionId,
+        wsUrl,
+        supportsSplitStatusChannels,
+        supportsPairedListenerGenerations,
+      );
     }
 
     // Keep process alive

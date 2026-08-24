@@ -48,7 +48,7 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
 
     for (const outputFile of outputFiles) {
       if (fs.existsSync(outputFile)) {
-        fs.unlinkSync(outputFile);
+        fs.rmSync(outputFile, { recursive: true, force: true });
       }
     }
   });
@@ -190,6 +190,26 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
         chars: "",
       }),
     ).rejects.toThrow("Unknown process id");
+  });
+
+  test("fails the session when its output file cannot be written", async () => {
+    const first = await exec_command({
+      cmd: "printf 'start\\n'; sleep 1; printf 'after\\n'; sleep 30",
+      yield_time_ms: 250,
+    });
+    const sessionId = first.output.match(
+      /Process running with session ID (\d+)/,
+    )?.[1];
+    expect(sessionId).toBeDefined();
+
+    const processState = backgroundProcesses.get(sessionId ?? "");
+    expect(processState?.outputFile).toBeDefined();
+    fs.rmSync(processState?.outputFile ?? "", { force: true });
+    fs.mkdirSync(processState?.outputFile ?? "");
+
+    await Bun.sleep(1_250);
+
+    expect(backgroundProcesses.get(sessionId ?? "")?.status).toBe("failed");
   });
 
   test("caps write_stdin inline output when max_output_tokens is too large", async () => {

@@ -14,7 +14,7 @@ The important part is choosing the right layer. Do not smear a preference into d
 
 | Layer | Use it for | How to change it |
 | --- | --- | --- |
-| Memory and identity | Durable facts, style preferences, persona changes, project knowledge, reusable skills | Edit `$MEMORY_DIR` files and sync the memory repo |
+| Memory and identity | Facts worth retaining, style preferences, persona changes, project knowledge, reusable skills | Edit `$MEMORY_DIR` files and sync the memory repo |
 | Server agent fields | Default model, model settings, context limit, system prompt, compaction, agent name, description | Patch `/v1/agents/{agent_id}` |
 | Server conversation fields | Temporary model/context experiments for one conversation | Patch `/v1/conversations/{conversation_id}` |
 | Local settings | Permissions, environment variables, UI/runtime preferences, pinned agents, toolset overrides, reflection cadence | Edit `~/.letta/settings.json`, `./.letta/settings.json`, or `./.letta/settings.local.json` |
@@ -92,10 +92,10 @@ Common files:
 | Path | Purpose |
 | --- | --- |
 | `$MEMORY_DIR/system/persona.md` | Identity, voice, behavioral defaults |
-| `$MEMORY_DIR/system/human.md` | Durable notes about the person you work with |
+| `$MEMORY_DIR/system/human.md` | Notes about the person you work with |
 | `$MEMORY_DIR/projects/` | Project-specific long-term context |
 | `$MEMORY_DIR/skills/` | Agent-owned reusable skills |
-| `$MEMORY_DIR/relationships/` | Durable relationship and collaboration notes |
+| `$MEMORY_DIR/relationships/` | Relationship and collaboration notes |
 
 After changing memory, inspect and commit the exact changed files. Push/sync according to the current harness reminder or the `syncing-memory-filesystem` skill; some environments sync committed memory automatically.
 
@@ -423,7 +423,7 @@ letta --backend local
 letta --memfs
 ```
 
-Startup flags affect a new process only. They do not rewrite an already-running listener. Persist durable defaults in settings or server fields instead.
+Startup flags affect a new process only. They do not rewrite an already-running listener. Persist long-term defaults in settings or server fields instead.
 
 ### Existing listeners and long-running processes
 

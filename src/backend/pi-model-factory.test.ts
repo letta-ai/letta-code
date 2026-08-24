@@ -2,12 +2,15 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/api/openai-completions";
 import { getBuiltinModels as getModels } from "@earendil-works/pi-ai/providers/all";
 import {
   applyPiEnvOverrides,
+  patchTemporaryPiAiOpenRouterThinkingMap,
   reasoningForSettings,
   resolvePiModelForAgent,
+  resolveZaiConnection,
 } from "@/backend/dev/pi-model-factory";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import { getProviderOAuthAuth } from "@/backend/dev/pi-oauth";
@@ -43,6 +46,215 @@ async function withEnv<T>(
 describe("pi model factory", () => {
   afterEach(() => {
     clearRegisteredPiProviders();
+  });
+
+  test("defaults always-on zAI GLM models to a valid thinking level", () => {
+    expect(reasoningForSettings({}, "zai/glm-5.3")).toBe("low");
+    expect(
+      reasoningForSettings({ thinking: { type: "disabled" } }, "zai/glm-5.3"),
+    ).toBe("low");
+    expect(
+      reasoningForSettings({ reasoning_effort: "high" }, "zai/glm-5.3"),
+    ).toBe("high");
+    expect(
+      reasoningForSettings({ reasoning_effort: "medium" }, "zai/glm-5.3"),
+    ).toBe("low");
+    expect(reasoningForSettings({}, "zai/glm-5-turbo")).toBe("low");
+    expect(reasoningForSettings({}, "anthropic/claude-sonnet-4-6")).toBe(
+      undefined,
+    );
+  });
+
+  test("temporarily patches pi-ai OpenRouter metadata until issue 8454 ships", () => {
+    const piModel = {
+      id: "google/gemini-3.7-flash",
+      name: "Gemini 3.7 Flash",
+      api: "openai-completions",
+      provider: "openrouter",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1_048_576,
+      maxTokens: 65_536,
+    } as Model<"openai-completions">;
+
+    const patched = patchTemporaryPiAiOpenRouterThinkingMap(piModel);
+
+    expect(patched.thinkingLevelMap).toEqual({
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: null,
+      max: null,
+    });
+    expect(getSupportedThinkingLevels(patched)).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(
+      reasoningForSettings({}, "openrouter/google/gemini-3.7-flash", patched),
+    ).toBeUndefined();
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "minimal" },
+        "openrouter/google/gemini-3.7-flash",
+        patched,
+      ),
+    ).toBe("low");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "high" },
+        "openrouter/google/gemini-3.7-flash",
+        patched,
+      ),
+    ).toBe("high");
+  });
+
+  test("temporary metadata makes pi-ai omit disabled OpenRouter reasoning", async () => {
+    const bodies: unknown[] = [];
+    const model = patchTemporaryPiAiOpenRouterThinkingMap({
+      id: "google/gemini-3.7-flash",
+      name: "Gemini 3.7 Flash",
+      api: "openai-completions",
+      provider: "openrouter",
+      baseUrl: "https://openrouter.test/api/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1_048_576,
+      maxTokens: 65_536,
+    } as Model<"openai-completions">);
+    const fetchImpl = (async (
+      _input: Parameters<typeof fetch>[0],
+      init?: RequestInit,
+    ) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(
+        [
+          'data: {"id":"response-1","choices":[{"delta":{"content":"ok"},"finish_reason":null}]}',
+          'data: {"id":"response-1","choices":[{"delta":{},"finish_reason":"stop"}]}',
+          "data: [DONE]",
+          "",
+        ].join("\n"),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    }) as typeof fetch;
+
+    await streamSimple(
+      model,
+      { messages: [{ role: "user", content: "hello", timestamp: 0 }] },
+      { apiKey: "test-key", fetch: fetchImpl },
+    ).result();
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).not.toHaveProperty("reasoning");
+  });
+
+  test("limits the temporary pi-ai patch to OpenRouter models without metadata", () => {
+    const model = {
+      id: "google/gemini-3.7-flash",
+      name: "Gemini 3.7 Flash",
+      api: "openai-completions",
+      provider: "registered-provider",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1_048_576,
+      maxTokens: 65_536,
+    } as Model<"openai-completions">;
+    const existingMap = { off: "none", high: "high" };
+    const openRouterModel = {
+      ...model,
+      provider: "openrouter",
+      thinkingLevelMap: existingMap,
+    } as Model<"openai-completions">;
+
+    expect(patchTemporaryPiAiOpenRouterThinkingMap(model)).toBe(model);
+    expect(patchTemporaryPiAiOpenRouterThinkingMap(openRouterModel)).toBe(
+      openRouterModel,
+    );
+  });
+
+  test("reuses a lone zAI key on the published coding-plan endpoint", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-zai-coding-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "zai",
+        providerName: "zai",
+        apiKey: "test-zai-coding-plan-key",
+      });
+
+      expect(
+        resolveZaiConnection({
+          storageDir,
+          preferredProviderType: "zai",
+          publishedBaseURL: "https://api.z.ai/api/coding/paas/v4",
+        }),
+      ).toMatchObject({
+        apiKey: "test-zai-coding-plan-key",
+        baseURL: "https://api.z.ai/api/coding/paas/v4",
+        providerName: "zai-coding",
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "zai/glm-5.3",
+        { provider_type: "zai" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+      expect(resolved.model.baseUrl).toBe(
+        "https://api.z.ai/api/coding/paas/v4",
+      );
+      expect(resolved.apiKey).toBe("test-zai-coding-plan-key");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps dedicated zAI pay-as-you-go and coding records distinct", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-zai-split-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "zai",
+        providerName: "zai",
+        apiKey: "test-zai-paygo-key",
+      });
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "zai_coding",
+        providerName: "lc-zai-coding",
+        apiKey: "test-zai-coding-key",
+      });
+
+      expect(
+        resolveZaiConnection({
+          storageDir,
+          preferredProviderType: "zai",
+          publishedBaseURL: "https://api.z.ai/api/coding/paas/v4",
+        }),
+      ).toMatchObject({
+        apiKey: "test-zai-paygo-key",
+        baseURL: "https://api.z.ai/api/paas/v4",
+        providerName: "zai",
+      });
+      expect(
+        resolveZaiConnection({
+          storageDir,
+          preferredProviderType: "zai_coding",
+          publishedBaseURL: "https://api.z.ai/api/coding/paas/v4",
+        }),
+      ).toMatchObject({
+        apiKey: "test-zai-coding-key",
+        baseURL: "https://api.z.ai/api/coding/paas/v4",
+        providerName: "zai-coding",
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("notifies subscribers when mod provider registry changes", () => {
@@ -143,7 +355,7 @@ describe("pi model factory", () => {
           id_token: "chatgpt-id-token",
           refresh_token: "chatgpt-refresh-token",
           account_id: "account-123",
-          expires_at: Date.now() + 60_000,
+          expires_at: Date.now() + 3_600_000,
         }),
       });
 
@@ -171,7 +383,7 @@ describe("pi model factory", () => {
           id_token: "chatgpt-id-token",
           refresh_token: "chatgpt-refresh-token",
           account_id: "account-123",
-          expires_at: Date.now() + 60_000,
+          expires_at: Date.now() + 3_600_000,
         }),
       });
 
@@ -191,6 +403,12 @@ describe("pi model factory", () => {
           "openai-codex/gpt-5.6-sol",
         ),
       ).toBe("max");
+      expect(
+        reasoningForSettings(
+          { reasoning: { reasoning_effort: "minimal" } },
+          "openai-codex/gpt-5.6-sol",
+        ),
+      ).toBe("none" as "low");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
@@ -206,7 +424,7 @@ describe("pi model factory", () => {
         auth: localOAuthAuthFromCredentials({
           access: "sk-ant-oat-local",
           refresh: "anthropic-refresh-token",
-          expires: Date.now() + 60_000,
+          expires: Date.now() + 3_600_000,
         }),
       });
 
@@ -235,7 +453,7 @@ describe("pi model factory", () => {
         auth: localOAuthAuthFromCredentials({
           access: "tid=1;exp=1;proxy-ep=proxy.enterprise.githubcopilot.com;",
           refresh: "copilot-refresh-token",
-          expires: Date.now() + 60_000,
+          expires: Date.now() + 3_600_000,
         }),
       });
 
@@ -475,14 +693,14 @@ describe("pi model factory", () => {
           login: async () => ({
             access: "login-token",
             refresh: "refresh-token",
-            expires: Date.now() + 60_000,
+            expires: Date.now() + 3_600_000,
           }),
           refreshToken: async (credentials) => {
             refreshes.push(credentials);
             return {
               ...credentials,
               access: "refreshed-token",
-              expires: Date.now() + 60_000,
+              expires: Date.now() + 3_600_000,
             };
           },
           getApiKey: (credentials) => `oauth:${credentials.access}`,

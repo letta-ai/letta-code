@@ -34,6 +34,7 @@ export interface GrepArgs {
   head_limit?: number;
   offset?: number;
   multiline?: boolean;
+  signal?: AbortSignal;
 }
 
 interface GrepResult {
@@ -58,6 +59,7 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
     head_limit = 100,
     offset = 0,
     multiline,
+    signal,
   } = args;
 
   const userCwd = getCurrentWorkingDirectory();
@@ -96,6 +98,7 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
     const { stdout } = await execFileAsync(rgPath, rgArgs, {
       maxBuffer: 10 * 1024 * 1024,
       cwd: userCwd,
+      signal,
     });
     if (output_mode === "files_with_matches") {
       const allFiles = stdout.trim().split("\n").filter(Boolean);
@@ -170,6 +173,9 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
       };
     }
   } catch (error) {
+    if (signal?.aborted) {
+      signal.throwIfAborted();
+    }
     const err = error as NodeJS.ErrnoException & {
       stdout?: string;
     };

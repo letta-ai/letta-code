@@ -28,7 +28,7 @@ import type { ApprovalResult } from "./agent/approval-execution";
 import {
   buildFreshDenialApprovals,
   extractConflictDetail,
-  fetchRunErrorDetail,
+  fetchRunErrorInfo,
   getPreStreamErrorAction,
   getRetryDelayMs,
   isApprovalPendingError,
@@ -41,13 +41,17 @@ import {
   shouldRetryRunMetadataError,
 } from "./agent/approval-recovery";
 import { handleBootstrapSessionState } from "./agent/bootstrap-handler";
+import {
+  CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN,
+  formatPlanRotationNotice,
+  rotateChatGPTPlanOnQuotaLimit,
+} from "./agent/chatgpt-plan-rotation";
 import { buildClientSkillsPayload } from "./agent/client-skills";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/list-messages-handler";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import {
-  getModelInfo,
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
   getResumeRefreshArgs,
@@ -209,35 +213,6 @@ const HEADLESS_STREAM_RESUME_POLICY = {
   initialDelayMs: 250,
   maxAttempts: 20,
   maxDelayMs: 2_000,
-};
-
-// Provider fallback: Anthropic model ID → Bedrock model ID.
-// After 1 failed retry against Anthropic, automatically retry via Bedrock.
-const PROVIDER_FALLBACK_MAP: Record<string, string> = {
-  // Opus 4.7 variants → Bedrock Opus 4.7
-  "opus-4.7-low": "bedrock-opus-4.7",
-  "opus-4.7-medium": "bedrock-opus-4.7",
-  "opus-4.7-high": "bedrock-opus-4.7",
-  "opus-4.7-xhigh": "bedrock-opus-4.7",
-  "opus-4.7-max": "bedrock-opus-4.7",
-  // Opus 4.6 variants → Bedrock Opus 4.6
-  "opus-4.6-no-reasoning": "bedrock-opus-4.6",
-  "opus-4.6-low": "bedrock-opus-4.6",
-  "opus-4.6-medium": "bedrock-opus-4.6",
-  "opus-4.6-high": "bedrock-opus-4.6",
-  "opus-4.6-xhigh": "bedrock-opus-4.6",
-  // Sonnet 5 variants → Bedrock Sonnet 5; Sonnet 4.6 variants → Bedrock Sonnet 4.6
-  sonnet: "bedrock-sonnet-5",
-  "sonnet-5-no-reasoning": "bedrock-sonnet-5",
-  "sonnet-5-low": "bedrock-sonnet-5",
-  "sonnet-5-medium": "bedrock-sonnet-5",
-  "sonnet-5-xhigh": "bedrock-sonnet-5",
-  "sonnet-4.6": "bedrock-sonnet-4.6",
-  "sonnet-1m": "bedrock-sonnet-4.6",
-  "sonnet-4.6-no-reasoning": "bedrock-sonnet-4.6",
-  "sonnet-4.6-low": "bedrock-sonnet-4.6",
-  "sonnet-4.6-medium": "bedrock-sonnet-4.6",
-  "sonnet-4.6-xhigh": "bedrock-sonnet-4.6",
 };
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
@@ -2353,8 +2328,7 @@ ${SYSTEM_REMINDER_CLOSE}
   let llmApiErrorRetries = 0;
   let emptyResponseRetries = 0;
   let conversationBusyRetries = 0;
-  let providerFallbackAttempted = false;
-  let overrideModelHandle: string | undefined;
+  let chatgptPlanSwaps = 0;
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
 
@@ -2443,7 +2417,7 @@ ${SYSTEM_REMINDER_CLOSE}
         const turnToolContext = await prepareHeadlessToolExecutionContext({
           agentId: agent.id,
           conversationId,
-          overrideModel: overrideModelHandle ?? preparedEffectiveModel,
+          overrideModel: preparedEffectiveModel,
           cachedAgent,
           modContext: createHeadlessModContext({
             agent,
@@ -2460,7 +2434,6 @@ ${SYSTEM_REMINDER_CLOSE}
           currentInput,
           {
             agentId: agent.id,
-            overrideModel: overrideModelHandle,
             preparedToolContext:
               turnToolContext.preparedToolContext.preparedToolContext,
           },
@@ -2570,34 +2543,6 @@ ${SYSTEM_REMINDER_CLOSE}
         if (preStreamAction === "retry_transient") {
           const attempt = llmApiErrorRetries + 1;
           llmApiErrorRetries = attempt;
-
-          // Provider fallback: after 1 retry against Anthropic, switch to Bedrock
-          if (attempt >= 2 && !providerFallbackAttempted && model) {
-            const fallbackId = PROVIDER_FALLBACK_MAP[model];
-            const fallbackHandle = fallbackId
-              ? getModelInfo(fallbackId)?.handle
-              : undefined;
-            if (fallbackHandle) {
-              providerFallbackAttempted = true;
-              overrideModelHandle = fallbackHandle;
-              if (outputFormat === "stream-json") {
-                console.log(
-                  JSON.stringify({
-                    type: "status",
-                    message: "Anthropic API error; falling back to Bedrock...",
-                    session_id: sessionId,
-                    uuid: `fallback-${randomUUID()}`,
-                  }),
-                );
-              } else {
-                console.error(
-                  "Anthropic API error; falling back to Bedrock...",
-                );
-              }
-              conversationBusyRetries = 0;
-              continue;
-            }
-          }
 
           const retryAfterMs =
             preStreamError instanceof APIError
@@ -2779,6 +2724,7 @@ ${SYSTEM_REMINDER_CLOSE}
         llmApiErrorRetries = 0;
         emptyResponseRetries = 0;
         conversationBusyRetries = 0;
+        chatgptPlanSwaps = 0;
 
         // Emit turn_end. A mod may return { continue: "..." } to append a
         // follow-up user message and run another turn. Auto-continues re-enter
@@ -2936,42 +2882,48 @@ ${SYSTEM_REMINDER_CLOSE}
         }
       }
 
-      // Fetch run error detail for invalid tool call ID detection
-      const detailFromRun = await fetchRunErrorDetail(lastRunId);
+      const runErrorInfo = await fetchRunErrorInfo(lastRunId),
+        detailFromRun = runErrorInfo?.detail ?? runErrorInfo?.message;
+
+      // ChatGPT plan rotation: when a chatgpt_oauth BYOK plan hits its usage
+      // limit, swap to the same model on a sibling ChatGPT plan and resend.
+      if (chatgptPlanSwaps < CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN) {
+        const rotation = await rotateChatGPTPlanOnQuotaLimit({
+          agentId: agent.id,
+          currentHandle: null,
+          error: runErrorInfo ?? detailFromRun ?? latestErrorText,
+        });
+        if (rotation) {
+          chatgptPlanSwaps += 1;
+          const rotationMessage = formatPlanRotationNotice(rotation);
+
+          if (outputFormat === "stream-json") {
+            const retryMsg: RetryMessage = {
+              type: "retry",
+              reason: "llm_api_error",
+              attempt: chatgptPlanSwaps,
+              max_attempts: CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN,
+              delay_ms: 0,
+              run_id: lastRunId ?? undefined,
+              session_id: sessionId,
+              uuid: `retry-${lastRunId || randomUUID()}`,
+            };
+            writeWireMessage(retryMsg);
+          } else {
+            console.error(rotationMessage);
+          }
+
+          // Post-stop retry creates a new run/request.
+          currentInput = refreshInputOtidsForNewRequest(currentInput);
+          continue;
+        }
+      }
 
       // Case 3: Transient LLM API error - retry with exponential backoff up to a limit
       if (stopReason === "llm_api_error") {
         if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           const attempt = llmApiErrorRetries + 1;
           llmApiErrorRetries = attempt;
-
-          // Provider fallback: after 1 retry against Anthropic, switch to Bedrock
-          if (attempt >= 2 && !providerFallbackAttempted && model) {
-            const fallbackId = PROVIDER_FALLBACK_MAP[model];
-            const fallbackHandle = fallbackId
-              ? getModelInfo(fallbackId)?.handle
-              : undefined;
-            if (fallbackHandle) {
-              providerFallbackAttempted = true;
-              overrideModelHandle = fallbackHandle;
-              if (outputFormat === "stream-json") {
-                console.log(
-                  JSON.stringify({
-                    type: "status",
-                    message: "Anthropic API error; falling back to Bedrock...",
-                    session_id: sessionId,
-                    uuid: `fallback-${randomUUID()}`,
-                  }),
-                );
-              } else {
-                console.error(
-                  "Anthropic API error; falling back to Bedrock...",
-                );
-              }
-              currentInput = refreshInputOtidsForNewRequest(currentInput);
-              continue;
-            }
-          }
 
           const delayMs = getRetryDelayMs({
             category: "transient_provider",

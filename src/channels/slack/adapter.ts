@@ -19,7 +19,7 @@ import {
 } from "./agent-thread-tracker";
 import { createSlackApprovalController } from "./approval-controller";
 import { downloadSlackAttachmentById } from "./attachment-download";
-import type { SlackAttachmentReadClient } from "./attachment-types";
+import type { SlackAttachmentReadClient } from "./attachment-primitives";
 import { uploadSlackFile } from "./file-upload";
 import {
   createSlackInboundDebounceController,
@@ -62,6 +62,12 @@ export interface SlackChannelAdapter extends ChannelAdapter {
   }): Promise<ChannelMessageAttachment>;
 }
 
+type SlackAuthClient = {
+  auth: {
+    test(): Promise<{ team?: string; user_id?: string; bot_id?: string }>;
+  };
+};
+
 export function createSlackAdapter(
   config: SlackChannelAccount,
 ): SlackChannelAdapter {
@@ -71,6 +77,7 @@ export function createSlackAdapter(
   let running = false;
   let botUserId: string | null = null;
   let botId: string | null = null;
+  let workspaceName: string | null = null;
   let adapter: SlackChannelAdapter;
 
   const agentThreadTracker: AgentThreadTracker = createAgentThreadTracker();
@@ -100,12 +107,24 @@ export function createSlackAdapter(
 
   async function ensureApp(): Promise<SlackApp> {
     if (app) return app;
+    const auth = await (
+      (await ensureWriteClient()) as SlackWriteClient & SlackAuthClient
+    ).auth.test();
+    if (!isNonEmptyString(auth.user_id) || !isNonEmptyString(auth.bot_id)) {
+      throw new Error("Slack auth.test did not return bot identity fields");
+    }
+    botUserId = auth.user_id;
+    botId = auth.bot_id;
+    workspaceName = isNonEmptyString(auth.team) ? auth.team : null;
+
     const bolt = await loadSlackBoltModule();
     const App = resolveSlackAppConstructor(bolt);
     const instance = new App({
       token: config.botToken,
       appToken: config.appToken,
       socketMode: true,
+      botUserId,
+      botId,
     });
     instance.error(async (error) => {
       console.error("[Slack] Unhandled app error:", error);
@@ -388,16 +407,10 @@ export function createSlackAdapter(
     async start(): Promise<void> {
       if (running) return;
       const slackApp = await ensureApp();
-      const auth = await slackApp.client.auth.test();
-      const authRecord = auth as unknown as Record<string, unknown>;
-      botUserId = isNonEmptyString(authRecord.user_id)
-        ? authRecord.user_id
-        : null;
-      botId = isNonEmptyString(authRecord.bot_id) ? authRecord.bot_id : null;
       await slackApp.start();
       running = true;
       console.log(
-        `[Slack] App started for workspace ${auth.team ?? "unknown"} (dm_policy: ${config.dmPolicy})`,
+        `[Slack] App started for workspace ${workspaceName ?? "unknown"} (dm_policy: ${config.dmPolicy})`,
       );
     },
     async stop(): Promise<void> {
@@ -412,6 +425,7 @@ export function createSlackAdapter(
       writeClientPromise = null;
       botUserId = null;
       botId = null;
+      workspaceName = null;
       status.clear();
       approvals.clear();
       debounce.clear();

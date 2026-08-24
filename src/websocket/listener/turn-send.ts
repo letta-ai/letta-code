@@ -5,7 +5,6 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { sendMessageStream } from "@/agent/message";
-import type { ProviderFallbackState } from "./provider-fallback";
 import { finalizeHandledRecoveryTurn } from "./recovery";
 import {
   type ApprovalContinuationSendResult,
@@ -23,7 +22,6 @@ export function createTurnInputSender(params: {
   socket: ListenerTransport;
   runtime: ConversationRuntime;
   turnLease: TurnLease;
-  providerFallback: ProviderFallbackState;
   buildSendOptions: () => Parameters<typeof sendMessageStream>[2];
   onTerminal: (transition: TurnFinishTransition) => void;
   getTurnId: () => string;
@@ -45,7 +43,6 @@ export function createTurnInputSender(params: {
           params.socket,
           params.runtime,
           params.turnLease,
-          { providerFallback: params.providerFallback },
         );
       }
       return {
@@ -57,7 +54,6 @@ export function createTurnInputSender(params: {
           params.socket,
           params.runtime,
           params.turnLease,
-          { providerFallback: params.providerFallback },
         ),
       };
     },

@@ -56,11 +56,11 @@ describe("buildClientSkillsPayload", () => {
       ],
       errors: [],
     });
-
     const result = await buildClientSkillsPayload({
       agentId: "agent-1",
       skillsDirectory: "/tmp/.skills",
       skillSources: ["project", "bundled"],
+      attachedRepositories: [],
       discoverSkillsFn,
     });
 
@@ -282,12 +282,12 @@ describe("buildClientSkillsPayload", () => {
         errors: [],
       };
     };
-
     const result = await buildClientSkillsPayload({
       agentId: "agent-1",
       workingDirectory: "/tmp",
       skillsDirectory: "/tmp/.skills",
       skillSources: ["project"],
+      attachedRepositories: [],
       discoverSkillsFn,
     });
 
@@ -896,68 +896,6 @@ describe("client skills payload cache", () => {
       expect(result2.clientSkills.length).toBeGreaterThanOrEqual(
         result1.clientSkills.length,
       );
-    } finally {
-      process.chdir(originalCwd);
-      await rm(tempRoot, { recursive: true, force: true });
-    }
-  });
-
-  test("cache misses when a skill file changes", async () => {
-    const { buildClientSkillsPayload } = await importFresh();
-
-    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-cache-change-"));
-    const originalCwd = process.cwd();
-
-    try {
-      const projectDir = join(tempRoot, "project");
-      const agentsSkillsDir = join(projectDir, ".agents", "skills");
-      const skillDir = join(agentsSkillsDir, "mutable-skill");
-      const skillPath = join(skillDir, "SKILL.md");
-      await mkdir(skillDir, { recursive: true });
-      await writeFile(
-        skillPath,
-        [
-          "---",
-          "id: mutable-skill",
-          "name: mutable-skill",
-          "description: original",
-          "---",
-          "",
-          "Body",
-        ].join("\n"),
-      );
-
-      process.chdir(projectDir);
-      invalidateClientSkillsPayloadCache();
-
-      const result1 = await buildClientSkillsPayload({
-        agentId: "change-agent",
-        skillsDirectory: join(projectDir, ".skills"),
-        skillSources: ["project"],
-      });
-      expect(result1.clientSkills[0]?.description).toBe("original");
-
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      await writeFile(
-        skillPath,
-        [
-          "---",
-          "id: mutable-skill",
-          "name: mutable-skill",
-          "description: updated description",
-          "---",
-          "",
-          "Body changed",
-        ].join("\n"),
-      );
-
-      const result2 = await buildClientSkillsPayload({
-        agentId: "change-agent",
-        skillsDirectory: join(projectDir, ".skills"),
-        skillSources: ["project"],
-      });
-
-      expect(result2.clientSkills[0]?.description).toBe("updated description");
     } finally {
       process.chdir(originalCwd);
       await rm(tempRoot, { recursive: true, force: true });

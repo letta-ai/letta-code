@@ -104,6 +104,7 @@ export type StreamRequestContext = {
   conversationId: string;
   resolvedConversationId: string;
   agentId: string | null;
+  actingUserId?: string;
   requestStartedAtMs: number;
   otid?: string;
 };
@@ -609,6 +610,7 @@ export async function sendMessageStreamWithBackend(
     conversationId,
     resolvedConversationId,
     agentId: opts.agentId ?? null,
+    ...(opts.actingUserId ? { actingUserId: opts.actingUserId } : {}),
     requestStartedAtMs,
     otid: firstOtid,
   });

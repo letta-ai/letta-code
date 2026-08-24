@@ -26,6 +26,8 @@ export interface TrackerEntry {
 }
 
 export interface TrackerState {
+  audit_cursor_tag: string | null;
+  audit_cursor_validated: boolean;
   last_checked_tag: string | null;
   last_checked_at: string | null;
   processed: TrackerEntry[];
@@ -41,6 +43,8 @@ export interface RecordAnalysisOptions {
 
 export function emptyTrackerState(): TrackerState {
   return {
+    audit_cursor_tag: null,
+    audit_cursor_validated: true,
     last_checked_tag: null,
     last_checked_at: null,
     processed: [],
@@ -49,21 +53,82 @@ export function emptyTrackerState(): TrackerState {
 
 export function parseTrackerState(body: string): TrackerState {
   const start = body.indexOf(STATE_START);
-  if (start === -1) return emptyTrackerState();
+  if (start === -1) throw new Error("Codex tracker hidden state is missing");
 
   const jsonStart = start + STATE_START.length;
   const end = body.indexOf(STATE_END, jsonStart);
-  if (end === -1) return emptyTrackerState();
+  if (end === -1) throw new Error("Codex tracker hidden state is incomplete");
 
   try {
     return normalizeState(JSON.parse(body.slice(jsonStart, end).trim()));
-  } catch {
-    return emptyTrackerState();
+  } catch (error) {
+    throw new Error("Codex tracker hidden state is invalid", { cause: error });
   }
 }
 
-export function hasProcessedTag(state: TrackerState, tag: string): boolean {
-  return state.processed.some((entry) => entry.tag === tag);
+export function isTerminalOutcome(outcome: TrackerOutcome): boolean {
+  return outcome !== "error";
+}
+
+export function hasProcessedRange(
+  state: TrackerState,
+  previousTag: string,
+  currentTag: string,
+): boolean {
+  return state.processed.some(
+    (entry) =>
+      entry.previous_tag === previousTag &&
+      entry.tag === currentTag &&
+      isTerminalOutcome(entry.outcome),
+  );
+}
+
+export function getCodexAuditCursorTag(state: TrackerState): string | null {
+  return state.audit_cursor_tag;
+}
+
+export function validateLegacyCodexAuditCursor(
+  state: TrackerState,
+  stableTags: string[],
+): TrackerState {
+  if (state.audit_cursor_validated) return state;
+
+  let tag = state.audit_cursor_tag;
+  while (tag !== null) {
+    const entry = state.processed.find(
+      (candidate) =>
+        candidate.tag === tag && isTerminalOutcome(candidate.outcome),
+    );
+    if (!entry) break;
+    const currentIndex = stableTags.indexOf(entry.tag);
+    if (
+      currentIndex < 1 ||
+      stableTags[currentIndex - 1] !== entry.previous_tag
+    ) {
+      throw new Error(
+        `Legacy Codex tracker range is not adjacent: ${entry.previous_tag}...${entry.tag}`,
+      );
+    }
+    tag = entry.previous_tag;
+  }
+
+  return { ...state, audit_cursor_validated: true };
+}
+
+export function advanceCodexAuditCursor(
+  state: TrackerState,
+  previousTag: string,
+  currentTag: string,
+  isAdjacentRelease: boolean,
+): TrackerState {
+  if (!isAdjacentRelease || state.audit_cursor_tag !== previousTag)
+    return state;
+  if (!hasProcessedRange(state, previousTag, currentTag)) {
+    throw new Error(
+      `Cannot advance Codex audit cursor without terminal ${previousTag}...${currentTag}`,
+    );
+  }
+  return { ...state, audit_cursor_tag: currentTag };
 }
 
 export function recordAnalysis(
@@ -71,29 +136,68 @@ export function recordAnalysis(
   options: RecordAnalysisOptions,
 ): TrackerState {
   const processedAt = options.processedAt ?? new Date().toISOString();
-  return upsertTrackerEntry(state, {
-    tag: options.analysis.current_tag,
-    previous_tag: options.analysis.previous_tag,
-    verdict: options.analysis.verdict,
-    outcome: options.outcome,
-    pr_url: options.prUrl ?? null,
-    notes: options.notes,
-    processed_at: processedAt,
-    compare_url: options.analysis.compare_url,
-    workflow_run_url: options.analysis.workflow_run_url,
-  });
+  return upsertTrackerEntry(
+    state,
+    {
+      tag: options.analysis.current_tag,
+      previous_tag: options.analysis.previous_tag,
+      verdict: options.analysis.verdict,
+      outcome: options.outcome,
+      pr_url: options.prUrl ?? null,
+      notes: options.notes,
+      processed_at: processedAt,
+      compare_url: options.analysis.compare_url,
+      workflow_run_url: options.analysis.workflow_run_url,
+    },
+    options.analysis.is_adjacent_release,
+  );
 }
 
 export function upsertTrackerEntry(
   state: TrackerState,
   entry: TrackerEntry,
+  advanceAuditCursor = true,
 ): TrackerState {
-  const processed = [
+  let auditCursorTag = state.audit_cursor_tag;
+  if (auditCursorTag === null && !advanceAuditCursor) {
+    auditCursorTag = entry.previous_tag;
+  } else if (
+    advanceAuditCursor &&
+    entry.outcome === "error" &&
+    auditCursorTag === null
+  ) {
+    auditCursorTag = entry.previous_tag;
+  } else if (
+    advanceAuditCursor &&
+    isTerminalOutcome(entry.outcome) &&
+    (auditCursorTag === null || entry.previous_tag === auditCursorTag)
+  ) {
+    auditCursorTag = entry.tag;
+  }
+
+  const candidates = [
     entry,
-    ...state.processed.filter((existing) => existing.tag !== entry.tag),
-  ].slice(0, HIDDEN_STATE_LIMIT);
+    ...state.processed.filter(
+      (existing) =>
+        existing.tag !== entry.tag ||
+        existing.previous_tag !== entry.previous_tag,
+    ),
+  ];
+  let processed = candidates.slice(0, HIDDEN_STATE_LIMIT);
+  if (
+    auditCursorTag !== null &&
+    !isSupportedAuditCursor(processed, auditCursorTag)
+  ) {
+    const support = candidates.find((candidate) =>
+      isAuditCursorSupportEntry(candidate, auditCursorTag),
+    );
+    if (!support) throw new Error("Codex audit cursor has no supporting entry");
+    processed = [...processed.slice(0, HIDDEN_STATE_LIMIT - 1), support];
+  }
 
   return {
+    audit_cursor_tag: auditCursorTag,
+    audit_cursor_validated: state.audit_cursor_validated,
     last_checked_tag: entry.tag,
     last_checked_at: entry.processed_at,
     processed,
@@ -103,9 +207,7 @@ export function upsertTrackerEntry(
 export function renderTrackerBody(state: TrackerState): string {
   const normalized = normalizeState(state);
   const parts: string[] = [
-    "Central tracker for the Amelia-driven Codex upstream drift watch experiment.",
-    "",
-    "The legacy per-release `codex-release-watch.yml` issue workflow is still enabled as the baseline while this tracker bakes off the new automation path.",
+    "Central tracker for Amelia-driven Codex upstream drift monitoring.",
     "",
     renderLastChecked(normalized),
     "",
@@ -181,28 +283,130 @@ function escapeTable(value: string): string {
 }
 
 function normalizeState(value: unknown): TrackerState {
-  if (!isRecord(value)) return emptyTrackerState();
+  if (!isRecord(value)) throw new TypeError("tracker state must be an object");
+  if (
+    !Array.isArray(value.processed) ||
+    !value.processed.every(isTrackerEntry)
+  ) {
+    throw new TypeError("tracker processed entries are invalid");
+  }
+  if (
+    value.last_checked_tag !== null &&
+    typeof value.last_checked_tag !== "string"
+  ) {
+    throw new TypeError("tracker last_checked_tag is invalid");
+  }
+  if (
+    value.last_checked_at !== null &&
+    typeof value.last_checked_at !== "string"
+  ) {
+    throw new TypeError("tracker last_checked_at is invalid");
+  }
 
-  const processed = Array.isArray(value.processed)
-    ? value.processed.filter(isTrackerEntry).slice(0, HIDDEN_STATE_LIMIT)
-    : [];
+  const processed = value.processed.slice(
+    0,
+    HIDDEN_STATE_LIMIT,
+  ) as TrackerEntry[];
+  const lastCheckedTag = value.last_checked_tag as string | null;
+  const lastChecked =
+    lastCheckedTag === null
+      ? null
+      : processed.find((entry) => entry.tag === lastCheckedTag);
+  if (lastCheckedTag === null ? processed.length > 0 : !lastChecked) {
+    throw new TypeError("tracker last_checked_tag is inconsistent");
+  }
+
+  let auditCursorTag: string | null;
+  let auditCursorValidated: boolean;
+  if (value.audit_cursor_tag === undefined) {
+    auditCursorTag = deriveLegacyAuditCursor(processed);
+    auditCursorValidated = false;
+  } else if (
+    (value.audit_cursor_tag === null ||
+      typeof value.audit_cursor_tag === "string") &&
+    value.audit_cursor_validated === true
+  ) {
+    auditCursorTag = value.audit_cursor_tag;
+    auditCursorValidated = true;
+  } else {
+    throw new TypeError("tracker audit cursor is invalid");
+  }
+  if (auditCursorTag !== null && !isStableTag(auditCursorTag)) {
+    throw new TypeError("tracker audit_cursor_tag is invalid");
+  }
+  if (auditCursorTag === null && processed.length > 0) {
+    throw new TypeError("tracker audit_cursor_tag is missing");
+  }
+  if (
+    auditCursorTag !== null &&
+    !isSupportedAuditCursor(processed, auditCursorTag)
+  ) {
+    throw new TypeError("tracker audit_cursor_tag is inconsistent");
+  }
 
   return {
-    last_checked_tag:
-      typeof value.last_checked_tag === "string"
-        ? value.last_checked_tag
-        : null,
-    last_checked_at:
-      typeof value.last_checked_at === "string" ? value.last_checked_at : null,
+    audit_cursor_tag: auditCursorTag,
+    audit_cursor_validated: auditCursorValidated,
+    last_checked_tag: lastCheckedTag,
+    last_checked_at: value.last_checked_at as string | null,
     processed,
   };
+}
+
+function isSupportedAuditCursor(
+  processed: TrackerEntry[],
+  cursorTag: string,
+): boolean {
+  return processed.some((entry) => isAuditCursorSupportEntry(entry, cursorTag));
+}
+
+function isAuditCursorSupportEntry(
+  entry: TrackerEntry,
+  cursorTag: string,
+): boolean {
+  return (
+    (entry.tag === cursorTag && isTerminalOutcome(entry.outcome)) ||
+    entry.previous_tag === cursorTag
+  );
+}
+
+function deriveLegacyAuditCursor(processed: TrackerEntry[]): string | null {
+  const terminal = processed.filter((entry) =>
+    isTerminalOutcome(entry.outcome),
+  );
+  if (terminal.length === 0) {
+    const errorBaselines = [
+      ...new Set(
+        processed
+          .filter((entry) => entry.outcome === "error")
+          .map((entry) => entry.previous_tag),
+      ),
+    ];
+    if (errorBaselines.length > 1) {
+      throw new TypeError("legacy tracker error baselines are ambiguous");
+    }
+    return errorBaselines[0] ?? null;
+  }
+
+  const tags = terminal.map((entry) => entry.tag);
+  if (new Set(tags).size !== tags.length) {
+    throw new TypeError("legacy tracker terminal tags are duplicated");
+  }
+  const previousTags = new Set(terminal.map((entry) => entry.previous_tag));
+  const endpoints = tags.filter((tag) => !previousTags.has(tag));
+  if (endpoints.length !== 1) {
+    throw new TypeError("legacy tracker audit chain is ambiguous");
+  }
+  return endpoints[0] ?? null;
 }
 
 function isTrackerEntry(value: unknown): value is TrackerEntry {
   if (!isRecord(value)) return false;
   return (
     typeof value.tag === "string" &&
+    isStableTag(value.tag) &&
     typeof value.previous_tag === "string" &&
+    isStableTag(value.previous_tag) &&
     isVerdict(value.verdict) &&
     isOutcome(value.outcome) &&
     (typeof value.pr_url === "string" || value.pr_url === null) &&
@@ -211,6 +415,10 @@ function isTrackerEntry(value: unknown): value is TrackerEntry {
     typeof value.compare_url === "string" &&
     typeof value.workflow_run_url === "string"
   );
+}
+
+function isStableTag(value: string): boolean {
+  return /^(?:rust-v|v)?\d+\.\d+\.\d+$/.test(value);
 }
 
 function isVerdict(value: unknown): value is Verdict {

@@ -45,6 +45,9 @@ export type RunMessageStreamParams = Parameters<
 export type RunMessageStreamBody = RunMessageStreamParams[1];
 export type RunMessageStreamOptions = RunMessageStreamParams[2];
 
+export type RunRetrieveParams = Parameters<APIClient["runs"]["retrieve"]>;
+export type RunRetrieveOptions = RunRetrieveParams[1];
+
 export type AgentRetrieveParams = Parameters<APIClient["agents"]["retrieve"]>;
 export type AgentRetrieveOptions = AgentRetrieveParams[1];
 
@@ -281,6 +284,7 @@ export interface Backend {
 
   retrieveRun(
     runId: string,
+    options?: RunRetrieveOptions,
   ): Promise<Awaited<ReturnType<APIClient["runs"]["retrieve"]>>>;
 
   streamRunMessages(
@@ -501,9 +505,9 @@ export class APIBackend implements Backend {
     return client.agents.messages.cancel(agentId, { run_ids: [runId] });
   }
 
-  async retrieveRun(runId: string) {
+  async retrieveRun(runId: string, options?: RunRetrieveOptions) {
     const client = await this.getClient();
-    return client.runs.retrieve(runId);
+    return client.runs.retrieve(runId, options);
   }
 
   async streamRunMessages(

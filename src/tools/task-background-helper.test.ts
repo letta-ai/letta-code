@@ -158,6 +158,45 @@ describe("spawnBackgroundSubagentTask", () => {
     expect(outputContent).toContain("[Task completed]");
   });
 
+  test("copies PR tags from the Agent conversation to its parent", async () => {
+    const spawnSubagentImpl = mock(async () => ({
+      agentId: "agent-child",
+      conversationId: "conv-child",
+      report: "PR opened",
+      success: true,
+      totalTokens: 21,
+    }));
+    const copyGitHubPullRequestTagsImpl = mock(async () => {});
+
+    spawnBackgroundSubagentTask({
+      subagentType: "fork",
+      prompt: "Open the PR",
+      description: "Open PR",
+      parentScope: {
+        agentId: "agent-parent",
+        conversationId: "conv-parent",
+      },
+      deps: {
+        spawnSubagentImpl,
+        copyGitHubPullRequestTagsImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(copyGitHubPullRequestTagsImpl).toHaveBeenCalledWith(
+      "conv-child",
+      "conv-parent",
+    );
+  });
+
   test("silentCompletion skips message queue notification", async () => {
     const spawnSubagentImpl = mock(async () => ({
       agentId: "agent-silent",

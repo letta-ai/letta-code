@@ -17,7 +17,7 @@ import {
 import { executeAutoAllowedTools } from "@/agent/approval-execution";
 import {
   extractConflictDetail,
-  fetchRunErrorDetail,
+  fetchRunErrorInfo,
   getPreStreamErrorAction,
   getRetryDelayMs,
   isApprovalPendingError,
@@ -31,9 +31,14 @@ import {
   shouldAttemptApprovalRecovery,
 } from "@/agent/approval-recovery";
 import { getAvailableModelHandles } from "@/agent/available-models";
+import {
+  CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN,
+  formatPlanRotationNotice,
+  rotateChatGPTPlanOnQuotaLimit,
+} from "@/agent/chatgpt-plan-rotation";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { getStreamToolContextId, sendMessageStream } from "@/agent/message";
-import { getModelInfo, getModelInfoForLlmConfig } from "@/agent/model";
+import { getModelInfoForLlmConfig } from "@/agent/model";
 import { INTERRUPT_RECOVERY_ALERT } from "@/agent/prompt-assets";
 import type { SessionStats } from "@/agent/stats";
 import {
@@ -116,7 +121,6 @@ import {
   ERROR_FEEDBACK_HINT,
   INTERRUPT_MESSAGE,
   LLM_API_ERROR_MAX_RETRIES,
-  PROVIDER_FALLBACK_MAP,
   TEMP_QUOTA_OVERRIDE_MODEL,
 } from "./constants";
 import { extractErrorMeta } from "./errors";
@@ -191,6 +195,7 @@ type ConversationLoopContext = {
   consumeQueuedMessages: () => QueuedMessage[] | null;
   queueModeRef: MutableRefObject<"immediate" | "defer">;
   contextTrackerRef: MutableRefObject<ContextTracker>;
+  chatgptPlanSwapsRef: MutableRefObject<number>;
   conversationBusyRetriesRef: MutableRefObject<number>;
   conversationGenerationRef: MutableRefObject<number>;
   conversationIdRef: MutableRefObject<string>;
@@ -222,7 +227,6 @@ type ConversationLoopContext = {
     overrideModel?: string | null,
   ) => Promise<PreparedScopeToolContext>;
   processingConversationRef: MutableRefObject<number>;
-  providerFallbackAttemptedRef: MutableRefObject<boolean>;
   queueApprovalResults: QueueApprovalResults;
   queueSnapshotRef: MutableRefObject<QueuedMessage[]>;
   quotaAutoSwapAttemptedRef: MutableRefObject<boolean>;
@@ -288,6 +292,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     buffersRef,
     clearApprovalToolContext,
     closeTrajectorySegment,
+    chatgptPlanSwapsRef,
     consumeQueuedMessages,
     queueModeRef,
     contextTrackerRef,
@@ -316,7 +321,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     precomputedDiffsRef,
     prepareScopedToolExecutionContext,
     processingConversationRef,
-    providerFallbackAttemptedRef,
     queueApprovalResults,
     queueSnapshotRef,
     quotaAutoSwapAttemptedRef,
@@ -600,7 +604,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         emptyResponseRetriesRef.current = 0;
         conversationBusyRetriesRef.current = 0;
         quotaAutoSwapAttemptedRef.current = false;
-        providerFallbackAttemptedRef.current = false;
+        chatgptPlanSwapsRef.current = 0;
       }
 
       // Track last run ID for error reporting (accessible in catch block)
@@ -1013,36 +1017,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               llmApiErrorRetriesRef.current += 1;
               const attempt = llmApiErrorRetriesRef.current;
 
-              // Provider fallback: after 1 retry against Anthropic, switch to Bedrock
-              if (
-                attempt >= 2 &&
-                !providerFallbackAttemptedRef.current &&
-                currentModelId
-              ) {
-                const fallbackId = PROVIDER_FALLBACK_MAP[currentModelId];
-                const fallbackHandle = fallbackId
-                  ? getModelInfo(fallbackId)?.handle
-                  : undefined;
-                if (fallbackHandle) {
-                  providerFallbackAttemptedRef.current = true;
-                  setTempModelOverride(fallbackHandle);
-
-                  const statusId = uid("status");
-                  buffersRef.current.byId.set(statusId, {
-                    kind: "status",
-                    id: statusId,
-                    lines: ["Anthropic API error; falling back to Bedrock..."],
-                  });
-                  buffersRef.current.order.push(statusId);
-                  refreshDerived();
-
-                  buffersRef.current.interrupted = false;
-                  conversationBusyRetriesRef.current = 0;
-                  restorePinnedPermissionMode();
-                  continue;
-                }
-              }
-
               const retryAfterMs =
                 preStreamError instanceof APIError
                   ? parseRetryAfterHeaderMs(
@@ -1281,7 +1255,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   if (modelInfo) {
                     setCurrentModelId(modelInfo.id);
                   } else {
-                    // Model not in models.json (e.g., BYOK model) - use handle as ID
+                    // Model not in the runtime catalog (e.g., BYOK model) - use handle as ID
                     setCurrentModelId(agentModelHandle || null);
                   }
                   setCurrentModelHandle(agentModelHandle || null);
@@ -1456,7 +1430,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
             emptyResponseRetriesRef.current = 0;
             conversationBusyRetriesRef.current = 0;
-            providerFallbackAttemptedRef.current = false;
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
             lastSentInputRef.current = null; // Clear - no recovery needed
             pendingInterruptRecoveryConversationIdRef.current = null;
@@ -2262,9 +2235,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
           }
 
-          // Check for "Invalid tool call IDs" error - server HAS pending approvals but with different IDs.
-          // Fetch the actual pending approvals and show them to the user.
-          const detailFromRun = await fetchRunErrorDetail(lastRunId);
+          // Fetch run error metadata for recovery decisions.
+          const runErrorInfo = await fetchRunErrorInfo(lastRunId),
+            detailFromRun = runErrorInfo?.detail ?? runErrorInfo?.message;
           const invalidIdsDetected =
             isInvalidToolCallIdsError(detailFromRun) ||
             isInvalidToolCallIdsError(latestErrorText);
@@ -2395,6 +2368,39 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             continue;
           }
 
+          // ChatGPT plan rotation: when a chatgpt_oauth BYOK plan hits its
+          // usage limit, swap the agent to the same model on a sibling
+          // connected ChatGPT plan and resend. Takes precedence over the
+          // letta/auto quota fallback below.
+          if (
+            chatgptPlanSwapsRef.current <
+            CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN
+          ) {
+            const rotation = await rotateChatGPTPlanOnQuotaLimit({
+              agentId: agentIdRef.current,
+              currentHandle: currentModelId,
+              error: runErrorInfo ?? detailFromRun ?? fallbackError,
+            });
+            if (rotation) {
+              chatgptPlanSwapsRef.current += 1;
+
+              const statusId = uid("status");
+              buffersRef.current.byId.set(statusId, {
+                kind: "status",
+                id: statusId,
+                lines: [formatPlanRotationNotice(rotation)],
+              });
+              buffersRef.current.order.push(statusId);
+              refreshDerived();
+
+              currentInput = refreshInputOtidsForNewRequest(currentInput);
+              buffersRef.current.interrupted = false;
+              continue;
+            }
+            // No sibling plan available — fall through to the letta/auto
+            // quota fallback below.
+          }
+
           // Quota-limit fallback: hosted Letta API can recover by switching to
           // Auto. Local/embedded mode has no hosted Auto router, so surface the
           // provider quota error and let the user choose/connect a local model.
@@ -2519,36 +2525,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
 
             llmApiErrorRetriesRef.current += 1;
             const attempt = llmApiErrorRetriesRef.current;
-
-            // Provider fallback: after 1 retry against Anthropic, switch to Bedrock
-            if (
-              attempt >= 2 &&
-              !providerFallbackAttemptedRef.current &&
-              currentModelId
-            ) {
-              const fallbackId = PROVIDER_FALLBACK_MAP[currentModelId];
-              const fallbackHandle = fallbackId
-                ? getModelInfo(fallbackId)?.handle
-                : undefined;
-              if (fallbackHandle) {
-                providerFallbackAttemptedRef.current = true;
-                setTempModelOverride(fallbackHandle);
-
-                const statusId = uid("status");
-                buffersRef.current.byId.set(statusId, {
-                  kind: "status",
-                  id: statusId,
-                  lines: ["Anthropic API error; falling back to Bedrock..."],
-                });
-                buffersRef.current.order.push(statusId);
-                refreshDerived();
-
-                currentInput = refreshInputOtidsForNewRequest(currentInput);
-                highestSeqIdSeen = null;
-                buffersRef.current.interrupted = false;
-                continue;
-              }
-            }
 
             const delayMs = getRetryDelayMs({
               category: "transient_provider",
