@@ -676,11 +676,13 @@ export class ChannelGateway {
     state: GatewayRuntimeState,
     delivery: ChannelGatewayDelivery,
   ): Promise<void> {
+    const registrationSources =
+      delivery.sources.length > 0 ? delivery.sources : state.routedSources;
     const tool = await this.hooks.buildExternalTool(
       delivery.runtime,
-      delivery.sources,
+      registrationSources,
     );
-    const conversationTags = channelTagsForSources(delivery.sources);
+    const conversationTags = channelTagsForSources(registrationSources);
     const signature = JSON.stringify({
       mode: delivery.defaultPermissionMode ?? null,
       tool,

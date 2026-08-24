@@ -282,7 +282,7 @@ export async function startLocalChannelGateway(
       },
       logger: options.logger,
     });
-  registry.setMessageHandler((delivery) => {
+  registry.setMessageHandler(async (delivery) => {
     const sources = delivery.turnSources ?? [];
     const gatewayDelivery: ChannelGatewayDelivery = {
       runtime: {
@@ -296,18 +296,16 @@ export async function startLocalChannelGateway(
         ? { defaultPermissionMode: delivery.defaultPermissionMode }
         : {}),
     };
-    void gateway
-      .submit(gatewayDelivery)
-      .then((accepted) => {
-        if (!accepted) {
-          options.logger?.("[ChannelGateway] Harness rejected channel input");
-        }
-      })
-      .catch((error) => {
-        options.logger?.(
-          `[ChannelGateway] Failed to submit input: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
+    try {
+      const accepted = await gateway.submit(gatewayDelivery);
+      if (!accepted) {
+        options.logger?.("[ChannelGateway] Harness rejected channel input");
+      }
+    } catch (error) {
+      options.logger?.(
+        `[ChannelGateway] Failed to submit input: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   });
 
   registry.setApprovalResponseHandler(({ runtime, response }) => {

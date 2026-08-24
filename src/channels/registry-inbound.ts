@@ -97,7 +97,7 @@ export function createChannelInboundRouter(deps: {
   dispatchTurnLifecycleEvent: (
     event: ChannelTurnLifecycleEvent,
   ) => Promise<void>;
-  deliver: (delivery: ChannelInboundDelivery) => void;
+  deliver: (delivery: ChannelInboundDelivery) => void | Promise<void>;
   emitEvent: (event: ChannelRegistryEvent) => void;
 }) {
   const discordObserverBatches = new Map<string, DiscordObserverBatchState>();
@@ -118,34 +118,36 @@ export function createChannelInboundRouter(deps: {
     );
   }
 
-  function deliverDiscordObserverBatch(
+  async function deliverDiscordObserverBatch(
     accountId: string,
     observer: DiscordObserverConfig,
     entries: readonly DiscordObserverBatchEntry[],
-  ): void {
+  ): Promise<void> {
     const content = formatDiscordObserverBatch(observer.guildId, entries);
     const now = new Date().toISOString();
-    for (const target of observer.targets) {
-      const route = {
-        accountId,
-        chatId: observer.guildId,
-        chatType: "channel" as const,
-        threadId: null,
-        agentId: target.agentId,
-        conversationId: target.conversationId,
-        enabled: true,
-        outboundEnabled: false,
-        createdAt: now,
-        updatedAt: now,
-      };
-      deps.deliver({
-        route,
-        content,
-        // Observer deliveries intentionally omit turn sources. The gateway
-        // builds MessageChannel from turn sources, so including them would let
-        // an ambient observer reply into Discord despite outboundEnabled=false.
-      });
-    }
+    await Promise.all(
+      observer.targets.map(async (target) => {
+        const route = {
+          accountId,
+          chatId: observer.guildId,
+          chatType: "channel" as const,
+          threadId: null,
+          agentId: target.agentId,
+          conversationId: target.conversationId,
+          enabled: true,
+          outboundEnabled: false,
+          createdAt: now,
+          updatedAt: now,
+        };
+        await deps.deliver({
+          route,
+          content,
+          // Observer deliveries intentionally omit turn sources. The gateway
+          // uses existing routed sources only for persistent tool registration;
+          // the active observer turn keeps an empty source set and cannot reply.
+        });
+      }),
+    );
   }
 
   async function getDiscordObserverBatcher(
@@ -161,7 +163,7 @@ export function createChannelInboundRouter(deps: {
     const generation = bumpDiscordObserverGeneration(accountId);
     if (existing) {
       discordObserverBatches.delete(accountId);
-      await existing.batcher.stop("flush");
+      await existing.batcher.stop("cancel");
     }
     if (
       !canAcceptDiscordObserver(accountId) ||
@@ -605,7 +607,10 @@ export function createChannelInboundRouter(deps: {
     bumpDiscordObserverGeneration(accountId);
   }
 
-  async function stopDiscordObserverBatches(accountId?: string): Promise<void> {
+  async function stopDiscordObserverBatches(
+    accountId?: string,
+    disposition: "flush" | "cancel" = "flush",
+  ): Promise<void> {
     const entries = accountId
       ? [[accountId, discordObserverBatches.get(accountId)] as const]
       : Array.from(discordObserverBatches.entries());
@@ -613,7 +618,7 @@ export function createChannelInboundRouter(deps: {
       entries.map(async ([key, state]) => {
         if (!state) return;
         discordObserverBatches.delete(key);
-        await state.batcher.stop("flush");
+        await state.batcher.stop(disposition);
       }),
     );
   }

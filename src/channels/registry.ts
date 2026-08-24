@@ -597,18 +597,18 @@ export class ChannelRegistry {
     loadTargetStore(channelId);
 
     const existing = this.getAdapter(channelId, accountId);
+    if (channelId === "discord") {
+      this.inbound.disableDiscordObserverBatches(accountId);
+    }
     if (existing?.isRunning()) {
-      if (channelId === "discord") {
-        this.inbound.disableDiscordObserverBatches(accountId);
-      }
       logChannelStartup(
         options?.logger,
         `stopping existing adapter for ${channelId}/${accountId}`,
       );
       await existing.stop();
-      if (channelId === "discord") {
-        await this.inbound.stopDiscordObserverBatches(accountId);
-      }
+    }
+    if (channelId === "discord") {
+      await this.inbound.stopDiscordObserverBatches(accountId, "cancel");
     }
     this.adapters.delete(this.getAdapterKey(channelId, accountId));
 
@@ -658,6 +658,7 @@ export class ChannelRegistry {
       if (channelId === "discord") {
         await this.inbound.stopDiscordObserverBatches(
           adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+          "cancel",
         );
       }
       this.adapters.delete(
@@ -686,7 +687,7 @@ export class ChannelRegistry {
       await adapter.stop();
     }
     if (channelId === "discord") {
-      await this.inbound.stopDiscordObserverBatches(accountId);
+      await this.inbound.stopDiscordObserverBatches(accountId, "cancel");
     }
     this.adapters.delete(this.getAdapterKey(channelId, accountId));
     return true;
@@ -745,9 +746,16 @@ export class ChannelRegistry {
 
   // ── Inbound message pipeline ──────────────────────────────────
 
-  private deliverOrBuffer(delivery: ChannelInboundDelivery): void {
+  private deliverOrBuffer(
+    delivery: ChannelInboundDelivery,
+  ): void | Promise<void> {
     if (this.isReady()) {
-      this.messageHandler?.(delivery);
+      // ChannelMessageHandler remains void-compatible for existing adapters and
+      // tests, but async gateway handlers are awaited by observer flushes.
+      const result = this.messageHandler?.(delivery) as unknown;
+      if (result && typeof (result as PromiseLike<void>).then === "function") {
+        return Promise.resolve(result as PromiseLike<void>);
+      }
       return;
     }
 
