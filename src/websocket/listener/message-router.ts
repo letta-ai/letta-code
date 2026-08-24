@@ -26,7 +26,7 @@ import { handleChatGPTUsageCommand } from "./commands/chatgpt-usage";
 import { handleConnectProvidersCommand } from "./commands/connect-providers";
 import { handleCronProtocolCommand } from "./commands/cron";
 import { handleGitBranchCommand } from "./commands/git-branches";
-import { handleMemoryProtocolCommand } from "./commands/memory";
+import { handleMemfsSyncedMemoryProtocolCommand } from "./commands/memory-command-sync";
 import { handleModelToolsetCommand } from "./commands/model-toolset";
 import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
@@ -763,8 +763,9 @@ export function createListenerMessageHandler(
       }
 
       if (
-        handleMemoryProtocolCommand(parsed, {
+        handleMemfsSyncedMemoryProtocolCommand(parsed, {
           socket,
+          runtime,
           safeSocketSend,
           runDetachedListenerTask,
         })
