@@ -2590,6 +2590,12 @@ async function executeToolInner(
       let enhancedArgs = args;
       let invocationSecrets: Record<string, string> = {};
 
+      // Every built-in may opt into turn cancellation without adding another
+      // manager-side allowlist entry. The signal remains outside tool schemas.
+      if (options?.signal) {
+        enhancedArgs = { ...enhancedArgs, signal: options.signal };
+      }
+
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
         // Keep secret values out of shell interpolation and only redact values
         // that this invocation can access.
@@ -2600,9 +2606,6 @@ async function executeToolInner(
             command.every((part) => typeof part === "string"))
             ? extractSecretEnvFromCommand(command, scopedAgentId)
             : {};
-        if (options?.signal) {
-          enhancedArgs = { ...enhancedArgs, signal: options.signal };
-        }
         if (options?.onOutput) {
           enhancedArgs = {
             ...enhancedArgs,
@@ -2627,9 +2630,6 @@ async function executeToolInner(
         if (options?.toolCallId) {
           enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
         }
-        if (options?.signal) {
-          enhancedArgs = { ...enhancedArgs, signal: options.signal };
-        }
         if (options?.parentScope) {
           enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
         }
@@ -2653,7 +2653,6 @@ async function executeToolInner(
           ...(options?.toolContextId && {
             _executionContextId: options.toolContextId,
           }),
-          ...(options?.signal && { signal: options.signal }),
         };
       }
 
