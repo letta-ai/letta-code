@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { getReasoningTierOptionsForHandle } from "@/agent/model";
 import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
@@ -25,9 +26,15 @@ type FakeModel = {
   max_tokens?: number;
   model?: string;
   model_endpoint?: string;
+  model_id?: string;
   name?: string;
   provider_category?: "base" | "byok";
   provider_type?: string;
+  reasoning_capabilities?: {
+    mandatory?: boolean;
+    supported_efforts?: string[] | null;
+  };
+  reasoning_levels?: string[];
 };
 
 let listModelsImpl: () => Promise<FakeModel[]> = async () => [];
@@ -43,6 +50,7 @@ const {
   getAvailableModelHandles,
   getCachedAvailableModels,
   getCachedModelHandles,
+  getCachedModelReasoningCapabilities,
   getCachedOpenAICompatibleProxyHandles,
   getModelProviderType,
 } = await import("@/agent/available-models");
@@ -173,6 +181,88 @@ describe("available-models cache semantics", () => {
       },
     ]);
     expect(getCachedAvailableModels()).toEqual(result.models);
+    expect(
+      getCachedModelReasoningCapabilities()?.get(
+        "opencode/deepseek-v4-flash-free",
+      ),
+    ).toEqual({ supported_efforts: ["none", "medium", "high"] });
+  });
+
+  test("keeps runtime reasoning levels isolated by backend handle", async () => {
+    listModelsImpl = async () => [
+      {
+        handle: "openai-codex/gpt-5.6-sol",
+        provider_type: "chatgpt_oauth",
+        reasoning_levels: [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+        ],
+      },
+      {
+        handle: "chatgpt-plus-pro/gpt-5.6-sol",
+        provider_type: "chatgpt_oauth",
+        reasoning_levels: ["high"],
+      },
+    ];
+
+    await getAvailableModelHandles();
+    const capabilities = getCachedModelReasoningCapabilities();
+
+    expect(capabilities?.get("openai-codex/gpt-5.6-sol")).toEqual({
+      supported_efforts: [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+      ],
+    });
+    expect(capabilities?.get("chatgpt-plus-pro/gpt-5.6-sol")).toEqual({
+      supported_efforts: ["high"],
+    });
+    expect(
+      getReasoningTierOptionsForHandle(
+        "chatgpt-plus-pro/gpt-5.6-sol",
+        undefined,
+        capabilities?.get("openai-codex/gpt-5.6-sol"),
+      ).map((option) => option.effort),
+    ).toEqual(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
+    expect(
+      getReasoningTierOptionsForHandle(
+        "chatgpt-plus-pro/gpt-5.6-sol",
+        undefined,
+        capabilities?.get("chatgpt-plus-pro/gpt-5.6-sol"),
+      ).map((option) => option.effort),
+    ).toEqual(["high"]);
+  });
+
+  test("prefers explicit reasoning capabilities over reasoning levels", async () => {
+    listModelsImpl = async () => [
+      {
+        handle: "custom/reasoning-model",
+        reasoning_capabilities: {
+          supported_efforts: ["low", "high"],
+          mandatory: true,
+        },
+        reasoning_levels: ["off", "medium", "high"],
+      },
+    ];
+
+    await getAvailableModelHandles();
+
+    expect(
+      getCachedModelReasoningCapabilities()?.get("custom/reasoning-model"),
+    ).toEqual({
+      supported_efforts: ["low", "high"],
+      mandatory: true,
+    });
   });
 
   test("classifies custom OpenAI endpoints without classifying the official API", async () => {

@@ -87,13 +87,18 @@ export function registryHandleForByokAlias(
   return normalizeModelHandleForRegistry(baseHandle) ?? baseHandle;
 }
 
+export function catalogHandleForModelLookup(handle: string): string {
+  if (models.some((model) => model.handle === handle)) return handle;
+  return normalizeModelHandleForRegistry(handle) ?? handle;
+}
+
 export function registryHandleForBackendModel(
   handle: string,
   providerType?: string,
 ): string {
-  const normalizedHandle = normalizeModelHandleForRegistry(handle) ?? handle;
-  if (models.some((model) => model.handle === normalizedHandle)) {
-    return normalizedHandle;
+  const catalogHandle = catalogHandleForModelLookup(handle);
+  if (models.some((model) => model.handle === catalogHandle)) {
+    return catalogHandle;
   }
 
   if (providerType === "chatgpt_oauth" || providerType === "openai") {
@@ -106,7 +111,7 @@ export function registryHandleForBackendModel(
     }
   }
 
-  return normalizedHandle;
+  return catalogHandle;
 }
 
 export function labelForBackendModel(
@@ -147,7 +152,7 @@ export function toByokSelectorModel(
 }
 
 export function toSelectorModelForHandle(handle: string): UiModel {
-  const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
+  const registryHandle = catalogHandleForModelLookup(handle);
   const modelInfo = getModelInfo(registryHandle);
   if (modelInfo) {
     return {
@@ -170,7 +175,7 @@ export function toSelectorModelForHandle(handle: string): UiModel {
 export function includeUnknownBackendHandleInRecommended(
   handle: string,
 ): boolean {
-  const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
+  const registryHandle = catalogHandleForModelLookup(handle);
   return isLocalModelHandle(registryHandle);
 }
 

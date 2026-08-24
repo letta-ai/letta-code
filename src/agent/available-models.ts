@@ -157,8 +157,10 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
     if (model.handle && isOpenAICompatibleProxy) {
       openAICompatibleProxyHandles.add(model.handle);
     }
-    const capabilities = parseReasoningCapabilities(
-      modelRecord.reasoning_capabilities,
+    const reasoningLevels = parseReasoningLevels(modelRecord.reasoning_levels);
+    const capabilities = mergeReasoningCapabilities(
+      parseReasoningCapabilities(modelRecord.reasoning_capabilities),
+      reasoningCapabilitiesFromLevels(reasoningLevels),
     );
     if (model.handle && capabilities) {
       reasoningCapabilities.set(model.handle, capabilities);
@@ -173,11 +175,6 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
         typeof modelRecord.model_id === "string"
           ? modelRecord.model_id
           : undefined;
-      const reasoningLevels = Array.isArray(modelRecord.reasoning_levels)
-        ? modelRecord.reasoning_levels.filter(
-            (level): level is string => typeof level === "string",
-          )
-        : undefined;
       const availableModel = {
         handle: model.handle,
         label,
@@ -228,6 +225,32 @@ function parseReasoningCapabilities(
       ? { mandatory: record.mandatory }
       : {}),
   };
+}
+
+function parseReasoningLevels(value: unknown): string[] | undefined {
+  return Array.isArray(value)
+    ? value.filter((level): level is string => typeof level === "string")
+    : undefined;
+}
+
+function reasoningCapabilitiesFromLevels(
+  levels: readonly string[] | undefined,
+): ReasoningCapabilities | undefined {
+  if (levels === undefined) return undefined;
+  const supportedEfforts = levels
+    .map((level) => (level === "off" ? "none" : level))
+    .filter(isModelReasoningEffort);
+  if (levels.length > 0 && supportedEfforts.length === 0) return undefined;
+  return { supported_efforts: supportedEfforts };
+}
+
+function mergeReasoningCapabilities(
+  explicit: ReasoningCapabilities | undefined,
+  fromLevels: ReasoningCapabilities | undefined,
+): ReasoningCapabilities | undefined {
+  if (!explicit) return fromLevels;
+  if (!fromLevels || explicit.supported_efforts !== undefined) return explicit;
+  return { ...fromLevels, ...explicit };
 }
 
 function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {

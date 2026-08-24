@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getReasoningTierOptionsForHandle } from "@/agent/model";
+import { getReasoningTierOptionsForHandle, models } from "@/agent/model";
 import {
   buildByokProviderAliases,
   isByokHandleForSelector,
@@ -10,6 +10,7 @@ import {
   toByokSelectorModel,
   withProviderMetadataForSelector,
 } from "@/cli/components/ModelSelector";
+import { catalogHandleForModelLookup } from "@/cli/components/model-selector-helpers";
 import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
 
 setupRuntimeModelCatalogFixture();
@@ -103,6 +104,30 @@ describe("ModelSelector custom BYOK provider detection", () => {
     expect(labelForBackendModel("GPT-5.6 Sol (ChatGPT)", "chatgpt_oauth")).toBe(
       "GPT-5.6 Sol (ChatGPT)",
     );
+  });
+
+  test("prefers exact runtime handles before canonical aliases", () => {
+    expect(catalogHandleForModelLookup("openai-codex/gpt-5.6-sol")).toBe(
+      "chatgpt-plus-pro/gpt-5.6-sol",
+    );
+
+    models.push({
+      id: "gpt-5.6-sol-high",
+      handle: "openai-codex/gpt-5.6-sol",
+      label: "GPT-5.6 Sol",
+      description: "",
+      updateArgs: { reasoning_effort: "high" },
+    });
+
+    expect(catalogHandleForModelLookup("openai-codex/gpt-5.6-sol")).toBe(
+      "openai-codex/gpt-5.6-sol",
+    );
+    expect(
+      registryHandleForBackendModel(
+        "openai-codex/gpt-5.6-sol",
+        "chatgpt_oauth",
+      ),
+    ).toBe("openai-codex/gpt-5.6-sol");
   });
 
   test("resolves alias-backed BYOK handles to registry handles for reasoning tiers", () => {
