@@ -339,8 +339,6 @@ export async function getModelContextWindow(
 export async function getModelProviderType(
   handle: string,
 ): Promise<string | undefined> {
-  if (!cache) {
-    await getAvailableModelHandles();
-  }
-  return cache?.providerTypes.get(handle);
+  const result = await getAvailableModelHandles();
+  return result.providerTypes.get(handle);
 }

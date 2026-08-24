@@ -116,6 +116,34 @@ describe.skipIf(isWindows)("TaskOutput and TaskStop", () => {
     await task_stop({ task_id: taskId });
   });
 
+  test("interrupting TaskOutput stops the wait but leaves the process running", async () => {
+    const startResult = await bash({
+      command: "sleep 10",
+      description: "Interruptible wait process",
+      run_in_background: true,
+    });
+
+    const match = startResult.content[0]?.text.match(/bash_(\d+)/);
+    expect(match).toBeDefined();
+    const taskId = `bash_${match?.[1]}`;
+    const abortController = new AbortController();
+    setTimeout(() => abortController.abort(), 50);
+
+    const startTime = Date.now();
+    await expect(
+      task_output({
+        task_id: taskId,
+        block: true,
+        timeout: 600000,
+        signal: abortController.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(Date.now() - startTime).toBeLessThan(1000);
+    expect(backgroundProcesses.get(taskId)?.status).toBe("running");
+    await task_stop({ task_id: taskId });
+  });
+
   test("TaskOutput handles non-existent task_id", async () => {
     const result = await task_output({
       task_id: "nonexistent_task",

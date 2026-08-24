@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
@@ -67,16 +67,54 @@ function getMemorySkillsDirs(agentId?: string): string[] {
 }
 
 /**
- * Check if a skill directory has additional files beyond SKILL.md
+ * List bundled resources without eagerly reading their contents.
  */
-function hasAdditionalFiles(skillMdPath: string): boolean {
-  try {
-    const skillDir = dirname(skillMdPath);
-    const entries = readdirSync(skillDir);
-    return entries.some((e) => e.toUpperCase() !== "SKILL.MD");
-  } catch {
-    return false;
+const MAX_LISTED_SKILL_RESOURCES = 200;
+
+interface SkillResources {
+  paths: string[];
+  truncated: boolean;
+}
+
+function listSkillResources(skillMdPath: string): SkillResources {
+  const skillDir = dirname(skillMdPath);
+  const paths: string[] = [];
+  let truncated = false;
+
+  function walk(directory: string, relativeDirectory: string): void {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries.sort((left, right) =>
+      left.name.localeCompare(right.name),
+    )) {
+      const relativePath = relativeDirectory
+        ? `${relativeDirectory}/${entry.name}`
+        : entry.name;
+      if (relativePath.toUpperCase() === "SKILL.MD") {
+        continue;
+      }
+      if (paths.length >= MAX_LISTED_SKILL_RESOURCES) {
+        truncated = true;
+        return;
+      }
+      if (entry.isDirectory()) {
+        walk(join(directory, entry.name), relativePath);
+        if (truncated) {
+          return;
+        }
+      } else if (entry.isFile()) {
+        paths.push(relativePath);
+      }
+    }
   }
+
+  walk(skillDir, "");
+  return { paths, truncated };
 }
 
 /**
@@ -240,12 +278,22 @@ export function renderSkillContent(
   }
 
   const skillDir = dirname(skillPath);
-  const hasExtras = hasAdditionalFiles(skillPath);
   const withSkillDir = skillContent
     .replace(/<SKILL_DIR>/g, skillDir)
     .replace(/\$\{CLAUDE_SKILL_DIR\}/g, skillDir);
-  const dirHeader = hasExtras ? `# Skill Directory: ${skillDir}\n\n` : "";
-  return `${dirHeader}${withSkillDir}`;
+  const resources = listSkillResources(skillPath);
+  const resourceLines = resources.paths.map(
+    (resourcePath) => `  <file>${escapeXmlText(resourcePath)}</file>`,
+  );
+  if (resources.truncated) {
+    resourceLines.push("  <truncated>true</truncated>");
+  }
+  const resourcesSection =
+    resourceLines.length > 0
+      ? `\n\n<skill_resources>\n${resourceLines.join("\n")}\n</skill_resources>`
+      : "";
+
+  return `${withSkillDir}\n\nSkill directory: ${skillDir}\nRelative paths in this skill are relative to the skill directory.${resourcesSection}`;
 }
 
 export async function loadRenderedSkillContent(
@@ -266,19 +314,19 @@ export async function loadRenderedSkillContent(
   return renderSkillContent(skillName, skillContent, skillPath, options);
 }
 
-function escapeXmlAttribute(value: string): string {
+function escapeXmlText(value: string): string {
   return value
     .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
 
+function escapeXmlAttribute(value: string): string {
+  return escapeXmlText(value).replace(/"/g, "&quot;");
+}
+
 export function wrapSkillContent(skillName: string, content: string): string {
-  if (/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(skillName)) {
-    return `<${skillName}>\n${content}\n</${skillName}>`;
-  }
-  return `<skill name="${escapeXmlAttribute(skillName)}">\n${content}\n</skill>`;
+  return `<skill_content name="${escapeXmlAttribute(skillName)}">\n${content}\n</skill_content>`;
 }
 
 export function wrapSkillPrompt(

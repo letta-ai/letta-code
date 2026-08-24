@@ -455,6 +455,38 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
     }
   });
 
+  test("resolves provider metadata for conversation model overrides", async () => {
+    const backend = new NativeChatGptCatalogBackend(
+      "agent-conversation-toolset",
+      undefined,
+      {},
+      { modelHandle: "anthropic/claude-sonnet-4-6" },
+    );
+    __testSetBackend(backend);
+    const agent = await backend.retrieveAgent("agent-conversation-toolset");
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+      model: "chatgpt-jin/gpt-5.6-sol-fast",
+    } as ConversationCreateBody);
+
+    const prepared = await prepareToolExecutionContextForScope({
+      agentId: agent.id,
+      conversationId: conversation.id,
+      cachedAgent: {
+        ...agent,
+        model: "anthropic/claude-sonnet-4-6",
+        model_settings: { provider_type: "anthropic" },
+      },
+    });
+
+    expect(prepared.toolsetPreference).toBe("auto");
+    expect(prepared.toolset).toBe("codex");
+    expect(prepared.preparedToolContext.loadedToolNames).toContain(
+      "ApplyPatch",
+    );
+    expect(prepared.preparedToolContext.loadedToolNames).not.toContain("Edit");
+  });
+
   test("switches BYOK Opus 4.8 max update from stale ChatGPT provider state to default toolset", async () => {
     const storageDir = await mkdtemp(join(os.tmpdir(), "ws-byok-opus-max-"));
     const previousHome = process.env.HOME;
