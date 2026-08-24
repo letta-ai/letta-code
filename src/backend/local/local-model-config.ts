@@ -7,8 +7,10 @@ import {
 import {
   DEFAULT_PI_PROVIDER,
   isUnselectedLocalModelHandle,
+  knownReasoningCapabilities,
   type PiProvider,
   UNSELECTED_LOCAL_MODEL_HANDLE,
+  withKnownThinkingCompatibility,
 } from "@/backend/dev/pi-model-factory";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import {
@@ -55,6 +57,10 @@ interface LocalModelListEntry {
   name: string;
   provider_type: string;
   reasoning_levels?: ModelThinkingLevel[];
+  reasoning_capabilities?: {
+    supported_efforts?: string[];
+    mandatory?: boolean;
+  };
 }
 
 interface ListLocalModelsOptions {
@@ -68,9 +74,11 @@ interface ListLocalModelsOptions {
 }
 
 function supportedThinkingLevelsForRegistration(
-  model: Pick<Model<Api>, "reasoning" | "thinkingLevelMap">,
+  model: Pick<Model<Api>, "id" | "reasoning" | "thinkingLevelMap">,
 ): ModelThinkingLevel[] {
-  return getSupportedThinkingLevels(model as Model<Api>);
+  return getSupportedThinkingLevels(
+    withKnownThinkingCompatibility(model as Model<Api>),
+  );
 }
 
 function localProviderNamesFromRecords(
@@ -291,6 +299,10 @@ export async function listLocalModels(
       modelEndpointType?: string;
       name?: string;
       reasoningLevels?: ModelThinkingLevel[];
+      reasoningCapabilities?: {
+        supported_efforts?: string[];
+        mandatory?: boolean;
+      };
     } = {},
   ) => {
     const handle =
@@ -328,7 +340,13 @@ export async function listLocalModels(
     const name = options.name ?? catalogModel?.name ?? modelId;
     const reasoningLevels =
       options.reasoningLevels ??
-      (catalogModel ? getSupportedThinkingLevels(catalogModel) : undefined);
+      (catalogModel
+        ? getSupportedThinkingLevels(
+            withKnownThinkingCompatibility(catalogModel),
+          )
+        : undefined);
+    const reasoningCapabilities =
+      options.reasoningCapabilities ?? knownReasoningCapabilities(modelId);
     models.push({
       display_name: name,
       handle,
@@ -340,6 +358,9 @@ export async function listLocalModels(
       name,
       provider_type: providerType,
       ...(reasoningLevels ? { reasoning_levels: reasoningLevels } : {}),
+      ...(reasoningCapabilities
+        ? { reasoning_capabilities: reasoningCapabilities }
+        : {}),
     });
   };
 
@@ -418,6 +439,7 @@ export async function listLocalModels(
         maxOutputTokens: model.maxTokens,
         name: model.name,
         reasoningLevels: supportedThinkingLevelsForRegistration(model),
+        reasoningCapabilities: knownReasoningCapabilities(model.id),
       });
     }
   }

@@ -6,9 +6,11 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { getBuiltinModels as getModels } from "@earendil-works/pi-ai/providers/all";
 import {
   applyPiEnvOverrides,
+  knownReasoningCapabilities,
   reasoningForSettings,
   resolvePiModelForAgent,
   resolveZaiConnection,
+  withKnownThinkingCompatibility,
 } from "@/backend/dev/pi-model-factory";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import { getProviderOAuthAuth } from "@/backend/dev/pi-oauth";
@@ -59,6 +61,69 @@ describe("pi model factory", () => {
     ).toBe("low");
     expect(reasoningForSettings({}, "zai/glm-5-turbo")).toBe("low");
     expect(reasoningForSettings({}, "anthropic/claude-sonnet-4-6")).toBe(
+      undefined,
+    );
+  });
+
+  test("uses OpenRouter ox-alpha permitted efforts and advertised default", () => {
+    expect(reasoningForSettings({}, "openrouter/stealth/ox-alpha")).toBe("max");
+    expect(
+      reasoningForSettings(
+        { thinking: { type: "disabled" } },
+        "openrouter/stealth/ox-alpha",
+      ),
+    ).toBe("max");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "high" },
+        "openrouter/stealth/ox-alpha",
+      ),
+    ).toBe("high");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "low" },
+        "openrouter/stealth/ox-alpha",
+      ),
+    ).toBe("low");
+    // "max" maps to "xhigh" for non-GPT models; clamp back to the supported top.
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "max" },
+        "openrouter/stealth/ox-alpha",
+      ),
+    ).toBe("max");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "medium" },
+        "openrouter/stealth/ox-alpha",
+      ),
+    ).toBe("low");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "none" },
+        "openrouter/stealth/ox-alpha",
+      ),
+    ).toBe("max");
+    expect(
+      reasoningForSettings({}, "openrouter/anthropic/claude-sonnet-4"),
+    ).toBe(undefined);
+
+    const catalog = getModels("openrouter").find(
+      (model) => model.id === "stealth/ox-alpha",
+    );
+    expect(catalog).toBeDefined();
+    const compatible = withKnownThinkingCompatibility(catalog!);
+    expect(getSupportedThinkingLevels(compatible)).toEqual([
+      "low",
+      "high",
+      "max",
+    ]);
+
+    expect(knownReasoningCapabilities("stealth/ox-alpha")).toEqual({
+      supported_efforts: ["low", "high", "max"],
+      mandatory: true,
+    });
+    expect(knownReasoningCapabilities("anthropic/claude-opus-5")).toBe(
       undefined,
     );
   });

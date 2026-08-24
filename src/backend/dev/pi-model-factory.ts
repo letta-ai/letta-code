@@ -1,4 +1,9 @@
-import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  Model,
+  ThinkingLevel,
+  ThinkingLevelMap,
+} from "@earendil-works/pi-ai";
 import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 import { localNamesForProviderId } from "@/backend/local/local-pi-credential-store";
 import {
@@ -97,6 +102,70 @@ function alwaysOnZaiThinking(modelId?: string): boolean {
   );
 }
 
+// OpenRouter advertises these on stealth/ox-alpha:
+// supported_efforts: max | high | low, default_effort: max, mandatory: true.
+// pi-ai's static catalog only sets reasoning:true, so without a map it sends
+// reasoning.effort=none (thinkingLevelMap.off ?? "none") and OpenRouter 400s.
+const OPENROUTER_MANDATORY_REASONING_MAPS: Record<string, ThinkingLevelMap> = {
+  "stealth/ox-alpha": {
+    off: null,
+    minimal: null,
+    medium: null,
+    xhigh: null,
+    low: "low",
+    high: "high",
+    max: "max",
+  },
+};
+
+export function withKnownThinkingCompatibility<TApi extends Api>(
+  model: Model<TApi>,
+): Model<TApi> {
+  if (model.thinkingLevelMap) return model;
+  const map = OPENROUTER_MANDATORY_REASONING_MAPS[model.id];
+  if (!map) return model;
+  return {
+    ...model,
+    reasoning: true,
+    thinkingLevelMap: map,
+  };
+}
+
+function mandatoryOpenRouterDefault(
+  modelId?: string,
+): ThinkingLevel | undefined {
+  const map = modelId
+    ? OPENROUTER_MANDATORY_REASONING_MAPS[modelId]
+    : undefined;
+  if (!map) return undefined;
+  if (typeof map.max === "string") return "max";
+  if (typeof map.high === "string") return "high";
+  if (typeof map.low === "string") return "low";
+  return undefined;
+}
+
+/**
+ * Selector-facing reasoning capabilities for models whose endpoint forbids
+ * disabling reasoning. Mirrors what the API backend publishes as
+ * `reasoning_capabilities`; the local model list attaches this so /model and
+ * the Tab cycling show only the efforts the endpoint actually accepts.
+ */
+export function knownReasoningCapabilities(modelId?: string):
+  | {
+      supported_efforts: ThinkingLevel[];
+      mandatory: boolean;
+    }
+  | undefined {
+  const map = modelId
+    ? OPENROUTER_MANDATORY_REASONING_MAPS[modelId]
+    : undefined;
+  if (!map) return undefined;
+  const supported_efforts = (["low", "high", "max"] as const).filter(
+    (level) => typeof map[level] === "string",
+  );
+  return { supported_efforts: [...supported_efforts], mandatory: true };
+}
+
 // Maps Letta model settings to a pi-ai ThinkingLevel. Every pi-ai Anthropic
 // call against a reasoning-capable model must pass this when available:
 // pi-ai sends `thinking: {type: "disabled"}` for reasoning models when
@@ -130,6 +199,17 @@ export function reasoningForSettings(
     return explicit === "medium" || explicit === "minimal"
       ? "low"
       : (explicit ?? "low");
+  }
+  const openRouterDefault = mandatoryOpenRouterDefault(modelId);
+  if (openRouterDefault) {
+    // The endpoint rejects disabled reasoning and unsupported efforts
+    // (advertised set: low / high / max). Unset requests use the endpoint's
+    // advertised default; unsupported explicit efforts clamp to the nearest
+    // safe level (same pattern as the always-on GLM models).
+    if (explicit === "low" || explicit === "high") return explicit;
+    if (explicit === "xhigh") return "max";
+    if (explicit === "minimal" || explicit === "medium") return "low";
+    return openRouterDefault;
   }
   if (thinking?.type === "disabled") return undefined;
   return explicit;
@@ -605,13 +685,14 @@ export async function resolvePiModelForAgent(
 
   // Mod product hook: per-credential model transformation. Deep-copied so a
   // mutating mod cannot corrupt the provider-published instance.
-  const hookedModel =
+  const hookedModel = withKnownThinkingCompatibility(
     oauthCredentials && registeredProvider?.config.oauth?.modifyModels
       ? (registeredProvider.config.oauth.modifyModels(
           [structuredClone(publishedModel)],
           oauthCredentials,
         )[0] ?? publishedModel)
-      : publishedModel;
+      : publishedModel,
+  );
 
   // Effective-value overrides only: with none, the turn model IS the
   // runtime-published instance — persisted selection settings that merely
