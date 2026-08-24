@@ -176,4 +176,65 @@ describe("TurnLifecycle", () => {
     ).not.toThrow();
     expect(lifecycle.startCommand()).toBe(false);
   });
+
+  test("reset recovers from a stuck active lease so a new turn can begin", () => {
+    let nextId = 0;
+    const lifecycle = new TurnLifecycle(() => `lease-${++nextId}`);
+    // Simulate a previous turn that exited without finalizing (stuck lease).
+    lifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/stale",
+    });
+    expect(lifecycle.kind).toBe("active");
+
+    // The new turn's begin() throws because the lifecycle is stuck.
+    expect(() =>
+      lifecycle.begin({
+        origin: "message",
+        workingDirectory: "/tmp/new",
+      }),
+    ).toThrow("Cannot begin a turn while lifecycle is active");
+
+    // Recovery: reset() force-releases the stuck lease.
+    expect(lifecycle.reset("error").finished).toBe(true);
+    expect(lifecycle.kind).toBe("idle");
+
+    // The new turn can now begin successfully.
+    const newLease = lifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/new",
+    });
+    expect(lifecycle.kind).toBe("active");
+    expect(lifecycle.activeWorkingDirectory).toBe("/tmp/new");
+    expect(lifecycle.isCurrent(newLease)).toBe(true);
+    expect(lifecycle.lastStopReason).toBeNull();
+  });
+
+  test("reset recovers from a stuck cancelling lease so a new turn can begin", () => {
+    let nextId = 0;
+    const lifecycle = new TurnLifecycle(() => `lease-${++nextId}`);
+    lifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/stale",
+    });
+    lifecycle.requestCancellation();
+    expect(lifecycle.kind).toBe("cancelling");
+
+    expect(() =>
+      lifecycle.begin({
+        origin: "message",
+        workingDirectory: "/tmp/new",
+      }),
+    ).toThrow("Cannot begin a turn while lifecycle is cancelling");
+
+    expect(lifecycle.reset("error").finished).toBe(true);
+    expect(lifecycle.kind).toBe("idle");
+
+    const newLease = lifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/new",
+    });
+    expect(lifecycle.kind).toBe("active");
+    expect(lifecycle.isCurrent(newLease)).toBe(true);
+  });
 });
