@@ -85,7 +85,8 @@ describe("pi model factory", () => {
         "openrouter/stealth/ox-alpha",
       ),
     ).toBe("low");
-    // "max" maps to "xhigh" for non-GPT models; clamp back to the supported top.
+    // "max" is an advertised OpenRouter effort name, so it passes through
+    // without the GPT-style max→xhigh normalization.
     expect(
       reasoningForSettings(
         { reasoning_effort: "max" },
@@ -125,6 +126,77 @@ describe("pi model factory", () => {
     });
     expect(knownReasoningCapabilities("anthropic/claude-opus-5")).toBe(
       undefined,
+    );
+  });
+
+  test("uses gemini-3.7-flash permitted efforts and advertised default", () => {
+    // Advertised: efforts high/medium/low, default medium, mandatory.
+    expect(reasoningForSettings({}, "openrouter/google/gemini-3.7-flash")).toBe(
+      "medium",
+    );
+    expect(
+      reasoningForSettings(
+        { thinking: { type: "disabled" } },
+        "openrouter/google/gemini-3.7-flash",
+      ),
+    ).toBe("medium");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "high" },
+        "openrouter/google/gemini-3.7-flash",
+      ),
+    ).toBe("high");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "medium" },
+        "openrouter/google/gemini-3.7-flash",
+      ),
+    ).toBe("medium");
+    // Unsupported efforts clamp to the nearest advertised level.
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "max" },
+        "openrouter/google/gemini-3.7-flash",
+      ),
+    ).toBe("high");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "xhigh" },
+        "openrouter/google/gemini-3.7-flash",
+      ),
+    ).toBe("high");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "minimal" },
+        "openrouter/google/gemini-3.7-flash",
+      ),
+    ).toBe("low");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "none" },
+        "openrouter/google/gemini-3.7-flash",
+      ),
+    ).toBe("medium");
+
+    const catalog = getModels("openrouter").find(
+      (model) => model.id === "google/gemini-3.7-flash",
+    );
+    expect(catalog).toBeDefined();
+    const compatible = withKnownThinkingCompatibility(catalog!);
+    expect(getSupportedThinkingLevels(compatible)).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(knownReasoningCapabilities("google/gemini-3.7-flash")).toEqual({
+      supported_efforts: ["low", "medium", "high"],
+      mandatory: true,
+    });
+    expect(knownReasoningCapabilities("google/gemini-3.7-flash:batch")).toEqual(
+      {
+        supported_efforts: ["low", "medium", "high"],
+        mandatory: true,
+      },
     );
   });
 

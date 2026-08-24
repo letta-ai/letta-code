@@ -102,46 +102,107 @@ function alwaysOnZaiThinking(modelId?: string): boolean {
   );
 }
 
-// OpenRouter advertises these on stealth/ox-alpha:
-// supported_efforts: max | high | low, default_effort: max, mandatory: true.
-// pi-ai's static catalog only sets reasoning:true, so without a map it sends
-// reasoning.effort=none (thinkingLevelMap.off ?? "none") and OpenRouter 400s.
-const OPENROUTER_MANDATORY_REASONING_MAPS: Record<string, ThinkingLevelMap> = {
+// OpenRouter endpoints that forbid disabling reasoning. pi-ai's static
+// catalog only sets reasoning:true for these, so without a map it sends
+// reasoning.effort=none (thinkingLevelMap.off ?? "none") and they 400 with
+// "Reasoning is mandatory for this endpoint and cannot be disabled."
+// Effort sets and defaults mirror OpenRouter's published reasoning metadata
+// (supported_efforts / default_effort). The general fix is translating that
+// metadata during pi-ai catalog generation (89 live models advertise
+// mandatory reasoning); this table covers the known models until then.
+const OPENROUTER_MANDATORY_REASONING: Record<
+  string,
+  { thinkingLevelMap: ThinkingLevelMap; defaultEffort: ThinkingLevel }
+> = {
   "stealth/ox-alpha": {
-    off: null,
-    minimal: null,
-    medium: null,
-    xhigh: null,
-    low: "low",
-    high: "high",
-    max: "max",
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
+      medium: null,
+      xhigh: null,
+      low: "low",
+      high: "high",
+      max: "max",
+    },
+    defaultEffort: "max",
+  },
+  "google/gemini-3.7-flash": {
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
+      xhigh: null,
+      max: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+    },
+    defaultEffort: "medium",
+  },
+  "google/gemini-3.7-flash:batch": {
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
+      xhigh: null,
+      max: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+    },
+    defaultEffort: "medium",
   },
 };
+
+// Canonical effort order used for nearest-supported clamping.
+const EFFORT_CLAMP_ORDER = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
 
 export function withKnownThinkingCompatibility<TApi extends Api>(
   model: Model<TApi>,
 ): Model<TApi> {
   if (model.thinkingLevelMap) return model;
-  const map = OPENROUTER_MANDATORY_REASONING_MAPS[model.id];
-  if (!map) return model;
+  const known = OPENROUTER_MANDATORY_REASONING[model.id];
+  if (!known) return model;
   return {
     ...model,
     reasoning: true,
-    thinkingLevelMap: map,
+    thinkingLevelMap: known.thinkingLevelMap,
   };
 }
 
-function mandatoryOpenRouterDefault(
-  modelId?: string,
-): ThinkingLevel | undefined {
-  const map = modelId
-    ? OPENROUTER_MANDATORY_REASONING_MAPS[modelId]
-    : undefined;
-  if (!map) return undefined;
-  if (typeof map.max === "string") return "max";
-  if (typeof map.high === "string") return "high";
-  if (typeof map.low === "string") return "low";
-  return undefined;
+function clampToNearestSupported(
+  requested: string,
+  supported: readonly string[],
+): ThinkingLevel {
+  const index = (EFFORT_CLAMP_ORDER as readonly string[]).indexOf(requested);
+  if (index === -1) return supported[0] as ThinkingLevel;
+  for (let distance = 1; distance < EFFORT_CLAMP_ORDER.length; distance += 1) {
+    // Ties resolve downward (cheaper) to match the always-on GLM behavior.
+    const lower = EFFORT_CLAMP_ORDER[index - distance];
+    const upper = EFFORT_CLAMP_ORDER[index + distance];
+    if (lower && supported.includes(lower)) return lower as ThinkingLevel;
+    if (upper && supported.includes(upper)) return upper as ThinkingLevel;
+  }
+  return supported[0] as ThinkingLevel;
+}
+
+function knownMandatoryReasoning(modelId?: string):
+  | {
+      supportedEfforts: ThinkingLevel[];
+      defaultEffort: ThinkingLevel;
+    }
+  | undefined {
+  const known = modelId ? OPENROUTER_MANDATORY_REASONING[modelId] : undefined;
+  if (!known) return undefined;
+  const supportedEfforts = EFFORT_CLAMP_ORDER.filter(
+    (level) => typeof known.thinkingLevelMap[level] === "string",
+  ) as ThinkingLevel[];
+  return { supportedEfforts, defaultEffort: known.defaultEffort };
 }
 
 /**
@@ -156,14 +217,9 @@ export function knownReasoningCapabilities(modelId?: string):
       mandatory: boolean;
     }
   | undefined {
-  const map = modelId
-    ? OPENROUTER_MANDATORY_REASONING_MAPS[modelId]
-    : undefined;
-  if (!map) return undefined;
-  const supported_efforts = (["low", "high", "max"] as const).filter(
-    (level) => typeof map[level] === "string",
-  );
-  return { supported_efforts: [...supported_efforts], mandatory: true };
+  const known = knownMandatoryReasoning(modelId);
+  if (!known) return undefined;
+  return { supported_efforts: known.supportedEfforts, mandatory: true };
 }
 
 // Maps Letta model settings to a pi-ai ThinkingLevel. Every pi-ai Anthropic
@@ -200,16 +256,31 @@ export function reasoningForSettings(
       ? "low"
       : (explicit ?? "low");
   }
-  const openRouterDefault = mandatoryOpenRouterDefault(modelId);
-  if (openRouterDefault) {
-    // The endpoint rejects disabled reasoning and unsupported efforts
-    // (advertised set: low / high / max). Unset requests use the endpoint's
-    // advertised default; unsupported explicit efforts clamp to the nearest
-    // safe level (same pattern as the always-on GLM models).
-    if (explicit === "low" || explicit === "high") return explicit;
-    if (explicit === "xhigh") return "max";
-    if (explicit === "minimal" || explicit === "medium") return "low";
-    return openRouterDefault;
+  const known = knownMandatoryReasoning(modelId);
+  if (known) {
+    // These endpoints advertise effort names directly ("max" included), so
+    // skip the GPT-style max→xhigh normalization and match the advertised
+    // set. Unset/none requests use the endpoint's advertised default;
+    // unsupported explicit efforts clamp to the nearest advertised level.
+    const raw =
+      typeof rawEffort === "string"
+        ? normalizeReasoningEffortForModel(modelHandle, rawEffort)
+        : undefined;
+    const requested =
+      raw === "minimal" ||
+      raw === "low" ||
+      raw === "medium" ||
+      raw === "high" ||
+      raw === "xhigh" ||
+      raw === "max"
+        ? raw
+        : undefined;
+    if (requested && known.supportedEfforts.includes(requested)) {
+      return requested;
+    }
+    // Unset, "none", or anything unparseable: the endpoint's advertised default.
+    if (!requested) return known.defaultEffort;
+    return clampToNearestSupported(requested, known.supportedEfforts);
   }
   if (thinking?.type === "disabled") return undefined;
   return explicit;
