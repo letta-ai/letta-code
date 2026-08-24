@@ -537,7 +537,7 @@ function assertScenario(summary: LiveReflectionSummary): void {
     `Expected at least one auto reflection payload.\n${details}`,
   );
   assertTrue(
-    summary.state?.schema_version === "v3_assistant_steps",
+    summary.state?.schema_version === "v4_canonical_assistant_steps",
     `Unexpected reflection state schema.\n${details}`,
   );
   assertTrue(
