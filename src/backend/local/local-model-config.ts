@@ -8,6 +8,7 @@ import {
   DEFAULT_PI_PROVIDER,
   isUnselectedLocalModelHandle,
   type PiProvider,
+  patchTemporaryPiAiOpenRouterThinkingMap,
   UNSELECTED_LOCAL_MODEL_HANDLE,
 } from "@/backend/dev/pi-model-factory";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
@@ -68,9 +69,11 @@ interface ListLocalModelsOptions {
 }
 
 function supportedThinkingLevelsForRegistration(
-  model: Pick<Model<Api>, "reasoning" | "thinkingLevelMap">,
+  model: Model<Api>,
 ): ModelThinkingLevel[] {
-  return getSupportedThinkingLevels(model as Model<Api>);
+  return getSupportedThinkingLevels(
+    patchTemporaryPiAiOpenRouterThinkingMap(model),
+  );
 }
 
 function localProviderNamesFromRecords(
@@ -328,7 +331,11 @@ export async function listLocalModels(
     const name = options.name ?? catalogModel?.name ?? modelId;
     const reasoningLevels =
       options.reasoningLevels ??
-      (catalogModel ? getSupportedThinkingLevels(catalogModel) : undefined);
+      (catalogModel
+        ? getSupportedThinkingLevels(
+            patchTemporaryPiAiOpenRouterThinkingMap(catalogModel),
+          )
+        : undefined);
     models.push({
       display_name: name,
       handle,
