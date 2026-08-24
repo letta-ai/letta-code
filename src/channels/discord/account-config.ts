@@ -9,6 +9,10 @@ import {
   isValidDiscordAllowBotsConfigValue,
   normalizeDiscordAllowBotsMode,
 } from "./bot-policy";
+import {
+  cloneDiscordObserverConfig,
+  isDiscordObserverConfig,
+} from "./observer-config";
 
 const DISCORD_CONFIG_KEYS = new Set([
   "token",
@@ -22,6 +26,7 @@ const DISCORD_CONFIG_KEYS = new Set([
   "acknowledge_message_reaction",
   "remove_stale_routes",
   "inbound_debounce_ms",
+  "observer",
 ]);
 
 function isString(value: unknown): value is string {
@@ -133,7 +138,10 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
           (typeof config.inbound_debounce_ms === "number" &&
             Number.isFinite(config.inbound_debounce_ms) &&
             config.inbound_debounce_ms >= 0 &&
-            config.inbound_debounce_ms <= 10000))
+            config.inbound_debounce_ms <= 10000)) &&
+        (config.observer === undefined ||
+          config.observer === null ||
+          isDiscordObserverConfig(config.observer))
       );
     },
 
@@ -179,6 +187,12 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
           config.inbound_debounce_ms >= 0
             ? Math.trunc(Math.min(config.inbound_debounce_ms, 10000))
             : undefined,
+        observer:
+          config.observer === null
+            ? null
+            : isDiscordObserverConfig(config.observer)
+              ? cloneDiscordObserverConfig(config.observer)
+              : undefined,
         acknowledgeMessageReaction: isBoolean(
           config.acknowledge_message_reaction,
         )
@@ -204,6 +218,9 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
           account.acknowledgeMessageReaction ?? false,
         remove_stale_routes: account.removeStaleRoutes ?? false,
         inbound_debounce_ms: account.inboundDebounceMs,
+        observer: account.observer
+          ? cloneDiscordObserverConfig(account.observer)
+          : undefined,
       };
     },
 
@@ -221,6 +238,9 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
           account.acknowledgeMessageReaction ?? false,
         remove_stale_routes: account.removeStaleRoutes ?? false,
         inbound_debounce_ms: account.inboundDebounceMs,
+        observer: account.observer
+          ? cloneDiscordObserverConfig(account.observer)
+          : undefined,
       };
     },
 

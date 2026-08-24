@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { DiscordChannelAccount } from "@/channels/types";
 import { discordAccountConfigAdapter } from "./account-config";
+import {
+  DISCORD_OBSERVER_MAX_FLUSH_INTERVAL_MS,
+  normalizeDiscordObserverConfig,
+} from "./observer-config";
 
 function makeDiscordAccount(
   overrides: Partial<DiscordChannelAccount> = {},
@@ -63,5 +67,55 @@ describe("discordAccountConfigAdapter", () => {
     expect(
       discordAccountConfigAdapter.toConfigSnapshotConfig(makeDiscordAccount()),
     ).toEqual(expect.objectContaining({ allow_bots: false }));
+  });
+
+  test("validates and deep-clones Discord observer configuration", () => {
+    const observer = {
+      guildId: "guild-1",
+      targets: [
+        { agentId: "agent-alpha", conversationId: "default" },
+        { agentId: "agent-beta", conversationId: "conv-beta" },
+      ],
+      flushIntervalMs: 600_000,
+      maxMessages: 200,
+      maxCharacters: 100_000,
+      includeBots: true,
+    };
+    expect(discordAccountConfigAdapter.isValidConfig({ observer })).toBe(true);
+    expect(
+      discordAccountConfigAdapter.isValidConfig({
+        observer: { ...observer, targets: [] },
+      }),
+    ).toBe(false);
+    expect(
+      discordAccountConfigAdapter.isValidConfig({
+        observer: { ...observer, flushIntervalMs: 0 },
+      }),
+    ).toBe(false);
+    expect(
+      discordAccountConfigAdapter.isValidConfig({
+        observer: {
+          ...observer,
+          flushIntervalMs: DISCORD_OBSERVER_MAX_FLUSH_INTERVAL_MS + 1,
+        },
+      }),
+    ).toBe(false);
+
+    const patch = discordAccountConfigAdapter.toAccountPatch({ observer });
+    expect(patch.observer).toEqual(observer);
+    expect(patch.observer).not.toBe(observer);
+    expect(patch.observer?.targets).not.toBe(observer.targets);
+
+    expect(
+      discordAccountConfigAdapter.toAccountConfig(
+        makeDiscordAccount({ observer }),
+      ),
+    ).toEqual(expect.objectContaining({ observer }));
+    expect(
+      discordAccountConfigAdapter.toAccountPatch({ observer: null }).observer,
+    ).toBeNull();
+    expect(
+      normalizeDiscordObserverConfig({ guildId: "broken" }),
+    ).toBeUndefined();
   });
 });

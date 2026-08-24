@@ -13,6 +13,7 @@ import {
   isValidDiscordAllowBotsConfigValue,
   normalizeDiscordAllowBotsMode,
 } from "./discord/bot-policy";
+import { normalizeDiscordObserverConfig } from "./discord/observer-config";
 import { normalizeSlackAllowBotsMode } from "./slack/bot-policy";
 import type {
   ChannelConfig,
@@ -265,6 +266,7 @@ const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
         parsed.inbound_debounce_ms >= 0
           ? Math.trunc(Math.min(parsed.inbound_debounce_ms, 10000))
           : undefined,
+      observer: normalizeDiscordObserverConfig(parsed.observer),
     };
   },
 };

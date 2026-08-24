@@ -245,6 +245,85 @@ describe("Discord adapter bot ingress", () => {
     });
   });
 
+  test("accepts unmentioned foreign bot messages in the configured observer guild", async () => {
+    const { client, deliveries } = await startAdapterWithDeliveries(
+      { "*": "open" },
+      {
+        observer: {
+          guildId: "guild-1",
+          targets: [{ agentId: "agent-observer", conversationId: "default" }],
+          includeBots: true,
+        },
+      },
+    );
+
+    await client.emitMessageCreate(
+      createDiscordMessage({
+        id: "msg-observer-bot",
+        content: "worker progress",
+        mentioned: false,
+        authorId: "foreign-bot",
+        authorUsername: "workerbot",
+        authorGlobalName: "Worker Bot",
+        authorBot: true,
+      }),
+    );
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]?.guildId).toBe("guild-1");
+    expect(deliveries[0]?.text).toBe("worker progress");
+  });
+
+  test("observer guild bypasses interactive mention-only channel gating", async () => {
+    const { client, deliveries } = await startAdapterWithDeliveries(
+      { "different-channel": "mention-only" },
+      {
+        observer: {
+          guildId: "guild-1",
+          targets: [{ agentId: "agent-observer", conversationId: "default" }],
+        },
+      },
+    );
+
+    await client.emitMessageCreate(
+      createDiscordMessage({
+        id: "msg-observer-human",
+        channelId: "unlisted-channel",
+        content: "ambient human progress",
+        mentioned: false,
+      }),
+    );
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]?.text).toBe("ambient human progress");
+  });
+
+  test("observer includeBots remains authoritative over interactive bot policy", async () => {
+    const { client, deliveries } = await startAdapterWithDeliveries(
+      { "*": "open" },
+      {
+        allowBots: "mentions",
+        observer: {
+          guildId: "guild-1",
+          targets: [{ agentId: "agent-observer", conversationId: "default" }],
+          includeBots: false,
+        },
+      },
+    );
+
+    await client.emitMessageCreate(
+      createDiscordMessage({
+        id: "msg-observer-mentioned-bot",
+        content: "<@bot-user> worker progress",
+        mentioned: true,
+        authorId: "foreign-bot",
+        authorBot: true,
+      }),
+    );
+
+    expect(deliveries).toHaveLength(0);
+  });
+
   test("does not treat Discord reply-ping metadata as a foreign bot mention", async () => {
     const { client, deliveries } = await startAdapterWithDeliveries(
       { "channel-open": "open" },

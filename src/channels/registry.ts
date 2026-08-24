@@ -598,11 +598,17 @@ export class ChannelRegistry {
 
     const existing = this.getAdapter(channelId, accountId);
     if (existing?.isRunning()) {
+      if (channelId === "discord") {
+        this.inbound.disableDiscordObserverBatches(accountId);
+      }
       logChannelStartup(
         options?.logger,
         `stopping existing adapter for ${channelId}/${accountId}`,
       );
       await existing.stop();
+      if (channelId === "discord") {
+        await this.inbound.stopDiscordObserverBatches(accountId);
+      }
     }
     this.adapters.delete(this.getAdapterKey(channelId, accountId));
 
@@ -621,6 +627,9 @@ export class ChannelRegistry {
       options?.logger,
       `starting adapter for ${account.channel}/${accountId}`,
     );
+    if (channelId === "discord") {
+      this.inbound.resumeDiscordObserverBatches(accountId);
+    }
     await adapter.start({ logger: options?.logger });
     logChannelStartup(
       options?.logger,
@@ -638,8 +647,18 @@ export class ChannelRegistry {
     }
 
     for (const adapter of adapters) {
+      if (channelId === "discord") {
+        this.inbound.disableDiscordObserverBatches(
+          adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+        );
+      }
       if (adapter.isRunning()) {
         await adapter.stop();
+      }
+      if (channelId === "discord") {
+        await this.inbound.stopDiscordObserverBatches(
+          adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+        );
       }
       this.adapters.delete(
         this.getAdapterKey(
@@ -660,8 +679,14 @@ export class ChannelRegistry {
     if (!adapter) {
       return false;
     }
+    if (channelId === "discord") {
+      this.inbound.disableDiscordObserverBatches(accountId);
+    }
     if (adapter.isRunning()) {
       await adapter.stop();
+    }
+    if (channelId === "discord") {
+      await this.inbound.stopDiscordObserverBatches(accountId);
     }
     this.adapters.delete(this.getAdapterKey(channelId, accountId));
     return true;
@@ -698,11 +723,13 @@ export class ChannelRegistry {
    * Only called on actual process shutdown, NOT on WS disconnect.
    */
   async stopAll(): Promise<void> {
+    this.inbound.disableDiscordObserverBatches();
     for (const adapter of Array.from(this.adapters.values())) {
       if (adapter.isRunning()) {
         await adapter.stop();
       }
     }
+    await this.inbound.stopDiscordObserverBatches();
     this.ready = false;
     this.messageHandler = null;
     this.eventHandler = null;

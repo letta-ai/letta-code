@@ -172,6 +172,12 @@ export function toAccountSnapshot(
       allowBots: account.allowBots ?? false,
       removeStaleRoutes: account.removeStaleRoutes ?? false,
       inboundDebounceMs: account.inboundDebounceMs,
+      observer: account.observer
+        ? {
+            ...account.observer,
+            targets: account.observer.targets.map((target) => ({ ...target })),
+          }
+        : undefined,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };

@@ -403,19 +403,26 @@ export function createDiscordAdapter(
 
         const effectiveBotUserId = botUserId ?? client?.user?.id ?? null;
         const chatType = resolveDiscordChatType(message.guildId);
+        const isObserverGuild =
+          chatType === "channel" &&
+          !!message.guildId &&
+          config.observer?.guildId === message.guildId;
         const isThread = isThreadMessage(message);
         const hasParsedBotMention = hasBotMention(message);
         const wasMentioned = chatType === "channel" && hasParsedBotMention;
-        if (
-          !shouldAcceptDiscordInboundBotMessage({
-            message,
-            allowBots: config.allowBots,
-            botUserId: effectiveBotUserId,
-            wasExplicitlyMentioned:
-              hasParsedBotMention &&
-              hasExplicitDiscordUserMention(message, effectiveBotUserId),
-          })
-        ) {
+        const acceptedByBotPolicy = isObserverGuild
+          ? message.author.bot !== true ||
+            (config.observer?.includeBots === true &&
+              message.author.id !== effectiveBotUserId)
+          : shouldAcceptDiscordInboundBotMessage({
+              message,
+              allowBots: config.allowBots,
+              botUserId: effectiveBotUserId,
+              wasExplicitlyMentioned:
+                hasParsedBotMention &&
+                hasExplicitDiscordUserMention(message, effectiveBotUserId),
+            });
+        if (!acceptedByBotPolicy) {
           return;
         }
 
@@ -464,18 +471,22 @@ export function createDiscordAdapter(
         // the thread is already routed, or whether a new mention is required.
         const parentChannelId =
           (message.channel as { parentId?: string | null }).parentId ?? null;
-        const channelMode = resolveDiscordChannelMode(
-          message.channelId,
-          parentChannelId,
-          isThread,
-          config.allowedChannels,
-        );
+        const channelMode = isObserverGuild
+          ? "open"
+          : resolveDiscordChannelMode(
+              message.channelId,
+              parentChannelId,
+              isThread,
+              config.allowedChannels,
+            );
         const isOpenChannel = channelMode === "open";
-        if (!isThread && !wasMentioned && !isOpenChannel) return;
+        if (!isObserverGuild && !isThread && !wasMentioned && !isOpenChannel)
+          return;
 
         // Channel allowlist: when configured, only process guild messages whose
         // channel ID (or parent channel ID for thread messages) is allowed.
         if (
+          !isObserverGuild &&
           !isDiscordGuildChannelAllowed({
             channelId: message.channelId,
             parentChannelId,
@@ -497,7 +508,7 @@ export function createDiscordAdapter(
         // auto-threading is disabled, the mention routes to the channel
         // itself (effectiveChatId stays as message.channelId and
         // effectiveThreadId stays null) instead of spawning a new thread.
-        if (!isThread && wasMentioned) {
+        if (!isObserverGuild && !isThread && wasMentioned) {
           if (shouldAutoThreadOnDiscordMention(config, message.channelId)) {
             const createdThread = await createThreadForMention(
               message,
@@ -513,9 +524,10 @@ export function createDiscordAdapter(
           message.attachments,
           effectiveChatId,
         );
-        const normalizedText = wasMentioned
-          ? normalizeDiscordMentionText(content, botUserId)
-          : content;
+        const normalizedText =
+          wasMentioned && !isObserverGuild
+            ? normalizeDiscordMentionText(content, botUserId)
+            : content;
         // A bare mention inside a Discord thread can recover a thread whose
         // route provisioning failed. Other empty guild messages stay inert.
         if (
@@ -535,6 +547,7 @@ export function createDiscordAdapter(
             "name" in message.channel
               ? (message.channel.name ?? undefined)
               : undefined,
+          guildId: message.guildId ?? undefined,
           text: normalizedText,
           timestamp: message.createdTimestamp,
           messageId: message.id,
@@ -566,8 +579,6 @@ export function createDiscordAdapter(
         action: "added" | "removed",
       ) => {
         if (!adapter.onMessage) return;
-        // Ignore bot reactions
-        if (user.bot) return;
         if (user.id === botUserId) return;
 
         try {
@@ -587,6 +598,13 @@ export function createDiscordAdapter(
         if (!emoji) return;
 
         const chatType = resolveDiscordChatType(msg.guildId);
+        const isObserverGuild =
+          chatType === "channel" &&
+          !!msg.guildId &&
+          config.observer?.guildId === msg.guildId;
+        if (user.bot && !(isObserverGuild && config.observer?.includeBots)) {
+          return;
+        }
         const isThread =
           msg.channel &&
           "isThread" in msg.channel &&
@@ -594,12 +612,13 @@ export function createDiscordAdapter(
           msg.channel.isThread();
 
         // In guilds, only react on messages in threads we're tracking
-        if (chatType === "channel" && !isThread) return;
+        if (chatType === "channel" && !isThread && !isObserverGuild) return;
 
         // Apply channel allowlist gating in guilds (parent channel of the thread)
         if (
           chatType === "channel" &&
           isThread &&
+          !isObserverGuild &&
           !isDiscordGuildChannelAllowed({
             channelId,
             parentChannelId:
@@ -616,6 +635,7 @@ export function createDiscordAdapter(
           chatId: channelId,
           senderId: user.id,
           senderName: user.username ?? undefined,
+          guildId: msg.guildId ?? undefined,
           text: "",
           timestamp: Date.now(),
           messageId: msg.id,

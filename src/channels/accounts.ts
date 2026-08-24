@@ -14,6 +14,10 @@ import {
   setChannelSecret,
 } from "./credential-store";
 import { normalizeDiscordAllowBotsMode } from "./discord/bot-policy";
+import {
+  cloneDiscordObserverConfig,
+  normalizeDiscordObserverConfig,
+} from "./discord/observer-config";
 import { normalizeSlackAllowBotsMode } from "./slack/bot-policy";
 import type {
   ChannelAccount,
@@ -252,6 +256,11 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
       ? [...account.allowedChannels]
       : { ...account.allowedChannels };
   }
+  if (isDiscordChannelAccount(account) && account.observer) {
+    (cloned as DiscordChannelAccount).observer = cloneDiscordObserverConfig(
+      account.observer,
+    );
+  }
 
   if (isWhatsAppChannelAccount(account)) {
     (cloned as WhatsAppChannelAccount).allowedGroups = [
@@ -379,6 +388,9 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     (next as DiscordChannelAccount).allowBots = normalizeDiscordAllowBotsMode(
       (next as DiscordChannelAccount).allowBots,
     );
+    (next as DiscordChannelAccount).observer = normalizeDiscordObserverConfig(
+      (next as DiscordChannelAccount).observer,
+    );
 
     // Compatibility migration: existing accounts created before this field was
     // persisted auto-threaded on mentions by default. Keep that behavior for
@@ -468,6 +480,9 @@ function makeDefaultLegacyAccount(
       autoThreadOnMention: config.autoThreadOnMention ?? true,
       threadPolicyByChannel: config.threadPolicyByChannel,
       allowBots: config.allowBots ?? false,
+      observer: config.observer
+        ? cloneDiscordObserverConfig(config.observer)
+        : undefined,
       agentId: null,
       defaultPermissionMode: config.defaultPermissionMode ?? "standard",
       createdAt: now,

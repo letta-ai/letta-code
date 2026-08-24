@@ -1,3 +1,4 @@
+import type { DiscordObserverConfig } from "./discord/observer-config";
 import type { ChannelProtocolConfig } from "./plugin-types";
 import type {
   ChannelAllowBotsMode,
@@ -48,6 +49,7 @@ export interface ChannelConfigSnapshot {
   allowBots?: ChannelAllowBotsMode;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
+  observer?: DiscordObserverConfig;
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];

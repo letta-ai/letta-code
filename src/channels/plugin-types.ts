@@ -1,3 +1,4 @@
+import type { DiscordObserverConfig } from "./discord/observer-config";
 import type {
   ChannelAccount,
   ChannelAdapter,
@@ -174,6 +175,7 @@ export interface ChannelPluginAccountPatch {
   allowBots?: ChannelAllowBotsMode;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
+  observer?: DiscordObserverConfig | null;
   messagePrefix?: string;
   selfChatMode?: boolean;
   allowedGroups?: string[];

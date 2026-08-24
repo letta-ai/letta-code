@@ -19,6 +19,7 @@ import {
   __testOverrideSavePairingStore,
   clearPairingStores,
 } from "@/channels/pairing";
+import type { ChannelInboundDelivery } from "@/channels/registry-handlers";
 import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
@@ -501,6 +502,88 @@ describe("discord channel registry", () => {
     expect(deliveries).toHaveLength(1);
   });
 
+  test("batches one guild and fans the same read-only chunk into fixed observer conversations", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "discord-token",
+        agentId: "agent-chat",
+        defaultPermissionMode: "standard",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        allowedChannels: { "different-channel": "mention-only" },
+        observer: {
+          guildId: "guild-observed",
+          targets: [
+            { agentId: "agent-alpha", conversationId: "default" },
+            { agentId: "agent-beta", conversationId: "conv-beta" },
+          ],
+          maxMessages: 2,
+          maxCharacters: 100_000,
+          flushIntervalMs: 60_000,
+        },
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const replies: Array<{ chatId: string; text: string }> = [];
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+    const deliveries: ChannelInboundDelivery[] = [];
+    registry.setMessageHandler((delivery) => deliveries.push(delivery));
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        guildId: "guild-observed",
+        chatId: "channel-alpha",
+        threadId: null,
+        messageId: "observer-1",
+        text: "/status",
+        timestamp: 100,
+      }),
+    );
+    expect(deliveries).toHaveLength(0);
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        guildId: "guild-observed",
+        chatId: "channel-beta",
+        chatLabel: "builders",
+        threadId: null,
+        messageId: "observer-2",
+        text: "second observation",
+        timestamp: 200,
+      }),
+    );
+
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(replies).toHaveLength(0);
+    expect(deliveries).toHaveLength(2);
+    expect(
+      deliveries.map((delivery) => [
+        delivery.route.agentId,
+        delivery.route.conversationId,
+        delivery.route.outboundEnabled,
+      ]),
+    ).toEqual([
+      ["agent-alpha", "default", false],
+      ["agent-beta", "conv-beta", false],
+    ]);
+    const content = deliveries[0]?.content;
+    expect(typeof content).toBe("string");
+    expect(content).toContain("discord-observer-batch");
+    expect(content).toContain("/status");
+    expect(content).toContain("second observation");
+    expect(content).toContain('channel_name="builders"');
+    expect(deliveries[0]?.turnSources).toBeUndefined();
+  });
+
   test("does not spam setup replies for unbound ambient open-channel traffic", async () => {
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => [
@@ -775,15 +858,11 @@ describe("discord channel registry", () => {
   // ── Delivery-time gate (allowed_channels re-check) ─────────────
 
   test("delivery-time gate passes thread-on-mention with correct parentChannelId", async () => {
-    // Simulates a mention in guild-channel "alpha" where the adapter
-    // creates a thread and sets parentChannelId to the guild channel.
-    // The delivery-time gate should resolve alpha → allowed.
     const { ChannelRegistry } = await import("@/channels/registry");
     const registry = new ChannelRegistry();
     const adapter = createAdapter();
     registry.registerAdapter(adapter);
 
-    // Override account with allowedChannels that includes the guild channel
     __testOverrideLoadChannelAccounts(() => [
       {
         channel: "discord",
@@ -806,12 +885,6 @@ describe("discord channel registry", () => {
     });
     registry.setReady();
 
-    // This is what the adapter sends after creating a thread for
-    // a mention in guild channel "alpha":
-    //   chatId = thread ID
-    //   threadId = thread ID (both same — "thread-1")
-    //   parentChannelId = "alpha" (the original guild channel)
-    //   isMention = true
     await adapter.onMessage?.(
       createInboundMessage({
         chatId: "thread-1",
@@ -823,7 +896,6 @@ describe("discord channel registry", () => {
       }),
     );
 
-    // Route should be created and message delivered
     expect(createConversation).toHaveBeenCalledTimes(1);
     expect(
       getRoute("discord", "thread-1", "discord-bot", "thread-1"),

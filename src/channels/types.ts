@@ -14,6 +14,7 @@ import type {
   ListModelsResponseModelEntry,
   StopReasonType,
 } from "@/types/protocol_v2";
+import type { DiscordObserverConfig } from "./discord/observer-config";
 import type { WhatsAppAttachmentPolicyConfig } from "./whatsapp/attachment-policy-types";
 import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
 /**
@@ -380,6 +381,7 @@ export interface InboundChannelMessage {
   senderName?: string;
   /** Chat/channel label, if available (for discovery UIs). */
   chatLabel?: string;
+  guildId?: string;
   /** Message text content. */
   text: string;
   /** Platform-verified user mentions within text. */
@@ -516,6 +518,7 @@ export type SlackChannelMode = "socket";
 export type ChannelAllowBotsMode = false | "mentions";
 export type SlackAllowBotsMode = ChannelAllowBotsMode;
 export type DiscordAllowBotsMode = ChannelAllowBotsMode;
+
 export type TelegramGroupMode = "open" | "mention-only";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
 export type SignalGroupMode = "disabled" | "mention" | "open";
@@ -657,12 +660,9 @@ export interface DiscordChannelConfig {
    * Clamped to `0..10000`.
    */
   inboundDebounceMs?: number;
-  /**
-   * Bot-authored inbound policy. Default false drops bot messages. "mentions"
-   * accepts only explicit foreign bot mentions. There is intentionally no
-   * accept-all mode until Letta has a shared pair-loop guard.
-   */
+  /** Interactive bot policy; observer bot ingestion is configured separately. */
   allowBots?: DiscordAllowBotsMode;
+  observer?: DiscordObserverConfig;
 }
 
 export interface WhatsAppChannelConfig
@@ -843,12 +843,9 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
    * Clamped to `0..10000`.
    */
   inboundDebounceMs?: number;
-  /**
-   * Bot-authored inbound policy. Default false drops bot messages. "mentions"
-   * accepts only explicit foreign bot mentions. There is intentionally no
-   * accept-all mode until Letta has a shared pair-loop guard.
-   */
+  /** Interactive bot policy; observer bot ingestion is configured separately. */
   allowBots?: DiscordAllowBotsMode;
+  observer?: DiscordObserverConfig;
 }
 
 export interface WhatsAppChannelAccount

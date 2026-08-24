@@ -170,6 +170,42 @@ Only set `LETTA_BASE_URL` for a separate self-hosted server. For example,
 a server running at that URL. Do not set a dummy `LETTA_BASE_URL` for
 `--backend local`.
 
+## Discord observer mode
+
+The bundled Discord plugin can aggregate one guild into fixed, read-only agent
+conversations. This is intended for ambient observation and dreaming tests,
+not interactive replies. Normal Discord routing remains unchanged outside the
+configured guild.
+
+Add an `observer` object to the Discord account in
+`~/.letta/channels/discord/accounts.json`:
+
+```json
+{
+  "observer": {
+    "guildId": "123456789012345678",
+    "targets": [
+      { "agentId": "agent-alpha", "conversationId": "default" },
+      { "agentId": "agent-beta", "conversationId": "default" }
+    ],
+    "flushIntervalMs": 600000,
+    "maxMessages": 200,
+    "maxCharacters": 100000,
+    "includeBots": true
+  }
+}
+```
+
+Messages are collected across the whole guild and flushed in chronological
+order. Observer-guild traffic bypasses interactive mention-only and channel
+allowlist behavior without changing those policies in other guilds. The
+interval is a tumbling window, not an inactivity debounce. Message
+count and character limits flush a busy window early. Every target receives
+the same chunk in its fixed conversation; observer routes are always outbound
+disabled. Foreign bot messages are optional, while the receiving Discord bot's
+own messages are always dropped to prevent feedback loops. Pending observations
+flush before the channel registry shuts down.
+
 ## Channel slash commands
 
 Typed slash commands are handled before normal channel ingress so operational

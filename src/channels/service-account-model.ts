@@ -100,6 +100,7 @@ export function createAccountFromPatch(
       acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
       removeStaleRoutes: normalizedPatch.removeStaleRoutes,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
+      observer: normalizedPatch.observer ?? undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -265,6 +266,10 @@ export function mergeAccountPatch(
         normalizedPatch.removeStaleRoutes ?? existing.removeStaleRoutes,
       inboundDebounceMs:
         normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
+      observer:
+        normalizedPatch.observer === null
+          ? undefined
+          : (normalizedPatch.observer ?? existing.observer),
       updatedAt: nextUpdatedAt,
     };
   }

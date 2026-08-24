@@ -8,6 +8,11 @@ import {
 import { getChannelAccount, LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { tryHandleChannelSlashCommand } from "./commands";
 import { isDiscordGuildChannelAllowed } from "./discord/channel-gating";
+import {
+  createDiscordObserverBatcher,
+  type DiscordObserverBatcher,
+} from "./discord/observer-batcher";
+import type { DiscordObserverConfig } from "./discord/observer-config";
 import { createPairingCode } from "./pairing";
 import type { ChannelCommandRouter } from "./registry-commands";
 import type { ChannelControlRequests } from "./registry-controls";
@@ -34,7 +39,55 @@ import {
   isTelegramChannelAccount,
   isWhatsAppChannelAccount,
 } from "./types";
-import { formatChannelNotification } from "./xml";
+import { buildChannelNotificationXml, formatChannelNotification } from "./xml";
+
+const DISCORD_OBSERVER_DEFAULT_FLUSH_INTERVAL_MS = 10 * 60 * 1000;
+const DISCORD_OBSERVER_DEFAULT_MAX_MESSAGES = 200;
+const DISCORD_OBSERVER_DEFAULT_MAX_CHARACTERS = 100_000;
+
+interface DiscordObserverBatchEntry {
+  timestamp: number;
+  text: string;
+  message: InboundChannelMessage;
+}
+
+interface DiscordObserverBatchState {
+  signature: string;
+  batcher: DiscordObserverBatcher<DiscordObserverBatchEntry>;
+}
+
+function escapeObserverAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function formatDiscordObserverBatch(
+  guildId: string,
+  entries: readonly DiscordObserverBatchEntry[],
+): string {
+  const first = entries[0];
+  const last = entries.at(-1);
+  const lines = [
+    `<discord-observer-batch guild_id="${escapeObserverAttribute(guildId)}" message_count="${entries.length}" window_start="${new Date(first?.timestamp ?? Date.now()).toISOString()}" window_end="${new Date(last?.timestamp ?? Date.now()).toISOString()}">`,
+    "Observe this Discord activity. Update durable Discord knowledge when useful; otherwise take no action.",
+  ];
+  for (const entry of entries) {
+    lines.push(
+      `<observed-message timestamp="${new Date(entry.timestamp).toISOString()}" channel_id="${escapeObserverAttribute(entry.message.chatId)}"${entry.message.chatLabel ? ` channel_name="${escapeObserverAttribute(entry.message.chatLabel)}"` : ""}>`,
+      entry.text,
+      "</observed-message>",
+    );
+  }
+  lines.push("</discord-observer-batch>");
+  return lines.join("\n");
+}
+
+function observerSignature(observer: DiscordObserverConfig): string {
+  return JSON.stringify(observer);
+}
 
 export function createChannelInboundRouter(deps: {
   controls: ChannelControlRequests;
@@ -47,6 +100,95 @@ export function createChannelInboundRouter(deps: {
   deliver: (delivery: ChannelInboundDelivery) => void;
   emitEvent: (event: ChannelRegistryEvent) => void;
 }) {
+  const discordObserverBatches = new Map<string, DiscordObserverBatchState>();
+  const disabledDiscordObserverAccounts = new Set<string>();
+  const discordObserverGenerations = new Map<string, number>();
+  let discordObserversStopped = false;
+
+  function bumpDiscordObserverGeneration(accountId: string): number {
+    const next = (discordObserverGenerations.get(accountId) ?? 0) + 1;
+    discordObserverGenerations.set(accountId, next);
+    return next;
+  }
+
+  function canAcceptDiscordObserver(accountId: string): boolean {
+    return (
+      !discordObserversStopped &&
+      !disabledDiscordObserverAccounts.has(accountId)
+    );
+  }
+
+  function deliverDiscordObserverBatch(
+    accountId: string,
+    observer: DiscordObserverConfig,
+    entries: readonly DiscordObserverBatchEntry[],
+  ): void {
+    const content = formatDiscordObserverBatch(observer.guildId, entries);
+    const now = new Date().toISOString();
+    for (const target of observer.targets) {
+      const route = {
+        accountId,
+        chatId: observer.guildId,
+        chatType: "channel" as const,
+        threadId: null,
+        agentId: target.agentId,
+        conversationId: target.conversationId,
+        enabled: true,
+        outboundEnabled: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+      deps.deliver({
+        route,
+        content,
+        // Observer deliveries intentionally omit turn sources. The gateway
+        // builds MessageChannel from turn sources, so including them would let
+        // an ambient observer reply into Discord despite outboundEnabled=false.
+      });
+    }
+  }
+
+  async function getDiscordObserverBatcher(
+    accountId: string,
+    observer: DiscordObserverConfig,
+  ): Promise<DiscordObserverBatcher<DiscordObserverBatchEntry> | null> {
+    if (!canAcceptDiscordObserver(accountId)) return null;
+    const signature = observerSignature(observer);
+    const existing = discordObserverBatches.get(accountId);
+    if (existing?.signature === signature) {
+      return existing.batcher;
+    }
+    const generation = bumpDiscordObserverGeneration(accountId);
+    if (existing) {
+      discordObserverBatches.delete(accountId);
+      await existing.batcher.stop("flush");
+    }
+    if (
+      !canAcceptDiscordObserver(accountId) ||
+      discordObserverGenerations.get(accountId) !== generation
+    ) {
+      return null;
+    }
+    const batcher = createDiscordObserverBatcher<DiscordObserverBatchEntry>({
+      flushIntervalMs:
+        observer.flushIntervalMs ?? DISCORD_OBSERVER_DEFAULT_FLUSH_INTERVAL_MS,
+      maxMessages:
+        observer.maxMessages ?? DISCORD_OBSERVER_DEFAULT_MAX_MESSAGES,
+      maxCharacters:
+        observer.maxCharacters ?? DISCORD_OBSERVER_DEFAULT_MAX_CHARACTERS,
+      onBatch: (entries) =>
+        deliverDiscordObserverBatch(accountId, observer, entries),
+      onBackgroundError: (error) => {
+        console.error(
+          `[Discord] Observer batch delivery failed for ${accountId}:`,
+          error instanceof Error ? error.message : error,
+        );
+      },
+    });
+    discordObserverBatches.set(accountId, { signature, batcher });
+    return batcher;
+  }
+
   async function handleInboundMessage(
     msg: InboundChannelMessage,
   ): Promise<void> {
@@ -85,6 +227,36 @@ export function createChannelInboundRouter(deps: {
           `[channels] Dropped ${msg.channel} group message from unauthorized sender ${msg.senderId} in chat ${msg.chatId}`,
         );
       }
+      return;
+    }
+
+    // Observer guilds are passive transcript sources. Consume them before
+    // controls, slash commands, route provisioning, or any reply-producing
+    // behavior. The adapter already scopes this branch to the configured guild
+    // and bypasses interactive mention/channel policy there.
+    if (
+      config &&
+      msg.channel === "discord" &&
+      isDiscordChannelAccount(config) &&
+      config.observer &&
+      msg.chatType === "channel" &&
+      msg.guildId === config.observer.guildId
+    ) {
+      const preparedMessage = adapter.prepareInboundMessage
+        ? await adapter.prepareInboundMessage(msg, {
+            isFirstRouteTurn: false,
+          })
+        : msg;
+      const batcher = await getDiscordObserverBatcher(
+        accountId,
+        config.observer,
+      );
+      if (!batcher) return;
+      await batcher.add({
+        timestamp: preparedMessage.timestamp,
+        text: buildChannelNotificationXml(preparedMessage),
+        message: preparedMessage,
+      });
       return;
     }
 
@@ -404,7 +576,55 @@ export function createChannelInboundRouter(deps: {
     });
   }
 
-  return { handleInboundMessage };
+  async function flushDiscordObserverBatches(
+    accountId?: string,
+  ): Promise<void> {
+    const states = accountId
+      ? [discordObserverBatches.get(accountId)].filter(
+          (state): state is DiscordObserverBatchState => !!state,
+        )
+      : Array.from(discordObserverBatches.values());
+    await Promise.all(states.map((state) => state.batcher.flush()));
+  }
+
+  function disableDiscordObserverBatches(accountId?: string): void {
+    if (accountId) {
+      disabledDiscordObserverAccounts.add(accountId);
+      bumpDiscordObserverGeneration(accountId);
+      return;
+    }
+    discordObserversStopped = true;
+    for (const key of discordObserverBatches.keys()) {
+      bumpDiscordObserverGeneration(key);
+    }
+  }
+
+  function resumeDiscordObserverBatches(accountId: string): void {
+    discordObserversStopped = false;
+    disabledDiscordObserverAccounts.delete(accountId);
+    bumpDiscordObserverGeneration(accountId);
+  }
+
+  async function stopDiscordObserverBatches(accountId?: string): Promise<void> {
+    const entries = accountId
+      ? [[accountId, discordObserverBatches.get(accountId)] as const]
+      : Array.from(discordObserverBatches.entries());
+    await Promise.all(
+      entries.map(async ([key, state]) => {
+        if (!state) return;
+        discordObserverBatches.delete(key);
+        await state.batcher.stop("flush");
+      }),
+    );
+  }
+
+  return {
+    handleInboundMessage,
+    disableDiscordObserverBatches,
+    flushDiscordObserverBatches,
+    resumeDiscordObserverBatches,
+    stopDiscordObserverBatches,
+  };
 }
 
 export type ChannelInboundRouter = ReturnType<
