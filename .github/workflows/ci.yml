@@ -168,6 +168,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun install --frozen-lockfile
 
+      - name: Verify native binaries
+        run: |
+          node -e "try { require('sharp'); console.log('sharp: OK') } catch(e) { console.error('sharp: FAIL —', e.message); process.exit(1) }"
+          node -e "try { require('@janhapke/sharp-electron'); console.log('@janhapke/sharp-electron: OK') } catch(e) { console.error('@janhapke/sharp-electron: FAIL —', e.message); process.exit(1) }"
+          node -e "try { require('node-pty'); console.log('node-pty: OK') } catch(e) { console.error('node-pty: FAIL —', e.message); process.exit(1) }"
+
       - name: Unlock GNOME Keyring
         if: runner.os == 'Linux'
         uses: t1m0thyj/unlock-keyring@v1
