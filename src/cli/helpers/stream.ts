@@ -128,11 +128,12 @@ export async function drainStream(
   // ~20s, so silence means a dead read, not a slow model), then abort the dead
   // read so the resume path can replay the lost tail. A server-side status
   // check avoids reconnecting an active run when it is available.
-  const recoveryActingUserId =
-    actingUserId ?? getStreamRequestContext(stream)?.actingUserId;
+  const requestContext = getStreamRequestContext(stream);
+  const recoveryActingUserId = actingUserId ?? requestContext?.actingUserId;
   const stallReconciler = createStreamStallReconciler({
     getRunId: () => streamProcessor.lastRunId,
     getStopReason: () => streamProcessor.stopReason,
+    canResumeWithoutRunId: () => Boolean(requestContext?.otid),
     retrieveRunStatus: async (runId, signal) =>
       (
         await getBackend().retrieveRun(runId, {

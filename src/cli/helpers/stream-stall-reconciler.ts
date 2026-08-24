@@ -74,6 +74,7 @@ export type StreamStallReconciler = {
 export function createStreamStallReconciler(context: {
   getRunId: () => string | null;
   getStopReason: () => string | null;
+  canResumeWithoutRunId: () => boolean;
   /** Fetch the run's current server-side status; may throw. */
   retrieveRunStatus: (
     runId: string,
@@ -85,6 +86,7 @@ export function createStreamStallReconciler(context: {
   let fired = false;
   let cleared = false;
   let reconciling = false;
+  let activityGeneration = 0;
 
   const abortDeadRead = (runId: string | null, status: string | null) => {
     fired = true;
@@ -111,6 +113,7 @@ export function createStreamStallReconciler(context: {
     if (cleared || fired) {
       return;
     }
+    activityGeneration += 1;
     if (timer) {
       clearTimeout(timer);
     }
@@ -128,9 +131,14 @@ export function createStreamStallReconciler(context: {
     }
     const runId = context.getRunId();
     if (!runId) {
-      abortDeadRead(null, null);
+      if (context.canResumeWithoutRunId()) {
+        abortDeadRead(null, null);
+      } else {
+        arm();
+      }
       return;
     }
+    const reconciliationGeneration = activityGeneration;
     reconciling = true;
     void (async () => {
       let status: string | null | undefined;
@@ -160,7 +168,21 @@ export function createStreamStallReconciler(context: {
         }
       }
       reconciling = false;
-      if (cleared || fired || context.getStopReason() !== null) {
+      if (
+        cleared ||
+        fired ||
+        context.getStopReason() !== null ||
+        activityGeneration !== reconciliationGeneration
+      ) {
+        if (
+          activityGeneration !== reconciliationGeneration &&
+          !timer &&
+          !cleared &&
+          !fired &&
+          context.getStopReason() === null
+        ) {
+          arm();
+        }
         return;
       }
       if (status != null && ACTIVE_RUN_STATUSES.has(status)) {
