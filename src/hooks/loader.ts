@@ -234,11 +234,14 @@ function filterHooksForEvent(
 
 /**
  * Get all hooks that match a specific event and tool name
+ *
+ * A tool call may provide model-facing and internal aliases. A matcher fires
+ * once when it matches any alias.
  */
 export function getMatchingHooks(
   config: HooksConfig,
   event: HookEvent,
-  toolName?: string,
+  toolName?: string | readonly string[],
 ): HookCommand[] {
   if (isToolEvent(event)) {
     // Tool events use HookMatcher[] - need to match against tool name
@@ -249,9 +252,14 @@ export function getMatchingHooks(
       return [];
     }
 
+    const toolNames =
+      typeof toolName === "string" ? [toolName] : (toolName ?? []);
     const hooks: HookCommand[] = [];
     for (const matcher of matchers) {
-      if (!toolName || matchesTool(matcher.matcher, toolName)) {
+      if (
+        toolNames.length === 0 ||
+        toolNames.some((name) => matchesTool(matcher.matcher, name))
+      ) {
         hooks.push(...matcher.hooks);
       }
     }
@@ -373,7 +381,7 @@ export function areHooksDisabled(
  */
 export async function getHooksForEvent(
   event: HookEvent,
-  toolName?: string,
+  toolName?: string | readonly string[],
   workingDirectory: string = process.cwd(),
 ): Promise<HookCommand[]> {
   // Check if all hooks are disabled

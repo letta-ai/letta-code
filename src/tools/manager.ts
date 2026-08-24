@@ -1971,7 +1971,7 @@ type ToolHookContext = {
   debugLabel: string;
   scopedAgentId?: string;
   toolCallId?: string;
-  toolName: string;
+  toolName: string | readonly string[];
   workingDirectory: string;
 };
 
@@ -2562,7 +2562,7 @@ async function executeToolInner(
   const run = async (): Promise<ToolExecutionResult> => {
     // Run PreToolUse hooks - can block tool execution
     const preHookResult = await runPreToolUseHooks(
-      internalName,
+      [getServerToolName(internalName), internalName],
       args as Record<string, unknown>,
       options?.toolCallId,
       workingDirectory,
@@ -2748,7 +2748,7 @@ async function executeToolInner(
           debugLabel: "tool result path",
           scopedAgentId,
           toolCallId: options?.toolCallId,
-          toolName: internalName,
+          toolName: [getServerToolName(internalName), internalName],
           workingDirectory,
         },
         {
@@ -2807,7 +2807,7 @@ async function executeToolInner(
           debugLabel: "tool exception path",
           scopedAgentId,
           toolCallId: options?.toolCallId,
-          toolName: internalName,
+          toolName: [getServerToolName(internalName), internalName],
           workingDirectory,
         },
         {

@@ -29,11 +29,20 @@ export * from "./types";
 // ============================================================================
 
 /**
+ * Tool names may include aliases for the same call. The first name is the
+ * canonical, model-facing name reported to hook commands; every name
+ * participates in matcher resolution.
+ */
+function canonicalToolName(toolName: string | readonly string[]): string {
+  return typeof toolName === "string" ? toolName : (toolName[0] ?? "");
+}
+
+/**
  * Run PreToolUse hooks before a tool is executed
  * Can block the tool call by returning blocked: true
  */
 export async function runPreToolUseHooks(
-  toolName: string,
+  toolName: string | readonly string[],
   toolInput: Record<string, unknown>,
   toolCallId?: string,
   workingDirectory: string = process.cwd(),
@@ -51,7 +60,7 @@ export async function runPreToolUseHooks(
   const input: PreToolUseHookInput = {
     event_type: "PreToolUse",
     working_directory: workingDirectory,
-    tool_name: toolName,
+    tool_name: canonicalToolName(toolName),
     tool_input: toolInput,
     tool_call_id: toolCallId,
     agent_id: agentId,
@@ -66,7 +75,7 @@ export async function runPreToolUseHooks(
  * These run in parallel since they cannot block
  */
 export async function runPostToolUseHooks(
-  toolName: string,
+  toolName: string | readonly string[],
   toolInput: Record<string, unknown>,
   toolResult: { status: "success" | "error"; output?: string },
   toolCallId?: string,
@@ -87,7 +96,7 @@ export async function runPostToolUseHooks(
   const input: PostToolUseHookInput = {
     event_type: "PostToolUse",
     working_directory: workingDirectory,
-    tool_name: toolName,
+    tool_name: canonicalToolName(toolName),
     tool_input: toolInput,
     tool_call_id: toolCallId,
     tool_result: toolResult,
@@ -106,7 +115,7 @@ export async function runPostToolUseHooks(
  * Stderr from hooks with exit code 2 is fed back to the agent
  */
 export async function runPostToolUseFailureHooks(
-  toolName: string,
+  toolName: string | readonly string[],
   toolInput: Record<string, unknown>,
   errorMessage: string,
   errorType?: string,
@@ -128,7 +137,7 @@ export async function runPostToolUseFailureHooks(
   const input: PostToolUseFailureHookInput = {
     event_type: "PostToolUseFailure",
     working_directory: workingDirectory,
-    tool_name: toolName,
+    tool_name: canonicalToolName(toolName),
     tool_input: toolInput,
     tool_call_id: toolCallId,
     error_message: errorMessage,
