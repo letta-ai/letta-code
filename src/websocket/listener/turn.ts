@@ -172,10 +172,34 @@ async function handleIncomingMessageInner(
   let lastNeedsUserInputToolCallIds: string[] = [];
   const turnLease =
     existingTurnLease ??
-    runtime.turnLifecycle.begin({
-      origin: "message",
-      workingDirectory: turnWorkingDirectory,
-    });
+    (() => {
+      try {
+        return runtime.turnLifecycle.begin({
+          origin: "message",
+          workingDirectory: turnWorkingDirectory,
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.startsWith("Cannot begin a turn while lifecycle is")
+        ) {
+          trackBoundaryError({
+            errorType: "turn_lifecycle_stuck_lease_recovery",
+            error: new Error(
+              `Recovering from stuck turn lifecycle: ${error.message}`,
+            ),
+            context: "listener_turn_begin",
+            runId: undefined,
+          });
+          runtime.turnLifecycle.reset("error");
+          return runtime.turnLifecycle.begin({
+            origin: "message",
+            workingDirectory: turnWorkingDirectory,
+          });
+        }
+        throw error;
+      }
+    })();
   if (connectionId) {
     runtime.activeConnectionId = connectionId;
   }
