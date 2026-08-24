@@ -198,6 +198,16 @@ function shouldAcquireStandaloneListenerLock(): boolean {
   );
 }
 
+function shouldInstallChannelRuntimes(
+  channelNames: readonly string[],
+  restoreEnabledChannels: boolean,
+  installRequested: boolean,
+): boolean {
+  return (
+    installRequested && (channelNames.length > 0 || restoreEnabledChannels)
+  );
+}
+
 export const __listenSubcommandTestUtils = {
   createListenerProcessAnchorPromise,
   flushListenerTelemetryEnd,
@@ -205,6 +215,7 @@ export const __listenSubcommandTestUtils = {
   resolveListenerStartupMode,
   resolveListenerRegistrationOptions,
   shouldAcquireStandaloneListenerLock,
+  shouldInstallChannelRuntimes,
 };
 
 const LISTEN_OPTIONS = {
@@ -234,7 +245,7 @@ function printListenUsage(): void {
     "  --skills <path>     Use this directory for environment-provided skills",
   );
   console.log(
-    "  --install-channel-runtimes  Install missing runtime deps for the selected channels before startup",
+    "  --install-channel-runtimes  Install missing runtime deps for selected or restored channels before startup",
   );
   console.log(
     "  --debug            Plain-text mode: log all WebSocket events instead of interactive UI",
@@ -553,8 +564,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           restoreEnabledChannels,
           restoreAgentScope,
           failOnStartupError: Boolean(values.channels),
-          installChannelRuntimes: Boolean(
-            values.channels && values["install-channel-runtimes"],
+          installChannelRuntimes: shouldInstallChannelRuntimes(
+            channelNames,
+            restoreEnabledChannels,
+            Boolean(values["install-channel-runtimes"]),
           ),
           onLog: (message) => {
             sessionLog.log(message);

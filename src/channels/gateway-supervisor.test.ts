@@ -35,6 +35,7 @@ async function writeGatewayFixture(
 function createGatewayFixtureProcess(): {
   spawnProcess: typeof spawn;
   getKillSignal: () => NodeJS.Signals | number | undefined;
+  getSpawnArgs: () => readonly string[];
 } {
   // Bun 1.3.0 on Windows can stall when the test process writes to a spawned
   // child's stdin pipe. Model the process boundary in memory so this protocol
@@ -45,6 +46,7 @@ function createGatewayFixtureProcess(): {
   const stderr = new PassThrough();
   const child = new EventEmitter() as ChildProcess;
   let killSignal: NodeJS.Signals | number | undefined;
+  let spawnArgs: readonly string[] = [];
   Object.assign(child, {
     pid: 1234,
     stdin,
@@ -79,11 +81,16 @@ function createGatewayFixtureProcess(): {
       );
     }
   });
-  const spawnProcess = (() => {
+  const spawnProcess = ((_command: string, args?: readonly string[]) => {
+    spawnArgs = args ?? [];
     queueMicrotask(() => stdout.write("CHANNEL_GATEWAY_READY\r\n"));
     return child;
   }) as typeof spawn;
-  return { spawnProcess, getKillSignal: () => killSignal };
+  return {
+    spawnProcess,
+    getKillSignal: () => killSignal,
+    getSpawnArgs: () => spawnArgs,
+  };
 }
 
 test("supervisor waits for readiness, carries service commands, and shuts down", async () => {
@@ -106,6 +113,23 @@ test("supervisor waits for readiness, carries service commands, and shuts down",
 
   await supervisor.close();
   expect(fixture.getKillSignal()).toBe("SIGTERM");
+});
+
+test("supervisor installs runtimes for restored enabled channels", async () => {
+  const fixture = createGatewayFixtureProcess();
+  const supervisor = await startChannelGatewaySupervisor({
+    appServerUrl: "ws://127.0.0.1:1/ws",
+    channelNames: [],
+    restoreEnabledChannels: true,
+    restoreAgentScope: "cloud",
+    installChannelRuntimes: true,
+    launcher: { command: "fixture" },
+    spawnProcess: fixture.spawnProcess,
+  });
+
+  expect(fixture.getSpawnArgs()).toContain("--restore-enabled-channels");
+  expect(fixture.getSpawnArgs()).toContain("--install-channel-runtimes");
+  await supervisor.close();
 });
 
 test("supervisor reports an unexpected post-ready exit without restarting", async () => {

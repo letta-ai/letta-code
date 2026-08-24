@@ -15,7 +15,7 @@ Run the local agent server as a remote environment, with messaging channels, or 
 Remote environment options:
   --env-name <name>  Friendly name for this environment (uses hostname if not provided)
   --channels <list>  Comma-separated channel names to enable (e.g. telegram)
-  --install-channel-runtimes  Install missing runtime dependencies for selected channels
+  --install-channel-runtimes  Install missing runtime dependencies for selected or restored channels
   --debug  Log WebSocket events instead of showing the interactive status UI
 
 App Server options:
