@@ -171,8 +171,15 @@ jobs:
       - name: Verify native binaries
         run: |
           node -e "try { require('sharp'); console.log('sharp: OK') } catch(e) { console.error('sharp: FAIL —', e.message); process.exit(1) }"
-          node -e "try { require('@janhapke/sharp-electron'); console.log('@janhapke/sharp-electron: OK') } catch(e) { console.error('@janhapke/sharp-electron: FAIL —', e.message); process.exit(1) }"
           node -e "try { require('node-pty'); console.log('node-pty: OK') } catch(e) { console.error('node-pty: FAIL —', e.message); process.exit(1) }"
+          # @janhapke/sharp-electron only has a patched build for linux-x64;
+          # the code only imports it on linux-x64 + Electron. Verify it loads
+          # where it's actually used, skip elsewhere.
+          if [ "${{ runner.os }}" = "Linux" ] && [ "${{ runner.arch }}" = "X64" ]; then
+            node -e "try { require('@janhapke/sharp-electron'); console.log('@janhapke/sharp-electron: OK') } catch(e) { console.error('@janhapke/sharp-electron: FAIL —', e.message); process.exit(1) }"
+          else
+            echo "@janhapke/sharp-electron: skipped (not linux-x64)"
+          fi
 
       - name: Unlock GNOME Keyring
         if: runner.os == 'Linux'
