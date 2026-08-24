@@ -232,6 +232,36 @@ describe("accumulator usage statistics", () => {
     expect(tracker.pendingConversationDescriptionRegeneration).toBe(true);
   });
 
+  test("hides injected skill content user messages", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "user_message",
+      id: "skill-content-1",
+      content:
+        '<skill_content name="review-pr">\n---\ndescription: Review a PR\n---\nInstructions\n</skill_content>',
+    } as unknown as LettaStreamingResponse);
+
+    expect(buffers.byId.get("skill-content-1")).toBeUndefined();
+    expect(buffers.order).toHaveLength(0);
+  });
+
+  test("preserves user text alongside injected skill content", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "user_message",
+      id: "skill-content-with-text-1",
+      content:
+        '<skill_content name="review-pr">\nInstructions\n</skill_content>\n\nReview PR 123',
+    } as unknown as LettaStreamingResponse);
+
+    expect(buffers.byId.get("skill-content-with-text-1")).toMatchObject({
+      kind: "user",
+      text: "Review PR 123",
+    });
+  });
+
   test("accumulates assistant messages when otid is missing but id is present", () => {
     const buffers = createBuffers();
 

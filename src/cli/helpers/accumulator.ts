@@ -18,6 +18,7 @@ import type { ContextTracker } from "./context-tracker";
 import { MAX_CONTEXT_HISTORY } from "./context-tracker";
 import { findLastSafeSplitPoint } from "./markdown-split";
 import { trimFinishedReasoningText } from "./reasoning-text";
+import { stripSkillContentBlocks } from "./skill-content-display";
 import { isShellOutputTool } from "./tool-name-mapping";
 import { extractUnifiedExecRunningSessionId } from "./unified-exec-output";
 
@@ -1044,11 +1045,8 @@ export function onChunk(
       // Handle otid transition (mark previous line as finished)
       handleOtidTransition(b, lineId);
 
-      // Extract text content from the user message
       const rawText = extractTextPart(chunk.content);
       if (!rawText) break;
-
-      // Check if this is a compaction summary message (old format embedded in user_message)
       const compactionSummary = extractCompactionSummary(rawText);
       if (compactionSummary) {
         // Render as a finished compaction event
@@ -1065,18 +1063,20 @@ export function onChunk(
         markCompactionCompleted(ctx);
         break;
       }
+      const displayText = stripSkillContentBlocks(rawText);
+      if (!displayText) break;
 
       const line = ensure(b, lineId, () => ({
         kind: "user",
         id: lineId,
-        text: rawText,
+        text: displayText,
         messageId,
         otid,
       }));
       if (line.kind === "user") {
         b.byId.set(lineId, {
           ...line,
-          text: line.text || rawText,
+          text: line.text || displayText,
           messageId: messageId ?? line.messageId,
           otid: otid ?? line.otid,
         });

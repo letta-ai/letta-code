@@ -15,6 +15,7 @@ import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import type { Buffers } from "./accumulator";
 import { extractCompactionSummary } from "./compaction-utils";
 import { trimFinishedReasoningText } from "./reasoning-text";
+import { stripSkillContentBlocks } from "./skill-content-display";
 
 /**
  * Extract displayable text from tool return content.
@@ -49,19 +50,20 @@ function normalizeLineEndings(s: string): string {
 }
 
 function removeSystemContextBlocks(text: string): string {
-  return text
-    .replace(
-      new RegExp(
-        `${SYSTEM_REMINDER_OPEN}[\\s\\S]*?${SYSTEM_REMINDER_CLOSE}`,
-        "g",
+  return stripSkillContentBlocks(
+    text
+      .replace(
+        new RegExp(
+          `${SYSTEM_REMINDER_OPEN}[\\s\\S]*?${SYSTEM_REMINDER_CLOSE}`,
+          "g",
+        ),
+        "",
+      )
+      .replace(
+        new RegExp(`${SYSTEM_ALERT_OPEN}[\\s\\S]*?${SYSTEM_ALERT_CLOSE}`, "g"),
+        "",
       ),
-      "",
-    )
-    .replace(
-      new RegExp(`${SYSTEM_ALERT_OPEN}[\\s\\S]*?${SYSTEM_ALERT_CLOSE}`, "g"),
-      "",
-    )
-    .trim();
+  );
 }
 
 function renderAssistantContentParts(
