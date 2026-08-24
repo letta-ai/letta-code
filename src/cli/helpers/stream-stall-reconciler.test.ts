@@ -15,12 +15,18 @@ import { createStreamStallReconciler } from "@/cli/helpers/stream-stall-reconcil
  */
 
 const originalInterval = process.env.LETTA_STREAM_STALL_RECONCILE_MS;
+const originalStatusTimeout = process.env.LETTA_STREAM_STALL_STATUS_TIMEOUT_MS;
 
 afterEach(() => {
   if (originalInterval === undefined) {
     delete process.env.LETTA_STREAM_STALL_RECONCILE_MS;
   } else {
     process.env.LETTA_STREAM_STALL_RECONCILE_MS = originalInterval;
+  }
+  if (originalStatusTimeout === undefined) {
+    delete process.env.LETTA_STREAM_STALL_STATUS_TIMEOUT_MS;
+  } else {
+    process.env.LETTA_STREAM_STALL_STATUS_TIMEOUT_MS = originalStatusTimeout;
   }
 });
 
@@ -37,6 +43,7 @@ type ReconcilerHarness = {
 function makeReconciler(options: {
   runId?: string | null;
   stopReason?: string | null;
+  canResumeWithoutRunId?: boolean;
   status?: string | null | (() => string | null);
   statusError?: boolean;
 }): ReconcilerHarness {
@@ -45,6 +52,7 @@ function makeReconciler(options: {
   const reconciler = createStreamStallReconciler({
     getRunId: () => options.runId ?? null,
     getStopReason: () => options.stopReason ?? null,
+    canResumeWithoutRunId: () => options.canResumeWithoutRunId ?? false,
     retrieveRunStatus: async () => {
       statusCallCount += 1;
       if (options.statusError) {
@@ -88,24 +96,69 @@ describe("createStreamStallReconciler", () => {
     harness.reconciler.clear();
   });
 
-  test("keeps waiting when the status lookup fails", async () => {
+  test("reconnects when the status lookup fails", async () => {
     process.env.LETTA_STREAM_STALL_RECONCILE_MS = "20";
     const harness = makeReconciler({ runId: "run-1", statusError: true });
     harness.reconciler.arm();
-    await waitMs(70);
-    expect(harness.aborts()).toBe(0);
-    expect(harness.statusCalls()).toBeGreaterThanOrEqual(2);
+    await waitMs(50);
+    expect(harness.aborts()).toBe(1);
+    expect(harness.statusCalls()).toBe(1);
     harness.reconciler.clear();
   });
 
-  test("keeps waiting when no run_id has arrived yet", async () => {
+  test("keeps waiting without a run id or OTID", async () => {
     process.env.LETTA_STREAM_STALL_RECONCILE_MS = "20";
     const harness = makeReconciler({ runId: null, status: "completed" });
     harness.reconciler.arm();
-    await waitMs(60);
+    await waitMs(50);
     expect(harness.aborts()).toBe(0);
     expect(harness.statusCalls()).toBe(0);
     harness.reconciler.clear();
+  });
+
+  test("reconnects without a run id when OTID replay is available", async () => {
+    process.env.LETTA_STREAM_STALL_RECONCILE_MS = "20";
+    const harness = makeReconciler({
+      runId: null,
+      canResumeWithoutRunId: true,
+    });
+    harness.reconciler.arm();
+    await waitMs(50);
+    expect(harness.aborts()).toBe(1);
+    expect(harness.statusCalls()).toBe(0);
+    harness.reconciler.clear();
+  });
+
+  test("times out a hung status lookup before reconnecting", async () => {
+    process.env.LETTA_STREAM_STALL_RECONCILE_MS = "10";
+    process.env.LETTA_STREAM_STALL_STATUS_TIMEOUT_MS = "15";
+    let abortCount = 0;
+    let statusSignalAborted = false;
+    const reconciler = createStreamStallReconciler({
+      getRunId: () => "run-1",
+      getStopReason: () => null,
+      canResumeWithoutRunId: () => false,
+      retrieveRunStatus: async (_runId, signal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              statusSignalAborted = true;
+              reject(signal.reason);
+            },
+            { once: true },
+          );
+        }),
+      abortHttpRead: () => {
+        abortCount += 1;
+      },
+    });
+
+    reconciler.arm();
+    await waitMs(50);
+    expect(statusSignalAborted).toBe(true);
+    expect(abortCount).toBe(1);
+    reconciler.clear();
   });
 
   test("defers to the terminal-EOF guard once stop_reason arrived", async () => {
@@ -155,6 +208,32 @@ describe("createStreamStallReconciler", () => {
     harness.reconciler.clear();
   });
 
+  test("activity during a status lookup invalidates its result", async () => {
+    process.env.LETTA_STREAM_STALL_RECONCILE_MS = "20";
+    let resolveStatus!: (status: string) => void;
+    const statusPromise = new Promise<string>((resolve) => {
+      resolveStatus = resolve;
+    });
+    let abortCount = 0;
+    const reconciler = createStreamStallReconciler({
+      getRunId: () => "run-1",
+      getStopReason: () => null,
+      canResumeWithoutRunId: () => false,
+      retrieveRunStatus: async () => statusPromise,
+      abortHttpRead: () => {
+        abortCount += 1;
+      },
+    });
+
+    reconciler.arm();
+    await waitMs(25);
+    reconciler.arm();
+    resolveStatus("completed");
+    await waitMs(10);
+    expect(abortCount).toBe(0);
+    reconciler.clear();
+  });
+
   test("status resolved after stop_reason arrival does not abort", async () => {
     process.env.LETTA_STREAM_STALL_RECONCILE_MS = "20";
     let stopReason: string | null = null;
@@ -162,6 +241,7 @@ describe("createStreamStallReconciler", () => {
     const reconciler = createStreamStallReconciler({
       getRunId: () => "run-1",
       getStopReason: () => stopReason,
+      canResumeWithoutRunId: () => false,
       retrieveRunStatus: async () => {
         // The terminal chunk lands while the status lookup is in flight.
         stopReason = "requires_approval";

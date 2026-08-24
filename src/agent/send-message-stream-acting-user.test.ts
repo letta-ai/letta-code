@@ -29,6 +29,10 @@ describe("sendMessageStream acting-user header propagation (contract)", () => {
     fileURLToPath(new URL("../agent/message.ts", import.meta.url)),
     "utf-8",
   );
+  const streamSource = readFileSync(
+    fileURLToPath(new URL("../cli/helpers/stream.ts", import.meta.url)),
+    "utf-8",
+  );
 
   test("public option is declared on SendMessageStreamOptions", () => {
     expect(source).toContain("actingUserId?: string;");
@@ -47,6 +51,17 @@ describe("sendMessageStream acting-user header propagation (contract)", () => {
     // Guard the merge path so the header actually reaches the SDK
     // call's options.headers.
     expect(source).toMatch(/headers:\s*\{[\s\S]*?\.\.\.extraHeaders[\s\S]*?\}/);
+  });
+
+  test("acting user identity is preserved for stream recovery requests", () => {
+    expect(source).toContain(
+      "...(opts.actingUserId ? { actingUserId: opts.actingUserId } : {})",
+    );
+    expect(streamSource).toContain(
+      "const recoveryRequestOptions = actingUserRequestOptions(",
+    );
+    expect(streamSource).toContain("recoveryRequestOptions,");
+    expect(streamSource).toContain("streamRequestContext?.actingUserId");
   });
 
   test("response-state header carries previous id only for explicitly allowed approval continuations", () => {
