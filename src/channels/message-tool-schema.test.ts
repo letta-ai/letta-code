@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-
+import { buildMessageChannelDescriptionFromDiscovery } from "@/channels/message-channel-tool-definition";
 import {
   buildDynamicMessageChannelSchema,
   buildDynamicMessageChannelToolDefinition,
@@ -207,6 +207,30 @@ describe("buildDynamicMessageChannelSchema", () => {
       "upload-file",
       "download-file",
     ]);
+  });
+
+  test("automatic relay guidance tells the model not to duplicate the final reply", () => {
+    const description = buildMessageChannelDescriptionFromDiscovery(
+      "Base MessageChannel description.",
+      {
+        activeChannels: ["slack"],
+        displayNames: ["Slack"],
+        accountIds: ["acct-slack"],
+        actions: ["send"],
+        schemaContributions: [],
+        automaticRelay: true,
+      },
+      true,
+    );
+
+    expect(description).toContain("uses automatic relay");
+    expect(description).toContain(
+      "write the user-visible reply normally and do not make a duplicate MessageChannel send",
+    );
+    expect(description).toContain("exact duplicate final text is suppressed");
+    expect(description).not.toContain(
+      "Plain assistant text is not delivered to that external user.",
+    );
   });
 
   test("moves channel-specific reply guidance into the tool description", async () => {

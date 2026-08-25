@@ -242,10 +242,12 @@ test("releases the matching active delivery without a terminal lifecycle", async
   await gateway.adoptActiveDelivery(
     makeHandoff({ clientMessageId: "cm-release" }),
   );
-  expect(gateway.releaseActiveDelivery(TEST_RUNTIME, "cm-other")).toBe(false);
+  expect(gateway.releaseActiveDelivery(TEST_RUNTIME, "cm-other")).toBeNull();
   expect(client.runtimeToolUpdates).toHaveLength(0);
 
-  expect(gateway.releaseActiveDelivery(TEST_RUNTIME, "cm-release")).toBe(true);
+  expect(
+    gateway.releaseActiveDelivery(TEST_RUNTIME, "cm-release"),
+  ).not.toBeNull();
   expect(client.runtimeToolUpdates).toHaveLength(0);
   await gateway.releaseRuntimeTools(TEST_RUNTIME);
   expect(client.runtimeToolUpdates).toEqual([
@@ -263,6 +265,63 @@ test("releases the matching active delivery without a terminal lifecycle", async
     collector.lifecycleEvents.filter((event) => event.type === "finished"),
   ).toEqual([]);
   gateway.close();
+});
+
+test("transfers accumulated assistant text across an active handoff", async () => {
+  const client = new FakeClient();
+  const relays: string[] = [];
+  const sourceHooks = makeHooks();
+  const destinationHooks = makeHooks({
+    relayAssistantText: ({ text }) => {
+      relays.push(text);
+    },
+  });
+  const sourceGateway = new ChannelGateway(client, sourceHooks.hooks);
+  const destinationGateway = new ChannelGateway(client, destinationHooks.hooks);
+  const handoff = makeHandoff({ clientMessageId: "cm-text-handoff" });
+
+  await sourceGateway.adoptActiveDelivery({
+    ...handoff,
+    activeTurnState: {
+      assistantText: { textByMessageId: [], deltaKeys: [] },
+      idempotency: {
+        successfulActionKeys: [],
+        successfulTextDeliveryKeys: [],
+        lastSuccessfulActionKey: null,
+      },
+    },
+  });
+  client.emit({
+    ...makeStreamDelta({
+      message_type: "assistant_message",
+      id: "assistant-before",
+      content: "Before",
+    }),
+    idempotency_key: "assistant-before",
+  });
+  const activeTurnState = sourceGateway.releaseActiveDelivery(
+    TEST_RUNTIME,
+    "cm-text-handoff",
+  );
+  expect(activeTurnState).not.toBeNull();
+  await destinationGateway.adoptActiveDelivery({
+    ...handoff,
+    activeTurnState: activeTurnState ?? undefined,
+  });
+  client.emit({
+    ...makeStreamDelta({
+      message_type: "assistant_message",
+      id: "assistant-after",
+      content: " after",
+    }),
+    idempotency_key: "assistant-after",
+  });
+  client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
+
+  expect(relays).toEqual(["Before after"]);
+  sourceGateway.close();
+  destinationGateway.close();
 });
 
 test("failed destination registration leaves no adopted or deduped state", async () => {

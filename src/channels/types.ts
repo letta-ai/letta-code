@@ -505,6 +505,7 @@ export interface ChannelRoute {
 // ── Config ────────────────────────────────────────────────────────
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
+export type ChannelReplyMode = "tool" | "relay";
 /**
  * Group/channel-scope sender policy. "open" preserves the historical
  * behavior (any participant of an allowed group/channel can talk to the
@@ -530,6 +531,7 @@ interface ChannelAccountBase {
   displayName?: string;
   enabled: boolean;
   dmPolicy: DmPolicy;
+  replyMode?: ChannelReplyMode;
   allowedUsers: string[];
   /**
    * Sender policy for group/channel-scope messages. Default "open"

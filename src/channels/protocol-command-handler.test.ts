@@ -878,6 +878,7 @@ describe("channel account list responses", () => {
             display_name: "Telegram Managed Bot",
             enabled: false,
             dm_policy: "pairing",
+            reply_mode: "tool",
             config: {
               token: "telegram-token",
               group_mode: "open",
@@ -899,6 +900,7 @@ describe("channel account list responses", () => {
           account_id: "telegram-managed-bot",
           config: {
             dm_policy: "allowlist",
+            reply_mode: "relay",
             allowed_users: ["8450770457"],
             plugin_config: {
               group_mode: "mention-only",
@@ -934,6 +936,7 @@ describe("channel account list responses", () => {
           display_name: "Telegram Managed Bot",
           enabled: false,
           dm_policy: "allowlist",
+          reply_mode: "relay",
           allowed_users: ["8450770457"],
           config: {
             has_token: true,
@@ -953,6 +956,7 @@ describe("channel account list responses", () => {
           account_id: "telegram-managed-bot",
           display_name: "Telegram Managed Bot",
           dm_policy: "allowlist",
+          reply_mode: "relay",
           allowed_users: ["8450770457"],
           config: {
             has_token: true,

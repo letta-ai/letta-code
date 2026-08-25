@@ -35,7 +35,11 @@ const SEND = (chatId: string, message: string) => ({
 
 function createResolver(
   sendMessage: ReturnType<typeof mock>,
-  opts: { errorString?: string; onHandleAction?: () => void } = {},
+  opts: {
+    errorString?: string;
+    onHandleAction?: () => void;
+    supportSendRich?: boolean;
+  } = {},
 ): MessageChannelExecutionResolver {
   const transport: ChannelMessageActionTransport = { sendMessage };
   return {
@@ -58,7 +62,21 @@ function createResolver(
               return opts.errorString ?? "Error:";
             },
           }
-        : createSlackMessageActionAdapter({ react: true, uploadFile: true }),
+        : opts.supportSendRich
+          ? {
+              describeMessageTool: () => ({ actions: ["send", "send-rich"] }),
+              handleAction: async ({ request, route, adapter }) => {
+                const result = await adapter.sendMessage({
+                  channel: request.channel,
+                  accountId: route.accountId,
+                  chatId: request.chatId,
+                  text: request.message ?? "",
+                  threadId: request.threadId ?? route.threadId,
+                });
+                return `Message sent to slack (message_id: ${result.messageId})`;
+              },
+            }
+          : createSlackMessageActionAdapter({ react: true, uploadFile: true }),
     }),
     resolveProactiveContext: () => "Error: not used",
   };
@@ -247,6 +265,73 @@ describe("MessageChannel idempotency (executor)", () => {
     expect(await executeMessageChannel(input, o)).toBe("Error: refused");
     expect(sendMessage).toHaveBeenCalledTimes(0);
     expect(actionCalls).toBe(2);
+  });
+
+  test("relay suppresses matching successful explicit text even after another action", async () => {
+    const sendMessage = mock(async () => ({ messageId: "m-relay" }));
+    const resolver = createResolver(sendMessage);
+    const scope = createMessageChannelIdempotencyScope();
+    const explicit = execOpts(resolver, scope);
+    const relay = { ...explicit, idempotencyMode: "relay" as const };
+
+    await executeMessageChannel(SEND("C123", "  final reply  "), explicit);
+    await executeMessageChannel(
+      SEND("C123", "early acknowledgement"),
+      explicit,
+    );
+    await expect(
+      executeMessageChannel(SEND("C123", "final reply"), relay),
+    ).rejects.toBeInstanceOf(MessageChannelDuplicateActionError);
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test("transfers successful text-delivery fingerprints across handoff", async () => {
+    const sendMessage = mock(async () => ({ messageId: "m-handoff" }));
+    const resolver = createResolver(sendMessage, { supportSendRich: true });
+    const sourceScope = createMessageChannelIdempotencyScope();
+
+    await executeMessageChannel(
+      { ...SEND("C123", "final reply"), action: "send-rich" },
+      execOpts(resolver, sourceScope),
+    );
+    const snapshot = sourceScope.snapshot();
+    expect(snapshot).not.toBeNull();
+    const destinationScope = createMessageChannelIdempotencyScope(
+      snapshot ?? undefined,
+    );
+
+    await expect(
+      executeMessageChannel(SEND("C123", " final reply "), {
+        ...execOpts(resolver, destinationScope),
+        idempotencyMode: "relay",
+      }),
+    ).rejects.toBeInstanceOf(MessageChannelDuplicateActionError);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test("relay does not suppress the same text for another thread or failed send", async () => {
+    let call = 0;
+    const sendMessage = mock(async () => {
+      call++;
+      if (call === 1) throw new Error("temporary failure");
+      return { messageId: `m-relay-${call}` };
+    });
+    const resolver = createResolver(sendMessage);
+    const scope = createMessageChannelIdempotencyScope();
+    const relay = {
+      ...execOpts(resolver, scope),
+      idempotencyMode: "relay" as const,
+    };
+    const input = SEND("C123", "reply");
+
+    expect(await executeMessageChannel(input, relay)).toContain(
+      "temporary failure",
+    );
+    await executeMessageChannel(input, relay);
+    await executeMessageChannel({ ...input, threadId: "thread-2" }, relay);
+
+    expect(sendMessage).toHaveBeenCalledTimes(3);
   });
 });
 
