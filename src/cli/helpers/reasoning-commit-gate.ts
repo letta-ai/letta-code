@@ -24,9 +24,9 @@ export function shouldHoldSplitReasoning(
   byId: Map<string, Line>,
 ): boolean {
   if (ln.kind !== "reasoning" || ln.phase !== "finished") return false;
-  // Only the header part is shown while the block streams; holding tails
-  // would just add an empty marginTop box per split to the live area.
-  if (ln.isContinuation) return false;
+  // Every part of a still-streaming block waits for the block to finish:
+  // committing tails immediately would print them above the header,
+  // which only lands in Static once the block is done.
   const blockId = ln.id.split("-split-")[0];
   if (!blockId || blockId === ln.id) return false;
   const original = byId.get(blockId);
