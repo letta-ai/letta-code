@@ -68,9 +68,21 @@ export const ReasoningMessage = memo(({ line }: { line: ReasoningLine }) => {
   const expanded = useReasoningDisplay();
   const span = reasoningSpanOf(line.messageId) ?? reasoningSpanOf(line.id);
 
-  // Continuation lines are split-off tails of a block; they only carry
-  // visible content in expanded mode.
-  if (line.isContinuation && !expanded) return null;
+  // Split-off tails of a block: hidden when collapsed, plain text when
+  // expanded — the block's single header lives on its first line only.
+  if (line.isContinuation) {
+    if (!expanded) return null;
+    return (
+      <Box flexDirection="row">
+        <Box width={2} flexShrink={0}>
+          <Text> </Text>
+        </Box>
+        <Box flexGrow={1} width={contentWidth}>
+          <MarkdownDisplay text={normalize(line.text)} dimColor={true} />
+        </Box>
+      </Box>
+    );
+  }
 
   return (
     <Box flexDirection="column">
