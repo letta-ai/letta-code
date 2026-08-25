@@ -136,7 +136,7 @@ describe("local pi provider catalog", () => {
     expect(openRouter?.headers?.()).toEqual({
       "HTTP-Referer": "https://letta.com",
       "X-OpenRouter-Title": "Letta Code",
-      "X-OpenRouter-Categories": "cloud-agent,cli-agent,personal-agent",
+      "X-OpenRouter-Categories": "cloud-agent,personal-agent",
     });
   });
 

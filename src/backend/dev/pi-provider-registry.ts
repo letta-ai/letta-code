@@ -176,7 +176,7 @@ const PI_PROVIDER_OVERRIDES: Partial<
     headers: () => ({
       "HTTP-Referer": "https://letta.com",
       "X-OpenRouter-Title": "Letta Code",
-      "X-OpenRouter-Categories": "cloud-agent,cli-agent,personal-agent",
+      "X-OpenRouter-Categories": "cloud-agent,personal-agent",
     }),
   },
   zai: {
