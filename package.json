@@ -76,7 +76,6 @@
       "import": "./dist/agent-presets.js",
       "default": "./dist/agent-presets.js"
     },
-    "./assets/tutor-profile.png": "./assets/tutor-profile.png",
     "./schedules": {
       "types": "./dist/types/schedules.d.ts",
       "browser": "./dist/schedules.js",

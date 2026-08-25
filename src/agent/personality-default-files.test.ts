@@ -69,7 +69,7 @@ describe("Tutor default profile picture", () => {
     const metadata = await sharp(assetPath).metadata();
     const packageJson = JSON.parse(
       readFileSync(join(import.meta.dir, "../../package.json"), "utf8"),
-    ) as { files: string[]; exports: Record<string, unknown> };
+    ) as { files: string[] };
 
     expect(metadata.format).toBe("png");
     expect(metadata.width).toBe(512);
@@ -77,9 +77,6 @@ describe("Tutor default profile picture", () => {
     expect(statSync(assetPath).size).toBeLessThan(5 * 1024 * 1024);
     expect(packageJson.files).toContain("assets/tutor-profile.png");
     expect(packageJson.files).not.toContain("assets");
-    expect(packageJson.exports["./assets/tutor-profile.png"]).toBe(
-      "./assets/tutor-profile.png",
-    );
   });
 
   test("seeds profile.png once in a local memory repo", async () => {
