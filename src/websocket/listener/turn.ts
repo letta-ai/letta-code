@@ -50,7 +50,6 @@ import {
   emitLoopStatusUpdate,
   emitRetryDelta,
   emitRuntimeStateUpdates,
-  emitStatusDelta,
 } from "./protocol-outbound";
 import {
   emitLoopErrorNotice,
@@ -72,6 +71,7 @@ import {
 import { normalizeCwdAgentId } from "./scope";
 import { markAwaitingAcceptedApprovalContinuationRunId } from "./send";
 import { injectQueuedSkillContent } from "./skill-injection";
+import { emitStreamRecoveryStatusDeltas } from "./stream-recovery-status";
 import * as tp from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
@@ -435,16 +435,13 @@ async function handleIncomingMessageInner(
       const approvals = result.approvals || [];
       const fallbackError = result.fallbackError ?? null;
 
-      if (result.terminalEofGuardFired) {
-        emitStatusDelta(socket, runtime, {
-          message:
-            "Stream did not close after completing, continued without waiting",
-          level: "warning",
-          runId: runId || runtime.activeRunId,
-          agentId,
-          conversationId,
-        });
-      }
+      emitStreamRecoveryStatusDeltas(socket, runtime, {
+        terminalEofGuardFired: result.terminalEofGuardFired,
+        stallReconcilerFired: result.stallReconcilerFired,
+        runId: runId || runtime.activeRunId,
+        agentId,
+        conversationId,
+      });
 
       if (finishIfInterrupted(runId || runtime.activeRunId)) {
         break;
