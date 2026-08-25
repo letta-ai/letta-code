@@ -112,7 +112,7 @@ async function buildSecretsInfoReminder(
       process.platform === "win32"
         ? "`$env:API_KEY = $API_KEY; python script.py`\n`$env:API_KEY = $API_KEY; bun run script.ts`"
         : '`API_KEY="$API_KEY" python3 script.py`\n`API_KEY="$API_KEY" bun run script.ts`';
-    return `${SYSTEM_REMINDER_OPEN}\n${intro}\nThe Letta Code harness secret manager injects only secrets referenced as \`$NAME\` in a shell command:\n${list}\n\nWhen launching Python, TypeScript, or another program that reads a secret from its environment, include each required secret in the launch command. For example, for a secret named \`API_KEY\`:\n${launchExamples}\n\nInside the program, read it normally with \`os.environ["API_KEY"]\` or \`process.env.API_KEY\`.\n\nYou cannot read the raw values. If a value would appear in tool output, you will see \`NAME=<REDACTED>\` instead. This means the secret IS set and working — the bytes are just hidden from your context. Keep using \`$NAME\`; it will resolve correctly.\n${SYSTEM_REMINDER_CLOSE}`;
+    return `${SYSTEM_REMINDER_OPEN}\n${intro}\n${list}\n\nWhen running a shell command, the harness replaces a referenced \`$NAME\` with its real value. Secrets are not exported automatically, so a program you launch will not receive one unless you pass it on the launch line:\n\n${launchExamples}\n\nInside the program, read it normally with \`os.environ["API_KEY"]\` or \`process.env.API_KEY\`.\n\nYou cannot read secret values. Tool output shows \`NAME=<REDACTED>\`, which means the secret is set and working. Keep using \`$NAME\`.\n${SYSTEM_REMINDER_CLOSE}`;
   } catch (error) {
     debugLog(
       "secrets",

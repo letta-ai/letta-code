@@ -8,6 +8,9 @@
 # Letta Code file index exclusions (auto-created per-project, not for repo)
 .lettaignore
 
+# Generated Husky hook machinery (including worktree hook links)
+/.husky/_
+
 .idea
 node_modules
 bun.lockb

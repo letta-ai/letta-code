@@ -212,9 +212,7 @@ export function areAdjacentStableReleases(
   previousTag: string,
   currentTag: string,
 ): boolean {
-  return (
-    findPreviousStable(stables, currentTag)?.tag_name === previousTag
-  );
+  return findPreviousStable(stables, currentTag)?.tag_name === previousTag;
 }
 
 export function findNextStableRelease(

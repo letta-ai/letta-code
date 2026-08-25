@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { getChannelDir, getChannelRoutingPath } from "./config";
+import { normalizeTelegramChatId } from "./telegram/chat-id";
 import type { ChannelRoute, InboundChannelMessage } from "./types";
 
 // ── In-memory store ───────────────────────────────────────────────
@@ -276,10 +277,15 @@ export function getAllRoutes(): ChannelRoute[] {
  * Add or update a route. Automatically saves to disk.
  */
 export function addRoute(channelId: string, route: ChannelRoute): void {
+  const chatId =
+    channelId === "telegram"
+      ? normalizeTelegramChatId(route.chatId)
+      : route.chatId;
   routesByKey.set(
-    routeKey(channelId, route.chatId, route.accountId, route.threadId),
+    routeKey(channelId, chatId, route.accountId, route.threadId),
     {
       ...route,
+      chatId,
       accountId: normalizeAccountId(route.accountId),
       threadId: route.threadId ?? null,
       outboundEnabled: route.outboundEnabled !== false,

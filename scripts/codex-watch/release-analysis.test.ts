@@ -23,25 +23,17 @@ const STABLES = [
 
 describe("Codex stable release backlog", () => {
   test("selects the first release after the durable cursor", () => {
-    expect(
-      findNextStableRelease(STABLES, "rust-v0.1.0")?.tag_name,
-    ).toBe("rust-v0.2.0");
+    expect(findNextStableRelease(STABLES, "rust-v0.1.0")?.tag_name).toBe(
+      "rust-v0.2.0",
+    );
   });
 
   test("identifies only adjacent stable release pairs", () => {
     expect(
-      areAdjacentStableReleases(
-        STABLES,
-        "rust-v0.1.0",
-        "rust-v0.2.0",
-      ),
+      areAdjacentStableReleases(STABLES, "rust-v0.1.0", "rust-v0.2.0"),
     ).toBe(true);
     expect(
-      areAdjacentStableReleases(
-        STABLES,
-        "rust-v0.1.0",
-        "rust-v0.3.0",
-      ),
+      areAdjacentStableReleases(STABLES, "rust-v0.1.0", "rust-v0.3.0"),
     ).toBe(false);
   });
 
@@ -50,8 +42,8 @@ describe("Codex stable release backlog", () => {
   });
 
   test("fails instead of skipping an unavailable cursor", () => {
-    expect(() =>
-      findNextStableRelease(STABLES, "rust-v0.0.9"),
-    ).toThrow("Could not find terminal release rust-v0.0.9");
+    expect(() => findNextStableRelease(STABLES, "rust-v0.0.9")).toThrow(
+      "Could not find terminal release rust-v0.0.9",
+    );
   });
 });

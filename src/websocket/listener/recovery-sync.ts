@@ -32,7 +32,7 @@ function isBackendNotFoundError(error: unknown): boolean {
 
 export async function recoverApprovalStateForSync(
   runtime: ConversationRuntime,
-  scope: { agent_id: string; conversation_id: string },
+  scope: { agent_id: string | null; conversation_id: string },
   deps: Partial<{
     getBackend: typeof getBackend;
     getResumeDataFromBackend: typeof getResumeDataFromBackend;
@@ -43,6 +43,10 @@ export async function recoverApprovalStateForSync(
     getResumeDataFromBackend,
     ...deps,
   };
+  if (!scope.agent_id) {
+    clearRecoveredApprovalState(runtime);
+    return;
+  }
   if (hasInterruptedCacheForScope(runtime.listener, scope)) {
     clearRecoveredApprovalState(runtime);
     return;

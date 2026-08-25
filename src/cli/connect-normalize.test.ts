@@ -50,6 +50,25 @@ describe("connect provider normalization", () => {
     expect(isConnectOAuthProvider(resolved)).toBe(true);
   });
 
+  test("resolves OpenRouter API-key and OAuth cloud providers separately", () => {
+    const apiKey = resolveConnectProvider("openrouter", "api");
+    const oauth = resolveConnectProvider("openrouter-oauth", "api");
+
+    expect(apiKey?.byokProvider).toMatchObject({
+      id: "openrouter",
+      providerType: "openrouter",
+      providerName: "lc-openrouter",
+    });
+    expect(apiKey?.byokProvider.isOAuth).not.toBe(true);
+    expect(oauth?.byokProvider).toMatchObject({
+      id: "openrouter-oauth",
+      providerType: "openrouter",
+      providerName: "openrouter-oauth",
+      isOAuth: true,
+      oauthProviderId: "openrouter",
+    });
+  });
+
   test("resolves standard api-key providers", () => {
     const anthropic = resolveConnectProvider("anthropic", "api");
     const openrouter = resolveConnectProvider("openrouter", "api");
