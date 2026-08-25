@@ -65,9 +65,6 @@ function rewriteDeclarationAliases(typesRoot) {
 const pkg = JSON.parse(readFileSync(join(__dirname, "package.json"), "utf-8"));
 const version = pkg.version;
 const useMagick = Bun.env.USE_MAGICK;
-const tutorProfilePictureBase64 = readFileSync(
-  join(__dirname, "assets/tutor-profile.png"),
-).toString("base64");
 const features = [];
 
 console.log(`📦 Building Letta Code v${version}...`);
@@ -209,9 +206,6 @@ await Bun.build({
   sourcemap: "external",
   naming: {
     entry: "agent-presets.js",
-  },
-  define: {
-    __TUTOR_PROFILE_PICTURE_BASE64__: JSON.stringify(tutorProfilePictureBase64),
   },
   loader: {
     ".md": "text",

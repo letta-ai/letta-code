@@ -16,11 +16,9 @@ import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { buildCreatedAgentTags } from "./agent-tags";
 import { getDefaultMemoryBlocks } from "./memory";
 import { getDefaultModel, resolveModel } from "./model-catalog";
-import { getPersonalityAssetBase64 } from "./personality-asset-content";
 import {
   buildPersonalityMemoryBlocks,
   getPersonalityCreationTags,
-  getPersonalityDefaultMemoryFiles,
   getPersonalityOption,
   type PersonalityId,
   type PersonalityMemoryBlock,
@@ -88,9 +86,6 @@ export type CreateAgentRequestForPersonality = CreateAgentRequest & {
   name: string;
   description: string;
   memory_blocks: PersonalityMemoryBlock[];
-  profile_picture?: {
-    content: string;
-  };
 };
 
 function mergeMemoryBlocks(
@@ -200,19 +195,7 @@ export async function buildCreateAgentRequestForPersonality(params: {
   model?: string;
   extraTags?: string[];
 }): Promise<CreateAgentRequestForPersonality> {
-  const request = (await buildCreateAgentRequest(
+  return (await buildCreateAgentRequest(
     params,
   )) as CreateAgentRequestForPersonality;
-  const profilePicture = getPersonalityDefaultMemoryFiles(
-    params.personalityId,
-  ).find((file) => file.path === "profile.png");
-  if (!profilePicture) {
-    return request;
-  }
-  return {
-    ...request,
-    profile_picture: {
-      content: await getPersonalityAssetBase64(profilePicture.assetId),
-    },
-  };
 }
