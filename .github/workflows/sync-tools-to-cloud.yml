@@ -115,7 +115,7 @@ jobs:
           EXPECTED_GITHUB_LOGIN: ${{ steps.github-identity.outputs.login }}
           SOURCE_MARKER: ${{ steps.prompt.outputs.source_marker }}
         run: |
-          result=$(jq -r '[.[] | select(.type == "result" and (.result | type) == "string")] | last | (.result // "" | gsub("^\\s+|\\s+$"; ""))' "$EXECUTION_FILE")
+          result=$(jq -r '[.[] | select(.type == "result" and (.result | type) == "string")] | last | (.result // "" | split("\n") | map(gsub("^\\s+|\\s+$"; "") | select(length > 0)) | last // "")' "$EXECUTION_FILE")
           if [ "$result" = "NO_SYNC_NEEDED" ]; then
             echo "No letta-cloud sync needed"
             exit 0
