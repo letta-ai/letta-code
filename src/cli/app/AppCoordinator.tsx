@@ -4700,7 +4700,11 @@ export function App({
   // Live area shows only in-progress items
   // biome-ignore lint/correctness/useExhaustiveDependencies: staticItems.length and deferredCommitAt are intentional triggers to recompute when items are promoted to static or deferred commits complete
   const liveItems = useMemo(() => {
-    const heldParts = getVisibleStreamingParts(lines, reasoningExpanded);
+    const heldParts = getVisibleStreamingParts(
+      lines,
+      reasoningExpanded,
+      Math.max(20, columns - 2),
+    );
     return lines.filter((ln) => {
       if (!("phase" in ln)) return false;
       if (emittedIdsRef.current.has(ln.id)) return false;
@@ -4736,6 +4740,7 @@ export function App({
     reasoningExpanded,
     tokenStreamingEnabled,
     showCompactionsEnabled,
+    columns,
     staticItems.length,
     deferredCommitAt,
   ]);

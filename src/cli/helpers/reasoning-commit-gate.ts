@@ -39,32 +39,42 @@ export function shouldHoldSplitReasoning(
  * because they are held out of Static while the block streams.
  */
 /**
- * Trailing text budget (terminal lines) shown in the live area while an
- * expanded thought streams. Keeping the live zone short prevents Ink's
- * full-screen clearTerminal repaints once output exceeds the terminal
- * height; the full text lands in Static when the block finishes.
+ * Trailing text budget (estimated terminal lines) for the live area while
+ * an expanded thought streams, shared by ALL parts of the block. Keeping
+ * the live zone short prevents Ink's full-screen clearTerminal repaints
+ * once output exceeds the terminal height; the full text lands in Static
+ * when the block finishes.
  */
-export const REASONING_STREAM_WINDOW_LINES = 18;
+export const REASONING_STREAM_WINDOW_LINES = 16;
+
+/**
+ * Estimated terminal height of a piece of reasoning text at the given
+ * content width: raw newlines plus wraps of long lines. A cheap upper
+ * bound — good enough to keep the live zone well under the screen.
+ */
+function estimateHeight(text: string, contentWidth: number): number {
+  const cols = Math.max(20, contentWidth);
+  let height = 0;
+  for (const rawLine of text.split("\n")) {
+    height += Math.max(1, Math.ceil(rawLine.length / cols));
+  }
+  return Math.max(1, height);
+}
 
 /**
  * Which reasoning line ids belong in the live area right now?
  *
  * Only parts of still-streaming blocks are ever held. Collapsed: just the
- * ticking header. Expanded: the header plus a trailing window of text so
- * the thought grows on screen without flooding the live area.
- */
-/**
- * Which reasoning line ids belong in the live area right now?
- *
- * Only parts of still-streaming blocks are ever held. Collapsed: just the
- * ticking header. Expanded: every part of the block — the render caps how
- * much text each part shows (see ReasoningMessage's trailing window), so
- * the live zone stays shorter than the terminal and Ink never takes its
- * full-screen clearTerminal repaint path mid-stream.
+ * ticking header. Expanded: as many trailing split parts as fit in
+ * REASONING_STREAM_WINDOW_LINES (wrap-aware estimate, shared budget for
+ * the whole block), so the thought grows on screen without flooding the
+ * live area. Each rendered part also self-caps its lines (see
+ * ReasoningMessage) so a single oversized part cannot overflow alone.
  */
 export function getVisibleStreamingParts(
   lines: Line[],
   expanded: boolean,
+  contentWidth: number,
 ): Set<string> {
   type ReasoningLineT = Extract<Line, { kind: "reasoning" }>;
   const visible = new Set<string>();
@@ -86,6 +96,27 @@ export function getVisibleStreamingParts(
     const original = originals.get(blockId);
     if (!original || original.phase !== "streaming") continue;
     if (!expanded && ln.isContinuation) continue;
+    visible.add(ln.id);
+  }
+  if (!expanded) return visible;
+  // Budget the trailing parts per streaming block, newest first.
+  let budget = REASONING_STREAM_WINDOW_LINES;
+  for (let i = lines.length - 1; i >= 0 && budget > 0; i--) {
+    const ln = lines[i];
+    if (
+      !ln ||
+      ln.kind !== "reasoning" ||
+      !ln.id.includes("-split-") ||
+      visible.has(ln.id)
+    ) {
+      continue;
+    }
+    const blockId = ln.id.split("-split-")[0];
+    const original = blockId ? originals.get(blockId) : undefined;
+    if (!original || original.phase !== "streaming") continue;
+    const height = estimateHeight(ln.text, contentWidth);
+    if (height > budget) break;
+    budget -= height;
     visible.add(ln.id);
   }
   return visible;
