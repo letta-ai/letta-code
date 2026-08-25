@@ -107,19 +107,38 @@ export const ReasoningMessage = memo(({ line }: { line: ReasoningLine }) => {
   const expanded = useReasoningDisplay();
   const span = spanOfLine(line);
   const label = phaseLabel(line, span);
+  // While an expanded thought streams the timer lives in a footer under
+  // the text (the live area is pinned to the screen bottom), so it stays
+  // visible; finished blocks and collapsed mode keep the classic header.
+  const streamingLive = expanded && line.phase === "streaming";
+  const timerFooter =
+    line.phase === "streaming" ? (
+      <Box flexDirection="row">
+        <Box width={2} flexShrink={0}>
+          <Text dimColor>✻</Text>
+        </Box>
+        <Box flexGrow={1} width={contentWidth}>
+          <Text dimColor>{label} </Text>
+          <Elapsed {...span} />
+        </Box>
+      </Box>
+    ) : null;
 
   // Split-off tails of a block: hidden when collapsed, plain text when
   // expanded — the block's single header lives on its first line only.
   if (line.isContinuation) {
     if (!expanded) return null;
     return (
-      <Box flexDirection="row">
-        <Box width={2} flexShrink={0}>
-          <Text> </Text>
+      <Box flexDirection="column">
+        <Box flexDirection="row">
+          <Box width={2} flexShrink={0}>
+            <Text> </Text>
+          </Box>
+          <Box flexGrow={1} width={contentWidth}>
+            <MarkdownDisplay text={normalize(line.text)} dimColor={true} />
+          </Box>
         </Box>
-        <Box flexGrow={1} width={contentWidth}>
-          <MarkdownDisplay text={normalize(line.text)} dimColor={true} />
-        </Box>
+        {timerFooter}
       </Box>
     );
   }
@@ -132,7 +151,7 @@ export const ReasoningMessage = memo(({ line }: { line: ReasoningLine }) => {
         </Box>
         <Box flexGrow={1} width={contentWidth}>
           <Text dimColor>{label} </Text>
-          <Elapsed {...span} />
+          {!streamingLive && <Elapsed {...span} />}
         </Box>
       </Box>
       {expanded ? (
@@ -151,6 +170,7 @@ export const ReasoningMessage = memo(({ line }: { line: ReasoningLine }) => {
       ) : (
         <ToggleHint expanded={false} />
       )}
+      {streamingLive && timerFooter}
     </Box>
   );
 });
