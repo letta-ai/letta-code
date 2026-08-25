@@ -749,6 +749,30 @@ test("telegram adapter does not fallback on ambiguous rich send failures", async
   expect(bot?.api.sendMessage).not.toHaveBeenCalled();
 });
 
+test("telegram adapter rejects malformed stored Chat IDs before sending", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  const bot = FakeBot.instances[0];
+
+  await expect(
+    adapter.sendMessage({
+      channel: "telegram",
+      chatId: "Chat ID: 7945451305",
+      text: "Hello",
+    }),
+  ).rejects.toThrow("Paste only the numeric Telegram Chat ID");
+
+  expect(bot?.api.sendMessage).not.toHaveBeenCalled();
+});
+
 test("telegram adapter does not fallback when rich send targets a bad thread", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
