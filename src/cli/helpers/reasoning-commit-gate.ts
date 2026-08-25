@@ -43,7 +43,10 @@ export function shouldHoldSplitReasoning(
  * now: collapsed mode hides continuation halves entirely (they would only
  * contribute an empty margin box per split).
  */
-export function isHiddenReasoningTail(ln: Line, expanded: boolean): boolean {
+export function isHiddenReasoningTail(
+  ln: { kind: string; isContinuation?: boolean },
+  expanded: boolean,
+): boolean {
   return ln.kind === "reasoning" && !!ln.isContinuation && !expanded;
 }
 
