@@ -126,7 +126,6 @@ jobs:
             echo '```'
             echo "AMELIA_PROMPT_EOF"
           } >> "$GITHUB_OUTPUT"
-          echo "conversation_name=$GITHUB_WORKFLOW $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
       - name: Ask Amelia to review pi-ai release
         if: steps.detect.outputs.should_run_agent == 'true'
@@ -136,8 +135,7 @@ jobs:
           github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
           agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
           environment: cloud
-          letta_args: >-
-            --new --name "${{ steps.prompt.outputs.conversation_name }}"
+          letta_args: --new
           track_progress: ""
           tracking_comment: "false"
           model: auto
