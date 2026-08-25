@@ -71,11 +71,37 @@ function Elapsed({
  * Elapsed time comes from reasoning-timing.ts keyed by messageId, so every
  * line of a split block renders the same duration.
  */
+/**
+ * Span for a line: by messageId, own id, or — for split lines created
+ * before a messageId arrived — by recovering the block id from the
+ * "<blockId>-split-<N>" naming convention.
+ */
+function spanOfLine(line: ReasoningLine) {
+  return (
+    reasoningSpanOf(line.messageId) ??
+    reasoningSpanOf(line.id) ??
+    reasoningSpanOf(line.id.split("-split-")[0])
+  );
+}
+
+/**
+ * Phase label follows the whole block (span frozen?), not the individual
+ * line: a freshly split-off part carries line.phase === "finished" while
+ * the thought is still streaming.
+ */
+function phaseLabel(line: ReasoningLine, span?: { endedAt?: number }): string {
+  if (span?.endedAt !== undefined) return "thinked";
+  return line.phase === "finished" && !line.isContinuation
+    ? "thinked"
+    : "thinking";
+}
+
 export const ReasoningMessage = memo(({ line }: { line: ReasoningLine }) => {
   const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - 2);
   const expanded = useReasoningDisplay();
-  const span = reasoningSpanOf(line.messageId) ?? reasoningSpanOf(line.id);
+  const span = spanOfLine(line);
+  const label = phaseLabel(line, span);
 
   // Split-off tails of a block: hidden when collapsed, plain text when
   // expanded — the block's single header lives on its first line only.
@@ -100,9 +126,7 @@ export const ReasoningMessage = memo(({ line }: { line: ReasoningLine }) => {
           <Text dimColor>✻</Text>
         </Box>
         <Box flexGrow={1} width={contentWidth}>
-          <Text dimColor>
-            {line.phase === "streaming" ? "thinking" : "thinked"}{" "}
-          </Text>
+          <Text dimColor>{label} </Text>
           <Elapsed {...span} />
         </Box>
       </Box>
