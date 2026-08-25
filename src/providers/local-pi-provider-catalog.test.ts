@@ -16,6 +16,8 @@ import {
 } from "@/backend/dev/pi-provider-mod-registry";
 import {
   PI_PROVIDER_SPECS,
+  PI_TUI_DEFAULT_MODEL_IDS,
+  PI_TUI_DEFAULTLESS_PROVIDER_IDS,
   resolveProviderFromProviderType,
 } from "@/backend/dev/pi-provider-registry";
 import { listLocalModels } from "@/backend/local/local-model-config";
@@ -91,7 +93,7 @@ describe("local pi provider catalog", () => {
     }
   });
 
-  test("local provider fallbacks come from the current pi-ai catalog", () => {
+  test("local provider defaults point at current pi-ai catalog models", () => {
     for (const spec of PI_PROVIDER_SPECS) {
       if (!spec.piProvider) continue;
       expect(spec.defaultModel).toBeDefined();
@@ -106,6 +108,34 @@ describe("local pi provider catalog", () => {
           ),
         ).toBe(true);
       }
+    }
+  });
+
+  test("built-in provider defaults mirror Pi TUI defaults", () => {
+    for (const [provider, modelId] of Object.entries(
+      PI_TUI_DEFAULT_MODEL_IDS,
+    )) {
+      const spec = PI_PROVIDER_SPECS.find((entry) => entry.id === provider);
+      expect(spec).toBeDefined();
+      expect(spec?.defaultModel).toBe(`${spec?.handlePrefixes[0]}${modelId}`);
+      // Purely dynamic providers (e.g. "radius") have no generated catalog;
+      // their TUI default cannot be catalog-checked.
+      const catalog =
+        getModels(provider as Parameters<typeof getModels>[0]) ?? [];
+      if (catalog.length > 0) {
+        expect(catalog.some((model) => model.id === modelId)).toBe(true);
+      }
+    }
+  });
+
+  test("pi-ai providers without Pi TUI defaults are explicit", () => {
+    const defaultedProviders = new Set(Object.keys(PI_TUI_DEFAULT_MODEL_IDS));
+
+    for (const provider of getProviders()) {
+      expect(
+        defaultedProviders.has(provider) ||
+          PI_TUI_DEFAULTLESS_PROVIDER_IDS.has(provider),
+      ).toBe(true);
     }
   });
 
