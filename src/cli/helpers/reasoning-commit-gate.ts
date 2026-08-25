@@ -53,6 +53,15 @@ export const REASONING_STREAM_WINDOW_LINES = 18;
  * ticking header. Expanded: the header plus a trailing window of text so
  * the thought grows on screen without flooding the live area.
  */
+/**
+ * Which reasoning line ids belong in the live area right now?
+ *
+ * Only parts of still-streaming blocks are ever held. Collapsed: just the
+ * ticking header. Expanded: every part of the block — the render caps how
+ * much text each part shows (see ReasoningMessage's trailing window), so
+ * the live zone stays shorter than the terminal and Ink never takes its
+ * full-screen clearTerminal repaint path mid-stream.
+ */
 export function getVisibleStreamingParts(
   lines: Line[],
   expanded: boolean,
@@ -65,37 +74,19 @@ export function getVisibleStreamingParts(
       originals.set(ln.id, ln);
     }
   }
-  const blocks = new Map<string, ReasoningLineT[]>();
   for (const ln of lines) {
-    if (ln.kind !== "reasoning" || !ln.id.includes("-split-")) continue;
+    if (ln.kind !== "reasoning") continue;
+    if (!ln.id.includes("-split-")) {
+      // The original itself only needs holding while it streams (it does
+      // anyway via the generic streaming rule); splits are what vanish.
+      continue;
+    }
     const blockId = ln.id.split("-split-")[0];
     if (!blockId) continue;
     const original = originals.get(blockId);
     if (!original || original.phase !== "streaming") continue;
-    let parts = blocks.get(blockId);
-    if (!parts) {
-      parts = [];
-      blocks.set(blockId, parts);
-    }
-    parts.push(ln);
-  }
-  for (const [blockId, parts] of blocks) {
-    const original = originals.get(blockId);
-    if (!original) continue;
-    const header = parts.find((p) => !p.isContinuation);
-    if (!expanded) {
-      if (header) visible.add(header.id);
-      continue;
-    }
-    if (header) visible.add(header.id);
-    let budget = REASONING_STREAM_WINDOW_LINES;
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const part = parts[i];
-      if (!part || part === header || budget <= 0) break;
-      visible.add(part.id);
-      budget -= Math.max(1, part.text.split("\n").length);
-    }
-    visible.add(original.id);
+    if (!expanded && ln.isContinuation) continue;
+    visible.add(ln.id);
   }
   return visible;
 }
