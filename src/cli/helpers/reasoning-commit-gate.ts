@@ -38,9 +38,30 @@ export function shouldHoldSplitReasoning(
  * Used by the live-area filter: such headers must stay visible there,
  * because they are held out of Static while the block streams.
  */
-export function isHeldSplitReasoning(lines: Line[], ln: Line): boolean {
+/**
+ * True when this reasoning line must NOT render in the live area right
+ * now: collapsed mode hides continuation halves entirely (they would only
+ * contribute an empty margin box per split).
+ */
+export function isHiddenReasoningTail(ln: Line, expanded: boolean): boolean {
+  return ln.kind === "reasoning" && !!ln.isContinuation && !expanded;
+}
+
+/**
+ * Is this a part of a still-streaming block that belongs in the live area?
+ *
+ * Collapsed: only the header (tails would render as empty boxes with
+ * margins, one blank line per split). Expanded: every part, so the thought
+ * grows on screen as it streams. Finished blocks are never held — they go
+ * to Static in transcript order when the block completes.
+ */
+export function isHeldSplitReasoning(
+  lines: Line[],
+  ln: Line,
+  expanded: boolean,
+): boolean {
   if (ln.kind !== "reasoning" || ln.phase !== "finished") return false;
-  if (ln.isContinuation) return false;
+  if (!expanded && ln.isContinuation) return false;
   const blockId = ln.id.split("-split-")[0];
   if (!blockId || blockId === ln.id) return false;
   const original = lines.find((candidate) => candidate.id === blockId);
