@@ -152,8 +152,7 @@ describe("detectOptionWordDirection", () => {
     instance.unmount();
     instance.cleanup();
 
-    expect(changes).not.toContain("alpha betab");
-    expect(changes).not.toContain("alpha betaf");
+    expect(changes).toEqual([]);
     expect(cursorOffsets).toContain(6);
   });
 });
