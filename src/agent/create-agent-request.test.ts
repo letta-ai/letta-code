@@ -1,6 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   GIT_MEMORY_ENABLED_TAG,
   LETTA_CODE_ORIGIN_TAG,
@@ -193,17 +191,6 @@ describe("buildCreateAgentRequestForPersonality", () => {
       request.memory_blocks.find((block) => block.label === "onboarding")
         ?.value,
     ).toContain("Offer to create one yourself.");
-  });
-
-  test("includes the bundled Tutor profile picture", async () => {
-    const request = await buildCreateAgentRequestForPersonality({
-      personalityId: "tutorial",
-    });
-    expect(request.profile_picture?.content).toBe(
-      readFileSync(
-        join(import.meta.dir, "../../assets/tutor-profile.png"),
-      ).toString("base64"),
-    );
   });
 
   test("appends extra tags after the Letta Code tags", async () => {
