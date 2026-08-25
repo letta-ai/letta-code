@@ -19,6 +19,7 @@ import { getDefaultModel, resolveModel } from "./model-catalog";
 import {
   buildPersonalityMemoryBlocks,
   getPersonalityCreationTags,
+  getPersonalityDefaultMemoryFiles,
   getPersonalityOption,
   type PersonalityId,
   type PersonalityMemoryBlock,
@@ -86,6 +87,9 @@ export type CreateAgentRequestForPersonality = CreateAgentRequest & {
   name: string;
   description: string;
   memory_blocks: PersonalityMemoryBlock[];
+  profile_picture?: {
+    content: string;
+  };
 };
 
 function mergeMemoryBlocks(
@@ -195,7 +199,22 @@ export async function buildCreateAgentRequestForPersonality(params: {
   model?: string;
   extraTags?: string[];
 }): Promise<CreateAgentRequestForPersonality> {
-  return (await buildCreateAgentRequest(
+  const request = (await buildCreateAgentRequest(
     params,
   )) as CreateAgentRequestForPersonality;
+  const profilePicture = getPersonalityDefaultMemoryFiles(
+    params.personalityId,
+  ).find((file) => file.path === "profile.png");
+  if (!profilePicture) {
+    return request;
+  }
+  const { getPersonalityAssetBase64 } = await import(
+    "./personality-asset-content"
+  );
+  return {
+    ...request,
+    profile_picture: {
+      content: await getPersonalityAssetBase64(profilePicture.assetId),
+    },
+  };
 }

@@ -37,7 +37,9 @@
     "dist/channels-telegram.js",
     "dist/channels-telegram.js.map",
     "dist/types",
-    "docs"
+    "docs",
+    "dist/agent-presets-*.js",
+    "dist/agent-presets-*.js.map"
   ],
   "exports": {
     ".": "./letta.js",
