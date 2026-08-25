@@ -96,6 +96,11 @@ import {
   toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
 import {
+  shouldHoldSplitReasoning,
+  shouldSkipCommittedToolCall as shouldSkipCommittedToolCallGate,
+  shouldSkipDeferral,
+} from "@/cli/helpers/reasoning-commit-gate";
+import {
   buildReflectionArenaChoiceQuestions,
   finalizeReflectionArenaChoice,
   formatReflectionArenaDeferredMessage,
@@ -2118,26 +2123,8 @@ export function App({
       let blockedByDeferred = false;
       // If we eagerly committed a tall preview for file tools, don't also
       // commit the successful tool_call line (preview already represents it).
-      const shouldSkipCommittedToolCall = (ln: Line): boolean => {
-        if (ln.kind !== "tool_call") return false;
-        if (!ln.toolCallId || !ln.name) return false;
-        if (ln.phase !== "finished" || ln.resultOk === false) return false;
-        if (!eagerCommittedPreviewsRef.current.has(ln.toolCallId)) return false;
-        return (
-          isFileEditTool(ln.name) ||
-          isFileWriteTool(ln.name) ||
-          isPatchTool(ln.name)
-        );
-      };
-
-      const shouldSkipDeferral = (ln: Line): boolean => {
-        if (ln.kind !== "tool_call") return false;
-        if (ln.phase !== "finished") return false;
-        // Skip deferral when the result is already available: the component height
-        // has already changed (header + result), so deferring only extends the
-        // live-area repaint window that causes ghost lines in the terminal scrollback.
-        return ln.resultText != null;
-      };
+      const shouldSkipCommittedToolCall = (ln: Line): boolean =>
+        shouldSkipCommittedToolCallGate(ln, eagerCommittedPreviewsRef.current);
       if (!deferToolCalls && deferredCommits.size > 0) {
         deferredCommits.clear();
         setDeferredCommitAt(null);
@@ -2215,6 +2202,9 @@ export function App({
             emittedIdsRef.current.add(id);
             newlyCommitted.push({ ...ln });
           }
+          continue;
+        }
+        if (ln.kind === "reasoning" && shouldHoldSplitReasoning(ln, b.byId)) {
           continue;
         }
         if ("phase" in ln && ln.phase === "finished") {
