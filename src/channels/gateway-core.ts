@@ -300,11 +300,11 @@ export class ChannelGateway {
         return false;
       }
       this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
-      const queuedEvents = delivery.sources.map((source) =>
-        this.enqueueHook(state, () =>
+      for (const source of delivery.sources) {
+        void this.enqueueHook(state, () =>
           this.hooks.onLifecycle({ type: "queued", source }),
-        ),
-      );
+        );
+      }
       if (response.disposition === "started") {
         this.activateSources(state, delivery.clientMessageId, delivery.sources);
         state.pendingSourcesByClientMessageId.delete(delivery.clientMessageId);
@@ -317,7 +317,6 @@ export class ChannelGateway {
         }
         this.reconcileExplicitQueueRemovals(state);
       }
-      await Promise.all(queuedEvents);
       return true;
     } catch (error) {
       state.pendingSourcesByClientMessageId.delete(delivery.clientMessageId);
@@ -440,7 +439,7 @@ export class ChannelGateway {
             batchId,
             sources: routingSources,
           }) ?? null;
-        await this.enqueueHook(state, () =>
+        void this.enqueueHook(state, () =>
           this.hooks.onLifecycle({
             type: "processing",
             batchId,
