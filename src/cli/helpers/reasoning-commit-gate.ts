@@ -31,6 +31,19 @@ export function shouldHoldSplitReasoning(
 }
 
 /**
+ * Is this a finished split header whose thought block is still streaming?
+ * Used by the live-area filter: such headers must stay visible there,
+ * because they are held out of Static while the block streams.
+ */
+export function isHeldSplitReasoning(lines: Line[], ln: Line): boolean {
+  if (ln.kind !== "reasoning" || ln.phase !== "finished") return false;
+  const blockId = ln.id.split("-split-")[0];
+  if (!blockId || blockId === ln.id) return false;
+  const original = lines.find((candidate) => candidate.id === blockId);
+  return original?.kind === "reasoning" && original.phase === "streaming";
+}
+
+/**
  * Skip re-committing a finished file tool_call whose tall preview was
  * already committed eagerly: the preview already represents the result.
  */

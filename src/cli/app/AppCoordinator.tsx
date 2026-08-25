@@ -96,6 +96,7 @@ import {
   toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
 import {
+  isHeldSplitReasoning,
   shouldHoldSplitReasoning,
   shouldSkipCommittedToolCall as shouldSkipCommittedToolCallGate,
   shouldSkipDeferral,
@@ -4724,6 +4725,8 @@ export function App({
         return ln.phase === "running";
       }
       if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
+      if (ln.kind === "reasoning" && isHeldSplitReasoning(lines, ln))
+        return true;
       return ln.phase === "streaming";
     });
   }, [
