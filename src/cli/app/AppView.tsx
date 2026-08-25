@@ -55,7 +55,7 @@ import { SubagentManager } from "@/cli/components/SubagentManager";
 import { SystemPromptSelector } from "@/cli/components/SystemPromptSelector";
 import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
 import { ToolsetSelector } from "@/cli/components/ToolsetSelector";
-import { UserMessage } from "@/cli/components/UserMessageRich";
+import { LiveUserMessage as UserMessage } from "@/cli/components/UserMessageRich";
 import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import { WindowTitlePicker } from "@/cli/components/WindowTitlePicker";
 import { WorktreeDiffSelector } from "@/cli/components/WorktreeDiffSelector";

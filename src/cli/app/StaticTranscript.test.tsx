@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { Readable, Writable } from "node:stream";
 import { render } from "ink";
 import stripAnsi from "strip-ansi";
+import { setSystemRemindersVisible } from "@/cli/components/transcript-display-state";
 import { StaticTranscript } from "./StaticTranscript";
 
 class CaptureStream extends Writable {
@@ -29,7 +30,8 @@ function createInputStream(): NodeJS.ReadStream {
   return input;
 }
 
-test("ctrl+r expands and collapses system reminders", async () => {
+test("system reminders default to hidden and ctrl+r toggles enabled reminders", async () => {
+  setSystemRemindersVisible(false);
   const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
   const stdin = createInputStream();
   const instance = render(
@@ -39,7 +41,7 @@ test("ctrl+r expands and collapses system reminders", async () => {
         {
           kind: "user",
           id: "user-1",
-          text: "<system-reminder>\nFirst instruction\nSecond instruction\n</system-reminder>",
+          text: "<system-reminder>\nFirst instruction\nSecond instruction\n</system-reminder>\n\nVisible user question",
         },
       ]}
       columns={100}
@@ -57,7 +59,20 @@ test("ctrl+r expands and collapses system reminders", async () => {
   );
 
   await new Promise((resolve) => setTimeout(resolve, 20));
-  const collapsedOutput = stripAnsi(stdout.chunks.join(""));
+  const hiddenOutput = stripAnsi(stdout.chunks.join(""));
+  expect(hiddenOutput).not.toContain("System reminder");
+  expect(hiddenOutput).not.toContain("First instruction");
+  expect(hiddenOutput).toContain("Visible user question");
+
+  const hiddenCtrlRStart = stdout.chunks.length;
+  stdin.push("\x12");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(stdout.chunks).toHaveLength(hiddenCtrlRStart);
+
+  const visibleStart = stdout.chunks.length;
+  setSystemRemindersVisible(true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const collapsedOutput = stripAnsi(stdout.chunks.slice(visibleStart).join(""));
   expect(collapsedOutput).toContain(
     "▸ System reminder · 2 lines (ctrl+r to expand)",
   );
@@ -79,6 +94,7 @@ test("ctrl+r expands and collapses system reminders", async () => {
 
   instance.unmount();
   instance.cleanup();
+  setSystemRemindersVisible(false);
 });
 
 test("ctrl+t expands and collapses thinking blocks", async () => {

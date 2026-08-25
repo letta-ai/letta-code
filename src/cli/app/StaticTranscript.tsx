@@ -15,6 +15,7 @@ import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
 import { TrajectorySummary } from "@/cli/components/TrajectorySummary";
 import {
   getSystemRemindersExpanded,
+  getSystemRemindersVisible,
   getThinkingExpanded,
   subscribeToSystemReminderDisplay,
   subscribeToThinkingDisplay,
@@ -54,12 +55,17 @@ export function StaticTranscript({
     subscribeToSystemReminderDisplay,
     getSystemRemindersExpanded,
   );
+  const systemRemindersVisible = useSyncExternalStore(
+    subscribeToSystemReminderDisplay,
+    getSystemRemindersVisible,
+  );
   const thinkingExpanded = useSyncExternalStore(
     subscribeToThinkingDisplay,
     getThinkingExpanded,
   );
   useInput((input, key) => {
     if (!key.ctrl || (input !== "r" && input !== "t")) return;
+    if (input === "r" && !systemRemindersVisible) return;
     if (process.stdout?.isTTY) process.stdout.write(CLEAR_SCREEN_AND_HOME);
     if (input === "r") toggleSystemReminderDisplay();
     if (input === "t") toggleThinkingDisplay();
@@ -67,7 +73,7 @@ export function StaticTranscript({
 
   return (
     <Static
-      key={`${renderEpoch}-${hiddenToolCallId ?? ""}-${systemRemindersExpanded}-${thinkingExpanded}`}
+      key={`${renderEpoch}-${hiddenToolCallId ?? ""}-${systemRemindersVisible}-${systemRemindersExpanded}-${thinkingExpanded}`}
       items={items}
       style={{ flexDirection: "column" }}
     >
@@ -81,6 +87,7 @@ export function StaticTranscript({
                 <UserMessage
                   line={item}
                   prompt={statusLinePrompt}
+                  systemRemindersVisible={systemRemindersVisible}
                   systemRemindersExpanded={systemRemindersExpanded}
                 />
               ) : item.kind === "reasoning" ? (

@@ -3,6 +3,7 @@
 
 import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
+import { handleSystemRemindersCommand } from "./system-reminders";
 
 type CommandHandlerResult =
   | string
@@ -456,6 +457,12 @@ export const commands: Record<string, Command> = {
       // Handled specially in App.tsx
       return "Managing reasoning Tab shortcut...";
     },
+  },
+  "/system-reminders": {
+    desc: "Show or hide system reminders",
+    args: "[on|off|status]",
+    order: 36.8,
+    handler: (args: string[]) => handleSystemRemindersCommand(args),
   },
   "/terminal": {
     desc: "Setup terminal shortcuts [--revert]",
