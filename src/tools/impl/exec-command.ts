@@ -38,6 +38,7 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 10_000;
 const MAX_INLINE_OUTPUT_CHARS = LIMITS.BASH_OUTPUT_CHARS;
 const MAX_SESSION_OUTPUT_CHARS = 1_000_000;
 const EXEC_SESSION_CLEANUP_MS = 5 * 60 * 1000;
+const INTERRUPT = "\u0003";
 
 interface ExecCommandArgs {
   cmd: string;
@@ -617,11 +618,15 @@ export async function write_stdin(
 
   const chars = args.chars ?? "";
   if (chars && !session.tty) {
-    throw new Error(
-      "stdin is closed for this session; rerun exec_command with tty=true to keep stdin open",
-    );
+    if (chars === INTERRUPT) {
+      (backgroundProcess.process as ShellProcessHandle).interrupt();
+    } else {
+      throw new Error(
+        "stdin is closed for this session; rerun exec_command with tty=true to keep stdin open",
+      );
+    }
   }
-  if (chars) {
+  if (chars && session.tty) {
     (backgroundProcess.process as ShellProcessHandle).write(chars);
     await sleep(100, args.signal);
   }
