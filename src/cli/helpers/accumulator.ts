@@ -459,8 +459,7 @@ function markAsFinished(b: Buffers, id: string) {
           }
         : { ...line, phase: "finished" as const };
     b.byId.set(id, updatedLine);
-    if (updatedLine.kind === "reasoning")
-      noteReasoningEnd(updatedLine.messageId);
+    if (updatedLine.kind === "reasoning") noteReasoningEnd(id);
 
     // Track last reasoning content for hooks (PostToolUse and Stop will include it)
     if (
@@ -951,7 +950,7 @@ export function onChunk(
         phase: "streaming",
         messageId,
       }));
-      if (messageId) noteReasoningStart(messageId);
+      if (messageId) noteReasoningStart(id, messageId);
       if (delta) {
         const newText = normalizeReasoningSectionBoundaries(line.text + delta);
         b.tokenCount += Buffer.byteLength(delta, "utf8");

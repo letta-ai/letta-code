@@ -1,30 +1,37 @@
 /**
- * Wall-clock timing for reasoning blocks, keyed by backend messageId.
+ * Wall-clock timing for reasoning blocks.
  *
- * Time belongs to the thought block, not to physical transcript lines: a
- * long block may be split into several lines by the token streaming
- * machinery (see trySplitContent in accumulator.ts), and every split keeps
- * the same messageId — so all parts of one block render the same elapsed
- * time without any field copying.
+ * Time belongs to the thought block, keyed by the stable transcript line
+ * id of its original (non-split) line. Backend messageIds may change
+ * mid-stream (the accumulator updates line.messageId as chunks arrive),
+ * so every seen messageId is registered as an alias to the block's span;
+ * split lines share the messageId and resolve to the same span through
+ * it. Nothing here persists across CLI restarts.
  */
 
 type ReasoningSpan = { startedAt: number; endedAt?: number };
 
 const spans = new Map<string, ReasoningSpan>();
+const aliases = new Map<string, string>();
 
 /** First chunk of a block arrived; start its timer (idempotent). */
-export function noteReasoningStart(messageId: string): void {
-  if (!spans.has(messageId)) spans.set(messageId, { startedAt: Date.now() });
+export function noteReasoningStart(blockId: string, messageId?: string): void {
+  let span = spans.get(blockId);
+  if (!span) {
+    span = { startedAt: Date.now() };
+    spans.set(blockId, span);
+  }
+  if (messageId) aliases.set(messageId, blockId);
 }
 
-/** Block was finalized; freeze its duration (idempotent, optional-id safe). */
-export function noteReasoningEnd(messageId?: string): void {
-  if (!messageId) return;
-  const span = spans.get(messageId);
+/** Block was finalized; freeze its duration (idempotent). */
+export function noteReasoningEnd(blockId: string): void {
+  const span = spans.get(blockId);
   if (span && span.endedAt === undefined) span.endedAt = Date.now();
 }
 
-/** Span for a line's messageId, or undefined when unknown. */
-export function reasoningSpanOf(messageId?: string): ReasoningSpan | undefined {
-  return messageId ? spans.get(messageId) : undefined;
+/** Span for a line's messageId or own id, or undefined when unknown. */
+export function reasoningSpanOf(key?: string): ReasoningSpan | undefined {
+  if (!key) return undefined;
+  return spans.get(key) ?? spans.get(aliases.get(key) ?? "");
 }

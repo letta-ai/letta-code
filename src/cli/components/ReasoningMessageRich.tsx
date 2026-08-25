@@ -70,7 +70,7 @@ export const ReasoningMessage = memo(({ line }: { line: ReasoningLine }) => {
   const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - 2);
   const expanded = useReasoningDisplay();
-  const span = reasoningSpanOf(line.messageId);
+  const span = reasoningSpanOf(line.messageId) ?? reasoningSpanOf(line.id);
 
   // Continuation lines are split-off tails of a block; they only carry
   // visible content in expanded mode.
