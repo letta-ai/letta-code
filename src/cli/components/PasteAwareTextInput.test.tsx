@@ -1,7 +1,54 @@
 import { describe, expect, test } from "bun:test";
-import { detectOptionWordDirection } from "@/cli/components/PasteAwareTextInput";
+import { EventEmitter } from "node:events";
+import { Readable, Writable } from "node:stream";
+import { render } from "ink";
+import {
+  detectOptionWordDirection,
+  PasteAwareTextInput,
+} from "@/cli/components/PasteAwareTextInput";
 
 const ESC = "\u001b";
+
+class CaptureStream extends Writable {
+  columns = 80;
+  rows = 24;
+  isTTY = true;
+
+  override _write(
+    _chunk: Buffer | string,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ) {
+    callback();
+  }
+}
+
+function createInputStream(): NodeJS.ReadStream {
+  const input = new Readable({ read() {} }) as NodeJS.ReadStream;
+  input.isTTY = true;
+  input.setRawMode = () => input;
+  input.ref = () => input;
+  input.unref = () => input;
+  return input;
+}
+
+const existingNavigationSequences: ReadonlyArray<
+  readonly [string, "left" | "right"]
+> = [
+  [`${ESC}b`, "left"],
+  [`${ESC}B`, "left"],
+  [`${ESC}f`, "right"],
+  [`${ESC}F`, "right"],
+  ...[3, 4, 7, 8, 9].flatMap(
+    (modifier) =>
+      [
+        [`${ESC}[${modifier}D`, "left"],
+        [`${ESC}[${modifier}C`, "right"],
+        [`${ESC}[1;${modifier}D`, "left"],
+        [`${ESC}[1;${modifier}C`, "right"],
+      ] as const,
+  ),
+];
 
 describe("detectOptionWordDirection", () => {
   test.each([
@@ -46,14 +93,7 @@ describe("detectOptionWordDirection", () => {
     expect(detectOptionWordDirection(sequence)).toBeNull();
   });
 
-  test.each([
-    [`${ESC}b`, "left"],
-    [`${ESC}B`, "left"],
-    [`${ESC}f`, "right"],
-    [`${ESC}F`, "right"],
-    [`${ESC}[1;3D`, "left"],
-    [`${ESC}[1;3C`, "right"],
-  ] as const)(
+  test.each(existingNavigationSequences)(
     "preserves existing navigation sequences: %s",
     (sequence, direction) => {
       expect(detectOptionWordDirection(sequence)).toBe(direction);
@@ -66,5 +106,54 @@ describe("detectOptionWordDirection", () => {
     [`${ESC}[98;195u`, "left"], // Alt + Caps Lock + Num Lock
   ] as const)("normalizes Kitty lock bits: %s", (sequence, direction) => {
     expect(detectOptionWordDirection(sequence)).toBe(direction);
+  });
+
+  test("handles CSI-u through the raw input path without inserting b or f", async () => {
+    const stdin = createInputStream();
+    const stdout = new CaptureStream();
+    const eventEmitter = new EventEmitter();
+    const changes: string[] = [];
+    const cursorOffsets: number[] = [];
+    const { default: StdinContext } = await import(
+      new URL(
+        "../../../node_modules/ink/build/components/StdinContext.js",
+        import.meta.url,
+      ).href
+    );
+
+    const contextValue = {
+      stdin,
+      setRawMode: () => {},
+      isRawModeSupported: true,
+      internal_eventEmitter: eventEmitter,
+      internal_exitOnCtrlC: false,
+    };
+    const instance = render(
+      <StdinContext.Provider value={contextValue}>
+        <PasteAwareTextInput
+          value="alpha beta"
+          onChange={(value) => changes.push(value)}
+          cursorPosition={10}
+          onCursorMove={(position) => cursorOffsets.push(position)}
+        />
+      </StdinContext.Provider>,
+      {
+        stdout: stdout as CaptureStream & NodeJS.WriteStream,
+        stdin,
+        debug: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    eventEmitter.emit("input", `${ESC}[98;3u`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    instance.unmount();
+    instance.cleanup();
+
+    expect(changes).not.toContain("alpha betab");
+    expect(changes).not.toContain("alpha betaf");
+    expect(cursorOffsets).toContain(6);
   });
 });
