@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
@@ -79,6 +79,10 @@ function setup(replyMode: "tool" | "relay") {
 }
 
 describe("local automatic channel relay", () => {
+  beforeEach(() => {
+    clearChannelAccountStores();
+  });
+
   afterEach(async () => {
     await getChannelRegistry()?.stopAll();
     clearAllRoutes();
