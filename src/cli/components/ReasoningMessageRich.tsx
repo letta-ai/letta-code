@@ -89,11 +89,16 @@ function spanOfLine(line: ReasoningLine) {
  * line: a freshly split-off part carries line.phase === "finished" while
  * the thought is still streaming.
  */
+/**
+ * Phase label follows the block's timing span: a split header carries
+ * line.phase === "finished" by construction while its thought still
+ * streams, so only a frozen span means the thought is really done.
+ * Without a span (CLI restarted, history from disk) fall back to the
+ * line's own phase.
+ */
 function phaseLabel(line: ReasoningLine, span?: { endedAt?: number }): string {
-  if (span?.endedAt !== undefined) return "thinked";
-  return line.phase === "finished" && !line.isContinuation
-    ? "thinked"
-    : "thinking";
+  if (!span) return line.phase === "streaming" ? "thinking" : "thinked";
+  return span.endedAt !== undefined ? "thinked" : "thinking";
 }
 
 export const ReasoningMessage = memo(({ line }: { line: ReasoningLine }) => {
