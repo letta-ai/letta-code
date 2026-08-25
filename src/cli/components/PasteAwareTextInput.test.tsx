@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { EventEmitter } from "node:events";
 import { Readable, Writable } from "node:stream";
 import { render } from "ink";
 import {
@@ -111,32 +110,22 @@ describe("detectOptionWordDirection", () => {
   test("handles CSI-u through the raw input path without inserting b or f", async () => {
     const stdin = createInputStream();
     const stdout = new CaptureStream();
-    const eventEmitter = new EventEmitter();
     const changes: string[] = [];
     const cursorOffsets: number[] = [];
-    const { default: StdinContext } = await import(
-      new URL(
-        "../../../node_modules/ink/build/components/StdinContext.js",
-        import.meta.url,
-      ).href
-    );
-
-    const contextValue = {
-      stdin,
-      setRawMode: () => {},
-      isRawModeSupported: true,
-      internal_eventEmitter: eventEmitter,
-      internal_exitOnCtrlC: false,
-    };
+    let resolveCursorMove: (() => void) | undefined;
+    const cursorMoved = new Promise<void>((resolve) => {
+      resolveCursorMove = resolve;
+    });
     const instance = render(
-      <StdinContext.Provider value={contextValue}>
-        <PasteAwareTextInput
-          value="alpha beta"
-          onChange={(value) => changes.push(value)}
-          cursorPosition={10}
-          onCursorMove={(position) => cursorOffsets.push(position)}
-        />
-      </StdinContext.Provider>,
+      <PasteAwareTextInput
+        value="alpha beta"
+        onChange={(value) => changes.push(value)}
+        cursorPosition={10}
+        onCursorMove={(position) => {
+          cursorOffsets.push(position);
+          if (position === 6) resolveCursorMove?.();
+        }}
+      />,
       {
         stdout: stdout as CaptureStream & NodeJS.WriteStream,
         stdin,
@@ -146,9 +135,16 @@ describe("detectOptionWordDirection", () => {
       },
     );
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    eventEmitter.emit("input", `${ESC}[98;3u`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    stdin.push(`${ESC}[98;3u`);
+    await Promise.race([
+      cursorMoved,
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("CSI-u cursor move timed out")),
+          1000,
+        ),
+      ),
+    ]);
     instance.unmount();
     instance.cleanup();
 
