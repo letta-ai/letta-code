@@ -16,6 +16,7 @@ import {
 import { createTempRuntimeScriptCommand } from "@/tools/runtime-script";
 import {
   extractSecretEnvFromCommand,
+  resolveShellSecretReferences,
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
 import {
@@ -98,6 +99,41 @@ describe("shell secret env extraction", () => {
       {},
     );
   });
+
+  test("reports unavailable secret-like references without treating ordinary variables as secrets", async () => {
+    await seedSecrets();
+
+    expect(
+      resolveShellSecretReferences(
+        "echo $BETTERSTACK_API_KEY:$LOCAL_STATUS",
+        TEST_AGENT_ID,
+      ),
+    ).toEqual({
+      env: {},
+      missing: ["BETTERSTACK_API_KEY"],
+    });
+  });
+
+  test("does not report secret-like references already available in the process environment", async () => {
+    await seedSecrets();
+    const previousValue = process.env.RUNTIME_API_KEY;
+    process.env.RUNTIME_API_KEY = "runtime-value";
+
+    try {
+      expect(
+        resolveShellSecretReferences("echo $RUNTIME_API_KEY", TEST_AGENT_ID),
+      ).toEqual({
+        env: {},
+        missing: [],
+      });
+    } finally {
+      if (previousValue === undefined) {
+        delete process.env.RUNTIME_API_KEY;
+      } else {
+        process.env.RUNTIME_API_KEY = previousValue;
+      }
+    }
+  });
 });
 
 describe("shell secret scrubbing", () => {
@@ -120,6 +156,40 @@ describe("shell secret scrubbing", () => {
 });
 
 describe("shell secret execution", () => {
+  test("blocks shell execution with a structured missing-secrets result", async () => {
+    const context = await prepareToolExecutionContextForSpecificTools(
+      ["Bash"],
+      {
+        runtimeContext: {
+          agentId: TEST_AGENT_ID,
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+
+    try {
+      const result = await executeTool(
+        "Bash",
+        {
+          command: 'printf "%s" "$BETTERSTACK_API_KEY"',
+          description: "Use an unavailable secret",
+        },
+        { toolContextId: context.contextId },
+      );
+
+      expect(result.status).toBe("error");
+      expect(JSON.parse(toolReturnText(result.toolReturn))).toEqual({
+        type: "missing_secrets",
+        names: ["BETTERSTACK_API_KEY"],
+        message:
+          "Add BETTERSTACK_API_KEY to this agent's secrets, then retry the command.",
+      });
+    } finally {
+      releaseToolExecutionContext(context.contextId);
+    }
+  });
+
   test("PowerShell aliases dynamically injected secret env vars", () => {
     const command = buildPowerShellCommand("Write-Output $API_KEY", [
       "API_KEY",

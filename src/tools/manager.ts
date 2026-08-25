@@ -74,7 +74,7 @@ import {
   type PermissionModeState,
 } from "./permission-mode-state";
 import {
-  extractSecretEnvFromCommand,
+  prepareShellSecretExecution,
   scrubSecretsFromString,
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
@@ -2600,12 +2600,9 @@ async function executeToolInner(
         // Keep secret values out of shell interpolation and only redact values
         // that this invocation can access.
         const command = enhancedArgs.command ?? enhancedArgs.cmd;
-        invocationSecrets =
-          typeof command === "string" ||
-          (Array.isArray(command) &&
-            command.every((part) => typeof part === "string"))
-            ? extractSecretEnvFromCommand(command, scopedAgentId)
-            : {};
+        const secrets = prepareShellSecretExecution(command, scopedAgentId);
+        invocationSecrets = secrets.env;
+        if (secrets.error) return secrets.error;
         if (options?.onOutput) {
           enhancedArgs = {
             ...enhancedArgs,

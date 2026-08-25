@@ -14,6 +14,69 @@ import { loadSecrets } from "@/utils/secrets-store";
  * value and conclude the secret is unset even though it exists.
  */
 const SECRET_PATTERN = /\$(?:\{[#!]?)?([A-Z_][A-Z0-9_]*)/g;
+const SECRET_LIKE_NAME_PATTERN =
+  /(?:^|_)(?:API_KEY|APP_KEY|ACCESS_KEY|PRIVATE_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|CREDENTIALS)$/;
+
+export interface ShellSecretResolution {
+  env: Record<string, string>;
+  missing: string[];
+}
+
+function scanSecretReferences(
+  command: string | readonly string[],
+): Set<string> {
+  const references = new Set<string>();
+  const scan = (text: string) => {
+    for (const match of text.matchAll(SECRET_PATTERN)) {
+      const name = match[1];
+      if (name !== undefined) {
+        references.add(name);
+      }
+    }
+  };
+
+  if (typeof command === "string") {
+    scan(command);
+  } else {
+    for (const part of command) {
+      if (typeof part === "string") {
+        scan(part);
+      }
+    }
+  }
+
+  return references;
+}
+
+/**
+ * Resolve agent secrets referenced by a shell command and identify references
+ * that look like credentials but are unavailable to the process. Ordinary
+ * shell variables remain untouched so commands can keep using local state.
+ */
+export function resolveShellSecretReferences(
+  command: string | readonly string[],
+  agentId?: string,
+): ShellSecretResolution {
+  const secrets = loadSecrets(agentId);
+  const env: Record<string, string> = {};
+  const missing: string[] = [];
+
+  for (const name of scanSecretReferences(command)) {
+    const value = secrets[name];
+    if (value !== undefined) {
+      env[name] = value;
+      continue;
+    }
+    if (
+      process.env[name] === undefined &&
+      SECRET_LIKE_NAME_PATTERN.test(name)
+    ) {
+      missing.push(name);
+    }
+  }
+
+  return { env, missing: missing.sort() };
+}
 
 /**
  * Scan a command string or command-argument array for `$SECRET_NAME`
@@ -25,30 +88,42 @@ export function extractSecretEnvFromCommand(
   command: string | readonly string[],
   agentId?: string,
 ): Record<string, string> {
-  const secrets = loadSecrets(agentId);
-  const env: Record<string, string> = {};
+  return resolveShellSecretReferences(command, agentId).env;
+}
 
-  const scan = (text: string) => {
-    for (const match of text.matchAll(SECRET_PATTERN)) {
-      const name = match[1];
-      if (name !== undefined && secrets[name] !== undefined) {
-        env[name] = secrets[name];
-      }
-    }
+export function formatMissingSecretsToolReturn(names: string[]): string {
+  return JSON.stringify({
+    type: "missing_secrets",
+    names,
+    message: `Add ${names.join(", ")} to this agent's secrets, then retry the command.`,
+  });
+}
+
+export function prepareShellSecretExecution(
+  command: unknown,
+  agentId?: string,
+): {
+  env: Record<string, string>;
+  error: { toolReturn: string; status: "error" } | null;
+} {
+  const isCommand =
+    typeof command === "string" ||
+    (Array.isArray(command) &&
+      command.every((part) => typeof part === "string"));
+  const resolution = isCommand
+    ? resolveShellSecretReferences(command, agentId)
+    : { env: {}, missing: [] };
+
+  return {
+    env: resolution.env,
+    error:
+      resolution.missing.length > 0
+        ? {
+            toolReturn: formatMissingSecretsToolReturn(resolution.missing),
+            status: "error",
+          }
+        : null,
   };
-
-  if (typeof command === "string") {
-    scan(command);
-    return env;
-  }
-
-  for (const part of command) {
-    if (typeof part === "string") {
-      scan(part);
-    }
-  }
-
-  return env;
 }
 
 /**
