@@ -105,7 +105,6 @@ type TrackListenerError = (
 type FileCommandSession = {
   handle(parsed: unknown): boolean;
 };
-
 type RuntimeScope = {
   agent_id: string | null;
   conversation_id: string;
