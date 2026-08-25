@@ -126,8 +126,10 @@ jobs:
             echo '```'
             echo "AMELIA_PROMPT_EOF"
           } >> "$GITHUB_OUTPUT"
+          echo "conversation_name=$GITHUB_WORKFLOW $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
       - name: Ask Amelia to review pi-ai release
+        id: review
         if: steps.detect.outputs.should_run_agent == 'true'
         uses: letta-ai/letta-code-action@244cc9e80c77cfebdb3ec8e146e018a5fe0af027
         with:
@@ -140,6 +142,21 @@ jobs:
           tracking_comment: "false"
           model: auto
           prompt: ${{ steps.prompt.outputs.prompt }}
+
+      - name: Name watcher conversation
+        if: always() && steps.review.outputs.conversation_id != ''
+        env:
+          LETTA_API_KEY: ${{ secrets.AMELIA_LETTA_API_KEY }}
+          CONVERSATION_ID: ${{ steps.review.outputs.conversation_id }}
+          CONVERSATION_NAME: ${{ steps.prompt.outputs.conversation_name }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request PATCH \
+            --header "Authorization: Bearer $LETTA_API_KEY" \
+            --header "Content-Type: application/json" \
+            --data "$(jq -nc --arg summary "$CONVERSATION_NAME" '{summary: $summary}')" \
+            --output /dev/null \
+            "https://api.letta.com/v1/conversations/$CONVERSATION_ID"
 
       - name: Verify recorded outcome
         if: steps.detect.outputs.should_run_agent == 'true'
