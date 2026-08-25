@@ -24,6 +24,9 @@ export function shouldHoldSplitReasoning(
   byId: Map<string, Line>,
 ): boolean {
   if (ln.kind !== "reasoning" || ln.phase !== "finished") return false;
+  // Only the header part is shown while the block streams; holding tails
+  // would just add an empty marginTop box per split to the live area.
+  if (ln.isContinuation) return false;
   const blockId = ln.id.split("-split-")[0];
   if (!blockId || blockId === ln.id) return false;
   const original = byId.get(blockId);
@@ -37,6 +40,7 @@ export function shouldHoldSplitReasoning(
  */
 export function isHeldSplitReasoning(lines: Line[], ln: Line): boolean {
   if (ln.kind !== "reasoning" || ln.phase !== "finished") return false;
+  if (ln.isContinuation) return false;
   const blockId = ln.id.split("-split-")[0];
   if (!blockId || blockId === ln.id) return false;
   const original = lines.find((candidate) => candidate.id === blockId);
