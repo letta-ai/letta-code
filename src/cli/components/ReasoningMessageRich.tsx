@@ -1,6 +1,7 @@
 import { Box } from "ink";
 import { memo, useEffect, useState } from "react";
 import { useReasoningDisplay } from "@/cli/app/use-reasoning-display";
+import { reasoningSpanOf } from "@/cli/helpers/reasoning-timing";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { Text } from "./Text";
@@ -18,9 +19,8 @@ type ReasoningLine = {
   id: string;
   text: string;
   phase: "streaming" | "finished";
-  startedAt?: number;
-  endedAt?: number;
   isContinuation?: boolean;
+  messageId?: string;
 };
 
 function formatElapsed(ms: number): string {
@@ -62,11 +62,15 @@ function Elapsed({
  * ("thinking"/"thinked" + elapsed time) so long thought streams don't flood
  * the transcript. ctrl+t (see use-reasoning-display.ts) expands every block
  * into its full markdown text.
+ *
+ * Elapsed time comes from reasoning-timing.ts keyed by messageId, so every
+ * line of a split block renders the same duration.
  */
 export const ReasoningMessage = memo(({ line }: { line: ReasoningLine }) => {
   const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - 2);
   const expanded = useReasoningDisplay();
+  const span = reasoningSpanOf(line.messageId);
 
   // Continuation lines are split-off tails of a block; they only carry
   // visible content in expanded mode.
@@ -82,7 +86,7 @@ export const ReasoningMessage = memo(({ line }: { line: ReasoningLine }) => {
           <Text dimColor>
             {line.phase === "streaming" ? "thinking" : "thinked"}{" "}
           </Text>
-          <Elapsed {...line} />
+          <Elapsed {...span} />
         </Box>
       </Box>
       {expanded ? (
