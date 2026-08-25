@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.245:docs:50dde6e9fffa928d3b3bcd55ea7d5a095a84c991e99b573ade4f9ed63a9ac360:runtime:c58de7fab9fecbd087e53e33bb420833d4e93e3c81fc3b0b1793f47f34686cdf",
+  "candidate_id": "claude@2.1.245:docs:83524b483b38178d02a33b838138ab513f79a28221f372c3756b1fcf0f38b83b:runtime:c58de7fab9fecbd087e53e33bb420833d4e93e3c81fc3b0b1793f47f34686cdf",
   "package_version": "2.1.245",
   "npm_integrity": "sha512-+7baJddJXZukgd6AgC7xStHGsMTVHDPlRcAoqTSPx2NQ+QwKGtvCZQLgbnKuhjkwq9v9vKvYwIhLOwGiE77mVQ==",
   "npm_published_at": "2026-08-25T04:45:52.102Z",
   "release_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.245",
-  "release_notes_md": "## [2.1.239](https://github.com/anthropics/claude-code/releases/tag/v2.1.239)\n\n## What's changed\n\n- Cost estimates (`/cost`, status line, `--max-budget-usd`) now include the 1.1× US-only-inference premium for data-residency workspaces\n- Added the one-time fullscreen renderer offer on Bedrock, Vertex, Foundry and other previously excluded setups; new installs there now start in fullscreen\n- Added `/claude-api upgrade` to migrate Python projects from `anthropic` 0.x to 1.x, and updated the skill's Python reference for 1.x (timeouts use `anthropic.Timeout`, not `httpx.Timeout`)\n- Cloud sessions: plugins synced from claude.ai now show as `name@synced`, work with `claude plugin enable/disable <name>@synced`, and never override a same-named plugin you installed\n- Alpine/musl builds: native image paste, clipboard, and audio-capture add-ons now load (musl-built binaries instead of glibc ones refused by the runtime)\n- The usage-limit message shown when your monthly spend limit is already used up now also says when your session or weekly limit resets\n- Fixed Bedrock streaming behind proxies that strip the response Content-Type header, which silently doubled billed API calls by re-running every turn non-streaming\n- Fixed Claude Code hanging at startup behind an HTTPS proxy when using Bedrock with an SSO profile and `awsAuthRefresh` — the credential pre-check now honors `HTTPS_PROXY`\n- Fixed a raw crash dump when starting Claude Code from a directory that no longer exists; it now prints a clear message\n- Fixed Edit and Write calls pausing for about 5 seconds in JetBrains IDE terminals when the Claude Code plugin is connected\n- Fixed a race where pressing Esc with a prompt queued could let the next turn finish early, leaving the session idle while Claude was still working and letting a later resubmit repeat actions\n- Fixed WebFetch retaining expired page content in memory for the whole session instead of the intended 15 minutes\n- Fixed cloud sessions (Claude Code on the web, desktop and mobile apps) resuming out of plan mode after an idle worker restart\n- Fixed MCP elicitation forms taller than the terminal being clipped in fullscreen mode: the form now fits the window, with hidden fields reachable by scrolling and Accept/Decline always visible\n- Fixed remote MCP servers staying failed after a transient 5xx on a mid-session reconnect in cloud sessions or via SDK `setMcpServers()`\n- Fixed custom session titles disappearing from `/resume` after more than ~64 KB of conversation was written following the rename\n- Fixed `claude -c`/resume picking up sessions from a different directory whose path differed only by characters like `_`, `-`, or `.`\n- Fixed `/resume` and the agents view showing a session as recently changed (and reordering it) when only its file was touched or it was merely reopened\n- Fixed `/resume` in all-projects mode telling you to `cd` into a deleted directory (e.g. a removed worktree); such sessions now resume in the current directory\n- Fixed the `dark-ansi` theme rendering expanded tool results in fullscreen mode with text the same color as the background\n- Fixed the fullscreen renderer prompt reappearing on every launch when it could never be answered; it now stops after being shown on three launches\n- Fixed `.worktreeinclude` patterns starting with `**/` silently matching nothing when the target lived in a gitignored directory\n- Fixed agents, skills, and commands whose `.md` file starts with a UTF-8 BOM being silently ignored\n- Fixed `/insights` echoing literal `<message>` tags in its response on some models\n- Fixed marketplace `metadata.pluginRoot` having no effect: bare plugin source names now resolve under it as the docs describe\n- Fixed mouse movement in browser-based terminals inserting text like `\"35;150;7M\"` into the prompt when a mouse report arrived split across writes\n- Fixed custom theme overrides for the effort/ultracode status badge colors being ignored\n- Fixed OpenTelemetry trace fragmentation: tool executions deferred by a `PreToolUse` hook now resume in the original turn's trace instead of starting a new trace\n- Fixed vim mode in the agent view: Escape now switches to NORMAL mode and keeps your text instead of clearing the prompt\n- Fixed the `selection:copy` keybinding silently dropping a text selection that had been extended with Shift+Arrow keys\n- Fixed the `/voice` startup tip still appearing after voice dictation was enabled via the `voice.enabled` setting\n- Fixed shell-mode (`!`) Tab completion dropping the `./` from a `./script` path, which left a command the shell couldn't run\n- Fixed fullscreen mode answering a permission prompt or pressing a button when you clicked the terminal window only to bring it back into focus\n- Fixed slash-command panels (e.g. `/config`, `/model`) in fullscreen mode covering the latest messages; the conversation now stays pinned above the panel\n- Fixed the `/workflows` detail dialog overflowing the terminal and losing its header off-screen when opened while Claude is still responding\n- Fixed the Linux sandbox making a nonexistent `.git/config.worktree` unreadable, which broke every sandboxed git command in repos with `extensions.worktreeConfig` set\n- Fixed hooks failing with \"posix_spawn ENOENT\" after the session's working directory was deleted; they now run from the project root or home directory instead\n- Fixed `claudeMdExcludes` not excluding a symlinked `.claude/rules` file when the pattern names the rules directory or the symlink rather than its target\n- Fixed runaway session-title syncing to Remote Control when two Claude Code processes shared one background job's state (2.1.232 regression); title updates are now deduplicated and rate-limited\n- Fixed sessions whose title starts with `/` being unaddressable by `SendMessage` and shown as \"(untitled)\" in `ListAgents`\n- Fixed Ctrl+W, Ctrl+U, Ctrl+K, Option+Backspace, Option+D and vim `df`/`dt` leaving a broken `[Pasted text #N]` placeholder when the cursor was inside it\n- Fixed masked (password-style) inputs such as the login code field letting their text be pasted back with Ctrl+Y elsewhere or saved to prompt history when cleared with double Esc\n- Fixed Ctrl+Backspace deleting one character instead of a word in search boxes\n- Fixed a request rejected by an organization policy check being re-sent before the rejection was shown\n- Improved the reminder shown after compaction so a skill's original arguments are not re-run as a new request\n- Long file paths on tool-use rows now truncate in the middle to stay on one line\n- Remote sessions keep sending keep-alives while a long `SessionStart` or `Setup` hook runs, so the container is not idle-reaped mid-hook\n- `/goal`: repeat check-ins on long-running background work now back off (30 min, then 1 h, then every 2 h) instead of repeating every 30 minutes\n- `/goal`: resuming a session from the `claude --resume` picker now restores its active goal\n- `ListAgents` now tells a session its own name (the one peers use to message it), and `SendMessage` to your own name says so instead of \"no agent named …\"\n- `ListAgents` and `/list-agents` now list your live teammates (previously only subagents and other sessions appeared, so a reachable teammate looked absent)\n- `keybindingFlavor: \"readline\"` now also matches Bash for word keys: Alt+F and Ctrl/Option+→ stop at the end of the word, Alt+D deletes to it (Ctrl+Y pastes it back), and punctuation separates words\n- Persistent retry mode (`CLAUDE_CODE_RETRY_WATCHDOG`) now fails immediately on organization spend-limit and out-of-credits errors instead of waiting indefinitely for a reset\n- Claude in Chrome: `/clear` now closes the session's Chrome tab group, and empty groups are closed on `/resume` and when Claude Code exits\n- Remote sessions: images uploaded from mobile now include their saved file path, so Claude can copy them into files it creates\n- Claude Code on the web: requests from Bash and other tools to non-API anthropic.com hosts (e.g. www, docs) now go through the session's network proxy, so your environment's allowed domains apply\n- Remote Control: clearer message and `claude doctor` wording when Remote Control isn't enabled for your account\n- Windows: cross-session messaging is now available, so Claude Code sessions across your machines can message each other with `SendMessage` and find each other with `ListAgents`, as on macOS and Linux\n- [VSCode] \"View usage\" in the usage-limit banner now sits inline with the warning text instead of floating mid-banner\n\n## [2.1.240](https://github.com/anthropics/claude-code/releases/tag/v2.1.240)\n\n## What's changed\n\n- Bug fixes and reliability improvements\n\n## [2.1.241](https://github.com/anthropics/claude-code/releases/tag/v2.1.241)\n\n## What's changed\n\n- Bug fixes and reliability improvements\n\n## [2.1.245](https://github.com/anthropics/claude-code/releases/tag/v2.1.245)\n\n## What's changed\n\n- Fixed a crash on startup on Linux distributions that ship glibc 2.44 (for example Arch Linux, CachyOS and Fedora Rawhide)",
+  "release_notes_md": "## What's changed\n\n- Fixed a crash on startup on Linux distributions that ship glibc 2.44 (for example Arch Linux, CachyOS and Fedora Rawhide)\n",
   "release_published_at": "2026-08-25T05:13:24Z",
   "dist_tags": {
     "latest": "2.1.245",
@@ -15,7 +15,7 @@
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
     "index_hash": "465c161f71598cf6231bab83b6ca31365f3c1146120bb8d2a2a6dce323302442",
-    "full_scan": true,
+    "full_scan": false,
     "scanned_at": "2026-08-25T20:29:55.807Z",
     "pages": {
       "https://code.claude.com/docs/_llms/cn.md": {
@@ -578,7 +578,7 @@
       },
       "https://code.claude.com/docs/en/env-vars.md": {
         "url": "https://code.claude.com/docs/en/env-vars.md",
-        "hash": "d663d0a64d39195da7520ab9823b0672f5e3fafbe852000d37dbdf726ce59db5",
+        "hash": "77ca6355db528d0cc9671cad917d0ec24dc6db8959e5eb04e3d236bc37ad8eb9",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/env-vars.md"
       },
@@ -746,7 +746,7 @@
       },
       "https://code.claude.com/docs/en/managed-settings.md": {
         "url": "https://code.claude.com/docs/en/managed-settings.md",
-        "hash": "f6329614fc9e9a343156f1e1171f108c201c88d174640b79c228585fa808cfc2",
+        "hash": "93a2d2c24a1d05a10417ff601d4bade91dbf9d48dec16a784154e24b1756dddb",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/managed-settings.md"
       },
@@ -968,7 +968,7 @@
       },
       "https://code.claude.com/docs/en/server-managed-settings.md": {
         "url": "https://code.claude.com/docs/en/server-managed-settings.md",
-        "hash": "159c69cd0c831b4ed1e029865d6656abed2d352a0f2a6c465a17b03631bf930e",
+        "hash": "cacf4534ccc6151ee4544237376c7665fad4dc73b371156041cd48defd3788ff",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/server-managed-settings.md"
       },
@@ -1237,7 +1237,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "50dde6e9fffa928d3b3bcd55ea7d5a095a84c991e99b573ade4f9ed63a9ac360"
+    "digest": "83524b483b38178d02a33b838138ab513f79a28221f372c3756b1fcf0f38b83b"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1452,7 +1452,7 @@
           {
             "name": "TaskCreate",
             "input": {
-              "activeForm": "Running probe task",
+              "activeForm": "Probing task tools",
               "description": "Probe task for exercising task tool metadata and deletion behavior.",
               "metadata": {
                 "keep": "yes",
@@ -1515,8 +1515,8 @@
     ],
     "digest": "c58de7fab9fecbd087e53e33bb420833d4e93e3c81fc3b0b1793f47f34686cdf"
   },
-  "fetched_at": "2026-08-25T20:31:05.226Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/32895615183",
-  "state_commit_parent": "8056edfcf2723fe0c4ef07142c0f19e0666a51e3",
-  "analysis_parent_sha": "8056edfcf2723fe0c4ef07142c0f19e0666a51e3"
+  "fetched_at": "2026-08-25T22:26:03.095Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/32906003482",
+  "state_commit_parent": "1b3528790aed56dedf5f735a7172f6c22eb7272f",
+  "analysis_parent_sha": "1b3528790aed56dedf5f735a7172f6c22eb7272f"
 }
