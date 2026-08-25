@@ -3,6 +3,7 @@ import type {
   ProviderAuthInteraction,
 } from "@earendil-works/pi-ai";
 import type {
+  OAuthCredentials,
   OAuthPrompt,
   OAuthSelectPrompt,
 } from "@earendil-works/pi-ai/oauth";
@@ -13,7 +14,11 @@ import {
   setLocalOAuthProvider,
 } from "@/backend/local/local-provider-auth-store";
 import type { LocalProviderTimeout } from "@/backend/local/local-provider-timeout";
-import type { ByokProvider } from "@/providers/byok-providers";
+import {
+  type ByokProvider,
+  checkProviderApiKey,
+  createOrUpdateProvider,
+} from "@/providers/byok-providers";
 import { openOAuthBrowser } from "./connect-oauth-core";
 
 export interface LocalOAuthConnectCallbacks {
@@ -58,10 +63,16 @@ function waitForPromptCancellation(prompt: AuthPrompt): Promise<string> {
   });
 }
 
-export async function runLocalOAuthConnectFlow(
+export interface ProviderOAuthLoginResult {
+  providerName: string;
+  credential: OAuthCredentials;
+  apiKey: string;
+}
+
+export async function runProviderOAuthLogin(
   provider: ByokProvider,
   callbacks: LocalOAuthConnectCallbacks,
-): Promise<{ providerName: string }> {
+): Promise<ProviderOAuthLoginResult> {
   const providerId = localOAuthProviderId(provider);
   const oauth = getProviderOAuthAuth(providerId);
   if (!oauth) {
@@ -129,15 +140,65 @@ export async function runLocalOAuthConnectFlow(
   };
 
   const credential = await oauth.login(interaction);
+  if (credential.type !== "oauth") {
+    throw new Error(`${oauth.name} returned invalid OAuth credentials.`);
+  }
+  const modelAuth = await oauth.toAuth(credential);
+  if (!modelAuth.apiKey) {
+    throw new Error(`${oauth.name} returned no API key.`);
+  }
 
+  return {
+    providerName: provider.providerName,
+    credential,
+    apiKey: modelAuth.apiKey,
+  };
+}
+
+export async function runCloudOAuthConnectFlow(
+  provider: ByokProvider,
+  callbacks: LocalOAuthConnectCallbacks,
+): Promise<{ providerName: string }> {
+  const result = await runProviderOAuthLogin(provider, callbacks);
+  await callbacks.onStatus(`Validating ${provider.displayName} connection...`);
+  await checkProviderApiKey(
+    provider.providerType,
+    result.apiKey,
+    undefined,
+    undefined,
+    undefined,
+    {
+      target: "api",
+    },
+  );
+  await callbacks.onStatus(`Saving ${provider.displayName} provider...`);
+  await createOrUpdateProvider(
+    provider.providerType,
+    provider.providerName,
+    result.apiKey,
+    undefined,
+    undefined,
+    undefined,
+    {},
+    { target: "api" },
+  );
+  clearAvailableModelsCache();
+  return { providerName: result.providerName };
+}
+
+export async function runLocalOAuthConnectFlow(
+  provider: ByokProvider,
+  callbacks: LocalOAuthConnectCallbacks,
+): Promise<{ providerName: string }> {
+  const result = await runProviderOAuthLogin(provider, callbacks);
   setLocalOAuthProvider({
     providerName: provider.providerName,
     providerType: provider.providerType,
-    auth: localOAuthAuthFromCredentials(credential),
+    auth: localOAuthAuthFromCredentials(result.credential),
     baseURL: callbacks.baseURL,
     timeout: callbacks.timeout,
   });
   clearAvailableModelsCache();
 
-  return { providerName: provider.providerName };
+  return { providerName: result.providerName };
 }

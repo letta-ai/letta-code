@@ -38,6 +38,9 @@ function createIoDeps() {
       runChatGPTOAuthConnectFlow: mock(() =>
         Promise.resolve({ providerName: "chatgpt-plus-pro" }),
       ),
+      runCloudOAuthConnectFlow: mock(() =>
+        Promise.resolve({ providerName: "openrouter-oauth" }),
+      ),
       providerStorageTargetLabel: () => "test storage",
     },
   };
@@ -134,6 +137,27 @@ describe("connect subcommand", () => {
       expect.objectContaining({ providerName: "chatgpt-work" }),
     );
     expect(stdout.join("\n")).toContain("Provider 'chatgpt-work' saved.");
+  });
+
+  test("connects OpenRouter OAuth to the cloud provider store", async () => {
+    const { stdout, deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(["openrouter-oauth"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(deps.ensureSettingsReady).toHaveBeenCalledTimes(1);
+    expect(deps.runCloudOAuthConnectFlow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "openrouter-oauth",
+        providerType: "openrouter",
+        providerName: "openrouter-oauth",
+        oauthProviderId: "openrouter",
+      }),
+      expect.objectContaining({ onStatus: expect.any(Function) }),
+    );
+    expect(stdout.join("\n")).toContain(
+      "Successfully connected to OpenRouter OAuth.",
+    );
   });
 
   test("connects API key provider from positional key", async () => {
