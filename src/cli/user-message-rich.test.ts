@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  formatSystemReminderBlock,
   renderBlock,
   splitSystemReminderBlocks,
 } from "@/cli/components/UserMessageRich";
@@ -29,6 +30,23 @@ describe("splitSystemReminderBlocks", () => {
 
     expect(blocks.some((b) => b.isSystemReminder)).toBe(true);
     expect(blocks.some((b) => b.text.includes("<system-alert>"))).toBe(true);
+  });
+});
+
+describe("formatSystemReminderBlock", () => {
+  const reminder =
+    "<system-reminder>\nFirst instruction\nSecond instruction\n</system-reminder>";
+
+  test("collapses reminder contents into a one-line summary by default", () => {
+    expect(formatSystemReminderBlock(reminder, false)).toBe(
+      "▸ System reminder · 2 lines (ctrl+r to expand)",
+    );
+  });
+
+  test("preserves the complete reminder when expanded", () => {
+    expect(formatSystemReminderBlock(reminder, true)).toBe(
+      `▾ System reminder (ctrl+r to collapse)\n${reminder}`,
+    );
   });
 });
 

@@ -1,4 +1,6 @@
-import { Box, Static } from "ink";
+import { Box, Static, useInput } from "ink";
+import { useSyncExternalStore } from "react";
+import { CLEAR_SCREEN_AND_HOME } from "@/cli/app/constants";
 import { ApprovalPreview } from "@/cli/components/ApprovalPreview";
 import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
 import { BashCommandMessage } from "@/cli/components/BashCommandMessage";
@@ -11,6 +13,14 @@ import { SubagentGroupStatic } from "@/cli/components/SubagentGroupStatic";
 import { Text } from "@/cli/components/Text";
 import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
 import { TrajectorySummary } from "@/cli/components/TrajectorySummary";
+import {
+  getSystemRemindersExpanded,
+  getThinkingExpanded,
+  subscribeToSystemReminderDisplay,
+  subscribeToThinkingDisplay,
+  toggleSystemReminderDisplay,
+  toggleThinkingDisplay,
+} from "@/cli/components/transcript-display-state";
 import { UserMessage } from "@/cli/components/UserMessageRich";
 import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
@@ -40,9 +50,24 @@ export function StaticTranscript({
    *  remounting on every tool call and re-printing history). */
   lastShellToolCallId?: string;
 }) {
+  const systemRemindersExpanded = useSyncExternalStore(
+    subscribeToSystemReminderDisplay,
+    getSystemRemindersExpanded,
+  );
+  const thinkingExpanded = useSyncExternalStore(
+    subscribeToThinkingDisplay,
+    getThinkingExpanded,
+  );
+  useInput((input, key) => {
+    if (!key.ctrl || (input !== "r" && input !== "t")) return;
+    if (process.stdout?.isTTY) process.stdout.write(CLEAR_SCREEN_AND_HOME);
+    if (input === "r") toggleSystemReminderDisplay();
+    if (input === "t") toggleThinkingDisplay();
+  });
+
   return (
     <Static
-      key={`${renderEpoch}-${hiddenToolCallId ?? ""}`}
+      key={`${renderEpoch}-${hiddenToolCallId ?? ""}-${systemRemindersExpanded}-${thinkingExpanded}`}
       items={items}
       style={{ flexDirection: "column" }}
     >
@@ -53,9 +78,13 @@ export function StaticTranscript({
               {item.kind === "welcome" ? (
                 <WelcomeScreen loadingState="ready" {...item.snapshot} />
               ) : item.kind === "user" ? (
-                <UserMessage line={item} prompt={statusLinePrompt} />
+                <UserMessage
+                  line={item}
+                  prompt={statusLinePrompt}
+                  systemRemindersExpanded={systemRemindersExpanded}
+                />
               ) : item.kind === "reasoning" ? (
-                <ReasoningMessage line={item} />
+                <ReasoningMessage line={item} expanded={thinkingExpanded} />
               ) : item.kind === "assistant" ? (
                 <AssistantMessage line={item} />
               ) : item.kind === "tool_call" ? (

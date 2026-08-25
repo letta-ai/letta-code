@@ -153,6 +153,8 @@ export type Line =
       phase: "streaming" | "finished";
       isContinuation?: boolean; // true for split continuation lines (no header)
       messageId?: string; // canonical backend message.id when known
+      startedAtMs?: number;
+      durationMs?: number;
     }
   | {
       kind: "assistant";
@@ -448,7 +450,6 @@ export function upsertStatusLine(
 // Mark a line as finished if it has a phase (immutable update)
 function markAsFinished(b: Buffers, id: string) {
   const line = b.byId.get(id);
-  // console.log(`[MARK_FINISHED] Called for ${id}, line exists: ${!!line}, kind: ${line?.kind}, phase: ${(line as any)?.phase}`);
   if (line && "phase" in line && line.phase === "streaming") {
     const updatedLine =
       line.kind === "reasoning"
@@ -456,10 +457,14 @@ function markAsFinished(b: Buffers, id: string) {
             ...line,
             text: trimFinishedReasoningText(line.text),
             phase: "finished" as const,
+            durationMs:
+              line.durationMs ??
+              (line.startedAtMs === undefined
+                ? undefined
+                : Math.max(0, Date.now() - line.startedAtMs)),
           }
         : { ...line, phase: "finished" as const };
     b.byId.set(id, updatedLine);
-    // console.log(`[MARK_FINISHED] Successfully marked ${id} as finished`);
 
     // Track last reasoning content for hooks (PostToolUse and Stop will include it)
     if (
@@ -477,8 +482,6 @@ function markAsFinished(b: Buffers, id: string) {
     ) {
       b.lastAssistantMessage = updatedLine.text;
     }
-  } else {
-    // console.log(`[MARK_FINISHED] Did NOT mark ${id} as finished (conditions not met)`);
   }
 }
 
@@ -932,11 +935,6 @@ export function onChunk(
     return;
   }
 
-  // TODO remove once SDK v1 has proper typing for in-stream errors
-  // Check for streaming error objects (not typed in SDK but emitted by backend)
-  // Note: Error handling moved to catch blocks in App.tsx and headless.ts
-  // The SDK now throws APIError when it sees event: error, so chunks never have error property
-
   switch (chunk.message_type) {
     case "reasoning_message": {
       const chunkWithIds = chunk as LettaStreamingResponse & {
@@ -944,9 +942,7 @@ export function onChunk(
         otid?: string;
       };
       const id = resolveReasoningLineId(b, chunkWithIds);
-      // console.log(`[REASONING] Received chunk with otid=${id}, delta="${chunk.reasoning?.substring(0, 50)}..."`);
       if (!id) {
-        // console.log(`[REASONING] No otid, breaking`);
         break;
       }
 
@@ -962,6 +958,7 @@ export function onChunk(
         text: "",
         phase: "streaming",
         messageId,
+        startedAtMs: Date.now(),
       }));
       if (delta) {
         const newText = normalizeReasoningSectionBoundaries(line.text + delta);
@@ -979,7 +976,6 @@ export function onChunk(
       } else if (messageId && line.messageId !== messageId) {
         b.byId.set(id, { ...line, messageId });
       }
-      // console.log(`[REASONING] Updated ${id}, textLen=${newText.length}`);
       break;
     }
 

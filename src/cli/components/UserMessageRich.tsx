@@ -23,6 +23,26 @@ type RenderedBlockLine = {
   highlighted: boolean;
 };
 
+export function formatSystemReminderBlock(
+  text: string,
+  expanded: boolean,
+): string {
+  const content = text
+    .replace(SYSTEM_REMINDER_OPEN, "")
+    .replace(SYSTEM_REMINDER_CLOSE, "")
+    .replace(SYSTEM_ALERT_OPEN, "")
+    .replace(SYSTEM_ALERT_CLOSE, "")
+    .trim();
+  const lineCount = content ? content.split("\n").length : 0;
+
+  if (expanded) {
+    return `▾ System reminder (ctrl+r to collapse)\n${text}`;
+  }
+
+  const lineLabel = lineCount === 1 ? "1 line" : `${lineCount} lines`;
+  return `▸ System reminder · ${lineLabel} (ctrl+r to expand)`;
+}
+
 function getCurrentStdoutColumns(): number | null {
   if (typeof process === "undefined") return null;
   const columns = (process.stdout as NodeJS.WriteStream | undefined)?.columns;
@@ -262,7 +282,15 @@ export function renderBlock(
  * - System-reminder parts are shown plain (no highlight), user parts highlighted
  */
 export const UserMessage = memo(
-  ({ line, prompt }: { line: UserLine; prompt?: string }) => {
+  ({
+    line,
+    prompt,
+    systemRemindersExpanded = false,
+  }: {
+    line: UserLine;
+    prompt?: string;
+    systemRemindersExpanded?: boolean;
+  }) => {
     const trackedColumns = useTerminalWidth();
     const columns = getCurrentStdoutColumns() ?? trackedColumns;
     const promptPrefix = `${prompt || CLI_GLYPHS.prompt} `;
@@ -290,7 +318,9 @@ export const UserMessage = memo(
         allLines.push({ text: "", highlighted: false });
       }
       const blockLines = renderBlock(
-        block.text,
+        block.isSystemReminder
+          ? formatSystemReminderBlock(block.text, systemRemindersExpanded)
+          : block.text,
         contentWidth,
         columns,
         !block.isSystemReminder,

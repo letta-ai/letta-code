@@ -377,6 +377,28 @@ describe("accumulator usage statistics", () => {
     expect(buffers.byId.get("reasoning-otid-1")).toBeUndefined();
   });
 
+  test("records elapsed time when reasoning finishes", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "timed-reasoning",
+      reasoning: "Considering the response",
+    } as unknown as LettaStreamingResponse);
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "timed-assistant",
+      content: [{ type: "text", text: "Done" }],
+    } as unknown as LettaStreamingResponse);
+
+    const line = buffers.byId.get("timed-reasoning");
+    expect(line?.kind).toBe("reasoning");
+    if (line?.kind !== "reasoning") throw new Error("missing reasoning line");
+    expect(line.phase).toBe("finished");
+    expect(line.startedAtMs).toBeNumber();
+    expect(line.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
   test("keeps one reasoning line when stream transitions otid -> both -> id", () => {
     const buffers = createBuffers();
 

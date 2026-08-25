@@ -46,7 +46,7 @@ import { PendingApprovalStub } from "@/cli/components/PendingApprovalStub";
 import { PersonalitySelector } from "@/cli/components/PersonalitySelector";
 import { PinDialog } from "@/cli/components/PinDialog";
 import { ProviderSelector } from "@/cli/components/ProviderSelector";
-import { ReasoningMessage } from "@/cli/components/ReasoningMessageRich";
+import { LiveReasoningMessage } from "@/cli/components/ReasoningMessageRich";
 import { SkillsDialog } from "@/cli/components/SkillsDialog";
 import { SleeptimeSelector } from "@/cli/components/SleeptimeSelector";
 import { StatusMessage } from "@/cli/components/StatusMessage";
@@ -601,7 +601,7 @@ export function AppView(props: AppViewProps) {
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} prompt={statusLinePrompt} />
                         ) : ln.kind === "reasoning" ? (
-                          <ReasoningMessage line={ln} />
+                          <LiveReasoningMessage line={ln} />
                         ) : ln.kind === "assistant" ? (
                           <AssistantMessage line={ln} />
                         ) : ln.kind === "tool_call" &&
