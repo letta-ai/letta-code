@@ -9,8 +9,6 @@
  * it. Nothing here persists across CLI restarts.
  */
 
-import fs from "node:fs";
-import os from "node:os";
 import { useSyncExternalStore } from "react";
 
 type ReasoningSpan = { startedAt: number; endedAt?: number };
@@ -18,30 +16,12 @@ type ReasoningSpan = { startedAt: number; endedAt?: number };
 const spans = new Map<string, ReasoningSpan>();
 const aliases = new Map<string, string>();
 
-/**
- * Optional low-level trace for diagnosing timer freezes, written straight
- * to a file so it can never interfere with terminal rendering. Enable with
- * LETTA_REASONING_TICK_DEBUG=1; the path is printed once when enabled.
- */
-let traceSink: ((line: string) => void) | undefined;
-function trace(line: string): void {
-  if (!process.env["LETTA_REASONING_TICK_DEBUG"]) return;
-  if (!traceSink) {
-    const path = `${os.tmpdir()}/reasoning-tick-debug.log`;
-    fs.appendFileSync(path, `\n=== session ${new Date().toISOString()} ===\n`);
-    traceSink = (l) => fs.appendFileSync(path, l);
-    traceSink(`[sink] writing to ${path}`);
-  }
-  traceSink(`${Date.now() % 100000} ${line}`);
-}
-
 /** First chunk of a block arrived; start its timer (idempotent). */
 export function noteReasoningStart(blockId: string, messageId?: string): void {
   let span = spans.get(blockId);
   if (!span) {
     span = { startedAt: Date.now() };
     spans.set(blockId, span);
-    trace(`start block=${blockId} msg=${messageId ?? "-"}`);
   }
   if (messageId) aliases.set(messageId, blockId);
 }
@@ -51,7 +31,6 @@ export function noteReasoningEnd(blockId: string): void {
   const span = spans.get(blockId);
   if (span && span.endedAt === undefined) {
     span.endedAt = Date.now();
-    trace(`end block=${blockId}`);
   }
 }
 
@@ -59,11 +38,6 @@ export function noteReasoningEnd(blockId: string): void {
 export function reasoningSpanOf(key?: string): ReasoningSpan | undefined {
   if (!key) return undefined;
   return spans.get(key) ?? spans.get(aliases.get(key) ?? "");
-}
-
-/** Render-site trace helper (no-op without LETTA_REASONING_TICK_DEBUG). */
-export function traceRender(label: string, detail: string): void {
-  trace(`render ${label} ${detail}`);
 }
 
 /**
@@ -83,7 +57,6 @@ function startTicker(): void {
   tickerStarted = true;
   globalThis.setInterval(() => {
     tickCount += 1;
-    trace(`tick=${tickCount} listeners=${tickListeners.size}`);
     for (const listener of tickListeners) listener();
   }, 1000);
 }
@@ -91,10 +64,8 @@ function startTicker(): void {
 function subscribeTick(listener: () => void): () => void {
   startTicker();
   tickListeners.add(listener);
-  trace(`subscribe listeners=${tickListeners.size}`);
   return () => {
     tickListeners.delete(listener);
-    trace(`unsubscribe listeners=${tickListeners.size}`);
   };
 }
 
