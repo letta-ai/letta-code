@@ -87,9 +87,9 @@ export function recordAnalysis(
   ].slice(0, HISTORY_LIMIT);
 
   const advancesCursor =
-    options.analysis.is_adjacent_release &&
+    options.analysis.is_latest_release &&
     entry.previous_version === state.audit_cursor_version &&
-    (entry.outcome === "no_upgrade" || entry.outcome === "needs_human_review");
+    entry.outcome !== "error";
 
   return {
     audit_cursor_version: advancesCursor
@@ -123,8 +123,7 @@ export function hasCompletedRange(
     (entry) =>
       entry.previous_version === previousVersion &&
       entry.version === currentVersion &&
-      (entry.outcome === "no_upgrade" ||
-        entry.outcome === "needs_human_review"),
+      entry.outcome !== "error",
   );
 }
 
@@ -134,22 +133,11 @@ export function getPendingPrForCursor(
   return (
     state.processed.find(
       (entry) =>
-        entry.previous_version === state.audit_cursor_version &&
+        entry.version === state.audit_cursor_version &&
         entry.outcome === "pr_created" &&
         entry.pr_url,
     ) ?? null
   );
-}
-
-export function advanceMergedPr(
-  state: TrackerState,
-  currentVersion: string,
-): TrackerState {
-  const pending = getPendingPrForCursor(state);
-  if (!pending || pending.version !== currentVersion) {
-    throw new Error(`No pending pi-ai PR for ${currentVersion}`);
-  }
-  return { ...state, audit_cursor_version: currentVersion };
 }
 
 export function renderTrackerBody(state: TrackerState): string {
@@ -166,7 +154,7 @@ export function renderTrackerBody(state: TrackerState): string {
     "",
     "## Hidden state",
     "",
-    "The workflow uses the hidden JSON block below for ordered release processing and dedupe.",
+    "The workflow uses the hidden JSON block below for cumulative release processing and dedupe.",
     "",
     serializeTrackerState(normalized),
   ].join("\n")}\n`;
@@ -193,12 +181,12 @@ function renderTable(state: TrackerState): string {
   if (entries.length === 0) return "_No pi-ai releases reviewed yet._";
 
   const rows = [
-    "| Release | Installed | Outcome | PR | Notes |",
+    "| Range | Installed | Outcome | PR | Notes |",
     "|---|---|---|---|---|",
   ];
   for (const entry of entries) {
     rows.push(
-      `| [${entry.version}](${entry.compare_url}) | ${entry.installed_version} | ${entry.outcome} | ${renderPr(entry.pr_url)} | ${escapeTable(entry.notes)} |`,
+      `| [${entry.previous_version}...${entry.version}](${entry.compare_url}) | ${entry.installed_version} | ${entry.outcome} | ${renderPr(entry.pr_url)} | ${escapeTable(entry.notes)} |`,
     );
   }
   return rows.join("\n");

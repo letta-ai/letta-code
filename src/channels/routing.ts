@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { getChannelDir, getChannelRoutingPath } from "./config";
+import { resolveChannelRouteThreadKey } from "./route-thread-key";
 import { normalizeTelegramChatId } from "./telegram/chat-id";
 import type { ChannelRoute, InboundChannelMessage } from "./types";
 
@@ -35,18 +36,13 @@ function notifyChannelRoutesChanged(channelId: string): void {
   for (const listener of routeChangeListeners) listener(channelId);
 }
 
-function normalizeThreadId(threadId?: string | null): string {
-  const trimmed = threadId?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : "__root__";
-}
-
 function routeKey(
   channel: string,
   chatId: string,
   accountId?: string,
   threadId?: string | null,
 ): string {
-  return `${channel}:${normalizeAccountId(accountId)}:${chatId}:${normalizeThreadId(threadId)}`;
+  return `${channel}:${normalizeAccountId(accountId)}:${chatId}:${resolveChannelRouteThreadKey(threadId)}`;
 }
 
 // ── Load/save ─────────────────────────────────────────────────────
