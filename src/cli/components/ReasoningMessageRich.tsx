@@ -3,6 +3,7 @@ import { memo } from "react";
 import { useReasoningDisplay } from "@/cli/app/use-reasoning-display";
 import {
   reasoningSpanOf,
+  traceRender,
   useReasoningTick,
 } from "@/cli/helpers/reasoning-timing";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
@@ -40,6 +41,7 @@ function formatElapsed(ms: number): string {
  */
 function TickingElapsed({ startedAt }: { startedAt: number }) {
   useReasoningTick();
+  traceRender("ticking", `startedAt=${startedAt}`);
   return <Text dimColor>({formatElapsed(Date.now() - startedAt)})</Text>;
 }
 
@@ -51,8 +53,10 @@ function Elapsed({
   endedAt?: number;
 }) {
   if (!startedAt) return null;
-  if (endedAt !== undefined)
+  if (endedAt !== undefined) {
+    traceRender("frozen", `dur=${endedAt - startedAt}`);
     return <Text dimColor>({formatElapsed(endedAt - startedAt)})</Text>;
+  }
   return <TickingElapsed startedAt={startedAt} />;
 }
 

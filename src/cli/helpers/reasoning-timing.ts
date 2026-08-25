@@ -61,6 +61,11 @@ export function reasoningSpanOf(key?: string): ReasoningSpan | undefined {
   return spans.get(key) ?? spans.get(aliases.get(key) ?? "");
 }
 
+/** Render-site trace helper (no-op without LETTA_REASONING_TICK_DEBUG). */
+export function traceRender(label: string, detail: string): void {
+  trace(`render ${label} ${detail}`);
+}
+
 /**
  * Single shared one-second ticker for all visible elapsed timers.
  *
