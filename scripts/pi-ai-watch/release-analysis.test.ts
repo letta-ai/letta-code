@@ -3,10 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  areAdjacentStableReleases,
   compareStableVersions,
-  extractChangelogSection,
-  findNextStableRelease,
+  extractChangelogRange,
+  findLatestStableReleaseAfter,
   type PackageRelease,
   parseRegistryMetadata,
   readInstalledVersion,
@@ -59,24 +58,20 @@ describe("pi-ai npm releases", () => {
     ).toThrow("missing publication time for 0.82.1");
   });
 
-  test("selects exactly the next stable version after the cursor", () => {
+  test("selects the latest stable version after the cursor", () => {
     const releases = releaseList("0.82.1", "0.83.0", "0.84.0");
-    expect(findNextStableRelease(releases, "0.82.1")?.version).toBe("0.83.0");
-    expect(findNextStableRelease(releases, "0.84.0")).toBeNull();
-    expect(() => findNextStableRelease(releases, "0.80.0")).toThrow(
+    expect(findLatestStableReleaseAfter(releases, "0.82.1")?.version).toBe(
+      "0.84.0",
+    );
+    expect(findLatestStableReleaseAfter(releases, "0.84.0")).toBeNull();
+    expect(() => findLatestStableReleaseAfter(releases, "0.80.0")).toThrow(
       "Could not find pi-ai cursor release 0.80.0",
     );
-  });
-
-  test("recognizes only adjacent release pairs", () => {
-    const releases = releaseList("0.82.1", "0.83.0", "0.84.0");
-    expect(areAdjacentStableReleases(releases, "0.82.1", "0.83.0")).toBe(true);
-    expect(areAdjacentStableReleases(releases, "0.82.1", "0.84.0")).toBe(false);
   });
 });
 
 describe("pi-ai release evidence", () => {
-  test("extracts only the requested changelog section", () => {
+  test("extracts the cumulative changelog after the cursor", () => {
     const changelog = `# Changelog
 
 ## [0.84.0] - 2026-08-06
@@ -88,16 +83,27 @@ describe("pi-ai release evidence", () => {
 ## [0.83.0] - 2026-07-29
 
 - Previous feature.
+
+## [0.82.1] - 2026-07-20
+
+- Cursor release.
 `;
     expect(
-      extractChangelogSection(changelog, "0.84.0"),
+      extractChangelogRange(changelog, "0.82.1", "0.84.0"),
     ).toBe(`## [0.84.0] - 2026-08-06
 
 ### Added
 
-- Current feature.`);
-    expect(() => extractChangelogSection(changelog, "0.82.1")).toThrow(
-      "Could not find pi-ai changelog section 0.82.1",
+- Current feature.
+
+## [0.83.0] - 2026-07-29
+
+- Previous feature.`);
+    expect(() => extractChangelogRange(changelog, "0.80.0", "0.84.0")).toThrow(
+      "Could not find pi-ai changelog section 0.80.0",
+    );
+    expect(() => extractChangelogRange(changelog, "0.82.1", "0.85.0")).toThrow(
+      "Could not find pi-ai changelog section 0.85.0",
     );
   });
 

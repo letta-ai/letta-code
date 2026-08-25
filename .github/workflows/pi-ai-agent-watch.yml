@@ -43,7 +43,7 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Detect next stable pi-ai release
+      - name: Detect latest stable pi-ai release
         id: detect
         env:
           GH_TOKEN: ${{ github.token }}
@@ -186,4 +186,4 @@ jobs:
             --tracker-issue "${{ steps.detect.outputs.tracker_issue }}" \
             --analysis-file "$RUNNER_TEMP/pi-ai-watch-analysis.json" \
             --outcome error \
-            --notes "Amelia review failed before recording an outcome; retry this release"
+            --notes "Amelia review failed before recording an outcome; retry this release range"

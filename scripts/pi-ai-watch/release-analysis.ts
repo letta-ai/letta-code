@@ -42,11 +42,14 @@ export interface PiAiWatchAnalysis {
   installed_version: string;
   previous_version: string;
   current_version: string;
-  is_adjacent_release: boolean;
+  is_latest_release: boolean;
   published_at: string;
   integrity: string | null;
   tarball_url: string | null;
+  previous_git_head: string | null;
   git_head: string | null;
+  previous_tag_commit: string;
+  current_tag_commit: string;
   release_url: string;
   compare_url: string;
   changelog_md: string;
@@ -79,6 +82,11 @@ export async function analyzePiAiRelease(
       `Could not find previous pi-ai release before ${current.version}`,
     );
   }
+  if (compareStableVersions(previous.version, current.version) >= 0) {
+    throw new Error(
+      `Previous pi-ai release ${previous.version} must precede ${current.version}`,
+    );
+  }
 
   const installedVersion = options.installedVersion ?? readInstalledVersion();
   const previousTag = `v${previous.version}`;
@@ -86,11 +94,13 @@ export async function analyzePiAiRelease(
   const temp = mkdtempSync(join(tmpdir(), "pi-ai-watch-"));
   try {
     const repoDir = clonePi(temp);
-    fetchTag(repoDir, previousTag);
-    fetchTag(repoDir, currentTag);
-    verifyTagMatchesPackage(repoDir, previousTag, previous);
-    verifyTagMatchesPackage(repoDir, currentTag, current);
-    const changelog = showFile(repoDir, currentTag, "packages/ai/CHANGELOG.md");
+    const previousSource = resolveReleaseSource(repoDir, previousTag, previous);
+    const currentSource = resolveReleaseSource(repoDir, currentTag, current);
+    const changelog = showFile(
+      repoDir,
+      currentSource.sourceCommit,
+      "packages/ai/CHANGELOG.md",
+    );
     if (changelog === null) {
       throw new Error(`packages/ai/CHANGELOG.md is missing at ${currentTag}`);
     }
@@ -100,24 +110,35 @@ export async function analyzePiAiRelease(
       installed_version: installedVersion,
       previous_version: previous.version,
       current_version: current.version,
-      is_adjacent_release: areAdjacentStableReleases(
-        releases,
-        previous.version,
-        current.version,
-      ),
+      is_latest_release: current.version === releases.at(-1)?.version,
       published_at: current.published_at,
       integrity: current.integrity,
       tarball_url: current.tarball_url,
+      previous_git_head: previous.git_head,
       git_head: current.git_head,
+      previous_tag_commit: previousSource.tagCommit,
+      current_tag_commit: currentSource.tagCommit,
       release_url: `https://github.com/${PI_AI_REPO}/releases/tag/${currentTag}`,
-      compare_url: `https://github.com/${PI_AI_REPO}/compare/${previousTag}...${currentTag}`,
-      changelog_md: extractChangelogSection(changelog, current.version),
-      changed_files: changedFiles(repoDir, previousTag, currentTag),
-      diff_stat: diffStat(repoDir, previousTag, currentTag),
+      compare_url: `https://github.com/${PI_AI_REPO}/compare/${previousSource.sourceCommit}...${currentSource.sourceCommit}`,
+      changelog_md: extractChangelogRange(
+        changelog,
+        previous.version,
+        current.version,
+      ),
+      changed_files: changedFiles(
+        repoDir,
+        previousSource.sourceCommit,
+        currentSource.sourceCommit,
+      ),
+      diff_stat: diffStat(
+        repoDir,
+        previousSource.sourceCommit,
+        currentSource.sourceCommit,
+      ),
       package_json_diff: diffPreview(
         repoDir,
-        previousTag,
-        currentTag,
+        previousSource.sourceCommit,
+        currentSource.sourceCommit,
         "packages/ai/package.json",
       ),
       workflow_run_url: workflowRunUrl(),
@@ -182,7 +203,7 @@ export function readInstalledVersion(lockfilePath = "bun.lock"): string {
   return match[1];
 }
 
-export function findNextStableRelease(
+export function findLatestStableReleaseAfter(
   releases: PackageRelease[],
   cursorVersion: string,
 ): PackageRelease | null {
@@ -192,33 +213,33 @@ export function findNextStableRelease(
   if (index < 0) {
     throw new Error(`Could not find pi-ai cursor release ${cursorVersion}`);
   }
-  return releases[index + 1] ?? null;
+  return index === releases.length - 1 ? null : (releases.at(-1) ?? null);
 }
 
-export function areAdjacentStableReleases(
-  releases: PackageRelease[],
+export function extractChangelogRange(
+  changelog: string,
   previousVersion: string,
   currentVersion: string,
-): boolean {
-  return (
-    findPreviousStableRelease(releases, currentVersion)?.version ===
-    previousVersion
-  );
-}
-
-export function extractChangelogSection(
-  changelog: string,
-  version: string,
 ): string {
-  const heading = new RegExp(`^## \\[${escapeRegExp(version)}\\].*$`, "m");
-  const match = heading.exec(changelog);
-  if (!match)
-    throw new Error(`Could not find pi-ai changelog section ${version}`);
-  const start = match.index;
-  const remaining = changelog.slice(start + match[0].length);
-  const next = /^## \[/m.exec(remaining);
-  const end = next ? start + match[0].length + next.index : changelog.length;
-  return changelog.slice(start, end).trim();
+  const currentHeading = new RegExp(
+    `^## \\[${escapeRegExp(currentVersion)}\\].*$`,
+    "m",
+  ).exec(changelog);
+  if (!currentHeading) {
+    throw new Error(`Could not find pi-ai changelog section ${currentVersion}`);
+  }
+  const previousHeading = new RegExp(
+    `^## \\[${escapeRegExp(previousVersion)}\\].*$`,
+    "m",
+  ).exec(changelog.slice(currentHeading.index + currentHeading[0].length));
+  if (!previousHeading) {
+    throw new Error(
+      `Could not find pi-ai changelog section ${previousVersion}`,
+    );
+  }
+  const end =
+    currentHeading.index + currentHeading[0].length + previousHeading.index;
+  return changelog.slice(currentHeading.index, end).trim();
 }
 
 function findPreviousStableRelease(
@@ -276,18 +297,37 @@ function fetchTag(repoDir: string, tag: string): void {
   );
 }
 
-function verifyTagMatchesPackage(
+function resolveReleaseSource(
   repoDir: string,
   tag: string,
   release: PackageRelease,
-): void {
-  if (!release.git_head) return;
+): { sourceCommit: string; tagCommit: string } {
+  fetchTag(repoDir, tag);
   const tagCommit = git(["rev-list", "-n", "1", tag], repoDir).trim();
-  if (tagCommit !== release.git_head) {
+  const sourceCommit = release.git_head ?? tagCommit;
+  if (sourceCommit !== tagCommit) {
+    fetchCommit(repoDir, sourceCommit);
+  }
+  const packageJson = showFile(
+    repoDir,
+    sourceCommit,
+    "packages/ai/package.json",
+  );
+  if (packageJson === null) {
+    throw new Error(`packages/ai/package.json is missing at ${sourceCommit}`);
+  }
+  const sourceVersion = (JSON.parse(packageJson) as { version?: unknown })
+    .version;
+  if (sourceVersion !== release.version) {
     throw new Error(
-      `pi-ai npm ${release.version} gitHead ${release.git_head} does not match ${tag} commit ${tagCommit}`,
+      `pi-ai npm ${release.version} source ${sourceCommit} declares version ${String(sourceVersion)}`,
     );
   }
+  return { sourceCommit, tagCommit };
+}
+
+function fetchCommit(repoDir: string, commit: string): void {
+  git(["fetch", "--filter=blob:none", "origin", commit], repoDir);
 }
 
 function showFile(repoDir: string, tag: string, path: string): string | null {
