@@ -119,10 +119,9 @@ export function advanceCodexAuditCursor(
   state: TrackerState,
   previousTag: string,
   currentTag: string,
-  isAdjacentRelease: boolean,
+  isLatestRelease: boolean,
 ): TrackerState {
-  if (!isAdjacentRelease || state.audit_cursor_tag !== previousTag)
-    return state;
+  if (!isLatestRelease || state.audit_cursor_tag !== previousTag) return state;
   if (!hasProcessedRange(state, previousTag, currentTag)) {
     throw new Error(
       `Cannot advance Codex audit cursor without terminal ${previousTag}...${currentTag}`,
@@ -149,26 +148,26 @@ export function recordAnalysis(
       compare_url: options.analysis.compare_url,
       workflow_run_url: options.analysis.workflow_run_url,
     },
-    options.analysis.is_adjacent_release,
+    options.analysis.is_latest_release,
   );
 }
 
 export function upsertTrackerEntry(
   state: TrackerState,
   entry: TrackerEntry,
-  advanceAuditCursor = true,
+  isLatestRelease = true,
 ): TrackerState {
   let auditCursorTag = state.audit_cursor_tag;
-  if (auditCursorTag === null && !advanceAuditCursor) {
+  if (auditCursorTag === null && !isLatestRelease) {
     auditCursorTag = entry.previous_tag;
   } else if (
-    advanceAuditCursor &&
+    isLatestRelease &&
     entry.outcome === "error" &&
     auditCursorTag === null
   ) {
     auditCursorTag = entry.previous_tag;
   } else if (
-    advanceAuditCursor &&
+    isLatestRelease &&
     isTerminalOutcome(entry.outcome) &&
     (auditCursorTag === null || entry.previous_tag === auditCursorTag)
   ) {
