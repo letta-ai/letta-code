@@ -34,9 +34,15 @@ function formatElapsed(ms: number): string {
 }
 
 /**
- * Elapsed time for a reasoning block. Driven by the shared one-second
- * ticker (see reasoning-timing.ts) — no per-component timers.
+ * Elapsed time for a still-streaming block: the only case that needs the
+ * shared ticker. Finished blocks render a frozen duration with no
+ * subscription at all — a long transcript must not re-render every second.
  */
+function TickingElapsed({ startedAt }: { startedAt: number }) {
+  useReasoningTick();
+  return <Text dimColor>({formatElapsed(Date.now() - startedAt)})</Text>;
+}
+
 function Elapsed({
   startedAt,
   endedAt,
@@ -44,11 +50,10 @@ function Elapsed({
   startedAt?: number;
   endedAt?: number;
 }) {
-  useReasoningTick();
-
   if (!startedAt) return null;
-  const end = endedAt ?? Date.now();
-  return <Text dimColor>({formatElapsed(end - startedAt)})</Text>;
+  if (endedAt !== undefined)
+    return <Text dimColor>({formatElapsed(endedAt - startedAt)})</Text>;
+  return <TickingElapsed startedAt={startedAt} />;
 }
 
 /**
