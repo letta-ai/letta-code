@@ -1,6 +1,6 @@
 ---
 name: self-configuration
-description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, and local runtime settings. Use when the user asks how this agent or conversation is configured, or asks you to change how you behave or how the harness runs you.
+description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, agent secrets, and local runtime settings. Use when the user asks how this agent or conversation is configured, or asks you to change how you behave or how the harness runs you.
 license: MIT
 ---
 
@@ -22,6 +22,7 @@ The important part is choosing the right layer. Do not smear a preference into d
 | Skills | Reusable procedural knowledge or bundled scripts | Load `creating-skills` or `acquiring-skills` |
 | Channels | Slack/Discord/Telegram/WhatsApp/Signal accounts, pairing, routing, listener state | Use `letta channels` or channel commands |
 | Schedules | Reminders and recurring prompts | Load `scheduling-tasks` and use `letta cron` |
+| Agent secrets | Per-agent `$NAME` credential values for shell commands | Use `letta secret` (or `/secret` in a session) |
 
 Decision rule: if the model should remember and reason about it, use memory. If the runtime must enforce it or route it before the model decides anything, use settings, API fields, mods, channels, or schedules.
 
@@ -369,6 +370,24 @@ Before connecting, verify whether the target agent/backend is Letta Cloud or loc
 Never print provider keys. Shell expansion such as `--api-key "$OPENAI_API_KEY"` still puts the resolved secret in process argv, where process listings may expose it. Prefer the command's interactive secret prompt in a trusted TTY. If no safer input path exists, stop for explicit user approval rather than passing a provider secret autonomously. Browser login, device-code confirmation, or account consent also requires human consent; do not claim success before it completes.
 
 After connecting, verify the provider/model from the same backend and process that will run the agent. Do not infer success from a saved credential alone.
+
+## Agent secrets
+
+Agent-scoped secrets hold credential values that are referenced as `$NAME` in shell commands. Cloud agents store them server-side on the agent; local agents use OS secure storage. The harness substitutes `$NAME` at exec time and scrubs values from tool output, so values never enter agent context.
+
+```bash
+letta secret list                                   # names only, never values
+letta secret set GITHUB_TOKEN --env GITHUB_TOKEN    # ingest from the environment
+openssl rand -hex 32 | letta secret set WEBHOOK_TOKEN --stdin   # generate without seeing the value
+letta secret unset GITHUB_TOKEN                     # aliases: delete | remove | rm
+```
+
+Rules:
+
+- Pass the source variable *name* to `--env`, not `$NAME`. `--env $GITHUB_TOKEN` triggers harness substitution and places the resolved value in process arguments; `--env GITHUB_TOKEN` reads it from the CLI process environment without exposure.
+- Never echo secret values into tool output. Pipe generated credentials straight into `--stdin`.
+- Inside a session, `AGENT_ID`/`LETTA_AGENT_ID` resolves the target automatically; pass `--agent <agent-id>` otherwise.
+- A running session loads its secret cache at startup; CLI-side changes apply to new sessions. The `/secret` slash command manages the same store interactively and refreshes the live cache.
 
 ## Channels
 

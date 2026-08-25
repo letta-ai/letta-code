@@ -11,6 +11,7 @@ import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
 import { runModsSubcommand } from "./mods";
 import { runSandboxSubcommand } from "./sandbox";
+import { runSecretSubcommand } from "./secret";
 import { asLegacyAppServerCommand, runServerSubcommand } from "./server";
 import { runSetupSubcommand } from "./setup";
 import { runSharedMemorySubcommand } from "./shared-memory";
@@ -49,6 +50,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "mods":
     case "remote":
     case "sandbox":
+    case "secret":
     case "server":
     case "shared-memory":
     case "skills":
@@ -91,6 +93,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runModsSubcommand(rest);
     case "sandbox":
       return runSandboxSubcommand(rest);
+    case "secret":
+      return runSecretSubcommand(rest);
     case "teleport":
       return runTeleportSubcommand(rest);
     case "server":
