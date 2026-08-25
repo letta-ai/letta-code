@@ -111,12 +111,40 @@ const OPTION_LEFT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|7|8|9)D$/;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequences require ESC control character
 const OPTION_RIGHT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|7|8|9)C$/;
 
-function detectOptionWordDirection(sequence: string): WordDirection | null {
+// Kitty CSI-u modifiers use bit 0 as the base value, bit 1 for Alt, and
+// higher bits for Shift/Ctrl/Super/Meta. Caps Lock and Num Lock occupy bits
+// 6 and 7 and do not change the meaning of an Alt+b/f word movement.
+const CSI_U_LOCK_BITS = 64 | 128;
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequences require ESC control character
+const OPTION_WORD_CSI_U_PATTERN = /^\u001b\[(\d+);(\d+)(?::(\d+))?u$/;
+
+export function detectOptionWordDirection(
+  sequence: string,
+): WordDirection | null {
   if (!sequence.startsWith("\u001b")) return null;
   if (sequence === "\u001bb" || sequence === "\u001bB") return "left";
   if (sequence === "\u001bf" || sequence === "\u001bF") return "right";
   if (OPTION_LEFT_PATTERN.test(sequence)) return "left";
   if (OPTION_RIGHT_PATTERN.test(sequence)) return "right";
+
+  const csiU = sequence.match(OPTION_WORD_CSI_U_PATTERN);
+  if (!csiU) return null;
+
+  const codepoint = Number(csiU[1]);
+  const modifiers = Number(csiU[2]);
+  const event = csiU[3] === undefined ? 1 : Number(csiU[3]);
+
+  // Event 1 is a press and event 2 is a repeat. A release must not move the
+  // cursor, and unknown event values are rejected rather than guessed.
+  if (event !== 1 && event !== 2) return null;
+
+  // The base modifier value is 1, so Alt alone is 3. Ignore only the Kitty
+  // lock bits; Shift/Ctrl/Super/Hyper/Meta remain rejected.
+  if ((modifiers & ~CSI_U_LOCK_BITS) !== 3) return null;
+
+  if (codepoint === 98) return "left";
+  if (codepoint === 102) return "right";
   return null;
 }
 
