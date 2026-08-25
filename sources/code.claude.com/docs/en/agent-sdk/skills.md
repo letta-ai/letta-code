@@ -24,7 +24,7 @@ When using the Claude Agent SDK, skills are:
 Unlike subagents, which you can define in the [`agents` option](/docs/en/agent-sdk/subagents#programmatic-definition-recommended), you create skills as files on disk. The SDK doesn't provide a programmatic API for registering them.
 
 <Note>
-  Skills are discovered through the filesystem setting sources. With default `query()` options, the SDK loads user and project sources, so skills in `~/.claude/skills/`, `<cwd>/.claude/skills/`, and `.claude/skills/` in any parent directory of `<cwd>` up to the repository root are available. If you set `settingSources` explicitly, include `'user'` or `'project'` to keep skill discovery, or use the [`plugins` option](/docs/en/agent-sdk/plugins) to load skills from a specific path.
+  Skills are discovered through the filesystem setting sources. With default `query()` options, the SDK loads user and project sources, so skills in `~/.claude/skills/`, `<cwd>/.claude/skills/`, and `.claude/skills/` in any parent directory of `<cwd>` up to the repository root are available. The project source also covers `<dir>/.claude/skills/` in each directory you pass through `additionalDirectories` (TypeScript) or `add_dirs` (Python), because the SDK passes those directories to Claude Code as [`--add-dir`](/docs/en/skills#skills-from-additional-directories). If you set `settingSources` explicitly, include `'project'` to keep project and added-directory skills and `'user'` to keep your personal skills, or use the [`plugins` option](/docs/en/agent-sdk/plugins) to load skills from a specific path.
 </Note>
 
 ## Use skills with the Agent SDK
@@ -346,7 +346,7 @@ The skill's name also appears in the init message's `slash_commands` array.
 ## Pre-approve tools for skills
 
 <Note>
-  For project and personal skills, the `allowed-tools` frontmatter field applies only when you use the Claude Code CLI directly. In SDK sessions, manage tool approval for these skills through the `allowedTools` option (`allowed_tools` in Python) in your query configuration. Skills [synced from claude.ai](/docs/en/skills#how-claude-code-handles-the-frontmatter-of-a-synced-skill) follow their own frontmatter rules.
+  For project and personal skills, Claude Code applies the [`allowed-tools`](/docs/en/skills#pre-approve-tools-for-a-skill) frontmatter field in SDK sessions. You can also pre-approve tools for these skills through the `allowedTools` option (`allowed_tools` in Python) in your query configuration. Skills [synced from claude.ai](/docs/en/skills#how-claude-code-handles-the-frontmatter-of-a-synced-skill) follow their own frontmatter rules.
 </Note>
 
 Skills run with the session's tools. The example below pre-approves `Read`, `Grep`, and `Glob` with `allowedTools` (`allowed_tools` in Python), so Claude can inspect files while running the [security-check skill](#create-and-dispatch-your-first-skill) without stopping for approval:
@@ -487,6 +487,8 @@ Each SDK surfaces the rejection differently:
     ```
 
     An empty name reports `Skill names must be non-empty strings.`
+
+    Before TypeScript Agent SDK 0.3.221, the SDK didn't run this check.
   </Tab>
 
   <Tab title="Python">
@@ -497,6 +499,8 @@ Each SDK surfaces the rejection differently:
     ```
 
     An empty name reports `Skill names must be non-empty strings`.
+
+    Before Python Agent SDK 0.2.129, the SDK didn't run this check.
   </Tab>
 </Tabs>
 
@@ -506,7 +510,7 @@ For general skills troubleshooting, such as YAML syntax errors and debugging, se
 
 ## Next steps
 
-The [Claude Code skills guide](/docs/en/skills) covers authoring in depth. Its guidance applies to SDK sessions, with one exception: for project and personal skills, [Pre-approve tools for skills](#pre-approve-tools-for-skills) replaces the `allowed-tools` frontmatter field with the `allowedTools` option. Start with these sections:
+The [Claude Code skills guide](/docs/en/skills) covers authoring in depth. Its guidance applies to SDK sessions. Start with these sections:
 
 * [Frontmatter reference](/docs/en/skills#frontmatter-reference): every supported field
 * [Pass arguments to skills](/docs/en/skills#pass-arguments-to-skills): `$ARGUMENTS`, `$0`, `$1`, and skill stacking. The [full substitution table](/docs/en/skills#available-string-substitutions) adds named arguments and the `${CLAUDE_*}` variables

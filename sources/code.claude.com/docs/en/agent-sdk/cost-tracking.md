@@ -327,7 +327,9 @@ Track these separately from `input_tokens` to understand caching savings. In Typ
 
 ### Extend the prompt cache TTL to one hour
 
-Cache entries written by the SDK use a 5-minute TTL by default when you authenticate with an API key or run on Amazon Bedrock, Google Cloud's Agent Platform, Microsoft Foundry, or [Claude Platform on AWS](/docs/en/claude-platform-on-aws). If your workload runs many short sessions against the same system prompt and context with gaps longer than 5 minutes between them, the cache expires between sessions and each new session pays full input price.
+Your own turns fall in the [main conversation TTL bucket](/docs/en/prompt-caching#which-ttl-each-request-gets), together with the helpers Claude Code runs inline with them. The requests Claude Code makes outside that conversation, such as [subagents](/docs/en/agent-sdk/subagents), have a [separate TTL control](/docs/en/prompt-caching#choose-the-ttl-yourself).
+
+Cache entries for your own turns use a 5-minute TTL by default when you authenticate with an API key or run on Amazon Bedrock, Google Cloud's Agent Platform, Microsoft Foundry, or [Claude Platform on AWS](/docs/en/claude-platform-on-aws). If your workload runs many short sessions against the same system prompt and context with gaps longer than 5 minutes between them, the cache expires between sessions and each new session pays full input price.
 
 To request a 1-hour TTL on cache writes, set the [`ENABLE_PROMPT_CACHING_1H`](/docs/en/env-vars) environment variable. You can export it in your shell or container environment, or pass it through `options.env`.
 
@@ -371,7 +373,14 @@ The following example enables 1-hour TTL for an agent running on Amazon Bedrock.
   ```
 </CodeGroup>
 
-Cache writes with a 1-hour TTL are billed at a higher rate than 5-minute writes, so enabling this trades higher write cost for more cache reads. See [prompt caching pricing](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) for details. Claude subscription users within included usage receive the 1-hour TTL automatically without setting this variable. When you're drawing on [usage credits](https://support.claude.com/en/articles/12429409-extra-usage-for-paid-claude-plans), the SDK drops to the 5-minute TTL unless you set `ENABLE_PROMPT_CACHING_1H`.
+Cache writes with a 1-hour TTL are billed at a higher rate than 5-minute writes, so enabling this trades higher write cost for more cache reads. See [prompt caching pricing](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) for details. On a Claude subscription within your plan's included usage, you get the 1-hour TTL on your own turns, and on some of the helper requests Claude Code makes beside them, without setting this variable, and Claude Code drops those turns to the 5-minute TTL once you're drawing on [usage credits](https://support.claude.com/en/articles/12429409-extra-usage-for-paid-claude-plans).
+
+`ENABLE_PROMPT_CACHING_1H` asks for the 1-hour TTL on every request in both buckets. To choose a TTL for each bucket separately, use these controls instead. Each takes `5m` or `1h` and takes precedence over `ENABLE_PROMPT_CACHING_1H`:
+
+* Main conversation: the `CLAUDE_CODE_PROMPT_CACHE_TTL` [environment variable](/docs/en/env-vars), or the [`promptCacheTtl`](/docs/en/settings-reference#promptcachettl) setting
+* Everything else: the `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` environment variable, or the [`subagentPromptCacheTtl`](/docs/en/settings-reference#subagentpromptcachettl) setting
+
+Setting `promptCacheTtl` to `1h` keeps the 1-hour cache on the main conversation while you're drawing on usage credits. For the full precedence order, see [choose the TTL yourself](/docs/en/prompt-caching#choose-the-ttl-yourself).
 
 ## Related documentation
 

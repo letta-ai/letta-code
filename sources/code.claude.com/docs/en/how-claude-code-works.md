@@ -69,7 +69,7 @@ When you run `claude` in a directory, Claude Code gains access to:
 * **Your terminal.** Any command you could run: build tools, git, package managers, system utilities, scripts. If you can do it from the command line, Claude can too.
 * **Your git state.** Current branch, uncommitted changes, and recent commit history.
 * **Your [CLAUDE.md](/docs/en/memory).** A markdown file where you store project-specific instructions, conventions, and context that Claude should know every session.
-* **[Auto memory](/docs/en/memory#auto-memory).** Learnings Claude saves automatically as you work, like project patterns and your preferences. The first 200 lines or 25KB of MEMORY.md, whichever comes first, load at the start of each session.
+* **[Auto memory](/docs/en/memory#auto-memory).** Learnings Claude saves automatically as you work, like your preferences. The first 200 lines or 25KB of MEMORY.md, whichever comes first, load at the start of each session.
 * **Extensions you configure.** [MCP servers](/docs/en/mcp) for external services, [skills](/docs/en/skills) for workflows, [subagents](/docs/en/sub-agents) for delegated work, and [Claude in Chrome](/docs/en/chrome) for browser interaction.
 
 Because Claude sees your whole project, it can work across it. When you ask Claude to "fix the authentication bug," it searches for relevant files, reads multiple files to understand context, makes coordinated edits across them, runs tests to verify the fix, and commits the changes if you ask. This is different from inline code assistants that only see the current file.
@@ -130,7 +130,7 @@ To control what's preserved during compaction, add a "Compact Instructions" sect
 
 If a single file or tool output is so large that context refills immediately after each summary, Claude Code stops auto-compacting after a few attempts and shows an error instead of looping. See [Auto-compaction stops with a thrashing error](/docs/en/troubleshooting#auto-compaction-stops-with-a-thrashing-error) for recovery steps.
 
-Run `/context` to see what's using space. MCP tool definitions are deferred by default and loaded on demand via [tool search](/docs/en/mcp#scale-with-mcp-tool-search), so only tool names consume context until Claude uses a specific tool. Run `/mcp` to check per-server costs.
+Run `/context` to see what's using space. MCP tool definitions are deferred by default and loaded on demand via [tool search](/docs/en/mcp#scale-with-mcp-tool-search), so only tool names and server instructions consume context until Claude uses a specific tool.
 
 #### Manage context with skills and subagents
 
@@ -167,7 +167,7 @@ You can also allow specific commands in `.claude/settings.json` so Claude doesn'
 
 ## Work effectively with Claude Code
 
-These tips help you get better results from Claude Code.
+These tips help you get better results from Claude Code. For more on specific prompts, verification, and planning, see [Best practices](/docs/en/best-practices).
 
 ### Ask Claude Code for help
 
@@ -203,40 +203,6 @@ You can redirect Claude at any point without waiting for the turn to finish or s
 * **Press `Esc`** to stop Claude immediately. The running tool call is canceled and Claude waits for your next instruction. If you have messages queued, Claude Code [sends them next](/docs/en/interactive-mode#queue-messages-while-claude-works).
 * **Type a correction and press `Enter`** to send it without stopping the running tool. Claude reads it as soon as the current action completes and adjusts before deciding its next step.
 
-### Be specific upfront
-
-The more precise your initial prompt, the fewer corrections you'll need. Reference specific files, mention constraints, and point to example patterns.
-
-```text theme={null}
-The checkout flow is broken for users with expired cards.
-Check src/payments/ for the issue, especially token refresh.
-Write a failing test first, then fix it.
-```
-
-Vague prompts work, but you'll spend more time steering. Specific prompts like the one above often succeed on the first attempt.
-
-### Give Claude something to verify against
-
-Claude performs better when it can check its own work. Include test cases, paste screenshots of expected UI, or define the output you want.
-
-```text theme={null}
-Implement validateEmail. Test cases: 'user@example.com' → true,
-'invalid' → false, 'user@.com' → false. Run the tests after.
-```
-
-For visual work, paste a screenshot of the design and ask Claude to compare its implementation against it.
-
-### Explore before implementing
-
-For complex problems, separate research from coding. Press `Shift+Tab` until the status bar shows `⏸ plan mode on`, then ask Claude to analyze the codebase first:
-
-```text theme={null}
-Read src/auth/ and understand how we handle sessions.
-Then create a plan for adding OAuth support.
-```
-
-Review the plan, refine it through conversation, then let Claude implement. This two-phase approach produces better results than jumping straight to code.
-
 ### Delegate, don't dictate
 
 Think of delegating to a capable colleague. Give context and direction, then trust Claude to figure out the details:
@@ -252,7 +218,7 @@ You don't need to specify which files to read or what commands to run. Claude fi
 
 <CardGroup cols={2}>
   <Card title="Extend with features" icon="puzzle-piece" href="/docs/en/features-overview">
-    Add Skills, MCP connections, and custom commands
+    Add skills and MCP connections
   </Card>
 
   <Card title="Common workflows" icon="graduation-cap" href="/docs/en/common-workflows">
