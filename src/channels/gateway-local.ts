@@ -248,7 +248,10 @@ export async function startLocalChannelGateway(
       return buildGatewayMessageChannelTool(sources, runtime);
     },
     executeExternalTool: async (request, sources, idempotencyScope) => {
-      if (request.tool_name !== "MessageChannel" || !request.runtime) {
+      if (
+        request.tool_name !== "MessageChannel" ||
+        !request.runtime?.agent_id
+      ) {
         throw new Error(`Unsupported gateway tool: ${request.tool_name}`);
       }
       return await executeLocalMessageChannelExternalTool(

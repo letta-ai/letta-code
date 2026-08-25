@@ -16,7 +16,7 @@ import type { ConversationRuntime } from "./types";
 export async function completeSuccessfulListenerTurn(params: {
   runtime: ConversationRuntime;
   socket: ListenerTransport;
-  agentId: string;
+  agentId: string | null;
   conversationId: string;
   workingDirectory: string;
   permissionMode: string;
@@ -26,6 +26,16 @@ export async function completeSuccessfulListenerTurn(params: {
   getCachedAgent: () => AgentState | null;
   isInterrupted: () => boolean;
 }): Promise<"completed" | "interrupted"> {
+  if (!params.agentId) {
+    if (
+      params.runtime.contextTracker.pendingConversationDescriptionRegeneration
+    ) {
+      params.runtime.contextTracker.pendingConversationDescriptionRegeneration = false;
+      void regenerateConversationDescription(params.conversationId);
+    }
+    return params.isInterrupted() ? "interrupted" : "completed";
+  }
+
   const continueText = await emitListenerTurnEnd({
     agentId: params.agentId,
     conversationId: params.conversationId,

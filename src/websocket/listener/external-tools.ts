@@ -51,13 +51,13 @@ function getConnectionIdsByRegistrationKey(runtime: ListenerRuntime) {
   return controllers;
 }
 
-function getRuntimeKey(runtime: RuntimeScope): string {
+function getRuntimeKey(runtime: RuntimeScope<string | null>): string {
   return `${runtime.agent_id}:${runtime.conversation_id}`;
 }
 
 function getToolRegistrationKey(
   connectionId: ListenerConnectionId,
-  runtime: RuntimeScope,
+  runtime: RuntimeScope<string | null>,
   scopeId: string | undefined,
   toolName: string,
 ): string {
@@ -74,7 +74,7 @@ function getToolRegistrationKey(
 function toExternalToolDefinition(
   tool: ExternalToolDefinitionPayload,
   connectionId: ListenerConnectionId,
-  runtime: RuntimeScope,
+  runtime: RuntimeScope<string | null>,
   scopeId?: string,
 ): ExternalToolDefinition {
   return {
@@ -91,7 +91,7 @@ function toExternalToolDefinition(
     ),
     ...(scopeId !== undefined ? { scopeId } : {}),
     runtime: {
-      agentId: runtime.agent_id,
+      agentId: runtime.agent_id ?? undefined,
       conversationId: runtime.conversation_id,
     },
   };
@@ -118,13 +118,12 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
     const requestId = `external-tool-${crypto.randomUUID()}`;
     const requestKey = createConnectionRequestKey(connection.id, requestId);
     const toolRuntime = context?.tool.runtime;
-    const requestRuntime =
-      toolRuntime?.agentId && toolRuntime.conversationId
-        ? {
-            agent_id: toolRuntime.agentId,
-            conversation_id: toolRuntime.conversationId,
-          }
-        : undefined;
+    const requestRuntime = toolRuntime?.conversationId
+      ? {
+          agent_id: toolRuntime.agentId ?? null,
+          conversation_id: toolRuntime.conversationId,
+        }
+      : undefined;
     const request: ExternalToolCallRequestMessage = {
       type: "external_tool_call_request",
       request_id: requestId,
@@ -179,7 +178,7 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
 export function registerRuntimeExternalTools(
   runtime: ListenerRuntime,
   connectionId: ListenerConnectionId,
-  runtimeScope: RuntimeScope,
+  runtimeScope: RuntimeScope<string | null>,
   groups?: readonly RuntimeStartExternalToolsGroup[],
 ): void {
   const resolvedGroups = groups ?? [];

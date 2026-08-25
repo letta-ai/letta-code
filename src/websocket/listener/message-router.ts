@@ -107,7 +107,7 @@ type FileCommandSession = {
 };
 
 type RuntimeScope = {
-  agent_id: string;
+  agent_id: string | null;
   conversation_id: string;
 };
 
@@ -440,18 +440,24 @@ export function createListenerMessageHandler(
             "input",
           );
         };
-
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
           console.log(`[Listen V2] Dropping input: runtime mismatch or closed`);
           acknowledgeInput(false, "Runtime is no longer active");
           return;
         }
-
         if (parsed.payload.kind === "teleport_continue") {
+          const teleportAgentId = parsed.runtime.agent_id;
+          if (!teleportAgentId) {
+            acknowledgeInput(
+              false,
+              "Teleport requires an agent-backed runtime",
+            );
+            return;
+          }
           const teleportId = parsed.payload.teleport_id;
           clearPriorReadyTeleports({
             listener: runtime,
-            agentId: parsed.runtime.agent_id,
+            agentId: teleportAgentId,
             conversationId: parsed.runtime.conversation_id,
             currentTeleportId: teleportId,
           });
@@ -467,7 +473,6 @@ export function createListenerMessageHandler(
             acknowledgeInput(true, undefined, previousDisposition);
             return;
           }
-
           const approvals = parsed.payload.continuation?.approvals;
           if (!approvals || approvals.length === 0) {
             acknowledgeInput(true);
@@ -480,7 +485,6 @@ export function createListenerMessageHandler(
             );
             return;
           }
-
           scopedRuntime.acceptedInputDispositions.set(acceptedKey, "started");
           acknowledgeInput(true, undefined, "started");
           runDetachedListenerTask("teleport_continue", async () => {
@@ -488,7 +492,7 @@ export function createListenerMessageHandler(
               {
                 type: "message",
                 connectionId,
-                agentId: parsed.runtime.agent_id,
+                agentId: teleportAgentId,
                 conversationId: parsed.runtime.conversation_id,
                 messages: buildTeleportContinuationMessages({
                   teleportId,
@@ -503,7 +507,6 @@ export function createListenerMessageHandler(
           });
           return;
         }
-
         if (parsed.payload.kind === "approval_response") {
           const handled = await handleApprovalResponseInput(runtime, {
             runtime: parsed.runtime,
@@ -522,7 +525,6 @@ export function createListenerMessageHandler(
           );
           return;
         }
-
         const inputPayload = parsed.payload;
         if (inputPayload.kind !== "create_message") {
           emitLoopErrorNotice(socket, runtime, {
@@ -535,11 +537,12 @@ export function createListenerMessageHandler(
           acknowledgeInput(false, "Unsupported input payload kind");
           return;
         }
-
         const incoming: IncomingMessage = {
           type: "message",
           connectionId,
-          agentId: parsed.runtime.agent_id,
+          ...(parsed.runtime.agent_id
+            ? { agentId: parsed.runtime.agent_id }
+            : {}),
           conversationId: parsed.runtime.conversation_id,
           clientToolAllowlist: inputPayload.client_tool_allowlist,
           clientToolset: inputPayload.client_toolset,

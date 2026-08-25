@@ -170,10 +170,26 @@ function withContextWindow(
 }
 
 async function getCurrentModelScopeSnapshot(params: {
-  agentId: string;
+  agentId: string | null;
   conversationId: string;
 }): Promise<ModelScopeSnapshot> {
   const backend = getBackend();
+  if (!params.agentId) {
+    const conversation = await backend.retrieveConversation(
+      params.conversationId,
+    );
+    const record = conversation as unknown as Record<string, unknown>;
+    return {
+      modelHandle: typeof record.model === "string" ? record.model : null,
+      llmConfig: withContextWindow(
+        (record.model_settings as ModelScopeSnapshot["llmConfig"]) ?? null,
+        typeof record.context_window_limit === "number"
+          ? record.context_window_limit
+          : undefined,
+      ),
+    };
+  }
+
   const agent = await backend.retrieveAgent(params.agentId);
   const agentRecord = agent as unknown as Record<string, unknown>;
   const agentModelHandle =
@@ -222,7 +238,7 @@ async function getCurrentModelScopeSnapshot(params: {
 }
 
 export async function getCurrentModelStatusForRuntime(params: {
-  agentId: string;
+  agentId: string | null;
   conversationId: string;
 }): Promise<CurrentModelStatus> {
   const snapshot = await getCurrentModelScopeSnapshot(params);
@@ -399,16 +415,15 @@ export async function applyModelUpdateForRuntime(params: {
   const agentId = scopedRuntime.agentId;
   const conversationId = scopedRuntime.conversationId;
 
-  if (!agentId) {
+  const isDefaultConversation = conversationId === "default";
+  if (isDefaultConversation && !agentId) {
     return {
       type: "update_model_response",
       request_id: requestId,
       success: false,
-      error: "Missing agent_id in runtime scope",
+      error: "Agent-free runtimes require a persisted conversation",
     };
   }
-
-  const isDefaultConversation = conversationId === "default";
 
   const updateArgs: Record<string, unknown> = {
     ...(model.updateArgs ?? {}),
@@ -453,7 +468,7 @@ export async function applyModelUpdateForRuntime(params: {
   let modelSettings: Record<string, unknown> | null = null;
   let appliedTo: "agent" | "conversation";
 
-  if (isDefaultConversation) {
+  if (isDefaultConversation && agentId) {
     const updatedAgent = await updateAgentLLMConfig(
       agentId,
       model.handle,
@@ -485,11 +500,12 @@ export async function applyModelUpdateForRuntime(params: {
   let toolsetError: string | null = null;
 
   try {
-    await ensureCorrectMemoryTool(agentId, model.handle);
-    const modAdapters = await ensureListenerModAdaptersForAgent(
-      listener,
-      agentId,
-    );
+    if (agentId) {
+      await ensureCorrectMemoryTool(agentId, model.handle);
+    }
+    const modAdapters = agentId
+      ? await ensureListenerModAdaptersForAgent(listener, agentId)
+      : [];
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
@@ -498,7 +514,9 @@ export async function applyModelUpdateForRuntime(params: {
         providerTypeFromModelSettings(modelSettings) ??
         inferProviderTypeFromRegistryHandle(model.handle) ??
         null,
-      modContext: createListenerAgentModContext(agentId),
+      ...(agentId
+        ? { modContext: createListenerAgentModContext(agentId) }
+        : {}),
       modAdapters,
       modEvents: createListenerModEvents(modAdapters),
     });
@@ -559,20 +577,15 @@ export async function applyToolsetUpdateForRuntime(params: {
   const agentId = scopedRuntime.agentId;
   const conversationId = scopedRuntime.conversationId;
 
-  if (!agentId) {
-    return {
-      type: "update_toolset_response",
-      request_id: requestId,
-      success: false,
-      error: "Missing agent_id in runtime scope",
-    };
-  }
-
+  const settingsScopeId = agentId ?? conversationId;
   const previousToolNames = scopedRuntime.currentLoadedTools;
   let nextToolset: ToolsetName;
   const previousToolsetPreference = (() => {
     try {
-      return settingsManager.getToolsetPreference(agentId, conversationId);
+      return settingsManager.getToolsetPreference(
+        settingsScopeId,
+        conversationId,
+      );
     } catch {
       return scopedRuntime.currentToolsetPreference;
     }
@@ -580,18 +593,19 @@ export async function applyToolsetUpdateForRuntime(params: {
 
   try {
     settingsManager.setToolsetPreference(
-      agentId,
+      settingsScopeId,
       toolsetPreference,
       conversationId,
     );
-    const modAdapters = await ensureListenerModAdaptersForAgent(
-      listener,
-      agentId,
-    );
+    const modAdapters = agentId
+      ? await ensureListenerModAdaptersForAgent(listener, agentId)
+      : [];
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
-      modContext: createListenerAgentModContext(agentId),
+      ...(agentId
+        ? { modContext: createListenerAgentModContext(agentId) }
+        : {}),
       modAdapters,
       modEvents: createListenerModEvents(modAdapters),
     });
@@ -603,7 +617,7 @@ export async function applyToolsetUpdateForRuntime(params: {
       preparedToolContext.preparedToolContext.loadedToolNames;
   } catch (error) {
     settingsManager.setToolsetPreference(
-      agentId,
+      settingsScopeId,
       previousToolsetPreference,
       conversationId,
     );

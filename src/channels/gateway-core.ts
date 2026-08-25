@@ -132,6 +132,12 @@ function runtimeKey(runtime: RuntimeScope): string {
   return `${runtime.agent_id}:${runtime.conversation_id}`;
 }
 
+function hasAgentRuntime<
+  T extends { runtime?: RuntimeScope<string | null> | null },
+>(value: T): value is T & { runtime: RuntimeScope } {
+  return !!value.runtime?.agent_id;
+}
+
 function sourceRouteKey(source: ChannelTurnSource): string {
   return [
     source.channel,
@@ -220,7 +226,7 @@ export class ChannelGateway {
     this.disposers.push(
       client.onMessage((message) => this.handleMessage(message)),
       client.onExternalToolCall((request) => {
-        const state = request.runtime
+        const state = hasAgentRuntime(request)
           ? this.states.get(runtimeKey(request.runtime))
           : undefined;
         const active = state?.active;
@@ -755,14 +761,15 @@ export class ChannelGateway {
 
   private handleMessage(message: WsProtocolMessage): void {
     if (message.type === "update_queue") {
-      this.handleQueueUpdate(message);
+      if (hasAgentRuntime(message)) this.handleQueueUpdate(message);
       return;
     }
     if (message.type === "stream_delta") {
-      this.handleStreamDelta(message);
+      if (hasAgentRuntime(message)) this.handleStreamDelta(message);
       return;
     }
     if (message.type === "turn_finished") {
+      if (!hasAgentRuntime(message)) return;
       this.handleTurnFinished(message.runtime, {
         stopReason: message.stop_reason,
         runId: message.run_id,
@@ -775,7 +782,9 @@ export class ChannelGateway {
     }
   }
 
-  private handleQueueUpdate(message: QueueUpdateMessage): void {
+  private handleQueueUpdate(
+    message: QueueUpdateMessage & { runtime: RuntimeScope },
+  ): void {
     const state = this.getState(message.runtime);
     for (const transition of message.removed) {
       const pending = state.pendingSourcesByClientMessageId.get(
@@ -885,9 +894,10 @@ export class ChannelGateway {
     void this.enqueueHook(state, () => this.hooks.onLifecycle(processingEvent));
   }
 
-  private handleStreamDelta(message: StreamDeltaMessage): void {
+  private handleStreamDelta(
+    message: StreamDeltaMessage & { runtime: RuntimeScope },
+  ): void {
     if (message.subagent_id) return;
-
     const state = this.getState(message.runtime);
     const active = state.active;
     if (!active) return;
