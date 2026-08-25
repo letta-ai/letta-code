@@ -166,28 +166,45 @@ test("routes approval replay that arrives during destination registration", asyn
   gateway.close();
 });
 
-test("adoption waits for processing ownership to be recorded", async () => {
+test("hung processing lifecycle does not block adoption or later delivery", async () => {
   const client = new FakeClient();
-  let releaseProcessing: (() => void) | undefined;
-  let processingRecorded = false;
+  let markProcessingStarted!: () => void;
+  const processingStarted = new Promise<void>((resolve) => {
+    markProcessingStarted = resolve;
+  });
+  let releaseProcessing!: () => void;
+  const processingGate = new Promise<void>((resolve) => {
+    releaseProcessing = resolve;
+  });
   const gateway = new ChannelGateway(
     client,
     makeHooks({
-      onLifecycle: async () => {
-        await new Promise<void>((resolve) => {
-          releaseProcessing = resolve;
-        });
-        processingRecorded = true;
+      onLifecycle: async (event) => {
+        if (event.type !== "processing") return;
+        markProcessingStarted();
+        await processingGate;
       },
     }).hooks,
   );
+  const source = makeSource({ channel: "slack", chatId: "C-hung-hook" });
 
-  const adoption = gateway.adoptActiveDelivery(makeHandoff());
-  await Bun.sleep(0);
-  expect(processingRecorded).toBe(false);
-  releaseProcessing?.();
+  const adoption = gateway.adoptActiveDelivery(
+    makeHandoff({ sources: [source] }),
+  );
+  await processingStarted;
   await adoption;
-  expect(processingRecorded).toBe(true);
+  await expect(
+    gateway.submit(
+      makeDelivery({
+        sources: [source],
+        clientMessageId: "cm-after-hung-hook",
+      }),
+    ),
+  ).resolves.toBe(true);
+  expect(client.submittedInputs).toHaveLength(1);
+
+  releaseProcessing();
+  await Bun.sleep(0);
   gateway.close();
 });
 

@@ -447,6 +447,7 @@ test("terminal turn_finished with end_turn emits finished with completed outcome
   await gateway.submit(makeDelivery({ clientMessageId: "cm-end" }));
 
   client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
 
   const finishedEvents = lifecycleEvents.filter((e) => e.type === "finished");
   expect(finishedEvents).toHaveLength(1);
@@ -467,6 +468,7 @@ test("terminal turn_finished with cancelled emits finished with cancelled outcom
   await gateway.submit(makeDelivery({ clientMessageId: "cm-cancel" }));
 
   client.emit(makeTurnFinished("cancelled"));
+  await Bun.sleep(0);
 
   const finishedEvents = lifecycleEvents.filter((e) => e.type === "finished");
   expect(finishedEvents).toHaveLength(1);
@@ -487,6 +489,7 @@ test("terminal turn_finished with error emits finished with error outcome and er
   await gateway.submit(makeDelivery({ clientMessageId: "cm-err" }));
 
   client.emit(makeTurnFinished("error", TEST_RUNTIME, { error: "API failed" }));
+  await Bun.sleep(0);
 
   const finishedEvents = lifecycleEvents.filter((e) => e.type === "finished");
   expect(finishedEvents).toHaveLength(1);
@@ -783,35 +786,18 @@ test("idle runtime cleanup is explicit, guarded, and retryable", async () => {
       ...(shouldFail ? { error: "tool update failed" } : {}),
     };
   };
-  let failAdoption = false;
-  const gateway = new ChannelGateway(
-    client,
-    makeHooks({
-      onLifecycle: (event) => {
-        if (failAdoption && event.type === "processing") {
-          throw new Error("adoption failed");
-        }
-      },
-    }).hooks,
-  );
+  const gateway = new ChannelGateway(client, makeHooks().hooks);
   const clean = () =>
     gateway.releaseRuntimeTools(TEST_RUNTIME, [], { cleanupIdleRuntime: true });
   await gateway.registerRuntime(TEST_RUNTIME);
   await gateway.releaseRuntimeTools(TEST_RUNTIME);
   expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
-  failAdoption = true;
-  await expect(
-    gateway.adoptActiveDelivery(
-      makeDelivery({ sources: [], clientMessageId: "failed-adoption" }),
-    ),
-  ).rejects.toThrow("adoption failed");
   await expect(clean()).rejects.toThrow("tool update failed");
   expect(gateway.getKnownRuntimes()).toEqual([]);
   await expect(clean()).resolves.toBeUndefined();
   expect(client.runtimeToolUpdates).toHaveLength(2);
   expect(client.runtimeToolUpdates[0]?.external_tools).toEqual([]);
   expect(client.runtimeToolUpdates[1]?.external_tools).toEqual([]);
-  failAdoption = false;
   await gateway.adoptActiveDelivery(
     makeDelivery({ sources: [], clientMessageId: "active" }),
   );
@@ -939,6 +925,7 @@ test("control request with single source dispatches to onControlRequest", async 
     agent_id: "agent-1",
     conversation_id: "conv-1",
   } as unknown as WsProtocolMessage);
+  await Bun.sleep(0);
 
   expect(controlRequestEvents).toHaveLength(1);
   const event = controlRequestEvents[0];
