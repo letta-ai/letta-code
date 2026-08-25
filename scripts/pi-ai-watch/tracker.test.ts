@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PiAiWatchAnalysis } from "./release-analysis.ts";
 import {
-  advanceMergedPr,
   getPendingPrForCursor,
   hasCompletedRange,
   hasRecordedOutcome,
@@ -19,17 +18,18 @@ describe("pi-ai watch tracker", () => {
 
   test("advances after a no-upgrade decision", () => {
     const state = recordAnalysis(initialTrackerState("0.82.1"), {
-      analysis: analysis("0.82.1", "0.83.0"),
+      analysis: analysis("0.82.1", "0.84.0"),
       outcome: "no_upgrade",
       notes: "upstream-only provider change",
       processedAt: "2026-08-21T00:00:00Z",
     });
-    expect(state.audit_cursor_version).toBe("0.83.0");
-    expect(hasCompletedRange(state, "0.82.1", "0.83.0")).toBe(true);
-    expect(hasRecordedOutcome(state, "0.82.1", "0.83.0")).toBe(true);
+    expect(state.audit_cursor_version).toBe("0.84.0");
+    expect(hasCompletedRange(state, "0.82.1", "0.84.0")).toBe(true);
+    expect(hasRecordedOutcome(state, "0.82.1", "0.84.0")).toBe(true);
+    expect(renderTrackerBody(state)).toContain("[0.82.1...0.84.0]");
   });
 
-  test("keeps a created PR pending until it merges", () => {
+  test("advances a created PR and keeps it pending at the cursor", () => {
     const pending = recordAnalysis(initialTrackerState("0.82.1"), {
       analysis: analysis("0.82.1", "0.83.0"),
       outcome: "pr_created",
@@ -37,14 +37,18 @@ describe("pi-ai watch tracker", () => {
       prUrl: "https://github.com/letta-ai/letta-code/pull/123",
       processedAt: "2026-08-21T00:00:00Z",
     });
-    expect(pending.audit_cursor_version).toBe("0.82.1");
+    expect(pending.audit_cursor_version).toBe("0.83.0");
     expect(getPendingPrForCursor(pending)?.version).toBe("0.83.0");
-    expect(hasCompletedRange(pending, "0.82.1", "0.83.0")).toBe(false);
+    expect(hasCompletedRange(pending, "0.82.1", "0.83.0")).toBe(true);
     expect(hasRecordedOutcome(pending, "0.82.1", "0.83.0")).toBe(true);
 
-    const merged = advanceMergedPr(pending, "0.83.0");
-    expect(merged.audit_cursor_version).toBe("0.83.0");
-    expect(getPendingPrForCursor(merged)).toBeNull();
+    const later = recordAnalysis(pending, {
+      analysis: analysis("0.83.0", "0.84.0"),
+      outcome: "no_upgrade",
+      notes: "later release range",
+    });
+    expect(later.audit_cursor_version).toBe("0.84.0");
+    expect(getPendingPrForCursor(later)).toBeNull();
   });
 
   test("keeps errors retryable and replaces them with a later outcome", () => {
@@ -68,16 +72,16 @@ describe("pi-ai watch tracker", () => {
     expect(retried.processed[0]?.outcome).toBe("no_upgrade");
   });
 
-  test("advances uncertain releases but not explicit non-adjacent replays", () => {
+  test("advances cumulative reviews but not replays behind the cursor", () => {
     const human = recordAnalysis(initialTrackerState("0.82.1"), {
-      analysis: analysis("0.82.1", "0.83.0"),
+      analysis: analysis("0.82.1", "0.84.0"),
       outcome: "needs_human_review",
       notes: "product decision",
     });
-    expect(human.audit_cursor_version).toBe("0.83.0");
+    expect(human.audit_cursor_version).toBe("0.84.0");
 
     const replay = recordAnalysis(initialTrackerState("0.82.1"), {
-      analysis: analysis("0.82.1", "0.84.0", false),
+      analysis: analysis("0.82.1", "0.83.0", false),
       outcome: "no_upgrade",
       notes: "explicit replay",
     });
@@ -101,7 +105,7 @@ describe("pi-ai watch tracker", () => {
       const previous = `0.${index}.0`;
       const current = `0.${index}.1`;
       state = recordAnalysis(state, {
-        analysis: analysis(previous, current, false),
+        analysis: analysis(previous, current),
         outcome: "error",
         notes: `attempt ${index}`,
         processedAt: `2026-08-21T00:${String(index).padStart(2, "0")}:00Z`,
@@ -115,18 +119,21 @@ describe("pi-ai watch tracker", () => {
 function analysis(
   previousVersion: string,
   currentVersion: string,
-  adjacent = true,
+  isLatestRelease = true,
 ): PiAiWatchAnalysis {
   return {
     package: "@earendil-works/pi-ai",
     installed_version: "0.82.1",
     previous_version: previousVersion,
     current_version: currentVersion,
-    is_adjacent_release: adjacent,
+    is_latest_release: isLatestRelease,
     published_at: "2026-08-14T00:00:00Z",
     integrity: "sha512-test",
     tarball_url: "https://example.test/pi-ai.tgz",
+    previous_git_head: "previous123",
     git_head: "abc123",
+    previous_tag_commit: "previous123",
+    current_tag_commit: "abc123",
     release_url: `https://github.com/earendil-works/pi/releases/tag/v${currentVersion}`,
     compare_url: `https://github.com/earendil-works/pi/compare/v${previousVersion}...v${currentVersion}`,
     changelog_md: "## Added",

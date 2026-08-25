@@ -202,13 +202,13 @@ function parseOutcome(value: string | undefined): TrackerOutcome {
 function defaultNotes(outcome: TrackerOutcome): string {
   switch (outcome) {
     case "no_upgrade":
-      return "reviewed; no upgrade needed for this release";
+      return "reviewed; no upgrade needed for this release range";
     case "pr_created":
       return "opened pi-ai dependency upgrade PR";
     case "needs_human_review":
       return "needs human review";
     case "error":
-      return "automation hit an error; retry this release";
+      return "automation hit an error; retry this release range";
   }
 }
 
