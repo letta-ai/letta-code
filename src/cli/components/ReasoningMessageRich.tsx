@@ -1,7 +1,10 @@
 import { Box } from "ink";
-import { memo, useEffect, useState } from "react";
+import { memo } from "react";
 import { useReasoningDisplay } from "@/cli/app/use-reasoning-display";
-import { reasoningSpanOf } from "@/cli/helpers/reasoning-timing";
+import {
+  reasoningSpanOf,
+  useReasoningTick,
+} from "@/cli/helpers/reasoning-timing";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { Text } from "./Text";
@@ -31,8 +34,8 @@ function formatElapsed(ms: number): string {
 }
 
 /**
- * Elapsed time for a reasoning block. Re-renders once per second while
- * streaming; finished blocks render their fixed duration without a timer.
+ * Elapsed time for a reasoning block. Driven by the shared one-second
+ * ticker (see reasoning-timing.ts) — no per-component timers.
  */
 function Elapsed({
   startedAt,
@@ -41,17 +44,10 @@ function Elapsed({
   startedAt?: number;
   endedAt?: number;
 }) {
-  const [now, setNow] = useState(() => Date.now());
-
-  const streaming = endedAt === undefined;
-  useEffect(() => {
-    if (!streaming || !startedAt) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [streaming, startedAt]);
+  useReasoningTick();
 
   if (!startedAt) return null;
-  const end = endedAt ?? now;
+  const end = endedAt ?? Date.now();
   return <Text dimColor>({formatElapsed(end - startedAt)})</Text>;
 }
 

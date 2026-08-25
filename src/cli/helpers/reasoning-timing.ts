@@ -9,6 +9,8 @@
  * it. Nothing here persists across CLI restarts.
  */
 
+import { useSyncExternalStore } from "react";
+
 type ReasoningSpan = { startedAt: number; endedAt?: number };
 
 const spans = new Map<string, ReasoningSpan>();
@@ -34,4 +36,34 @@ export function noteReasoningEnd(blockId: string): void {
 export function reasoningSpanOf(key?: string): ReasoningSpan | undefined {
   if (!key) return undefined;
   return spans.get(key) ?? spans.get(aliases.get(key) ?? "");
+}
+
+/**
+ * Single shared one-second ticker for all visible elapsed timers.
+ *
+ * A module-level interval (not per-component useEffect intervals) so a
+ * transcript repaint can never leave individual spoilers without a timer:
+ * every mounted subscriber is woken by the same tick.
+ */
+
+let tickCount = 0;
+const tickListeners = new Set<() => void>();
+
+function subscribeTick(listener: () => void): () => void {
+  if (tickListeners.size === 0) {
+    globalThis.setInterval(() => {
+      tickCount += 1;
+      for (const listener of tickListeners) listener();
+    }, 1000);
+  }
+  tickListeners.add(listener);
+  return () => tickListeners.delete(listener);
+}
+
+export function useReasoningTick(): number {
+  return useSyncExternalStore(
+    subscribeTick,
+    () => tickCount,
+    () => 0,
+  );
 }
