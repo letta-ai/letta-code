@@ -128,6 +128,18 @@ describe("local pi provider catalog", () => {
     }
   });
 
+  test("OpenRouter attribution includes leaderboard headers and app categories", () => {
+    const openRouter = PI_PROVIDER_SPECS.find(
+      (provider) => provider.id === "openrouter",
+    );
+
+    expect(openRouter?.headers?.()).toEqual({
+      "HTTP-Referer": "https://letta.com",
+      "X-OpenRouter-Title": "Letta Code",
+      "X-OpenRouter-Categories": "cloud-agent,personal-agent",
+    });
+  });
+
   test("pi-ai providers without Pi TUI defaults are explicit", () => {
     const defaultedProviders = new Set(Object.keys(PI_TUI_DEFAULT_MODEL_IDS));
 
