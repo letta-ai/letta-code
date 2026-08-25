@@ -31,29 +31,15 @@ class FakeStore {
 
   async set(key: string, value: string, agentId?: string): Promise<void> {
     this.calls.push({ op: "set", key, value, agentId });
-    if (!agentId && !resolvedEnvAgentId()) {
-      throw new Error("No agent context set. Agent ID is required.");
-    }
     this.entries.set(key, value);
   }
 
   async delete(key: string, agentId?: string): Promise<boolean> {
     this.calls.push({ op: "delete", key, agentId });
-    if (!agentId && !resolvedEnvAgentId()) {
-      throw new Error("No agent context set. Agent ID is required.");
-    }
     if (!this.entries.has(key)) return false;
     this.entries.delete(key);
     return true;
   }
-}
-
-function resolvedEnvAgentId(): string | undefined {
-  return (
-    process.env.LETTA_AGENT_ID?.trim() ||
-    process.env.AGENT_ID?.trim() ||
-    undefined
-  );
 }
 
 function captureConsole(): {
@@ -224,17 +210,15 @@ describe("secret subcommand", () => {
   });
 
   test("mutations without an agent surface resolution guidance", async () => {
-    const store = new FakeStore();
     const captured = captureConsole();
     try {
-      await withEnvironment(
-        { LETTA_AGENT_ID: undefined, AGENT_ID: undefined },
-        async () =>
-          await run(["set", "KEY", "--stdin"], {
-            readStdin: async () => "value",
-            setSecret: (key, value, id) => store.set(key, value, id),
-          }),
-      );
+      await run(["set", "KEY", "--stdin"], {
+        readStdin: async () => "value",
+        // Mirror the real store, which throws before writing when no agent resolves.
+        setSecret: async () => {
+          throw new Error("No agent context set. Agent ID is required.");
+        },
+      });
       expect(captured.err.join("\n")).toContain("--agent");
     } finally {
       captured.restore();
