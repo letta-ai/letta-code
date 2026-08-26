@@ -117,4 +117,87 @@ describe("LocalBackend context pressure", () => {
       await rm(storageDir, { recursive: true, force: true });
     }
   });
+
+  test("honors a persisted context window nested in conversation model settings", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-conversation-context-pressure-"),
+    );
+    try {
+      const initialBackend = new LocalBackend({
+        storageDir,
+        memfsEnabled: false,
+      });
+      const agent = await initialBackend.createAgent({
+        name: "Context Pressure",
+        model: "openai/gpt-5.5",
+        model_settings: {
+          provider_type: "openai",
+          context_window_limit: 100_000,
+        },
+      } as never);
+      const conversation = await initialBackend.createConversation({
+        agent_id: agent.id,
+        model: "openai/gpt-5.5",
+        model_settings: {
+          provider_type: "openai",
+          context_window_limit: 1_000,
+        },
+      } as never);
+
+      const providerContexts: Context[] = [];
+      const stream: PiStreamFunction = (_model, context) => {
+        providerContexts.push(context);
+        return streamFromMessage(assistantMessage("provider response"));
+      };
+      const backend = new LocalBackend({
+        storageDir,
+        stream,
+        complete: async () => assistantMessage("compacted after reload"),
+        memfsEnabled: false,
+      });
+      const reloadedConversation = (await backend.retrieveConversation(
+        conversation.id,
+      )) as unknown as {
+        model_settings?: { context_window_limit?: number } | null;
+      };
+      expect(reloadedConversation.model_settings?.context_window_limit).toBe(
+        1_000,
+      );
+
+      const chunks = await collect(
+        await backend.createConversationMessageStream(conversation.id, {
+          agent_id: agent.id,
+          messages: [{ role: "user", content: "x".repeat(4_000) }],
+        } as ConversationMessageCreateBody),
+      );
+
+      expect(providerContexts).toHaveLength(1);
+      expect(providerContexts[0]?.messages).toEqual([
+        expect.objectContaining({
+          role: "user",
+          content: [
+            expect.objectContaining({
+              type: "text",
+              text: expect.stringContaining("compacted after reload"),
+            }),
+          ],
+        }),
+      ]);
+      expect(chunks).toContainEqual(
+        expect.objectContaining({
+          message_type: "event_message",
+          event_type: "compaction",
+          event_data: { trigger: "context_window_limit" },
+        }),
+      );
+      expect(chunks).toContainEqual(
+        expect.objectContaining({
+          message_type: "summary_message",
+          summary: "compacted after reload",
+        }),
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
 });
