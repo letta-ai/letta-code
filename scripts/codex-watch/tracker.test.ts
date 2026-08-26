@@ -21,7 +21,7 @@ function analysis(
   return {
     previous_tag: "rust-v0.1.0",
     current_tag: tag,
-    is_adjacent_release: true,
+    is_latest_release: true,
     release_url: `https://github.com/openai/codex/releases/tag/${tag}`,
     release_notes_md: "",
     verdict,
@@ -37,7 +37,7 @@ function analysis(
 
 function withoutAuditCursor(body: string): string {
   return body
-    .replace(/  "audit_cursor_tag": (?:null|"[^"]+"),\n/, "")
+    .replace(/ {2}"audit_cursor_tag": (?:null|"[^"]+"),\n/, "")
     .replace('  "audit_cursor_validated": true,\n', "");
 }
 
@@ -166,7 +166,7 @@ describe("tracker state", () => {
   test("fails closed on a cumulative legacy replay", () => {
     const cumulative = {
       ...analysis("rust-v0.5.0", "tool-surface review needed"),
-      is_adjacent_release: false,
+      is_latest_release: false,
     };
     const state = recordAnalysis(emptyTrackerState(), {
       analysis: cumulative,
@@ -198,11 +198,7 @@ describe("tracker state", () => {
 
     const body = renderTrackerBody(state);
     expect(
-      hasProcessedRange(
-        parseTrackerState(body),
-        "rust-v0.1.0",
-        "rust-v0.2.0",
-      ),
+      hasProcessedRange(parseTrackerState(body), "rust-v0.1.0", "rust-v0.2.0"),
     ).toBe(true);
     expect(body).toContain("_No actionable releases recorded yet._");
     expect(body).toContain("no watched changes");
@@ -215,23 +211,16 @@ describe("tracker state", () => {
     );
     state = upsertTrackerEntry(state, entry(2, "error"));
 
-    expect(
-      hasProcessedRange(state, "rust-v0.1.0", "rust-v0.2.0"),
-    ).toBe(false);
+    expect(hasProcessedRange(state, "rust-v0.1.0", "rust-v0.2.0")).toBe(false);
     expect(getCodexAuditCursorTag(state)).toBe("rust-v0.1.0");
 
     state = upsertTrackerEntry(state, entry(2, "no_local_impact"));
-    expect(
-      hasProcessedRange(state, "rust-v0.1.0", "rust-v0.2.0"),
-    ).toBe(true);
+    expect(hasProcessedRange(state, "rust-v0.1.0", "rust-v0.2.0")).toBe(true);
     expect(getCodexAuditCursorTag(state)).toBe("rust-v0.2.0");
   });
 
   test("uses an errored release baseline when no terminal entry exists", () => {
-    const state = upsertTrackerEntry(
-      emptyTrackerState(),
-      entry(2, "error"),
-    );
+    const state = upsertTrackerEntry(emptyTrackerState(), entry(2, "error"));
 
     expect(getCodexAuditCursorTag(state)).toBe("rust-v0.1.0");
   });
@@ -261,14 +250,14 @@ describe("tracker state", () => {
     expect(getCodexAuditCursorTag(state)).toBe("rust-v0.2.0");
   });
 
-  test("does not advance for an explicit non-adjacent range", () => {
+  test("does not advance for an explicit non-latest range", () => {
     const initial = upsertTrackerEntry(
       emptyTrackerState(),
       entry(1, "no_local_impact"),
     );
     const cumulative = {
       ...analysis("rust-v0.5.0", "tool-surface review needed"),
-      is_adjacent_release: false,
+      is_latest_release: false,
     };
     const state = recordAnalysis(initial, {
       analysis: cumulative,
@@ -279,17 +268,12 @@ describe("tracker state", () => {
     expect(getCodexAuditCursorTag(state)).toBe("rust-v0.1.0");
     expect(
       getCodexAuditCursorTag(
-        advanceCodexAuditCursor(
-          state,
-          "rust-v0.1.0",
-          "rust-v0.5.0",
-          false,
-        ),
+        advanceCodexAuditCursor(state, "rust-v0.1.0", "rust-v0.5.0", false),
       ),
     ).toBe("rust-v0.1.0");
   });
 
-  test("advances across an already audited adjacent range", () => {
+  test("advances across an already audited latest range", () => {
     let state = upsertTrackerEntry(
       emptyTrackerState(),
       entry(1, "no_local_impact"),
@@ -298,12 +282,7 @@ describe("tracker state", () => {
     state = upsertTrackerEntry(state, entry(2, "no_local_impact"));
 
     expect(getCodexAuditCursorTag(state)).toBe("rust-v0.2.0");
-    state = advanceCodexAuditCursor(
-      state,
-      "rust-v0.2.0",
-      "rust-v0.3.0",
-      true,
-    );
+    state = advanceCodexAuditCursor(state, "rust-v0.2.0", "rust-v0.3.0", true);
     expect(getCodexAuditCursorTag(state)).toBe("rust-v0.3.0");
   });
 

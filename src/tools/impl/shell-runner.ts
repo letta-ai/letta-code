@@ -32,6 +32,7 @@ export type ShellSpawnOptions = {
 
 export interface ShellProcessHandle {
   kill(signal?: string | number): unknown;
+  interrupt(): void;
   write(input: string): void;
 }
 
@@ -203,6 +204,15 @@ function killChildProcessTree(
   }
 }
 
+function interruptChildProcessTree(childProcess: ChildProcess): void {
+  if (process.platform === "win32") {
+    throw new ShellExecutionError(
+      "Process interrupt is not supported on Windows",
+    );
+  }
+  killChildProcessTree(childProcess, "SIGINT");
+}
+
 function spawnPipeProcess(
   launcher: string[],
   options: ShellSpawnOptions,
@@ -233,6 +243,9 @@ function spawnPipeProcess(
   return {
     kill(signal?: string | number) {
       killChildProcessTree(childProcess, signal);
+    },
+    interrupt() {
+      interruptChildProcessTree(childProcess);
     },
     write(_input: string) {
       // Pipe-mode shell processes deliberately keep stdin closed.
@@ -279,6 +292,9 @@ function spawnPtyBridgeProcess(
     kill(signal?: string | number) {
       killChildProcessTree(childProcess, signal);
     },
+    interrupt() {
+      interruptChildProcessTree(childProcess);
+    },
     write(input: string) {
       childProcess.stdin?.write(input);
     },
@@ -313,6 +329,9 @@ function spawnNativePtyProcess(
   return {
     kill(signal?: string | number) {
       ptyProcess.kill(typeof signal === "string" ? signal : undefined);
+    },
+    interrupt() {
+      ptyProcess.kill("SIGINT");
     },
     write(input: string) {
       ptyProcess.write(input);

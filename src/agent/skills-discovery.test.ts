@@ -2,12 +2,59 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { discoverSkills } from "@/agent/skills";
+import { discoverSkills, getBundledSkills } from "@/agent/skills";
+
+test("scopes the memory filesystem skill to repository operations", async () => {
+  const skills = await getBundledSkills();
+  const skill = skills.find(
+    (candidate) => candidate.id === "syncing-memory-filesystem",
+  );
+
+  expect(skill?.description).toContain(
+    "Diagnose and repair MemFS repository setup, remote sync, authentication failures, optional backup remotes, or merge/rebase conflicts.",
+  );
+  expect(skill?.description).toContain(
+    "Do not load for routine memory reads or edits.",
+  );
+});
+
+test("keeps memory repository repair guidance aligned with the harness", async () => {
+  const skills = await getBundledSkills();
+  const skill = skills.find(
+    (candidate) => candidate.id === "syncing-memory-filesystem",
+  );
+  if (!skill) {
+    throw new Error("syncing-memory-filesystem bundled skill was not found");
+  }
+
+  const content = readFileSync(skill.path, "utf8");
+
+  expect(content).toContain("`$MEMORY_DIR` is the repository root");
+  expect(content).toContain("Do not run `git push` for normal MemFS sync");
+  expect(content).toMatch(/the harness pushes\s+clean committed changes/);
+  expect(content).toContain(
+    "Do not reproduce `/memfs enable` by PATCHing agent tags",
+  );
+  expect(content).toMatch(/Do not change global Git\s+configuration\./);
+  expect(content).toContain("GIT_EDITOR=true git -C");
+  expect(content).toContain("rebase --continue");
+  expect(content).toContain("/memory-repository push");
+
+  expect(content).not.toContain("$LETTA_BASE_URL");
+  expect(content).not.toContain("git config --global");
+  expect(content).not.toContain("memory/system");
+  expect(content).not.toContain("2-3s");
+  expect(content).not.toContain('echo "Updated info" >');
+  expect(content).not.toContain(
+    '"tags": ["origin:letta-code", "git-memory-enabled"]',
+  );
+});
 
 describe.skipIf(process.platform === "win32")(
   "skills discovery with symlinks",
@@ -40,7 +87,7 @@ describe.skipIf(process.platform === "win32")(
       mkdirSync(projectSkillsDir, { recursive: true });
 
       const externalSkillDir = join(testDir, "external-skill");
-      writeSkill(externalSkillDir, "Linked Skill");
+      writeSkill(externalSkillDir, "linked-skill");
 
       symlinkSync(
         externalSkillDir,
@@ -61,7 +108,7 @@ describe.skipIf(process.platform === "win32")(
 
     test("handles symlink cycles without hanging and still discovers siblings", async () => {
       mkdirSync(projectSkillsDir, { recursive: true });
-      writeSkill(join(projectSkillsDir, "good-skill"), "Good Skill");
+      writeSkill(join(projectSkillsDir, "good-skill"), "good-skill");
 
       const cycleDir = join(projectSkillsDir, "cycle");
       mkdirSync(cycleDir, { recursive: true });
@@ -87,7 +134,7 @@ describe.skipIf(process.platform === "win32")(
 
     test("continues discovery when a dangling symlink cannot be inspected", async () => {
       mkdirSync(projectSkillsDir, { recursive: true });
-      writeSkill(join(projectSkillsDir, "healthy-skill"), "Healthy Skill");
+      writeSkill(join(projectSkillsDir, "healthy-skill"), "healthy-skill");
 
       symlinkSync(
         join(projectSkillsDir, "missing-target"),
@@ -110,9 +157,9 @@ describe.skipIf(process.platform === "win32")(
 
     test("returns discovered skills in deterministic sorted order", async () => {
       mkdirSync(projectSkillsDir, { recursive: true });
-      writeSkill(join(projectSkillsDir, "z-skill"), "Z Skill");
-      writeSkill(join(projectSkillsDir, "a-skill"), "A Skill");
-      writeSkill(join(projectSkillsDir, "m-skill"), "M Skill");
+      writeSkill(join(projectSkillsDir, "z-skill"), "z-skill");
+      writeSkill(join(projectSkillsDir, "a-skill"), "a-skill");
+      writeSkill(join(projectSkillsDir, "m-skill"), "m-skill");
 
       const result = await discoverSkills(projectSkillsDir, undefined, {
         skipBundled: true,
@@ -128,6 +175,59 @@ describe.skipIf(process.platform === "win32")(
     });
   },
 );
+
+describe("nested skill discovery", () => {
+  const testDir = join(process.cwd(), ".test-nested-skill-resources");
+  const projectSkillsDir = join(testDir, ".skills");
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  test("uses frontmatter names for nested skills", async () => {
+    const skillDir = join(projectSkillsDir, "computer-use");
+    const nestedResourceDir = join(skillDir, "references", "cua-driver");
+    mkdirSync(nestedResourceDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: computer-use\ndescription: Control GUI applications\n---\n",
+    );
+    writeFileSync(
+      join(nestedResourceDir, "SKILL.md"),
+      "---\nname: cua-driver\ndescription: Cua Driver reference\n---\n",
+    );
+
+    const result = await discoverSkills(projectSkillsDir, undefined, {
+      skipBundled: true,
+      sources: ["project"],
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.skills.map((skill) => skill.id)).toEqual([
+      "computer-use",
+      "cua-driver",
+    ]);
+  });
+
+  test("discovers skills inside category directories", async () => {
+    const skillDir = join(projectSkillsDir, "creative", "image-generation");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: image-generation\ndescription: Generate images\n---\n",
+    );
+
+    const result = await discoverSkills(projectSkillsDir, undefined, {
+      skipBundled: true,
+      sources: ["project"],
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.skills.map((skill) => skill.id)).toEqual([
+      "image-generation",
+    ]);
+  });
+});
 
 describe("agent skills discovery", () => {
   const testDir = join(process.cwd(), ".test-agent-skills-discovery");
@@ -200,7 +300,7 @@ describe("skills frontmatter metadata", () => {
       join(skillDir, "SKILL.md"),
       [
         "---",
-        "name: Deploy",
+        "name: deploy",
         "description: Deploy the application",
         "when_to_use: When the user asks to ship a release",
         "argument-hint: [environment]",

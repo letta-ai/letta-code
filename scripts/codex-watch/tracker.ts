@@ -119,9 +119,9 @@ export function advanceCodexAuditCursor(
   state: TrackerState,
   previousTag: string,
   currentTag: string,
-  isAdjacentRelease: boolean,
+  isLatestRelease: boolean,
 ): TrackerState {
-  if (!isAdjacentRelease || state.audit_cursor_tag !== previousTag) return state;
+  if (!isLatestRelease || state.audit_cursor_tag !== previousTag) return state;
   if (!hasProcessedRange(state, previousTag, currentTag)) {
     throw new Error(
       `Cannot advance Codex audit cursor without terminal ${previousTag}...${currentTag}`,
@@ -135,35 +135,39 @@ export function recordAnalysis(
   options: RecordAnalysisOptions,
 ): TrackerState {
   const processedAt = options.processedAt ?? new Date().toISOString();
-  return upsertTrackerEntry(state, {
-    tag: options.analysis.current_tag,
-    previous_tag: options.analysis.previous_tag,
-    verdict: options.analysis.verdict,
-    outcome: options.outcome,
-    pr_url: options.prUrl ?? null,
-    notes: options.notes,
-    processed_at: processedAt,
-    compare_url: options.analysis.compare_url,
-    workflow_run_url: options.analysis.workflow_run_url,
-  }, options.analysis.is_adjacent_release);
+  return upsertTrackerEntry(
+    state,
+    {
+      tag: options.analysis.current_tag,
+      previous_tag: options.analysis.previous_tag,
+      verdict: options.analysis.verdict,
+      outcome: options.outcome,
+      pr_url: options.prUrl ?? null,
+      notes: options.notes,
+      processed_at: processedAt,
+      compare_url: options.analysis.compare_url,
+      workflow_run_url: options.analysis.workflow_run_url,
+    },
+    options.analysis.is_latest_release,
+  );
 }
 
 export function upsertTrackerEntry(
   state: TrackerState,
   entry: TrackerEntry,
-  advanceAuditCursor = true,
+  isLatestRelease = true,
 ): TrackerState {
   let auditCursorTag = state.audit_cursor_tag;
-  if (auditCursorTag === null && !advanceAuditCursor) {
+  if (auditCursorTag === null && !isLatestRelease) {
     auditCursorTag = entry.previous_tag;
   } else if (
-    advanceAuditCursor &&
+    isLatestRelease &&
     entry.outcome === "error" &&
     auditCursorTag === null
   ) {
     auditCursorTag = entry.previous_tag;
   } else if (
-    advanceAuditCursor &&
+    isLatestRelease &&
     isTerminalOutcome(entry.outcome) &&
     (auditCursorTag === null || entry.previous_tag === auditCursorTag)
   ) {
@@ -179,7 +183,10 @@ export function upsertTrackerEntry(
     ),
   ];
   let processed = candidates.slice(0, HIDDEN_STATE_LIMIT);
-  if (auditCursorTag !== null && !isSupportedAuditCursor(processed, auditCursorTag)) {
+  if (
+    auditCursorTag !== null &&
+    !isSupportedAuditCursor(processed, auditCursorTag)
+  ) {
     const support = candidates.find((candidate) =>
       isAuditCursorSupportEntry(candidate, auditCursorTag),
     );
@@ -276,7 +283,10 @@ function escapeTable(value: string): string {
 
 function normalizeState(value: unknown): TrackerState {
   if (!isRecord(value)) throw new TypeError("tracker state must be an object");
-  if (!Array.isArray(value.processed) || !value.processed.every(isTrackerEntry)) {
+  if (
+    !Array.isArray(value.processed) ||
+    !value.processed.every(isTrackerEntry)
+  ) {
     throw new TypeError("tracker processed entries are invalid");
   }
   if (
@@ -346,9 +356,7 @@ function isSupportedAuditCursor(
   processed: TrackerEntry[],
   cursorTag: string,
 ): boolean {
-  return processed.some((entry) =>
-    isAuditCursorSupportEntry(entry, cursorTag),
-  );
+  return processed.some((entry) => isAuditCursorSupportEntry(entry, cursorTag));
 }
 
 function isAuditCursorSupportEntry(

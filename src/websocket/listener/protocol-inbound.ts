@@ -55,7 +55,6 @@ import type {
   CronGetCommand,
   CronListCommand,
   CronRunsCommand,
-  CronTriggerCommand,
   CronUpdateCommand,
   DeleteMemoryFileCommand,
   DisconnectProviderCommand,
@@ -115,6 +114,11 @@ function isExperimentId(value: unknown): value is ExperimentId {
 
 import { isValidApprovalResponseBody } from "./approval";
 import {
+  isCronPauseCommand,
+  isCronResumeCommand,
+  isCronTriggerCommand,
+} from "./cron-protocol-inbound";
+import {
   isGetCwdMapCommand,
   isSetBootWorkingDirectoryCommand,
 } from "./cwd-protocol-inbound";
@@ -128,6 +132,7 @@ import {
   isConversationForkCommand,
 } from "./management-protocol-inbound";
 import {
+  isAgentRuntimeScope,
   isObjectRecord,
   isRuntimeScope,
   isStringArray,
@@ -224,9 +229,11 @@ function isInputCommand(value: unknown): value is InputCommand {
   if (payload.kind === "approval_response") {
     return isValidApprovalResponseBody(payload);
   }
-  if (payload.kind === "teleport_continue") {
-    return isTeleportContinuePayload(payload);
-  }
+  if (payload.kind === "teleport_continue")
+    return (
+      isAgentRuntimeScope(candidate.runtime) &&
+      isTeleportContinuePayload(payload)
+    );
   return false;
 }
 
@@ -988,7 +995,6 @@ export function isChatGPTUsageReadCommand(
     (c.force_refresh === undefined || typeof c.force_refresh === "boolean")
   );
 }
-
 export function isUpdateModelCommand(
   value: unknown,
 ): value is UpdateModelCommand {
@@ -1036,7 +1042,6 @@ export function isUpdateModelCommand(
 
   return hasModelId && hasModelHandle && hasReasoningEffort && hasAtLeastOne;
 }
-
 export function isUpdateToolsetCommand(
   value: unknown,
 ): value is UpdateToolsetCommand {
@@ -1135,22 +1140,6 @@ export function isCronRunsCommand(value: unknown): value is CronRunsCommand {
     (c.limit === undefined || typeof c.limit === "number") &&
     (c.offset === undefined || typeof c.offset === "number") &&
     (c.run_id === undefined || typeof c.run_id === "string")
-  );
-}
-
-export function isCronTriggerCommand(
-  value: unknown,
-): value is CronTriggerCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    task_id?: unknown;
-  };
-  return (
-    c.type === "cron_trigger" &&
-    typeof c.request_id === "string" &&
-    typeof c.task_id === "string"
   );
 }
 
@@ -1488,7 +1477,7 @@ export function isGetReflectionSettingsCommand(
   return (
     c.type === "get_reflection_settings" &&
     typeof c.request_id === "string" &&
-    isRuntimeScope(c.runtime)
+    isAgentRuntimeScope(c.runtime)
   );
 }
 export function isSetReflectionSettingsCommand(
@@ -1505,7 +1494,7 @@ export function isSetReflectionSettingsCommand(
   if (
     c.type !== "set_reflection_settings" ||
     typeof c.request_id !== "string" ||
-    !isRuntimeScope(c.runtime) ||
+    !isAgentRuntimeScope(c.runtime) ||
     !c.settings ||
     typeof c.settings !== "object"
   ) {
@@ -1651,7 +1640,6 @@ export function isChannelAccountUpdateCommand(
 
   return true;
 }
-
 export function isChannelAccountBindCommand(
   value: unknown,
 ): value is ChannelAccountBindCommand {
@@ -1668,7 +1656,7 @@ export function isChannelAccountBindCommand(
     typeof c.request_id === "string" &&
     isChannelId(c.channel_id) &&
     typeof c.account_id === "string" &&
-    isRuntimeScope(c.runtime)
+    isAgentRuntimeScope(c.runtime)
   );
 }
 
@@ -1847,7 +1835,6 @@ export function isChannelPairingsListCommand(
     (c.account_id === undefined || typeof c.account_id === "string")
   );
 }
-
 export function isChannelPairingBindCommand(
   value: unknown,
 ): value is ChannelPairingBindCommand {
@@ -1865,7 +1852,7 @@ export function isChannelPairingBindCommand(
     typeof c.request_id === "string" &&
     isChannelId(c.channel_id) &&
     (c.account_id === undefined || typeof c.account_id === "string") &&
-    isRuntimeScope(c.runtime) &&
+    isAgentRuntimeScope(c.runtime) &&
     typeof c.code === "string" &&
     c.code.length > 0
   );
@@ -1913,7 +1900,6 @@ export function isChannelRouteRemoveCommand(
     c.chat_id.length > 0
   );
 }
-
 export function isChannelRouteUpdateCommand(
   value: unknown,
 ): value is ChannelRouteUpdateCommand {
@@ -1933,7 +1919,7 @@ export function isChannelRouteUpdateCommand(
     (c.account_id === undefined || typeof c.account_id === "string") &&
     typeof c.chat_id === "string" &&
     c.chat_id.length > 0 &&
-    isRuntimeScope(c.runtime)
+    isAgentRuntimeScope(c.runtime)
   );
 }
 
@@ -1954,7 +1940,6 @@ export function isChannelTargetsListCommand(
     (c.account_id === undefined || typeof c.account_id === "string")
   );
 }
-
 export function isChannelTargetBindCommand(
   value: unknown,
 ): value is ChannelTargetBindCommand {
@@ -1972,7 +1957,7 @@ export function isChannelTargetBindCommand(
     typeof c.request_id === "string" &&
     isChannelId(c.channel_id) &&
     (c.account_id === undefined || typeof c.account_id === "string") &&
-    isRuntimeScope(c.runtime) &&
+    isAgentRuntimeScope(c.runtime) &&
     typeof c.target_id === "string" &&
     c.target_id.length > 0
   );
@@ -2058,7 +2043,6 @@ export function isSecretApplyCommand(
   }
   return true;
 }
-
 export function isExecuteCommandCommand(
   value: unknown,
 ): value is ExecuteCommandCommand {
@@ -2075,11 +2059,10 @@ export function isExecuteCommandCommand(
     c.type === "execute_command" &&
     typeof c.command_id === "string" &&
     typeof c.request_id === "string" &&
-    isRuntimeScope(c.runtime) &&
+    isAgentRuntimeScope(c.runtime) &&
     hasValidArgs
   );
 }
-
 export function isRemoveQueueItemCommand(
   value: unknown,
 ): value is RemoveQueueItemCommand {
@@ -2093,7 +2076,7 @@ export function isRemoveQueueItemCommand(
   return (
     c.type === "remove_queue_item" &&
     typeof c.request_id === "string" &&
-    isRuntimeScope(c.runtime) &&
+    isAgentRuntimeScope(c.runtime) &&
     typeof c.item_id === "string"
   );
 }
@@ -2171,6 +2154,8 @@ export function parseServerMessage(
       isCronGetCommand(parsed) ||
       isCronRunsCommand(parsed) ||
       isCronTriggerCommand(parsed) ||
+      isCronPauseCommand(parsed) ||
+      isCronResumeCommand(parsed) ||
       isCronUpdateCommand(parsed) ||
       isCronDeleteCommand(parsed) ||
       isCronDeleteAllCommand(parsed) ||

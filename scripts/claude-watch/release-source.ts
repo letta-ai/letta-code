@@ -275,7 +275,10 @@ export function selectClaudeReleaseCandidate(
         `Terminal version ${terminalVersion} is not present in GitHub releases.`,
       );
     }
-    release = githubReleases[terminalIndex + 1];
+    release =
+      terminalIndex === githubReleases.length - 1
+        ? undefined
+        : githubReleases.at(-1);
   }
 
   if (!release) return null;
@@ -290,10 +293,46 @@ export function selectClaudeReleaseCandidate(
   return {
     ...npmVersion,
     release_url: release.html_url,
-    release_notes_md: release.body ?? "",
+    release_notes_md: releaseNotesForRange(
+      githubReleases,
+      terminalVersion,
+      release.tag_name,
+    ),
     release_published_at: release.published_at,
     dist_tags: options.npmMetadata.dist_tags,
   };
+}
+
+export function releaseNotesForRange(
+  releases: ClaudeGitHubRelease[],
+  previousVersion: string | null,
+  currentVersion: string,
+): string {
+  const currentIndex = releases.findIndex(
+    (release) => release.tag_name === currentVersion,
+  );
+  if (currentIndex < 0) {
+    throw new Error(`Could not find Claude release ${currentVersion}`);
+  }
+  const previousIndex = previousVersion
+    ? releases.findIndex((release) => release.tag_name === previousVersion)
+    : -1;
+  if (previousIndex >= currentIndex) {
+    throw new Error(
+      `Previous Claude release ${previousVersion} must precede ${currentVersion}`,
+    );
+  }
+  const included = releases.slice(
+    previousIndex < 0 ? currentIndex : previousIndex + 1,
+    currentIndex + 1,
+  );
+  if (included.length === 1) return included[0]?.body ?? "";
+  return included
+    .map(
+      (release) =>
+        `## [${release.tag_name}](${release.html_url})\n\n${release.body?.trim() || "_No release notes._"}`,
+    )
+    .join("\n\n");
 }
 
 async function fetchJson(

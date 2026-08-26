@@ -26,17 +26,44 @@ describe("routing", () => {
 
   test("adds and retrieves a route", () => {
     addRoute("telegram", {
-      chatId: "chat-1",
+      chatId: "1001",
       agentId: "agent-a",
       conversationId: "conv-1",
       enabled: true,
       createdAt: new Date().toISOString(),
     });
 
-    const route = getRoute("telegram", "chat-1");
+    const route = getRoute("telegram", "1001");
     expect(route).not.toBeNull();
     expect(route?.agentId).toBe("agent-a");
     expect(route?.conversationId).toBe("conv-1");
+  });
+
+  test("normalizes numeric Telegram Chat IDs before persistence", () => {
+    addRoute("telegram", {
+      chatId: " -1003904563283 ",
+      agentId: "agent-a",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+    });
+
+    expect(getRoute("telegram", "-1003904563283")?.chatId).toBe(
+      "-1003904563283",
+    );
+  });
+
+  test("rejects labeled Telegram Chat IDs before persistence", () => {
+    expect(() =>
+      addRoute("telegram", {
+        chatId: "Chat ID: 7945451305",
+        agentId: "agent-a",
+        conversationId: "conv-1",
+        enabled: true,
+        createdAt: new Date().toISOString(),
+      }),
+    ).toThrow("Paste only the numeric Telegram Chat ID");
+    expect(getAllRoutes()).toHaveLength(0);
   });
 
   test("notifies subscribers after persisted route changes", () => {
@@ -47,13 +74,13 @@ describe("routing", () => {
 
     try {
       addRoute("telegram", {
-        chatId: "chat-1",
+        chatId: "1001",
         agentId: "agent-a",
         conversationId: "conv-1",
         enabled: true,
         createdAt: new Date().toISOString(),
       });
-      removeRoute("telegram", "chat-1");
+      removeRoute("telegram", "1001");
     } finally {
       unsubscribe();
     }
@@ -67,46 +94,46 @@ describe("routing", () => {
 
   test("returns null for disabled route", () => {
     addRoute("telegram", {
-      chatId: "chat-1",
+      chatId: "1001",
       agentId: "agent-a",
       conversationId: "conv-1",
       enabled: false,
       createdAt: new Date().toISOString(),
     });
 
-    expect(getRoute("telegram", "chat-1")).toBeNull();
+    expect(getRoute("telegram", "1001")).toBeNull();
   });
 
   test("removes a route", () => {
     addRoute("telegram", {
-      chatId: "chat-1",
+      chatId: "1001",
       agentId: "agent-a",
       conversationId: "conv-1",
       enabled: true,
       createdAt: new Date().toISOString(),
     });
 
-    expect(removeRoute("telegram", "chat-1")).toBe(true);
-    expect(getRoute("telegram", "chat-1")).toBeNull();
+    expect(removeRoute("telegram", "1001")).toBe(true);
+    expect(getRoute("telegram", "1001")).toBeNull();
   });
 
   test("removeRoutesForScope removes matching routes", () => {
     addRoute("telegram", {
-      chatId: "chat-1",
+      chatId: "1001",
       agentId: "agent-a",
       conversationId: "conv-1",
       enabled: true,
       createdAt: new Date().toISOString(),
     });
     addRoute("telegram", {
-      chatId: "chat-2",
+      chatId: "1002",
       agentId: "agent-a",
       conversationId: "conv-1",
       enabled: true,
       createdAt: new Date().toISOString(),
     });
     addRoute("telegram", {
-      chatId: "chat-3",
+      chatId: "1003",
       agentId: "agent-b",
       conversationId: "conv-2",
       enabled: true,
@@ -116,14 +143,14 @@ describe("routing", () => {
     const removed = removeRoutesForScope("telegram", "agent-a", "conv-1");
     expect(removed).toBe(2);
 
-    expect(getRoute("telegram", "chat-1")).toBeNull();
-    expect(getRoute("telegram", "chat-2")).toBeNull();
-    expect(getRoute("telegram", "chat-3")).not.toBeNull();
+    expect(getRoute("telegram", "1001")).toBeNull();
+    expect(getRoute("telegram", "1002")).toBeNull();
+    expect(getRoute("telegram", "1003")).not.toBeNull();
   });
 
   test("getRoutesForChannel returns channel-specific routes", () => {
     addRoute("telegram", {
-      chatId: "chat-1",
+      chatId: "1001",
       agentId: "agent-a",
       conversationId: "conv-1",
       enabled: true,
@@ -139,7 +166,7 @@ describe("routing", () => {
 
   test("getAllRoutes returns all routes", () => {
     addRoute("telegram", {
-      chatId: "chat-1",
+      chatId: "1001",
       agentId: "agent-a",
       conversationId: "conv-1",
       enabled: true,

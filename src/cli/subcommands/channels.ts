@@ -42,6 +42,7 @@ import {
   isChannelRuntimeInstalled,
 } from "@/channels/runtime-deps";
 import { listChannelAccountSnapshots } from "@/channels/service";
+import { normalizeTelegramChatId } from "@/channels/telegram/chat-id";
 import type {
   ChannelRoute,
   SlackChannelAccount,
@@ -359,6 +360,15 @@ function handleRouteAdd(
     console.error("Error: --chat-id is required.");
     return 1;
   }
+  let normalizedChatId = chatId;
+  if (channelId === "telegram") {
+    try {
+      normalizedChatId = normalizeTelegramChatId(chatId);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      return 1;
+    }
+  }
   if (!agentId) {
     console.error(
       "Error: --agent is required (or set LETTA_AGENT_ID env var).",
@@ -376,7 +386,7 @@ function handleRouteAdd(
 
   const route: ChannelRoute = {
     accountId: resolvedAccountId,
-    chatId,
+    chatId: normalizedChatId,
     agentId,
     conversationId,
     enabled: true,

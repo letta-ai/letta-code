@@ -18,7 +18,7 @@ export interface RuntimeStartExternalToolsGroup {
  * Empty external_tools removes the controller's tools for those runtimes.
  */
 export interface RuntimeExternalToolsUpdateGroup {
-  runtimes: readonly RuntimeScope[];
+  runtimes: readonly RuntimeScope<string | null>[];
   external_tools: readonly RuntimeStartExternalToolsGroup[];
 }
 
@@ -42,7 +42,7 @@ export interface RuntimeExternalToolsUpdateResponseMessage {
 export interface ExternalToolCallRequestMessage {
   type: "external_tool_call_request";
   request_id: string;
-  runtime?: RuntimeScope;
+  runtime?: RuntimeScope<string | null>;
   scope_id?: string;
   tool_call_id: string;
   tool_name: string;

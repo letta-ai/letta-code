@@ -37,6 +37,7 @@ import {
   getActiveTasks,
   getCronFileMtime,
   getTask,
+  recordTaskQueued,
   releaseSchedulerLease,
   updateTask,
   verifySchedulerLease,
@@ -257,6 +258,7 @@ async function fireCronTask(
   socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
+  trigger: "automatic" | "manual",
 ): Promise<boolean> {
   const listener = getActiveRuntime();
   if (!listener) {
@@ -322,6 +324,12 @@ async function fireCronTask(
     rawRuntime,
   );
 
+  // Pause can land while a recurring task waits for jitter or while a new
+  // conversation is being created. Recheck immediately before enqueueing.
+  if (trigger === "automatic" && getTask(task.id)?.status !== "active") {
+    return false;
+  }
+
   const text = wrapCronPrompt(task, timing);
 
   const queuedItem = conversationRuntime.queueRuntime.enqueue({
@@ -353,35 +361,16 @@ async function fireCronTask(
 
   scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
 
-  // Update task state
+  // A manual run records an occurrence but does not consume or reschedule the
+  // automatic occurrence. In particular, a one-off remains active or paused.
   const nowIso = timing.schedulerNow.toISOString();
-  if (task.recurring) {
-    updateTask(task.id, (t) => {
-      t.last_fired_at = nowIso;
-      t.fire_count += 1;
-      t.last_run_at = nowIso;
-      t.last_run_outcome = "queued";
-      t.last_run_reason = "scheduled_time_matched";
-      t.last_run_error = null;
-    });
-  } else {
-    // One-shot: mark as fired
-    updateTask(task.id, (t) => {
-      t.status = "fired";
-      t.fired_at = nowIso;
-      t.last_fired_at = nowIso;
-      t.fire_count = 1;
-      t.last_run_at = nowIso;
-      t.last_run_outcome = "queued";
-      t.last_run_reason = "one_off_due";
-      t.last_run_error = null;
-    });
-  }
+  recordTaskQueued(task.id, trigger, timing.schedulerNow);
 
+  const runReason = task.recurring ? "scheduled_time_matched" : "one_off_due";
   safeAppendCronRunLogForTask(task, {
     status: "ok",
     outcome: "queued",
-    reason: task.recurring ? "scheduled_time_matched" : "one_off_due",
+    reason: runReason,
     runAtMs: timing.schedulerNow.getTime(),
     queueItemId: queuedItem.id,
     scheduledFor: task.scheduled_for,
@@ -448,12 +437,12 @@ export async function runCronTaskNow(taskId: string): Promise<{
     return { success: false, found: false, error: "Schedule not found" };
   }
 
-  if (task.status !== "active") {
+  if (task.status !== "active" && task.status !== "paused") {
     return {
       success: false,
       found: true,
       task,
-      error: "Schedule is not active",
+      error: "Completed schedules cannot run again",
     };
   }
 
@@ -479,6 +468,7 @@ export async function runCronTaskNow(taskId: string): Promise<{
     ctx.socket,
     ctx.opts,
     ctx.processQueuedTurn,
+    "manual",
   );
 
   if (!fired) {
@@ -560,6 +550,7 @@ function tick(
           socket,
           opts,
           processQueuedTurn,
+          "automatic",
         ).catch((err) => {
           console.error(`[Cron] Error firing task ${taskId}:`, err);
           setLastRunOutcome(freshTask.id, {

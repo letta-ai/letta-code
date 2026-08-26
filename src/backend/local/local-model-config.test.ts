@@ -28,16 +28,16 @@ describe("local model catalog", () => {
 
       const entry = (
         await listLocalModels(storageDir, { fetch: fetchImpl })
-      ).find((model) => model.handle === "opencode/deepseek-v4-flash-free");
+      ).find((model) => model.handle === "opencode/kimi-k2.6");
 
       expect(entry).toMatchObject({
-        display_name: "DeepSeek V4 Flash Free",
-        handle: "opencode/deepseek-v4-flash-free",
-        max_context_window: 200000,
-        max_tokens: 128000,
-        model_id: "deepseek-v4-flash-free",
+        display_name: "Kimi K2.6",
+        handle: "opencode/kimi-k2.6",
+        max_context_window: 262144,
+        max_tokens: 65536,
+        model_id: "kimi-k2.6",
         model_endpoint_type: "opencode",
-        name: "DeepSeek V4 Flash Free",
+        name: "Kimi K2.6",
         provider_type: "opencode",
       });
     } finally {

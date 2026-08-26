@@ -300,6 +300,40 @@ describe("getByokOpenAIReasoningTierOptions", () => {
 });
 
 describe("getReasoningTierOptionsForHandle", () => {
+  test("uses local ChatGPT OAuth runtime catalog handles", () => {
+    const efforts = [
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ] as const;
+    models.splice(
+      0,
+      models.length,
+      ...efforts.map((effort) => ({
+        id: `gpt-5.6-sol-${effort}`,
+        handle: "openai-codex/gpt-5.6-sol",
+        label: "GPT-5.6 Sol",
+        description: "",
+        updateArgs: {
+          context_window: 272000,
+          provider_type: "chatgpt_oauth",
+          reasoning_effort: effort,
+        },
+      })),
+    );
+
+    const options = getReasoningTierOptionsForHandle(
+      "openai-codex/gpt-5.6-sol",
+      272000,
+    );
+
+    expect(options.map((option) => option.effort)).toEqual([...efforts]);
+  });
+
   test("returns ordered reasoning options for gpt-5.4", () => {
     const options = getReasoningTierOptionsForHandle("openai/gpt-5.4");
     expect(options.map((option) => option.effort)).toEqual([

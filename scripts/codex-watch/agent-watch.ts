@@ -17,7 +17,7 @@ import {
 import {
   analyzeCodexRelease,
   DEFAULT_TARGET_REPO,
-  findNextStableRelease,
+  findLatestStableReleaseAfter,
   listStableReleases,
   type Release,
 } from "./release-analysis.ts";
@@ -104,8 +104,11 @@ async function main() {
     const cursorTag = getCodexAuditCursorTag(state);
     if (cursorTag) {
       stableReleases ??= await listStableReleases();
-      const nextRelease = findNextStableRelease(stableReleases, cursorTag);
-      if (!nextRelease) {
+      const latestRelease = findLatestStableReleaseAfter(
+        stableReleases,
+        cursorTag,
+      );
+      if (!latestRelease) {
         console.log(`No stable release after ${cursorTag}; nothing to do.`);
         writeOutput("tracker_issue", String(tracker.number));
         writeOutput("tracker_issue_url", tracker.url);
@@ -116,7 +119,7 @@ async function main() {
         return;
       }
       sinceTag = cursorTag;
-      currentTag = nextRelease.tag_name;
+      currentTag = latestRelease.tag_name;
     }
   }
 
@@ -142,7 +145,7 @@ async function main() {
       state,
       analysis.previous_tag,
       analysis.current_tag,
-      analysis.is_adjacent_release,
+      analysis.is_latest_release,
     );
     if (next !== state) {
       editIssueBody(args.repo, tracker.number, renderTrackerBody(next));

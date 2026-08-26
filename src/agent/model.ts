@@ -137,13 +137,17 @@ export function getReasoningTierOptionsForHandle(
   if (providerOptions.length > 0) return providerOptions;
 
   const byEffort = new Map<ModelReasoningEffort, string>();
-  const registryHandle =
+  const normalizedHandle =
     normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
+  const catalogHandle =
+    [...new Set([modelHandle, normalizedHandle])].find((candidate) =>
+      models.some((model) => model.handle === candidate),
+    ) ?? normalizedHandle;
   const effectiveContextWindow =
     contextWindow ??
     (() => {
       const contextWindows = models
-        .filter((model) => model.handle === registryHandle)
+        .filter((model) => model.handle === catalogHandle)
         .map(
           (model) =>
             (model.updateArgs as { context_window?: number } | null)
@@ -157,7 +161,7 @@ export function getReasoningTierOptionsForHandle(
     })();
 
   for (const model of models) {
-    if (model.handle !== registryHandle) continue;
+    if (model.handle !== catalogHandle) continue;
     if (effectiveContextWindow !== undefined) {
       const mCtx = (model.updateArgs as { context_window?: number } | null)
         ?.context_window;
@@ -171,10 +175,10 @@ export function getReasoningTierOptionsForHandle(
     }
   }
 
-  if (byEffort.size === 0 && isLocalModelHandle(registryHandle)) {
+  if (byEffort.size === 0 && isLocalModelHandle(catalogHandle)) {
     return LOCAL_REASONING_EFFORT_ORDER.map((effort) => ({
       effort,
-      modelId: registryHandle,
+      modelId: catalogHandle,
     }));
   }
 

@@ -351,6 +351,25 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     );
   });
 
+  test("write_stdin interrupts non-tty sessions with Ctrl-C", async () => {
+    const first = await exec_command({
+      cmd: "trap 'printf interrupted; exit 23' INT; while :; do sleep 1; done",
+      yield_time_ms: 250,
+    });
+
+    const match = first.output.match(/Process running with session ID (\d+)/);
+    expect(match?.[1]).toBeDefined();
+
+    const second = await write_stdin({
+      session_id: Number(match?.[1]),
+      chars: "\u0003",
+      yield_time_ms: 5_000,
+    });
+
+    expect(second.output).toContain("Process exited with code 23");
+    expect(second.output).toContain("Output:\ninterrupted");
+  });
+
   test("preserves non-zero exit code in model-facing output", async () => {
     const result = await exec_command({
       cmd: "printf 'bad'; exit 7",

@@ -50,7 +50,6 @@ import {
   emitLoopStatusUpdate,
   emitRetryDelta,
   emitRuntimeStateUpdates,
-  emitStatusDelta,
 } from "./protocol-outbound";
 import {
   emitLoopErrorNotice,
@@ -72,6 +71,7 @@ import {
 import { normalizeCwdAgentId } from "./scope";
 import { markAwaitingAcceptedApprovalContinuationRunId } from "./send";
 import { injectQueuedSkillContent } from "./skill-injection";
+import { emitStreamRecoveryStatusDeltas } from "./stream-recovery-status";
 import * as tp from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
@@ -141,19 +141,18 @@ async function handleIncomingMessageInner(
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
 ): Promise<void> {
-  const agentId = msg.agentId;
+  const agentId = normalizeCwdAgentId(msg.agentId);
   const requestedConversationId = msg.conversationId || undefined;
   const conversationId = requestedConversationId ?? "default";
-  const normalizedAgentId = normalizeCwdAgentId(agentId);
   const turnWorkingDirectory = getConversationWorkingDirectory(
     runtime.listener,
-    normalizedAgentId,
+    agentId,
     conversationId,
   );
 
   const turnPermissionModeState = getOrCreateConversationPermissionModeStateRef(
     runtime.listener,
-    normalizedAgentId,
+    agentId,
     conversationId,
   );
 
@@ -229,14 +228,6 @@ async function handleIncomingMessageInner(
       conversation_id: conversationId,
     });
     telemetry.setCurrentAgentId(agentId ?? null);
-    if (!agentId) {
-      finishTurn({
-        stopReason: "error",
-        conversationId,
-        error: getSafeTerminalError({ message: "Missing agent ID" }),
-      });
-      return;
-    }
     let turnToolContextId: string | null = null;
     const setup = await prepareListenerTurn({
       msg,
@@ -287,7 +278,7 @@ async function handleIncomingMessageInner(
       setup.pendingNormalizationInterruptedToolCallIds;
     const preparedToolContext = setup.preparedToolContext;
     const buildSendOptions = (): Parameters<typeof sendMessageStream>[2] => ({
-      agentId,
+      ...(agentId ? { agentId } : {}),
       streamTokens: true,
       background: true,
       workingDirectory: turnWorkingDirectory,
@@ -356,7 +347,7 @@ async function handleIncomingMessageInner(
     );
     let runIdSent = false;
     let runId: string | undefined;
-    const buffers = createBuffers(agentId);
+    const buffers = createBuffers(agentId ?? undefined);
     seedInboundUserTranscriptLines(buffers, inboundUserTranscriptLines);
     while (true) {
       runIdSent = false;
@@ -444,16 +435,13 @@ async function handleIncomingMessageInner(
       const approvals = result.approvals || [];
       const fallbackError = result.fallbackError ?? null;
 
-      if (result.terminalEofGuardFired) {
-        emitStatusDelta(socket, runtime, {
-          message:
-            "Stream did not close after completing, continued without waiting",
-          level: "warning",
-          runId: runId || runtime.activeRunId,
-          agentId,
-          conversationId,
-        });
-      }
+      emitStreamRecoveryStatusDeltas(socket, runtime, {
+        terminalEofGuardFired: result.terminalEofGuardFired,
+        stallReconcilerFired: result.stallReconcilerFired,
+        runId: runId || runtime.activeRunId,
+        agentId,
+        conversationId,
+      });
 
       if (finishIfInterrupted(runId || runtime.activeRunId)) {
         break;
@@ -669,10 +657,10 @@ async function handleIncomingMessageInner(
           continue;
         }
 
-        // ChatGPT plan rotation: quota-limit errors are non-retryable, so
-        // handle them before the transient-retry classification by swapping
-        // the agent to the same model on a sibling connected ChatGPT plan.
-        if (chatgptPlanSwaps < CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN) {
+        if (
+          agentId &&
+          chatgptPlanSwaps < CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN
+        ) {
           const rotation = await rotateChatGPTPlanOnQuotaLimit({
             agentId,
             currentHandle: null,
@@ -856,7 +844,7 @@ async function handleIncomingMessageInner(
         approvals,
         runtime,
         socket,
-        agentId,
+        agentId: agentId ?? undefined,
         conversationId,
         turnWorkingDirectory,
         turnPermissionModeState,
@@ -1057,7 +1045,7 @@ async function handleIncomingMessageInner(
       await runListenerTurnCleanup({
         runtime,
         agentId,
-        normalizedAgentId,
+        normalizedAgentId: agentId,
         conversationId,
         finalized: finalizedByThisInvocation,
       });

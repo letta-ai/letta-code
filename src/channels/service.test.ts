@@ -480,6 +480,21 @@ describe("channel service", () => {
     );
   });
 
+  test("updateChannelRouteLive rejects a labeled Telegram Chat ID", () => {
+    expect(() =>
+      updateChannelRouteLive(
+        "telegram",
+        "Chat ID: 7945451305",
+        "agent-telegram",
+        "default",
+        "telegram-bot",
+      ),
+    ).toThrow("Paste only the numeric Telegram Chat ID");
+    expect(getRoute("telegram", "Chat ID: 7945451305", "telegram-bot")).toBe(
+      null,
+    );
+  });
+
   test("updateChannelAccountLive updates Telegram allowlist users", () => {
     createChannelAccountLive(
       "telegram",
@@ -779,7 +794,7 @@ describe("channel service", () => {
 
     bindChannelPairing(
       "telegram",
-      createPairingCode("telegram", "sender-1", "chat-1", "C P", "bot-one"),
+      createPairingCode("telegram", "sender-1", "7945451305", "C P", "bot-one"),
       "agent-telegram",
       "conv-telegram",
     );
@@ -966,7 +981,7 @@ describe("channel service", () => {
     const code = createPairingCode(
       "telegram",
       "user-1",
-      "chat-1",
+      "7945451305",
       "john",
       "bot-one",
     );
@@ -974,7 +989,7 @@ describe("channel service", () => {
     const result = bindChannelPairing("telegram", code, "agent-a", "conv-1");
     expect(result.route.accountId).toBe("bot-one");
 
-    const route = getRoute("telegram", "chat-1", "bot-one");
+    const route = getRoute("telegram", "7945451305", "bot-one");
     expect(route).not.toBeNull();
     expect(route?.agentId).toBe("agent-a");
   });

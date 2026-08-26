@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import { parseLocalProviderTimeout } from "@/backend/local/local-provider-timeout";
 import {
   type LocalOAuthConnectCallbacks,
+  runCloudOAuthConnectFlow,
   runLocalOAuthConnectFlow,
 } from "@/cli/commands/connect-local-oauth";
 import {
@@ -78,6 +79,7 @@ interface ConnectSubcommandDeps {
   runChatGPTOAuthConnectFlow: (
     callbacks: ChatGPTOAuthFlowCallbacks,
   ) => Promise<unknown>;
+  runCloudOAuthConnectFlow: typeof runCloudOAuthConnectFlow;
   runLocalOAuthConnectFlow: (
     provider: Parameters<typeof runLocalOAuthConnectFlow>[0],
     callbacks: LocalOAuthConnectCallbacks,
@@ -108,6 +110,7 @@ const DEFAULT_DEPS: ConnectSubcommandDeps = {
         getOpenAICodexProvider({}, providerName ?? OPENAI_CODEX_PROVIDER_NAME),
     }),
   runChatGPTOAuthConnectFlow,
+  runCloudOAuthConnectFlow,
   runLocalOAuthConnectFlow,
   providerStorageTargetLabel,
 };
@@ -254,6 +257,27 @@ export async function runConnectSubcommand(
     try {
       if (provider.target !== "local") {
         await io.ensureSettingsReady();
+        if (
+          provider.byokProvider.oauthProviderId !== "openai-codex" &&
+          provider.byokProvider.providerType !== "chatgpt_oauth"
+        ) {
+          const result = await io.runCloudOAuthConnectFlow(
+            provider.byokProvider,
+            { onStatus: (status) => io.stdout(status) },
+          );
+          const providerName =
+            typeof result === "object" &&
+            result !== null &&
+            "providerName" in result &&
+            typeof result.providerName === "string"
+              ? result.providerName
+              : provider.byokProvider.providerName;
+          io.stdout(
+            `Successfully connected to ${provider.byokProvider.displayName}.\nProvider '${providerName}' saved.`,
+          );
+          return 0;
+        }
+
         let providerName: string;
         try {
           providerName = normalizeChatGPTOAuthProviderName(

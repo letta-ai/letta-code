@@ -27,6 +27,7 @@ import type {
   OutboundChannelRichMessageDraft,
   TelegramChannelAccount,
 } from "@/channels/types";
+import { normalizeTelegramChatId } from "./chat-id";
 import {
   buildTelegramDebounceKey,
   resolveTelegramInboundDebounceMs,
@@ -676,6 +677,7 @@ export function createTelegramAdapter(
     async sendRichMessageDraft(
       draft: OutboundChannelRichMessageDraft,
     ): Promise<void> {
+      normalizeTelegramChatId(draft.chatId);
       const telegramBot = await ensureBot();
       const raw = telegramBot.api.raw as unknown as TelegramRichMessageRawApi;
       await raw.sendRichMessageDraft(
@@ -686,6 +688,7 @@ export function createTelegramAdapter(
     async sendMessage(
       msg: OutboundChannelMessage,
     ): Promise<{ messageId: string }> {
+      normalizeTelegramChatId(msg.chatId);
       const telegramBot = await ensureBot();
 
       if (msg.reaction || msg.removeReaction) {

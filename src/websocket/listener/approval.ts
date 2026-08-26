@@ -366,6 +366,27 @@ export function replayPendingApprovalRequestsToConnection(
       toListenerConnection(connectionId),
     );
   }
+  const recovered = runtime.recoveredApprovalState;
+  if (
+    recovered?.agentId !== runtime.agentId ||
+    recovered.conversationId !== runtime.conversationId
+  ) {
+    return;
+  }
+  for (const requestId of recovered.pendingRequestIds) {
+    const pending = recovered.approvalsByRequestId.get(requestId);
+    if (!pending) continue;
+    emitProtocolV2Message(
+      connection.writer,
+      runtime,
+      pending.controlRequest,
+      {
+        agent_id: runtime.agentId,
+        conversation_id: runtime.conversationId,
+      },
+      toListenerConnection(connectionId),
+    );
+  }
 }
 
 export function requestApprovalOverWS(

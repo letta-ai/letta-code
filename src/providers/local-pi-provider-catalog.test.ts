@@ -128,6 +128,18 @@ describe("local pi provider catalog", () => {
     }
   });
 
+  test("OpenRouter attribution includes leaderboard headers and app categories", () => {
+    const openRouter = PI_PROVIDER_SPECS.find(
+      (provider) => provider.id === "openrouter",
+    );
+
+    expect(openRouter?.headers?.()).toEqual({
+      "HTTP-Referer": "https://letta.com",
+      "X-OpenRouter-Title": "Letta Code",
+      "X-OpenRouter-Categories": "cloud-agent,personal-agent",
+    });
+  });
+
   test("pi-ai providers without Pi TUI defaults are explicit", () => {
     const defaultedProviders = new Set(Object.keys(PI_TUI_DEFAULT_MODEL_IDS));
 
@@ -233,14 +245,23 @@ describe("local pi provider catalog", () => {
     }
   });
 
-  test("local /connect API-key providers mirror Pi TUI OAuth split", () => {
+  test("local /connect exposes both API-key and OAuth entries for dual-auth providers", () => {
+    const providers = getProviderConfigs("local");
     const localApiKeyProviderIds = new Set(
-      getProviderConfigs("local")
+      providers
         .filter((provider) => !provider.isOAuth)
+        .map((provider) => provider.id),
+    );
+    const localOAuthProviderIds = new Set(
+      providers
+        .filter((provider) => provider.isOAuth)
         .map((provider) => provider.id),
     );
 
     expect(localApiKeyProviderIds.has("anthropic")).toBe(true);
+    expect(localOAuthProviderIds.has("anthropic-oauth")).toBe(true);
+    expect(localApiKeyProviderIds.has("openrouter")).toBe(true);
+    expect(localOAuthProviderIds.has("openrouter-oauth")).toBe(true);
     expect(localApiKeyProviderIds.has("openai-codex")).toBe(false);
     expect(localApiKeyProviderIds.has("github-copilot")).toBe(false);
   });

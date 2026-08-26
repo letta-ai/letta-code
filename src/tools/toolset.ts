@@ -381,7 +381,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 export async function prepareToolExecutionContextForScope(params: {
   connectionId?: string;
   environmentDeviceId?: string;
-  agentId: string;
+  agentId: string | null;
   conversationId?: string | null;
   overrideModel?: string | null;
   overrideProviderType?: string | null;
@@ -424,8 +424,10 @@ export async function prepareToolExecutionContextForScope(params: {
   } = params;
 
   const backend = getBackend();
-  const agent = (cachedAgent ??
-    (await backend.retrieveAgent(agentId))) as ScopeModelCarrier;
+  const agent = agentId
+    ? ((cachedAgent ??
+        (await backend.retrieveAgent(agentId))) as ScopeModelCarrier)
+    : null;
   const agentTarget = modelTargetFromCarrier(agent);
   const conversationTarget =
     conversationId && conversationId !== "default"
@@ -458,7 +460,7 @@ export async function prepareToolExecutionContextForScope(params: {
   const toolsetPreference = (() => {
     try {
       return settingsManager.getToolsetPreference(
-        agentId,
+        agentId ?? conversationId ?? "agent-free",
         conversationId ?? "default",
       );
     } catch {
@@ -497,12 +499,12 @@ export async function prepareToolExecutionContextForScope(params: {
     modContext,
     modEvents,
     modAdapters,
-    agent: agent as AgentState,
+    agent: agent as AgentState | null,
     runtimeContext: {
       connectionId,
       environmentDeviceId,
       agentId,
-      agentName: (agent as AgentState).name ?? null,
+      agentName: (agent as AgentState | null)?.name ?? null,
       conversationId: scopedConversationId,
       workingDirectory,
       ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
@@ -510,7 +512,7 @@ export async function prepareToolExecutionContextForScope(params: {
       ...(workspaceSandbox !== undefined ? { workspaceSandbox } : {}),
     },
   });
-  return { ...result, agent: agent as AgentState };
+  return { ...result, agent: agent as AgentState | null };
 }
 
 /**

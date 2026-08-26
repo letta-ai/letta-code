@@ -459,6 +459,7 @@ async function runGenerateText(
   const reasoning = reasoningForSettings(
     localModel.modelSettings,
     localModel.model,
+    resolved.model,
   );
   const options: SimpleStreamOptions & Record<string, unknown> = {
     ...resolved.providerOptions,

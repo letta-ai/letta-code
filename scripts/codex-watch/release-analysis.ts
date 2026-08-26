@@ -45,7 +45,7 @@ export interface PathChangeSummary {
 export interface CodexWatchAnalysis {
   previous_tag: string;
   current_tag: string;
-  is_adjacent_release: boolean;
+  is_latest_release: boolean;
   release_url: string;
   release_notes_md: string;
   verdict: Verdict;
@@ -139,13 +139,13 @@ export async function analyzeCodexRelease(
     return {
       previous_tag: previous.tag_name,
       current_tag: current.tag_name,
-      is_adjacent_release: areAdjacentStableReleases(
+      is_latest_release: current.tag_name === stables.at(-1)?.tag_name,
+      release_url: current.html_url,
+      release_notes_md: releaseNotesForRange(
         stables,
         previous.tag_name,
         current.tag_name,
       ),
-      release_url: current.html_url,
-      release_notes_md: current.body ?? "",
       verdict,
       models_diff: modelsDiff,
       prompt_md_changed: promptMdChanged,
@@ -207,17 +207,37 @@ function findPreviousStable(
   return stables[idx - 1] ?? null;
 }
 
-export function areAdjacentStableReleases(
+export function releaseNotesForRange(
   stables: Release[],
   previousTag: string,
   currentTag: string,
-): boolean {
-  return (
-    findPreviousStable(stables, currentTag)?.tag_name === previousTag
+): string {
+  const currentIndex = stables.findIndex(
+    (release) => release.tag_name === currentTag,
   );
+  if (currentIndex < 0) {
+    throw new Error(`Could not find current release ${currentTag}`);
+  }
+  const previousIndex = stables.findIndex(
+    (release) => release.tag_name === previousTag,
+  );
+  if (previousIndex >= currentIndex) {
+    throw new Error(
+      `Previous release ${previousTag} must precede ${currentTag}`,
+    );
+  }
+  const firstIncludedIndex =
+    previousIndex < 0 ? currentIndex : previousIndex + 1;
+  return stables
+    .slice(firstIncludedIndex, currentIndex + 1)
+    .map(
+      (release) =>
+        `## [${release.tag_name}](${release.html_url})\n\n${release.body?.trim() || "_No release notes._"}`,
+    )
+    .join("\n\n");
 }
 
-export function findNextStableRelease(
+export function findLatestStableReleaseAfter(
   stables: Release[],
   terminalTag: string,
 ): Release | null {
@@ -227,7 +247,7 @@ export function findNextStableRelease(
   if (terminalIndex < 0) {
     throw new Error(`Could not find terminal release ${terminalTag}`);
   }
-  return stables[terminalIndex + 1] ?? null;
+  return terminalIndex === stables.length - 1 ? null : (stables.at(-1) ?? null);
 }
 
 function cloneCodex(tmp: string): string {
