@@ -6,6 +6,7 @@ import {
   addTask,
   deleteTask,
   getTask,
+  pauseTask,
   readCronFile,
   updateTask,
 } from "@/cron/cron-file";
@@ -379,11 +380,21 @@ describe("jitter revalidation guards", () => {
     expect(getTask(task.id)).toBeNull();
   });
 
+  test("paused task fails the fresh active-status check during jitter", () => {
+    const { task } = addTask(makeInput());
+    expect(task.status).toBe("active");
+
+    expect(pauseTask(task.id).success).toBe(true);
+
+    const fresh = getTask(task.id);
+    expect(fresh?.status).toBe("paused");
+    expect(fresh?.status === "active").toBe(false);
+  });
+
   test("cancelled task has non-active status (revalidation would skip fire)", () => {
     const { task } = addTask(makeInput());
     expect(task.status).toBe("active");
 
-    // Simulate cancellation during jitter window
     updateTask(task.id, (t) => {
       t.status = "cancelled";
     });
