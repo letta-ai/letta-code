@@ -45,6 +45,7 @@ To add custom tools, connect an [MCP server](/docs/en/mcp). To extend Claude wit
 | `RemoteTrigger`        | Creates, updates, runs, and lists [Routines](/docs/en/routines) on claude.ai. Backs the `/schedule` command. The [`RemoteTrigger` input reference](/docs/en/agent-sdk/typescript#remotetrigger) documents every action and the organization policies that remove the tool. Routines live on claude.ai and require a Pro, Max, Team, or Enterprise plan, so this tool is not accessible from Amazon Bedrock, Claude Platform on AWS, Google Cloud's Agent Platform, or Microsoft Foundry. Also unavailable when you turn off [feature-flag fetching](/docs/en/env-vars#features-that-need-feature-flag-fetching)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | No                  |
 | `ReportFindings`       | Reports code-review findings as a structured list, with a file, summary, and failure scenario per finding, so Claude Code can render them instead of printing them as text. Claude calls it when active code-review instructions tell it to. Requires Claude Code v2.1.196 or later. As of v2.1.199, a finding can also carry an optional `category` slug, such as `correctness` or `test-coverage`, shown next to the file location in the rendered list                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | No                  |
 | `ScheduleWakeup`       | Reschedules the next iteration of a [self-paced `/loop`](/docs/en/scheduled-tasks#let-claude-choose-the-interval). Claude calls this at the end of each iteration to pick when the next one runs, between one minute and one hour out; you don't call it directly. To end the loop instead, Claude calls it with `stop: true`, which cancels the pending wakeup. The `stop` field requires Claude Code v2.1.202 or later. The pending wakeup appears in `session_crons` in [Stop hook input](/docs/en/hooks#stop-input). Not available on Amazon Bedrock, Claude Platform on AWS, Google Cloud's Agent Platform, or Microsoft Foundry, where a `/loop` prompt with no interval runs on a fixed schedule instead. The same happens when you turn off [feature-flag fetching](/docs/en/env-vars#features-that-need-feature-flag-fetching)                                                                                                                                                                                                                                                                                                                                        | No                  |
+| `SendFeedback`         | Drafts a feedback report about Claude Code, covering a product problem or Claude's own behavior in the session, and queues it on your machine for you to review. Claude Code sends nothing until you choose to send the draft. See [SendFeedback tool behavior](#sendfeedback-tool-behavior). Requires Claude Code v2.1.238 or later                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | No                  |
 | `SendMessage`          | Sends a message to another agent: an [agent team](/docs/en/agent-teams) teammate, a [subagent it resumes](/docs/en/sub-agents#resume-subagents) by agent ID or name, or one of your other Claude Code sessions, on this machine or beyond it. Messaging other sessions requires Claude Code v2.1.224 or later; [cross-session messaging](/docs/en/cross-session-messaging) covers which sessions Claude can reach and each case's requirements. A receiver never treats a message from another agent as your consent or approval. Claude can include an optional `summary` input, typically 5-10 words, that Claude Code shows as a one-line preview. When Claude omits it on a [plain-text message](/docs/en/cross-session-messaging#limitations), Claude Code uses the first line of the message as the summary. Claude Code truncates a summary longer than 200 characters with an ellipsis. With the `notify_when_idle` input, Claude can ask one of your other sessions on this machine to [send one notice when it next goes idle or exits](/docs/en/cross-session-messaging#get-a-notice-when-another-session-goes-idle). Requires Claude Code v2.1.236 or later in both sessions | No                  |
 | `SendUserFile`         | Sends files from the session to you with an optional caption, so a generated report, diagram, screenshot, or built artifact reaches your device instead of only being mentioned in the transcript. As of v2.1.196, the optional `display` input controls presentation: `render` opens the file inline in the client, `attach` shows a download card only, and when unset the client decides by file type. Available when a [Remote Control](/docs/en/remote-control) client is connected or the session runs in a managed cloud environment such as [Claude Code on the web](/docs/en/claude-code-on-the-web). Delivery runs through Anthropic-hosted infrastructure, so the tool is not available on Amazon Bedrock, Google Cloud's Agent Platform, or Microsoft Foundry                                                                                                                                                                                                                                                                                                                                                                                                 | No                  |
 | `ShareOnboardingGuide` | Uploads `ONBOARDING.md` and returns a share link teammates can open in Claude Code. Called from `/team-onboarding` after the guide is written. Available to claude.ai subscribers on Pro, Max, Team, and Enterprise plans                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Yes                 |
@@ -428,6 +429,64 @@ Read handles several file types beyond plain text:
 * **Jupyter notebooks**: `.ipynb` files return all cells with their outputs, including code, markdown, and visualizations. Claude Code refuses to read a notebook file over 100 MB; the error tells Claude how to read a portion of the notebook instead, such as a slice of cells, with a shell command.
 
 Read only reads files, not directories. Claude lists directory contents with a shell command such as `ls`.
+
+## SendFeedback tool behavior
+
+Claude-drafted feedback is a feedback report about Claude Code that Claude writes for you. It requires Claude Code v2.1.238 or later. Claude Code saves each draft on your machine under `~/.claude/feedback/drafts/`, and nothing reaches Anthropic until you send it. Claude drafts one with the SendFeedback tool when:
+
+* A tool or command keeps failing
+* It can't help with something you asked for
+* You point out a mistake it made, or it notices one
+* You ask it to file feedback
+
+### What you see when Claude drafts
+
+After Claude queues a draft, you see a card above your prompt with the draft's title. Press `1` to review the draft, press `2` twice to send it as written, or press `0` to dismiss it. A dismissed draft stays in your queue. After you dismiss a card, Claude Code asks whether to turn Claude-drafted feedback off. It stops asking once you've declined twice.
+
+By default, you see at most three cards in a session; Anthropic can adjust that limit from the server without a release. After the limit, and whenever you set [`feedbackDrafts`](/docs/en/settings-reference#feedbackdrafts) to `quiet`, you see only a count of queued drafts in the prompt footer.
+
+### Review and edit a draft
+
+Run `/feedback` with no argument to open your queue. It lists every queued draft from all your sessions, including drafts whose cards you dismissed or never saw. Select a draft to open it for review, where you can:
+
+* Edit the title, area, and details
+* Set **Send transcript** to `yes` or `no`. When the transcript from the session where Claude queued the draft is still available, it starts at `yes`, which sends that conversation to Anthropic; `no` sends the report only
+* Send the draft, discard it, or leave it in the queue for later
+
+To write a report yourself instead, press `w` for the standard feedback dialog. `/feedback` with text after it, and `/bug`, open that dialog directly.
+
+### Send a draft
+
+When you send a draft, Claude Code submits it the same way as a `/feedback` report, with the same [retention](/docs/en/data-usage#feedback-using-the-%2Ffeedback-command), and deletes the draft from your machine. When you send from the card, it shows `✓ Sent`; when you send from the queue, it closes with a receipt ID.
+
+The report carries:
+
+* Your title, area, and details
+* Environment info, such as your Claude Code version, operating system, and model
+* The IDs of recent API requests
+* The conversation transcript, when you left **Send transcript** at `yes` in the review screen. Sending from the card never includes the transcript
+
+Claude Code keeps your working directory in the local draft so it can find the transcript, and doesn't send the directory.
+
+In [organizations with zero data retention](/docs/en/zero-data-retention#features-disabled-under-zdr), Claude Code leaves the tool out, as it does for `/feedback`. If a session in such an organization still offers the tool, drafts stay on your machine, and sending fails with `Feedback collection is not available for organizations with custom data retention policies.`
+
+### Discard or keep a draft
+
+When you discard a draft, Claude Code deletes it from your machine. A draft you leave in the queue expires after 30 days, or after [`cleanupPeriodDays`](/docs/en/settings-reference#cleanupperioddays) when that's shorter. The queue holds 10 drafts across all your sessions, and when Claude queues an eleventh, Claude Code deletes the oldest. When you run `/exit` with drafts from the session still in the queue, Claude Code asks whether to review them or discard them before exiting.
+
+### Turn Claude-drafted feedback off
+
+Set **Claude-drafted feedback** to `off` in `/config`, which writes the [`feedbackDrafts`](/docs/en/settings-reference#feedbackdrafts) setting, or set [`CLAUDE_CODE_SEND_FEEDBACK=0`](/docs/en/env-vars) for one session. With either, Claude can't queue drafts. To keep drafting on without cards, set `feedbackDrafts` to `quiet` instead. Administrators can set `feedbackDrafts` in [managed settings](/docs/en/managed-settings), which takes precedence over your own setting.
+
+### Sessions without Claude-drafted feedback
+
+Claude Code includes the tool in interactive terminal sessions on your own machine that use the Claude API rather than a cloud provider. It leaves the tool out of:
+
+* Non-interactive `-p` runs and [Agent SDK](/docs/en/agent-sdk/overview) sessions, which have no screen to review the queue on
+* Cloud sessions such as [Claude Code on the web](/docs/en/claude-code-on-the-web), which can't write to the queue on your machine
+* Sessions on [Amazon Bedrock](/docs/en/amazon-bedrock), [Claude Platform on AWS](/docs/en/claude-platform-on-aws), [Google Cloud's Agent Platform](/docs/en/google-vertex-ai), or [Microsoft Foundry](/docs/en/microsoft-foundry)
+* Sessions where you set [`CLAUDE_CODE_SEND_FEEDBACK=0`](/docs/en/env-vars) or [`DISABLE_FEEDBACK_COMMAND=1`](/docs/en/env-vars), set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` to any non-empty value, or turned off [feature-flag fetching](/docs/en/env-vars#features-that-need-feature-flag-fetching)
+* Organizations that have turned off product feedback, and [organizations with zero data retention](/docs/en/zero-data-retention#features-disabled-under-zdr)
 
 ## Task tool availability
 

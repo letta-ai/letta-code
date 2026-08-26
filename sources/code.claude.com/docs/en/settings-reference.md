@@ -662,6 +662,7 @@ scope: "Which settings files can set the key: user (~/.claude/settings.json), pr
 | [`fallbackModel`](#fallbackmodel)                                                               | Name [backup models](/docs/en/model-config#fallback-model-chains) for when the primary is overloaded                                                                                                                             | Model and responses                | Any file                |
 | [`fastMode`](#fastmode)                                                                         | Turn [fast mode](/docs/en/fast-mode) on for sessions where it's available                                                                                                                                                        | Model and responses                | Any file                |
 | [`fastModePerSessionOptIn`](#fastmodepersessionoptin)                                           | Require people to turn [fast mode](/docs/en/fast-mode) on each session                                                                                                                                                           | Model and responses                | Any file                |
+| [`feedbackDrafts`](#feedbackdrafts)                                                             | Control whether Claude queues [feedback drafts](/docs/en/tools-reference#sendfeedback-tool-behavior) for you to review                                                                                                           | Privacy and telemetry              | User or managed         |
 | [`feedbackSurveyRate`](#feedbacksurveyrate)                                                     | Change how often the [session quality survey](/docs/en/data-usage#session-quality-surveys) appears                                                                                                                               | Privacy and telemetry              | Any file                |
 | [`fileCheckpointingEnabled`](#filecheckpointingenabled)                                         | Turn off or on the file snapshots that [`/rewind`](/docs/en/checkpointing) restores                                                                                                                                              | Memory and context                 | Any file                |
 | [`fileSuggestion`](#filesuggestion)                                                             | Supply [`@` file autocomplete](/docs/en/interactive-mode#quick-commands) from your own command                                                                                                                                   | Interface and terminal             | Any file                |
@@ -5141,7 +5142,7 @@ The desktop app ignores any other value, and a value that isn't a Boolean, such 
 
 ## Privacy and telemetry
 
-Control how long Claude Code keeps session data and what it sends. The switches that turn off usage metrics and error reports are environment variables, not settings keys: set `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` in the [`env`](#env) key or in the shell. [Telemetry services](/docs/en/data-usage#telemetry-services) says what each one stops. The session survey is the exception: [`feedbackSurveyRate`](#feedbacksurveyrate) below turns it off from a settings file.
+Control how long Claude Code keeps session data and what it sends. The switches that turn off usage metrics and error reports are environment variables, not settings keys: set `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` in the [`env`](#env) key or in the shell. [Telemetry services](/docs/en/data-usage#telemetry-services) says what each one stops. Two exceptions turn off from a settings file: [`feedbackDrafts`](#feedbackdrafts) below for Claude-drafted feedback, and [`feedbackSurveyRate`](#feedbacksurveyrate) below for the session survey.
 
 ### `cleanupPeriodDays`
 
@@ -5158,6 +5159,26 @@ Set how many days Claude Code keeps [session transcripts and other application d
 ```
 
 Setting `0` fails validation, so pick a large value such as `3650` for long retention. To stop Claude Code from writing transcripts at all, see [Plaintext storage](/docs/en/claude-directory#plaintext-storage).
+
+### `feedbackDrafts`
+
+Control [Claude-drafted feedback](/docs/en/tools-reference#sendfeedback-tool-behavior): whether Claude can queue feedback drafts for you to review, and whether Claude Code shows a card when Claude queues one.
+
+* **Scope**: [`User or managed`](#scopes)
+* **Type**: string, one of `"notify"`, `"quiet"`, or `"off"`
+  * `"notify"`: Claude Code shows a card above the prompt when Claude queues a draft, up to [three cards in a session](/docs/en/tools-reference#what-you-see-when-claude-drafts) by default
+  * `"quiet"`: Claude drafts without a card. You see the count of queued drafts in the prompt footer and review them in `/feedback`
+  * `"off"`: Claude Code removes the SendFeedback tool, so Claude can't queue drafts
+* **Default**: `"notify"`
+* **Per-session overrides**: [`CLAUDE_CODE_SEND_FEEDBACK`](/docs/en/env-vars) set to `0` turns the feature off for one session
+
+```json settings.json theme={null}
+{
+  "feedbackDrafts": "quiet"
+}
+```
+
+Appears in `/config` as **Claude-drafted feedback**, which writes this key to your user settings. You see the `/config` row only in sessions [where Claude can draft feedback](/docs/en/tools-reference#sessions-without-claude-drafted-feedback); setting `"off"` doesn't hide it, so you can turn the feature back on from the same row. A value in managed settings takes precedence over your user setting, so when an administrator sets this key, the row shows the managed value and changing it has no effect. Claude Code ignores this key in project and local settings.
 
 ### `feedbackSurveyRate`
 
