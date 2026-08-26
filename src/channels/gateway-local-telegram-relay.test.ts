@@ -31,12 +31,48 @@ const ACCOUNT_ID = "telegram-relay-integration";
 const AGENT_ID = "agent-telegram-relay-integration";
 const CHAT_ID = "123";
 const FINAL_TEXT = "cross-boundary reply";
+const BEFORE_TOOL_TEXT = "before tool";
+const AFTER_TOOL_TEXT = "after tool";
 const TEST_TIMEOUT_MS = 10_000;
 
 type TurnPlan = {
   callMessageChannel: boolean;
   text: string;
+  assistantMessagesAroundTool?: [string, string];
 };
+
+function assistantMessagesAroundToolStream(
+  first: string,
+  second: string,
+  sequence: number,
+): ReturnType<typeof createAssistantMessageStream> {
+  const controller = new AbortController();
+  return {
+    controller,
+    async *[Symbol.asyncIterator]() {
+      yield {
+        message_type: "assistant_message",
+        id: `telegram-relay-assistant-${sequence}-1`,
+        content: [{ type: "text", text: first }],
+      };
+      yield {
+        message_type: "tool_call_message",
+        id: `telegram-relay-tool-${sequence}`,
+        tool_call: {
+          tool_call_id: `telegram-relay-tool-call-${sequence}`,
+          name: "Bash",
+          arguments: JSON.stringify({ command: "true" }),
+        },
+      };
+      yield {
+        message_type: "assistant_message",
+        id: `telegram-relay-assistant-${sequence}-2`,
+        content: [{ type: "text", text: second }],
+      };
+      yield { message_type: "stop_reason", stop_reason: "end_turn" };
+    },
+  } as unknown as ReturnType<typeof createAssistantMessageStream>;
+}
 
 async function waitFor(
   predicate: () => boolean,
@@ -103,6 +139,13 @@ function plannedExecutor(plans: TurnPlan[]): HeadlessTurnExecutor {
           releaseToolExecutionContext(context.contextId);
         }
       }
+      if (plan.assistantMessagesAroundTool) {
+        return assistantMessagesAroundToolStream(
+          plan.assistantMessagesAroundTool[0],
+          plan.assistantMessagesAroundTool[1],
+          turnSequence,
+        );
+      }
       return createAssistantMessageStream({
         id: `telegram-relay-assistant-${turnSequence}`,
         content: [{ type: "text", text: plan.text }],
@@ -111,7 +154,7 @@ function plannedExecutor(plans: TurnPlan[]): HeadlessTurnExecutor {
   };
 }
 
-test("Telegram ingress relays final text once across the local App Server boundary", async () => {
+test("Telegram ingress relays finalized assistant messages across the local App Server boundary", async () => {
   const originalDisableMods = process.env.LETTA_DISABLE_MODS;
   const originalDisableCron = process.env.LETTA_DISABLE_CRON_SCHEDULER;
   const originalIsMemfsExplicitlyDisabled =
@@ -123,7 +166,11 @@ test("Telegram ingress relays final text once across the local App Server bounda
     originalIsMemfsExplicitlyDisabled.call(settingsManager, agentId);
 
   const plans: TurnPlan[] = [
-    { callMessageChannel: false, text: FINAL_TEXT },
+    {
+      callMessageChannel: false,
+      text: FINAL_TEXT,
+      assistantMessagesAroundTool: [BEFORE_TOOL_TEXT, AFTER_TOOL_TEXT],
+    },
     { callMessageChannel: true, text: FINAL_TEXT },
     { callMessageChannel: false, text: FINAL_TEXT },
   ];
@@ -190,10 +237,17 @@ test("Telegram ingress relays final text once across the local App Server bounda
       () => finishedTurns === 1,
       "Timed out waiting for relay-only channel turn",
     );
-    expect(bot.api.sendMessage).toHaveBeenCalledTimes(1);
-    expect(bot.api.sendMessage).toHaveBeenLastCalledWith(
+    expect(bot.api.sendMessage).toHaveBeenCalledTimes(2);
+    expect(bot.api.sendMessage).toHaveBeenNthCalledWith(
+      1,
       CHAT_ID,
-      FINAL_TEXT,
+      BEFORE_TOOL_TEXT,
+      expect.any(Object),
+    );
+    expect(bot.api.sendMessage).toHaveBeenNthCalledWith(
+      2,
+      CHAT_ID,
+      AFTER_TOOL_TEXT,
       expect.any(Object),
     );
 
@@ -205,7 +259,7 @@ test("Telegram ingress relays final text once across the local App Server bounda
       () => finishedTurns === 2,
       "Timed out waiting for explicit-send channel turn",
     );
-    expect(bot.api.sendMessage).toHaveBeenCalledTimes(2);
+    expect(bot.api.sendMessage).toHaveBeenCalledTimes(3);
     expect(bot.api.sendMessage).toHaveBeenLastCalledWith(
       CHAT_ID,
       FINAL_TEXT,
@@ -221,7 +275,7 @@ test("Telegram ingress relays final text once across the local App Server bounda
       () => finishedTurns === 3,
       "Timed out waiting for tool-mode channel turn",
     );
-    expect(bot.api.sendMessage).toHaveBeenCalledTimes(2);
+    expect(bot.api.sendMessage).toHaveBeenCalledTimes(3);
     expect(plans).toHaveLength(0);
   } finally {
     settingsManager.isMemfsExplicitlyDisabled =

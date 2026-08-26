@@ -19,9 +19,19 @@ import type {
 } from "@/types/app-server-protocol";
 import {
   channelTurnOutcome,
+  type FinalizedGatewayAssistantMessage,
   GatewayAssistantTextAccumulator,
-  relayCompletedAssistantText,
+  relayFinalizedAssistantMessage,
+  runIdFromDelta,
+  stopReasonFromDelta,
 } from "./gateway-assistant-relay";
+import {
+  channelTagsForSources,
+  sourceLifecycleKey,
+  sourceRouteKey,
+  uniqueLifecycleSources,
+  uniqueRoutedSources,
+} from "./gateway-source-routing";
 import type {
   ChannelGatewayActiveTurnState,
   ChannelGatewayDelivery,
@@ -31,6 +41,7 @@ import type {
 } from "./gateway-types";
 import {
   createMessageChannelIdempotencyScope,
+  MessageChannelDuplicateActionError,
   type MessageChannelIdempotencyScope,
 } from "./message-channel-idempotency";
 import { createChannelTurnProgressBuilder } from "./progress-builder";
@@ -140,65 +151,6 @@ function hasAgentRuntime<
   return !!value.runtime?.agent_id;
 }
 
-function sourceRouteKey(source: ChannelTurnSource): string {
-  return [
-    source.channel,
-    source.accountId ?? "",
-    source.chatId,
-    source.threadId ?? "",
-  ].join(":");
-}
-
-function sourceLifecycleKey(source: ChannelTurnSource): string {
-  return [
-    sourceRouteKey(source),
-    source.messageId ?? "",
-    source.agentId,
-    source.conversationId,
-  ].join(":");
-}
-
-function uniqueSourcesBy(
-  sources: ChannelTurnSource[],
-  getKey: (source: ChannelTurnSource) => string,
-): ChannelTurnSource[] {
-  const byKey = new Map<string, ChannelTurnSource>();
-  for (const source of sources) byKey.set(getKey(source), source);
-  return [...byKey.values()];
-}
-
-function uniqueRoutedSources(
-  sources: ChannelTurnSource[],
-): ChannelTurnSource[] {
-  return uniqueSourcesBy(sources, sourceRouteKey);
-}
-
-function uniqueLifecycleSources(
-  sources: ChannelTurnSource[],
-): ChannelTurnSource[] {
-  return uniqueSourcesBy(sources, sourceLifecycleKey);
-}
-
-function channelTagsForSources(sources: ChannelTurnSource[]): string[] {
-  return [...new Set(sources.map((source) => `channel:${source.channel}`))];
-}
-
-function stopReasonFromDelta(
-  message: StreamDeltaMessage,
-): StopReasonType | null {
-  const delta = message.delta;
-  return delta.message_type === "stop_reason" &&
-    "stop_reason" in delta &&
-    typeof delta.stop_reason === "string"
-    ? delta.stop_reason
-    : null;
-}
-
-function runIdFromDelta(message: StreamDeltaMessage): string | undefined {
-  const runId = "run_id" in message.delta ? message.delta.run_id : undefined;
-  return typeof runId === "string" && runId.length > 0 ? runId : undefined;
-}
-
 /**
  * Process-neutral Channels bridge. It only speaks the public App Server
  * protocol; channel adapters and credentials stay behind the injected hooks.
@@ -215,7 +167,7 @@ export class ChannelGateway {
   ) {
     this.disposers.push(
       client.onMessage((message) => this.handleMessage(message)),
-      client.onExternalToolCall((request) => {
+      client.onExternalToolCall(async (request) => {
         const state = hasAgentRuntime(request)
           ? this.states.get(runtimeKey(request.runtime))
           : undefined;
@@ -223,11 +175,20 @@ export class ChannelGateway {
         const sources = active?.routingSources ?? state?.routedSources ?? [];
         // Pass the per-turn idempotency scope only when a turn is active;
         // process-owned calls (no active batch) are not deduped.
-        return hooks.executeExternalTool(
-          request,
-          sources,
-          active?.idempotencyScope ?? null,
-        );
+        try {
+          return await hooks.executeExternalTool(
+            request,
+            sources,
+            active?.idempotencyScope ?? null,
+          );
+        } catch (error) {
+          if (!(error instanceof MessageChannelDuplicateActionError))
+            throw error;
+          return {
+            content: [{ type: "text", text: error.message }],
+            is_error: true,
+          };
+        }
       }),
     );
   }
@@ -467,6 +428,9 @@ export class ChannelGateway {
     if (!state || active?.batchId !== `channel-${clientMessageId}`) {
       return null;
     }
+    // Hook ownership stays with this gateway until every queued side effect has
+    // settled. A finalized relay may not have entered the idempotency scope yet.
+    if (state.hookQueue) return null;
     const idempotency = active.idempotencyScope.snapshot();
     if (!idempotency) return null;
     const handoffState = {
@@ -907,7 +871,11 @@ export class ChannelGateway {
 
     const runId = runIdFromDelta(message);
     if (runId) active.runId = runId;
-    active.assistantText.append(message);
+    this.enqueueFinalizedAssistantMessages(
+      state,
+      active,
+      active.assistantText.handleDelta(message),
+    );
     for (const update of active.progress.buildUpdates(message.delta)) {
       void this.enqueueHook(state, () =>
         this.hooks.onProgress({
@@ -921,12 +889,39 @@ export class ChannelGateway {
     active.richDraft?.handleDelta(message.delta);
 
     const stopReason = stopReasonFromDelta(message);
-    if (stopReason === "requires_approval" || stopReason === "end_turn") {
+    if (
+      stopReason === "requires_approval" ||
+      stopReason === "end_turn" ||
+      stopReason === "tool_rule"
+    ) {
       void active.richDraft?.flushPending();
+      const finalized = active.assistantText.finalizeCurrent();
+      if (finalized) {
+        this.enqueueFinalizedAssistantMessages(state, active, [finalized]);
+      }
     }
     // The listener sends a canonical turn_finished event after it classifies
     // terminal failures. Finalizing from this earlier delta would discard that
     // user-safe error detail.
+  }
+
+  private enqueueFinalizedAssistantMessages(
+    state: GatewayRuntimeState,
+    active: ActiveGatewayTurn,
+    messages: FinalizedGatewayAssistantMessage[],
+  ): void {
+    const relay = active.relayEligible
+      ? this.hooks.relayAssistantText
+      : undefined;
+    for (const message of messages)
+      void this.enqueueHook(state, () =>
+        relayFinalizedAssistantMessage({
+          message,
+          sources: active.routingSources,
+          idempotencyScope: active.idempotencyScope,
+          relay,
+        }),
+      );
   }
 
   private handleTurnFinished(
@@ -940,6 +935,15 @@ export class ChannelGateway {
     const state = this.getState(runtime);
     const active = state.active;
     if (!active) return;
+    if (
+      terminal.stopReason === "end_turn" ||
+      terminal.stopReason === "tool_rule"
+    ) {
+      const finalized = active.assistantText.finalizeCurrent();
+      if (finalized) {
+        this.enqueueFinalizedAssistantMessages(state, active, [finalized]);
+      }
+    }
     state.active = null;
     active.richDraft?.dispose();
     const finishedEvent: ChannelTurnLifecycleEvent = {
@@ -953,18 +957,7 @@ export class ChannelGateway {
         : {}),
       ...(terminal.error ? { error: terminal.error } : {}),
     };
-    void this.enqueueHook(state, () => {
-      const relay = relayCompletedAssistantText({
-        stopReason: terminal.stopReason,
-        accumulator: active.assistantText,
-        sources: active.routingSources,
-        idempotencyScope: active.idempotencyScope,
-        relay: active.relayEligible ? this.hooks.relayAssistantText : undefined,
-      });
-      return relay
-        ? relay.then(() => this.hooks.onLifecycle(finishedEvent))
-        : this.hooks.onLifecycle(finishedEvent);
-    });
+    void this.enqueueHook(state, () => this.hooks.onLifecycle(finishedEvent));
   }
 
   private handleControlRequest(message: ControlRequest): void {

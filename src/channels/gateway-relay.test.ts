@@ -59,7 +59,7 @@ function assistantDelta(options: {
   };
 }
 
-test("relays all ordered assistant messages after approval resumes and the turn completes", async () => {
+test("relays each finalized assistant message across an approval boundary", async () => {
   const client = new FakeClient();
   const relays: string[] = [];
   const { hooks } = makeHooks({
@@ -85,7 +85,7 @@ test("relays all ordered assistant messages after approval resumes and the turn 
     }),
   );
   await Bun.sleep(0);
-  expect(relays).toEqual([]);
+  expect(relays).toEqual(["First"]);
 
   client.emit(
     assistantDelta({
@@ -113,7 +113,55 @@ test("relays all ordered assistant messages after approval resumes and the turn 
   client.emit(makeTurnFinished("end_turn"));
   await Bun.sleep(0);
 
-  expect(relays).toEqual(["First part Second"]);
+  expect(relays).toEqual(["First", "Second"]);
+  gateway.close();
+});
+
+test("tool boundary relays two assistant messages separately and in order", async () => {
+  const client = new FakeClient();
+  const relays: string[] = [];
+  const { hooks } = makeHooks({
+    relayAssistantText: ({ text }) => {
+      relays.push(text);
+    },
+  });
+  const gateway = new ChannelGateway(client, hooks);
+
+  await gateway.submit(makeDelivery());
+  client.emit(
+    assistantDelta({
+      id: "assistant-1",
+      key: "assistant-1",
+      content: "Before",
+    }),
+  );
+  client.emit(
+    makeStreamDelta({
+      message_type: "tool_call_message",
+      id: "tool-1",
+      tool_call: {
+        tool_call_id: "tool-call-1",
+        name: "Bash",
+        arguments: JSON.stringify({ command: "true" }),
+      },
+    }),
+  );
+  await Bun.sleep(0);
+  expect(relays).toEqual(["Before"]);
+
+  client.emit(
+    assistantDelta({ id: "assistant-2", key: "assistant-2", content: "After" }),
+  );
+  client.emit(
+    makeStreamDelta({
+      message_type: "stop_reason",
+      stop_reason: "end_turn",
+    }),
+  );
+  await Bun.sleep(0);
+  expect(relays).toEqual(["Before", "After"]);
+
+  client.emit(makeTurnFinished("end_turn"));
   gateway.close();
 });
 
@@ -131,6 +179,14 @@ test("tool_rule completion relays once and ignores duplicate or late terminal ev
   client.emit(
     assistantDelta({ id: "assistant-1", key: "assistant-1", content: "Done" }),
   );
+  client.emit(
+    makeStreamDelta({
+      message_type: "stop_reason",
+      stop_reason: "tool_rule",
+    }),
+  );
+  await Bun.sleep(0);
+  expect(relays).toEqual(["Done"]);
   client.emit(makeTurnFinished("tool_rule"));
   client.emit(makeTurnFinished("tool_rule"));
   client.emit(
@@ -212,6 +268,53 @@ test("fails closed after approval recovery because earlier text is unavailable",
   await Bun.sleep(0);
 
   expect(relay).not.toHaveBeenCalled();
+  gateway.close();
+});
+
+test("relay delivery failure does not reorder a later finalized message", async () => {
+  const client = new FakeClient();
+  const attempts: string[] = [];
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const { hooks } = makeHooks({
+    relayAssistantText: ({ text }) => {
+      attempts.push(text);
+      if (text === "First") throw new Error("first failed");
+    },
+  });
+  const gateway = new ChannelGateway(client, hooks);
+
+  await gateway.submit(makeDelivery());
+  client.emit(
+    assistantDelta({ id: "assistant-1", key: "assistant-1", content: "First" }),
+  );
+  client.emit(
+    makeStreamDelta({
+      message_type: "tool_call_message",
+      id: "tool-1",
+      tool_call: {
+        tool_call_id: "tool-call-1",
+        name: "Bash",
+        arguments: "{}",
+      },
+    }),
+  );
+  client.emit(
+    assistantDelta({
+      id: "assistant-2",
+      key: "assistant-2",
+      content: "Second",
+    }),
+  );
+  client.emit(
+    makeStreamDelta({ message_type: "stop_reason", stop_reason: "end_turn" }),
+  );
+  await Bun.sleep(0);
+
+  expect(attempts).toEqual(["First", "Second"]);
+  expect(warn).toHaveBeenCalledWith(
+    "[channels] Automatic relay failed: first failed",
+  );
+  warn.mockRestore();
   gateway.close();
 });
 

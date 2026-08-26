@@ -1,6 +1,7 @@
 export interface MessageChannelIdempotencyState {
   successfulActionKeys: string[];
   successfulTextDeliveryKeys: string[];
+  successfulRelayTextDeliveryKeys?: string[];
   lastSuccessfulActionKey: string | null;
 }
 
@@ -36,19 +37,23 @@ function isErrorResult(result: string): boolean {
 }
 
 /**
- * Explicit calls suppress only an adjacent repeat of the same action. Relay
- * suppression separately remembers every successful text delivery, regardless
- * of whether it used send or send-rich. In-flight state cannot be serialized,
- * so snapshot returns null until all dispatches settle.
+ * Explicit calls suppress an adjacent repeat plus text already delivered by an
+ * automatic relay. Relay suppression remembers every successful text delivery,
+ * regardless of whether it used send or send-rich. In-flight state cannot be
+ * serialized, so snapshot returns null until all dispatches settle.
  */
 export function createMessageChannelIdempotencyScope(
   state?: MessageChannelIdempotencyState,
 ): MessageChannelIdempotencyScope {
   const inFlightActionKeys = new Map<string, Promise<string>>();
   const inFlightTextDeliveryKeys = new Map<string, number>();
+  const inFlightRelayTextDeliveryKeys = new Set<string>();
   const successfulActionKeys = new Set(state?.successfulActionKeys ?? []);
   const successfulTextDeliveryKeys = new Set(
     state?.successfulTextDeliveryKeys ?? [],
+  );
+  const successfulRelayTextDeliveryKeys = new Set(
+    state?.successfulRelayTextDeliveryKeys ?? [],
   );
   let lastSuccessfulActionKey = state?.lastSuccessfulActionKey ?? null;
   let latestInvocation = 0;
@@ -76,10 +81,17 @@ export function createMessageChannelIdempotencyScope(
         return await effect();
       }
 
-      if (inFlightActionKeys.has(actionKey)) {
+      if (
+        inFlightActionKeys.has(actionKey) ||
+        (textDeliveryKey && inFlightRelayTextDeliveryKeys.has(textDeliveryKey))
+      ) {
         throw new MessageChannelDuplicateActionError("in-flight");
       }
-      if (lastSuccessfulActionKey === actionKey) {
+      if (
+        lastSuccessfulActionKey === actionKey ||
+        (textDeliveryKey &&
+          successfulRelayTextDeliveryKeys.has(textDeliveryKey))
+      ) {
         throw new MessageChannelDuplicateActionError("completed");
       }
 
@@ -123,11 +135,15 @@ export function createMessageChannelIdempotencyScope(
       const pending = Promise.resolve().then(effect);
       inFlightActionKeys.set(actionKey, pending);
       addInFlightTextDelivery(textDeliveryKey);
+      if (textDeliveryKey) inFlightRelayTextDeliveryKeys.add(textDeliveryKey);
       try {
         const result = await pending;
         if (!isErrorResult(result)) {
           successfulActionKeys.add(actionKey);
-          if (textDeliveryKey) successfulTextDeliveryKeys.add(textDeliveryKey);
+          if (textDeliveryKey) {
+            successfulTextDeliveryKeys.add(textDeliveryKey);
+            successfulRelayTextDeliveryKeys.add(textDeliveryKey);
+          }
         }
         return result;
       } finally {
@@ -135,6 +151,8 @@ export function createMessageChannelIdempotencyScope(
           inFlightActionKeys.delete(actionKey);
         }
         removeInFlightTextDelivery(textDeliveryKey);
+        if (textDeliveryKey)
+          inFlightRelayTextDeliveryKeys.delete(textDeliveryKey);
       }
     },
     snapshot() {
@@ -144,6 +162,7 @@ export function createMessageChannelIdempotencyScope(
       return {
         successfulActionKeys: [...successfulActionKeys],
         successfulTextDeliveryKeys: [...successfulTextDeliveryKeys],
+        successfulRelayTextDeliveryKeys: [...successfulRelayTextDeliveryKeys],
         lastSuccessfulActionKey,
       };
     },
