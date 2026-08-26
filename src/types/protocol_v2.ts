@@ -30,6 +30,7 @@ import type {
   MessageListParams,
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type { ChatGPTOAuthConfig } from "@/types/chatgpt-oauth";
 import type {
   AppServerInfoCommand,
   AppServerInfoResponseMessage,
@@ -1305,14 +1306,13 @@ export interface ConnectProviderCommand {
   type: "connect_provider";
   /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Provider store to write. MVP supports local provider storage. */
   target: ConnectProviderStorageTarget;
-  /** Provider id from list_connect_providers. */
   provider_id: string;
   /** Optional auth method id for providers with multiple auth methods. */
   auth_method_id?: string;
-  /** User-provided connection fields keyed by field id. */
   fields: Record<string, string>;
+  provider_name?: string;
+  oauth_config?: ChatGPTOAuthConfig;
 }
 
 export interface DisconnectProviderCommand {

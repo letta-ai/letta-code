@@ -3,6 +3,7 @@ import {
   isChannelAccountCreateCommand,
   isChannelAccountUpdateCommand,
   isChannelSetConfigCommand,
+  isConnectProviderCommand,
   isUpdateModelCommand,
   parseServerMessage,
 } from "@/websocket/listener/protocol-inbound";
@@ -18,6 +19,45 @@ describe("app-server protocol hard cut", () => {
   ])("rejects legacy command %s", (type) => {
     const parsed = parseServerMessage(Buffer.from(JSON.stringify({ type })));
     expect(parsed).toBeNull();
+  });
+});
+
+describe("connect provider protocol", () => {
+  test("accepts completed ChatGPT OAuth credentials", () => {
+    expect(
+      isConnectProviderCommand({
+        type: "connect_provider",
+        request_id: "request-1",
+        target: "local",
+        provider_id: "openai-codex-oauth",
+        provider_name: "chatgpt-work",
+        fields: {},
+        oauth_config: {
+          access_token: "access-token",
+          id_token: "id-token",
+          refresh_token: "refresh-token",
+          account_id: "account-id",
+          expires_at: 1_800_000_000_000,
+        },
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects incomplete ChatGPT OAuth credentials", () => {
+    expect(
+      isConnectProviderCommand({
+        type: "connect_provider",
+        request_id: "request-1",
+        target: "local",
+        provider_id: "openai-codex-oauth",
+        fields: {},
+        oauth_config: {
+          access_token: "access-token",
+          id_token: "id-token",
+          expires_at: 1_800_000_000_000,
+        },
+      }),
+    ).toBe(false);
   });
 });
 

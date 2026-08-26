@@ -14,9 +14,14 @@ import {
   removeProviderByName,
 } from "@/providers/byok-providers";
 import {
+  createOrUpdateOpenAICodexProvider,
+  normalizeChatGPTOAuthProviderName,
+} from "@/providers/openai-codex-provider";
+import {
   connectedRecordsForProvider,
   uniqueProviderNames,
 } from "@/providers/provider-connections";
+import type { ChatGPTOAuthConfig } from "@/types/chatgpt-oauth";
 
 export interface ConnectProviderField {
   key: string;
@@ -74,6 +79,8 @@ export interface ConnectProviderInput<
   providerId: string;
   authMethodId?: string;
   fields: Record<string, string>;
+  providerName?: string;
+  oauthConfig?: ChatGPTOAuthConfig;
 }
 
 export interface DisconnectProviderInput<
@@ -90,6 +97,27 @@ export interface ResolvedProviderConnectionFields {
   region?: string;
   profile?: string;
   options: ProviderConnectionOptions;
+}
+
+export function resolveChatGPTOAuthConnection(
+  provider: ByokProvider,
+  input: Pick<ConnectProviderInput, "providerName" | "oauthConfig">,
+): { providerName: string; oauthConfig: ChatGPTOAuthConfig } | null {
+  if (!input.oauthConfig) {
+    if (input.providerName) {
+      throw new Error("providerName requires OAuth credentials.");
+    }
+    return null;
+  }
+  if (!provider.isOAuth || provider.providerType !== "chatgpt_oauth") {
+    throw new Error(`${provider.displayName} does not accept ChatGPT OAuth.`);
+  }
+  return {
+    providerName: normalizeChatGPTOAuthProviderName(
+      input.providerName ?? provider.providerName,
+    ),
+    oauthConfig: input.oauthConfig,
+  };
 }
 
 function serializeConnectedProvider(
@@ -302,6 +330,18 @@ export async function connectProvider<TTarget extends ProviderStorageTarget>(
     getProviderConfigs(input.target),
     input.providerId,
   );
+  const oauthConnection = resolveChatGPTOAuthConnection(provider, input);
+  if (oauthConnection) {
+    if (input.authMethodId || Object.keys(input.fields).length > 0) {
+      throw new Error("ChatGPT OAuth does not accept API credential fields.");
+    }
+    await createOrUpdateOpenAICodexProvider(
+      oauthConnection.oauthConfig,
+      { target: input.target },
+      oauthConnection.providerName,
+    );
+    return listConnectProviders(input.target);
+  }
   const resolved = resolveProviderConnectionFields(provider, {
     authMethodId: input.authMethodId,
     fields: input.fields,
