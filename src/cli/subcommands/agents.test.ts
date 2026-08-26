@@ -1,5 +1,33 @@
-import { describe, expect, test } from "bun:test";
-import { buildAgentConfigReport } from "@/cli/subcommands/agents";
+import { describe, expect, spyOn, test } from "bun:test";
+import {
+  buildAgentConfigReport,
+  runAgentsSubcommand,
+} from "@/cli/subcommands/agents";
+
+describe("agents list numeric options", () => {
+  test.each(["0", "-5", "1.5", "10junk", " ", "9007199254740992", "1001"])(
+    "rejects invalid limit %p before initialization",
+    async (limit) => {
+      const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const code = await runAgentsSubcommand([
+          "list",
+          limit.startsWith("-") ? `--limit=${limit}` : "--limit",
+          ...(limit.startsWith("-") ? [] : [limit]),
+        ]);
+
+        expect(code).toBe(1);
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "--limit must be an integer between 1 and 1000",
+          ),
+        );
+      } finally {
+        errorSpy.mockRestore();
+      }
+    },
+  );
+});
 
 describe("buildAgentConfigReport", () => {
   test("reports agent defaults and redacts credential fields", () => {

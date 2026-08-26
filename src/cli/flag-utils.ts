@@ -1,3 +1,9 @@
+export const CLI_NUMERIC_OPTION_MAX = {
+  pageSize: 1000,
+  pageCount: 1000,
+  timeoutSeconds: 86_400,
+} as const;
+
 export function parseCsvListFlag(
   value: string | undefined,
 ): string[] | undefined {
@@ -45,16 +51,26 @@ export function resolveImportFlagAlias(options: {
 export function parsePositiveIntFlag(options: {
   rawValue: string | undefined;
   flagName: string;
+  maxValue?: number;
 }): number | undefined {
-  const { rawValue, flagName } = options;
+  const { rawValue, flagName, maxValue = Number.MAX_SAFE_INTEGER } = options;
   if (rawValue === undefined) {
     return undefined;
   }
-  const parsed = Number.parseInt(rawValue, 10);
-  if (Number.isNaN(parsed) || parsed <= 0) {
-    throw new Error(
-      `--${flagName} must be a positive integer, got: ${rawValue}`,
-    );
+
+  const trimmed = rawValue.trim();
+  const parsed = Number(trimmed);
+  if (
+    !/^\d+$/.test(trimmed) ||
+    !Number.isSafeInteger(parsed) ||
+    parsed < 1 ||
+    parsed > maxValue
+  ) {
+    const expected =
+      maxValue === Number.MAX_SAFE_INTEGER
+        ? "a positive integer"
+        : `an integer between 1 and ${maxValue}`;
+    throw new Error(`--${flagName} must be ${expected}, got: ${rawValue}`);
   }
   return parsed;
 }
