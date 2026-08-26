@@ -87,7 +87,7 @@ describe.skipIf(process.platform === "win32")(
       mkdirSync(projectSkillsDir, { recursive: true });
 
       const externalSkillDir = join(testDir, "external-skill");
-      writeSkill(externalSkillDir, "Linked Skill");
+      writeSkill(externalSkillDir, "linked-skill");
 
       symlinkSync(
         externalSkillDir,
@@ -108,7 +108,7 @@ describe.skipIf(process.platform === "win32")(
 
     test("handles symlink cycles without hanging and still discovers siblings", async () => {
       mkdirSync(projectSkillsDir, { recursive: true });
-      writeSkill(join(projectSkillsDir, "good-skill"), "Good Skill");
+      writeSkill(join(projectSkillsDir, "good-skill"), "good-skill");
 
       const cycleDir = join(projectSkillsDir, "cycle");
       mkdirSync(cycleDir, { recursive: true });
@@ -134,7 +134,7 @@ describe.skipIf(process.platform === "win32")(
 
     test("continues discovery when a dangling symlink cannot be inspected", async () => {
       mkdirSync(projectSkillsDir, { recursive: true });
-      writeSkill(join(projectSkillsDir, "healthy-skill"), "Healthy Skill");
+      writeSkill(join(projectSkillsDir, "healthy-skill"), "healthy-skill");
 
       symlinkSync(
         join(projectSkillsDir, "missing-target"),
@@ -157,9 +157,9 @@ describe.skipIf(process.platform === "win32")(
 
     test("returns discovered skills in deterministic sorted order", async () => {
       mkdirSync(projectSkillsDir, { recursive: true });
-      writeSkill(join(projectSkillsDir, "z-skill"), "Z Skill");
-      writeSkill(join(projectSkillsDir, "a-skill"), "A Skill");
-      writeSkill(join(projectSkillsDir, "m-skill"), "M Skill");
+      writeSkill(join(projectSkillsDir, "z-skill"), "z-skill");
+      writeSkill(join(projectSkillsDir, "a-skill"), "a-skill");
+      writeSkill(join(projectSkillsDir, "m-skill"), "m-skill");
 
       const result = await discoverSkills(projectSkillsDir, undefined, {
         skipBundled: true,
@@ -175,6 +175,59 @@ describe.skipIf(process.platform === "win32")(
     });
   },
 );
+
+describe("nested skill discovery", () => {
+  const testDir = join(process.cwd(), ".test-nested-skill-resources");
+  const projectSkillsDir = join(testDir, ".skills");
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  test("uses frontmatter names for nested skills", async () => {
+    const skillDir = join(projectSkillsDir, "computer-use");
+    const nestedResourceDir = join(skillDir, "references", "cua-driver");
+    mkdirSync(nestedResourceDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: computer-use\ndescription: Control GUI applications\n---\n",
+    );
+    writeFileSync(
+      join(nestedResourceDir, "SKILL.md"),
+      "---\nname: cua-driver\ndescription: Cua Driver reference\n---\n",
+    );
+
+    const result = await discoverSkills(projectSkillsDir, undefined, {
+      skipBundled: true,
+      sources: ["project"],
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.skills.map((skill) => skill.id)).toEqual([
+      "computer-use",
+      "cua-driver",
+    ]);
+  });
+
+  test("discovers skills inside category directories", async () => {
+    const skillDir = join(projectSkillsDir, "creative", "image-generation");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: image-generation\ndescription: Generate images\n---\n",
+    );
+
+    const result = await discoverSkills(projectSkillsDir, undefined, {
+      skipBundled: true,
+      sources: ["project"],
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.skills.map((skill) => skill.id)).toEqual([
+      "image-generation",
+    ]);
+  });
+});
 
 describe("agent skills discovery", () => {
   const testDir = join(process.cwd(), ".test-agent-skills-discovery");
@@ -247,7 +300,7 @@ describe("skills frontmatter metadata", () => {
       join(skillDir, "SKILL.md"),
       [
         "---",
-        "name: Deploy",
+        "name: deploy",
         "description: Deploy the application",
         "when_to_use: When the user asks to ship a release",
         "argument-hint: [environment]",

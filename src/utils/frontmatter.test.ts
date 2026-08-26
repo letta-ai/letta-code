@@ -57,4 +57,20 @@ Prompt body`;
     expect(frontmatter.description).toBe("custom reflection");
     expect(body).toBe("Prompt body");
   });
+
+  test("does not flatten nested YAML fields over top-level fields", () => {
+    const { frontmatter } = parseFrontmatter(`---
+name: cua-driver
+description: Drive native GUI applications.
+metadata:
+  openclaw:
+    envVars:
+      - name: CUA_DRIVER_TOKEN
+        description: Required host-generated bearer token.
+---
+Instructions`);
+
+    expect(frontmatter.name).toBe("cua-driver");
+    expect(frontmatter.description).toBe("Drive native GUI applications.");
+  });
 });

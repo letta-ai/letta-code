@@ -64,10 +64,16 @@ export function parseFrontmatter(content: string): {
   };
 
   for (const line of lines) {
-    // Check if this is an array item
-    if (line.trim().startsWith("-") && currentKey) {
-      const value = line.trim().slice(1).trim();
-      currentArray.push(value);
+    const trimmedLine = line.trim();
+    const indentation = line.length - line.trimStart().length;
+
+    if (indentation > 0) {
+      // Preserve the existing top-level string-array support without flattening
+      // nested YAML objects into the frontmatter record.
+      if (indentation <= 2 && trimmedLine.startsWith("-") && currentKey) {
+        const value = trimmedLine.slice(1).trim();
+        currentArray.push(value);
+      }
       continue;
     }
 

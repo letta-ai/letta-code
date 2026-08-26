@@ -13,6 +13,7 @@ import {
   resolveSharedMemorySkillsContext,
 } from "@/agent/shared-memory-skills";
 import {
+  discoverSkills,
   GLOBAL_SKILLS_DIR,
   getAgentSkillsDir,
   getBundledSkills,
@@ -40,6 +41,29 @@ interface SkillResult {
 
 export interface ReadSkillContentOptions {
   attachedRepositories?: readonly AttachedAgentRepository[];
+}
+
+async function readSkillFromRoot(
+  skillsRoot: string,
+  skillId: string,
+): Promise<{ content: string; path: string } | null> {
+  const discovery = await discoverSkills(skillsRoot, undefined, {
+    sources: ["project"],
+    skipBundled: true,
+  });
+  const discoveredSkill = discovery.skills.find(
+    (candidate) => candidate.id === skillId,
+  );
+  if (!discoveredSkill) {
+    return null;
+  }
+
+  try {
+    const content = await readFile(discoveredSkill.path, "utf-8");
+    return { content, path: discoveredSkill.path };
+  } catch {
+    return null;
+  }
 }
 
 function getMemorySkillsDirs(agentId?: string): string[] {
@@ -141,38 +165,25 @@ export async function readSkillContent(
     skillsDir,
   ]);
   for (const projectSkillsDir of projectSkillsDirs) {
-    const projectSkillPath = join(projectSkillsDir, skillId, "SKILL.md");
-    try {
-      const content = await readFile(projectSkillPath, "utf-8");
-      return { content, path: projectSkillPath };
-    } catch {
-      // Not in this project skills directory, continue
+    const result = await readSkillFromRoot(projectSkillsDir, skillId);
+    if (result) {
+      return result;
     }
   }
 
   // 2. Try agent memory skills directory (if agentId provided)
   if (agentId) {
-    const agentSkillPath = join(
-      getAgentSkillsDir(agentId),
-      skillId,
-      "SKILL.md",
-    );
-    try {
-      const content = await readFile(agentSkillPath, "utf-8");
-      return { content, path: agentSkillPath };
-    } catch {
-      // Not in agent dir, continue
+    const result = await readSkillFromRoot(getAgentSkillsDir(agentId), skillId);
+    if (result) {
+      return result;
     }
   }
 
   // 3. Try agent memory skills fallback directories
   for (const memorySkillsDir of getMemorySkillsDirs(agentId)) {
-    const memorySkillPath = join(memorySkillsDir, skillId, "SKILL.md");
-    try {
-      const content = await readFile(memorySkillPath, "utf-8");
-      return { content, path: memorySkillPath };
-    } catch {
-      // Not in this memory skills dir, continue
+    const result = await readSkillFromRoot(memorySkillsDir, skillId);
+    if (result) {
+      return result;
     }
   }
 
@@ -198,12 +209,9 @@ export async function readSkillContent(
   }
 
   // 5. Try global skills directory
-  const globalSkillPath = join(GLOBAL_SKILLS_DIR, skillId, "SKILL.md");
-  try {
-    const content = await readFile(globalSkillPath, "utf-8");
-    return { content, path: globalSkillPath };
-  } catch {
-    // Not in global, continue
+  const globalResult = await readSkillFromRoot(GLOBAL_SKILLS_DIR, skillId);
+  if (globalResult) {
+    return globalResult;
   }
 
   // 6. Try bundled skills (lowest priority)
