@@ -212,6 +212,14 @@ describe("Shell Launchers", () => {
         ).toBe(2);
       });
 
+      test("does not reuse a native error after an ignored final cmdlet failure", () => {
+        expect(
+          runPowerShellHook(
+            "$PSNativeCommandUseErrorActionPreference = $true; node -e \"process.exit(2)\"; Get-Item -LiteralPath 'Z:\\missing-letta-hook-path' -ErrorAction Ignore",
+          ),
+        ).toBe(1);
+      });
+
       test("preserves native blocks invoked through a PowerShell alias", () => {
         expect(
           runPowerShellHook(

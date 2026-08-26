@@ -14,8 +14,10 @@ export const STRICT_SHELL_PRELUDE = "set -euo pipefail";
 export const POWERSHELL_UTF8_OUTPUT_PREFIX =
   "try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n";
 // `$LASTEXITCODE` remains stale after PowerShell statements, while `$Error`
-// can omit ignored cmdlet failures or include native failures. Track the last
-// resolved command type so only a final native process can produce a BLOCK.
+// can omit ignored cmdlet failures. Track the last resolved user command type
+// so only a final native process can produce a BLOCK. PowerShell 7 performs
+// nested command lookups while rendering native errors; those are not hook
+// statements and must not replace the native command we just observed.
 export const POWERSHELL_EXIT_CODE_SUFFIX =
   "\n$__lettaCommandSucceeded = $?; " +
   "$__lettaFinalCommandWasNative = $global:__lettaLastCommandWasNative; " +
@@ -117,9 +119,10 @@ export function buildPowerShellCommand(
       "$global:__lettaLastCommandWasNative = $false; " +
       "$__lettaPreviousPostCommandLookupAction = $ExecutionContext.InvokeCommand.PostCommandLookupAction; " +
       "$ExecutionContext.InvokeCommand.PostCommandLookupAction = { param($sender, $eventArgs) " +
+      "if (-not [System.Environment]::StackTrace.Contains('System.Management.Automation.NativeCommandProcessor.Complete')) { " +
       "$__lettaResolvedCommand = $eventArgs.Command; " +
       "while ($__lettaResolvedCommand -is [System.Management.Automation.AliasInfo]) { $__lettaResolvedCommand = $__lettaResolvedCommand.ResolvedCommand }; " +
-      "$global:__lettaLastCommandWasNative = $__lettaResolvedCommand.CommandType -in @([System.Management.Automation.CommandTypes]::Application, [System.Management.Automation.CommandTypes]::ExternalScript); " +
+      "$global:__lettaLastCommandWasNative = $__lettaResolvedCommand.CommandType -in @([System.Management.Automation.CommandTypes]::Application, [System.Management.Automation.CommandTypes]::ExternalScript) }; " +
       "if ($null -ne $__lettaPreviousPostCommandLookupAction) { $__lettaPreviousPostCommandLookupAction.Invoke($sender, $eventArgs) } }.GetNewClosure(); "
     : "";
   const exitCodeSuffix = preserveExitCode ? POWERSHELL_EXIT_CODE_SUFFIX : "";
