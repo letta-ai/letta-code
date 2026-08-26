@@ -2,15 +2,15 @@ name: Built-in Skills Agent Watch
 
 on:
   schedule:
-    - cron: "47 */8 * * *"
+    - cron: "47 8 * * *"
   workflow_dispatch:
     inputs:
       skill:
-        description: "Exact bundled skill ID to audit instead of rotating"
+        description: "Audit only this bundled skill during a manual run"
         required: false
         type: string
       dry_run:
-        description: "Build the candidate without writing tracker state or invoking Amelia"
+        description: "Build candidates without writing tracker state or invoking Amelia"
         required: false
         default: false
         type: boolean
@@ -20,13 +20,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  watch:
+  prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 15
     permissions:
       contents: read
       issues: write
-      pull-requests: read
+    outputs:
+      expected_github_login: ${{ steps.github-identity.outputs.login }}
+      matrix: ${{ steps.detect.outputs.matrix }}
+      should_run_agent: ${{ steps.detect.outputs.should_run_agent }}
+      tracker_issue: ${{ steps.detect.outputs.tracker_issue }}
+      tracker_issue_url: ${{ steps.detect.outputs.tracker_issue_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -41,14 +46,17 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Select built-in skill audit
+      - name: Prepare built-in skill audits
         id: detect
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_SKILL: ${{ inputs.skill }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          ARGS=(--analysis-file "$RUNNER_TEMP/builtin-skills-watch-analysis.json")
+          ARGS=(
+            --analysis-dir "$RUNNER_TEMP/builtin-skills-watch-analyses"
+            --manifest-file "$RUNNER_TEMP/builtin-skills-watch-manifest.json"
+          )
           if [ -n "$REQUESTED_SKILL" ]; then
             ARGS+=(--skill "$REQUESTED_SKILL")
           fi
@@ -57,12 +65,13 @@ jobs:
           fi
           bun scripts/builtin-skills-watch/agent-watch.ts "${ARGS[@]}"
 
-      - name: Upload dry-run analysis
-        if: inputs.dry_run == true
-        uses: actions/upload-artifact@v6
+      - name: Upload audit inputs
+        uses: actions/upload-artifact@v7
         with:
-          name: builtin-skills-watch-${{ github.run_id }}
-          path: ${{ runner.temp }}/builtin-skills-watch-analysis.json
+          name: builtin-skills-watch-inputs
+          path: |
+            ${{ runner.temp }}/builtin-skills-watch-manifest.json
+            ${{ runner.temp }}/builtin-skills-watch-analyses
           retention-days: 3
 
       - name: Resolve Amelia GitHub identity
@@ -75,18 +84,32 @@ jobs:
           echo "login=$login" >> "$GITHUB_OUTPUT"
           echo "Authenticated GitHub login: $login"
 
+  review:
+    needs: prepare
+    if: needs.prepare.outputs.should_run_agent == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Build Amelia prompt
-        if: steps.detect.outputs.should_run_agent == 'true'
         id: prompt
         env:
-          TRACKER_ISSUE: ${{ steps.detect.outputs.tracker_issue }}
-          TRACKER_ISSUE_URL: ${{ steps.detect.outputs.tracker_issue_url }}
-          SKILL: ${{ steps.detect.outputs.skill }}
-          CANDIDATE_ID: ${{ steps.detect.outputs.candidate_id }}
-          CURRENT_SHA: ${{ steps.detect.outputs.current_sha }}
-          SKILL_DIGEST: ${{ steps.detect.outputs.skill_digest }}
-          AUDIT_AT: ${{ steps.detect.outputs.audit_at }}
-          EXPECTED_GITHUB_LOGIN: ${{ steps.github-identity.outputs.login }}
+          TRACKER_ISSUE: ${{ needs.prepare.outputs.tracker_issue }}
+          TRACKER_ISSUE_URL: ${{ needs.prepare.outputs.tracker_issue_url }}
+          EXPECTED_GITHUB_LOGIN: ${{ needs.prepare.outputs.expected_github_login }}
+          SKILL: ${{ matrix.skill }}
+          CANDIDATE_ID: ${{ matrix.candidate_id }}
+          CURRENT_SHA: ${{ matrix.current_sha }}
+          SKILL_DIGEST: ${{ matrix.skill_digest }}
+          AUDIT_AT: ${{ matrix.audit_at }}
+          PREVIOUS_AUDIT_BASE64: ${{ matrix.previous_audit_base64 }}
         run: |
           {
             echo "prompt<<AMELIA_PROMPT_EOF"
@@ -109,22 +132,22 @@ jobs:
             echo
             echo '```bash'
             echo 'set -euo pipefail'
-            echo 'rm -rf /tmp/letta-code-builtin-skills-watch'
+            echo 'rm -rf /tmp/letta-code-builtin-skills-watch /tmp/builtin-skills-watch-analyses'
             # The token expands later in Amelia's sandbox.
             # shellcheck disable=SC2016
             echo 'test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh repo clone letta-ai/letta-code /tmp/letta-code-builtin-skills-watch -- --no-checkout'
             echo 'cd /tmp/letta-code-builtin-skills-watch'
             echo "env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN git checkout \"$CURRENT_SHA\""
             echo 'env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN bun install --frozen-lockfile'
-            echo "env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=letta-ai/letta-code GITHUB_RUN_ID=\"$GITHUB_RUN_ID\" bun scripts/builtin-skills-watch/agent-watch.ts --dry-run --skill \"$SKILL\" --current-sha \"$CURRENT_SHA\" --audit-at \"$AUDIT_AT\" --analysis-file /tmp/builtin-skills-watch-analysis.json > /tmp/builtin-skills-watch-analysis.log"
+            echo "env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=letta-ai/letta-code GITHUB_RUN_ID=\"$GITHUB_RUN_ID\" bun scripts/builtin-skills-watch/agent-watch.ts --dry-run --skill \"$SKILL\" --current-sha \"$CURRENT_SHA\" --audit-at \"$AUDIT_AT\" --previous-audit-base64 \"$PREVIOUS_AUDIT_BASE64\" --analysis-dir /tmp/builtin-skills-watch-analyses --manifest-file /tmp/builtin-skills-watch-manifest.json > /tmp/builtin-skills-watch-analysis.log"
+            echo "cp /tmp/builtin-skills-watch-analyses/\"$SKILL\".json /tmp/builtin-skills-watch-analysis.json"
             echo "jq -e '.candidate_id == \"$CANDIDATE_ID\" and .skill == \"$SKILL\" and .current_sha == \"$CURRENT_SHA\" and .skill_digest == \"$SKILL_DIGEST\"' /tmp/builtin-skills-watch-analysis.json > /dev/null"
             echo '```'
             echo "AMELIA_PROMPT_EOF"
           } >> "$GITHUB_OUTPUT"
-          echo "conversation_name=$GITHUB_WORKFLOW $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+          echo "conversation_name=$GITHUB_WORKFLOW $SKILL $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
       - name: Ask Amelia to audit built-in skill
-        if: steps.detect.outputs.should_run_agent == 'true'
         id: review
         uses: letta-ai/letta-code-action@4b8e508a523ff576fee09be1432d6f39158c272c
         with:
@@ -154,49 +177,81 @@ jobs:
             --output /dev/null \
             "https://api.letta.com/v1/conversations/$CONVERSATION_ID"
 
-      - name: Record Amelia result
-        if: always() && steps.detect.outputs.should_run_agent == 'true' && steps.review.outcome == 'success'
+      - name: Extract Amelia result
+        if: always()
         env:
-          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
-          EXPECTED_GITHUB_LOGIN: ${{ steps.github-identity.outputs.login }}
+          REVIEW_OUTCOME: ${{ steps.review.outcome }}
         run: |
+          if [ "$REVIEW_OUTCOME" != "success" ]; then
+            exit 0
+          fi
+          if [ ! -f "$EXECUTION_FILE" ]; then
+            echo "Amelia execution file is missing" >&2
+            exit 1
+          fi
           result=$(jq -r '[.[] | select(.type == "result" and (.result | type) == "string")] | last | (.result // "" | split("\n") | map(gsub("^\\s+|\\s+$"; "") | select(length > 0)) | last // "")' "$EXECUTION_FILE")
           if [ "${#result}" -gt 8192 ] || [[ ! "$result" =~ ^SKILL_WATCH_RESULT\ [A-Za-z0-9+/=]+$ ]]; then
             echo "Unexpected Amelia result format" >&2
             exit 1
           fi
-          printf '%s' "${result#SKILL_WATCH_RESULT }" | base64 --decode > "$RUNNER_TEMP/builtin-skill-watch-result.json"
-          bun scripts/builtin-skills-watch/update-tracker.ts \
-            --tracker-issue "${{ steps.detect.outputs.tracker_issue }}" \
-            --analysis-file "$RUNNER_TEMP/builtin-skills-watch-analysis.json" \
-            --result-file "$RUNNER_TEMP/builtin-skill-watch-result.json" \
+          mkdir -p "$RUNNER_TEMP/builtin-skill-result"
+          printf '%s' "${result#SKILL_WATCH_RESULT }" | base64 --decode > "$RUNNER_TEMP/builtin-skill-result/result.json"
+
+      - name: Upload Amelia result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: builtin-skill-result-${{ matrix.skill }}
+          path: ${{ runner.temp }}/builtin-skill-result/result.json
+          if-no-files-found: ignore
+          retention-days: 3
+
+  aggregate:
+    needs: [prepare, review]
+    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.should_run_agent == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download audit inputs
+        uses: actions/download-artifact@v8
+        with:
+          name: builtin-skills-watch-inputs
+          path: ${{ runner.temp }}/inputs
+
+      - name: Download Amelia results
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: builtin-skill-result-*
+          path: ${{ runner.temp }}/results
+
+      - name: Validate and record every result
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          EXPECTED_GITHUB_LOGIN: ${{ needs.prepare.outputs.expected_github_login }}
+          TRACKER_ISSUE: ${{ needs.prepare.outputs.tracker_issue }}
+        run: |
+          bun scripts/builtin-skills-watch/aggregate-results.ts \
+            --tracker-issue "$TRACKER_ISSUE" \
+            --manifest-file "$RUNNER_TEMP/inputs/builtin-skills-watch-manifest.json" \
+            --analysis-dir "$RUNNER_TEMP/inputs/builtin-skills-watch-analyses" \
+            --results-dir "$RUNNER_TEMP/results" \
             --expected-github-login "$EXPECTED_GITHUB_LOGIN"
-
-      - name: Verify terminal outcome
-        if: steps.detect.outputs.should_run_agent == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          bun scripts/builtin-skills-watch/update-tracker.ts \
-            --tracker-issue "${{ steps.detect.outputs.tracker_issue }}" \
-            --candidate-id "${{ steps.detect.outputs.candidate_id }}" \
-            --assert-terminal
-
-      - name: Record failed review attempt
-        if: failure() && steps.detect.outputs.should_run_agent == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if bun scripts/builtin-skills-watch/update-tracker.ts \
-            --tracker-issue "${{ steps.detect.outputs.tracker_issue }}" \
-            --candidate-id "${{ steps.detect.outputs.candidate_id }}" \
-            --assert-terminal; then
-            echo "The agent recorded a terminal outcome before its action failed"
-            exit 0
-          fi
-          bun scripts/builtin-skills-watch/update-tracker.ts \
-            --tracker-issue "${{ steps.detect.outputs.tracker_issue }}" \
-            --analysis-file "$RUNNER_TEMP/builtin-skills-watch-analysis.json" \
-            --outcome error \
-            --notes "Amelia review failed before recording a terminal outcome; retry this skill"

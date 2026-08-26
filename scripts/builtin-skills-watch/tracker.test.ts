@@ -11,6 +11,8 @@ import {
 } from "./tracker.ts";
 
 const INVENTORY = ["creating-skills", "syncing-memory-filesystem"];
+const EVIDENCE_URL =
+  "https://github.com/letta-ai/letta-code/issues/1#issuecomment-1";
 
 describe("built-in skills tracker", () => {
   test("round trips hidden state and shows never-audited skills", () => {
@@ -18,7 +20,7 @@ describe("built-in skills tracker", () => {
     const body = renderTrackerBody(state, INVENTORY);
 
     expect(parseTrackerState(body)).toEqual(state);
-    expect(body).toContain("| creating-skills | never | - | - | - |");
+    expect(body).toContain("| creating-skills | never | - | - |");
   });
 
   test("terminal outcomes advance only the selected skill", () => {
@@ -29,6 +31,7 @@ describe("built-in skills tracker", () => {
       notes: "current",
       processedAt: "2026-08-26T01:00:00.000Z",
       evidence: fakeEvidence(analysis),
+      evidenceUrl: EVIDENCE_URL,
     });
 
     expect(next.skills["creating-skills"]).toMatchObject({
@@ -52,7 +55,9 @@ describe("built-in skills tracker", () => {
     expect(next.skills["creating-skills"]).toBeUndefined();
     expect(next.history[0]?.outcome).toBe("error");
     expect(hasTerminalCandidate(next, analysis.candidate_id)).toBe(false);
-    expect(next.pending?.candidate_id).toBe(analysis.candidate_id);
+    expect(next.pending["creating-skills"]?.candidate_id).toBe(
+      analysis.candidate_id,
+    );
     expect(startCandidate(next, analysis)).toEqual(next);
     expect(parseTrackerState(renderTrackerBody(next, INVENTORY))).toEqual(next);
   });
@@ -75,11 +80,12 @@ describe("built-in skills tracker", () => {
       prUrl: "https://github.com/letta-ai/letta-code/pull/1",
       processedAt: "2026-08-26T02:00:00.000Z",
       evidence: fakeEvidence(analysis),
+      evidenceUrl: EVIDENCE_URL,
     });
 
     expect(recovered.history).toHaveLength(1);
     expect(recovered.history[0]?.outcome).toBe("pr_created");
-    expect(recovered.skills["creating-skills"]?.pr_url).toBe(
+    expect(recovered.history[0]?.pr_url).toBe(
       "https://github.com/letta-ai/letta-code/pull/1",
     );
   });
@@ -95,6 +101,7 @@ describe("built-in skills tracker", () => {
         notes: "current",
         processedAt: `2026-08-${String((index % 26) + 1).padStart(2, "0")}T00:00:00.000Z`,
         evidence: fakeEvidence(analysis),
+        evidenceUrl: EVIDENCE_URL,
       });
     }
 
@@ -119,6 +126,7 @@ describe("built-in skills tracker", () => {
         outcome: "no_drift",
         notes: "current",
         evidence: fakeEvidence(analysis),
+        evidenceUrl: EVIDENCE_URL,
         processedAt: "2026-08-26T01:00:00.000Z",
       },
     );
@@ -133,25 +141,64 @@ describe("built-in skills tracker", () => {
     expect(afterError.history[0]?.outcome).toBe("no_drift");
   });
 
-  test("keeps a full skill rotation below the issue body limit", () => {
+  test("tracks and completes pending candidates independently", () => {
+    const first = fakeAnalysis("creating-skills", 5);
+    const second = fakeAnalysis("syncing-memory-filesystem", 6);
+    const pending = startCandidate(
+      startCandidate(emptyTrackerState(), first),
+      second,
+    );
+
+    expect(Object.keys(pending.pending).sort()).toEqual(INVENTORY);
+    const completed = recordOutcome(pending, {
+      analysis: first,
+      outcome: "no_drift",
+      notes: "current",
+      evidence: fakeEvidence(first),
+      evidenceUrl: EVIDENCE_URL,
+    });
+    expect(completed.pending["creating-skills"]).toBeUndefined();
+    expect(completed.pending["syncing-memory-filesystem"]?.candidate_id).toBe(
+      second.candidate_id,
+    );
+  });
+
+  test("keeps a full daily skill batch below the issue body limit", () => {
     let state = emptyTrackerState();
     const inventory: string[] = [];
-    for (let index = 0; index < 21; index += 1) {
+    const skillCount = 50;
+    for (let index = 0; index < skillCount; index += 1) {
       const skill = `skill-${index}`;
       inventory.push(skill);
       const analysis = fakeAnalysis(skill, index);
       state = startCandidate(state, analysis);
+    }
+    expect(Object.keys(state.pending)).toHaveLength(skillCount);
+    for (let index = 0; index < skillCount; index += 1) {
+      const skill = `skill-${index}`;
+      const analysis = fakeAnalysis(skill, index);
       state = recordOutcome(state, {
         analysis,
         outcome: "no_drift",
-        notes: "n".repeat(200),
+        notes: "n".repeat(120),
         evidence: fakeEvidence(analysis),
-        processedAt: `2026-08-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`,
+        evidenceUrl: EVIDENCE_URL,
+        processedAt: `2026-08-26T${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}:00.000Z`,
       });
     }
 
-    const body = renderTrackerBody(state, inventory);
-    expect(Buffer.byteLength(body, "utf8")).toBeLessThan(60_000);
+    expect(
+      Buffer.byteLength(renderTrackerBody(state, inventory), "utf8"),
+    ).toBeLessThan(60_000);
+    for (let index = 0; index < skillCount; index += 1) {
+      state = startCandidate(
+        state,
+        fakeAnalysis(`skill-${index}`, index + skillCount),
+      );
+    }
+    expect(
+      Buffer.byteLength(renderTrackerBody(state, inventory), "utf8"),
+    ).toBeLessThan(60_000);
   });
 });
 

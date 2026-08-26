@@ -78,6 +78,27 @@ export function editIssueBody(
   }
 }
 
+export function createIssueComment(
+  repo: string,
+  issueNumber: number,
+  body: string,
+): string {
+  const bodyFile = writeTempMarkdown(body, "builtin-skills-watch-evidence");
+  try {
+    return runGh([
+      "issue",
+      "comment",
+      String(issueNumber),
+      "--repo",
+      repo,
+      "--body-file",
+      bodyFile,
+    ]).trim();
+  } finally {
+    rmSync(bodyFile, { force: true });
+  }
+}
+
 export function getIssueBody(repo: string, issueNumber: number): string {
   const issue = ghJson<{ body: string | null }>([
     "issue",

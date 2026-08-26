@@ -41,10 +41,6 @@ export interface BuildAnalysisOptions {
   previousAudit?: PriorSkillAudit | null;
 }
 
-interface AuditedAtRecord {
-  audited_at: string;
-}
-
 export function listBuiltinSkillsAtCommit(commit: string): string[] {
   const files = runGit([
     "ls-tree",
@@ -73,25 +69,6 @@ export function collectSkillFilesAtCommit(
     .split("\n")
     .filter(Boolean)
     .sort();
-}
-
-export function selectNextSkill(
-  skills: string[],
-  audits: Record<string, AuditedAtRecord>,
-): string | null {
-  const neverAudited = skills.filter((skill) => audits[skill] === undefined);
-  if (neverAudited.length > 0) return neverAudited.sort()[0] ?? null;
-
-  return (
-    [...skills].sort((left, right) => {
-      const leftAudit = audits[left];
-      const rightAudit = audits[right];
-      if (!leftAudit) return -1;
-      if (!rightAudit) return 1;
-      const byDate = leftAudit.audited_at.localeCompare(rightAudit.audited_at);
-      return byDate || left.localeCompare(right);
-    })[0] ?? null
-  );
 }
 
 export function buildAnalysis(

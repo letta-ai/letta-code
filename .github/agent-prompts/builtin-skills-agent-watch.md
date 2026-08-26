@@ -121,7 +121,7 @@ After the review and any PR creation, write `/tmp/builtin-skill-watch-result.jso
   "candidate_id": "<candidate-id>",
   "skill": "<selected-skill>",
   "outcome": "<no_drift | pr_created | needs_human_review>",
-  "notes": "<concise result, at most 200 characters>",
+  "notes": "<concise result, at most 120 characters>",
   "pr_url": "<draft PR URL, or null>",
   "evidence": {
     "schema_version": 1,

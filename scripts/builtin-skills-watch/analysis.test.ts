@@ -3,7 +3,6 @@ import {
   buildAnalysis,
   collectSkillFilesAtCommit,
   listBuiltinSkillsAtCommit,
-  selectNextSkill,
 } from "./analysis.ts";
 
 const HEAD = gitHead();
@@ -24,30 +23,6 @@ describe("bundled skill inventory", () => {
 
     expect(files).toContain("src/skills/builtin/creating-skills/SKILL.md");
     expect(files.some((path) => path.includes("/scripts/"))).toBe(true);
-  });
-});
-
-describe("selectNextSkill", () => {
-  test("selects never-audited skills alphabetically first", () => {
-    expect(
-      selectNextSkill(["zeta", "alpha", "middle"], {
-        alpha: { audited_at: "2026-08-25T00:00:00.000Z" },
-      }),
-    ).toBe("middle");
-  });
-
-  test("selects the oldest completed audit", () => {
-    expect(
-      selectNextSkill(["alpha", "middle", "zeta"], {
-        alpha: { audited_at: "2026-08-25T00:00:00.000Z" },
-        middle: { audited_at: "2026-08-23T00:00:00.000Z" },
-        zeta: { audited_at: "2026-08-24T00:00:00.000Z" },
-      }),
-    ).toBe("middle");
-  });
-
-  test("returns null for an empty inventory", () => {
-    expect(selectNextSkill([], {})).toBeNull();
   });
 });
 

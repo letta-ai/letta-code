@@ -8,7 +8,7 @@ import {
   DEFAULT_TARGET_REPO,
 } from "./analysis.ts";
 import { parseReviewEvidence, type ReviewEvidence } from "./evidence.ts";
-import { editIssueBody, ghJson } from "./github.ts";
+import { createIssueComment, editIssueBody, ghJson } from "./github.ts";
 import {
   hasTerminalCandidate,
   parseTrackerState,
@@ -144,19 +144,19 @@ function main(): void {
     );
     return;
   }
-  const pending = state.pending;
+  const pending = state.pending[receivedAnalysis.skill];
   if (!pending || pending.candidate_id !== receivedAnalysis.candidate_id) {
     throw new Error(
-      `Candidate ${receivedAnalysis.candidate_id} is not the pending tracker candidate`,
+      `Candidate ${receivedAnalysis.candidate_id} is not pending for ${receivedAnalysis.skill}`,
     );
   }
   const analysis = buildAnalysis({
-    skill: pending.skill,
+    skill: receivedAnalysis.skill,
     currentSha: pending.current_sha,
     auditAt: pending.audit_at,
-    previousAudit: pending.previous_audit,
+    previousAudit: previousAudit(state, receivedAnalysis.skill),
   });
-  analysis.workflow_run_url = pending.workflow_run_url;
+  analysis.workflow_run_url = workflowRunUrl(pending.workflow_run_id);
   assertAnalysisIdentity(receivedAnalysis, analysis);
   const result = args.resultFile
     ? readReviewResult(args.resultFile, analysis)
@@ -174,14 +174,31 @@ function main(): void {
       args.expectedGithubLogin as string,
     );
   }
+  const evidenceUrl = result.evidence
+    ? args.dryRun
+      ? `https://github.com/letta-ai/letta-code/issues/${args.trackerIssue}#issuecomment-1`
+      : createIssueComment(
+          args.repo,
+          args.trackerIssue as number,
+          renderEvidenceComment(analysis, result),
+        )
+    : null;
   const next = recordOutcome(state, {
     analysis,
     outcome: result.outcome,
     notes: result.notes,
     prUrl: result.pr_url,
     evidence: result.evidence,
+    evidenceUrl,
   });
-  const nextBody = renderTrackerBody(next, analysis.skill_inventory);
+  const inventory = [
+    ...new Set([
+      ...analysis.skill_inventory,
+      ...Object.keys(next.skills),
+      ...Object.keys(next.pending),
+    ]),
+  ].sort();
+  const nextBody = renderTrackerBody(next, inventory);
   if (args.dryRun) console.log(nextBody);
   else {
     editIssueBody(args.repo, args.trackerIssue as number, nextBody);
@@ -191,7 +208,44 @@ function main(): void {
   }
 }
 
-function getOpenTrackerIssue(
+function previousAudit(
+  state: ReturnType<typeof parseTrackerState>,
+  skill: string,
+): BuiltinSkillWatchAnalysis["previous_audit"] {
+  const audit = state.skills[skill];
+  return audit
+    ? {
+        candidate_id: audit.candidate_id,
+        audited_sha: audit.audited_sha,
+        skill_digest: audit.skill_digest,
+        audited_at: audit.audited_at,
+      }
+    : null;
+}
+
+function workflowRunUrl(runId: string): string {
+  return `https://github.com/letta-ai/letta-code/actions/runs/${runId}`;
+}
+
+function renderEvidenceComment(
+  analysis: BuiltinSkillWatchAnalysis,
+  result: ReviewResult,
+): string {
+  return [
+    `## Built-in skill audit evidence: ${analysis.skill}`,
+    "",
+    `Candidate: \`${analysis.candidate_id}\``,
+    `Outcome: \`${result.outcome}\``,
+    `Notes: ${result.notes}`,
+    `PR: ${result.pr_url ?? "-"}`,
+    "",
+    "```json",
+    JSON.stringify(result.evidence, null, 2),
+    "```",
+  ].join("\n");
+}
+
+export function getOpenTrackerIssue(
   repo: string,
   issueNumber: number,
 ): { body: string } {
@@ -220,7 +274,7 @@ export function validateTrackerIssueView(issue: TrackerIssueView): void {
   }
 }
 
-function readAnalysis(path: string): BuiltinSkillWatchAnalysis {
+export function readAnalysis(path: string): BuiltinSkillWatchAnalysis {
   const analysis = JSON.parse(
     readFileSync(path, "utf8"),
   ) as BuiltinSkillWatchAnalysis;
@@ -261,7 +315,7 @@ export function assertAnalysisIdentity(
   }
 }
 
-function readReviewResult(
+export function readReviewResult(
   path: string,
   analysis: BuiltinSkillWatchAnalysis,
 ): ReviewResult {
@@ -292,7 +346,7 @@ export function parseReviewResult(
       value.outcome !== "needs_human_review") ||
     typeof value.notes !== "string" ||
     value.notes.length === 0 ||
-    value.notes.length > 200 ||
+    value.notes.length > 120 ||
     (value.pr_url !== null && typeof value.pr_url !== "string")
   ) {
     throw new Error("Review result does not match the pending candidate");
@@ -321,7 +375,7 @@ export function parseReviewResult(
   };
 }
 
-function verifyPullRequest(
+export function verifyPullRequest(
   repo: string,
   prUrl: string,
   analysis: BuiltinSkillWatchAnalysis,

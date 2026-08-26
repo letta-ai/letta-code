@@ -1,9 +1,5 @@
 import type { BuiltinSkillWatchAnalysis } from "./analysis.ts";
-import {
-  digestReviewEvidence,
-  parseReviewEvidence,
-  type ReviewEvidence,
-} from "./evidence.ts";
+import { digestReviewEvidence, type ReviewEvidence } from "./evidence.ts";
 
 const STATE_START = "<!-- builtin-skills-agent-watch-state";
 const STATE_END = "-->";
@@ -19,12 +15,9 @@ export interface SkillAudit {
   audited_sha: string;
   skill_digest: string;
   outcome: TerminalOutcome;
-  pr_url: string | null;
-  notes: string;
   audited_at: string;
-  workflow_run_url: string;
-  evidence_digest: string;
-  evidence: ReviewEvidence;
+  workflow_run_id: string;
+  evidence_url: string;
 }
 
 export interface TrackerEntry {
@@ -38,24 +31,21 @@ export interface TrackerEntry {
   processed_at: string;
   workflow_run_url: string;
   evidence_digest: string | null;
-  evidence: ReviewEvidence | null;
+  evidence_url: string | null;
 }
 
 export interface PendingCandidate {
   candidate_id: string;
-  skill: string;
   current_sha: string;
   skill_digest: string;
   audit_at: string;
-  previous_audit: BuiltinSkillWatchAnalysis["previous_audit"];
-  workflow_run_url: string;
+  workflow_run_id: string;
 }
 
 export interface TrackerState {
   schema_version: 1;
-  last_attempted_skill: string | null;
-  last_attempted_at: string | null;
-  pending: PendingCandidate | null;
+  last_scheduled_at: string | null;
+  pending: Record<string, PendingCandidate>;
   skills: Record<string, SkillAudit>;
   history: TrackerEntry[];
 }
@@ -67,14 +57,14 @@ export interface RecordOutcomeOptions {
   prUrl?: string | null;
   processedAt?: string;
   evidence?: ReviewEvidence | null;
+  evidenceUrl?: string | null;
 }
 
 export function emptyTrackerState(): TrackerState {
   return {
     schema_version: 1,
-    last_attempted_skill: null,
-    last_attempted_at: null,
-    pending: null,
+    last_scheduled_at: null,
+    pending: {},
     skills: {},
     history: [],
   };
@@ -84,22 +74,25 @@ export function startCandidate(
   state: TrackerState,
   analysis: BuiltinSkillWatchAnalysis,
 ): TrackerState {
-  if (state.pending) {
-    if (state.pending.candidate_id === analysis.candidate_id) return state;
+  const pending = state.pending[analysis.skill];
+  if (pending) {
+    if (pending.candidate_id === analysis.candidate_id) return state;
     throw new Error(
-      `Cannot start ${analysis.candidate_id}; ${state.pending.candidate_id} is pending`,
+      `Cannot start ${analysis.candidate_id}; ${pending.candidate_id} is pending for ${analysis.skill}`,
     );
   }
   return {
     ...state,
+    last_scheduled_at: analysis.audit_at,
     pending: {
-      candidate_id: analysis.candidate_id,
-      skill: analysis.skill,
-      current_sha: analysis.current_sha,
-      skill_digest: analysis.skill_digest,
-      audit_at: analysis.audit_at,
-      previous_audit: analysis.previous_audit,
-      workflow_run_url: analysis.workflow_run_url,
+      ...state.pending,
+      [analysis.skill]: {
+        candidate_id: analysis.candidate_id,
+        current_sha: analysis.current_sha,
+        skill_digest: analysis.skill_digest,
+        audit_at: analysis.audit_at,
+        workflow_run_id: workflowRunId(analysis.workflow_run_url),
+      },
     },
   };
 }
@@ -127,8 +120,8 @@ export function recordOutcome(
   state: TrackerState,
   options: RecordOutcomeOptions,
 ): TrackerState {
-  if (options.notes.length > 200) {
-    throw new Error("Tracker notes must be at most 200 characters");
+  if (options.notes.length > 120) {
+    throw new Error("Tracker notes must be at most 120 characters");
   }
   const existingOutcome = terminalOutcomeForCandidate(
     state,
@@ -142,9 +135,17 @@ export function recordOutcome(
       `Candidate ${options.analysis.candidate_id} already has terminal outcome ${existingOutcome}`,
     );
   }
-  assertPendingCandidate(state.pending, options.analysis);
-  if (isTerminalOutcome(options.outcome) && !options.evidence) {
-    throw new Error("Terminal skill audits require structured evidence");
+  assertPendingCandidate(
+    state.pending[options.analysis.skill],
+    options.analysis,
+  );
+  if (
+    isTerminalOutcome(options.outcome) &&
+    (!options.evidence || !options.evidenceUrl)
+  ) {
+    throw new Error(
+      "Terminal skill audits require structured evidence and its comment URL",
+    );
   }
   const evidenceDigest = options.evidence
     ? digestReviewEvidence(options.evidence)
@@ -161,7 +162,7 @@ export function recordOutcome(
     processed_at: processedAt,
     workflow_run_url: options.analysis.workflow_run_url,
     evidence_digest: evidenceDigest,
-    evidence: options.evidence ?? null,
+    evidence_url: options.evidenceUrl ?? null,
   };
   const history = [
     entry,
@@ -176,19 +177,19 @@ export function recordOutcome(
       audited_sha: options.analysis.current_sha,
       skill_digest: options.analysis.skill_digest,
       outcome: options.outcome,
-      pr_url: options.prUrl ?? null,
-      notes: options.notes,
       audited_at: processedAt,
-      workflow_run_url: options.analysis.workflow_run_url,
-      evidence_digest: evidenceDigest as string,
-      evidence: options.evidence as ReviewEvidence,
+      workflow_run_id: currentWorkflowRunId(options.analysis.workflow_run_url),
+      evidence_url: options.evidenceUrl as string,
     };
+  }
+  const pending = { ...state.pending };
+  if (isTerminalOutcome(options.outcome)) {
+    delete pending[options.analysis.skill];
   }
   return {
     schema_version: 1,
-    last_attempted_skill: options.analysis.skill,
-    last_attempted_at: processedAt,
-    pending: isTerminalOutcome(options.outcome) ? null : state.pending,
+    last_scheduled_at: state.last_scheduled_at,
+    pending,
     skills,
     history,
   };
@@ -232,7 +233,7 @@ export function renderTrackerBody(
   const lines = [
     "Central tracker for Amelia-driven built-in skill staleness reviews.",
     "",
-    renderLastAttempt(normalized),
+    renderScheduleStatus(normalized),
     "",
     "## Skills",
     "",
@@ -244,7 +245,7 @@ export function renderTrackerBody(
     "",
     "## Hidden state",
     "",
-    "The workflow uses the hidden JSON block below for rotation, deduplication, and retries.",
+    "The workflow uses the hidden JSON block below for candidate identity, deduplication, and retries.",
     "",
     serializeTrackerState(normalized),
   ];
@@ -259,26 +260,26 @@ export function serializeTrackerState(state: TrackerState): string {
   return `${STATE_START}\n${JSON.stringify(normalizeState(state), null, 2)}\n${STATE_END}`;
 }
 
-function renderLastAttempt(state: TrackerState): string {
-  if (!state.last_attempted_skill || !state.last_attempted_at) {
-    return "_Last attempted: never._";
+function renderScheduleStatus(state: TrackerState): string {
+  if (!state.last_scheduled_at) {
+    return "_Last scheduled audit: never._";
   }
-  return `_Last attempted: ${state.last_attempted_skill} at ${state.last_attempted_at}._`;
+  return `_Last scheduled audit: ${state.last_scheduled_at}. Pending skills: ${Object.keys(state.pending).length}._`;
 }
 
 function renderSkillsTable(state: TrackerState, inventory: string[]): string {
   const rows = [
-    "| Skill | Last audit | Outcome | PR | Notes |",
-    "|---|---|---|---|---|",
+    "| Skill | Last audit | Outcome | Evidence |",
+    "|---|---|---|---|",
   ];
   for (const skill of [...inventory].sort()) {
     const audit = state.skills[skill];
     if (!audit) {
-      rows.push(`| ${escapeTable(skill)} | never | - | - | - |`);
+      rows.push(`| ${escapeTable(skill)} | never | - | - |`);
       continue;
     }
     rows.push(
-      `| ${escapeTable(skill)} | ${escapeTable(audit.audited_at)} | ${escapeTable(audit.outcome)} | ${renderPr(audit.pr_url)} | ${escapeTable(audit.notes)} |`,
+      `| ${escapeTable(skill)} | ${escapeTable(audit.audited_at)} | ${escapeTable(audit.outcome)} | ${renderEvidence(audit.evidence_url)} |`,
     );
   }
   return rows.join("\n");
@@ -290,12 +291,12 @@ function renderActionableHistory(state: TrackerState): string {
     .slice(0, VISIBLE_HISTORY_LIMIT);
   if (entries.length === 0) return "_No actionable reviews recorded yet._";
   const rows = [
-    "| Skill | Candidate | Outcome | PR | Notes |",
-    "|---|---|---|---|---|",
+    "| Skill | Candidate | Outcome | PR | Evidence | Notes |",
+    "|---|---|---|---|---|---|",
   ];
   for (const entry of entries) {
     rows.push(
-      `| ${escapeTable(entry.skill)} | \`${escapeTable(entry.candidate_id)}\` | ${escapeTable(entry.outcome)} | ${renderPr(entry.pr_url)} | ${escapeTable(entry.notes)} |`,
+      `| ${escapeTable(entry.skill)} | \`${escapeTable(entry.candidate_id)}\` | ${escapeTable(entry.outcome)} | ${renderPr(entry.pr_url)} | ${renderEvidence(entry.evidence_url)} | ${escapeTable(truncate(entry.notes, 80))} |`,
     );
   }
   return rows.join("\n");
@@ -305,28 +306,40 @@ function renderPr(prUrl: string | null): string {
   return prUrl ? `[PR](${prUrl})` : "-";
 }
 
+function renderEvidence(evidenceUrl: string | null): string {
+  return evidenceUrl ? `[Evidence](${evidenceUrl})` : "-";
+}
+
 function escapeTable(value: string): string {
   return value.replaceAll("|", "\\|").replaceAll("\n", " ");
+}
+
+function truncate(value: string, length: number): string {
+  return value.length <= length ? value : `${value.slice(0, length - 1)}…`;
 }
 
 function normalizeState(value: unknown): TrackerState {
   if (!isRecord(value) || value.schema_version !== 1) {
     throw new TypeError("tracker state must use schema version 1");
   }
-  if (!isNullableString(value.last_attempted_skill)) {
-    throw new TypeError("tracker last_attempted_skill is invalid");
-  }
-  if (!isNullableString(value.last_attempted_at)) {
-    throw new TypeError("tracker last_attempted_at is invalid");
+  if (!isNullableString(value.last_scheduled_at)) {
+    throw new TypeError("tracker last_scheduled_at is invalid");
   }
   if (
-    value.last_attempted_at !== null &&
-    !isIsoTimestamp(value.last_attempted_at)
+    value.last_scheduled_at !== null &&
+    !isIsoTimestamp(value.last_scheduled_at)
   ) {
-    throw new TypeError("tracker last_attempted_at is not an ISO timestamp");
+    throw new TypeError("tracker last_scheduled_at is not an ISO timestamp");
   }
-  if (value.pending !== null && !isPendingCandidate(value.pending)) {
-    throw new TypeError("tracker pending candidate is invalid");
+  if (!isRecord(value.pending)) {
+    throw new TypeError("tracker pending candidates are invalid");
+  }
+  const pending: Record<string, PendingCandidate> = {};
+  for (const [skill, candidate] of Object.entries(value.pending)) {
+    if (!isPendingCandidate(candidate)) {
+      throw new TypeError(`tracker pending candidate for ${skill} is invalid`);
+    }
+    pending[skill] = candidate;
   }
   if (!isRecord(value.skills)) {
     throw new TypeError("tracker skills are invalid");
@@ -336,21 +349,15 @@ function normalizeState(value: unknown): TrackerState {
   }
   const skills: Record<string, SkillAudit> = {};
   for (const [skill, audit] of Object.entries(value.skills)) {
-    if (
-      !isSkillAudit(audit) ||
-      audit.evidence.skill !== skill ||
-      audit.evidence.candidate_id !== audit.candidate_id ||
-      digestReviewEvidence(audit.evidence) !== audit.evidence_digest
-    ) {
+    if (!isSkillAudit(audit)) {
       throw new TypeError(`tracker audit for ${skill} is invalid`);
     }
     skills[skill] = audit;
   }
   return {
     schema_version: 1,
-    last_attempted_skill: value.last_attempted_skill,
-    last_attempted_at: value.last_attempted_at,
-    pending: value.pending,
+    last_scheduled_at: value.last_scheduled_at,
+    pending,
     skills,
     history: value.history.slice(0, HISTORY_LIMIT),
   };
@@ -363,12 +370,9 @@ function isSkillAudit(value: unknown): value is SkillAudit {
     isCommitSha(value.audited_sha) &&
     isDigest(value.skill_digest) &&
     isTerminalOutcomeValue(value.outcome) &&
-    isNullableString(value.pr_url) &&
-    typeof value.notes === "string" &&
     isIsoTimestamp(value.audited_at) &&
-    isWorkflowRunUrl(value.workflow_run_url) &&
-    isDigest(value.evidence_digest) &&
-    isReviewEvidence(value.evidence)
+    isWorkflowRunId(value.workflow_run_id) &&
+    isGitHubIssueCommentUrl(value.evidence_url)
   );
 }
 
@@ -386,12 +390,9 @@ function isTrackerEntry(value: unknown): value is TrackerEntry {
     isWorkflowRunUrl(value.workflow_run_url) &&
     (value.evidence_digest === null || isDigest(value.evidence_digest)) &&
     (value.outcome === "error"
-      ? value.evidence_digest === null && value.evidence === null
+      ? value.evidence_digest === null && value.evidence_url === null
       : isDigest(value.evidence_digest) &&
-        isReviewEvidence(value.evidence) &&
-        value.evidence.candidate_id === value.candidate_id &&
-        value.evidence.skill === value.skill &&
-        digestReviewEvidence(value.evidence) === value.evidence_digest)
+        isGitHubIssueCommentUrl(value.evidence_url))
   );
 }
 
@@ -399,24 +400,10 @@ function isPendingCandidate(value: unknown): value is PendingCandidate {
   return (
     isRecord(value) &&
     isCandidateId(value.candidate_id) &&
-    isSkillName(value.skill) &&
     isCommitSha(value.current_sha) &&
     isDigest(value.skill_digest) &&
     isIsoTimestamp(value.audit_at) &&
-    (value.previous_audit === null || isPriorAudit(value.previous_audit)) &&
-    isWorkflowRunUrl(value.workflow_run_url)
-  );
-}
-
-function isPriorAudit(
-  value: unknown,
-): value is BuiltinSkillWatchAnalysis["previous_audit"] {
-  return (
-    isRecord(value) &&
-    isCandidateId(value.candidate_id) &&
-    isCommitSha(value.audited_sha) &&
-    isDigest(value.skill_digest) &&
-    isIsoTimestamp(value.audited_at)
+    isWorkflowRunId(value.workflow_run_id)
   );
 }
 
@@ -428,7 +415,6 @@ function assertPendingCandidate(
     throw new Error(`Candidate ${analysis.candidate_id} is not pending`);
   }
   if (
-    pending.skill !== analysis.skill ||
     pending.current_sha !== analysis.current_sha ||
     pending.skill_digest !== analysis.skill_digest ||
     pending.audit_at !== analysis.audit_at
@@ -436,15 +422,6 @@ function assertPendingCandidate(
     throw new Error(
       `Pending candidate ${analysis.candidate_id} does not match analysis`,
     );
-  }
-}
-
-function isReviewEvidence(value: unknown): value is ReviewEvidence {
-  try {
-    parseReviewEvidence(value);
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -477,6 +454,32 @@ function isWorkflowRunUrl(value: unknown): value is string {
   return (
     typeof value === "string" &&
     /^https:\/\/github\.com\/letta-ai\/letta-code\/actions\/runs\/\d+$/.test(
+      value,
+    )
+  );
+}
+
+function workflowRunId(url: string): string {
+  const match = url.match(/\/actions\/runs\/(\d+)$/);
+  if (!match?.[1]) throw new Error(`Invalid workflow run URL: ${url}`);
+  return match[1];
+}
+
+function currentWorkflowRunId(candidateRunUrl: string): string {
+  const current = process.env.GITHUB_RUN_ID;
+  return current && /^\d+$/.test(current)
+    ? current
+    : workflowRunId(candidateRunUrl);
+}
+
+function isWorkflowRunId(value: unknown): value is string {
+  return typeof value === "string" && /^\d+$/.test(value);
+}
+
+function isGitHubIssueCommentUrl(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^https:\/\/github\.com\/letta-ai\/letta-code\/issues\/\d+#issuecomment-\d+$/.test(
       value,
     )
   );
