@@ -280,6 +280,120 @@ describe("listener approval reconnect timing", () => {
     };
   }
 
+  test("service restart reconnect preserves a client tool already executing", async () => {
+    await startClient();
+    await waitFor(
+      () =>
+        getActiveRuntime()?.connections.get("connection-id")?.initialized ===
+        true,
+      "initial listener connection did not initialize",
+    );
+
+    const listener = getActiveRuntime();
+    if (!listener?.transport) throw new Error("listener transport missing");
+    subscribeListenerConnection(listener, "connection-id", {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    });
+    const capturedTransport = listener.transport;
+    const conversationRuntime = getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-1",
+    );
+    const turnLease = conversationRuntime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      initialStatus: "PROCESSING_API_RESPONSE",
+    });
+    conversationRuntime.turnLifecycle.setRunId(turnLease, "run-restart");
+
+    const approval = {
+      toolCallId: "call-during-restart",
+      toolName: "LongRunningClientTool",
+      toolArgs: JSON.stringify({ command: "sleep 1" }),
+    };
+    let executionStarted = false;
+    let finishExecution!: (results: ApprovalResult[]) => void;
+    const execution = new Promise<ApprovalResult[]>((resolve) => {
+      finishExecution = resolve;
+    });
+    const executionResults = [
+      {
+        type: "tool" as const,
+        tool_call_id: approval.toolCallId,
+        status: "success" as const,
+        tool_return: "finished-after-reconnect",
+      },
+    ] satisfies ApprovalResult[];
+    const deps = makeAutoAllowedDeps(approval, turnLease, [], executionResults);
+    deps.executeApprovalBatch.mockImplementation(async () => {
+      executionStarted = true;
+      return execution;
+    });
+
+    const approvalStop = handleApprovalStop({
+      approvals: [approval],
+      runtime: conversationRuntime,
+      socket: capturedTransport,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      turnWorkingDirectory: process.cwd(),
+      turnPermissionModeState: getOrCreateConversationPermissionModeStateRef(
+        listener,
+        "agent-1",
+        "conv-1",
+      ),
+      dequeuedBatchId: "batch-restart",
+      runId: "run-restart",
+      msgRunIds: ["run-restart"],
+      turnInput: createTurnInputState([]),
+      pendingNormalizationInterruptedToolCallIds: [],
+      turnToolContextId: null,
+      turnLease,
+      buildSendOptions: () => ({ streamTokens: true }),
+      dependencies: deps as never,
+    });
+
+    await waitFor(
+      () =>
+        executionStarted &&
+        conversationRuntime.loopStatus === "EXECUTING_CLIENT_SIDE_TOOL",
+      "client tool did not start",
+    );
+    const initialControlIndex = lastConnectionIndexForChannel("control");
+    connections[initialControlIndex]?.close(1012, "Service restart");
+    await waitFor(
+      () =>
+        countConnectionsForChannel("control") === 2 &&
+        countConnectionsForChannel("stream") === 2,
+      "listener did not reconnect after service restart",
+    );
+
+    finishExecution(executionResults);
+    const result = await approvalStop;
+    expect(result.kind).toBe("terminal");
+    if (result.kind !== "terminal") throw new Error("tool did not finish");
+    finalizeHandledRecoveryTurn(
+      conversationRuntime,
+      capturedTransport,
+      turnLease,
+      {
+        drainResult: result.drainResult,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        turnId: "run-restart",
+      },
+    );
+    await waitFor(
+      () =>
+        countToolStreamDeltas("client_tool_end", approval.toolCallId) === 1 &&
+        countToolStreamDeltas("tool_return_message", approval.toolCallId) === 1,
+      "tool result did not reach the replacement listener connection",
+    );
+    expect(deps.executeApprovalBatch).toHaveBeenCalledTimes(1);
+  });
+
   test("disconnected requires_approval producer waits for reconnect before executing a generic client tool", async () => {
     await startClient();
     await waitFor(
