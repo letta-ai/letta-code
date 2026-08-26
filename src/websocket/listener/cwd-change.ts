@@ -1,7 +1,9 @@
+import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { updateRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { getOrCreateProcessTransport } from "./connection";
 import {
+  getConversationWorkingDirectory,
   getWorkingDirectoryScopeKey,
   setConversationWorkingDirectory,
 } from "./cwd";
@@ -66,15 +68,25 @@ export async function switchConversationWorkingDirectory(params: {
   const { runtime, workingDirectory } = params;
   const agentId = normalizeCwdAgentId(params.agentId);
   const conversationId = normalizeConversationId(params.conversationId);
-
-  await loadSettingsForWorkingDirectory(workingDirectory);
-
-  setConversationWorkingDirectory(
+  const currentWorkingDirectory = getConversationWorkingDirectory(
     runtime,
     agentId,
     conversationId,
-    workingDirectory,
   );
+  const workingDirectoryChanged =
+    canonicalizeRoot(currentWorkingDirectory) !==
+    canonicalizeRoot(workingDirectory);
+
+  await loadSettingsForWorkingDirectory(workingDirectory);
+
+  if (workingDirectoryChanged) {
+    setConversationWorkingDirectory(
+      runtime,
+      agentId,
+      conversationId,
+      workingDirectory,
+    );
+  }
 
   if (params.updateCurrentRuntimeContext !== false) {
     updateRuntimeContext({ workingDirectory });
@@ -90,7 +102,7 @@ export async function switchConversationWorkingDirectory(params: {
   const reminderState =
     conversationRuntime?.reminderState ??
     runtime.reminderStateByConversation.get(scopeKey);
-  if (reminderState) {
+  if (workingDirectoryChanged && reminderState) {
     reminderState.hasSentSessionContext = false;
     reminderState.pendingSessionContextReason = "cwd_changed";
   }

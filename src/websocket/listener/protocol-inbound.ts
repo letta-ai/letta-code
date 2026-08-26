@@ -55,7 +55,6 @@ import type {
   CronGetCommand,
   CronListCommand,
   CronRunsCommand,
-  CronTriggerCommand,
   CronUpdateCommand,
   DeleteMemoryFileCommand,
   DisconnectProviderCommand,
@@ -114,6 +113,11 @@ function isExperimentId(value: unknown): value is ExperimentId {
 }
 
 import { isValidApprovalResponseBody } from "./approval";
+import {
+  isCronPauseCommand,
+  isCronResumeCommand,
+  isCronTriggerCommand,
+} from "./cron-protocol-inbound";
 import {
   isGetCwdMapCommand,
   isSetBootWorkingDirectoryCommand,
@@ -1139,22 +1143,6 @@ export function isCronRunsCommand(value: unknown): value is CronRunsCommand {
   );
 }
 
-export function isCronTriggerCommand(
-  value: unknown,
-): value is CronTriggerCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    task_id?: unknown;
-  };
-  return (
-    c.type === "cron_trigger" &&
-    typeof c.request_id === "string" &&
-    typeof c.task_id === "string"
-  );
-}
-
 export function isCronUpdateCommand(
   value: unknown,
 ): value is CronUpdateCommand {
@@ -2166,6 +2154,8 @@ export function parseServerMessage(
       isCronGetCommand(parsed) ||
       isCronRunsCommand(parsed) ||
       isCronTriggerCommand(parsed) ||
+      isCronPauseCommand(parsed) ||
+      isCronResumeCommand(parsed) ||
       isCronUpdateCommand(parsed) ||
       isCronDeleteCommand(parsed) ||
       isCronDeleteAllCommand(parsed) ||

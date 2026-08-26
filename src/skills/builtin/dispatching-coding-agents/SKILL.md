@@ -1,6 +1,6 @@
 ---
 name: dispatching-coding-agents
-description: Dispatch stateless coding agents (Claude Code or Codex) via Bash. Use when you're stuck, need a second opinion, or need parallel research on a hard problem. They have no memory — you must provide all context.
+description: Dispatch stateless coding agents through Claude Code or Codex. Model catalog checked 2026-08-25: Claude Code includes Sonnet 5, Opus 5, and Fable 5; Codex includes GPT-5.6 Luna, Terra, and Sol. Use when you're stuck, need a second opinion, or need parallel research on a hard problem. They have no memory, so you must provide all context.
 ---
 
 # Dispatching Coding Agents
@@ -43,14 +43,23 @@ Different agents have different strengths. Track what works in your memory over 
 
 ### Categories
 
-**Codex:**
-- Use the configured default model. Model catalogs and account access change frequently, so only pass `--model` when the user explicitly requests one.
+**Codex (catalog checked 2026-08-25):**
+- `gpt-5.6-luna`: high-throughput, lower-latency work
+- `gpt-5.6-terra`: strong performance with a balance of intelligence and cost
+- `gpt-5.6-sol`: quality-first flagship for difficult coding and reasoning
+- Use the configured default unless the user requests a model. Pass a requested model with `-m`, for example `codex exec "YOUR PROMPT" -m gpt-5.6-sol --sandbox workspace-write`.
 - If a requested model is rejected, inspect the installed CLI and account configuration rather than guessing another model name.
 
-**Claude Code:**
-- `opus` — Excellent writer. Best for docs, refactors, open-ended tasks, and vague instructions.
-  - Strengths: Excellent writer, understands vague instructions, excellent for coding but also general-purpose
-  - Weaknesses: Tends to generate "slop", writing excessive quantities of code unnecessarily. Can hang on large repos.
+**Claude Code (catalog checked 2026-08-25):**
+- The current flagship models are Sonnet 5, Opus 5, and Fable 5. Use the configured default unless the user requests a model.
+- Claude Code's stable aliases follow its current catalog:
+  - `best`: highest-capability model available to the account, using Fable 5 when available
+  - `fable`: Fable 5 for the hardest, longest-running tasks
+  - `opus`: Opus 5 for complex reasoning, docs, refactors, and open-ended tasks
+  - `sonnet`: Sonnet 5 for everyday coding
+  - `haiku`: fast, simple tasks
+- Pass an alias with `--model`, for example `claude -p "YOUR PROMPT" --model fable --dangerously-skip-permissions`.
+- Aliases update as Claude Code's catalog changes. If an alias is rejected, inspect the installed CLI version and account access rather than guessing a versioned model name.
 
 ### Cost and speed tradeoffs
 - Use each CLI's configured default model unless the task requires a model the user explicitly requested
