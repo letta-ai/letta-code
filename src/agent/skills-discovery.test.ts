@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -16,10 +17,42 @@ test("scopes the memory filesystem skill to repository operations", async () => 
   );
 
   expect(skill?.description).toContain(
-    "Load only for memory repository setup, remote authentication or push/pull failures, cloning another agent's memory, or sync conflicts.",
+    "Diagnose and repair MemFS repository setup, remote sync, authentication failures, optional backup remotes, or merge/rebase conflicts.",
   );
   expect(skill?.description).toContain(
-    "Do not load for routine reads or edits to the current agent's memory.",
+    "Do not load for routine memory reads or edits.",
+  );
+});
+
+test("keeps memory repository repair guidance aligned with the harness", async () => {
+  const skills = await getBundledSkills();
+  const skill = skills.find(
+    (candidate) => candidate.id === "syncing-memory-filesystem",
+  );
+  if (!skill) {
+    throw new Error("syncing-memory-filesystem bundled skill was not found");
+  }
+
+  const content = readFileSync(skill.path, "utf8");
+
+  expect(content).toContain("`$MEMORY_DIR` is the repository root");
+  expect(content).toContain("Do not run `git push` for normal MemFS sync");
+  expect(content).toMatch(/the harness pushes\s+clean committed changes/);
+  expect(content).toContain(
+    "Do not reproduce `/memfs enable` by PATCHing agent tags",
+  );
+  expect(content).toMatch(/Do not change global Git\s+configuration\./);
+  expect(content).toContain("GIT_EDITOR=true git -C");
+  expect(content).toContain("rebase --continue");
+  expect(content).toContain("/memory-repository push");
+
+  expect(content).not.toContain("$LETTA_BASE_URL");
+  expect(content).not.toContain("git config --global");
+  expect(content).not.toContain("memory/system");
+  expect(content).not.toContain("2-3s");
+  expect(content).not.toContain('echo "Updated info" >');
+  expect(content).not.toContain(
+    '"tags": ["origin:letta-code", "git-memory-enabled"]',
   );
 });
 
