@@ -204,6 +204,100 @@ describe("local automatic channel relay", () => {
     expect(toolSend).not.toHaveBeenCalled();
   });
 
+  test("applies relay mode per account and declines mixed-channel turns", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    createChannelAccountLive(
+      "slack",
+      {
+        enabled: true,
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        dmPolicy: "open",
+        replyMode: "relay",
+      },
+      { accountId: "relay-account" },
+    );
+    createChannelAccountLive(
+      "telegram",
+      {
+        enabled: true,
+        token: "telegram-test-token",
+        dmPolicy: "open",
+        replyMode: "tool",
+      },
+      { accountId: "tool-account" },
+    );
+
+    const relaySource = makeSource({
+      channel: "slack",
+      accountId: "relay-account",
+      chatId: "C-relay",
+    });
+    const toolSource = makeSource({
+      channel: "telegram",
+      accountId: "tool-account",
+      chatId: "515978553",
+    });
+    for (const source of [relaySource, toolSource]) {
+      setRouteInMemory(source.channel, {
+        accountId: source.accountId,
+        chatId: source.chatId,
+        chatType: "direct",
+        threadId: source.threadId,
+        agentId: source.agentId,
+        conversationId: source.conversationId,
+        enabled: true,
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      });
+    }
+    const relaySend = mock(async () => ({ messageId: "relay-message" }));
+    const toolSend = mock(async () => ({ messageId: "tool-message" }));
+    const registry = new ChannelRegistry();
+    registry.registerAdapter({
+      id: "slack:relay-account",
+      channelId: "slack",
+      accountId: "relay-account",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: relaySend,
+      sendDirectReply: async () => {},
+    });
+    registry.registerAdapter({
+      id: "telegram:tool-account",
+      channelId: "telegram",
+      accountId: "tool-account",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: toolSend,
+      sendDirectReply: async () => {},
+    });
+
+    await relayLocalAssistantText({
+      text: "relay account reply",
+      sources: [relaySource],
+      idempotencyScope: createMessageChannelIdempotencyScope(),
+    });
+    await relayLocalAssistantText({
+      text: "tool account reply",
+      sources: [toolSource],
+      idempotencyScope: createMessageChannelIdempotencyScope(),
+    });
+    await relayLocalAssistantText({
+      text: "ambiguous reply",
+      sources: [relaySource, toolSource],
+      idempotencyScope: createMessageChannelIdempotencyScope(),
+    });
+
+    expect(relaySend).toHaveBeenCalledTimes(1);
+    expect(toolSend).not.toHaveBeenCalled();
+  });
+
   test("suppresses relay text already sent explicitly in the same turn", async () => {
     const sendMessage = setup("relay");
     const idempotencyScope = createMessageChannelIdempotencyScope();
