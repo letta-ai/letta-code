@@ -187,11 +187,37 @@ describe("Shell Launchers", () => {
       });
 
       test("does not reuse a stale native exit code after a failing cmdlet", () => {
+        for (const errorAction of ["SilentlyContinue", "Ignore"]) {
+          expect(
+            runPowerShellHook(
+              `node -e "process.exit(2)"; Get-Item -LiteralPath 'Z:\\missing-letta-hook-path' -ErrorAction ${errorAction}`,
+            ),
+          ).toBe(1);
+        }
+      });
+
+      test("preserves a final native block after an earlier cmdlet failure", () => {
         expect(
           runPowerShellHook(
-            "node -e \"process.exit(2)\"; Get-Item -LiteralPath 'Z:\\\\missing-letta-hook-path' -ErrorAction SilentlyContinue",
+            "Get-Item -LiteralPath 'Z:\\\\missing-letta-hook-path' -ErrorAction SilentlyContinue; node -e \"process.exit(2)\"",
           ),
-        ).toBe(1);
+        ).toBe(2);
+      });
+
+      test("preserves native blocks when native errors populate PowerShell error state", () => {
+        expect(
+          runPowerShellHook(
+            '$PSNativeCommandUseErrorActionPreference = $true; node -e "process.exit(2)"',
+          ),
+        ).toBe(2);
+      });
+
+      test("preserves native blocks invoked through a PowerShell alias", () => {
+        expect(
+          runPowerShellHook(
+            'Set-Alias letta-test-node node; letta-test-node -e "process.exit(2)"',
+          ),
+        ).toBe(2);
       });
     });
   } else {

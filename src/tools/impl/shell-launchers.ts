@@ -13,15 +13,15 @@ export const STRICT_SHELL_ENV_VAR = "LETTA_BASH_STRICT";
 export const STRICT_SHELL_PRELUDE = "set -euo pipefail";
 export const POWERSHELL_UTF8_OUTPUT_PREFIX =
   "try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n";
-// PowerShell cmdlets update `$?` and `$Error` but leave `$LASTEXITCODE` from
-// the last native process untouched. Track new PowerShell errors so a stale
-// native exit 2 cannot turn an ordinary hook failure into a false BLOCK.
+// `$LASTEXITCODE` remains stale after PowerShell statements, while `$Error`
+// can omit ignored cmdlet failures or include native failures. Track the last
+// resolved command type so only a final native process can produce a BLOCK.
 export const POWERSHELL_EXIT_CODE_SUFFIX =
   "\n$__lettaCommandSucceeded = $?; " +
-  "$__lettaPowerShellFailed = -not [object]::ReferenceEquals($Error[0], $__lettaPreviousError); " +
+  "$__lettaFinalCommandWasNative = $global:__lettaLastCommandWasNative; " +
+  "$ExecutionContext.InvokeCommand.PostCommandLookupAction = $__lettaPreviousPostCommandLookupAction; " +
   "if ($__lettaCommandSucceeded) { exit 0 }; " +
-  "if ($__lettaPowerShellFailed) { exit 1 }; " +
-  "if (($null -ne $LASTEXITCODE) -and ($LASTEXITCODE -ne 0)) { exit $LASTEXITCODE }; " +
+  "if ($__lettaFinalCommandWasNative -and ($null -ne $LASTEXITCODE) -and ($LASTEXITCODE -ne 0)) { exit $LASTEXITCODE }; " +
   "exit 1";
 
 const POWERSHELL_ENV_ALIASES = [
@@ -113,7 +113,14 @@ export function buildPowerShellCommand(
     .map((name) => `$${name} = $env:${name}`)
     .join("; ");
   const exitCodePrefix = preserveExitCode
-    ? "$global:LASTEXITCODE = $null; $__lettaPreviousError = $Error[0]; "
+    ? "$global:LASTEXITCODE = $null; " +
+      "$global:__lettaLastCommandWasNative = $false; " +
+      "$__lettaPreviousPostCommandLookupAction = $ExecutionContext.InvokeCommand.PostCommandLookupAction; " +
+      "$ExecutionContext.InvokeCommand.PostCommandLookupAction = { param($sender, $eventArgs) " +
+      "$__lettaResolvedCommand = $eventArgs.Command; " +
+      "while ($__lettaResolvedCommand -is [System.Management.Automation.AliasInfo]) { $__lettaResolvedCommand = $__lettaResolvedCommand.ResolvedCommand }; " +
+      "$global:__lettaLastCommandWasNative = $__lettaResolvedCommand.CommandType -in @([System.Management.Automation.CommandTypes]::Application, [System.Management.Automation.CommandTypes]::ExternalScript); " +
+      "if ($null -ne $__lettaPreviousPostCommandLookupAction) { $__lettaPreviousPostCommandLookupAction.Invoke($sender, $eventArgs) } }.GetNewClosure(); "
     : "";
   const exitCodeSuffix = preserveExitCode ? POWERSHELL_EXIT_CODE_SUFFIX : "";
   return prefixPowerShellCommandWithUtf8Output(
