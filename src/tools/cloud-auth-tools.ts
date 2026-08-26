@@ -5,11 +5,18 @@ import type { ToolName } from "./tool-definitions";
 const AGENT_MCP_TOOL_NAMES: ToolName[] = ["agent_mcp"];
 
 function hasCloudAuthCredentials(): boolean {
+  if (process.env.LETTA_API_KEY) {
+    return true;
+  }
+
+  if (!settingsManager.isReady) {
+    return false;
+  }
+
   const settings = settingsManager.getSettings();
   const cachedTokens = settingsManager.getCachedSecureTokens();
   return Boolean(
-    process.env.LETTA_API_KEY ||
-      settings.env?.LETTA_API_KEY ||
+    settings.env?.LETTA_API_KEY ||
       cachedTokens.apiKey ||
       cachedTokens.refreshToken ||
       settings.refreshToken,
