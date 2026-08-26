@@ -15,7 +15,9 @@ export const POWERSHELL_UTF8_OUTPUT_PREFIX =
   "try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n";
 export const POWERSHELL_EXIT_CODE_SUFFIX =
   "\n$__lettaCommandSucceeded = $?; " +
+  "$__lettaPowerShellFailed = -not [object]::ReferenceEquals($Error[0], $__lettaPreviousError); " +
   "if ($__lettaCommandSucceeded) { exit 0 }; " +
+  "if ($__lettaPowerShellFailed) { exit 1 }; " +
   "if (($null -ne $LASTEXITCODE) -and ($LASTEXITCODE -ne 0)) { exit $LASTEXITCODE }; " +
   "exit 1";
 
@@ -108,7 +110,7 @@ export function buildPowerShellCommand(
     .map((name) => `$${name} = $env:${name}`)
     .join("; ");
   const exitCodePrefix = preserveExitCode
-    ? "$global:LASTEXITCODE = $null; "
+    ? "$global:LASTEXITCODE = $null; $__lettaPreviousError = $Error[0]; "
     : "";
   const exitCodeSuffix = preserveExitCode ? POWERSHELL_EXIT_CODE_SUFFIX : "";
   return prefixPowerShellCommandWithUtf8Output(

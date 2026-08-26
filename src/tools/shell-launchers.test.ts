@@ -185,6 +185,14 @@ describe("Shell Launchers", () => {
           runPowerShellHook('node -e "process.exit(2)"; Write-Output handled'),
         ).toBe(0);
       });
+
+      test("does not reuse a stale native exit code after a failing cmdlet", () => {
+        expect(
+          runPowerShellHook(
+            "node -e \"process.exit(2)\"; Get-Item -LiteralPath 'Z:\\\\missing-letta-hook-path' -ErrorAction SilentlyContinue",
+          ),
+        ).toBe(1);
+      });
     });
   } else {
     describe("Unix-specific", () => {
