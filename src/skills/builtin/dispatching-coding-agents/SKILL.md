@@ -1,6 +1,6 @@
 ---
 name: dispatching-coding-agents
-description: Dispatch stateless coding agents through Claude Code or Codex, including requests to use Claude Code models such as Fable, Opus, Sonnet, or Haiku. Use when you're stuck, need a second opinion, or need parallel research on a hard problem. They have no memory, so you must provide all context.
+description: Dispatch stateless coding agents through Claude Code or Codex, including when the user asks to use Fable, Opus, Sonnet, or Haiku. Use when you're stuck, need a second opinion, or need parallel research on a hard problem. They have no memory, so you must provide all context.
 ---
 
 # Dispatching Coding Agents
