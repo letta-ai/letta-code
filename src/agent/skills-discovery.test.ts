@@ -7,7 +7,21 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { discoverSkills } from "@/agent/skills";
+import { discoverSkills, getBundledSkills } from "@/agent/skills";
+
+test("scopes the memory filesystem skill to repository operations", async () => {
+  const skills = await getBundledSkills();
+  const skill = skills.find(
+    (candidate) => candidate.id === "syncing-memory-filesystem",
+  );
+
+  expect(skill?.description).toContain(
+    "Load only for memory repository setup, remote authentication or push/pull failures, cloning another agent's memory, or sync conflicts.",
+  );
+  expect(skill?.description).toContain(
+    "Do not load for routine reads or edits to the current agent's memory.",
+  );
+});
 
 describe.skipIf(process.platform === "win32")(
   "skills discovery with symlinks",
