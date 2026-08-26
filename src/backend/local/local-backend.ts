@@ -594,7 +594,7 @@ export class LocalBackend extends HeadlessBackend {
 
   private async compactForContextPressure(
     input: ProviderTurnInput,
-    _pressure: LocalContextPressure,
+    pressure: LocalContextPressure,
   ): Promise<{
     uiMessages: LocalMessage[];
     summary: string;
@@ -604,6 +604,8 @@ export class LocalBackend extends HeadlessBackend {
       input.conversationId,
       input.agentId,
       "context_window_limit",
+      undefined,
+      pressure.contextWindow,
     );
     return {
       uiMessages: this.store.listLocalMessages(
@@ -745,6 +747,7 @@ export class LocalBackend extends HeadlessBackend {
     agentId: string,
     trigger: string,
     body?: ConversationMessageCompactBody,
+    contextWindowOverride?: number,
   ): Promise<{
     numMessagesBefore: number;
     numMessagesAfter: number;
@@ -757,6 +760,7 @@ export class LocalBackend extends HeadlessBackend {
       agentId,
       trigger,
       body,
+      contextWindowOverride,
     );
     await this.emitCompactEnd(conversationId, agentId, trigger, result.stats);
     return result;
@@ -767,6 +771,7 @@ export class LocalBackend extends HeadlessBackend {
     agentId: string,
     trigger: string,
     body?: ConversationMessageCompactBody,
+    contextWindowOverride?: number,
   ): Promise<{
     numMessagesBefore: number;
     numMessagesAfter: number;
@@ -789,6 +794,7 @@ export class LocalBackend extends HeadlessBackend {
           agent,
           trigger,
           settings,
+          contextWindowOverride,
         );
         if (
           result.stats.context_window === undefined ||
@@ -881,6 +887,7 @@ export class LocalBackend extends HeadlessBackend {
     agent: LocalAgentRecord,
     trigger: string,
     settings: ResolvedLocalCompactionSettings,
+    contextWindowOverride?: number,
   ): Promise<{
     numMessagesBefore: number;
     numMessagesAfter: number;
@@ -888,7 +895,9 @@ export class LocalBackend extends HeadlessBackend {
     stats: LocalCompactionStats;
   }> {
     const messages = this.store.listLocalMessages(conversationId, agentId);
-    const contextWindow = this.effectiveContextWindow(conversationId, agentId);
+    const contextWindow =
+      contextWindowOverride ??
+      this.effectiveContextWindow(conversationId, agentId);
     const plan = planLocalSlidingWindowCompaction(messages, {
       slidingWindowPercentage: settings.slidingWindowPercentage,
       contextWindow,
