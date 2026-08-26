@@ -1,6 +1,6 @@
 ---
 name: dispatching-coding-agents
-description: Dispatch stateless coding agents (Claude Code or Codex) via Bash. Use when you're stuck, need a second opinion, or need parallel research on a hard problem. They have no memory — you must provide all context.
+description: Dispatch stateless coding agents through Claude Code or Codex, including requests to use Claude Code models such as Fable, Opus, Sonnet, or Haiku. Use when you're stuck, need a second opinion, or need parallel research on a hard problem. They have no memory, so you must provide all context.
 ---
 
 # Dispatching Coding Agents
@@ -48,9 +48,14 @@ Different agents have different strengths. Track what works in your memory over 
 - If a requested model is rejected, inspect the installed CLI and account configuration rather than guessing another model name.
 
 **Claude Code:**
-- `opus` — Excellent writer. Best for docs, refactors, open-ended tasks, and vague instructions.
-  - Strengths: Excellent writer, understands vague instructions, excellent for coding but also general-purpose
-  - Weaknesses: Tends to generate "slop", writing excessive quantities of code unnecessarily. Can hang on large repos.
+- Use the configured default unless the user requests a model. Claude Code's stable aliases follow its current catalog:
+  - `best`: highest-capability model available to the account, using Fable when available
+  - `fable`: hardest, long-running tasks
+  - `opus`: complex reasoning, docs, refactors, and open-ended tasks
+  - `sonnet`: everyday coding
+  - `haiku`: fast, simple tasks
+- Pass an alias with `--model`, for example `claude -p "YOUR PROMPT" --model fable --dangerously-skip-permissions`.
+- Aliases update as Claude Code's catalog changes. If an alias is rejected, inspect the installed CLI version and account access rather than guessing a versioned model name.
 
 ### Cost and speed tradeoffs
 - Use each CLI's configured default model unless the task requires a model the user explicitly requested

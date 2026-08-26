@@ -13,8 +13,16 @@ const skill = readFileSync(
   ),
   "utf8",
 );
+const frontmatter = skill.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
 
 describe("dispatching-coding-agents skill", () => {
+  test("advertises current Claude Code model aliases", () => {
+    expect(frontmatter).toContain("Fable");
+    expect(skill).toContain("`best`: highest-capability model");
+    expect(skill).toContain("`fable`: hardest, long-running tasks");
+    expect(skill).toContain("--model fable");
+  });
+
   test("uses configured defaults instead of versioned model guidance", () => {
     expect(skill).toContain("configured default model");
     expect(skill).not.toMatch(/\bgpt-\d/i);
