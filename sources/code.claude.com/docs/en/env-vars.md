@@ -480,7 +480,9 @@ Standard OpenTelemetry exporter variables (`OTEL_METRICS_EXPORTER`, `OTEL_LOGS_E
 
 ## Features that need feature-flag fetching
 
-Claude Code turns some features on through feature flags it fetches from Anthropic. You turn flag fetching off for a session by setting `DISABLE_GROWTHBOOK`, `DISABLE_TELEMETRY`, `DO_NOT_TRACK`, or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`. Each variable's row says which values do that. With fetching off, you can't:
+Claude Code turns some features on through feature flags it fetches from Anthropic. You turn flag fetching off for a session by setting `DISABLE_GROWTHBOOK`, `DISABLE_TELEMETRY`, `DO_NOT_TRACK`, or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`. Each variable's row says which values do that.
+
+Claude Code also leaves fetching off when you connect through a [Claude apps gateway](/docs/en/claude-apps-gateway). On Amazon Bedrock, Claude Platform on AWS, Google Cloud's Agent Platform, or Microsoft Foundry, Claude Code leaves fetching off unless a host platform that embeds Claude Code sets `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`. With fetching off, you can't:
 
 * [Start sessions in auto mode by default](/docs/en/permission-modes#which-mode-a-session-starts-in) on Pro, Max, and Team plans; Claude Code starts your sessions in Manual instead
 * Have the VS Code extension [read settings files for the starting permission mode](/docs/en/permission-modes#switch-permission-modes)
@@ -496,8 +498,6 @@ Claude Code turns some features on through feature flags it fetches from Anthrop
 * Have Claude Code refresh the [PR review status badge](/docs/en/interactive-mode#pr-review-status) less often while you're idle; Claude Code refreshes it every 60 seconds instead
 * Get the [v2 MCP client runtime](/docs/en/mcp#mcp-client-runtimes) and its protocol probe without setting `MCP_SDK_GENERATION` and `MCP_PROTOCOL_NEGOTIATION`; Claude Code uses the v1 runtime unless you set `MCP_SDK_GENERATION=v2`, and skips the probe unless you set `MCP_PROTOCOL_NEGOTIATION=auto`
 * Get the [PowerShell tool](/docs/en/tools-reference#powershell-tool) by default for claude.ai and Console accounts on Windows with Git Bash installed; Claude Code routes shell commands through Git Bash unless you set `CLAUDE_CODE_USE_POWERSHELL_TOOL=1`. On Windows without Git Bash, the tool stays on
-
-With fetching off, you can still type `/code-review` yourself, but [Claude can't start the review on its own, and a scheduled `/code-review` reaches Claude as plain text](/docs/en/code-review#let-claude-start-the-review) instead of running the review.
 
 ### First session after an install or upgrade
 
