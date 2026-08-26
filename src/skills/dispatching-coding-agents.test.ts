@@ -16,17 +16,22 @@ const skill = readFileSync(
 const frontmatter = skill.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
 
 describe("dispatching-coding-agents skill", () => {
-  test("advertises current Claude Code model aliases", () => {
-    expect(frontmatter).toContain("Fable");
+  test("advertises dated Claude Code and Codex model catalogs", () => {
+    expect(frontmatter).toContain("Model catalog checked 2026-08-25");
+    expect(frontmatter).toContain("Sonnet 5, Opus 5, and Fable 5");
+    expect(frontmatter).toContain("GPT-5.6 Luna, Terra, and Sol");
+    expect(skill).toContain("Codex (catalog checked 2026-08-25)");
+    expect(skill).toContain("`gpt-5.6-luna`");
+    expect(skill).toContain("`gpt-5.6-terra`");
+    expect(skill).toContain("`gpt-5.6-sol`");
     expect(skill).toContain("`best`: highest-capability model");
-    expect(skill).toContain("`fable`: hardest, long-running tasks");
+    expect(skill).toContain("`fable`: Fable 5");
     expect(skill).toContain("--model fable");
   });
 
-  test("uses configured defaults instead of versioned model guidance", () => {
+  test("uses configured defaults unless a model is requested", () => {
     expect(skill).toContain("configured default model");
-    expect(skill).not.toMatch(/\bgpt-\d/i);
-    expect(skill).not.toMatch(/\bclaude-[a-z][a-z0-9-]*-\d/i);
+    expect(skill).toContain('codex exec "YOUR PROMPT" -m gpt-5.6-sol');
   });
 
   test("avoids deprecated Codex flags and nonexistent Bash options", () => {
