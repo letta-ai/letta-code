@@ -257,7 +257,11 @@ Selected global settings keys:
 | `preferredBackendMode` | Startup backend preference, `api` or `local` |
 | `channelCredentialsStore` | Channel token storage, `file`, `keyring`, or `auto` |
 | `reflectionTrigger` / `reflectionStepCount` | Default reflection cadence |
+| `reflectionMerge` / `reflectionMergeInstructions` | Reflection change integration policy |
 | `reflectionSettingsByAgent` | Per-agent reflection cadence |
+| `conversationSwitchAlertEnabled` | Send system-reminder when switching conversations/agents |
+| `createDefaultAgents` | Create Memo/Incognito default agents on startup (default: true) |
+| `windowTitle` | Configurable terminal window title fields |
 | `permissions` | Allow/deny/ask/alwaysAsk rules |
 | `env` | User-wide environment variables for Letta Code |
 | `experiments` | Feature flags |
@@ -271,7 +275,7 @@ Toolset values currently include `auto`, `default`, `codex`, `codex_snake`, `gem
 
 ## Permissions
 
-Permissions decide whether tool calls are allowed, denied, or require approval. User/global permission rules affect all agents using that settings file: `allow` can weaken review, while `deny` and `alwaysAsk` can brick workflows. Valid modes are `standard`, `acceptEdits`, and `unrestricted`; legacy `default` maps to `standard`, while `bypassPermissions` and `fullAccess` map to `unrestricted`. The default mode is `unrestricted` unless startup flags or settings override it.
+Permissions decide whether tool calls are allowed, denied, or require approval. User/global permission rules affect all agents using that settings file: `allow` can weaken review, while `deny` and `alwaysAsk` can brick workflows. Valid modes are `standard`, `acceptEdits`, `unrestricted`, and `strict`; legacy `default` maps to `standard`, while `bypassPermissions` and `fullAccess` map to `unrestricted`. The default mode is `unrestricted` unless startup flags or settings override it.
 
 The removed `memory` mode is invalid; memory access is governed by normal tool permissions plus the server/filesystem checks on the path used. These helper guardrails do not restrict raw Bash/API access. `permissions.mode` supplies a persisted startup default, rule lists still take precedence, and channel accounts have their own `defaultPermissionMode`. Inspect all three when channel approvals differ from the interactive CLI.
 
