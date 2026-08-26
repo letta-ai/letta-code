@@ -110,6 +110,8 @@ jobs:
             echo '```bash'
             echo 'set -euo pipefail'
             echo 'rm -rf /tmp/letta-code-builtin-skills-watch'
+            # The token expands later in Amelia's sandbox.
+            # shellcheck disable=SC2016
             echo 'test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh repo clone letta-ai/letta-code /tmp/letta-code-builtin-skills-watch -- --no-checkout'
             echo 'cd /tmp/letta-code-builtin-skills-watch'
             echo "env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN git checkout \"$CURRENT_SHA\""
