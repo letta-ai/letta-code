@@ -6,7 +6,6 @@ export const TOOL_PERMISSIONS: Record<
   ToolName,
   { requiresApproval: boolean; approvalPolicy?: ToolApprovalPolicy }
 > = {
-  agent_mcp: { requiresApproval: true },
   AskUserQuestion: { requiresApproval: true },
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },

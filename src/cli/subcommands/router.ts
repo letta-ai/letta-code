@@ -13,6 +13,7 @@ import { runModsSubcommand } from "./mods";
 import { runSandboxSubcommand } from "./sandbox";
 import { runSecretSubcommand } from "./secret";
 import { asLegacyAppServerCommand, runServerSubcommand } from "./server";
+import { runServerMcpSubcommand } from "./server-mcp";
 import { runSetupSubcommand } from "./setup";
 import { runSharedMemorySubcommand } from "./shared-memory";
 import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
@@ -52,6 +53,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "sandbox":
     case "secret":
     case "server":
+    case "server-mcp":
     case "shared-memory":
     case "skills":
     case "teleport":
@@ -99,6 +101,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runTeleportSubcommand(rest);
     case "server":
       return runServerSubcommand(rest);
+    case "server-mcp":
+      return runServerMcpSubcommand(rest);
     case "remote": // alias
       return runListenSubcommand(rest);
     case "connect":

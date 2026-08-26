@@ -61,7 +61,6 @@ import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
 import { serializeClientTools } from "./client-tool-serialization";
-import { resolveAgentMcpToolNames } from "./cloud-auth-tools";
 import { normalizeExternalToolResultContent } from "./external-tool-content";
 import { toolFilter } from "./filter";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
@@ -1453,8 +1452,6 @@ async function resolveBaseToolNamesForModel(
   baseToolNames = filterWorktreeTools(baseToolNames);
 
   baseToolNames = resolveArtifactToolNames(baseToolNames);
-
-  baseToolNames = resolveAgentMcpToolNames(baseToolNames);
 
   baseToolNames = filterBuiltInToolNamesByClientAllowlist(
     baseToolNames,
