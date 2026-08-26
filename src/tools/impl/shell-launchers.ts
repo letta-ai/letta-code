@@ -13,6 +13,9 @@ export const STRICT_SHELL_ENV_VAR = "LETTA_BASH_STRICT";
 export const STRICT_SHELL_PRELUDE = "set -euo pipefail";
 export const POWERSHELL_UTF8_OUTPUT_PREFIX =
   "try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n";
+// PowerShell cmdlets update `$?` and `$Error` but leave `$LASTEXITCODE` from
+// the last native process untouched. Track new PowerShell errors so a stale
+// native exit 2 cannot turn an ordinary hook failure into a false BLOCK.
 export const POWERSHELL_EXIT_CODE_SUFFIX =
   "\n$__lettaCommandSucceeded = $?; " +
   "$__lettaPowerShellFailed = -not [object]::ReferenceEquals($Error[0], $__lettaPreviousError); " +
