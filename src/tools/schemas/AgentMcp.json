@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "properties": {
+    "command": {
+      "type": "string",
+      "enum": ["list_servers", "list_tools", "run_tool"],
+      "description": "Operation to perform. Use list_servers first, then list_tools for a server, then run_tool with the chosen tool id."
+    },
+    "mcp_server_id": {
+      "type": "string",
+      "description": "MCP server id returned by list_servers. Required for list_tools and run_tool."
+    },
+    "tool_id": {
+      "type": "string",
+      "description": "MCP tool id returned by list_tools. Required for run_tool."
+    },
+    "args": {
+      "type": "object",
+      "description": "JSON arguments to pass to the MCP tool when command is run_tool.",
+      "additionalProperties": true
+    }
+  },
+  "required": ["command"],
+  "additionalProperties": false
+}

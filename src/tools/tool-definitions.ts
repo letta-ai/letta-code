@@ -1,4 +1,5 @@
 import { defineTool, type ToolAssets } from "./define-tool";
+import AgentMcpDescription from "./descriptions/AgentMcp.md";
 import ApplyPatchDescription from "./descriptions/ApplyPatch.md";
 import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
 import BashDescription from "./descriptions/Bash.md";
@@ -48,6 +49,7 @@ import WriteArtifactFileDescription from "./descriptions/WriteArtifactFile.md";
 import WriteFileGeminiDescription from "./descriptions/WriteFileGemini.md";
 import WriteStdinDescription from "./descriptions/WriteStdin.md";
 import WriteTodosGeminiDescription from "./descriptions/WriteTodosGemini.md";
+import { agent_mcp } from "./impl/agent-mcp";
 import { apply_patch } from "./impl/apply-patch";
 import { read_artifact_file, write_artifact_file } from "./impl/artifact-files";
 import { ask_user_question } from "./impl/ask-user-question";
@@ -95,7 +97,7 @@ import { view_image } from "./impl/view-image";
 import { write } from "./impl/write";
 import { write_file_gemini } from "./impl/write-file-gemini";
 import { write_todos } from "./impl/write-todos-gemini";
-
+import AgentMcpSchema from "./schemas/AgentMcp.json";
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
@@ -174,6 +176,11 @@ function execCommandDescription(): string {
 }
 
 const toolDefinitions = {
+  agent_mcp: defineTool({
+    schema: AgentMcpSchema,
+    description: AgentMcpDescription.trim(),
+    impl: agent_mcp,
+  }),
   AskUserQuestion: defineTool({
     schema: AskUserQuestionSchema,
     description: AskUserQuestionDescription.trim(),

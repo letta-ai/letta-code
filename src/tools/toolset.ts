@@ -15,6 +15,7 @@ import type { ModContext } from "@/mods/types";
 import type { RuntimeContextSnapshot } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
+import { resolveAgentMcpToolNames } from "./cloud-auth-tools";
 import { toolFilter } from "./filter";
 import {
   ANTHROPIC_DEFAULT_TOOLS,
@@ -56,6 +57,7 @@ function appendArtifactToolsIfEnabled(toolNames: ToolName[]): ToolName[] {
   }
   return [...withoutArtifactTools, ...ARTIFACT_TOOL_NAMES];
 }
+
 // Keep these as direct references at call-sites (not top-level aliases) to avoid
 // temporal-dead-zone issues under circular import initialization.
 
@@ -242,7 +244,7 @@ function getToolNamesForToolset(toolsetName: ToolsetName): ToolName[] {
       break;
   }
 
-  return appendArtifactToolsIfEnabled(tools);
+  return resolveAgentMcpToolNames(appendArtifactToolsIfEnabled(tools));
 }
 
 export async function prepareToolExecutionContextForResolvedTarget(params: {

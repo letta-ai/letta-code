@@ -61,6 +61,7 @@ import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
 import { serializeClientTools } from "./client-tool-serialization";
+import { resolveAgentMcpToolNames } from "./cloud-auth-tools";
 import { normalizeExternalToolResultContent } from "./external-tool-content";
 import { toolFilter } from "./filter";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
@@ -81,7 +82,6 @@ import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 import { TOOL_PERMISSIONS } from "./tool-permissions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
-
 async function resolveBackendSpecificToolDescription(
   name: string,
   description: string,
@@ -235,7 +235,6 @@ const ARTIFACT_TOOL_NAMES: ToolName[] = [
   "read_artifact_file",
   "write_artifact_file",
 ];
-
 function shouldIncludeWorktreeTool(): boolean {
   try {
     return settingsManager.shouldIncludeWorktreeTool();
@@ -243,7 +242,6 @@ function shouldIncludeWorktreeTool(): boolean {
     return true;
   }
 }
-
 function filterWorktreeTools(toolNames: ToolName[]): ToolName[] {
   if (shouldIncludeWorktreeTool()) {
     return toolNames;
@@ -1455,6 +1453,8 @@ async function resolveBaseToolNamesForModel(
   baseToolNames = filterWorktreeTools(baseToolNames);
 
   baseToolNames = resolveArtifactToolNames(baseToolNames);
+
+  baseToolNames = resolveAgentMcpToolNames(baseToolNames);
 
   baseToolNames = filterBuiltInToolNamesByClientAllowlist(
     baseToolNames,
