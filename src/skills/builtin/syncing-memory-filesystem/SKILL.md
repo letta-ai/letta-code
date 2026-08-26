@@ -1,6 +1,6 @@
 ---
 name: syncing-memory-filesystem
-description: Manage git-backed memory repos. Load this skill when working with git-backed agent memory, setting up remote memory repos, resolving sync conflicts, or managing memory via git workflows.
+description: Clone, sync, and troubleshoot git-backed agent memory repositories. Load only for memory repository setup, remote authentication or push/pull failures, cloning another agent's memory, or sync conflicts. Do not load for routine reads or edits to the current agent's memory.
 ---
 
 # Git-Backed Memory Repos
