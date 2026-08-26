@@ -33,6 +33,7 @@ import { settingsManager } from "@/settings-manager";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import { isSubagentStdoutLostError } from "@/utils/subagent-stdout-failure";
+import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import {
   getAllSubagentConfigs,
   type SubagentConfig,
@@ -478,7 +479,15 @@ async function executeSubagent(
       );
     }
 
-    const proc = spawn(spawnLauncher.command, spawnLauncher.args, {
+    const managedLauncher = wrapManagedWorkloadLauncher(
+      [spawnLauncher.command, ...spawnLauncher.args],
+      { env: spawnEnv },
+    );
+    const [managedCommand, ...managedArgs] = managedLauncher;
+    if (!managedCommand) {
+      throw new Error("Subagent executable is required");
+    }
+    const proc = spawn(managedCommand, managedArgs, {
       cwd: subagentWorkingDirectory,
       env: spawnEnv,
     });
