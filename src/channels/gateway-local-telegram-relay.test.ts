@@ -13,11 +13,6 @@ import {
 } from "@/channels/service";
 import type { ChannelTurnLifecycleEvent } from "@/channels/types";
 import { settingsManager } from "@/settings-manager";
-import {
-  executeTool,
-  prepareToolExecutionContextForModel,
-  releaseToolExecutionContext,
-} from "@/tools/manager";
 import { startAppServer } from "@/websocket/app-server";
 import {
   FakeBot,
@@ -36,7 +31,6 @@ const AFTER_TOOL_TEXT = "after tool";
 const TEST_TIMEOUT_MS = 10_000;
 
 type TurnPlan = {
-  callMessageChannel: boolean;
   text: string;
   assistantMessagesAroundTool?: [string, string];
 };
@@ -97,48 +91,22 @@ function inboundMessage(messageId: number, text: string) {
   };
 }
 
-function plannedExecutor(plans: TurnPlan[]): HeadlessTurnExecutor {
+function plannedExecutor(
+  plans: TurnPlan[],
+  clientToolNamesByTurn: string[][],
+): HeadlessTurnExecutor {
   let turnSequence = 0;
-  let toolCallSequence = 0;
   return {
     async execute(input) {
       const plan = plans.shift();
       if (!plan) throw new Error("Unexpected channel turn");
       turnSequence += 1;
-      if (plan.callMessageChannel) {
-        toolCallSequence += 1;
-        const context = await prepareToolExecutionContextForModel(
-          input.agent.model,
-          {
-            clientToolAllowlist: ["MessageChannel"],
-            runtimeContext: {
-              agentId: input.agentId,
-              conversationId: input.conversationId,
-            },
-          },
-        );
-        try {
-          const result = await executeTool(
-            "MessageChannel",
-            {
-              channel: "telegram",
-              action: "send",
-              chat_id: CHAT_ID,
-              accountId: ACCOUNT_ID,
-              message: plan.text,
-            },
-            {
-              toolCallId: `telegram-relay-call-${toolCallSequence}`,
-              toolContextId: context.contextId,
-            },
-          );
-          if (result.status !== "success") {
-            throw new Error(String(result.toolReturn));
-          }
-        } finally {
-          releaseToolExecutionContext(context.contextId);
-        }
-      }
+      clientToolNamesByTurn.push(
+        (
+          (input.body as { client_tools?: Array<{ name: string }> })
+            .client_tools ?? []
+        ).map((tool) => tool.name),
+      );
       if (plan.assistantMessagesAroundTool) {
         return assistantMessagesAroundToolStream(
           plan.assistantMessagesAroundTool[0],
@@ -167,18 +135,20 @@ test("Telegram ingress relays finalized assistant messages across the local App 
 
   const plans: TurnPlan[] = [
     {
-      callMessageChannel: false,
       text: FINAL_TEXT,
       assistantMessagesAroundTool: [BEFORE_TOOL_TEXT, AFTER_TOOL_TEXT],
     },
-    { callMessageChannel: true, text: FINAL_TEXT },
-    { callMessageChannel: false, text: FINAL_TEXT },
+    { text: FINAL_TEXT },
   ];
+  const clientToolNamesByTurn: string[][] = [];
   let server: Awaited<ReturnType<typeof startAppServer>> | undefined;
   let gateway: Awaited<ReturnType<typeof startLocalChannelGateway>> | undefined;
 
   try {
-    const backend = new HeadlessBackend(AGENT_ID, plannedExecutor(plans));
+    const backend = new HeadlessBackend(
+      AGENT_ID,
+      plannedExecutor(plans, clientToolNamesByTurn),
+    );
     const conversation = await backend.createConversation({
       agent_id: AGENT_ID,
     });
@@ -250,32 +220,19 @@ test("Telegram ingress relays finalized assistant messages across the local App 
       AFTER_TOOL_TEXT,
       expect.any(Object),
     );
-
-    await bot.emit(
-      "message",
-      inboundMessage(2, "relay after an explicit send"),
-    );
-    await waitFor(
-      () => finishedTurns === 2,
-      "Timed out waiting for explicit-send channel turn",
-    );
-    expect(bot.api.sendMessage).toHaveBeenCalledTimes(3);
-    expect(bot.api.sendMessage).toHaveBeenLastCalledWith(
-      CHAT_ID,
-      FINAL_TEXT,
-      expect.any(Object),
-    );
+    expect(clientToolNamesByTurn[0]).not.toContain("MessageChannel");
 
     updateChannelAccountLive("telegram", ACCOUNT_ID, { replyMode: "tool" });
     await bot.emit(
       "message",
-      inboundMessage(3, "tool mode without a tool call"),
+      inboundMessage(2, "tool mode without a tool call"),
     );
     await waitFor(
-      () => finishedTurns === 3,
+      () => finishedTurns === 2,
       "Timed out waiting for tool-mode channel turn",
     );
-    expect(bot.api.sendMessage).toHaveBeenCalledTimes(3);
+    expect(bot.api.sendMessage).toHaveBeenCalledTimes(2);
+    expect(clientToolNamesByTurn[1]).toContain("MessageChannel");
     expect(plans).toHaveLength(0);
   } finally {
     settingsManager.isMemfsExplicitlyDisabled =

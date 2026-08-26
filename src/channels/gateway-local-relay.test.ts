@@ -168,7 +168,7 @@ describe("local automatic channel relay", () => {
         }),
       );
       client.emit(makeTurnFinished("end_turn"));
-      await Bun.sleep(0);
+      await Bun.sleep(10);
 
       expect(sendMessage).toHaveBeenCalledTimes(expectedSends);
       if (expectedSends === 1) {

@@ -2,6 +2,7 @@ import type {
   ExternalToolDefinitionPayload,
   RuntimeScope,
 } from "@/types/app-server-protocol";
+import { getChannelAccount } from "./accounts";
 import { buildMessageChannelExternalToolDefinition } from "./message-channel-tool-definition";
 import { resolveLocalMessageChannelToolChannels } from "./message-tool";
 import { listEligibleProactiveSlackAccounts } from "./slack/proactive-accounts";
@@ -31,11 +32,16 @@ export async function buildGatewayMessageChannelTool(
             accountId: account.accountId,
           }))
         : [];
-  if (channelScopes.length === 0) return null;
+  const toolScopes = channelScopes.filter(
+    ({ channelId, accountId }) =>
+      !accountId ||
+      getChannelAccount(channelId, accountId)?.replyMode !== "relay",
+  );
+  if (toolScopes.length === 0) return null;
 
   return buildMessageChannelExternalToolDefinition({
     channels: await resolveLocalMessageChannelToolChannels({
-      channels: channelScopes,
+      channels: toolScopes,
     }),
     scoped: sources.length > 0,
     allowProactiveTargets: true,
