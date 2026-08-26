@@ -51,6 +51,7 @@ describe("managed workload systemd scope", () => {
       "--scope",
       "--quiet",
       "--collect",
+      "--property=TimeoutStopSec=5s",
       "--slice=letta-workload.slice",
       "--",
       "bash",
