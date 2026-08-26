@@ -385,6 +385,37 @@ describe("Skill tool memory filesystem lookup", () => {
     );
   });
 
+  test("loads a nested skill by its frontmatter name", async () => {
+    const projectRoot = join(tempRoot, "project-root");
+    const skillsRoot = join(projectRoot, ".skills");
+    const computerUseDir = join(skillsRoot, "computer-use");
+    const cuaDriverDir = join(computerUseDir, "references", "cua-driver");
+
+    currentSkillsDirectory = skillsRoot;
+    mkdirSync(cuaDriverDir, { recursive: true });
+    writeFileSync(
+      join(computerUseDir, "SKILL.md"),
+      "---\nname: computer-use\ndescription: managed computer use\n---\n",
+      "utf8",
+    );
+    writeFileSync(
+      join(cuaDriverDir, "SKILL.md"),
+      "---\nname: cua-driver\ndescription: Cua Driver reference\n---\n\nLoaded by frontmatter name.",
+      "utf8",
+    );
+    process.env.USER_CWD = projectRoot;
+
+    const result = await runScopedSkill({
+      skill: "cua-driver",
+      toolCallId: "tc-nested-frontmatter-name",
+    });
+
+    expect(result.message).toBe("Launching skill: cua-driver");
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain("Loaded by frontmatter name.");
+  });
+
   test("loads canonical .agents/skills project skills before legacy .skills", async () => {
     const skillName = "canonical-project-skill";
     const projectRoot = join(tempRoot, "project-root");

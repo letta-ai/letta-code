@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isCronPauseCommand,
+  isCronResumeCommand,
+} from "@/websocket/listener/cron-protocol-inbound";
+import {
   isChannelAccountCreateCommand,
   isChannelAccountUpdateCommand,
   isChannelSetConfigCommand,
@@ -147,6 +151,48 @@ describe("teleport protocol-inbound validators", () => {
     expect(parseServerMessage(Buffer.from(JSON.stringify(message)))?.type).toBe(
       message.type,
     );
+  });
+});
+
+describe("cron pause protocol-inbound validators", () => {
+  test("accepts the exact pause and resume wire shapes", () => {
+    const pause = {
+      type: "cron_pause" as const,
+      request_id: "pause-1",
+      task_id: "task-1",
+    };
+    const resume = {
+      type: "cron_resume" as const,
+      request_id: "resume-1",
+      task_id: "task-1",
+      scheduled_for: "2026-08-27T12:00:00.000Z",
+    };
+
+    expect(isCronPauseCommand(pause)).toBe(true);
+    expect(isCronResumeCommand(resume)).toBe(true);
+    expect(parseServerMessage(Buffer.from(JSON.stringify(pause)))).toEqual(
+      pause,
+    );
+    expect(parseServerMessage(Buffer.from(JSON.stringify(resume)))).toEqual(
+      resume,
+    );
+  });
+
+  test("rejects malformed pause and resume commands", () => {
+    expect(
+      isCronPauseCommand({
+        type: "cron_pause",
+        request_id: "pause-1",
+      }),
+    ).toBe(false);
+    expect(
+      isCronResumeCommand({
+        type: "cron_resume",
+        request_id: "resume-1",
+        task_id: "task-1",
+        scheduled_for: null,
+      }),
+    ).toBe(false);
   });
 });
 
