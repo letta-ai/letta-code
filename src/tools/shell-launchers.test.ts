@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildPowerShellCommand,
   buildShellLaunchers,
@@ -109,12 +112,21 @@ describe("Shell Launchers", () => {
 
   if (process.platform === "win32") {
     describe("Windows-specific", () => {
-      function runPowerShellHook(command: string): number | null {
-        const launcher = selectAvailableShellLauncher(
-          buildShellLaunchers(command, {
-            preservePowerShellExitCode: true,
-          }),
-        );
+      function runPowerShellHook(
+        command: string,
+        executable?: string,
+      ): number | null {
+        const shellLaunchers = buildShellLaunchers(command, {
+          preservePowerShellExitCode: true,
+        });
+        const launcher = executable
+          ? [
+              executable,
+              "-NoProfile",
+              "-Command",
+              shellLaunchers[0]?.at(-1) ?? "",
+            ]
+          : selectAvailableShellLauncher(shellLaunchers);
         expect(launcher?.[0]?.toLowerCase()).toMatch(/pwsh|powershell/);
         if (!launcher?.[0]) return null;
         return spawnSync(launcher[0], launcher.slice(1), {
@@ -216,6 +228,41 @@ describe("Shell Launchers", () => {
         expect(
           runPowerShellHook(
             "$PSNativeCommandUseErrorActionPreference = $true; node -e \"process.exit(2)\"; Get-Item -LiteralPath 'Z:\\missing-letta-hook-path' -ErrorAction Ignore",
+          ),
+        ).toBe(1);
+      });
+
+      test("does not reuse a native exit after a language failure", () => {
+        expect(
+          runPowerShellHook('node -e "process.exit(2)"; $null.NoSuchMethod()'),
+        ).toBe(1);
+      });
+
+      test("does not treat PowerShell scripts as native applications", () => {
+        const scriptPath = join(
+          tmpdir(),
+          `letta-hook-external-script-${process.pid}.ps1`,
+        );
+        writeFileSync(scriptPath, "exit 2\n");
+        try {
+          expect(
+            runPowerShellHook(`& '${scriptPath.replaceAll("'", "''")}'`),
+          ).toBe(1);
+        } finally {
+          rmSync(scriptPath, { force: true });
+        }
+      });
+
+      test("preserves the contract on Windows PowerShell 5.1", () => {
+        const executable =
+          "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+        expect(runPowerShellHook('node -e "process.exit(2)"', executable)).toBe(
+          2,
+        );
+        expect(
+          runPowerShellHook(
+            'node -e "process.exit(2)"; $null.NoSuchMethod()',
+            executable,
           ),
         ).toBe(1);
       });

@@ -13,17 +13,16 @@ export const STRICT_SHELL_ENV_VAR = "LETTA_BASH_STRICT";
 export const STRICT_SHELL_PRELUDE = "set -euo pipefail";
 export const POWERSHELL_UTF8_OUTPUT_PREFIX =
   "try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n";
-// `$LASTEXITCODE` remains stale after PowerShell statements, while `$Error`
-// can omit ignored cmdlet failures. Track the last resolved user command type
-// so only a final native process can produce a BLOCK. PowerShell 7 performs
-// nested command lookups while rendering native errors; those are not hook
-// statements and must not replace the native command we just observed.
+// `$LASTEXITCODE` remains stale after PowerShell statements. Only propagate it
+// when the parsed final operation is a command that resolves to an application.
+// Language expressions and PowerShell scripts use PowerShell's ERROR semantics.
 export const POWERSHELL_EXIT_CODE_SUFFIX =
   "\n$__lettaCommandSucceeded = $?; " +
-  "$__lettaFinalCommandWasNative = $global:__lettaLastCommandWasNative; " +
-  "$ExecutionContext.InvokeCommand.PostCommandLookupAction = $__lettaPreviousPostCommandLookupAction; " +
   "if ($__lettaCommandSucceeded) { exit 0 }; " +
-  "if ($__lettaFinalCommandWasNative -and ($null -ne $LASTEXITCODE) -and ($LASTEXITCODE -ne 0)) { exit $LASTEXITCODE }; " +
+  "$__lettaFinalCommand = $null; " +
+  "if ($null -ne $__lettaFinalCommandName) { try { $__lettaFinalCommand = $ExecutionContext.InvokeCommand.GetCommand($__lettaFinalCommandName, [System.Management.Automation.CommandTypes]::All) } catch {} }; " +
+  "while ($__lettaFinalCommand -is [System.Management.Automation.AliasInfo]) { $__lettaFinalCommand = $__lettaFinalCommand.ResolvedCommand }; " +
+  "if (($__lettaFinalCommand.CommandType -eq [System.Management.Automation.CommandTypes]::Application) -and ($null -ne $LASTEXITCODE) -and ($LASTEXITCODE -ne 0)) { exit $LASTEXITCODE }; " +
   "exit 1";
 
 const POWERSHELL_ENV_ALIASES = [
@@ -114,16 +113,18 @@ export function buildPowerShellCommand(
   const aliasPrelude = aliases
     .map((name) => `$${name} = $env:${name}`)
     .join("; ");
+  const encodedCommand = Buffer.from(powerShellCommand, "utf16le").toString(
+    "base64",
+  );
   const exitCodePrefix = preserveExitCode
     ? "$global:LASTEXITCODE = $null; " +
-      "$global:__lettaLastCommandWasNative = $false; " +
-      "$__lettaPreviousPostCommandLookupAction = $ExecutionContext.InvokeCommand.PostCommandLookupAction; " +
-      "$ExecutionContext.InvokeCommand.PostCommandLookupAction = { param($sender, $eventArgs) " +
-      "if (-not [System.Environment]::StackTrace.Contains('System.Management.Automation.NativeCommandProcessor.Complete')) { " +
-      "$__lettaResolvedCommand = $eventArgs.Command; " +
-      "while ($__lettaResolvedCommand -is [System.Management.Automation.AliasInfo]) { $__lettaResolvedCommand = $__lettaResolvedCommand.ResolvedCommand }; " +
-      "$global:__lettaLastCommandWasNative = $__lettaResolvedCommand.CommandType -in @([System.Management.Automation.CommandTypes]::Application, [System.Management.Automation.CommandTypes]::ExternalScript) }; " +
-      "if ($null -ne $__lettaPreviousPostCommandLookupAction) { $__lettaPreviousPostCommandLookupAction.Invoke($sender, $eventArgs) } }.GetNewClosure(); "
+      `$__lettaHookText = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String('${encodedCommand}')); ` +
+      "$__lettaTokens = $null; $__lettaParseErrors = $null; " +
+      "$__lettaHookAst = [System.Management.Automation.Language.Parser]::ParseInput($__lettaHookText, [ref]$__lettaTokens, [ref]$__lettaParseErrors); " +
+      "$__lettaStatements = $__lettaHookAst.EndBlock.Statements; " +
+      "$__lettaFinalStatement = if ($__lettaStatements.Count -gt 0) { $__lettaStatements[$__lettaStatements.Count - 1] } else { $null }; " +
+      "$__lettaFinalPipelineElement = if ($__lettaFinalStatement -is [System.Management.Automation.Language.PipelineAst]) { $__lettaFinalStatement.PipelineElements[$__lettaFinalStatement.PipelineElements.Count - 1] } else { $null }; " +
+      "$__lettaFinalCommandName = if ($__lettaFinalPipelineElement -is [System.Management.Automation.Language.CommandAst]) { $__lettaFinalPipelineElement.GetCommandName() } else { $null }; "
     : "";
   const exitCodeSuffix = preserveExitCode ? POWERSHELL_EXIT_CODE_SUFFIX : "";
   return prefixPowerShellCommandWithUtf8Output(

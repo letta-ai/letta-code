@@ -121,6 +121,28 @@ process.exit(code);
       expect(result.exitCode).not.toBe(HookExitCode.BLOCK);
     });
 
+    test("does not reuse a native exit after a language failure", async () => {
+      const input: PreToolUseHookInput = {
+        event_type: "PreToolUse",
+        working_directory: tempDir,
+        tool_name: "Agent",
+        tool_input: {},
+      };
+
+      const result = await executeCommandHook(
+        {
+          type: "command",
+          command: `node "${hookScript}" 2; $null.NoSuchMethod()`,
+          quiet: true,
+        },
+        input,
+        tempDir,
+      );
+
+      expect(result.exitCode).toBe(HookExitCode.ERROR);
+      expect(result.exitCode).not.toBe(HookExitCode.BLOCK);
+    });
+
     test("preserves a native block when native errors are enabled", async () => {
       const input: PreToolUseHookInput = {
         event_type: "PreToolUse",
