@@ -198,8 +198,8 @@ test("tool_rule completion relays once and ignores duplicate or late terminal ev
   gateway.close();
 });
 
-test.each(["cancelled", "llm_api_error", "requires_approval"])(
-  "does not relay a terminal %s turn",
+test.each(["cancelled", "llm_api_error"])(
+  "does not relay partial text on a terminal %s turn",
   async (stopReason) => {
     const client = new FakeClient();
     const relay = mock(() => {});
@@ -221,6 +221,27 @@ test.each(["cancelled", "llm_api_error", "requires_approval"])(
     gateway.close();
   },
 );
+
+test("does not relay incomplete text when approval finishes without its stop delta", async () => {
+  const client = new FakeClient();
+  const relay = mock(() => {});
+  const { hooks } = makeHooks({ relayAssistantText: relay });
+  const gateway = new ChannelGateway(client, hooks);
+
+  await gateway.submit(makeDelivery());
+  client.emit(
+    assistantDelta({
+      id: "assistant-1",
+      key: "assistant-1",
+      content: "Do not send",
+    }),
+  );
+  client.emit(makeTurnFinished("requires_approval"));
+  await Bun.sleep(0);
+
+  expect(relay).not.toHaveBeenCalled();
+  gateway.close();
+});
 
 test("fails closed when one turn has multiple routed sources", async () => {
   const client = new FakeClient();
