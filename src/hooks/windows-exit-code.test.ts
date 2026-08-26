@@ -54,5 +54,27 @@ process.exit(code);
         expect(result.stderr).toBe(`native exit ${nativeCode}`);
       }
     });
+
+    test("reports a failing final cmdlet as error after a native block", async () => {
+      const input: PreToolUseHookInput = {
+        event_type: "PreToolUse",
+        working_directory: tempDir,
+        tool_name: "Agent",
+        tool_input: {},
+      };
+
+      const result = await executeCommandHook(
+        {
+          type: "command",
+          command: `node "${hookScript}" 2; Get-Item -LiteralPath 'Z:\\missing-letta-hook-path' -ErrorAction SilentlyContinue`,
+          quiet: true,
+        },
+        input,
+        tempDir,
+      );
+
+      expect(result.exitCode).toBe(HookExitCode.ERROR);
+      expect(result.exitCode).not.toBe(HookExitCode.BLOCK);
+    });
   },
 );
