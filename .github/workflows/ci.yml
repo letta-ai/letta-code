@@ -168,6 +168,24 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun install --frozen-lockfile
 
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.19'
+
+      - name: Verify native binaries
+        run: |
+          node -e "try { require('sharp'); console.log('sharp: OK') } catch(e) { console.error('sharp: FAIL —', e.message); process.exit(1) }"
+          node -e "try { require('node-pty'); console.log('node-pty: OK') } catch(e) { console.error('node-pty: FAIL —', e.message); process.exit(1) }"
+          # @janhapke/sharp-electron only has a patched artifact for linux-x64.
+          # Plain Node verifies that artifact is installed and loadable; Electron
+          # runtime behavior is exercised elsewhere.
+          if [ "${{ runner.os }}" = "Linux" ] && [ "${{ runner.arch }}" = "X64" ]; then
+            node -e "try { require('@janhapke/sharp-electron'); console.log('@janhapke/sharp-electron: OK') } catch(e) { console.error('@janhapke/sharp-electron: FAIL —', e.message); process.exit(1) }"
+          else
+            echo "@janhapke/sharp-electron: skipped (not linux-x64)"
+          fi
+
       - name: Unlock GNOME Keyring
         if: runner.os == 'Linux'
         uses: t1m0thyj/unlock-keyring@v1
