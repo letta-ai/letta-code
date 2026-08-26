@@ -227,13 +227,12 @@ With a saved claude.ai login:
 * If you sign out and back in, or switch to another organization and later return, Claude Code doesn't show the dialog again while those settings are unchanged, unless another account approved them for that organization in the same configuration directory in between.
 * If you sign in to the same organization with a different account, Claude Code shows the dialog again even when the settings are unchanged. That account's approval replaces the previous one, so when you switch back, Claude Code shows the dialog once more.
 
-If an interactive session can't show the dialog, Claude Code doesn't apply the delivered settings and keeps the last-approved settings; the dialog appears in the next session that can show it. Requires Claude Code v2.1.211 or later.
+Claude Code can't always show the dialog. Each case below says which settings apply when it can't and when you next see the dialog:
 
-If an error closes the dialog before you answer, Claude Code doesn't apply the delivered settings and keeps the last-approved settings; Claude Code shows the dialog again in the next session that can show it.
-
-<Note>
-  A non-interactive run, such as `claude -p` or an Agent SDK session, can't show the dialog. When the delivered settings would require approval, Claude Code applies them for that run only: it doesn't record them as approved or write them to the [local cache](#fetch-and-caching-behavior), and the next interactive session shows the dialog. Until a user approves in an interactive session, each non-interactive run fetches the settings again at startup. Before v2.1.207, a non-interactive run saved the settings as approved, so later interactive sessions never showed the dialog for them.
-</Note>
+* **An interactive session that can't show the dialog**: Claude Code doesn't apply the delivered settings and keeps the last-approved settings. The dialog appears in the next session that can show it. Requires Claude Code v2.1.211 or later.
+* **`claude install` or `claude update`**: Claude Code doesn't show the dialog during either command. The command runs with the last-approved settings, and the dialog appears in your next interactive session. If Claude Code waits for the settings fetch at startup, such as with [`forceRemoteSettingsRefresh`](#enforce-fail-closed-startup) set or on a [Claude apps gateway](/docs/en/claude-apps-gateway) deployment, it shows the dialog during the command instead, and an install run from a pipe fails; see [`Raw mode is not supported` during install](/docs/en/troubleshoot-install#raw-mode-is-not-supported-during-install). Before v2.1.246, Claude Code tried to show the dialog during these commands too.
+* **An error closes the dialog before you answer**: Claude Code doesn't apply the delivered settings and keeps the last-approved settings. It shows the dialog again in the next session that can show it.
+* **A non-interactive run**, such as `claude -p` or an Agent SDK session: Claude Code can't show the dialog, so when the delivered settings would require approval, it applies them for that run only. It doesn't record them as approved or write them to the [local cache](#fetch-and-caching-behavior), and the next interactive session shows the dialog. Until a user approves in an interactive session, each non-interactive run fetches the settings again at startup. Before v2.1.207, a non-interactive run saved the settings as approved, so later interactive sessions never showed the dialog for them.
 
 #### Environment variables and the approval dialog
 
