@@ -30,6 +30,7 @@ letta agents list [options]
 | `--tags <tag1,tag2>` | Filter by tags (comma-separated) |
 | `--match-all-tags` | Require ALL tags (default: ANY) |
 | `--include-blocks` | Include agent.blocks in response |
+| `--shared` | List agents shared with current user |
 | `--limit <n>` | Max results (default: 20) |
 
 ## Common Patterns
@@ -84,6 +85,11 @@ letta agents list --tags "frontend,production" --match-all-tags
 letta agents list --query "project" --include-blocks
 ```
 
+**List agents shared with you:**
+```bash
+letta agents list --shared
+```
+
 ## Output
 
 Returns the raw API response with full agent details. Key fields:
@@ -92,24 +98,3 @@ Returns the raw API response with full agent details. Key fields:
 - `description` - Agent description
 - `tags` - Agent tags
 - `blocks` - Memory blocks (if `--include-blocks` used)
-
-## Related Skills
-
-- **migrating-memory** - Once you find an agent, use this skill to copy/share memory blocks
-- **searching-messages** - Search messages across all agents to find which agent discussed a topic. Use `--all-agents` to get `agent_id` values, then use this skill to get full agent details.
-
-### Finding Agents by Topic
-
-If you need to find which agent worked on a specific topic:
-
-1. Load both skills: `searching-messages` and `finding-agents`
-2. Search messages across all agents:
-   ```bash
-   letta messages search --query "topic" --all-agents --limit 10
-   ```
-3. Note the `agent_id` values from matching messages
-4. Get agent details:
-   ```bash
-   letta agents list --query "partial-name"
-   ```
-   Or use the agent_id directly in the Letta API
