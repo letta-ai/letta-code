@@ -146,7 +146,7 @@ Create a `.mcp.json` file at your project root. The file is picked up when the `
 
 ## Connection timing
 
-Claude Code registers the servers you pass in `options.mcpServers` at startup and emits the [init message](#error-handling) once the first-turn wait, if any, resolves. Servers loaded from [settings files](#from-a-config-file) such as `.mcp.json` don't get the full wait and commonly show `pending` at init. When each `options.mcpServers` server connects, and whether it delays the first turn, depends on its type:
+Claude Code registers the servers you pass in `options.mcpServers` at startup and emits the [init message](#error-handling) once the first-turn wait, if any, resolves. Without `options.mcpServers`, Claude Code waits 2 seconds for pending servers before the first turn, so servers loaded from [settings files](#from-a-config-file) such as `.mcp.json` commonly show `pending` at init. When each `options.mcpServers` server connects, and whether it delays the first turn, depends on its type:
 
 | Server type                                                                            | Delays the first turn?                                 | First-turn wait timeout                                                                     |
 | :------------------------------------------------------------------------------------- | :----------------------------------------------------- | :------------------------------------------------------------------------------------------ |
@@ -703,7 +703,15 @@ export DATABASE_URL=postgresql://user:password@localhost:5432/mydb
 
 MCP servers can fail to connect for various reasons: the server process might not be installed, credentials might be invalid, or a remote server might be unreachable.
 
-Claude Code emits a `system` message with subtype `init` at the start of each query. This message includes the connection status for each MCP server. The `status` field can be `"pending"`, `"connected"`, `"failed"`, `"needs-auth"`, or `"disabled"`. Claude Code emits the init message after the [first-turn connection wait](#connection-timing) for servers passed in `options.mcpServers`, so such a server that connected within the wait shows `"connected"`. A `"pending"` status means the server hasn't connected yet, which is common for [settings-file servers](#from-a-config-file) that don't get the full wait, or that its tool list was [served from the cache](#connection-timing) with a connection made on first use; the reported status for a deadline-expired server can be `"pending"` or `"failed"` depending on timing. Don't treat `"pending"` as a failure. Check for `"failed"` or `"needs-auth"` to detect servers that won't be usable:
+Claude Code emits a `system` message with subtype `init` at the start of each query. This message includes the connection status for each MCP server. The `status` field can be `"pending"`, `"connected"`, `"failed"`, `"needs-auth"`, or `"disabled"`. Claude Code emits the init message after the [first-turn connection wait](#connection-timing) for servers passed in `options.mcpServers`, so such a server that connected within the wait shows `"connected"`.
+
+In the init message, don't treat `"pending"` as a failure on its own. It can mean any of these:
+
+* The server hasn't connected yet. See [how long Claude Code waits for it before the first turn](#connection-timing)
+* The server's tool list was [served from the cache](#connection-timing), with a connection made on first use
+* The connection deadline expired. Such a server reports `"pending"` or `"failed"` depending on timing
+
+Check for `"failed"` or `"needs-auth"` to detect servers that won't be usable:
 
 <CodeGroup>
   ```typescript TypeScript theme={null}
@@ -784,6 +792,10 @@ Claude Code emits a `system` message with subtype `init` at the start of each qu
   ```
 </CodeGroup>
 
+A remote server's status can also change after it reports `"connected"`. When the connection to it drops mid-session, Claude Code moves the server back to `"pending"` while [reconnecting](/docs/en/mcp#automatic-reconnection). A later `mcpServerStatus()` call in TypeScript, or [`ClaudeSDKClient.get_mcp_status()`](/docs/en/agent-sdk/python#methods) in Python, can then report `"pending"` for a server you saw connected earlier, with no configuration change on your side.
+
+After five reconnection attempts fail, the server reports `"failed"`, or `"needs-auth"` when it needs authorizing again. To retry manually, call [`reconnectMcpServer()`](/docs/en/agent-sdk/typescript#methods) in TypeScript or [`ClaudeSDKClient.reconnect_mcp_server()`](/docs/en/agent-sdk/python#methods) in Python.
+
 ## Troubleshooting
 
 ### Server shows "failed" status
@@ -809,7 +821,7 @@ Check the `init` message to see which servers failed to connect:
   ```
 </CodeGroup>
 
-A `"pending"` status doesn't mean the server failed; see [Error handling](#error-handling) for the two cases it covers at init. To get updated statuses later in the session, call the query's `mcpServerStatus()` method in the TypeScript SDK, or [`ClaudeSDKClient.get_mcp_status()`](/docs/en/agent-sdk/python#methods) in Python.
+A `"pending"` status doesn't mean the server failed. See [Error handling](#error-handling) for the cases it covers at init. To get updated statuses later in the session, call the query's `mcpServerStatus()` method in the TypeScript SDK, or [`ClaudeSDKClient.get_mcp_status()`](/docs/en/agent-sdk/python#methods) in Python.
 
 Common causes:
 

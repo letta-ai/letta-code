@@ -32,6 +32,7 @@ export const BackToIndex = ({href = '#all-settings', label = 'Back to index'}) =
         .bti-btn:hover { border-color: #b3b3b3; }
         .dark .bti-btn { color: #ececec; background: #1e1e1e; border-color: #3a3a3a; box-shadow: 0 2px 8px rgba(0,0,0,0.5); }
         .dark .bti-btn:hover { border-color: #5a5a5a; }
+        @media (max-width: 1279px) { .bti-btn { bottom: 112px; } }
         @media print { .bti-btn { display: none; } }
       `}</style>
       <a className={'bti-btn' + (show ? ' bti-show' : '')} href={href} aria-hidden={!show} tabIndex={show ? 0 : -1}>

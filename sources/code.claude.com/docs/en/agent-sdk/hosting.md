@@ -161,7 +161,7 @@ Give each agent its own working directory so they do not overwrite each other's 
 
 ### Container-based sandboxing
 
-Run the SDK inside a sandboxed container for process isolation, resource limits, network control, and an ephemeral filesystem. Several providers specialize in sandboxed container environments that fit the Agent SDK's model.
+Run the SDK inside a sandboxed container for process isolation, resource limits, network control, and an ephemeral filesystem.
 
 Questions to answer when choosing a provider:
 
@@ -170,15 +170,6 @@ Questions to answer when choosing a provider:
 * **Persistent storage**: whether the provider offers durable volumes or only ephemeral disk. The hybrid pattern needs durable storage somewhere, whether in the sandbox or alongside it.
 * **Pricing model**: per-second, per-request, or flat hourly billing. Per-second pricing suits bursty ephemeral workloads. Hourly suits long-running sessions.
 * **Networking**: support for custom egress rules, outbound proxies, and private VPC peering for regulated environments.
-
-Providers to evaluate:
-
-* [Modal Sandbox](https://modal.com/docs/guide/sandbox), with a [demo implementation](https://modal.com/docs/examples/claude-slack-gif-creator)
-* [Cloudflare Sandboxes](https://github.com/cloudflare/sandbox-sdk)
-* [Daytona](https://www.daytona.io/)
-* [E2B](https://e2b.dev/)
-* [Fly Machines](https://fly.io/docs/machines/)
-* [Vercel Sandbox](https://vercel.com/docs/functions/sandbox)
 
 For self-hosted options such as Docker, gVisor, and Firecracker, and detailed isolation configuration, see [Isolation Technologies](/docs/en/agent-sdk/secure-deployment#isolation-technologies).
 

@@ -13,7 +13,7 @@ When you run agents in production, you need visibility into what they did:
 * how many tokens were spent
 * where failures occurred
 
-The Agent SDK can export this data as OpenTelemetry traces, metrics, and log events to any backend that accepts the OpenTelemetry Protocol (OTLP), such as Honeycomb, Datadog, Grafana, Langfuse, or a self-hosted collector.
+The Agent SDK can export this data as OpenTelemetry traces, metrics, and log events to any backend that accepts the OpenTelemetry Protocol (OTLP), whether a hosted observability platform or a self-hosted collector.
 
 This guide explains how the SDK emits telemetry, how to configure the export, and how to tag and filter the data once it reaches your backend. To read token usage and cost directly from the SDK response stream instead of exporting to a backend, see [Track cost and usage](/docs/en/agent-sdk/cost-tracking).
 
@@ -109,8 +109,7 @@ To confirm that export is working, check your collector's logs for incoming span
   The `console` exporter writes telemetry to standard output, which the SDK uses
   as its message channel. Do not set `console` as an exporter value when running
   through the SDK. To inspect telemetry locally, point
-  `OTEL_EXPORTER_OTLP_ENDPOINT` at a local collector or an all-in-one Jaeger
-  container instead.
+  `OTEL_EXPORTER_OTLP_ENDPOINT` at a local OpenTelemetry Collector instead.
 </Note>
 
 ### Flush telemetry from short-lived calls
