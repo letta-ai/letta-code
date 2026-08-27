@@ -1,98 +1,72 @@
 ---
 name: migrating-memory
-description: Migrate memory blocks from an existing agent to the current agent. Use when the user wants to copy or share memory from another agent, or during /init when setting up a new agent that should inherit memory from an existing one.
+description: Migrate memory from an existing agent into the current agent. Use when the user wants to copy, upgrade, or share memory and Agent Skills between agents.
 ---
 
 # Migrating Memory
 
-This skill helps migrate memory blocks from an existing agent to a new agent, similar to macOS Migration Assistant for AI agents.
+Use a dry-run-first workflow. Never overwrite the current memory repo or copy another repo's `.git`, hooks, remotes, or harness metadata.
 
-> **Requires Memory Filesystem (memfs)**
->
-> This workflow is memfs-first. If memfs is enabled, do **not** use the legacy block commands — they can conflict with file-based edits.
->
-> **To check:** Look for a `memory_filesystem` block in your system prompt. If it shows a tree structure starting with `/memory/` including a `system/` directory, memfs is enabled.
->
-> **To enable:** Ask the user to run `/memfs enable`, then reload the CLI.
+## Identify the active layout
 
-## When to Use This Skill
+Read the current system prompt before moving files:
 
-- User is setting up a new agent that should inherit memory from an existing one
-- User wants to share memory blocks across multiple agents
-- User is replacing an old agent with a new one
-- User mentions they have an existing agent with useful memory
+- **Agent Memory:** root Markdown is core memory, nested memory uses `MEMORY.md` indexes, and `skills/` follows Agent Skills.
+- **Legacy MemFS:** `system/` Markdown is always loaded and other Markdown is external.
 
-## Migration Method (memfs-first)
+The local Agent Memory staging path is enabled with `LETTA_LOCAL_AGENT_MEMORY=1`. Keep the source unchanged until the converted target has been compiled and inspected.
 
-### Export → Copy → Sync
+## Locate the source
 
-This is the recommended flow:
+For another local agent, its memory normally lives under the local backend storage directory. Resolve the path from the local agent ID rather than guessing.
 
-1. **Export the source agent's memfs to a temp directory**
-   ```bash
-   letta memory export --agent <source-agent-id> --out /tmp/letta-memory-<source-agent-id>
-   ```
+For an API-backed agent, export its memory to a temporary directory:
 
-2. **Copy the files you want into your own memfs**
-   - `system/` = attached blocks (always loaded)
-   - root = detached blocks
-
-   Example:
-   ```bash
-   cp -r /tmp/letta-memory-agent-abc123/system/project ~/.letta/agents/$LETTA_AGENT_ID/memory/system/
-   cp /tmp/letta-memory-agent-abc123/notes.md ~/.letta/agents/$LETTA_AGENT_ID/memory/
-   ```
-
-3. **Commit and push the memory repo**
-   ```bash
-   cd ~/.letta/agents/$LETTA_AGENT_ID/memory
-   git add system/project notes.md
-   git commit -m "Import memory from source agent"
-   git push
-   ```
-
-This gives you full control over what you bring across and keeps everything consistent with memfs.
-
-## If MemFS Is Disabled
-
-The legacy block-level CLI commands have been removed. Enable MemFS first, then use the export → copy → sync workflow above.
-
-If you run into duplicate filenames while copying memory files, rename the incoming file or merge its contents manually before committing.
-
-## Workflow
-
-### Step 1: Identify Source Agent
-
-Ask the user for the source agent's ID (e.g., `agent-abc123`).
-
-If they don't know the ID, invoke the **finding-agents** skill to search:
-```
-Skill({ skill: "finding-agents" })
+```bash
+letta memory export --agent <source-agent-id> --out /tmp/letta-memory-<source-agent-id>
 ```
 
-Example: "What's the ID of the agent you want to migrate memory from?"
+If the user does not know the source agent ID, load the `finding-agents` skill first.
 
-## Example: Migrating Project Memory
+## Convert legacy Letta Code memory to Agent Memory
 
-Scenario: You're a new agent and want to inherit memory from an existing agent "ProjectX-v1".
+Use the reference converter from a temporary checkout. Both converter invocations leave the source untouched.
 
-1. **Get source agent ID from user:**
-   User provides: `agent-abc123`
+```bash
+git clone --depth 1 https://github.com/agent-memory-spec/agent-memory /tmp/agent-memory-spec
+uv run --project /tmp/agent-memory-spec/memory-ref memory-ref migrate-from letta-code \
+  <source-memory-dir> --output /tmp/converted-agent-memory
+```
 
-2. **Export their memfs:**
-   ```bash
-   letta memory export --agent agent-abc123 --out /tmp/letta-memory-agent-abc123
-   ```
+Review the dry run. Confirm that:
 
-3. **Copy the relevant files into your memfs:**
-   ```bash
-   cp -r /tmp/letta-memory-agent-abc123/system/project ~/.letta/agents/$LETTA_AGENT_ID/memory/system/
-   ```
+- `.git` and hidden harness state are excluded;
+- `skills/` is preserved unchanged but is not indexed as memory;
+- promoted `system/` links are rewritten;
+- the reported root token count is acceptable;
+- no destination collision is unresolved.
 
-4. **Commit and push:**
-   ```bash
-   cd ~/.letta/agents/$LETTA_AGENT_ID/memory
-   git add system/project
-   git commit -m "Import project memory"
-   git push
-   ```
+Apply only after that review:
+
+```bash
+uv run --project /tmp/agent-memory-spec/memory-ref memory-ref migrate-from letta-code \
+  <source-memory-dir> --output /tmp/converted-agent-memory --apply
+uv run --project /tmp/agent-memory-spec/memory-ref memory-ref validate \
+  /tmp/converted-agent-memory
+```
+
+## Merge into the current agent
+
+1. Require a clean `$MEMORY_DIR` git working tree.
+2. Compare every root-file collision. Merge identity and user files by meaning rather than blindly replacing them.
+3. Copy nested memory directories and `skills/` only after checking name collisions.
+4. Keep every required `MEMORY.md` index.
+5. Search for stale `[[system/...]]` links and references to removed paths.
+6. Stage explicit files, review the diff, and commit once with the agent identity. Local memory is committed but not pushed to a Letta API remote.
+7. Recompile the current conversation and inspect the compiled prompt. Confirm root files are present, nested detail is absent, immediate child memory directories are surfaced, and skills appear only through the Skill system.
+
+Do not delete the source or temporary conversion until the migrated agent has completed a successful turn with the new prompt.
+
+## Legacy destination
+
+If the destination still uses legacy MemFS, retain its existing `system/` and frontmatter rules. Do not place Agent Memory root files into a legacy prompt compiler and assume they will load.

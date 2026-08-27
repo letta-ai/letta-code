@@ -3,6 +3,10 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { parseFrontmatter } from "@/utils/frontmatter";
+import {
+  isAgentSkillsPath,
+  isLocalAgentMemoryEnabled,
+} from "@/utils/local-agent-memory";
 import type { LocalAgentRecord } from "./local-types";
 
 const CORE_MEMORY_VARIABLE = "{CORE_MEMORY}";
@@ -11,6 +15,7 @@ const MEMORY_DIR_PLACEHOLDER = "$" + "{MEMORY_DIR}";
 interface LocalMemoryFile {
   relativePath: string;
   label: string;
+  raw: string;
   value: string;
   description: string;
 }
@@ -98,6 +103,7 @@ function collectCommittedMemoryFiles(memoryDir: string): {
       files.push({
         relativePath,
         label: labelFromPath(relativePath),
+        raw,
         value: body,
         description:
           typeof frontmatter.description === "string"
@@ -114,6 +120,59 @@ function collectCommittedMemoryFiles(memoryDir: string): {
     files: files.sort((a, b) => a.label.localeCompare(b.label)),
     revision,
   };
+}
+
+function renderAgentMemoryProjection(files: LocalMemoryFile[]): string {
+  const memoryFiles = files.filter(
+    (file) => !isAgentSkillsPath(file.relativePath),
+  );
+  const rootFiles = memoryFiles.filter(
+    (file) => !file.relativePath.includes("/"),
+  );
+  const childDirectories = new Set<string>();
+  for (const file of memoryFiles) {
+    const parts = file.relativePath.split("/").filter(Boolean);
+    if (parts.length > 1 && parts.at(-1) === "MEMORY.md") {
+      childDirectories.add(parts[0] ?? "");
+    }
+  }
+
+  if (rootFiles.length === 0 && childDirectories.size === 0) return "";
+
+  const lines = [
+    '<memory root="$MEMORY_DIR">',
+    "<instructions>",
+    "Root Markdown files are core memory and are already loaded below.",
+    "Nested Markdown is external memory and remains deferred.",
+    "Read a child directory's MEMORY.md before selecting deeper files.",
+    "The skills/ directory follows the Agent Skills format and is not Agent Memory.",
+    "</instructions>",
+  ];
+
+  for (const file of rootFiles.sort((a, b) =>
+    a.relativePath.localeCompare(b.relativePath),
+  )) {
+    lines.push(
+      `<file name="${file.relativePath}">`,
+      file.raw.trimEnd(),
+      "</file>",
+    );
+  }
+
+  if (childDirectories.size > 0) {
+    lines.push("<external-memory>");
+    for (const directory of [...childDirectories].sort((a, b) =>
+      a.localeCompare(b),
+    )) {
+      lines.push(
+        `<directory path="${directory}/" index="${directory}/MEMORY.md" />`,
+      );
+    }
+    lines.push("</external-memory>");
+  }
+
+  lines.push("</memory>");
+  return lines.join("\n");
 }
 
 function renderExternalProjection(files: LocalMemoryFile[]): string {
@@ -226,6 +285,9 @@ function renderMemfsProjection(memoryDir: string): {
 } {
   const { files, revision } = collectCommittedMemoryFiles(memoryDir);
   if (files.length === 0) return { content: "", revision };
+  if (isLocalAgentMemoryEnabled()) {
+    return { content: renderAgentMemoryProjection(files), revision };
+  }
 
   const lines = [
     "Reminder: <projection> contains the local path of the memory file projection.",

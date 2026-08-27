@@ -25,6 +25,7 @@ import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { createAgent } from "@/agent/create";
 import { selectDefaultAgentModel } from "@/agent/defaults";
 import { sendMessageStreamWithBackend } from "@/agent/message";
+import { localMemoryMode } from "@/agent/prompt-assets";
 import {
   configureBackendMode,
   getBackend,
@@ -752,7 +753,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           name,
           model: effectiveModel,
           memoryPromptMode: backend.capabilities.localMemfs
-            ? "local-memfs"
+            ? localMemoryMode()
             : willAutoEnableMemfs
               ? "memfs"
               : undefined,

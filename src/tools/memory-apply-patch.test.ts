@@ -208,6 +208,36 @@ describe("memory_apply_patch tool", () => {
     ).rejects.toThrow(/missing required parameter/i);
   });
 
+  test("patches plain Agent Memory and creates required indexes", async () => {
+    const previous = process.env.LETTA_LOCAL_AGENT_MEMORY;
+    process.env.LETTA_LOCAL_AGENT_MEMORY = "1";
+    try {
+      await runScopedMemoryApplyPatch({
+        reason: "Add nested project memory",
+        input: `*** Begin Patch
+*** Add File: projects/one/note.md
++Plain project note.
+*** End Patch`,
+      });
+
+      expect(
+        readFileSync(join(memoryDir, "projects/one/note.md"), "utf8"),
+      ).toBe("Plain project note.");
+      expect(readFileSync(join(memoryDir, "MEMORY.md"), "utf8")).toContain(
+        "# Memory",
+      );
+      expect(
+        readFileSync(join(memoryDir, "projects", "MEMORY.md"), "utf8"),
+      ).toContain("# Memory");
+      expect(
+        readFileSync(join(memoryDir, "projects", "one", "MEMORY.md"), "utf8"),
+      ).toContain("# Memory");
+    } finally {
+      if (previous === undefined) delete process.env.LETTA_LOCAL_AGENT_MEMORY;
+      else process.env.LETTA_LOCAL_AGENT_MEMORY = previous;
+    }
+  });
+
   test("adds and updates memory files with commit reason and agent author", async () => {
     const seedPatch = [
       "*** Begin Patch",

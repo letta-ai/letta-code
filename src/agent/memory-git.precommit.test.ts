@@ -309,3 +309,40 @@ describe("pre-commit hook: non-memory files", () => {
     expect(result.success).toBe(true);
   });
 });
+
+describe("pre-commit hook: Agent Memory layout", () => {
+  test("accepts plain Markdown when every memory directory has an index", () => {
+    const env = GIT_ENV as NodeJS.ProcessEnv;
+    env.LETTA_LOCAL_AGENT_MEMORY = "YES";
+    try {
+      writeAndStage("MEMORY.md", "# Memory\n");
+      writeAndStage("persona.md", "Plain persona.\n");
+      writeAndStage("projects/MEMORY.md", "# Projects\n");
+      writeAndStage("projects/one/MEMORY.md", "# Project one\n");
+      writeAndStage("projects/one/detail.md", "Plain detail.\n");
+      writeAndStage("skills/pdf/SKILL.md", "---\nname: pdf\n---\n");
+
+      const result = tryCommit();
+      expect(result.success).toBe(true);
+    } finally {
+      delete env.LETTA_LOCAL_AGENT_MEMORY;
+    }
+  });
+
+  test("rejects nested memory without its directory index", () => {
+    const env = GIT_ENV as NodeJS.ProcessEnv;
+    env.LETTA_LOCAL_AGENT_MEMORY = "1";
+    try {
+      writeAndStage("MEMORY.md", "# Memory\n");
+      writeAndStage("projects/one/detail.md", "Plain detail.\n");
+
+      const result = tryCommit();
+      expect(result.success).toBe(false);
+      expect(result.output).toContain(
+        "projects/one/MEMORY.md: missing required memory directory index",
+      );
+    } finally {
+      delete env.LETTA_LOCAL_AGENT_MEMORY;
+    }
+  });
+});

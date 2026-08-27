@@ -16,6 +16,7 @@ import {
 } from "@/agent/agent-tags";
 import { getBackend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
+import { isLocalAgentMemoryEnabled } from "@/utils/local-agent-memory";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
@@ -36,12 +37,15 @@ import {
   type PersonalityOption,
   serializeFrontmatter,
 } from "./personality-presets";
+import { localMemoryMode } from "./prompt-assets";
 
 const execFile = promisify(execFileCb);
 
 const PRIMARY_PERSONA_RELATIVE_PATH = "system/persona.md";
+const AGENT_MEMORY_PERSONA_RELATIVE_PATH = "persona.md";
 const LEGACY_PERSONA_RELATIVE_PATH = "memory/system/persona.md";
 const PRIMARY_HUMAN_RELATIVE_PATH = "system/human.md";
+const AGENT_MEMORY_HUMAN_RELATIVE_PATH = "human.md";
 const LEGACY_HUMAN_RELATIVE_PATH = "memory/system/human.md";
 
 export interface ApplyPersonalityToMemoryParams {
@@ -86,6 +90,7 @@ function getMemoryFileRelativePathForRepo(
 }
 
 function getPersonaRelativePathForRepo(repoDir: string): string {
+  if (isLocalAgentMemoryEnabled()) return AGENT_MEMORY_PERSONA_RELATIVE_PATH;
   return getMemoryFileRelativePathForRepo(
     repoDir,
     PRIMARY_PERSONA_RELATIVE_PATH,
@@ -94,6 +99,7 @@ function getPersonaRelativePathForRepo(repoDir: string): string {
 }
 
 function getHumanRelativePathForRepo(repoDir: string): string {
+  if (isLocalAgentMemoryEnabled()) return AGENT_MEMORY_HUMAN_RELATIVE_PATH;
   return getMemoryFileRelativePathForRepo(
     repoDir,
     PRIMARY_HUMAN_RELATIVE_PATH,
@@ -121,7 +127,7 @@ export async function buildCreateAgentOptionsForPersonality(params: {
     description: description ?? personality.description,
     model: model ?? personality.defaultModel,
     tags: [...getPersonalityCreationTags(personalityId), ...(tags ?? [])],
-    memoryPromptMode: "memfs",
+    memoryPromptMode: environment === "local" ? localMemoryMode() : "memfs",
     memoryBlocks: buildPersonalityMemoryBlocks(
       personalityId,
       defaultMemoryBlocks,
@@ -206,6 +212,9 @@ export function replaceBodyPreservingFrontmatter(
   newBody: string,
   options?: { description?: string },
 ): string {
+  if (isLocalAgentMemoryEnabled() && !existingPersonaFile.startsWith("---\n")) {
+    return ensureTrailingNewline(newBody.trim());
+  }
   const frontmatterMatch = existingPersonaFile.match(FRONTMATTER_REGEX);
   if (!frontmatterMatch || frontmatterMatch.index !== 0) {
     throw new Error(
@@ -288,11 +297,13 @@ function applyPersonalityFiles(
       ? replaceBodyPreservingFrontmatter(existingContent, file.content, {
           description: file.description,
         })
-      : buildDefaultMemoryFile(
-          file.templatePromptAssetName,
-          file.content,
-          file.description,
-        );
+      : isLocalAgentMemoryEnabled()
+        ? ensureTrailingNewline(file.content)
+        : buildDefaultMemoryFile(
+            file.templatePromptAssetName,
+            file.content,
+            file.description,
+          );
 
     if (
       existingContent !== null &&

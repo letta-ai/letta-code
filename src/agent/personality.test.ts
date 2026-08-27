@@ -27,11 +27,15 @@ import { settingsManager } from "@/settings-manager";
 const VALID_FRONTMATTER = "---\ndescription: Persona\nlimit: 20000\n---\n\n";
 const originalSetMemfsEnabled =
   settingsManager.setMemfsEnabled.bind(settingsManager);
+const originalAgentMemory = process.env.LETTA_LOCAL_AGENT_MEMORY;
 
 afterEach(() => {
   __testOverrideGetClient(null);
   settingsManager.setMemfsEnabled = originalSetMemfsEnabled;
   configureBackendMode("api");
+  if (originalAgentMemory === undefined)
+    delete process.env.LETTA_LOCAL_AGENT_MEMORY;
+  else process.env.LETTA_LOCAL_AGENT_MEMORY = originalAgentMemory;
 });
 
 describe("personality helpers", () => {
@@ -48,6 +52,17 @@ describe("personality helpers", () => {
     expect(() =>
       replaceBodyPreservingFrontmatter("no frontmatter", "new body"),
     ).toThrowError();
+  });
+
+  test("replaces plain persona files in Agent Memory mode", () => {
+    process.env.LETTA_LOCAL_AGENT_MEMORY = "1";
+
+    expect(
+      replaceBodyPreservingFrontmatter(
+        "plain old persona\n",
+        "plain new persona",
+      ),
+    ).toBe("plain new persona\n");
   });
 
   test("detectPersonalityFromPersonaFile resolves built-in personalities", () => {

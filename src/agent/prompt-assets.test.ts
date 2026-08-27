@@ -83,6 +83,15 @@ describe("buildSystemPrompt", () => {
     expect(result).not.toContain("Shared memory");
   });
 
+  test("keeps Agent Memory as a separate local prompt variant", () => {
+    const result = buildSystemPrompt("letta", "local-agent-memory");
+
+    expect(result).toContain("## Agent Memory (learning)");
+    expect(result).toContain("$MEMORY_DIR/MEMORY.md");
+    expect(result).toContain("$MEMORY_DIR/skills/");
+    expect(result).not.toContain("### Memory blocks (in-context memory)");
+  });
+
   test("memfs prompt documents direct edit commit safeguards", () => {
     const result = buildSystemPrompt("letta", "memfs");
 

@@ -59,6 +59,58 @@ function initAndCommitMemory(memoryDir: string, message = "initial memory") {
 }
 
 describe("local system prompt compilation", () => {
+  test("loads only root Agent Memory and surfaces indexed child directories", async () => {
+    const previous = process.env.LETTA_LOCAL_AGENT_MEMORY;
+    process.env.LETTA_LOCAL_AGENT_MEMORY = "1";
+    const memoryDir = await mkdtemp(join(tmpdir(), "local-agent-memory-"));
+    try {
+      await writeFile(join(memoryDir, "MEMORY.md"), "Root index.\n", "utf8");
+      await writeFile(
+        join(memoryDir, "persona.md"),
+        "Plain persona.\n",
+        "utf8",
+      );
+      await mkdir(join(memoryDir, "projects"), { recursive: true });
+      await writeFile(
+        join(memoryDir, "projects", "MEMORY.md"),
+        "Project index.\n",
+        "utf8",
+      );
+      await writeFile(
+        join(memoryDir, "projects", "secret.md"),
+        "Deferred detail.\n",
+        "utf8",
+      );
+      await mkdir(join(memoryDir, "skills", "pdf"), { recursive: true });
+      await writeFile(
+        join(memoryDir, "skills", "pdf", "SKILL.md"),
+        "---\nname: pdf\n---\nSkill body.\n",
+        "utf8",
+      );
+      initAndCommitMemory(memoryDir);
+
+      const compiled = compileLocalSystemPrompt({
+        agent: agent(),
+        conversationId: "local-conv-test",
+        memoryDir,
+      });
+
+      expect(compiled.content).toContain('<file name="MEMORY.md">');
+      expect(compiled.content).toContain('<file name="persona.md">');
+      expect(compiled.content).toContain("Plain persona.");
+      expect(compiled.content).toContain(
+        '<directory path="projects/" index="projects/MEMORY.md" />',
+      );
+      expect(compiled.content).not.toContain("Deferred detail.");
+      expect(compiled.content).not.toContain("Skill body.");
+      expect(compiled.content).not.toContain('path="skills/"');
+    } finally {
+      if (previous === undefined) delete process.env.LETTA_LOCAL_AGENT_MEMORY;
+      else process.env.LETTA_LOCAL_AGENT_MEMORY = previous;
+      await rm(memoryDir, { recursive: true, force: true });
+    }
+  });
+
   test("injects MemFS system files and metadata into CORE_MEMORY", async () => {
     const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-memfs-"));
     try {

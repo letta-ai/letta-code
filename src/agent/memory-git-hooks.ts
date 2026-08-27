@@ -48,7 +48,24 @@ get_fm_value() {
   echo "$content" | tail -n +2 | head -n $((closing_line - 1)) | grep "^$key:" | cut -d: -f2- | sed 's/^ *//;s/ *$//'
 }
 
-# Match .md files under system/ or reference/ (with optional memory/ prefix).
+# Agent Memory requires MEMORY.md at the root and in every memory directory.
+# skills/ is governed by Agent Skills and is excluded from this check.
+agent_memory_mode=$(printf '%s' "\${LETTA_LOCAL_AGENT_MEMORY:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+if [ "$agent_memory_mode" = "1" ] || [ "$agent_memory_mode" = "true" ] || [ "$agent_memory_mode" = "yes" ]; then
+  if ! git cat-file -e ":MEMORY.md" 2>/dev/null; then
+    errors="$errors\\n  MEMORY.md: missing required root index"
+  fi
+  for file in $(git ls-files --cached -- '*.md' | grep -v '^skills/' || true); do
+    dir=$(dirname "$file")
+    while [ "$dir" != "." ]; do
+      if ! git cat-file -e ":$dir/MEMORY.md" 2>/dev/null; then
+        errors="$errors\\n  $dir/MEMORY.md: missing required memory directory index"
+      fi
+      dir=$(dirname "$dir")
+    done
+  done
+else
+# Legacy MemFS validates frontmatter for system/ and reference/ Markdown.
 # Skip skill SKILL.md files — they use a different frontmatter format.
 for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memory/)?(system|reference)/.*\\.md$'); do
   staged=$(git show ":$file")
@@ -155,6 +172,7 @@ for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memor
     done
   fi
 done
+fi
 
 if [ -n "$errors" ]; then
   echo "Frontmatter validation failed:"
