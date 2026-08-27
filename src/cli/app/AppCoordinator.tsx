@@ -49,6 +49,7 @@ import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
 import { subscribePiProviderRegistry } from "@/backend/dev/pi-provider-mod-registry";
 import { useConversationTitleSync } from "@/cli/app/conversation-title-sync";
+import { useReasoningDisplay } from "@/cli/app/use-reasoning-display";
 import {
   cancelActiveConnectOperation,
   isActiveConnectOperationCancellable,
@@ -95,6 +96,12 @@ import {
   buildContentFromQueueBatch,
   toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
+import {
+  getVisibleStreamingParts,
+  shouldHoldSplitReasoning,
+  shouldSkipCommittedToolCall as shouldSkipCommittedToolCallGate,
+  shouldSkipDeferral,
+} from "@/cli/helpers/reasoning-commit-gate";
 import {
   buildReflectionArenaChoiceQuestions,
   finalizeReflectionArenaChoice,
@@ -2118,26 +2125,8 @@ export function App({
       let blockedByDeferred = false;
       // If we eagerly committed a tall preview for file tools, don't also
       // commit the successful tool_call line (preview already represents it).
-      const shouldSkipCommittedToolCall = (ln: Line): boolean => {
-        if (ln.kind !== "tool_call") return false;
-        if (!ln.toolCallId || !ln.name) return false;
-        if (ln.phase !== "finished" || ln.resultOk === false) return false;
-        if (!eagerCommittedPreviewsRef.current.has(ln.toolCallId)) return false;
-        return (
-          isFileEditTool(ln.name) ||
-          isFileWriteTool(ln.name) ||
-          isPatchTool(ln.name)
-        );
-      };
-
-      const shouldSkipDeferral = (ln: Line): boolean => {
-        if (ln.kind !== "tool_call") return false;
-        if (ln.phase !== "finished") return false;
-        // Skip deferral when the result is already available: the component height
-        // has already changed (header + result), so deferring only extends the
-        // live-area repaint window that causes ghost lines in the terminal scrollback.
-        return ln.resultText != null;
-      };
+      const shouldSkipCommittedToolCall = (ln: Line): boolean =>
+        shouldSkipCommittedToolCallGate(ln, eagerCommittedPreviewsRef.current);
       if (!deferToolCalls && deferredCommits.size > 0) {
         deferredCommits.clear();
         setDeferredCommitAt(null);
@@ -2215,6 +2204,9 @@ export function App({
             emittedIdsRef.current.add(id);
             newlyCommitted.push({ ...ln });
           }
+          continue;
+        }
+        if (ln.kind === "reasoning" && shouldHoldSplitReasoning(ln, b.byId)) {
           continue;
         }
         if ("phase" in ln && ln.phase === "finished") {
@@ -4704,9 +4696,15 @@ export function App({
       withCommandLock,
     });
 
+  const reasoningExpanded = useReasoningDisplay();
   // Live area shows only in-progress items
   // biome-ignore lint/correctness/useExhaustiveDependencies: staticItems.length and deferredCommitAt are intentional triggers to recompute when items are promoted to static or deferred commits complete
   const liveItems = useMemo(() => {
+    const heldParts = getVisibleStreamingParts(
+      lines,
+      reasoningExpanded,
+      Math.max(20, columns - 2),
+    );
     return lines.filter((ln) => {
       if (!("phase" in ln)) return false;
       if (emittedIdsRef.current.has(ln.id)) return false;
@@ -4734,12 +4732,15 @@ export function App({
         return ln.phase === "running";
       }
       if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
+      if (heldParts.has(ln.id)) return true;
       return ln.phase === "streaming";
     });
   }, [
     lines,
+    reasoningExpanded,
     tokenStreamingEnabled,
     showCompactionsEnabled,
+    columns,
     staticItems.length,
     deferredCommitAt,
   ]);

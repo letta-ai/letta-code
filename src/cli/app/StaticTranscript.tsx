@@ -1,4 +1,8 @@
 import { Box, Static } from "ink";
+import {
+  useReasoningDisplay,
+  useReasoningDisplayHotkey,
+} from "@/cli/app/use-reasoning-display";
 import { ApprovalPreview } from "@/cli/components/ApprovalPreview";
 import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
 import { BashCommandMessage } from "@/cli/components/BashCommandMessage";
@@ -14,6 +18,7 @@ import { TrajectorySummary } from "@/cli/components/TrajectorySummary";
 import { UserMessage } from "@/cli/components/UserMessageRich";
 import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import { isHiddenReasoningTail } from "@/cli/helpers/reasoning-commit-gate";
 import type { StaticItem } from "./types";
 
 export function StaticTranscript({
@@ -40,16 +45,27 @@ export function StaticTranscript({
    *  remounting on every tool call and re-printing history). */
   lastShellToolCallId?: string;
 }) {
+  // Mounts the ctrl+t listener once; subscribing also rekeys <Static> on
+  // toggle so committed reasoning blocks repaint between spoiler and text.
+  useReasoningDisplayHotkey();
+  const reasoningExpanded = useReasoningDisplay();
   return (
     <Static
-      key={`${renderEpoch}-${hiddenToolCallId ?? ""}`}
+      key={`${renderEpoch}-${hiddenToolCallId ?? ""}-${reasoningExpanded ? "r1" : "r0"}`}
       items={items}
       style={{ flexDirection: "column" }}
     >
       {(item: StaticItem, index: number) => {
         try {
           return (
-            <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
+            <Box
+              key={item.id}
+              marginTop={
+                index > 0 && !isHiddenReasoningTail(item, reasoningExpanded)
+                  ? 1
+                  : 0
+              }
+            >
               {item.kind === "welcome" ? (
                 <WelcomeScreen loadingState="ready" {...item.snapshot} />
               ) : item.kind === "user" ? (

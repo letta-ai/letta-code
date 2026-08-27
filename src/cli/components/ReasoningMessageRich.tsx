@@ -1,5 +1,11 @@
 import { Box } from "ink";
 import { memo } from "react";
+import { useReasoningDisplay } from "@/cli/app/use-reasoning-display";
+import { REASONING_STREAM_WINDOW_LINES } from "@/cli/helpers/reasoning-commit-gate";
+import {
+  reasoningSpanOf,
+  useReasoningTick,
+} from "@/cli/helpers/reasoning-timing";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { Text } from "./Text";
@@ -18,34 +24,144 @@ type ReasoningLine = {
   text: string;
   phase: "streaming" | "finished";
   isContinuation?: boolean;
+  messageId?: string;
 };
 
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 /**
- * ReasoningMessageRich - Rich formatting version with special reasoning layout
- * This is a direct port from the old letta-code codebase to preserve the exact styling
- *
- * Features:
- * - Header row with "✻" symbol and "Thinking…" text (unless continuation)
- * - Reasoning content indented with 2 spaces
- * - Full markdown rendering with dimmed colors
- * - Proper text normalization
+ * Elapsed time for a still-streaming block: the only case that needs the
+ * shared ticker. Finished blocks render a frozen duration with no
+ * subscription at all — a long transcript must not re-render every second.
  */
+function TickingElapsed({ startedAt }: { startedAt: number }) {
+  useReasoningTick();
+  return <Text dimColor>({formatElapsed(Date.now() - startedAt)})</Text>;
+}
+
+function Elapsed({
+  startedAt,
+  endedAt,
+}: {
+  startedAt?: number;
+  endedAt?: number;
+}) {
+  if (!startedAt) return null;
+  if (endedAt !== undefined) {
+    return <Text dimColor>({formatElapsed(endedAt - startedAt)})</Text>;
+  }
+  return <TickingElapsed startedAt={startedAt} />;
+}
+
+/**
+ * ReasoningMessageRich — collapsed-by-default spoiler view.
+ *
+ * Streaming and finished reasoning blocks render as a single dim line
+ * ("thinking"/"thinked" + elapsed time) so long thought streams don't flood
+ * the transcript. ctrl+t (see use-reasoning-display.ts) expands every block
+ * into its full markdown text.
+ *
+ * Elapsed time comes from reasoning-timing.ts keyed by messageId, so every
+ * line of a split block renders the same duration.
+ */
+/**
+ * Span for a line: by messageId, own id, or — for split lines created
+ * before a messageId arrived — by recovering the block id from the
+ * "<blockId>-split-<N>" naming convention.
+ */
+function spanOfLine(line: ReasoningLine) {
+  return (
+    reasoningSpanOf(line.messageId) ??
+    reasoningSpanOf(line.id) ??
+    reasoningSpanOf(line.id.split("-split-")[0])
+  );
+}
+
+/**
+ * Phase label follows the whole block (span frozen?), not the individual
+ * line: a freshly split-off part carries line.phase === "finished" while
+ * the thought is still streaming.
+ */
+/**
+ * Phase label follows the block's timing span: a split header carries
+ * line.phase === "finished" by construction while its thought still
+ * streams, so only a frozen span means the thought is really done.
+ * Without a span (CLI restarted, history from disk) fall back to the
+ * line's own phase.
+ */
+function phaseLabel(line: ReasoningLine, span?: { endedAt?: number }): string {
+  if (!span) return line.phase === "streaming" ? "thinking" : "thinked";
+  return span.endedAt !== undefined ? "thinked" : "thinking";
+}
+
+/**
+ * Trailing window for a live-streaming part: keeps at most
+ * REASONING_STREAM_WINDOW_LINES terminal lines of the part's text,
+ * counting wraps at the current content width so the live zone stays
+ * shorter than the screen even with heavily wrapped markdown.
+ */
+function tailWindow(text: string, contentWidth: number): string {
+  const rawLines = text.split("\n");
+  const cols = Math.max(20, contentWidth);
+  let budget = REASONING_STREAM_WINDOW_LINES;
+  let start = rawLines.length;
+  for (let i = rawLines.length - 1; i >= 0; i--) {
+    const height = Math.max(1, Math.ceil((rawLines[i]?.length ?? 0) / cols));
+    if (height > budget) break;
+    budget -= height;
+    start = i;
+  }
+  return start <= 0 ? text : rawLines.slice(start).join("\n");
+}
+
 export const ReasoningMessage = memo(({ line }: { line: ReasoningLine }) => {
   const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - 2);
-
-  const normalizedText = normalize(line.text);
-
-  // Continuation lines skip the header, just show content
-  if (line.isContinuation) {
-    return (
+  const expanded = useReasoningDisplay();
+  const span = spanOfLine(line);
+  const label = phaseLabel(line, span);
+  // The whole block's liveness lives in its span: split parts carry
+  // phase "finished" by construction while the thought still streams.
+  const blockLive = expanded && span?.endedAt === undefined;
+  // While an expanded thought streams the timer lives in a footer under
+  // the text (the live area is pinned to the screen bottom), so it stays
+  // visible; finished blocks and collapsed mode keep the classic header.
+  const timerFooter =
+    line.phase === "streaming" ? (
       <Box flexDirection="row">
         <Box width={2} flexShrink={0}>
-          <Text> </Text>
+          <Text dimColor>✻</Text>
         </Box>
         <Box flexGrow={1} width={contentWidth}>
-          <MarkdownDisplay text={normalizedText} dimColor={true} />
+          <Text dimColor>{label} </Text>
+          <Elapsed {...span} />
         </Box>
+      </Box>
+    ) : null;
+  const liveText = blockLive
+    ? tailWindow(normalize(line.text), contentWidth)
+    : normalize(line.text);
+
+  // Split-off tails of a block: hidden when collapsed, plain text when
+  // expanded — the block's single header lives on its first line only.
+  if (line.isContinuation) {
+    if (!expanded) return null;
+    return (
+      <Box flexDirection="column">
+        <Box flexDirection="row">
+          <Box width={2} flexShrink={0}>
+            <Text> </Text>
+          </Box>
+          <Box flexGrow={1} width={contentWidth}>
+            <MarkdownDisplay text={liveText} dimColor={true} />
+          </Box>
+        </Box>
+        {timerFooter}
       </Box>
     );
   }
@@ -57,20 +173,40 @@ export const ReasoningMessage = memo(({ line }: { line: ReasoningLine }) => {
           <Text dimColor>✻</Text>
         </Box>
         <Box flexGrow={1} width={contentWidth}>
-          <Text dimColor>Thinking…</Text>
+          <Text dimColor>{label} </Text>
+          {!blockLive && <Elapsed {...span} />}
         </Box>
       </Box>
-      <Box height={1} />
-      <Box flexDirection="row">
-        <Box width={2} flexShrink={0}>
-          <Text> </Text>
-        </Box>
-        <Box flexGrow={1} width={contentWidth}>
-          <MarkdownDisplay text={normalizedText} dimColor={true} />
-        </Box>
-      </Box>
+      {expanded ? (
+        <>
+          <ToggleHint expanded={true} />
+          <Box height={1} />
+          <Box flexDirection="row">
+            <Box width={2} flexShrink={0}>
+              <Text> </Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <MarkdownDisplay text={liveText} dimColor={true} />
+            </Box>
+          </Box>
+        </>
+      ) : (
+        <ToggleHint expanded={false} />
+      )}
+      {expanded && timerFooter}
     </Box>
   );
 });
+
+function ToggleHint({ expanded }: { expanded: boolean }) {
+  return (
+    <Box flexDirection="row">
+      <Box width={2} flexShrink={0}>
+        <Text> </Text>
+      </Box>
+      <Text dimColor>(ctrl+t to {expanded ? "collapse" : "expand"})</Text>
+    </Box>
+  );
+}
 
 ReasoningMessage.displayName = "ReasoningMessage";
