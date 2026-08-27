@@ -184,7 +184,7 @@ USAGE
   letta mods ...        List and manage local mods
   letta sandbox ...     Transfer files to or from the current Cloud sandbox
   letta server ...      Run a remote environment, channels, or the App Server
-  letta server-mcp ...  Use MCP servers connected to an agent
+  letta cloud-mcp ...  Use MCP servers connected to an agent
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
   letta setup           Re-run first-run setup
@@ -216,7 +216,7 @@ SUBCOMMANDS
   letta mods enable <package-spec>
   letta mods disable <package-spec>
   letta mods remove <package-spec>
-  letta server-mcp list|tools|run ... [--agent <id>]
+  letta cloud-mcp list|tools|run ... [--agent <id>]
   letta server [--env-name <name> | --listen [url]] [options]
   letta connect <provider> [options]
   letta install <thing> [--agent <id> | -n <name>]

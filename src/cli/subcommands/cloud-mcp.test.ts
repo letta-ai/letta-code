@@ -2,9 +2,9 @@ import { describe, expect, mock, test } from "bun:test";
 import type { Tool } from "@letta-ai/letta-client/resources/tools";
 import type { ServerMcpClient } from "@/backend/api/mcp-servers";
 import {
-  runServerMcpSubcommand,
-  type ServerMcpSubcommandDependencies,
-} from "@/cli/subcommands/server-mcp";
+  type CloudMcpSubcommandDependencies,
+  runCloudMcpSubcommand,
+} from "@/cli/subcommands/cloud-mcp";
 
 async function withEnv<T>(
   updates: Record<string, string | undefined>,
@@ -45,7 +45,7 @@ function createDeps(overrides: {
 }): {
   stdout: string[];
   stderr: string[];
-  deps: ServerMcpSubcommandDependencies;
+  deps: CloudMcpSubcommandDependencies;
 } {
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -82,15 +82,15 @@ function createDeps(overrides: {
   };
 }
 
-describe("server-mcp subcommand", () => {
+describe("cloud-mcp subcommand", () => {
   test("prints help", async () => {
     const { stdout, deps } = createDeps({});
 
-    const exitCode = await runServerMcpSubcommand(["--help"], deps);
+    const exitCode = await runCloudMcpSubcommand(["--help"], deps);
 
     expect(exitCode).toBe(0);
-    expect(stdout.join("\n")).toContain("letta server-mcp list");
-    expect(stdout.join("\n")).toContain("letta server-mcp run");
+    expect(stdout.join("\n")).toContain("letta cloud-mcp list");
+    expect(stdout.join("\n")).toContain("letta cloud-mcp run");
   });
 
   test("requires an agent id", async () => {
@@ -99,7 +99,7 @@ describe("server-mcp subcommand", () => {
     await withEnv(
       { LETTA_AGENT_ID: undefined, AGENT_ID: undefined },
       async () => {
-        const exitCode = await runServerMcpSubcommand(["list"], deps);
+        const exitCode = await runCloudMcpSubcommand(["list"], deps);
 
         expect(exitCode).toBe(1);
       },
@@ -123,7 +123,7 @@ describe("server-mcp subcommand", () => {
     });
 
     await withEnv({ LETTA_AGENT_ID: "agent-1" }, async () => {
-      const exitCode = await runServerMcpSubcommand(["list"], deps);
+      const exitCode = await runCloudMcpSubcommand(["list"], deps);
 
       expect(exitCode).toBe(0);
     });
@@ -141,7 +141,7 @@ describe("server-mcp subcommand", () => {
       },
     });
 
-    const exitCode = await runServerMcpSubcommand(
+    const exitCode = await runCloudMcpSubcommand(
       ["tools", "mcp_server-1", "--agent", "agent-1"],
       deps,
     );
@@ -165,7 +165,7 @@ describe("server-mcp subcommand", () => {
       },
     });
 
-    const exitCode = await runServerMcpSubcommand(
+    const exitCode = await runCloudMcpSubcommand(
       [
         "run",
         "mcp_server-1",
@@ -189,7 +189,7 @@ describe("server-mcp subcommand", () => {
   test("rejects non-object JSON args", async () => {
     const { stderr, deps } = createDeps({});
 
-    const exitCode = await runServerMcpSubcommand(
+    const exitCode = await runCloudMcpSubcommand(
       ["run", "mcp_server-1", "tool-1", "--agent", "agent-1", "--args", "[]"],
       deps,
     );
