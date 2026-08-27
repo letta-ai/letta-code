@@ -1504,7 +1504,7 @@ This turns the sandbox on, skips permission prompts for sandboxed commands, runs
 }
 ```
 
-Boolean keys take the value from the highest-precedence settings file that sets them, so a managed `enabled` or `failIfUnavailable` overrides anything a developer sets. Array keys merge across every settings file, so a developer can append entries; see [Keep developers from widening the policy](/docs/en/sandboxing#keep-developers-from-widening-the-policy) for the managed-only locks. To require the sandbox for an organization, see [Enforce sandboxing with managed settings](/docs/en/sandboxing#enforce-sandboxing-with-managed-settings).
+Claude Code takes a Boolean key's value from the highest-precedence settings file that sets it, so a managed `enabled` or `failIfUnavailable` overrides anything a developer sets. It merges array keys across every settings file the session loads, so a developer can append entries; see [Keep developers from widening the policy](/docs/en/sandboxing#keep-developers-from-widening-the-policy) for the managed-only locks. To require the sandbox for an organization, see [Enforce sandboxing with managed settings](/docs/en/sandboxing#enforce-sandboxing-with-managed-settings).
 
 ### `sandbox.enabled`
 
@@ -1588,7 +1588,7 @@ Name commands that Claude Code always runs outside the sandbox, such as tools th
 }
 ```
 
-Excluded commands still go through the regular permission flow. Exclusion is a convenience, not a security boundary: prefer [`filesystem.allowWrite`](#sandbox-filesystem-allowwrite) when a tool only needs to write somewhere specific. Entries merge across every settings file, and there is no managed-only lock for this list, so keep a managed list narrow.
+Excluded commands still go through the regular permission flow. Exclusion is a convenience, not a security boundary: prefer [`filesystem.allowWrite`](#sandbox-filesystem-allowwrite) when a tool only needs to write somewhere specific. Claude Code merges entries across every settings file the session loads, and there is no managed-only lock for this list, so keep a managed list narrow.
 
 ### `sandbox.allowUnsandboxedCommands`
 
@@ -1634,7 +1634,11 @@ This lets sandboxed commands write to a build directory and your kubeconfig, and
 }
 ```
 
-Claude Code enforces these lists at the OS sandbox boundary, so they apply to every subprocess a sandboxed command starts, such as `kubectl`, `terraform`, or `npm`, not only to Claude's file tools. Your [permission rules](/docs/en/sandboxing#permission-rules) feed the same lists: `Edit` allow and deny rules join `allowWrite` and `denyWrite`, `Read` deny rules join `denyRead`, and `WebFetch(domain:...)` allow and deny rules join the [`network`](#sandbox-network) domain lists. Every list merges across settings files. When you edit a list during a session, Claude Code [applies the change to the running session](/docs/en/settings#when-edits-take-effect).
+Claude Code enforces these lists at the OS sandbox boundary, so they apply to every subprocess a sandboxed command starts, such as `kubectl`, `terraform`, or `npm`, not only to Claude's file tools. Claude Code adds your [permission rules](/docs/en/sandboxing#permission-rules) to the same lists: `Edit` allow and deny rules to `allowWrite` and `denyWrite`, `Read` deny rules to `denyRead`, and `WebFetch(domain:...)` allow and deny rules to the [`network`](#sandbox-network) domain lists.
+
+Unless a managed-only lock is set, Claude Code merges every list across the settings files the session loads. [`allowManagedReadPathsOnly`](#sandbox-filesystem-allowmanagedreadpathsonly) limits `allowRead` to entries from managed settings, and [`allowManagedDomainsOnly`](#sandbox-network-allowmanageddomainsonly) does the same for allowed domains.
+
+[Configure sandboxing](/docs/en/sandboxing#configure-sandboxing) covers sources you exclude with `--setting-sources`. When you edit a list during a session, Claude Code [applies the change to the running session](/docs/en/settings#when-edits-take-effect).
 
 #### Sandbox path prefixes
 
@@ -1675,7 +1679,7 @@ This lets a build write under `/tmp/build` and lets `kubectl` update your kubeco
 }
 ```
 
-Entries merge across every settings file: user, project, local, and managed paths combine rather than replace each other, and Claude Code adds the paths from your `Edit(...)` allow permission rules. An `allowWrite` entry can't lift a [protected path](/docs/en/sandboxing#protected-paths).
+Claude Code merges entries across every settings file the session loads: user, project, local, and managed paths combine rather than replace each other, and Claude Code adds the paths from your `Edit(...)` allow permission rules. An `allowWrite` entry can't lift a [protected path](/docs/en/sandboxing#protected-paths).
 
 ### `sandbox.filesystem.denyWrite`
 
@@ -1697,7 +1701,7 @@ This keeps sandboxed commands from changing system configuration or installing b
 }
 ```
 
-Entries merge across every settings file, and Claude Code adds the paths from your `Edit(...)` deny permission rules.
+Claude Code merges entries across every settings file the session loads, and adds the paths from your `Edit(...)` deny permission rules.
 
 ### `sandbox.filesystem.denyRead`
 
@@ -1717,7 +1721,7 @@ Block sandboxed commands from reading specific paths, such as credential files t
 }
 ```
 
-Entries merge across every settings file, and Claude Code adds the paths from your `Read(...)` deny permission rules. When [`filesystem.disabled`](#sandbox-filesystem-disabled) is `true`, Claude Code doesn't enforce these entries.
+Claude Code merges entries across every settings file the session loads, and adds the paths from your `Read(...)` deny permission rules. When [`filesystem.disabled`](#sandbox-filesystem-disabled) is `true`, Claude Code doesn't enforce these entries.
 
 ### `sandbox.filesystem.allowRead`
 
@@ -1740,16 +1744,16 @@ This blocks reads of your home directory except the project itself:
 }
 ```
 
-Place a `.` entry in project settings: it resolves to the project root there and to `~/.claude` in user settings. Entries merge across every settings file unless [`allowManagedReadPathsOnly`](#sandbox-filesystem-allowmanagedreadpathsonly) is set.
+Place a `.` entry in project settings: it resolves to the project root there and to `~/.claude` in user settings. Claude Code merges entries across every settings file the session loads unless [`allowManagedReadPathsOnly`](#sandbox-filesystem-allowmanagedreadpathsonly) is set.
 
 ### `sandbox.filesystem.allowManagedReadPathsOnly`
 
-Honor only the [`allowRead`](#sandbox-filesystem-allowread) entries that come from managed settings, so developers can't re-open read access to paths your organization blocked. `denyRead` entries still merge from every settings file.
+Honor only the [`allowRead`](#sandbox-filesystem-allowread) entries that come from managed settings, so developers can't re-open read access to paths your organization blocked. Claude Code still merges `denyRead` entries from every settings file the session loads.
 
 * **Scope**: [`Managed`](#scopes)
 * **Type**: Boolean
   * `true`: Claude Code honors only the `allowRead` entries from managed settings
-  * `false`: `allowRead` entries merge from every settings file
+  * `false`: `allowRead` entries merge from every settings file the session loads
 * **Default**: `false`
 
 This blocks reads of the home directory, re-opens `~/work`, and stops developers from re-opening anything else:
@@ -1937,7 +1941,7 @@ Linux and WSL2 only.
 
 Declare the credential files and environment variables to [protect from sandboxed commands](/docs/en/sandboxing#protect-credentials). Each entry names a file `path` or a variable `name` and a `mode`: `deny` hides the credential inside the sandbox, and `mask` shows sandboxed commands a placeholder while the [sandbox proxy](/docs/en/sandboxing#mask-credentials) substitutes the real value on outbound requests. Claude Code protects only the entries you list; there is no built-in credential deny list. Requires Claude Code v2.1.187 or later.
 
-* **Scope**: [`Any file`](#scopes). `deny` entries merge from every scope, and Claude Code honors `mask` entries, `allowPlaintextInject`, `awsPairs`, and `sigv4` only from user settings, managed settings, and the `--settings` flag.
+* **Scope**: [`Any file`](#scopes). Claude Code honors `mask` entries, `allowPlaintextInject`, `awsPairs`, and `sigv4` only from user settings, managed settings, and the `--settings` flag.
 * **Type**: object with `files`, `envVars`, `allowPlaintextInject`, `awsPairs`, and `sigv4`
 * **Default**: unset, so no credentials are protected
 
@@ -1989,7 +1993,9 @@ This hides your AWS credentials file and masks the `gh` hosts file, substituting
 }
 ```
 
-Paths use the same [prefixes](#sandbox-path-prefixes) as the `sandbox.filesystem.*` settings, and Claude Code merges the arrays from every settings scope. `mask` substitution runs only through the sandbox proxy, so set [`sandbox.network.tlsTerminate`](#sandbox-network-tlsterminate), or [`allowPlaintextInject`](#sandbox-credentials-allowplaintextinject) for plain-HTTP test networks. `mask` applies to a single file, so list each credential file individually. Claude Code accepts but ignores the `mask` fields on a `deny` entry. [Mask credential files](/docs/en/sandboxing#mask-credential-files) covers which settings sources are honored and when an entry falls back to `deny`. Requires Claude Code v2.1.187 or later; `mask` entries require v2.1.221 or later.
+Paths use the same [prefixes](#sandbox-path-prefixes) as the `sandbox.filesystem.*` settings, and Claude Code merges the arrays from every settings scope the session loads. [Protect credentials](/docs/en/sandboxing#protect-credentials) covers what still applies from sources you exclude with `--setting-sources`. Requires Claude Code v2.1.187 or later; `mask` entries require v2.1.221 or later.
+
+`mask` substitution runs only through the sandbox proxy, so set [`sandbox.network.tlsTerminate`](#sandbox-network-tlsterminate), or [`allowPlaintextInject`](#sandbox-credentials-allowplaintextinject) for plain-HTTP test networks. `mask` applies to a single file, so list each credential file individually. Claude Code accepts but ignores the `mask` fields on a `deny` entry. [Mask credential files](/docs/en/sandboxing#mask-credential-files) covers which settings sources are honored and when an entry falls back to `deny`.
 
 <span id="sandbox-credentials-files-extract" />
 
@@ -2060,7 +2066,9 @@ This removes `NPM_TOKEN` from sandboxed commands and masks `GITHUB_TOKEN`, subst
 }
 ```
 
-The `name` must start with a letter or underscore and contain only letters, digits, and underscores. Claude Code merges the arrays from every settings scope, and `deny` takes precedence when the same variable appears with both modes. `mask` substitution runs only through the sandbox proxy, so set [`sandbox.network.tlsTerminate`](#sandbox-network-tlsterminate), or [`allowPlaintextInject`](#sandbox-credentials-allowplaintextinject) for plain-HTTP test networks; see [Mask environment variables](/docs/en/sandboxing#mask-environment-variables). Claude Code accepts but ignores the `mask` fields on a `deny` entry. Requires Claude Code v2.1.187 or later; `mask` entries require v2.1.199 or later.
+The `name` must start with a letter or underscore and contain only letters, digits, and underscores. Claude Code merges the arrays from every settings scope the session loads, and applies `deny` when the same variable appears with both modes. [Protect credentials](/docs/en/sandboxing#protect-credentials) covers what still applies from sources you exclude with `--setting-sources`. Requires Claude Code v2.1.187 or later; `mask` entries require v2.1.199 or later.
+
+`mask` substitution runs only through the sandbox proxy, so set [`sandbox.network.tlsTerminate`](#sandbox-network-tlsterminate), or [`allowPlaintextInject`](#sandbox-credentials-allowplaintextinject) for plain-HTTP test networks; see [Mask environment variables](/docs/en/sandboxing#mask-environment-variables). Claude Code accepts but ignores the `mask` fields on a `deny` entry.
 
 <span id="sandbox-credentials-envvars-extract" />
 
@@ -2331,7 +2339,7 @@ Block domains for outbound traffic from sandboxed commands, using the same wildc
 }
 ```
 
-Claude Code merges this list from every settings source even when `allowManagedDomainsOnly` is set, so a developer can always tighten the deny list. For IPv6 literals, see [IPv6 addresses in domain lists](/docs/en/sandboxing#ipv6-addresses-in-domain-lists).
+Claude Code merges this list from every settings source the session loads even when `allowManagedDomainsOnly` is set, so a developer can always tighten the deny list. For IPv6 literals, see [IPv6 addresses in domain lists](/docs/en/sandboxing#ipv6-addresses-in-domain-lists).
 
 ### `sandbox.network.strictAllowlist`
 
@@ -2378,7 +2386,7 @@ This locks the allowlist to GitHub and npm and ignores any domains developers ad
 }
 ```
 
-Denied domains still merge from every source. See [Keep developers from widening the policy](/docs/en/sandboxing#keep-developers-from-widening-the-policy).
+Denied domains still merge from every source the session loads. See [Keep developers from widening the policy](/docs/en/sandboxing#keep-developers-from-widening-the-policy).
 
 ### `sandbox.network.httpProxyPort`
 
@@ -2589,6 +2597,7 @@ This example turns off automatic compaction and routes API requests through a pr
 * Identity variables that Claude Code's hosting environments own, such as `CLAUDE_CODE_REMOTE` and `CLAUDE_CODE_ACCOUNT_UUID`, are ignored from every file.
 * [`CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`](/docs/en/env-vars#variables), which Claude Code exports itself, are ignored from every file. Ignoring the socket variable requires Claude Code v2.1.224 or later, and ignoring the token requires v2.1.228 or later.
 * [`CLAUDE_CODE_PROJECT_DIR_NAME`](/docs/en/sessions#name-the-project-directory-yourself), which Claude Code reads from the launch environment only, is ignored from every file; requires v2.1.234 or later.
+* [`CLAUDE_CODE_RESTRICTED`](/docs/en/env-vars#variables), which Claude Code reads from the launch environment only, is ignored from every file.
 
 ### `fileCheckpointingEnabled`
 

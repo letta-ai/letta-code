@@ -212,7 +212,7 @@ To run isolated from filesystem settings, pass an empty array:
   const isolatedResult = query({
     prompt: "Hello",
     options: {
-      settingSources: [] // No filesystem settings loaded
+      settingSources: [] // Skip user, project, and local settings
     }
   });
 
@@ -233,7 +233,7 @@ To run isolated from filesystem settings, pass an empty array:
   async def main():
       async for message in query(
           prompt="Hello",
-          options=ClaudeAgentOptions(setting_sources=[]),  # No filesystem settings loaded
+          options=ClaudeAgentOptions(setting_sources=[]),  # Skip user, project, and local settings
       ):
           print(message)
 

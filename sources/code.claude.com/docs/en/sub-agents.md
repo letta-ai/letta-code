@@ -24,6 +24,8 @@ Subagents help you:
 
 Claude uses each subagent's description to decide when to delegate tasks. When you create a subagent, write a clear description so Claude knows when to use it.
 
+Those descriptions take up context, so keep them short. When the combined descriptions of your subagents, except the built-in ones, exceed 15,000 tokens, Claude Code shows a [warning at startup with the total token count](/docs/en/errors#agent-descriptions-are-over-the-15000-token-limit). Trim the `description` fields of your subagents, and move detail into each subagent's system prompt, which only loads when that subagent runs.
+
 ## Built-in subagents
 
 Claude Code includes built-in subagents that Claude automatically uses when appropriate. Each inherits the parent conversation's permissions; most run with a restricted tool set.
@@ -291,7 +293,7 @@ The following fields can be used in the YAML frontmatter. Only `name` and `descr
 | `disallowedTools` | No       | Tools to deny, removed from inherited or specified list                                                                                                                                                                                                                                                                                                                                                                     |
 | `model`           | No       | [Model](#choose-a-model) to use: `sonnet`, `opus`, `haiku`, `fable`, a full model ID (for example, `claude-opus-5`), or `inherit`. Defaults to `inherit`                                                                                                                                                                                                                                                                    |
 | `permissionMode`  | No       | [Permission mode](#permission-modes): `default`, `acceptEdits`, `auto`, `dontAsk`, `bypassPermissions`, `plan`, or `manual` as an alias for `default`. The `manual` alias requires Claude Code v2.1.200 or later. Ignored for [plugin subagents](#choose-the-subagent-scope)                                                                                                                                                |
-| `maxTurns`        | No       | Maximum number of agentic turns before the subagent stops                                                                                                                                                                                                                                                                                                                                                                   |
+| `maxTurns`        | No       | Maximum number of agentic turns before the subagent stops. When the subagent reaches the limit, Claude Code returns its output marked as partial, and Claude can [resume it](#resume-subagents) to continue. The partial marking requires Claude Code v2.1.246 or later                                                                                                                                                     |
 | `skills`          | No       | [Skills](/docs/en/skills) to preload into the subagent's context at startup. The full skill content is injected, not only the description. Subagents can still invoke unlisted project, user, and plugin skills through the Skill tool                                                                                                                                                                                           |
 | `mcpServers`      | No       | [MCP servers](/docs/en/mcp) available to this subagent. Each entry is either a server name referencing an already-configured server (e.g., `"slack"`) or an inline definition with the server name as key and a full [MCP server config](/docs/en/mcp#installing-mcp-servers) as value. Ignored for [plugin subagents](#choose-the-subagent-scope)                                                                                    |
 | `hooks`           | No       | [Lifecycle hooks](#define-hooks-for-subagents) scoped to this subagent. Ignored for [plugin subagents](#choose-the-subagent-scope)                                                                                                                                                                                                                                                                                          |
@@ -994,7 +996,8 @@ Each subagent invocation creates a new instance rather than continuing an earlie
 
 Resumed subagents retain their full conversation history, including all previous tool calls, results, and reasoning. The subagent picks up exactly where it stopped rather than starting fresh.
 
-When a subagent completes, Claude receives its agent ID. The built-in Explore and Plan agents are one-shot and return no agent ID, so they can't be resumed; use `general-purpose` or a custom subagent when you need to continue the work.
+* When a subagent completes, Claude receives its agent ID. The built-in Explore and Plan agents are one-shot and return no agent ID, so they can't be resumed; use `general-purpose` or a custom subagent when you need to continue the work.
+* When a subagent stops at its [`maxTurns`](#supported-frontmatter-fields) limit, Claude Code marks the returned output as partial. For subagents that return an agent ID, Claude Code also notes in the result that Claude can message the subagent to continue from where it stopped.
 
 Claude uses the `SendMessage` tool with the agent's ID or name as the `to` field to resume it. `SendMessage` doesn't require [agent teams](/docs/en/agent-teams) to be enabled; only structured team-protocol messages such as `shutdown_request` and `plan_approval_response` do. Beyond subagents and teammates, in sessions where cross-session messaging is enabled, Claude can use the same tool to message [your other Claude Code sessions](/docs/en/cross-session-messaging), on this machine or [beyond it](/docs/en/cross-session-messaging#message-sessions-on-other-machines).
 
@@ -1120,7 +1123,7 @@ These examples demonstrate effective patterns for building subagents. Use them a
   **Best practices:**
 
   * **Design focused subagents:** each subagent should excel at one specific task
-  * **Write detailed descriptions:** Claude uses the description to decide when to delegate
+  * **Write specific descriptions:** Claude uses the description to decide when to delegate
   * **Limit tool access:** grant only necessary permissions for security and focus
   * **Check into version control:** share project subagents with your team
 </Tip>

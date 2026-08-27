@@ -98,7 +98,7 @@ Hook `matcher` fields use bare tool names, not the parenthesized rule format. Se
 
 The Agent tool spawns a subagent in a separate context window. The subagent works through its task autonomously, then returns a single text result to the parent conversation. The parent doesn't see the subagent's intermediate tool calls or outputs, only that final result. With [agent teams](/docs/en/agent-teams) enabled, a call that carries a `name` can launch a [teammate](/docs/en/agent-teams#how-claude-starts-agent-teams) instead, which reports back through team messages rather than by returning a result.
 
-To cap how many turns a subagent runs, set `maxTurns` in the [subagent definition](/docs/en/sub-agents#supported-frontmatter-fields).
+To cap how many turns a subagent runs, set `maxTurns` in the [subagent definition](/docs/en/sub-agents#supported-frontmatter-fields). When the subagent reaches the limit, Claude Code marks the returned result as partial output, and Claude can [resume the subagent](/docs/en/sub-agents#resume-subagents) to continue.
 
 The same Agent tool also launches [forked subagents](/docs/en/sub-agents#fork-the-current-conversation) wherever [fork mode](/docs/en/sub-agents#turn-fork-mode-on-or-off) is on. A fork inherits the full parent conversation instead of starting fresh, runs in the background apart from the [cases that stay in the foreground](/docs/en/sub-agents#run-subagents-in-foreground-or-background), and still surfaces permission prompts in your terminal. The rest of this section describes non-fork subagents.
 
