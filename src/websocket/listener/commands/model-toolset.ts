@@ -352,10 +352,15 @@ export function resolveModelForUpdate(
   payload: UpdateModelPayload,
 ): ResolvedModelForUpdate | null {
   const resolved = resolveModelForUpdateBase(payload);
+  const acceptsDeviceReasoningEffort =
+    resolved?.updateArgs?.[OPENAI_COMPATIBLE_PROXY_UPDATE_ARG] === true ||
+    resolved?.updateArgs?.provider_type === "chatgpt_oauth" ||
+    (resolved !== null &&
+      inferProviderTypeFromRegistryHandle(resolved.handle) === "chatgpt_oauth");
   if (
     !resolved ||
     payload.reasoning_effort === undefined ||
-    resolved.updateArgs?.[OPENAI_COMPATIBLE_PROXY_UPDATE_ARG] !== true
+    !acceptsDeviceReasoningEffort
   ) {
     return resolved;
   }
