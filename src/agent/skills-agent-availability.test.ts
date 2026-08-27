@@ -14,7 +14,7 @@ describe("isSkillAvailableForAgent", () => {
     for (const id of [
       "image-generation",
       "managing-shared-memory",
-      "using-server-mcp",
+      "using-cloud-mcp",
     ]) {
       const skill: Skill = { ...baseSkill, id };
       expect(isSkillAvailableForAgent(skill, "agent-local-123")).toBe(false);

@@ -10,7 +10,7 @@ import {
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 
-export interface ServerMcpSubcommandDependencies {
+export interface CloudMcpSubcommandDependencies {
   initializeSettings?: () => Promise<void>;
   getClient?: () => Promise<ServerMcpClient>;
   isServerSideMcpAvailable?: () => boolean;
@@ -18,20 +18,20 @@ export interface ServerMcpSubcommandDependencies {
   stderr?: (message: string) => void;
 }
 
-interface ServerMcpCommandResult {
+interface CloudMcpCommandResult {
   agent_id: string;
 }
 
-interface ServerMcpListResult extends ServerMcpCommandResult {
+interface CloudMcpListResult extends CloudMcpCommandResult {
   servers: Awaited<ReturnType<typeof listAgentConnectedMcpServers>>;
 }
 
-interface ServerMcpToolsResult extends ServerMcpCommandResult {
+interface CloudMcpToolsResult extends CloudMcpCommandResult {
   mcp_server_id: string;
   tools: Awaited<ReturnType<typeof listAgentConnectedMcpTools>>;
 }
 
-interface ServerMcpRunResult extends ServerMcpCommandResult {
+interface CloudMcpRunResult extends CloudMcpCommandResult {
   mcp_server_id: string;
   tool_id: string;
   result: Awaited<ReturnType<typeof runAgentConnectedMcpTool>>;
@@ -41,9 +41,9 @@ function printUsage(stdout: (message: string) => void = console.log): void {
   stdout(
     `
 Usage:
-  letta server-mcp list [--agent <id>]
-  letta server-mcp tools <mcp-server-id> [--agent <id>]
-  letta server-mcp run <mcp-server-id> <tool-id> [--args '<json>'] [--agent <id>]
+  letta cloud-mcp list [--agent <id>]
+  letta cloud-mcp tools <mcp-server-id> [--agent <id>]
+  letta cloud-mcp run <mcp-server-id> <tool-id> [--args '<json>'] [--agent <id>]
 
 Actions:
   list      List MCP servers connected to the agent
@@ -69,7 +69,7 @@ Notes:
   );
 }
 
-function parseServerMcpArgs(argv: string[]) {
+function parseCloudMcpArgs(argv: string[]) {
   return parseArgs({
     args: argv,
     options: {
@@ -87,7 +87,7 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-export function resolveServerMcpAgentId(
+export function resolveCloudMcpAgentId(
   agent?: string,
   agentId?: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -118,7 +118,7 @@ function parseToolArgs(value: unknown): Record<string, unknown> {
 
 function printJson(
   stdout: (message: string) => void,
-  result: ServerMcpListResult | ServerMcpToolsResult | ServerMcpRunResult,
+  result: CloudMcpListResult | CloudMcpToolsResult | CloudMcpRunResult,
 ): void {
   stdout(JSON.stringify(result, null, 2));
 }
@@ -128,16 +128,16 @@ async function defaultGetClient(): Promise<ServerMcpClient> {
   return client;
 }
 
-export async function runServerMcpSubcommand(
+export async function runCloudMcpSubcommand(
   argv: string[],
-  deps: ServerMcpSubcommandDependencies = {},
+  deps: CloudMcpSubcommandDependencies = {},
 ): Promise<number> {
   const stdout = deps.stdout ?? console.log;
   const stderr = deps.stderr ?? console.error;
 
-  let parsed: ReturnType<typeof parseServerMcpArgs>;
+  let parsed: ReturnType<typeof parseCloudMcpArgs>;
   try {
-    parsed = parseServerMcpArgs(argv);
+    parsed = parseCloudMcpArgs(argv);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     stderr(`Error: ${message}`);
@@ -161,7 +161,7 @@ export async function runServerMcpSubcommand(
     return 1;
   }
 
-  const agentId = resolveServerMcpAgentId(
+  const agentId = resolveCloudMcpAgentId(
     stringValue(parsed.values.agent),
     stringValue(parsed.values["agent-id"]),
   );
@@ -194,7 +194,7 @@ export async function runServerMcpSubcommand(
       action === "list_tools"
     ) {
       if (!mcpServerId) {
-        stderr("Usage: letta server-mcp tools <mcp-server-id> [--agent <id>]");
+        stderr("Usage: letta cloud-mcp tools <mcp-server-id> [--agent <id>]");
         return 1;
       }
       printJson(stdout, {
@@ -213,7 +213,7 @@ export async function runServerMcpSubcommand(
     ) {
       if (!mcpServerId || !toolId) {
         stderr(
-          "Usage: letta server-mcp run <mcp-server-id> <tool-id> [--args '<json>'] [--agent <id>]",
+          "Usage: letta cloud-mcp run <mcp-server-id> <tool-id> [--args '<json>'] [--agent <id>]",
         );
         return 1;
       }
@@ -232,7 +232,7 @@ export async function runServerMcpSubcommand(
       return 0;
     }
 
-    stderr(`Unknown server-mcp action: ${action}`);
+    stderr(`Unknown cloud-mcp action: ${action}`);
     printUsage(stdout);
     return 1;
   } catch (error) {
