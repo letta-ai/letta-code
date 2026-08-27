@@ -1905,14 +1905,16 @@ Raised after the final [`ResultMessage`](#resultmessage) when the Claude Code pr
 
 ```python theme={null}
 class ResultError(ProcessError):
-    subtype: str | None  # for example "error_max_turns" or "error_during_execution"
+    subtype: str | None  # "error_max_turns", "error_during_execution", ...; "success" when the run ended on a failed request
     errors: list[str]  # an empty list when the result message reported none
     result: str | None
     api_error_status: int | None
-    terminal_reason: str | None  # for example "max_turns" or "api_error"
+    terminal_reason: str | None  # "max_turns", "api_error", ...; check this before subtype
     session_id: str | None
     data: dict[str, Any]  # the raw result message payload
 ```
+
+To tell failures apart, check `terminal_reason` before `subtype`. When the final request fails, such as on an API error, Claude Code reports `subtype` `"success"` with the cause in `terminal_reason`, for example `"api_error"`; when a limit you set ends the run, such as `max_turns` or `max_budget_usd`, it reports an `error_*` subtype.
 
 ### `CLIJSONDecodeError`
 
@@ -3389,9 +3391,13 @@ async def main():
             "Claude Code CLI not found. Try reinstalling: pip install --force-reinstall claude-agent-sdk"
         )
     # Catch ResultError before ProcessError, which it subclasses. Its message
-    # carries the error text; branch on e.subtype or e.terminal_reason.
+    # carries the error text. A failed final request, such as an API error,
+    # arrives with subtype "success", so branch on terminal_reason first.
     except ResultError as e:
-        print(f"Query ended with an error result ({e.subtype}): {e}")
+        if e.terminal_reason == "api_error":
+            print(f"API request failed: {e}")
+        else:
+            print(f"Query ended with an error result ({e.terminal_reason or e.subtype}): {e}")
     except ProcessError as e:
         print(f"Process failed with exit code: {e.exit_code}")
     except CLIJSONDecodeError as e:
