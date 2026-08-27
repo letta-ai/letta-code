@@ -1392,7 +1392,7 @@ export async function handleHeadlessCommand(
   }
   markMilestone("HEADLESS_AGENT_RESOLVED");
   const publicAgentId = ephemeralFlag ? null : agent.id;
-  telemetry.setCurrentAgentId(publicAgentId);
+  telemetry.setCurrentAgent(publicAgentId, agent.tags);
   if (!ephemeralFlag) {
     await replaceClientMcpServers(
       agent.id,
