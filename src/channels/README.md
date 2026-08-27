@@ -1,10 +1,10 @@
 # Channel plugins
 
 Letta Code channels connect agents to external chat systems. Telegram, Slack,
-and Discord are first-party bundled plugins with custom Desktop UI. User-defined
-plugins are loaded from `~/.letta/channels/<channel-id>/` and run headlessly:
-they can receive inbound messages, participate in pairing/routing, and extend
-the shared `MessageChannel` tool, but they do not get custom Desktop screens.
+Discord, WhatsApp, Signal, and X Chat are first-party plugins. User-defined
+plugins load from `~/.letta/channels/<channel-id>/` and run headlessly. They can
+receive messages, use pairing and routes, and extend the shared
+`MessageChannel` tool. They do not get custom Desktop screens.
 
 ## Directory layout
 
@@ -169,6 +169,50 @@ Only set `LETTA_BASE_URL` for a separate self-hosted server. For example,
 `LETTA_BASE_URL=http://localhost:8283 letta server --channels telegram` talks to
 a server running at that URL. Do not set a dummy `LETTA_BASE_URL` for
 `--backend local`.
+
+## X Chat
+
+The X Chat channel uses end-to-end encryption. It polls the X Chat API for new
+conversations and decrypts each message with the bot's registered keys. It
+verifies message signatures before it delivers messages to an agent.
+
+Create the bot and register its keys with the [official X Chat bot
+flow](https://docs.x.com/xchat/bots). Keep the bot token and registration PIN.
+Then run the following commands:
+
+```bash
+letta channels install xchat
+letta channels configure xchat
+letta server --channels xchat
+```
+
+The setup command reads `XCHAT_BOT_TOKEN`, `XCHAT_PIN`, and the optional
+`X_BEARER_TOKEN` from the process environment. It stores these values through
+the channel credential store. Do not put them in Git.
+
+`X_BEARER_TOKEN` is the app-only Bearer token for the app that issued the bot
+token. The X activity stream uses it to discover DMs in Message requests.
+Without it, `GET /2/chat/conversations` returns only the primary inbox. Ask
+people to follow the bot before they send a DM if you do not configure the app
+Bearer token.
+
+Set `XCHAT_PEER_USER_IDS` to a comma-separated list of known sender IDs when
+the activity stream is unavailable. The adapter resolves and polls those
+direct-message conversations explicitly.
+
+The channel supports direct messages. Group chats are disabled because the
+upstream adapter cannot bind an asynchronous reply to its source message. The
+`MessageChannel` tool can send text, upload files, add reactions, and remove
+reactions. It does not support explicit reply targets.
+
+Inbound attachments include their name, type, and declared size. Letta Code
+does not download inbound X Chat media. The upstream adapter downloads the
+complete encrypted blob before it can check the decrypted size.
+
+The channel stores message IDs in
+`~/.letta/channels/xchat/poll-state-<account-id>.json`. This file prevents
+duplicate delivery after a restart. On the first start, the channel delivers
+messages from the last 10 minutes and records older messages without delivery.
 
 ## Channel slash commands
 

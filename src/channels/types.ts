@@ -69,6 +69,7 @@ export const FIRST_PARTY_CHANNEL_IDS = [
   "custom",
   "whatsapp",
   "signal",
+  "xchat",
 ] as const;
 export type FirstPartyChannelId = (typeof FIRST_PARTY_CHANNEL_IDS)[number];
 /**
@@ -952,9 +953,9 @@ export function isSignalChannelAccount(
 export function isCustomChannelAccount(
   account: ChannelAccount,
 ): account is CustomChannelAccount {
-  // The "custom" first-party channel and all user-installed channels share the
-  // same generic config-bag shape (no specific fields like `token`).
-  if (account.channel === "custom") {
+  // The "custom" and "xchat" first-party channels plus all user-installed
+  // channels share the generic config-bag shape.
+  if (account.channel === "custom" || account.channel === "xchat") {
     return "config" in account;
   }
   return !isFirstPartyChannelId(account.channel) && "config" in account;

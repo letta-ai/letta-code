@@ -11,6 +11,7 @@ import type {
 } from "./plugin-types";
 import { parseChannelConfigSchema } from "./schema-config";
 import { FIRST_PARTY_CHANNEL_IDS, type FirstPartyChannelId } from "./types";
+import { XCHAT_CONFIG_SCHEMA } from "./xchat/schema";
 
 type ChannelPluginRegistration = {
   metadata: ChannelPluginMetadata;
@@ -124,6 +125,26 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
     load: async () => {
       const { signalChannelPlugin } = await import("@/channels/signal/plugin");
       return signalChannelPlugin;
+    },
+  },
+  xchat: {
+    metadata: {
+      id: "xchat",
+      displayName: "X Chat",
+      runtimePackages: [
+        "@chat-adapter/x@4.38.1",
+        "@xdevplatform/chat-xdk@0.5.0",
+        "@xdevplatform/xdk@0.6.6",
+        "juicebox-sdk@0.3.7",
+      ],
+      runtimeModules: ["@chat-adapter/x/chat", "@xdevplatform/xdk"],
+      source: "first-party",
+      firstParty: true,
+      configSchema: XCHAT_CONFIG_SCHEMA,
+    },
+    load: async () => {
+      const { xchatChannelPlugin } = await import("@/channels/xchat/plugin");
+      return xchatChannelPlugin;
     },
   },
 };

@@ -47,6 +47,32 @@ function writeFakeGrammyModule(runtimeDir: string): void {
   );
 }
 
+function writeImportOnlyModule(runtimeDir: string): void {
+  const moduleDir = join(runtimeDir, "node_modules", "@import-only", "sdk");
+  mkdirSync(join(moduleDir, "dist", "chat"), { recursive: true });
+  writeFileSync(
+    join(moduleDir, "package.json"),
+    JSON.stringify(
+      {
+        name: "@import-only/sdk",
+        type: "module",
+        exports: {
+          "./chat": {
+            types: "./dist/chat/index.d.ts",
+            import: "./dist/chat/index.js",
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(moduleDir, "dist", "chat", "index.js"),
+    "export const label = 'import-only';\n",
+  );
+}
+
 let runtimeRoot: string;
 let bundledRuntimeRoot: string;
 let channelsRoot: string;
@@ -88,6 +114,17 @@ test("loadChannelRuntimeModule resolves a module from the channel runtime direct
     "telegram",
   );
   expect(mod.Bot.label).toBe("fake-grammy");
+});
+
+test("loadChannelRuntimeModule resolves import-only package exports", async () => {
+  const runtimeDir = getChannelRuntimeDir("xchat");
+  writeImportOnlyModule(runtimeDir);
+
+  const mod = await loadChannelRuntimeModule<{ label: string }>(
+    "xchat",
+    "@import-only/sdk/chat",
+  );
+  expect(mod.label).toBe("import-only");
 });
 
 test("loadChannelRuntimeModule resolves a module from the bundled runtime directory first", async () => {
