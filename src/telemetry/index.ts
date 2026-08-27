@@ -8,6 +8,10 @@ import { settingsManager } from "@/settings-manager";
 import { debugLogFile } from "@/utils/debug";
 import { isLoopbackHostname, parseUrl } from "@/utils/url";
 import { getVersion } from "@/version";
+import {
+  resolveTelemetryAgentOrigin,
+  type TelemetryAgentOrigin,
+} from "./agent-origin";
 import { installFatalErrorHandlers } from "./fatal-error-handler";
 
 export type TelemetrySurface =
@@ -273,6 +277,7 @@ class TelemetryManager {
   private sessionId: string;
   private deviceId: string | null = null;
   private currentAgentId: string | null = null;
+  private currentAgentOrigin: TelemetryAgentOrigin | null = null;
   private surface: TelemetrySurface = "letta_code_tui";
   private sessionStartTime: number;
   private messageCount = 0;
@@ -473,6 +478,7 @@ class TelemetryManager {
         ...data,
         session_id: this.sessionId,
         agent_id: this.currentAgentId || undefined,
+        agent_origin: this.currentAgentOrigin || undefined,
         surface: this.surface,
         backend: resolveTelemetryBackend(),
       },
@@ -496,6 +502,35 @@ class TelemetryManager {
    */
   setCurrentAgentId(agentId: string | null) {
     this.currentAgentId = agentId;
+    this.currentAgentOrigin = null;
+  }
+
+  /**
+   * Attach safe analytics fields from an agent that the caller already loaded.
+   * Events queued during startup are enriched without another API request.
+   */
+  setCurrentAgent(
+    agentId: string | null,
+    tags: readonly string[] | null | undefined,
+  ) {
+    this.currentAgentId = agentId;
+    this.currentAgentOrigin = agentId
+      ? (resolveTelemetryAgentOrigin(tags) ?? null)
+      : null;
+
+    if (!agentId) {
+      return;
+    }
+
+    for (const event of this.events) {
+      if (event.data.agent_id && event.data.agent_id !== agentId) {
+        continue;
+      }
+      event.data.agent_id = agentId;
+      if (this.currentAgentOrigin) {
+        event.data.agent_origin = this.currentAgentOrigin;
+      }
+    }
   }
 
   setSurface(surface: TelemetrySurface) {
