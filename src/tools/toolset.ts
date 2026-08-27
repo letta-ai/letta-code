@@ -56,7 +56,6 @@ function appendArtifactToolsIfEnabled(toolNames: ToolName[]): ToolName[] {
   }
   return [...withoutArtifactTools, ...ARTIFACT_TOOL_NAMES];
 }
-
 // Keep these as direct references at call-sites (not top-level aliases) to avoid
 // temporal-dead-zone issues under circular import initialization.
 

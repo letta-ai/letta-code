@@ -81,6 +81,7 @@ import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 import { TOOL_PERMISSIONS } from "./tool-permissions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
+
 async function resolveBackendSpecificToolDescription(
   name: string,
   description: string,
@@ -234,6 +235,7 @@ const ARTIFACT_TOOL_NAMES: ToolName[] = [
   "read_artifact_file",
   "write_artifact_file",
 ];
+
 function shouldIncludeWorktreeTool(): boolean {
   try {
     return settingsManager.shouldIncludeWorktreeTool();
@@ -241,6 +243,7 @@ function shouldIncludeWorktreeTool(): boolean {
     return true;
   }
 }
+
 function filterWorktreeTools(toolNames: ToolName[]): ToolName[] {
   if (shouldIncludeWorktreeTool()) {
     return toolNames;

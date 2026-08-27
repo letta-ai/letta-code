@@ -175,7 +175,7 @@ USAGE
   letta -p "..."        One-off prompt in headless mode (no TTY UI)
 
   # maintenance
-  letta update          Manually check for updates and install if available
+  letta update          Check for updates and install (aliases: upgrade, --update, --upgrade)
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta environments ... List available remote environments (JSON-only)
