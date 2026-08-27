@@ -90,6 +90,49 @@ async function copyToResolved(srcRel, targetSpecifier) {
   }
 }
 
+async function patchInkRuntime(replacements) {
+  let inkBuildDir;
+  try {
+    inkBuildDir = dirname(fileURLToPath(await import.meta.resolve("ink")));
+  } catch {
+    try {
+      inkBuildDir = join(dirname(require.resolve("ink/package.json")), "build");
+    } catch {
+      inkBuildDir = join(pkgRoot, "node_modules", "ink", "build");
+    }
+  }
+
+  const runtimePath = join(inkBuildDir, "ink.js");
+  let content = readFileSync(runtimePath, "utf8");
+  for (const { before, after, all = false } of replacements) {
+    if (all) {
+      const candidates = Array.isArray(before) ? before : [before];
+      const target = candidates.find((candidate) =>
+        content.includes(candidate),
+      );
+      if (target) {
+        content = content.replaceAll(target, after);
+        continue;
+      }
+      if (content.includes(after)) continue;
+      throw new Error(
+        `[patch] Ink runtime patch target not found in ${runtimePath}`,
+      );
+    }
+    if (content.includes(after)) continue;
+    const candidates = Array.isArray(before) ? before : [before];
+    const target = candidates.find((candidate) => content.includes(candidate));
+    if (!target) {
+      throw new Error(
+        `[patch] Ink runtime patch target not found in ${runtimePath}`,
+      );
+    }
+    content = content.replace(target, after);
+  }
+  writeFileSync(runtimePath, content);
+  console.log(`[patch] resettable static output -> ${runtimePath}`);
+}
+
 // Ink internals (resolve actual installed module path)
 await copyToResolved(
   "vendor/ink/build/components/App.js",
@@ -100,8 +143,59 @@ await copyToResolved(
   "ink/build/hooks/use-input.js",
 );
 await copyToResolved("vendor/ink/build/devtools.js", "ink/build/devtools.js");
-await copyToResolved("vendor/ink/build/log-update.js", "ink/build/log-update.js");
+await copyToResolved(
+  "vendor/ink/build/log-update.js",
+  "ink/build/log-update.js",
+);
 await copyToResolved("vendor/ink/build/wrap-text.js", "ink/build/wrap-text.js");
+await patchInkRuntime([
+  {
+    before:
+      "writeToStderr: this.writeToStderr, exitOnCtrlC: this.options.exitOnCtrlC",
+    after:
+      "writeToStderr: this.writeToStderr, resetStaticOutput: this.resetStaticOutput, exitOnCtrlC: this.options.exitOnCtrlC",
+  },
+  {
+    before: [
+      "    fullStaticOutput;\n    staticOutputRepaintPending = false;\n    exitPromise;",
+      "    fullStaticOutput;\n    exitPromise;",
+    ],
+    after:
+      "    fullStaticOutput;\n    staticOutputRepaintPending = false;\n    isCi = () => isInCi && !this.options.stdout.isTTY;\n    exitPromise;",
+  },
+  {
+    before: "        if (isInCi) {",
+    after: "        if (this.isCi()) {",
+    all: true,
+  },
+  {
+    before: "        if (!isInCi) {",
+    after: "        if (!this.isCi()) {",
+  },
+  {
+    before: "        if (!isInCi && !this.options.debug) {",
+    after: "        if (!this.isCi() && !this.options.debug) {",
+  },
+  {
+    before: "        if (this.options.debug) {",
+    after:
+      "        if (this.staticOutputRepaintPending && (this.options.debug || this.isCi())) {\n            if (this.options.stdout.isTTY) {\n                this.fullStaticOutput = hasStaticOutput ? staticOutput : '';\n                this.repaintStaticOutput(output);\n                return;\n            }\n            this.staticOutputRepaintPending = false;\n        }\n        if (this.options.debug) {",
+  },
+  {
+    before: "        if (outputHeight >= this.options.stdout.rows) {",
+    after:
+      "        if (this.staticOutputRepaintPending) {\n            this.repaintStaticOutput(output);\n            return;\n        }\n        if (outputHeight >= this.options.stdout.rows) {",
+  },
+  {
+    before: [
+      "    resetStaticOutput = () => {\n        this.fullStaticOutput = '';\n        this.staticOutputRepaintPending = true;\n    };\n    writeToStdout(data) {",
+      "    resetStaticOutput = () => {\n        this.fullStaticOutput = '';\n    };\n    writeToStdout(data) {",
+      "    writeToStdout(data) {",
+    ],
+    after:
+      "    repaintStaticOutput = (output) => {\n        this.staticOutputRepaintPending = false;\n        const liveOutput = output + '\\n';\n        this.options.stdout.write('\\u001B[?2026h\\u001B[2J\\u001B[H' + this.fullStaticOutput + liveOutput + '\\u001B[?2026l');\n        this.log.sync?.(output);\n        this.lastOutput = output;\n    };\n    resetStaticOutput = () => {\n        this.fullStaticOutput = '';\n        this.staticOutputRepaintPending = true;\n    };\n    writeToStdout(data) {",
+  },
+]);
 
 // ink-text-input (optional vendor with externalCursorOffset support)
 await copyToResolved(

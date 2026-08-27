@@ -864,6 +864,7 @@ function trySplitContent(
   newText: string,
 ): boolean {
   if (!b.tokenStreamingEnabled) return false;
+  if (kind === "reasoning") return false;
 
   const splitPoint = findLastSafeSplitPoint(newText);
   if (splitPoint >= newText.length) return false; // No safe split point
@@ -882,8 +883,7 @@ function trySplitContent(
   const committedLine = {
     kind,
     id: commitId,
-    text:
-      kind === "reasoning" ? trimFinishedReasoningText(beforeText) : beforeText,
+    text: beforeText,
     phase: "finished" as const,
     isContinuation: counter > 0, // First split shows bullet, subsequent don't
     messageId:

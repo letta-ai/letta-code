@@ -1,8 +1,13 @@
-import { expect, test } from "bun:test";
-import { Readable, Writable } from "node:stream";
-import { render } from "ink";
+import { afterEach, expect, test } from "bun:test";
+import { Writable } from "node:stream";
+import { Box, render, Text } from "ink";
 import stripAnsi from "strip-ansi";
-import { setSystemRemindersVisible } from "@/cli/components/transcript-display-state";
+import {
+  setSystemRemindersVisible,
+  setThinkingExpanded,
+  toggleSystemReminderDisplay,
+  toggleThinkingDisplay,
+} from "@/cli/components/transcript-display-state";
 import { StaticTranscript } from "./StaticTranscript";
 
 class CaptureStream extends Writable {
@@ -21,19 +26,18 @@ class CaptureStream extends Writable {
   }
 }
 
-function createInputStream(): NodeJS.ReadStream {
-  const input = new Readable({ read() {} }) as NodeJS.ReadStream;
-  input.isTTY = true;
-  input.setRawMode = () => input;
-  input.ref = () => input;
-  input.unref = () => input;
-  return input;
+async function waitForRender(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
-test("system reminders default to hidden and ctrl+r toggles enabled reminders", async () => {
+afterEach(() => {
+  setSystemRemindersVisible(false);
+  setThinkingExpanded(false);
+});
+
+test("system reminder display changes repaint committed transcript rows", async () => {
   setSystemRemindersVisible(false);
   const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
-  const stdin = createInputStream();
   const instance = render(
     <StaticTranscript
       renderEpoch={0}
@@ -51,27 +55,21 @@ test("system reminders default to hidden and ctrl+r toggles enabled reminders", 
     />,
     {
       stdout,
-      stdin,
       debug: false,
       patchConsole: false,
       exitOnCtrlC: false,
     },
   );
 
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await waitForRender();
   const hiddenOutput = stripAnsi(stdout.chunks.join(""));
   expect(hiddenOutput).not.toContain("System reminder");
   expect(hiddenOutput).not.toContain("First instruction");
   expect(hiddenOutput).toContain("Visible user question");
 
-  const hiddenCtrlRStart = stdout.chunks.length;
-  stdin.push("\x12");
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(stdout.chunks).toHaveLength(hiddenCtrlRStart);
-
   const visibleStart = stdout.chunks.length;
   setSystemRemindersVisible(true);
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await waitForRender();
   const collapsedOutput = stripAnsi(stdout.chunks.slice(visibleStart).join(""));
   expect(collapsedOutput).toContain(
     "▸ System reminder · 2 lines (ctrl+r to expand)",
@@ -79,27 +77,26 @@ test("system reminders default to hidden and ctrl+r toggles enabled reminders", 
   expect(collapsedOutput).not.toContain("First instruction");
 
   const expandedStart = stdout.chunks.length;
-  stdin.push("\x12");
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  toggleSystemReminderDisplay();
+  await waitForRender();
   const expandedOutput = stripAnsi(stdout.chunks.slice(expandedStart).join(""));
   expect(expandedOutput).toContain("▾ System reminder (ctrl+r to collapse)");
   expect(expandedOutput).toContain("First instruction");
 
   const recollapsedStart = stdout.chunks.length;
-  stdin.push("\x12");
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  toggleSystemReminderDisplay();
+  await waitForRender();
   expect(stripAnsi(stdout.chunks.slice(recollapsedStart).join(""))).toContain(
     "▸ System reminder · 2 lines (ctrl+r to expand)",
   );
 
   instance.unmount();
   instance.cleanup();
-  setSystemRemindersVisible(false);
 });
 
-test("ctrl+t expands and collapses thinking blocks", async () => {
+test("thinking display changes repaint committed transcript rows", async () => {
+  setThinkingExpanded(false);
   const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
-  const stdin = createInputStream();
   const instance = render(
     <StaticTranscript
       renderEpoch={0}
@@ -119,32 +116,101 @@ test("ctrl+t expands and collapses thinking blocks", async () => {
     />,
     {
       stdout,
-      stdin,
       debug: false,
       patchConsole: false,
       exitOnCtrlC: false,
     },
   );
 
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await waitForRender();
   const collapsedOutput = stripAnsi(stdout.chunks.join(""));
   expect(collapsedOutput).toContain("Thought for 4 seconds (ctrl+t to expand)");
   expect(collapsedOutput).not.toContain("First thought");
 
   const expandedStart = stdout.chunks.length;
-  stdin.push("\x14");
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  toggleThinkingDisplay();
+  await waitForRender();
   const expandedOutput = stripAnsi(stdout.chunks.slice(expandedStart).join(""));
   expect(expandedOutput).toContain(
     "Thought for 4 seconds (ctrl+t to collapse)",
   );
   expect(expandedOutput).toContain("First thought");
+  const repaintChunks = stdout.chunks.slice(expandedStart);
+  const atomicRepaint = repaintChunks.find((chunk) =>
+    chunk.includes("\u001B[2J"),
+  );
+  expect(atomicRepaint).toContain("\u001B[?2026h");
+  expect(atomicRepaint).not.toContain("\u001B[3J");
+  expect(atomicRepaint).toContain("First thought");
+  expect(atomicRepaint).toContain("\u001B[?2026l");
+  expect(repaintChunks.some((chunk) => chunk === "\u001B[2J\u001B[H")).toBe(
+    false,
+  );
 
   const recollapsedStart = stdout.chunks.length;
-  stdin.push("\x14");
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  toggleThinkingDisplay();
+  await waitForRender();
   expect(stripAnsi(stdout.chunks.slice(recollapsedStart).join(""))).toContain(
     "Thought for 4 seconds (ctrl+t to expand)",
+  );
+
+  instance.unmount();
+  instance.cleanup();
+});
+
+function OverflowTranscript({ overflow }: { overflow: boolean }) {
+  return (
+    <>
+      <StaticTranscript
+        renderEpoch={0}
+        items={[
+          {
+            kind: "reasoning",
+            id: "reasoning-overflow",
+            text: "Reasoning body that must not return after recollapse",
+            phase: "finished",
+            durationMs: 3_600,
+          },
+        ]}
+        columns={100}
+        statusLinePrompt=">"
+        showCompactionsEnabled={true}
+        precomputedDiffs={new Map()}
+      />
+      {overflow && (
+        <Box>
+          <Text>{Array.from({ length: 10 }, () => "live").join("\n")}</Text>
+        </Box>
+      )}
+    </>
+  );
+}
+
+test("repeated transcript repaints replace Ink static output", async () => {
+  setThinkingExpanded(false);
+  const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
+  stdout.rows = 6;
+  const instance = render(<OverflowTranscript overflow={false} />, {
+    stdout,
+    debug: false,
+    patchConsole: false,
+    exitOnCtrlC: false,
+  });
+
+  await waitForRender();
+  toggleThinkingDisplay();
+  await waitForRender();
+  toggleThinkingDisplay();
+  await waitForRender();
+
+  const overflowStart = stdout.chunks.length;
+  instance.rerender(<OverflowTranscript overflow={true} />);
+  await waitForRender();
+  const overflowOutput = stripAnsi(stdout.chunks.slice(overflowStart).join(""));
+
+  expect(overflowOutput.match(/Thought for 4 seconds/g)).toHaveLength(1);
+  expect(overflowOutput).not.toContain(
+    "Reasoning body that must not return after recollapse",
   );
 
   instance.unmount();

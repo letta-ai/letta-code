@@ -66,6 +66,7 @@ import {
 } from "./spinners/animations.js";
 import { StreamingStatusSpinner } from "./spinners/StreamingStatusSpinner.js";
 import { Text } from "./Text";
+import { handleTranscriptDisplayShortcut } from "./transcript-display-state";
 
 // Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
@@ -1378,12 +1379,11 @@ export function Input({
 
     if (!interactionEnabled) return;
 
-    // Handle CTRL-O to expand/collapse the last tool call output
     if (input === "o" && key.ctrl) {
       if (onCtrlO) onCtrlO();
       return;
     }
-
+    if (handleTranscriptDisplayShortcut(input, key)) return;
     // Handle CTRL-C for double-ctrl-c-to-exit
     // In bash mode, CTRL-C wipes input but doesn't exit bash mode
     if (input === "c" && key.ctrl) {

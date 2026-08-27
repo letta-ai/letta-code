@@ -1,6 +1,5 @@
-import { Box, Static, useInput } from "ink";
-import { useSyncExternalStore } from "react";
-import { CLEAR_SCREEN_AND_HOME } from "@/cli/app/constants";
+import { Box, Static, useApp } from "ink";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { ApprovalPreview } from "@/cli/components/ApprovalPreview";
 import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
 import { BashCommandMessage } from "@/cli/components/BashCommandMessage";
@@ -19,13 +18,16 @@ import {
   getThinkingExpanded,
   subscribeToSystemReminderDisplay,
   subscribeToThinkingDisplay,
-  toggleSystemReminderDisplay,
-  toggleThinkingDisplay,
+  subscribeToTranscriptDisplayRepaint,
 } from "@/cli/components/transcript-display-state";
 import { UserMessage } from "@/cli/components/UserMessageRich";
 import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import type { StaticItem } from "./types";
+
+type InkAppWithStaticOutputReset = ReturnType<typeof useApp> & {
+  resetStaticOutput?: () => void;
+};
 
 export function StaticTranscript({
   renderEpoch,
@@ -51,6 +53,8 @@ export function StaticTranscript({
    *  remounting on every tool call and re-printing history). */
   lastShellToolCallId?: string;
 }) {
+  const [displayRenderEpoch, setDisplayRenderEpoch] = useState(0);
+  const { resetStaticOutput } = useApp() as InkAppWithStaticOutputReset;
   const systemRemindersExpanded = useSyncExternalStore(
     subscribeToSystemReminderDisplay,
     getSystemRemindersExpanded,
@@ -63,17 +67,18 @@ export function StaticTranscript({
     subscribeToThinkingDisplay,
     getThinkingExpanded,
   );
-  useInput((input, key) => {
-    if (!key.ctrl || (input !== "r" && input !== "t")) return;
-    if (input === "r" && !systemRemindersVisible) return;
-    if (process.stdout?.isTTY) process.stdout.write(CLEAR_SCREEN_AND_HOME);
-    if (input === "r") toggleSystemReminderDisplay();
-    if (input === "t") toggleThinkingDisplay();
-  });
+  useEffect(
+    () =>
+      subscribeToTranscriptDisplayRepaint(() => {
+        resetStaticOutput?.();
+        setDisplayRenderEpoch((epoch) => epoch + 1);
+      }),
+    [resetStaticOutput],
+  );
 
   return (
     <Static
-      key={`${renderEpoch}-${hiddenToolCallId ?? ""}-${systemRemindersVisible}-${systemRemindersExpanded}-${thinkingExpanded}`}
+      key={`${renderEpoch}-${displayRenderEpoch}-${hiddenToolCallId ?? ""}`}
       items={items}
       style={{ flexDirection: "column" }}
     >

@@ -1,6 +1,10 @@
 import { Box } from "ink";
 import { memo, useSyncExternalStore } from "react";
-import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import stringWidth from "string-width";
+import {
+  useTerminalRows,
+  useTerminalWidth,
+} from "@/cli/hooks/use-terminal-width";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { Text } from "./Text";
 import {
@@ -25,6 +29,22 @@ type ReasoningLine = {
   durationMs?: number;
 };
 
+const LIVE_REASONING_MAX_LINES = 16;
+const LIVE_REASONING_CHROME_ROWS = 8;
+
+export function getLiveReasoningWindowHeight(
+  text: string,
+  contentWidth: number,
+  terminalRows: number,
+): number {
+  const width = Math.max(1, contentWidth);
+  const estimatedLines = text.split("\n").reduce((total, line) => {
+    return total + Math.max(1, Math.ceil(stringWidth(line) / width));
+  }, 0);
+  const availableRows = Math.max(3, terminalRows - LIVE_REASONING_CHROME_ROWS);
+  return Math.min(estimatedLines, LIVE_REASONING_MAX_LINES, availableRows);
+}
+
 export function formatThinkingDuration(durationMs: number): string {
   const seconds = Math.max(1, Math.round(durationMs / 1000));
   return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
@@ -43,6 +63,7 @@ export function formatThinkingDuration(durationMs: number): string {
 export const ReasoningMessage = memo(
   ({ line, expanded = false }: { line: ReasoningLine; expanded?: boolean }) => {
     const columns = useTerminalWidth();
+    const terminalRows = useTerminalRows();
     const contentWidth = Math.max(0, columns - 2);
 
     const normalizedText = normalize(line.text);
@@ -71,6 +92,16 @@ export const ReasoningMessage = memo(
         ? "Thought"
         : `Thought for ${formatThinkingDuration(line.durationMs)}`;
     const hint = expanded ? "collapse" : "expand";
+    const reasoningBody = (
+      <Box flexDirection="row" flexShrink={0}>
+        <Box width={2} flexShrink={0}>
+          <Text> </Text>
+        </Box>
+        <Box flexGrow={1} width={contentWidth}>
+          <MarkdownDisplay text={normalizedText} dimColor={true} />
+        </Box>
+      </Box>
+    );
 
     return (
       <Box flexDirection="column">
@@ -85,16 +116,22 @@ export const ReasoningMessage = memo(
           </Box>
         </Box>
         {expanded && <Box height={1} />}
-        {expanded && (
-          <Box flexDirection="row">
-            <Box width={2} flexShrink={0}>
-              <Text> </Text>
-            </Box>
-            <Box flexGrow={1} width={contentWidth}>
-              <MarkdownDisplay text={normalizedText} dimColor={true} />
-            </Box>
+        {expanded && isStreaming ? (
+          <Box
+            flexDirection="column"
+            height={getLiveReasoningWindowHeight(
+              normalizedText,
+              contentWidth,
+              terminalRows,
+            )}
+            justifyContent="flex-end"
+            overflowY="hidden"
+          >
+            {reasoningBody}
           </Box>
-        )}
+        ) : expanded ? (
+          reasoningBody
+        ) : null}
       </Box>
     );
   },

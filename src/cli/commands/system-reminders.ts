@@ -1,4 +1,3 @@
-import { CLEAR_SCREEN_AND_HOME } from "@/cli/app/constants";
 import {
   getSystemRemindersVisible,
   setSystemRemindersVisible,
@@ -22,16 +21,10 @@ export function handleSystemRemindersCommand(args: string[]): string {
       : "System reminders are hidden. Use /system-reminders on to show them.";
   }
   if (mode === "on") {
-    if (!getSystemRemindersVisible() && process.stdout?.isTTY) {
-      process.stdout.write(CLEAR_SCREEN_AND_HOME);
-    }
     setSystemRemindersVisible(true);
     return "System reminders shown. Ctrl+R expands or collapses their contents.";
   }
   if (mode === "off") {
-    if (getSystemRemindersVisible() && process.stdout?.isTTY) {
-      process.stdout.write(CLEAR_SCREEN_AND_HOME);
-    }
     setSystemRemindersVisible(false);
     return "System reminders hidden.";
   }
