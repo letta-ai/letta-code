@@ -8,7 +8,10 @@ import { settingsManager } from "@/settings-manager";
 import { debugLogFile } from "@/utils/debug";
 import { isLoopbackHostname, parseUrl } from "@/utils/url";
 import { getVersion } from "@/version";
-import { resolveTelemetryAgentOrigins } from "./agent-origin";
+import {
+  resolveTelemetryAgentOrigin,
+  type TelemetryAgentOrigin,
+} from "./agent-origin";
 import { installFatalErrorHandlers } from "./fatal-error-handler";
 
 export type TelemetrySurface =
@@ -274,7 +277,7 @@ class TelemetryManager {
   private sessionId: string;
   private deviceId: string | null = null;
   private currentAgentId: string | null = null;
-  private currentAgentOrigins: string[] = [];
+  private currentAgentOrigin: TelemetryAgentOrigin | null = null;
   private surface: TelemetrySurface = "letta_code_tui";
   private sessionStartTime: number;
   private messageCount = 0;
@@ -475,10 +478,7 @@ class TelemetryManager {
         ...data,
         session_id: this.sessionId,
         agent_id: this.currentAgentId || undefined,
-        agent_origins:
-          this.currentAgentOrigins.length > 0
-            ? this.currentAgentOrigins
-            : undefined,
+        agent_origin: this.currentAgentOrigin || undefined,
         surface: this.surface,
         backend: resolveTelemetryBackend(),
       },
@@ -502,7 +502,7 @@ class TelemetryManager {
    */
   setCurrentAgentId(agentId: string | null) {
     this.currentAgentId = agentId;
-    this.currentAgentOrigins = [];
+    this.currentAgentOrigin = null;
   }
 
   /**
@@ -514,9 +514,9 @@ class TelemetryManager {
     tags: readonly string[] | null | undefined,
   ) {
     this.currentAgentId = agentId;
-    this.currentAgentOrigins = agentId
-      ? resolveTelemetryAgentOrigins(tags)
-      : [];
+    this.currentAgentOrigin = agentId
+      ? (resolveTelemetryAgentOrigin(tags) ?? null)
+      : null;
 
     if (!agentId) {
       return;
@@ -527,8 +527,8 @@ class TelemetryManager {
         continue;
       }
       event.data.agent_id = agentId;
-      if (this.currentAgentOrigins.length > 0) {
-        event.data.agent_origins = this.currentAgentOrigins;
+      if (this.currentAgentOrigin) {
+        event.data.agent_origin = this.currentAgentOrigin;
       }
     }
   }

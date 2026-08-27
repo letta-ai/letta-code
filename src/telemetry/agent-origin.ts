@@ -1,27 +1,16 @@
-const AGENT_ORIGIN_TAG_PREFIX = "origin:";
-const MAX_AGENT_ORIGINS = 8;
-const TELEMETRY_AGENT_ORIGIN_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+export type TelemetryAgentOrigin = "claude-subconscious";
 
-export function resolveTelemetryAgentOrigins(
+const TELEMETRY_AGENT_ORIGIN_BY_TAG: ReadonlyMap<string, TelemetryAgentOrigin> =
+  new Map([["origin:claude-subconcious", "claude-subconscious"]]);
+
+export function resolveTelemetryAgentOrigin(
   tags: readonly string[] | null | undefined,
-): string[] {
-  const origins = new Set<string>();
-
+): TelemetryAgentOrigin | undefined {
   for (const tag of tags ?? []) {
-    if (!tag.startsWith(AGENT_ORIGIN_TAG_PREFIX)) {
-      continue;
-    }
-
-    const origin = tag.slice(AGENT_ORIGIN_TAG_PREFIX.length);
-    if (!TELEMETRY_AGENT_ORIGIN_PATTERN.test(origin)) {
-      continue;
-    }
-
-    origins.add(origin);
-    if (origins.size === MAX_AGENT_ORIGINS) {
-      break;
+    const origin = TELEMETRY_AGENT_ORIGIN_BY_TAG.get(tag);
+    if (origin) {
+      return origin;
     }
   }
-
-  return [...origins];
+  return undefined;
 }
