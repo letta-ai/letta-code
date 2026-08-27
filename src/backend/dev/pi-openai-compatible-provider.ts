@@ -2,7 +2,7 @@ import type { Provider } from "@earendil-works/pi-ai";
 import {
   createLocalEndpointPiProvider,
   type LocalEndpointDiscover,
-  modelIdsFromOpenAICompatibleList,
+  modelMetadataFromOpenAICompatibleList,
 } from "./pi-local-endpoint-provider";
 import { OPENAI_COMPATIBLE_PI_PROVIDER_ID } from "./pi-provider-registry";
 
@@ -15,9 +15,11 @@ export interface OpenAICompatiblePiProviderOptions {
 
 const openAICompatibleDiscover: LocalEndpointDiscover = async (context) => {
   const list = await context.fetchJson(`${context.openAIBaseURL}/models`);
-  return modelIdsFromOpenAICompatibleList(list).map(
-    (modelId) =>
-      context.lastKnown.get(modelId) ?? context.buildModel({ id: modelId }),
+  return modelMetadataFromOpenAICompatibleList(list).map(
+    (metadata) =>
+      (metadata.vision === undefined
+        ? context.lastKnown.get(metadata.id)
+        : undefined) ?? context.buildModel(metadata),
   );
 };
 
