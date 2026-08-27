@@ -794,7 +794,8 @@ export class LocalBackend extends HeadlessBackend {
           agent,
           trigger,
           settings,
-          contextWindowOverride,
+          contextWindowOverride ??
+            this.effectiveContextWindow(conversationId, agentId),
         );
         if (
           result.stats.context_window === undefined ||
@@ -887,7 +888,7 @@ export class LocalBackend extends HeadlessBackend {
     agent: LocalAgentRecord,
     trigger: string,
     settings: ResolvedLocalCompactionSettings,
-    contextWindowOverride?: number,
+    contextWindow: number | undefined,
   ): Promise<{
     numMessagesBefore: number;
     numMessagesAfter: number;
@@ -895,9 +896,6 @@ export class LocalBackend extends HeadlessBackend {
     stats: LocalCompactionStats;
   }> {
     const messages = this.store.listLocalMessages(conversationId, agentId);
-    const contextWindow =
-      contextWindowOverride ??
-      this.effectiveContextWindow(conversationId, agentId);
     const plan = planLocalSlidingWindowCompaction(messages, {
       slidingWindowPercentage: settings.slidingWindowPercentage,
       contextWindow,
