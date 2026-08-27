@@ -60,6 +60,7 @@ describe("pi model factory", () => {
       reasoningForSettings({ reasoning_effort: "medium" }, "zai/glm-5.3"),
     ).toBe("low");
     expect(reasoningForSettings({}, "zai/glm-5-turbo")).toBe("low");
+    expect(reasoningForSettings({}, "zai/glm-5.3-flash")).toBe("low");
     expect(reasoningForSettings({}, "anthropic/claude-sonnet-4-6")).toBe(
       undefined,
     );

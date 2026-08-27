@@ -1143,7 +1143,7 @@ describe("local backend pi transcript", () => {
     expect(zaiHandles[0]).toBe("zai/glm-5.3");
     expect(handles).toContain("zai/glm-5-turbo");
     expect(handles).toContain("zai/glm-5.2");
-    expect(handles).toContain("zai/glm-5.3");
+    expect(handles).toContain("zai/glm-5.3-flash");
   });
 
   test("lists Fable 5 from the configured Anthropic pi catalog", async () => {

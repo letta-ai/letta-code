@@ -45,6 +45,7 @@ import {
   listRegisteredPiProviders,
 } from "./pi-provider-mod-registry";
 import {
+  builtinCatalogModels,
   getPiProviderSpec,
   OPENAI_COMPATIBLE_PI_PROVIDER_ID,
   type PiProvider,
@@ -54,6 +55,14 @@ import { resolveRegisteredPiProviderRuntimeConnection } from "./registered-pi-pr
 const CONFIGURED_DISCOVERY_TIMEOUT_MS = 2_000;
 const AUTODETECT_DISCOVERY_TIMEOUT_MS = 500;
 const MAX_TURN_RESOLUTION_RETRIES = 2;
+
+function withLettaCatalogAdditions(provider: Provider): Provider {
+  if (provider.id !== "zai") return provider;
+  return {
+    ...provider,
+    getModels: () => builtinCatalogModels("zai"),
+  };
+}
 
 /**
  * Letta-documented environment aliases for env vars the upstream providers
@@ -225,7 +234,7 @@ export class LocalPiModelsRuntime {
     });
     const builtins = builtinProviders();
     for (const provider of builtins) {
-      this.models.setProvider(provider);
+      this.models.setProvider(withLettaCatalogAdditions(provider));
     }
     this.dynamicBuiltinIds = new Set(
       builtins
@@ -281,7 +290,7 @@ export class LocalPiModelsRuntime {
       const fresh = builtinProviders().find(
         (provider) => provider.id === providerId,
       );
-      if (fresh) this.models.setProvider(fresh);
+      if (fresh) this.models.setProvider(withLettaCatalogAdditions(fresh));
     }
   }
 
@@ -463,7 +472,9 @@ export class LocalPiModelsRuntime {
         const builtin = builtinProviders().find(
           (provider) => provider.id === providerId,
         );
-        if (builtin) this.models.setProvider(builtin);
+        if (builtin) {
+          this.models.setProvider(withLettaCatalogAdditions(builtin));
+        }
       }
       return false;
     }

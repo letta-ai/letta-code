@@ -99,6 +99,7 @@ function modelIdFromHandle(modelHandle?: string): string | undefined {
 function alwaysOnZaiThinking(modelId?: string): boolean {
   return (
     modelId === "glm-5.3" ||
+    modelId === "glm-5.3-flash" ||
     modelId === "glm-5-turbo" ||
     modelId === "glm-5.2-highspeed"
   );

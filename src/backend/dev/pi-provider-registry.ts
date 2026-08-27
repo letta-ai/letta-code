@@ -80,10 +80,50 @@ export function builtinCatalogModels(
   provider: KnownProvider,
 ): readonly Model<Api>[] {
   try {
-    return (getBuiltinModels(provider as never) ?? []) as readonly Model<Api>[];
+    const models = (getBuiltinModels(provider as never) ??
+      []) as readonly Model<Api>[];
+    return provider === "zai" ? withZaiCatalogAdditions(models) : models;
   } catch {
     return [];
   }
+}
+
+const ZAI_GLM_5_3_FLASH_MODEL: Model<"openai-completions"> = {
+  id: "glm-5.3-flash",
+  name: "GLM-5.3-Flash",
+  api: "openai-completions",
+  provider: "zai",
+  baseUrl: "https://api.z.ai/api/coding/paas/v4",
+  reasoning: true,
+  thinkingLevelMap: {
+    off: null,
+    minimal: null,
+    low: "low",
+    medium: null,
+    high: "high",
+    xhigh: null,
+    max: "max",
+  },
+  input: ["text", "image"],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  compat: {
+    supportsStore: false,
+    supportsDeveloperRole: false,
+    supportsReasoningEffort: true,
+    maxTokensField: "max_tokens",
+    thinkingFormat: "zai",
+    zaiToolStream: true,
+  },
+  contextWindow: 1_000_000,
+  maxTokens: 131_072,
+};
+
+function withZaiCatalogAdditions(
+  models: readonly Model<Api>[],
+): readonly Model<Api>[] {
+  return models.some((model) => model.id === ZAI_GLM_5_3_FLASH_MODEL.id)
+    ? models
+    : [...models, ZAI_GLM_5_3_FLASH_MODEL];
 }
 
 function hasEnvValue(value: string | undefined): boolean {
