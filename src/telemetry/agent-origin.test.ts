@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { resolveTelemetryAgentOrigin } from "@/telemetry/agent-origin";
+import { resolveTelemetryAgentOrigins } from "@/telemetry/agent-origin";
 import { type TelemetryEvent, telemetry } from "@/telemetry/index";
 
 type TelemetryTestState = {
   events: TelemetryEvent[];
   currentAgentId: string | null;
-  currentAgentOrigin: string | null;
+  currentAgentOrigins: string[];
 };
 
 const telemetryState = telemetry as unknown as TelemetryTestState;
@@ -15,7 +15,7 @@ describe("telemetry agent origin", () => {
   beforeEach(() => {
     telemetryState.events = [];
     telemetryState.currentAgentId = null;
-    telemetryState.currentAgentOrigin = null;
+    telemetryState.currentAgentOrigins = [];
     process.env.LETTA_CODE_TELEM = "1";
   });
 
@@ -27,19 +27,23 @@ describe("telemetry agent origin", () => {
     }
   });
 
-  test("maps only allowlisted agent tags to analytics values", () => {
+  test("extracts only bounded origin tags", () => {
     expect(
-      resolveTelemetryAgentOrigin([
+      resolveTelemetryAgentOrigins([
         "customer:private",
         "origin:claude-subconcious",
+        "origin:letta-code",
+        "origin:letta-code",
+        "origin:",
+        "origin:Customer Name",
       ]),
-    ).toBe("claude-subconscious");
+    ).toEqual(["claude-subconcious", "letta-code"]);
+
     expect(
-      resolveTelemetryAgentOrigin([
-        "customer:private",
-        "origin:unrecognized-product",
-      ]),
-    ).toBeUndefined();
+      resolveTelemetryAgentOrigins(
+        Array.from({ length: 10 }, (_, index) => `origin:product-${index}`),
+      ),
+    ).toEqual(Array.from({ length: 8 }, (_, index) => `product-${index}`));
   });
 
   test("enriches queued and subsequent events after headless agent resolution", () => {
@@ -48,13 +52,17 @@ describe("telemetry agent origin", () => {
     telemetry.setCurrentAgent("agent-subconscious", [
       "customer:private",
       "origin:claude-subconcious",
+      "origin:letta-code",
     ]);
     telemetry.trackUserInput("hello", "user", "model-1");
 
     expect(telemetryState.events).toHaveLength(2);
     for (const event of telemetryState.events) {
       expect(event.data.agent_id).toBe("agent-subconscious");
-      expect(event.data.agent_origin).toBe("claude-subconscious");
+      expect(event.data.agent_origins).toEqual([
+        "claude-subconcious",
+        "letta-code",
+      ]);
       expect(event.data).not.toHaveProperty("agent_tags");
       expect(JSON.stringify(event.data)).not.toContain("customer:private");
     }
