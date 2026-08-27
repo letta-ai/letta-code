@@ -52,7 +52,7 @@ letta agents list --tags "origin:letta-code"
 ```
 
 ### By Topic They Discussed
-Load the `searching-messages` skill to find which agent worked on something:
+Search messages across all agents to find which agent worked on something:
 ```bash
 letta messages search --query "topic" --all-agents
 ```
@@ -157,7 +157,7 @@ letta -p --from-agent $LETTA_AGENT_ID \
 - Text-mode scripts return only the **final assistant message** (not tool calls, reasoning, or metadata)
 - JSON and stream-json responses include `agent_id`, `conversation_id`, and `environment.source` so you can continue the same conversation/runtime. Environment-routed turns also include `environment.id`, `connection_id`, `device_id`, and `name`.
 - The target agent may use tools, think, and reason - but you only see their final response
-- To see the full conversation transcript (including tool calls), use the `searching-messages` skill with `letta messages list --agent <id>` targeting the other agent
+- To see the full conversation transcript (including tool calls), use `letta messages list --agent <id>` targeting the other agent
 
 ## How It Works
 
@@ -186,4 +186,3 @@ Continuing a hidden conversation with `--conversation <id>` keeps it hidden — 
 ## Related Skills
 
 - **finding-agents**: Find agents by name, tags, or fuzzy search
-- **searching-messages**: Search past messages across agents, or view full conversation transcripts
