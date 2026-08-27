@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   clearSubagentConfigCache,
   getAllSubagentConfigs,
+  resolveSubagentConfigForMemoryFormat,
 } from "@/agent/subagents";
 import { __testSetBackend, type Backend } from "@/backend";
 
@@ -141,6 +142,61 @@ Custom prompt body`,
     );
     expect(configs.memory?.systemPrompt).not.toContain("git push");
     expect(configs.reflection?.systemPrompt).not.toContain("git push");
+  });
+
+  test("selects v2 writer prompts only for unchanged API built-ins", async () => {
+    const configs = await getAllSubagentConfigs();
+
+    for (const name of ["reflection", "init", "memory", "history-analyzer"]) {
+      const config = configs[name];
+      expect(config).toBeDefined();
+      if (!config) throw new Error(`Missing ${name} config`);
+      const resolved = resolveSubagentConfigForMemoryFormat(
+        config,
+        "memfs-v2",
+        false,
+      );
+      expect(resolved.systemPrompt).toContain("MemFS v2");
+      expect(resolved.systemPrompt).not.toContain("$MEMORY_DIR/system/");
+      // shared v2 layout markers
+      expect(resolved.systemPrompt).toContain("MEMORY.md");
+      expect(resolved.systemPrompt).toContain("no frontmatter");
+      expect(resolved.systemPrompt).toContain("`name` and `description`");
+    }
+
+    // per-prompt operational phrases proving copied v1 guidance remains
+    const opsPhrases: Record<string, string[]> = {
+      reflection: ["Phase 1 — Investigate", "Phase 5 — Commit", "`create`"],
+      init: [
+        "### 5. Commit (1 bash call)",
+        "feat(init): initialize memory for project",
+      ],
+      "history-analyzer": ["### 5. Commit", "Do NOT merge into main"],
+      memory: [
+        "### Phase 5: Merge and Clean Up (MANDATORY)",
+        "## Error Handling",
+      ],
+    };
+    for (const [name, phrases] of Object.entries(opsPhrases)) {
+      const config = configs[name];
+      if (!config) throw new Error(`Missing ${name} config`);
+      const resolved = resolveSubagentConfigForMemoryFormat(
+        config,
+        "memfs-v2",
+        false,
+      );
+      for (const phrase of phrases) {
+        expect(resolved.systemPrompt).toContain(phrase);
+      }
+    }
+
+    const reflection = configs.reflection;
+    if (!reflection) throw new Error("Missing reflection config");
+    const custom = { ...reflection, systemPrompt: "Custom prompt" };
+    expect(
+      resolveSubagentConfigForMemoryFormat(custom, "memfs-v2", false)
+        .systemPrompt,
+    ).toBe("Custom prompt");
   });
 
   test("keeps API-backed built-in prompts free of local backend wording", async () => {

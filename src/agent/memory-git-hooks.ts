@@ -11,6 +11,8 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { debugLog } from "@/utils/debug";
 
+const MEMORY_LAYOUT_POLICY = "letta-memory-layout-policy";
+
 /**
  * Bash pre-commit hook that validates frontmatter in memory .md files.
  *
@@ -32,6 +34,106 @@ AGENT_EDITABLE_KEYS="description"
 PROTECTED_KEYS="read_only"
 ALL_KNOWN_KEYS="description read_only limit"
 errors=""
+
+memory_layout_policy_file="$(git rev-parse --git-common-dir 2>/dev/null)/${MEMORY_LAYOUT_POLICY}"
+memory_layout_policy=$(cat "$memory_layout_policy_file" 2>/dev/null || true)
+
+validate_v2_file() {
+  local file="$1" staged first_line closing_line frontmatter line key value
+  local has_name=false has_description=false
+  staged=$(git show ":$file")
+
+  if [ "\${file##*/}" = "MEMORY.md" ]; then
+    first_line=$(echo "$staged" | head -1)
+    if [ "$first_line" = "---" ]; then
+      errors="$errors\\n  $file: MEMORY.md must not have frontmatter"
+    fi
+    return
+  fi
+
+  first_line=$(echo "$staged" | head -1)
+  if [ "$first_line" != "---" ]; then
+    errors="$errors\\n  $file: missing frontmatter (must start with ---)"
+    return
+  fi
+  closing_line=$(echo "$staged" | tail -n +2 | grep -n '^---$' | head -1 | cut -d: -f1)
+  if [ -z "$closing_line" ]; then
+    errors="$errors\\n  $file: frontmatter opened but never closed (missing closing ---)"
+    return
+  fi
+  frontmatter=$(echo "$staged" | tail -n +2 | head -n $((closing_line - 1)))
+
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    key=$(echo "$line" | cut -d: -f1 | sed 's/^ *//;s/ *$//')
+    value=$(echo "$line" | cut -d: -f2- | sed 's/^ *//;s/ *$//')
+    case "$key" in
+      name)
+        if [ "$has_name" = "true" ]; then
+          errors="$errors\\n  $file: duplicate frontmatter key 'name'"
+        fi
+        has_name=true
+        ;;
+      description)
+        if [ "$has_description" = "true" ]; then
+          errors="$errors\\n  $file: duplicate frontmatter key 'description'"
+        fi
+        has_description=true
+        ;;
+      *)
+        errors="$errors\\n  $file: unknown frontmatter key '$key' (allowed: name description)"
+        continue
+        ;;
+    esac
+    if [ -z "$value" ] || [ "$value" = '""' ] || [ "$value" = "''" ]; then
+      errors="$errors\\n  $file: '$key' must not be empty"
+    fi
+  done <<< "$frontmatter"
+
+  if [ "$has_name" = "false" ]; then
+    errors="$errors\\n  $file: missing required field 'name'"
+  fi
+  if [ "$has_description" = "false" ]; then
+    errors="$errors\\n  $file: missing required field 'description'"
+  fi
+}
+
+if [ "$memory_layout_policy" = "root-marker" ] && git cat-file -e ":MEMORY.md" 2>/dev/null; then
+  for file in $(git diff --cached --name-only --diff-filter=ACMR | grep -E '^skills/[^/]+\\.md$' || true); do
+    errors="$errors\\n  $file: invalid skill path (skills must be folders). Use skills/<name>/SKILL.md"
+  done
+
+  while IFS= read -r file; do
+    case "$file" in
+      skills/*) continue ;;
+    esac
+
+    projected=true
+    case "$file" in
+      */*)
+        dir=\${file%/*}
+        while [ -n "$dir" ]; do
+          if ! git cat-file -e ":$dir/MEMORY.md" 2>/dev/null; then
+            projected=false
+            break
+          fi
+          case "$dir" in
+            */*) dir=\${dir%/*} ;;
+            *) dir="" ;;
+          esac
+        done
+        ;;
+    esac
+    [ "$projected" = "true" ] && validate_v2_file "$file"
+  done < <(git ls-files '*.md')
+
+  if [ -n "$errors" ]; then
+    echo "MemFS v2 validation failed:"
+    echo -e "$errors"
+    exit 1
+  fi
+  exit 0
+fi
 
 # Skills must always be directories: skills/<name>/SKILL.md
 # Reject legacy flat skill files (both current and legacy repo layouts).
@@ -166,7 +268,10 @@ fi
 /**
  * Install the pre-commit hook for frontmatter validation.
  */
-export function installPreCommitHook(dir: string): void {
+export function installPreCommitHook(
+  dir: string,
+  allowRootMemoryLayout = false,
+): void {
   const hooksDir = join(dir, ".git", "hooks");
   const hookPath = join(hooksDir, "pre-commit");
 
@@ -176,6 +281,11 @@ export function installPreCommitHook(dir: string): void {
 
   writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, "utf-8");
   chmodSync(hookPath, 0o755);
+  writeFileSync(
+    join(dir, ".git", MEMORY_LAYOUT_POLICY),
+    allowRootMemoryLayout ? "root-marker\n" : "legacy-only\n",
+    "utf8",
+  );
   debugLog("memfs-git", "Installed pre-commit hook");
 }
 

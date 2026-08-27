@@ -17,7 +17,7 @@
   "src/cli/components/ProviderSelector.tsx": 1692,
   "src/cli/components/ToolCallMessageRich.tsx": 1109,
   "src/cli/helpers/accumulator.ts": 1592,
-  "src/cli/helpers/reflection-transcript.ts": 1956,
+  "src/cli/helpers/reflection-transcript.ts": 1929,
   "src/cli/mods/local-mod-loader.test.ts": 1043,
   "src/cli/reflection-transcript.test.ts": 1084,
   "src/cli/subcommands/skills.ts": 1264,

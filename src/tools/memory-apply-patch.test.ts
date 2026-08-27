@@ -149,6 +149,12 @@ async function initTrackedMemoryRepo(
   await runGit(repoDir, ["push", "-u", "origin", "main"]);
 }
 
+async function activateRootMemoryLayout(repoDir: string): Promise<void> {
+  writeFileSync(join(repoDir, "MEMORY.md"), "# Memory\n", "utf8");
+  await runGit(repoDir, ["add", "MEMORY.md"]);
+  await runGit(repoDir, ["commit", "-m", "activate root memory layout"]);
+}
+
 describe("memory_apply_patch tool", () => {
   let tempRoot: string;
   let memoryDir: string;
@@ -162,6 +168,8 @@ describe("memory_apply_patch tool", () => {
   const originalAgentId = process.env.AGENT_ID;
   const originalAgentName = process.env.AGENT_NAME;
   const originalHome = process.env.HOME;
+  const originalLocalBackendDir = process.env.LETTA_LOCAL_BACKEND_DIR;
+  const originalLocalBackendFlag = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
 
   beforeEach(async () => {
     tempRoot = mkdtempSync(join(tmpdir(), "letta-memory-apply-patch-"));
@@ -190,6 +198,13 @@ describe("memory_apply_patch tool", () => {
 
     if (originalHome === undefined) delete process.env.HOME;
     else process.env.HOME = originalHome;
+    if (originalLocalBackendDir === undefined)
+      delete process.env.LETTA_LOCAL_BACKEND_DIR;
+    else process.env.LETTA_LOCAL_BACKEND_DIR = originalLocalBackendDir;
+    if (originalLocalBackendFlag === undefined)
+      delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+    else
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = originalLocalBackendFlag;
 
     if (tempRoot) {
       await rm(tempRoot, { recursive: true, force: true });
@@ -349,6 +364,49 @@ describe("memory_apply_patch tool", () => {
         process.env.LETTA_LOCAL_BACKEND_DIR = originalLocalBackendDir;
       }
     }
+  });
+
+  test("writes MemFS v2 files and requires directory indexes", async () => {
+    await activateRootMemoryLayout(memoryDir);
+    const invoke = (input: string) =>
+      runScopedMemoryApplyPatch({ reason: "update v2 memory", input });
+    await invoke(
+      "*** Begin Patch\n*** Add File: human.md\n+Prefers concise replies.\n*** End Patch",
+    );
+    expect(readFileSync(join(memoryDir, "human.md"), "utf8")).toBe(
+      '---\nname: "Human"\ndescription: "Memory block human"\n---\nPrefers concise replies.',
+    );
+
+    await expect(
+      invoke(
+        "*** Begin Patch\n*** Add File: projects/note.md\n+Deferred note.\n*** End Patch",
+      ),
+    ).rejects.toThrow(/requires projects\/MEMORY\.md/);
+    await invoke(
+      [
+        "*** Begin Patch",
+        "*** Add File: projects/MEMORY.md",
+        "+# Projects",
+        "*** Add File: projects/note.md",
+        "+Deferred note.",
+        "*** End Patch",
+      ].join("\n"),
+    );
+    expect(readFileSync(join(memoryDir, "projects/MEMORY.md"), "utf8")).toBe(
+      "# Projects\n",
+    );
+  });
+
+  test("rejects skills/ labels under memfs-v2 with a clear error", async () => {
+    await activateRootMemoryLayout(memoryDir);
+    const invoke = (input: string) =>
+      runScopedMemoryApplyPatch({ reason: "attempt skill add", input });
+
+    await expect(
+      invoke(
+        "*** Begin Patch\n*** Add File: skills/my-skill.md\n+Skill body.\n*** End Patch",
+      ),
+    ).rejects.toThrow(/skill\/file tooling/);
   });
 
   test("uses local-only wording for memory tool descriptions on local backend", async () => {

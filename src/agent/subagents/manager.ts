@@ -10,6 +10,8 @@
 import { spawn } from "node:child_process";
 import { platform } from "node:os";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { detectMemoryFormat } from "@/agent/memory-format";
 import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
 import { updateSubagent } from "@/agent/subagent-state.js";
@@ -36,6 +38,7 @@ import { isSubagentStdoutLostError } from "@/utils/subagent-stdout-failure";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import {
   getAllSubagentConfigs,
+  resolveSubagentConfigForMemoryFormat,
   type SubagentConfig,
   type SubagentMemoryScope,
   type SubagentResult,
@@ -826,7 +829,7 @@ export async function spawnSubagent(
   systemPromptOverride?: string,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
-  const config = allConfigs[type];
+  let config = allConfigs[type];
 
   if (!config) {
     return {
@@ -868,6 +871,22 @@ export async function spawnSubagent(
       agentId: resolvedParentAgentId,
       conversationId: resolvedParentConversationId,
     });
+  const formatConfig = resolveSubagentConfigForMemoryFormat(
+    config,
+    resolvedParentAgentId
+      ? detectMemoryFormat(
+          getScopedMemoryFilesystemRoot(resolvedParentAgentId),
+          activeBackend.capabilities.localMemfs,
+        )
+      : "memfs-v1",
+    activeBackend.capabilities.localMemfs,
+  );
+  const effectiveSystemPromptOverride =
+    systemPromptOverride ??
+    (formatConfig.systemPrompt !== config.systemPrompt
+      ? formatConfig.systemPrompt
+      : undefined);
+  config = formatConfig;
   const billingTier = await getCurrentBillingTier();
 
   // For existing agents, don't override model; for new agents, use provided or config default
@@ -940,7 +959,7 @@ export async function spawnSubagent(
     resolvedParentAgentId,
     transcriptPath,
     memoryScope,
-    systemPromptOverride,
+    effectiveSystemPromptOverride,
   );
 
   return result;
