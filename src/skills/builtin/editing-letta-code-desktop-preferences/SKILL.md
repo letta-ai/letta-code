@@ -15,12 +15,22 @@ The Desktop preferences file is:
 ~/.letta/desktop_preferences.json
 ```
 
-Known preference keys:
+User-editable preference keys:
 
 - `defaultWorkingDirectory`: default folder for new local sessions.
 - `theme`: `auto`, `light`, or `dark`.
 - `allowRemoteAccess`: boolean for whether remote access should be enabled in preferences.
-- `remoteEnvName`: environment name shown for remote access.
+- `runInBackground`: boolean for whether Desktop stays alive in tray/menu bar when all windows close.
+- `startAtLogin`: boolean for whether Desktop starts hidden at login.
+- `remoteEnvName`: environment name shown in the Letta Cloud environment picker for the cloud listener.
+- `localBackendDirectory`: directory containing local backend agents, conversations, and memory.
+- `allowLocalAgentsWhenSignedIn`: boolean for whether signed-in Desktop sessions can see local/offline agents.
+
+System-managed keys (do not edit directly):
+- `artifactsByAgent`: per-agent artifacts panel state, written by Desktop UI.
+- `debugPanelEnabled`: developer debug panel, controlled via app menus.
+- `remoteAppServerEnabled`: Remote App Server toggle, applied at startup.
+- `remoteAppServerUrl`: Remote App Server URL, configured via preferences UI.
 
 ## Workflow
 
@@ -29,7 +39,7 @@ Known preference keys:
 3. Merge only the requested preference updates.
 4. Write pretty JSON with a trailing newline.
 5. Do not edit token, provider, secret, agent, conversation, memory, or unrelated state files.
-6. Tell the user that the change applies live only if their Desktop build watches preference-file changes; otherwise they should reload/restart Desktop or use Preferences → General.
+6. Changes apply live within ~100ms via Desktop's file watcher; if Desktop is not running, changes take effect on next startup.
 
 ## Safe edit command
 
