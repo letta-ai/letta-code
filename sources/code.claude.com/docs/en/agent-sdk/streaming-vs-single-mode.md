@@ -276,7 +276,7 @@ If a query ends with an error result, such as `error_max_turns`, a single messag
 
   async def single_message_example():
       # Simple one-shot query using query() function
-      # query() raises after an error result, such as error_max_turns
+      # query() raises ResultError after an error result, such as error_max_turns
       try:
           async for message in query(
               prompt="Explain the authentication flow",
@@ -284,7 +284,6 @@ If a query ends with an error result, such as `error_max_turns`, a single messag
           ):
               if isinstance(message, ResultMessage) and message.subtype == "success":
                   print(message.result)
-      # The SDK raises a plain Exception for error results, so match Exception here
       except Exception as e:
           print(f"Query failed: {e}")
 
