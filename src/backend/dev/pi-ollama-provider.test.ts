@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { streamSimple } from "@earendil-works/pi-ai/api/openai-completions";
 import { testRefreshContext } from "@/test-utils/pi-refresh-context";
 import { localEndpointNativeBaseURL } from "./pi-local-endpoint-provider";
 import { resolvePiModelForAgent } from "./pi-model-factory";
@@ -171,6 +172,69 @@ describe("createOllamaPiProvider", () => {
     expect(text?.input).toEqual(["text"]);
     expect(text?.reasoning).toBe(false);
     expect(text?.contextWindow).toBe(32768);
+  });
+
+  test("publishes Ollama reasoning compatibility for thinking models", async () => {
+    const state = qwenState();
+    const provider = createOllamaPiProvider({
+      baseURL: "http://localhost:11434",
+      fetchImpl: fakeOllamaFetch(state),
+    });
+    await provider.refreshModels?.(testRefreshContext());
+
+    expect(
+      provider.getModels().find((m) => m.id === "qwen3.6:27b")?.compat,
+    ).toMatchObject({
+      supportsReasoningEffort: true,
+    });
+    expect(
+      provider.getModels().find((m) => m.id === "qwen3.6:27b")
+        ?.thinkingLevelMap,
+    ).toEqual({ off: "none" });
+  });
+
+  test("serializes configured reasoning effort for Ollama Chat Completions", async () => {
+    const state = qwenState();
+    const provider = createOllamaPiProvider({
+      baseURL: "http://localhost:11434",
+      fetchImpl: fakeOllamaFetch(state),
+    });
+    await provider.refreshModels?.(testRefreshContext());
+    const model = provider.getModels().find((m) => m.id === "qwen3.6:27b");
+    if (!model) throw new Error("Expected Qwen model");
+
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = (async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(
+        [
+          'data: {"id":"ollama-1","choices":[{"delta":{"content":"ok"},"finish_reason":null}]}',
+          'data: {"id":"ollama-1","choices":[{"delta":{},"finish_reason":"stop"}]}',
+          "data: [DONE]",
+          "",
+        ].join("\\n"),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    }) as typeof fetch;
+
+    await streamSimple(
+      model,
+      { messages: [{ role: "user", content: "hello", timestamp: 0 }] },
+      { apiKey: "ollama", fetch: fetchImpl, reasoning: "low" },
+    ).result();
+
+    await streamSimple(
+      model,
+      { messages: [{ role: "user", content: "hello", timestamp: 0 }] },
+      { apiKey: "ollama", fetch: fetchImpl },
+    ).result();
+
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toHaveProperty("reasoning_effort", "low");
+    expect(bodies[1]).toHaveProperty("reasoning_effort", "none");
   });
 
   // Ollama serves OLLAMA_CONTEXT_LENGTH, not the GGUF maximum, and silently
