@@ -37,6 +37,7 @@ import { withSerializedGitConfigMutation } from "./memory-git-config-lock";
 import {
   installPostCommitHook,
   installPreCommitHook,
+  installSharedMemoryPreCommitHook,
 } from "./memory-git-hooks";
 import { GIT_DISABLE_COMMIT_SIGNING_ARGS } from "./memory-git-signing";
 
@@ -312,25 +313,23 @@ async function maybeUpdateRepositoryRemoteOrigin(args: {
   }
 }
 
-export async function prepareAttachedRepositoryForGitOps(args: {
+interface RepositoryMountGitArgs {
   agentId: string;
   repositoryName: string;
   directory: string;
   remoteUrl: string;
   token: string;
-}): Promise<void> {
+}
+
+export async function prepareAttachedRepositoryForGitOps(
+  args: RepositoryMountGitArgs,
+): Promise<void> {
   await maybeUpdateRepositoryRemoteOrigin(args);
   await configureLocalCredentialHelper(args.directory, args.token);
   await ensureLocalMemfsGitConfig(args.directory, args.agentId);
 }
 
-async function cloneRepositoryMount(args: {
-  agentId: string;
-  repositoryName: string;
-  directory: string;
-  remoteUrl: string;
-  token: string;
-}): Promise<void> {
+async function syncRepoMount(args: RepositoryMountGitArgs): Promise<void> {
   if (!existsSync(args.directory)) {
     mkdirSync(args.directory, { recursive: true });
     try {
@@ -359,6 +358,7 @@ async function cloneRepositoryMount(args: {
   }
 
   await prepareAttachedRepositoryForGitOps(args);
+  installSharedMemoryPreCommitHook(args.directory);
 }
 
 /**
@@ -1499,7 +1499,7 @@ async function syncAttachedRepository(args: {
   const directory = getRepositoryMountDir(args.agentId, repositoryName);
   const remoteUrl = getRepositoryRemoteUrl(args.agentId, repositoryName);
 
-  await cloneRepositoryMount({
+  await syncRepoMount({
     agentId: args.agentId,
     repositoryName,
     directory,

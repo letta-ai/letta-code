@@ -1,9 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installPreCommitHook } from "./memory-git-hooks";
+import {
+  installPreCommitHook,
+  installSharedMemoryPreCommitHook,
+} from "./memory-git-hooks";
 
 describe("MemFS v2 pre-commit hook", () => {
   let repo = "";
@@ -67,6 +77,51 @@ describe("MemFS v2 pre-commit hook", () => {
     expect(extraKey.status).not.toBe(0);
     expect(extraKey.stdout + extraKey.stderr).toContain(
       "unknown frontmatter key 'extra' (allowed: name description)",
+    );
+  });
+});
+
+describe("shared-memory pre-commit hook", () => {
+  let repo = "";
+
+  afterEach(() => {
+    if (repo) rmSync(repo, { recursive: true, force: true });
+  });
+
+  test("requires name and description without a root marker", () => {
+    repo = mkdtempSync(join(tmpdir(), "shared-memory-hook-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Test Agent"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "test@example.com"], {
+      cwd: repo,
+    });
+
+    installSharedMemoryPreCommitHook(repo);
+
+    expect(existsSync(join(repo, ".git", "hooks", "pre-commit"))).toBe(true);
+    expect(
+      readFileSync(join(repo, ".git", "letta-memory-layout-policy"), "utf8"),
+    ).toBe("shared-memory\n");
+
+    writeFileSync(
+      join(repo, "missing-name.md"),
+      "---\ndescription: Purpose\n---\nBody.\n",
+    );
+    writeFileSync(
+      join(repo, "missing-description.md"),
+      "---\nname: Notes\n---\nBody.\n",
+    );
+    execFileSync("git", ["add", "."], { cwd: repo });
+
+    const result = spawnSync("git", ["commit", "-m", "invalid memory"], {
+      cwd: repo,
+      encoding: "utf8",
+    });
+    const output = result.stdout + result.stderr;
+    expect(result.status).not.toBe(0);
+    expect(output).toContain("missing-name.md: missing required field 'name'");
+    expect(output).toContain(
+      "missing-description.md: missing required field 'description'",
     );
   });
 });
