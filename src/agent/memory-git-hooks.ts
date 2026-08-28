@@ -31,7 +31,7 @@ type MemoryLayoutPolicy = "legacy-only" | "root-marker" | "shared-memory";
  * - Only allowed agent-editable key: description
  * - Legacy key 'limit' is tolerated for backward compatibility
  * - read_only may exist (from server) but agent must not change it
- * - Optional file-size and depth constraints come from .letta-memory.json
+ * - Optional file-size and depth constraints come from .memfs.config.json
  */
 export const PRE_COMMIT_HOOK_SCRIPT = `#!/usr/bin/env bash
 # Validate frontmatter in staged memory .md files

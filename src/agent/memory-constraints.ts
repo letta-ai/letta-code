@@ -5,7 +5,8 @@
  * the validator dependency-free lets Git execute it from agent and shared
  * memory repositories without resolving the Letta Code package at commit time.
  *
- * The optional tracked `.letta-memory.json` file accepts:
+ * The optional tracked `.memfs.config.json` file accepts:
+ * - `version`: the required config format version (currently 1)
  * - `maxFileCharacters`: a default cap for each projected memory Markdown file
  * - `fileCharacterLimits`: ordered glob overrides; the first match wins, and a
  *   null limit leaves matching files uncapped
@@ -15,7 +16,7 @@
  * File limits count the complete staged file, including frontmatter.
  */
 
-export const MEMORY_CONSTRAINTS_CONFIG_PATH = ".letta-memory.json";
+export const MEMORY_CONSTRAINTS_CONFIG_PATH = ".memfs.config.json";
 export const MEMORY_CONSTRAINTS_VALIDATOR_NAME = "letta-memory-constraints.cjs";
 export const MEMORY_CONSTRAINTS_UPDATE_ENV = "LETTA_MEMORY_CONSTRAINTS_UPDATE";
 
@@ -29,6 +30,7 @@ const CONFIG_PATH = ${JSON.stringify(MEMORY_CONSTRAINTS_CONFIG_PATH)};
 const CONFIG_UPDATE_ENV = ${JSON.stringify(MEMORY_CONSTRAINTS_UPDATE_ENV)};
 const LAYOUT_POLICY_FILE = "letta-memory-layout-policy";
 const ALLOWED_CONFIG_KEYS = new Set([
+  "version",
   "maxDepth",
   "maxFileCharacters",
   "fileCharacterLimits",
@@ -138,6 +140,10 @@ function parseConfig(content, errors) {
     if (!ALLOWED_CONFIG_KEYS.has(key)) {
       errors.push(CONFIG_PATH + ": unknown field '" + key + "'");
     }
+  }
+
+  if (value.version !== 1) {
+    errors.push(CONFIG_PATH + ": version must be 1");
   }
 
   if (

@@ -49,7 +49,7 @@ function v2Memory(body: string, name = "Notes"): string {
 function seedConstraints(repo: string, config: Record<string, unknown>): void {
   writeFileSync(
     join(repo, MEMORY_CONSTRAINTS_CONFIG_PATH),
-    `${JSON.stringify(config, null, 2)}\n`,
+    `${JSON.stringify({ version: 1, ...config }, null, 2)}\n`,
   );
   execFileSync("git", ["add", MEMORY_CONSTRAINTS_CONFIG_PATH], { cwd: repo });
   execFileSync("git", ["commit", "-qm", "seed constraints"], { cwd: repo });
@@ -275,6 +275,20 @@ describe("MemFS v2 pre-commit hook", () => {
     );
   });
 
+  test("rejects unsupported config versions", () => {
+    repo = initRepo("memfs-v2-config-version-");
+    seedConstraints(repo, { version: 2, maxDepth: 1 });
+    installPreCommitHook(repo, true);
+
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    execFileSync("git", ["add", "MEMORY.md"], { cwd: repo });
+    const result = tryCommit(repo, "reject unsupported config");
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      ".memfs.config.json: version must be 1",
+    );
+  });
+
   test("protects and validates the tracked constraint config", () => {
     repo = initRepo("memfs-v2-protected-constraints-");
     seedConstraints(repo, { maxDepth: 2 });
@@ -308,7 +322,7 @@ describe("MemFS v2 pre-commit hook", () => {
 
     writeFileSync(
       join(repo, MEMORY_CONSTRAINTS_CONFIG_PATH),
-      '{"maxDepth":3}\n',
+      '{"version":1,"maxDepth":3}\n',
     );
     execFileSync("git", ["add", MEMORY_CONSTRAINTS_CONFIG_PATH], { cwd: repo });
     expect(
