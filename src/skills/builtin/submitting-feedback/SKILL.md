@@ -1,6 +1,6 @@
 ---
 name: submitting-feedback
-description: Submits user-approved feedback about Letta Code or the current agent to the Letta team. Load when the user is upset, frustrated, dissatisfied, reports poor agent behavior, or asks to send feedback. Ask before submitting unless the user already explicitly requested submission.
+description: Submits user-approved feedback about Letta Code or the current agent to the Letta team. Load when the user is upset, frustrated, dissatisfied, reports poor agent behavior, or asks to send feedback. Works with cloud-hosted and local agents. Ask before submitting unless the user already explicitly requested submission.
 ---
 
 # Submitting Feedback

@@ -25,7 +25,6 @@ Options:
   -h, --help         Show this help
 
 Notes:
-  - Requires a signed-in Letta Cloud agent.
   - Ask the user for permission before submitting feedback on their behalf.
 `.trim(),
   );
