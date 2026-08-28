@@ -10,6 +10,11 @@
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { debugLog } from "@/utils/debug";
+import {
+  MEMORY_CONSTRAINTS_CONFIG_PATH,
+  MEMORY_CONSTRAINTS_VALIDATOR_NAME,
+  MEMORY_CONSTRAINTS_VALIDATOR_SCRIPT,
+} from "./memory-constraints";
 
 const MEMORY_LAYOUT_POLICY = "letta-memory-layout-policy";
 type MemoryLayoutPolicy = "legacy-only" | "root-marker" | "shared-memory";
@@ -26,6 +31,7 @@ type MemoryLayoutPolicy = "legacy-only" | "root-marker" | "shared-memory";
  * - Only allowed agent-editable key: description
  * - Legacy key 'limit' is tolerated for backward compatibility
  * - read_only may exist (from server) but agent must not change it
+ * - Optional file-size and depth constraints come from .memfs.config.json
  */
 export const PRE_COMMIT_HOOK_SCRIPT = `#!/usr/bin/env bash
 # Validate frontmatter in staged memory .md files
@@ -38,6 +44,13 @@ errors=""
 
 memory_layout_policy_file="$(git rev-parse --git-common-dir 2>/dev/null)/${MEMORY_LAYOUT_POLICY}"
 memory_layout_policy=$(cat "$memory_layout_policy_file" 2>/dev/null || true)
+
+validate_memory_constraints() {
+  if git cat-file -e ":${MEMORY_CONSTRAINTS_CONFIG_PATH}" 2>/dev/null || \
+     git cat-file -e "HEAD:${MEMORY_CONSTRAINTS_CONFIG_PATH}" 2>/dev/null; then
+    node "$(git rev-parse --git-common-dir)/hooks/${MEMORY_CONSTRAINTS_VALIDATOR_NAME}" || exit $?
+  fi
+}
 
 validate_v2_file() {
   local file="$1" staged first_line closing_line frontmatter line key value
@@ -145,6 +158,7 @@ if [ "$use_v2_validation" = "true" ]; then
     echo -e "$errors"
     exit 1
   fi
+  validate_memory_constraints
   exit 0
 fi
 
@@ -276,6 +290,7 @@ if [ -n "$errors" ]; then
   echo -e "$errors"
   exit 1
 fi
+validate_memory_constraints
 `;
 
 /**
@@ -294,6 +309,11 @@ function installPreCommitHookWithPolicy(
 
   writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, "utf-8");
   chmodSync(hookPath, 0o755);
+  writeFileSync(
+    join(hooksDir, MEMORY_CONSTRAINTS_VALIDATOR_NAME),
+    MEMORY_CONSTRAINTS_VALIDATOR_SCRIPT,
+    "utf8",
+  );
   writeFileSync(join(dir, ".git", MEMORY_LAYOUT_POLICY), `${policy}\n`, "utf8");
   debugLog("memfs-git", "Installed pre-commit hook");
 }
