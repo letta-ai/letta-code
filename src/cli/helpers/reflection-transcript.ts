@@ -647,9 +647,6 @@ function countAssistantRows(entries: TranscriptEntry[]): number {
   return entries.filter((entry) => entry.kind === "assistant").length;
 }
 
-/** Maximum characters to keep for tool-call arguments in the reflection payload. */
-const TOOL_ARGS_TRUNCATE_LIMIT = 300;
-
 /**
  * Normalize a selected client-transcript fragment into the shared trajectory
  * record format consumed by reflection agents.
@@ -661,7 +658,7 @@ function normalizeReflectionTranscript(entries: TranscriptEntry[]): string {
     transcript,
     sourceContext: { partial: true },
     bounds: {
-      toolArguments: { maxCharacters: TOOL_ARGS_TRUNCATE_LIMIT },
+      toolArguments: { maxCharacters: null },
     },
     filters: { toolResults: "include" },
   });
