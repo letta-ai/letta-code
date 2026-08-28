@@ -5354,12 +5354,14 @@ In cloud sessions, Claude Code also ignores server-delivered mid-session MCP upd
 
 ### `forceRemoteSettingsRefresh`
 
-Block CLI startup until Claude Code has freshly fetched [server-managed settings](/docs/en/server-managed-settings). If the fetch fails, Claude Code exits instead of continuing with cached or no settings. When the key is unset, startup continues without waiting for remote settings. A Cloud gateway session always waits, and exits if the gateway can't be reached. Set it when your environment can't accept even a brief window in which a session runs without its managed policy.
+Block CLI startup until Claude Code has freshly fetched [server-managed settings](/docs/en/server-managed-settings). If the fetch fails, Claude Code exits instead of continuing with cached or no settings. Set it when your environment can't accept even a brief window in which a session runs without its managed policy.
+
+When the key is unset, Claude Code doesn't block startup on the fetch, though when the developer signs in at startup it waits up to five seconds for the fetch. A Cloud gateway session always waits, and exits if the gateway can't be reached.
 
 * **Scope**: [`Managed`](#scopes). Claude Code honors a `true` from any admin-controlled managed source, even one that isn't the highest-priority source.
 * **Type**: Boolean
   * `true`: Claude Code blocks startup until it has freshly fetched server-managed settings, and exits if the fetch fails
-  * `false`: startup continues without waiting for remote settings
+  * `false`: Claude Code doesn't block startup on the fetch, though at a sign-in startup it waits up to five seconds for the fetch
 * **Default**: `false`
 
 ```json managed-settings.json theme={null}

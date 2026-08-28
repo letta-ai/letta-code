@@ -12,10 +12,6 @@ This page covers self-hosting on your own infrastructure. For deployable Dockerf
 
 If you do not need infrastructure control, custom isolation, or your own data plane, consider [Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview) instead: a hosted REST API where Anthropic runs the agent and the sandbox, so your application sends events and streams back results with no hosting infrastructure to operate.
 
-<Info>
-  For security hardening beyond basic sandboxing, including network controls, credential management, and isolation options, see [Secure Deployment](/docs/en/agent-sdk/secure-deployment).
-</Info>
-
 ## The subprocess model
 
 Every hosting decision on this page follows from how the SDK runs the agent. When your code calls `query()`, the SDK spawns a separate `claude` CLI process and talks to it over stdio. That subprocess owns the shell, the working directory, and the JSONL session transcripts on local disk.
@@ -148,8 +144,6 @@ The pattern hinges on resuming a session by ID with a shared store attached:
   asyncio.run(main())
   ```
 </CodeGroup>
-
-See [Session storage](/docs/en/agent-sdk/session-storage) for the full `SessionStore` interface and reference adapters.
 
 ### Multi-agent container
 
@@ -316,8 +310,6 @@ The example below applies the settings, auto memory, config directory, and worki
   ```
 </CodeGroup>
 
-For per-tenant network controls, see [Secure Deployment](/docs/en/agent-sdk/secure-deployment).
-
 ## Known limitations
 
 Plan around these in your deployment design.
@@ -328,6 +320,14 @@ Plan around these in your deployment design.
 | Memory growth over long sessions                    | Cap session length or recycle subprocesses periodically. See [Scaling and concurrency](#scaling-and-concurrency).                                                                                                                                                                            |
 | Large parallel-subagent fanouts can hit rate limits | Break work into smaller batches rather than issuing one wide dispatch.                                                                                                                                                                                                                       |
 | No per-subagent wall-clock deadline                 | Cap each [subagent](/docs/en/agent-sdk/subagents) with `maxTurns` in its `AgentDefinition`. For background subagents only, `CLAUDE_ASYNC_AGENT_STALL_TIMEOUT_MS` sets a stall watchdog that fires when a `run_in_background` subagent stops producing output; it is not a total-runtime deadline. |
+
+## Troubleshoot deployment failures
+
+Use this section when an agent that works on your machine fails in a deployed service. Each item below names a failure and links the entry that covers it:
+
+* **CLI not found at service start**: in Python, a container or service manager runs your application with a different `PATH` than your shell, so an install that works locally isn't visible to the process. In TypeScript, the image build skipped the SDK's optional dependencies, or `pathToClaudeCodeExecutable` points at a file that doesn't exist in the image. See [Claude Code not found](/docs/en/agent-sdk/troubleshooting#clinotfounderror-claude-code-not-found).
+* **CLI present in the image but won't launch**: Claude Code can't start from a binary that doesn't match the container's architecture or libc, or from a file that lost its execute permission in the image build. See [Failed to start Claude Code](/docs/en/agent-sdk/troubleshooting#cliconnectionerror-failed-to-start-claude-code).
+* **Claude Code process exits mid-run**: the error your application receives depends on the SDK language and on whether the CLI reported an error result first. The entries under [CLI process exit](/docs/en/agent-sdk/troubleshooting#cli-process-exit) cover each message.
 
 ## Next steps
 

@@ -217,26 +217,6 @@ When allowing, the tool runs with the input Claude requested unless you return a
 
 When denying, provide a message explaining why. Claude sees this message and may adjust its approach.
 
-<CodeGroup>
-  ```python Python theme={null}
-  from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
-
-  # Allow the tool to execute
-  return PermissionResultAllow(updated_input=input_data)
-
-  # Block the tool
-  return PermissionResultDeny(message="User rejected this action")
-  ```
-
-  ```typescript TypeScript theme={null}
-  // Allow the tool to execute
-  return { behavior: "allow", updatedInput: input };
-
-  // Block the tool
-  return { behavior: "deny", message: "User rejected this action" };
-  ```
-</CodeGroup>
-
 Beyond allowing or denying, you can modify the tool's input or provide context that helps Claude adjust its approach:
 
 * **Approve**: let the tool execute as Claude requested

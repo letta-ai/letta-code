@@ -253,11 +253,11 @@
 
 - [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview.md): Build production AI agents with Claude Code as a library
 - [Quickstart](https://code.claude.com/docs/en/agent-sdk/quickstart.md): Get started with the Python or TypeScript Agent SDK to build AI agents that work autonomously
+- [Troubleshooting](https://code.claude.com/docs/en/agent-sdk/troubleshooting.md): Fix Agent SDK errors by the exact message you see, with the cause and fix for each error in the TypeScript and Python SDKs.
 
 #### Build agents
 
 - [Examples](https://code.claude.com/docs/en/agent-sdk/examples.md): Find a complete, runnable Agent SDK project or a guided recipe in the Claude Cookbook that matches what you want to build.
-- [Troubleshooting](https://code.claude.com/docs/en/agent-sdk/troubleshooting.md): Fix Agent SDK errors by the exact message you see, with the cause and fix for each error in the TypeScript and Python SDKs.
 
 #### Core concepts
 
