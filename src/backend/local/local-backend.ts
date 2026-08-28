@@ -591,10 +591,9 @@ export class LocalBackend extends HeadlessBackend {
       stats: result.stats,
     };
   }
-
   private async compactForContextPressure(
     input: ProviderTurnInput,
-    _pressure: LocalContextPressure,
+    pressure: LocalContextPressure,
   ): Promise<{
     uiMessages: LocalMessage[];
     summary: string;
@@ -604,6 +603,8 @@ export class LocalBackend extends HeadlessBackend {
       input.conversationId,
       input.agentId,
       "context_window_limit",
+      undefined,
+      pressure.contextWindow,
     );
     return {
       uiMessages: this.store.listLocalMessages(
@@ -614,7 +615,6 @@ export class LocalBackend extends HeadlessBackend {
       stats: result.stats,
     };
   }
-
   private effectiveContextWindow(
     conversationId: string,
     agentId: string,
@@ -642,7 +642,6 @@ export class LocalBackend extends HeadlessBackend {
       ? agent.model_settings.context_window_limit
       : undefined;
   }
-
   /**
    * Resolve the model that compaction should use for a conversation.
    *
@@ -682,7 +681,6 @@ export class LocalBackend extends HeadlessBackend {
         : {}),
     };
   }
-
   private resolveCompactionSettings(
     agent: LocalAgentRecord,
     body?: ConversationMessageCompactBody,
@@ -739,12 +737,12 @@ export class LocalBackend extends HeadlessBackend {
           : LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
     };
   }
-
   private async compactLocalConversation(
     conversationId: string,
     agentId: string,
     trigger: string,
     body?: ConversationMessageCompactBody,
+    contextWindowOverride?: number,
   ): Promise<{
     numMessagesBefore: number;
     numMessagesAfter: number;
@@ -757,16 +755,17 @@ export class LocalBackend extends HeadlessBackend {
       agentId,
       trigger,
       body,
+      contextWindowOverride,
     );
     await this.emitCompactEnd(conversationId, agentId, trigger, result.stats);
     return result;
   }
-
   private async compactLocalConversationInner(
     conversationId: string,
     agentId: string,
     trigger: string,
     body?: ConversationMessageCompactBody,
+    contextWindowOverride?: number,
   ): Promise<{
     numMessagesBefore: number;
     numMessagesAfter: number;
@@ -789,6 +788,8 @@ export class LocalBackend extends HeadlessBackend {
           agent,
           trigger,
           settings,
+          contextWindowOverride ??
+            this.effectiveContextWindow(conversationId, agentId),
         );
         if (
           result.stats.context_window === undefined ||
@@ -874,13 +875,13 @@ export class LocalBackend extends HeadlessBackend {
       stats,
     };
   }
-
   private async compactLocalConversationSlidingWindow(
     conversationId: string,
     agentId: string,
     agent: LocalAgentRecord,
     trigger: string,
     settings: ResolvedLocalCompactionSettings,
+    contextWindow: number | undefined,
   ): Promise<{
     numMessagesBefore: number;
     numMessagesAfter: number;
@@ -888,7 +889,6 @@ export class LocalBackend extends HeadlessBackend {
     stats: LocalCompactionStats;
   }> {
     const messages = this.store.listLocalMessages(conversationId, agentId);
-    const contextWindow = this.effectiveContextWindow(conversationId, agentId);
     const plan = planLocalSlidingWindowCompaction(messages, {
       slidingWindowPercentage: settings.slidingWindowPercentage,
       contextWindow,

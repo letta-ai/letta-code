@@ -591,21 +591,24 @@ export function planLocalSlidingWindowCompaction(
     lastMessage && hasPendingLocalToolCall(lastMessage)
       ? messages.length - 2
       : messages.length - 1;
-  const goalTokens =
+  // Retention budget: derive it from the model's context window when
+  // known, otherwise from the conversation's own estimated size. Without
+  // a configured limit the budget used to be undefined, which made the
+  // eviction loop exit after its first step and degrade into pure
+  // count-based eviction — a few oversized tool/reasoning records could
+  // then retain most of the context tokens (#3956).
+  const totalEstimatedTokens = estimateLocalMessageTokens(messages);
+  const contextWindow =
     typeof options.contextWindow === "number" &&
     Number.isFinite(options.contextWindow)
-      ? (1 - percentage) * options.contextWindow
+      ? options.contextWindow
       : undefined;
+  const goalTokens = (1 - percentage) * (contextWindow ?? totalEstimatedTokens);
   let approxTokenCount = options.contextWindow ?? Number.POSITIVE_INFINITY;
   let cutoffIndex: number | undefined;
 
   let evictionPercentage = percentage;
-  while (
-    (goalTokens === undefined
-      ? cutoffIndex === undefined
-      : approxTokenCount >= goalTokens) &&
-    evictionPercentage < 1.0
-  ) {
+  while (approxTokenCount >= goalTokens && evictionPercentage < 1.0) {
     evictionPercentage += 0.1;
     const messageCutoffIndex = Math.min(
       Math.round(evictionPercentage * messages.length),

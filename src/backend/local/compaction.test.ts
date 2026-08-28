@@ -7,7 +7,12 @@ import type {
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { createOrUpdateLocalProvider } from "@/backend/local/local-provider-auth-store";
-import { summarizeLocalMessagesAll } from "./compaction";
+import {
+  estimateLocalMessageTokens,
+  LocalSlidingWindowCompactionPlanningError,
+  planLocalSlidingWindowCompaction,
+  summarizeLocalMessagesAll,
+} from "./compaction";
 import { emptyLocalUsage, type LocalMessage } from "./local-message";
 
 function summaryAssistantMessage(): AssistantMessage {
@@ -133,5 +138,125 @@ describe("local compaction summarizer options", () => {
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
+  });
+});
+
+function planningUserMessage(text: string): LocalMessage {
+  return {
+    id: `u-${Math.random().toString(36).slice(2)}`,
+    role: "user",
+    content: text,
+    timestamp: Date.now(),
+  };
+}
+
+function planningAssistantMessage(text: string): LocalMessage {
+  return {
+    id: `a-${Math.random().toString(36).slice(2)}`,
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: "anthropic-messages",
+    provider: "anthropic",
+    model: "claude-fable-5",
+    usage: emptyLocalUsage(),
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
+}
+
+/**
+ * u a(small) u a(small) u a(small) u a(BIG) u a(small) u a(small)
+ * Assistant cutoffs exist at indices 1/3/5/7/9; the bulk of the tokens
+ * sits in the assistant at index 7, so meaningful headroom requires
+ * evicting past it.
+ */
+function toolHeavyConversation(): {
+  messages: LocalMessage[];
+  bigRecord: LocalMessage;
+} {
+  const small = "x".repeat(1000);
+  const user = "y".repeat(100);
+  const big = "z".repeat(30000);
+  const bigRecord = planningAssistantMessage(big);
+  const messages: LocalMessage[] = [
+    planningUserMessage(user),
+    planningAssistantMessage(small),
+    planningUserMessage(user),
+    planningAssistantMessage(small),
+    planningUserMessage(user),
+    planningAssistantMessage(small),
+    planningUserMessage(user),
+    bigRecord,
+    planningUserMessage(user),
+    planningAssistantMessage(small),
+    planningUserMessage(user),
+    planningAssistantMessage(small),
+  ];
+  return { messages, bigRecord };
+}
+
+describe("planLocalSlidingWindowCompaction token awareness", () => {
+  test("evicts token-aware when no context window is configured", () => {
+    const { messages } = toolHeavyConversation();
+    const total = estimateLocalMessageTokens(messages);
+
+    const plan = planLocalSlidingWindowCompaction(messages, {});
+
+    const kept = estimateLocalMessageTokens(plan.messagesToKeep);
+    const goal = 0.7 * total;
+    expect(kept).toBeLessThanOrEqual(goal + 8);
+    // The first eviction step alone would have kept the big record.
+    expect(plan.cutoffIndex).toBeGreaterThan(5);
+  });
+
+  test("keeps first-step behavior once the retention budget is met", () => {
+    const { messages } = toolHeavyConversation();
+    const total = estimateLocalMessageTokens(messages);
+    const roomyWindow = Math.ceil(total / 0.3) + 1_000_000;
+
+    const plan = planLocalSlidingWindowCompaction(messages, {
+      contextWindow: roomyWindow,
+    });
+
+    expect(plan.cutoffIndex).toBe(5);
+  });
+
+  test("iterates until the configured budget is met", () => {
+    const { messages, bigRecord } = toolHeavyConversation();
+    // Retention budget is (1 - percentage) * contextWindow = 0.7 * 8000 =
+    // 5600 tokens: too small to keep the big record at index 7 (the tail
+    // from cutoff 5 estimates ~8325 tokens), so the planner must keep
+    // stepping until it lands past it.
+    const plan = planLocalSlidingWindowCompaction(messages, {
+      contextWindow: 8000,
+    });
+
+    const kept = estimateLocalMessageTokens(plan.messagesToKeep);
+    expect(kept).toBeLessThanOrEqual((1 - 0.3) * 8000 + 8);
+    expect(plan.messagesToSummarize).toContainEqual(bigRecord);
+  });
+
+  test("falls back to full summarization when the tail alone exceeds the budget", () => {
+    const small = "x".repeat(1000);
+    const user = "y".repeat(100);
+    const huge = "z".repeat(30000);
+    const messages: LocalMessage[] = [
+      planningUserMessage(user),
+      planningAssistantMessage(small),
+      planningUserMessage(user),
+      planningAssistantMessage(small),
+      planningUserMessage(user),
+      planningAssistantMessage(small),
+      planningUserMessage(user),
+      planningAssistantMessage(small),
+      planningUserMessage(user),
+      planningAssistantMessage(huge),
+      planningUserMessage(user),
+      planningAssistantMessage(huge),
+    ];
+
+    expect(() =>
+      planLocalSlidingWindowCompaction(messages, { contextWindow: 500 }),
+    ).toThrow(LocalSlidingWindowCompactionPlanningError);
   });
 });
