@@ -491,7 +491,6 @@ Claude Code also leaves fetching off when you connect through a [Claude apps gat
 * Have the VS Code extension [read settings files for the starting permission mode](/docs/en/permission-modes#switch-permission-modes)
 * Run [`/auto-mode-setup`](/docs/en/auto-mode-config#generate-environment-entries) to draft `autoMode.environment` entries
 * Use [Remote Control](/docs/en/remote-control#requirements)
-* Send or receive [cross-session messages](/docs/en/cross-session-messaging#availability)
 * Run [`claude import` or the `/import` command](/docs/en/cli-reference#cli-commands)
 * Create routines from the CLI with [`/schedule`](/docs/en/routines#troubleshooting)
 * Use [the advisor tool](/docs/en/advisor#requirements)

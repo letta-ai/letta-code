@@ -138,17 +138,17 @@ Claude Code keeps your vim mode and cursor position when you toggle the [transcr
 
 ### Mode switching
 
-| Command | Action                                | From mode      |
-| :------ | :------------------------------------ | :------------- |
-| `Esc`   | Enter NORMAL mode                     | INSERT, VISUAL |
-| `i`     | Insert before cursor                  | NORMAL         |
-| `I`     | Insert at beginning of line           | NORMAL         |
-| `a`     | Insert after cursor                   | NORMAL         |
-| `A`     | Insert at end of line                 | NORMAL         |
-| `o`     | Open line below                       | NORMAL         |
-| `O`     | Open line above                       | NORMAL         |
-| `v`     | Start character-wise visual selection | NORMAL         |
-| `V`     | Start line-wise visual selection      | NORMAL         |
+| Command           | Action                                                                                                    | From mode      |
+| :---------------- | :-------------------------------------------------------------------------------------------------------- | :------------- |
+| `Esc` or `Ctrl+[` | Enter NORMAL mode. In terminals that use the Kitty keyboard protocol, `Ctrl+[` requires v2.1.242 or later | INSERT, VISUAL |
+| `i`               | Insert before cursor                                                                                      | NORMAL         |
+| `I`               | Insert at beginning of line                                                                               | NORMAL         |
+| `a`               | Insert after cursor                                                                                       | NORMAL         |
+| `A`               | Insert at end of line                                                                                     | NORMAL         |
+| `o`               | Open line below                                                                                           | NORMAL         |
+| `O`               | Open line above                                                                                           | NORMAL         |
+| `v`               | Start character-wise visual selection                                                                     | NORMAL         |
+| `V`               | Start line-wise visual selection                                                                          | NORMAL         |
 
 ### Remap INSERT-mode key sequences
 
@@ -197,26 +197,27 @@ Claude Code reads this setting from your user settings file, the `--settings` fl
 
 ### Editing (NORMAL mode)
 
-| Command        | Action                                                                                                                    |
-| :------------- | :------------------------------------------------------------------------------------------------------------------------ |
-| `x`            | Delete character                                                                                                          |
-| `dd`           | Delete line                                                                                                               |
-| `D`            | Delete to end of line                                                                                                     |
-| `dw`/`de`/`db` | Delete word/to end/back                                                                                                   |
-| `cc`           | Change line                                                                                                               |
-| `C`            | Change to end of line                                                                                                     |
-| `cw`/`ce`/`cb` | Change word/to end/back                                                                                                   |
-| `s`            | Substitute character: delete the character under the cursor and enter INSERT mode. Requires Claude Code v2.1.211 or later |
-| `S`            | Substitute line: clear the line and enter INSERT mode. Requires Claude Code v2.1.211 or later                             |
-| `yy`/`Y`       | Yank (copy) line                                                                                                          |
-| `yw`/`ye`/`yb` | Yank word/to end/back                                                                                                     |
-| `p`            | Paste after cursor                                                                                                        |
-| `P`            | Paste before cursor                                                                                                       |
-| `>>`           | Indent line                                                                                                               |
-| `<<`           | Dedent line                                                                                                               |
-| `J`            | Join lines                                                                                                                |
-| `u`            | Undo                                                                                                                      |
-| `.`            | Repeat last change                                                                                                        |
+| Command               | Action                                                                                                                    |
+| :-------------------- | :------------------------------------------------------------------------------------------------------------------------ |
+| `x`                   | Delete character                                                                                                          |
+| `dd`                  | Delete line                                                                                                               |
+| `D`                   | Delete to end of line                                                                                                     |
+| `dw`/`de`/`db`        | Delete word/to end/back                                                                                                   |
+| `df{char}`/`dt{char}` | Delete to and including, or up to, the next occurrence of a character                                                     |
+| `cc`                  | Change line                                                                                                               |
+| `C`                   | Change to end of line                                                                                                     |
+| `cw`/`ce`/`cb`        | Change word/to end/back                                                                                                   |
+| `s`                   | Substitute character: delete the character under the cursor and enter INSERT mode. Requires Claude Code v2.1.211 or later |
+| `S`                   | Substitute line: clear the line and enter INSERT mode. Requires Claude Code v2.1.211 or later                             |
+| `yy`/`Y`              | Yank (copy) line                                                                                                          |
+| `yw`/`ye`/`yb`        | Yank word/to end/back                                                                                                     |
+| `p`                   | Paste after cursor                                                                                                        |
+| `P`                   | Paste before cursor                                                                                                       |
+| `>>`                  | Indent line                                                                                                               |
+| `<<`                  | Dedent line                                                                                                               |
+| `J`                   | Join lines                                                                                                                |
+| `u`                   | Undo                                                                                                                      |
+| `.`                   | Repeat last change                                                                                                        |
 
 ### Text objects (NORMAL mode)
 
