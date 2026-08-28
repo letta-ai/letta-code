@@ -19,6 +19,7 @@ const execFile = promisify(execFileCb);
 
 const TEST_AGENT_ID = "agent-test-memory-apply-patch";
 const TEST_AGENT_NAME = "Bob";
+const SYSTEM_DIRECTORY_PATH = /(^|[^A-Za-z0-9_-])(?:\$MEMORY_DIR\/)?system\//m;
 
 let mockClientOverride: (() => Promise<unknown>) | null = null;
 
@@ -458,7 +459,9 @@ describe("memory_apply_patch tool", () => {
     );
     expect(memorySchema?.description).not.toContain("MemFS v2");
     expect(memorySchema?.description).not.toContain("active memory format");
-    expect(memorySchema?.description).not.toContain("system/");
+    expect(SYSTEM_DIRECTORY_PATH.test(memorySchema?.description ?? "")).toBe(
+      false,
+    );
     expect(
       memorySchema?.input_schema.properties?.file_path?.description,
     ).toContain("human.md or projects/notes.md");
@@ -466,7 +469,10 @@ describe("memory_apply_patch tool", () => {
       memorySchema?.input_schema.properties?.description?.description,
     ).toContain("unused for frontmatter-free MEMORY.md indexes");
     expect(patchDescription).toContain(
-      "Root and child `MEMORY.md` files are frontmatter-free indexes",
+      "Root and child `MEMORY.md` files are valid without frontmatter",
+    );
+    expect(patchDescription).toContain(
+      "`read_only: true` files cannot be modified",
     );
     expect(patchDescription).not.toContain("MemFS v2");
     expect(patchDescription).not.toContain("Legacy");

@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getRepositoryMountDir } from "@/agent/memory-git";
@@ -9,11 +15,13 @@ import { clearTools, executeTool, loadSpecificTools } from "@/tools/manager";
 import SkillSchema from "@/tools/schemas/Skill.json";
 
 const TEST_AGENT_ID = "agent-skill-memfs-test";
+const SYSTEM_DIRECTORY_PATH = /(^|[^A-Za-z0-9_-])(?:\$MEMORY_DIR\/)?system\//m;
 let currentSkillsDirectory: string | null = null;
 
 const {
   readSkillContent,
   renderSkillContent,
+  resolveBundledSkillContentPath,
   skill,
   wrapSkillContent,
   wrapSkillPrompt,
@@ -104,6 +112,67 @@ describe("Skill tool memory filesystem lookup", () => {
         "agent-local-skill-test",
       ),
     ).rejects.toThrow('Skill "image-generation" not found');
+  });
+
+  test("selects root variants only for API repositories with root MEMORY.md", () => {
+    const memoryDir = join(tempRoot, "root-memory");
+    const bundledPath = join(tempRoot, "initializing-memory", "SKILL.md");
+    mkdirSync(memoryDir, { recursive: true });
+
+    expect(
+      resolveBundledSkillContentPath({
+        skillId: "initializing-memory",
+        bundledSkillPath: bundledPath,
+        memoryDir,
+        localMemfs: false,
+      }),
+    ).toBe(bundledPath);
+
+    writeFileSync(join(memoryDir, "MEMORY.md"), "# Memory\n");
+    expect(
+      resolveBundledSkillContentPath({
+        skillId: "initializing-memory",
+        bundledSkillPath: bundledPath,
+        memoryDir,
+        localMemfs: false,
+      }),
+    ).toEndWith(join("initializing-memory", "ROOT_MEMORY.md"));
+    expect(
+      resolveBundledSkillContentPath({
+        skillId: "initializing-memory",
+        bundledSkillPath: bundledPath,
+        memoryDir,
+        localMemfs: true,
+      }),
+    ).toBe(bundledPath);
+  });
+
+  test("selected root skill variants contain no system directory paths", () => {
+    const memoryDir = join(tempRoot, "root-skill-memory");
+    mkdirSync(memoryDir, { recursive: true });
+    writeFileSync(join(memoryDir, "MEMORY.md"), "# Memory\n");
+
+    for (const skillId of ["initializing-memory", "context-doctor"]) {
+      const bundledSkillPath = join(
+        import.meta.dir,
+        "..",
+        "skills",
+        "builtin",
+        skillId,
+        "SKILL.md",
+      );
+      const selectedPath = resolveBundledSkillContentPath({
+        skillId,
+        bundledSkillPath,
+        memoryDir,
+        localMemfs: false,
+      });
+
+      expect(selectedPath).toEndWith(join(skillId, "ROOT_MEMORY.md"));
+      expect(
+        SYSTEM_DIRECTORY_PATH.test(readFileSync(selectedPath, "utf8")),
+      ).toBe(false);
+    }
   });
 
   test("loads skills from MEMORY_DIR/skills", async () => {
