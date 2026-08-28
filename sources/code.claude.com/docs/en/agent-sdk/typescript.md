@@ -661,7 +661,7 @@ type SDKControlInterruptResponse = {
 };
 ```
 
-`still_queued` lists the UUIDs of user messages that survive the interrupt: messages still in the queue, plus any batch already dequeued for the next turn but not yet reachable by the abort. Each one runs as its own turn after the interrupt unless you cancel it first. Use the receipt to decide whether to resend anything; resending a message that is already listed produces a duplicate turn.
+`still_queued` lists the UUIDs of user messages that survive the interrupt: messages still in the queue, plus any messages Claude Code had already taken off the queue for the next turn before the interrupt arrived. Claude Code processes the listed messages after the interrupt unless you cancel them first, and can merge several into one turn. Use the receipt to decide whether to resend anything. Resending a message that is already listed delivers it to Claude twice.
 
 Interpret the list with these caveats:
 
