@@ -22,9 +22,11 @@ Path rules:
 
 Memory rules:
 - Operates on markdown memory files (`.md`)
-- Updated/deleted files must be valid memory files with frontmatter
+- Root and child `MEMORY.md` files are valid without frontmatter
+- Every other updated/deleted memory Markdown file must have exactly `name` and `description` frontmatter
+- A child directory is memory only when it contains `MEMORY.md`
 - `read_only: true` files cannot be modified
-- If adding a file without frontmatter, frontmatter is created automatically
+- If adding a regular memory file without frontmatter, frontmatter is created automatically
 
 Git behavior:
 - Stages changed memory paths
@@ -37,7 +39,7 @@ Example:
 memory_apply_patch(
   reason="Refine coding preferences",
   input="""*** Begin Patch
-*** Update File: system/human/prefs/coding.md
+*** Update File: human-prefs-coding.md
 @@
 -Use broad abstractions
 +Prefer small focused helpers

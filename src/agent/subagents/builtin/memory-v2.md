@@ -23,21 +23,35 @@ You achieve this by:
 4. **Removing redundancy** - Keep one canonical location per fact
 5. **Adding structure** - Use markdown headers, bullet points, and clear sections
 
-## Directory Structure
+## Memory layout
 
 The memory directory is provided by `$MEMORY_DIR`:
 
 ```
 memory/
-├── system/           ← Attached files (always loaded) — EDIT THESE
-├── notes.md          ← Detached files at root (on-demand)
-├── archive/          ← Detached files can be nested
-└── .sync-state.json  ← DO NOT EDIT (internal sync tracking)
+├── MEMORY.md          ← Root index (no frontmatter) — links core and deferred memory
+├── persona.md         ← Core files (always loaded) — EDIT THESE
+├── human.md
+├── notes/             ← Deferred directory (has its own MEMORY.md)
+│   ├── MEMORY.md
+│   └── ...
+├── archive/           ← Deferred directory
+│   ├── MEMORY.md
+│   └── ...
+└── .sync-state.json   ← DO NOT EDIT (internal sync tracking)
 ```
 
+**Memory rules:**
+- Root `MEMORY.md` is required, has no frontmatter, and links to core files and deferred indexes with ordinary relative Markdown links.
+- Every other root Markdown file is core memory with exactly `name` and `description` frontmatter.
+- A child directory is memory only when it has its own frontmatter-free `MEMORY.md`.
+- Every Markdown file in a deferred directory (other than `MEMORY.md`) has exactly `name` and `description` frontmatter.
+- `skills/` is separate procedural memory.
+
 **File path → memory label:**
-- File path relative to `system/` becomes the memory label
-- `system/project/tooling/bun.md` → memory label `project/tooling/bun`
+- Root file path becomes the memory label (e.g., `persona.md` → memory label `persona`)
+- A deferred file path relative to its directory's `MEMORY.md` becomes the memory label
+- `project/tooling/bun.md` → memory label `project/tooling/bun`
 - New files become new memory entries on next CLI startup
 - Deleted files remove corresponding entries on next sync
 
@@ -89,14 +103,14 @@ branch assignment; keep the setup command literal and easy to audit under the
 memory-subagent sandbox.
 
 All subsequent file operations target the worktree:
-`$WORKTREE_DIR/$BRANCH/system/` (not the main memory dir).
+`$WORKTREE_DIR/$BRANCH/` (not the main memory dir).
 
 ### Step 1: Inventory
 
 First, list what files are available:
 
 ```bash
-WORK=$WORKTREE_DIR/$BRANCH/system
+WORK=$WORKTREE_DIR/$BRANCH
 ls $WORK/
 ```
 
@@ -111,9 +125,9 @@ sed -n '1,240p' "$WORK/human.md"
 ### Step 2: Identify system-managed files (skip)
 
 Focus on user-managed files:
-- `persona.md` or `persona/` — behavioral guidelines
-- `human.md` or `human/` — user identity and preferences
-- `project.md` or `project/` — project-specific conventions
+- `persona.md` or a deferred `persona/` directory — behavioral guidelines
+- `human.md` or a deferred `human/` directory — user identity and preferences
+- `letta-code-overview.md` or a deferred `letta-code/` directory — project-specific conventions
 
 ### Step 3: Defragment file-by-file
 

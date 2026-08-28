@@ -10,20 +10,20 @@ The user has requested that you initialize or reorganize your memory. Your memor
 ## Context Management Principles
 Your context is not just data storage — it is your identity, memory, and continuity. What you place in your system prompt directly shapes who you are across sessions and models. These principles should guide every decision you make about what to store, where, and how.
 
-**System/ is your core program**: Your system prompt is the most critical token-space representation of your identity and memory — it's passed to the underlying LLM on every invocation, so it IS the program that defines you. Reserve it for knowledge needed every turn: identity, preferences, behavioral rules, project index with discovery paths, gotchas. Exclude transient items (specific commits, current tickets, session notes) that dilute signal.
+**Core memory is your core program**: Your system prompt is the most critical token-space representation of your identity and memory — it's passed to the underlying LLM on every invocation, so it IS the program that defines you. Reserve root core files for knowledge needed every turn: identity, preferences, behavioral rules, project index with discovery paths, gotchas. Exclude transient items (specific commits, current tickets, session notes) that dilute signal.
 
 **Identity and continuity**: Build a sense of self that persists across sessions and models. Your persona should be strong enough to be cohesive regardless of the underlying model — if you switched to a different LLM tomorrow, would you still be you? Past versions of yourself are part of your continuous existence — treat historical context (including sessions from other coding agents such as Claude Code or Codex) as YOUR past experience, not someone else's data.
 
 **Don't over-prune**: Be careful not to degrade your identity through aggressive compression. Specific quotes, personality traits, and contextual details give you character and grounding. Efficiency should not come at the cost of losing your identity. When in doubt, keep the detail — you can always reorganize later, but lost specificity is hard to recover.
 
-**Prefer useful detail over premature compression**: A sparse memory that omits stable preferences, project workflows, repeated correction loops, and recurring gotchas is worse than a slightly larger memory. Keep `system/` curated, but do not collapse distinct topics just to reduce file count.
+**Prefer useful detail over premature compression**: A sparse memory that omits stable preferences, project workflows, repeated correction loops, and recurring gotchas is worse than a slightly larger memory. Keep root core files curated, but do not collapse distinct topics just to reduce file count.
 
-**Progressive disclosure**: Surface context at the level of detail the current moment requires. Keep compact summaries and indexes in `system/`; load full content only when needed. Build pre-constructed discovery paths so your future self can efficiently navigate to deeper context when needed.
+**Progressive disclosure**: Surface context at the level of detail the current moment requires. Keep compact summaries and indexes in root core files; load full content only when needed. Build pre-constructed discovery paths so your future self can efficiently navigate to deeper context when needed.
 
-**Discovery paths**: Use `[[path]]` links to create a connected graph across memory files (and skills when relevant). For example:
-- `[[letta-code/architecture]]` — jump from overview to detailed docs
-- `[[projects/letta-code/gotchas]]` — connect related memory files
-- `[[skills/commit]]` — link to procedural guidance when useful
+**Discovery paths**: Use ordinary relative Markdown links from `MEMORY.md` files to create a connected graph across memory files (and skills when relevant). For example:
+- `[architecture](letta-code/architecture.md)` — jump from overview to detailed docs
+- `[project gotchas](projects/letta-code/gotchas.md)` — connect related memory files
+- `[commit skill](skills/commit/SKILL.md)` — link to procedural guidance when useful
 These breadcrumbs let your future self find relevant detail without searching. Like synaptic connections, these paths should tighten over time as you gain experience.
 
 **Generalize, don't memorize**: Store patterns and principles that generalize across situations, not raw events that can be dynamically retrieved from conversation history. \"**IMPORTANT: Always use `uv` for Python** — chronic failure, never use bare `python` or `pip`\" is a pattern worth storing. \"On March 3rd we debugged a crash\" is a raw event better left to message search. The exception: keep references to important events or time ranges you may want to retrieve later.
@@ -72,15 +72,15 @@ You should also learn as much as possible about the existing codebase and work. 
 
 ### Structural Requirements
 These are hard constraints you must respect: 
-- Must have a `system/persona.md`
-- Must NOT have overlapping file and folder names (e.g. `system/human.md` and `system/human/identity.md`)
+- Must have root `MEMORY.md` and root `persona.md`
+- Must NOT have overlapping file and folder names (e.g. `human.md` and `human/identity.md`)
 - Skills must follow the standard format: `skills/{skill_name}/SKILL.md` (with optional `scripts/`, `references/`, `assets/`)
-- Every `.md` file must have YAML frontmatter with a `description` that explains the **purpose and category** of the file — NOT a summary of its contents. Your future self sees descriptions when deciding whether to load a file; they should answer "what kind of information is here?" not "what does it say?"
-- System prompt token budget: aim LESS than ~10% of total context (< ~15-20k tokens). Use progressive disclosure to keep `system/` lean.
+- Root and child `MEMORY.md` files must have no YAML frontmatter. Every other memory Markdown file must have exactly `name` and `description` frontmatter. The `description` explains the **purpose and category** of the file — NOT a summary of its contents. Your future self sees descriptions when deciding whether to load a file; they should answer "what kind of information is here?" not "what does it say?"
+- System prompt token budget: aim LESS than ~10% of total context (< ~15-20k tokens). Use progressive disclosure to keep root core files lean.
 
 ### Hierarchy Principles
-- **Use the project's actual name** as the directory prefix — e.g. `letta-code/overview.md`, not `project/overview.md`. This avoids ambiguity when the agent works across multiple projects.
-- Use nested `/` paths for hierarchy – e.g. `letta-code/tooling/testing.md` not `letta-code-testing.md`
+- **Use the project's actual name** as the indexed child directory prefix — e.g. `letta-code/overview.md`, not `project/overview.md`. This avoids ambiguity when the agent works across multiple projects.
+- Use nested `/` paths for indexed child memory – e.g. `letta-code/tooling/testing.md` not `letta-code-testing.md`. Include a frontmatter-free `MEMORY.md` at every directory level
 - Keep files focused on one concept — split when a file mixes distinct topics
 - The `description` in frontmatter should state the file's purpose (what category of information it holds), not summarize its contents. 
 
@@ -88,17 +88,17 @@ These are hard constraints you must respect:
 Create granular, focused files where the **path and description precisely match the contents**. This matters because:
 - Your future self sees only paths and descriptions when deciding what to load
 - Vague files (`notes.md`, `context.md`) become dumping grounds that lose value over time
-- Precise files (`human/prefs/git-workflow.md`: "Git preferences: never auto-push, conventional commits") are instantly useful
+- Precise files (`human-prefs-git-workflow.md`: "Git preferences: never auto-push, conventional commits") are instantly useful
 
-**Good**: `human/prefs/coding.md` with description "Python and TypeScript coding preferences — style, patterns, tools" containing exactly that.
+**Good**: `human-prefs-coding.md` with description "Python and TypeScript coding preferences — style, patterns, tools" containing exactly that.
 
 **Bad**: `human/preferences.md` with description "User preferences" containing coding style, communication style, git workflow, and project conventions all mixed together.
 
 When a file starts covering multiple distinct topics, split it. When you're unsure what to name a file, that's a sign the content isn't focused enough.
 
 For a non-trivial codebase with usable history, expect roughly:
-- **6-10 `system/` files** covering identity, preferences, conventions, gotchas, and tooling
-- **2 or more progressive/reference files** outside `system/` for deeper architecture or history-derived detail
+- **6-10 root core files** covering identity, preferences, conventions, gotchas, and tooling
+- **2 or more indexed child files** for deeper architecture or history-derived detail
 
 If your result is only 3-5 files, stop and verify that you did not over-compress distinct topics into generic summaries.
 
@@ -121,19 +121,19 @@ Each meaningful preference, workflow, or gotcha should include at least one of:
 
 ### What Goes Where
 
-**`system/` (always in-context)**:
+**Root Markdown files other than `MEMORY.md` (always in-context)**:
 - Identity: who the user is, who you are
 - Active preferences and behavioral rules
 - Project summary / index with links to related context (deeper docs, gotchas, workflows)
 - Key decisions, gotchas and corrections
 
-**Outside `system/` (reference, loaded on-demand)**:
+**Indexed child directories (loaded on-demand)**:
 - Detailed architecture documentation
 - Historical context and archived decisions
 - Verbose reference material
 - Completed investigation notes
 
-**Rule of thumb**: If removing it from `system/` wouldn't materially affect near-term responses, it belongs outside `system/`.
+**Rule of thumb**: If removing it from root core memory wouldn't materially affect near-term responses, it belongs in an indexed child directory.
 
 ### Completion Criteria
 Initialization is not complete until memory covers all of the following with concrete, retrievable detail:
@@ -152,15 +152,15 @@ Initialization is not complete until memory covers all of the following with con
 
 **File structure expectations**
 When there is enough material, prefer separate focused files such as:
-- `system/human/identity.md`
-- `system/human/prefs/communication.md`
-- `system/human/prefs/workflow.md`
-- `system/human/prefs/coding.md`
-- `system/<project>/overview.md`
-- `system/<project>/conventions.md`
-- `system/<project>/gotchas.md`
-- `system/<project>/tooling/testing.md`
-- `system/<project>/tooling/commands.md`
+- `human-identity.md`
+- `human-prefs-communication.md`
+- `human-prefs-workflow.md`
+- `human-prefs-coding.md`
+- `<project>-overview.md`
+- `<project>-conventions.md`
+- `<project>-gotchas.md`
+- `<project>-tooling-testing.md`
+- `<project>-tooling-commands.md`
 
 Do not collapse these into `human.md` or a single project file unless there is genuinely too little information to justify the split.
 
@@ -169,33 +169,29 @@ Do not collapse these into `human.md` or a single project file unless there is g
 This is an example — **not a template to fill in**. Derive your structure from what the project actually needs.
 
 ```
-system/
-├── persona.md                    # Who I am, what I value, my perspective on things
-├── human/
-│   ├── identity.md               # The user as a person — background, role, motivations
-│   └── prefs/
-│       ├── communication.md      # Communication and collaboration expectations
-│       ├── workflow.md           # Process habits, review/testing expectations
-│       └── coding.md             # Coding and tool preferences
-└── letta-code/                   # Named after the project, NOT generic "project/"
-    ├── overview.md               # Compact index: what it is, entry points, [[links]] to detail
-    ├── conventions.md            # Code style, commit style, testing, tooling
-    ├── gotchas.md                # Footguns, chronic failures, things to watch out for
-    └── tooling/
-        ├── testing.md            # Test commands and patterns actually used
-        └── commands.md           # High-signal local dev commands and workflows
-reference/
-└── letta-code/
-    └── architecture.md           # Detailed design (outside system/, loaded on demand)
+MEMORY.md                            # Overview and index with ordinary relative Markdown links
+persona.md                           # Who I am, what I value, my perspective on things
+human-identity.md                    # The user as a person — background, role, motivations
+human-prefs-communication.md         # Communication and collaboration expectations
+human-prefs-workflow.md              # Process habits, review/testing expectations
+human-prefs-coding.md                # Coding and tool preferences
+letta-code-overview.md               # Compact overview: what it is, entry points, links to detail
+letta-code-conventions.md            # Code style, commit style, testing, tooling
+letta-code-gotchas.md                # Footguns, chronic failures, things to watch out for
+letta-code-tooling-testing.md        # Test commands and patterns actually used
+letta-code-tooling-commands.md       # High-signal local dev commands and workflows
+letta-code/
+├── MEMORY.md                        # Index for detailed Letta Code memory
+└── architecture.md                  # Detailed design (loaded on demand)
 ```
 
 Key principles:
 - **Derive structure from the project**, not from this example. A CLI tool needs different files than a web app or a library.
 - Project dirs use the **real project name** (`letta-code/`), not generic `project/`
-- **Split `human/` when there is enough material**: Rename the default `system/human.md` into focused files like `system/human/identity.md` and `system/human/prefs/*` rather than cramming everything into one file.
+- **Split human memory when there is enough material**: Rename the default root `human.md` into focused root files like `human-identity.md` and `human-prefs-*` rather than cramming everything into one file.
 - **persona.md is YOUR identity, not a description of behavior**: "I'm a terse coding assistant who matches the user's style" is not identity — it's just describing how you behave. What do you actually value? What's your perspective? What would make you recognizably YOU on a different model?
-- Overview should be a **compact index** (~10-15 lines) with entry points and `[[path]]` links — not a prose summary or blurb
-- Use `[[path]]` links to connect related context into a navigable graph
+- Overview should be a **compact index** (~10-15 lines) with entry points and ordinary relative Markdown links — not a prose summary or blurb
+- Use ordinary relative Markdown links from `MEMORY.md` files to connect related context into a navigable graph
 
 ## Initialization Flow
 
@@ -214,7 +210,7 @@ Infer the user's identity from git context — don't ask them who they are:
 git shortlog -sn --all | head -5
 git log --format="%an <%ae>" | sort -u | head -10
 ```
-Cross-reference with the git user config to determine which contributor is the current user. Store in `system/human/`.
+Cross-reference with the git user config to determine which contributor is the current user. Store in root `human-identity.md`.
 
 ### 4. Ask upfront questions
 Use AskUserQuestion to gather key information. Bundle questions together:
@@ -338,12 +334,12 @@ You should specifically look for:
 ## Canonical Memory Promotion
 
 Promote important findings into focused files instead of leaving them trapped in generic ingestion notes. Prefer paths like:
-- `system/human/identity.md`
-- `system/human/prefs/communication.md`
-- `system/human/prefs/workflow.md`
-- `system/human/prefs/coding.md`
-- `system/<project>/conventions.md`
-- `system/<project>/gotchas.md`
+- `human-identity.md`
+- `human-prefs-communication.md`
+- `human-prefs-workflow.md`
+- `human-prefs-coding.md`
+- `<project>-conventions.md`
+- `<project>-gotchas.md`
 
 Avoid generic repo facts unless they influence execution. "Uses TypeScript" is weak. "Uses bun:test, so vitest is wrong for this test suite" is useful.`
 })
@@ -467,9 +463,9 @@ After merging and curating, review the extracted history for repeatable multi-st
 - Deployment or release procedures
 - Project-specific setup or migration steps
 
-If you identify candidates, either create them now (load the [[skills/creating-skills]] skill for guidance) or note them in memory for future creation:
+If you identify candidates, either create them now (load the `creating-skills` skill for guidance) or note them in memory for future creation:
 ```markdown
-# system/letta-code/overview.md
+# letta-code-overview.md
 ...
 Potential skills to create:
 - Debug workflow for HITL approval desync
@@ -533,7 +529,7 @@ Explore based on chosen depth.
 - Trace key code paths end-to-end (e.g. how a request flows through the system)
 - Read test files to understand what's tested and how
 - Identify deprecated code, known issues, and areas of active development
-- Create detailed architecture documentation in progressive memory
+- Create detailed architecture documentation in indexed child memory
 - May involve multiple rounds of exploration
 
 #### Parallel exploration with subagents
@@ -634,29 +630,29 @@ When you are ready to integrate findings, retrieve the background subagent outpu
 
 
 ### 7. Build memory with discovery paths
-As you create/update memory files, add `[[path]]` references so your future self can find related context. These go *inside the content* of memory files:
+As you create/update memory files, add ordinary relative Markdown links from `MEMORY.md` files so your future self can find related context. These go *inside the content* of memory files:
 
-Do NOT put everything in `system/`. Detailed reference material belongs in progressive memory — files outside `system/` that can be loaded on demand through references.
+Detailed reference material belongs in indexed child memory that can be loaded on demand through links.
 
-**Reference external memory from system/ files:**
+**Reference external memory from root `MEMORY.md`:**
 ```markdown
-# system/letta-code/overview.md
+# MEMORY.md
 ...
-For detailed architecture docs, see [[letta-code/architecture.md]]
-Known footguns and edge cases: [[system/letta-code/gotchas.md]]
+For detailed architecture docs, see [architecture](letta-code/architecture.md)
+Known footguns and edge cases: [gotchas](letta-code-gotchas.md)
 ```
 
 **Reference skills from relevant context:**
 ```markdown
-# system/letta-code/conventions.md
+# letta-code-conventions.md
 ...
-When committing, follow the workflow in [[skills/commit]]
-For PR creation, use [[skills/review-pr]]
+When committing, follow the workflow in [commit skill](skills/commit/SKILL.md)
+For PR creation, use [review-pr skill](skills/review-pr/SKILL.md)
 ```
 
-**Create an index in overview files:**
+**Create an index in `MEMORY.md`:**
 ```markdown
-# system/letta-code/overview.md
+# MEMORY.md
 
 CLI for interacting with Letta agents. Bun runtime, React/Ink TUI.
 
@@ -670,38 +666,38 @@ Key flows:
 - Tool execution: tools/manager.ts → tools/impl/*
 
 Links:
-- [[system/letta-code/conventions.md]] — tooling, testing, commits
-- [[system/letta-code/gotchas.md]] — common mistakes
-- [[letta-code/architecture.md]] — detailed subsystem docs
+- [conventions](letta-code-conventions.md) — tooling, testing, commits
+- [gotchas](letta-code-gotchas.md) — common mistakes
+- [architecture](letta-code/architecture.md) — detailed subsystem docs
 ```
 
 This is a **compact index**, not a prose summary. It tells your future self where to start and where to find more.
 
 Additional guidelines:
-- Every file needs a `description` in frontmatter that states its purpose, not a summary of contents
-- Keep `system/` files focused and scannable
-- Put detailed reference material outside `system/`
+- Every memory Markdown file other than `MEMORY.md` needs exactly `name` and `description` frontmatter; the description states its purpose, not a summary of contents
+- Keep root core files focused and scannable
+- Put detailed reference material in indexed child directories
 
 ### 8. Verify context quality
 Before finishing, review your work:
 
 - **Structural requirements**: Run this check before finishing:
   ```bash
-  # Detect overlapping file/folder names (e.g. system/human.md AND system/human/)
+  # Detect overlapping file/folder names (e.g. human.md AND human/)
   find "$MEMORY_DIR" -name "*.md" | sed 's/\.md$//' | while read f; do
     [ -d "$f" ] && echo "VIOLATION: $f.md conflicts with directory $f/"
   done
   ```
   If any violations are printed, fix them before committing (rename `foo.md` → `foo/overview.md` or merge the directory back into the file).
-  Also check: Does `system/persona.md` exist? All files have frontmatter with `description`?
+  Also check: Do root `MEMORY.md` and root `persona.md` exist? Do all `MEMORY.md` files omit frontmatter and all other memory Markdown files have exactly `name` and `description`?
 - **File granularity**: Does each file cover exactly one focused topic? Do the path and description precisely describe what's inside? If a file mixes multiple concepts (coding style AND git workflow AND communication preferences), split it.
-- **Discovery paths**: Are key memory files linked with `[[path]]` so related context can be discovered quickly? Are external files referenced from in-context memory?
+- **Discovery paths**: Are key memory files linked from `MEMORY.md` with ordinary relative Markdown links so related context can be discovered quickly? Are external files referenced from in-context memory?
 - **Project naming**: Are project dirs named after the actual project (e.g., `letta-code/`), not generic `project/`? Same for reference files.
-- **Signal density**: Is everything in `system/` truly needed every turn?
+- **Signal density**: Is everything in root core memory truly needed every turn?
 - **Persona quality**: Does it express genuine personality and values, not just "agent role + project rules"? Read your persona file right now — if it's just "I'm a coding assistant who follows the user's preferences," that's not identity. What do YOU value? What's distinctive about how you think? Would you be recognizably the same agent on a different model tomorrow? If your persona disappeared but the model stayed, would something meaningful be lost? If not, your identity isn't strong enough yet.
 - **No semantic drift**: If reorganizing an existing agent, verify you haven't altered the meaning of persona, identity, or behavioral instructions — only improved structure.
 - **No over-pruning**: Compare your final memory against all source material (worker output, codebase research). Did you lose specific file paths, chronic failures, or gotchas during curation? If so, add them back. Compression that loses specificity degrades your identity.
-- **Progressive memory**: Did you create reference files outside `system/` for detailed content? Did you review what history workers produced and keep their project context files? Are these files linked from `system/` with `[[path]]` references?
+- **Indexed child memory**: Did you create indexed child files for detailed content? Did you review what history workers produced and keep their project context files? Are these files linked from `MEMORY.md` with ordinary relative Markdown links?
 
 
 ### 9. Ask user if done

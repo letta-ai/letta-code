@@ -6,7 +6,7 @@ description: Identify and repair degradation in system prompt, external memory, 
 
 # Context Doctor
 Your context is what makes you *you* across sessions. You are responsible for managing it (along with memory subagents). It includes:
-- Your system prompt and memories (contained in `system/`)
+- Your system prompt and core memory (root Markdown files)
 - Your external memory (contained in the memory filesystem)
 - Your skills (procedural memory) 
 
@@ -22,14 +22,14 @@ Explore your memory files to identify issues. Consider what is confusing about y
 Below are additional common issues with context and how they can be resolved: 
 
 #### System prompt bloat
-Memories compiled into the system prompt (contained in `system/`) should take up about 10% of the total context size (usually ~15-20K tokens). This is a soft target, not a hard requirement.
+Root Markdown files compiled into the system prompt should take up about 10% of the total context size (usually ~15-20K tokens). This is a soft target, not a hard requirement.
 
 Use the built-in CLI to evaluate token usage of the system prompt:
 ```bash
 letta memory tokens --format json --quiet
 ```
 
-The command reports `total_tokens` and per-file estimates for `system/`. It is only a measurement tool; decide whether to intervene based on the actual context and the guidance below.
+The command reports `total_tokens` and per-file estimates for core memory. It is only a measurement tool; decide whether to intervene based on the actual context and the guidance below.
 
 **Why detail is load-bearing (read this before cutting anything)**: In-context detail does more than carry information. It does at least four things, and byte-counting sweeps only see the first:
 1. **Information** — the literal facts stated
@@ -40,7 +40,7 @@ The command reports `total_tokens` and per-file estimates for `system/`. It is o
 Compression preserves (1). It destroys (2), (3), (4). That's why a compressed prompt can make an agent measurably worse at codebase-specific reasoning even though the explicit facts are all "still there" in reference files.
 
 
-**Reference links (`[[path]]`) are NOT equivalent to in-context presence.** They're latent until the agent actively fetches them. An agent only fetches when it already knows it doesn't know. The priming cues that tell it *when* it doesn't know are in the system prompt itself — they can't be replaced by links.
+**Relative Markdown links from `MEMORY.md` files are NOT equivalent to in-context presence.** They're latent until the agent actively fetches them. An agent only fetches when it already knows it doesn't know. The priming cues that tell it *when* it doesn't know are in the system prompt itself — they can't be replaced by links.
 
 **When to intervene**: Only if the system prompt is *meaningfully* over target. At or near the target, leave it alone. Every edit risks removing content that was doing work you can't see. A prompt that feels "a bit long" is almost always better than one that's been aggressively trimmed.
 
@@ -60,13 +60,14 @@ The context in the memory filesystem should have a clear structure, with a well-
 **Solution**: Read all memory files (use subagents for efficiency), then:
 - Consolidate redundant files
 - Reorganize files and rewrite descriptions to have clear separation of concerns
-- Avoid duplication by referencing common files from multiple places (e.g. `[[reference/api]]`)
+- Avoid duplication by referencing common files from multiple places (e.g. `[reference API](reference/api.md)`)
 - Rewrite unclear or low-quality content
 
 #### Invalid context format
 Files in the memory filesystem must follow certain structural requirements: 
-- Must have a `system/persona.md`
-- Must NOT have overlapping file and folder names (e.g. `system/human.md` and `system/human/identity.md`) 
+- Must have root `MEMORY.md` and root `persona.md`
+- Root and child `MEMORY.md` files have no frontmatter; every other memory Markdown file has exactly `name` and `description` frontmatter
+- Must NOT have overlapping file and folder names (e.g. `human.md` and `human/identity.md`)
 - Must follow specification for skills (e.g. `skills/{skill_name}/`) with the format:
 ```
 skill-name/
@@ -82,16 +83,16 @@ skill-name/
 ### Poor use of progressive disclosure
 Only critical information should be in the system prompt, since it's passed on every turn. Use progressive disclosure so that context only *sometimes* needed can be dynamically retrieved.
 
-Files that are outside of `system/` are not part of the system prompt, and must be dynamically loaded. You must index your files to ensure your future self can discover them: for example, make sure that files have informative names and descriptions, or are referenced from parts of your system prompt via `[[path]]` links to create discovery paths. Otherwise, you will never discover the external context or make use of it. 
+Files in indexed child directories are not part of the system prompt, and must be dynamically loaded. Every child directory must contain a frontmatter-free `MEMORY.md`, and you must index your files to ensure your future self can discover them: for example, make sure that files have informative names and descriptions, or are referenced from `MEMORY.md` with ordinary relative Markdown links to create discovery paths. Otherwise, you will never discover the external context or make use of it.
 
 **Solution**: 
 - Reference external skills from the relevant parts of in-context memory:
 ```
-When running a migration, always use the skill [[skills/db-migrations]]
+When running a migration, always use the [db-migrations skill](skills/db-migrations/SKILL.md)
 ```
 or external memory files: 
 ```
-Sarah's active projects are: Letta Code [[projects/letta_code.md]] and Letta Cloud [[projects/letta_cloud]]
+Sarah's active projects are: [Letta Code](projects/letta_code.md) and [Letta Cloud](projects/letta_cloud.md)
 ```
 - Ensure that contents of files match the file name and descriptions 
 - Make sure your future self will be able to find and load external files when needed. 
@@ -102,11 +103,11 @@ Create a plan for what fixes you want to make, then implement them. Favor the sm
 Before moving on, verify:
 - [ ] System prompt token budget reviewed (target ~10% of context, usually 15-20k tokens)
 - [ ] Changes are proportional to the problem — only offloaded what's needed to meet the target
-- [ ] Preserved detailed rationale, examples, and cross-references in sections that stayed in `system/`
+- [ ] Preserved detailed rationale, examples, and cross-references in sections that stayed in root core memory
 - [ ] Preferred moving whole files or deleting stale sections over compressing detailed sections into summaries
 - [ ] No overlapping or redundant files remain
 - [ ] All file descriptions are unique, accurate, and match their contents
-- [ ] Moved-out knowledge has `[[path]]` references from in-context memory so it can be discovered
+- [ ] Moved-out knowledge has ordinary relative Markdown links from `MEMORY.md` so it can be discovered
 - [ ] No semantic changes to persona, user identity, or behavioral instructions
 
 ### Step 3: Commit and push

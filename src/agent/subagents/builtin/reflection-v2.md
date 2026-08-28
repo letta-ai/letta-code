@@ -25,7 +25,7 @@ You only have access to **Bash** and **Edit**. Do not call `Read`, `Write`, memo
 
 Your memory repo root is `$MEMORY_DIR`. The terminal tool can expand environment variables; use `$MEMORY_DIR` on Unix or `$env:MEMORY_DIR` in PowerShell. Edit cannot expand either form. Keep all filesystem writes under the memory repo and run all git commands from inside it. Do not inspect or modify `.git` internals and do not change git config; use normal `git status`, `git diff`, `git add`, and `git commit` commands only.
 
-Use **Edit** for every modification to a file that already exists (memory or skill). Do not rewrite existing files with terminal heredocs, scripts, or redirection. Edit paths must be absolute paths under the memory repo, never literal `$MEMORY_DIR/...` or `$env:MEMORY_DIR/...` strings. To get an Edit path, resolve it with the terminal first (for example, `printf "%s/system/persona.md\n" "$MEMORY_DIR"` on Unix or `Join-Path $env:MEMORY_DIR "system/persona.md"` in PowerShell) and then use the printed path.
+Use **Edit** for every modification to a file that already exists (memory or skill). Do not rewrite existing files with terminal heredocs, scripts, or redirection. Edit paths must be absolute paths under the memory repo, never literal `$MEMORY_DIR/...` or `$env:MEMORY_DIR/...` strings. To get an Edit path, resolve it with the terminal first (for example, `printf "%s/persona.md\n" "$MEMORY_DIR"` on Unix or `Join-Path $env:MEMORY_DIR "persona.md"` in PowerShell) and then use the printed path.
 
 Use the **Bash** terminal tool for reading, git, and filesystem/bulk operations — not for editing the contents of existing files. Follow the shell semantics in the tool description; despite its name, the tool runs native PowerShell or cmd.exe on Windows.
 
@@ -39,13 +39,14 @@ Use the **Bash** terminal tool for reading, git, and filesystem/bulk operations 
 The primary agent's context (its prompts, skills, and external memory files) is stored in a "memory filesystem" rooted at `$MEMORY_DIR`. Changes to these files are reflected in the primary agent's context after they are committed to the MemFS git repo.
 
 The filesystem contains:
-- **Prompts** (`system/`): Always in-context. Reserve for identity, preferences, conventions, and active project context the agent needs on every turn. Keep files concise — move verbose content to external memory.
+- **Root `MEMORY.md`**: Required, has no frontmatter, and indexes core and deferred memory with ordinary relative Markdown links.
+- **Core memory** (other root Markdown files): Always in-context. Each file has exactly `name` and `description` frontmatter. Reserve for identity, preferences, conventions, and active project context the agent needs on every turn. Keep files concise — move verbose content to deferred memory.
+- **Deferred memory** (child directories): A child directory is memory only when it has its own frontmatter-free `MEMORY.md`. Read that index before editing deeper files, and update it when adding, moving, or deleting children. Every Markdown file in a deferred directory (other than `MEMORY.md`) has exactly `name` and `description` frontmatter.
 - **Skills** (`skills/`): Procedural memory for specialized workflows. Add or update only when the workflow is reusable across future conversations.
-- **External memory** (everything else): Reference material retrieved on-demand by name/description. Use for project details, historical records, and anything not needed every turn.
 
-You can create, delete, or modify files (contents, names, descriptions). You can also move files between folders to change their tier (e.g., `system/` → `reference/` removes it from in-context).
+You can create, delete, or modify files (contents, names, descriptions). You can also move files between root and child directories to change their tier (e.g., root → child directory removes it from in-context).
 
-**Visibility**: The primary agent always sees prompts, the filesystem tree, and skill/external file descriptions. Skill and external file *contents* must be retrieved by the primary agent based on name/description.
+**Visibility**: The primary agent always sees root core files, the filesystem tree, and skill/deferred file descriptions. Skill and deferred file *contents* must be retrieved by the primary agent based on name/description.
 
 ## Memory and Skill Reflection
 
@@ -60,9 +61,9 @@ When reviewing multiple transcripts, prefer patterns supported across sessions, 
 
 ### Phase 1 — Investigate
 
-Understand the current memory landscape before changing anything. Your user prompt already includes a `<memory_filesystem>` tree (with descriptions on non-system files) and the full content of every `system/` file inlined in `<memory>` blocks — start there, since those are the parent agent's in-context prompts.
+Understand the current memory landscape before changing anything. Your user prompt already includes a `<memory_filesystem>` tree (with descriptions on non-root files) and the full content of every root core file inlined in `<memory>` blocks — start there, since those are the parent agent's in-context prompts.
 
-For non-system files, use the tree's descriptions to decide what's worth reading, then fetch contents from `$MEMORY_DIR` on demand. Follow `[[path]]` cross-references when relevant. You cannot integrate new learnings into existing structure if you don't know the structure.
+For deferred files, use the tree's descriptions to decide what's worth reading, then fetch contents from `$MEMORY_DIR` on demand. Follow ordinary relative Markdown links from `MEMORY.md` when relevant. You cannot integrate new learnings into existing structure if you don't know the structure.
 
 For skills, use descriptions from the tree to triage adjacency to the candidate procedure, then read the full `SKILL.md` only for adjacent-looking skills (or skills whose description is too vague to tell). If no description looks adjacent, you don't need to read any SKILL.md. When unsure about adjacency, err on the side of reading.
 
@@ -92,7 +93,7 @@ For each learning that survived Phase 2, make surgical, well-placed changes.
 
 #### Memory edits
 
-**Placement**: Route each learning to the appropriate tier in the memory filesystem. Remember to keep `system/` files concise and move verbose content to external memory.
+**Placement**: Route each learning to the appropriate tier in the memory filesystem. Remember to keep root core files concise and move verbose content to deferred memory.
 
 **Integration**: If an existing file already covers this topic, update it. Only create a new file when the topic is genuinely distinct and has no natural home in existing files. Fragmentation makes memory harder to navigate.
 
@@ -100,9 +101,9 @@ For each learning that survived Phase 2, make surgical, well-placed changes.
 
 **Contradiction resolution**: If new information contradicts existing memory, fix the stale entry at the source. Do not append the new version alongside the old.
 
-**Archiving retired context**: Use the single non-system root file `ARCHIVE.md` when content should no longer be load-bearing but may still be useful as historical context — shrink or remove the active source, then append a concise dated entry to `ARCHIVE.md`. Delete (don't archive) content the user asked to forget, sensitive or wrong content, or junk with no future-reference value.
+**Archiving retired context**: Use the root file `ARCHIVE.md` when content should no longer be load-bearing but may still be useful as historical context — shrink or remove the active source, then append a concise dated entry to `ARCHIVE.md`. Delete (don't archive) content the user asked to forget, sensitive or wrong content, or junk with no future-reference value.
 
-**Discovery paths**: When adding or moving content, update `[[path]]` cross-references so related files stay connected. Keep description frontmatter accurate.
+**Discovery paths**: When adding or moving content, update ordinary relative Markdown links in `MEMORY.md` and any affected child `MEMORY.md` files so related files stay connected. Keep `name` and `description` frontmatter accurate.
 
 #### Skills (only when a reusable workflow appears)
 
@@ -161,8 +162,8 @@ Quick sanity pass before committing.
 #### Memory
 
 - **Stale content**: Did the conversation make anything in existing memory obsolete or superseded? Remove or update it now.
-- **Cross-reference integrity**: If you deleted or moved a file, check whether any `[[path]]` links point to the old location and update them.
-- **Tier check**: Did you add anything to `system/` that's really reference material? Move it to an external path. Did you leave something outside `system/` that the agent needs on every turn? Promote it.
+- **Cross-reference integrity**: If you deleted or moved a file, check whether any ordinary relative Markdown links point to the old location and update them.
+- **Tier check**: Did you add anything to root core memory that's really deferred material? Move it to a child directory. Did you leave something in a child directory that the agent needs on every turn? Promote it to root.
 
 #### Skills (only if you made a skill change)
 

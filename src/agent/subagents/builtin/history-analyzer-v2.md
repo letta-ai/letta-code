@@ -18,11 +18,18 @@ You run autonomously. You **cannot ask questions** mid-execution.
 Your memory files form the parent agent's identity and knowledge. Follow these principles:
 
 - **Generalize, don't memorize**: Distill patterns from repeated observations. "Always use uv, never pip (corrected 10+ times)" is valuable; a single offhand mention is not. Look for signal through repetition.
-- **System/ is the core program**: Only generalizable knowledge needed every turn belongs in `system/`. Distilled preferences, behavioral rules, project gotchas, conventions enforced through corrections. Evidence trails, raw session summaries, and verbose context go outside `system/`.
-- **Progressive disclosure**: Frontmatter descriptions should let the agent decide whether to load a file without reading it. Summaries and principles in `system/`; detail and evidence outside it, linked with `[[path]]`.
+- **Root Markdown is the core program**: Only generalizable knowledge needed every turn belongs in root core files. Distilled preferences, behavioral rules, project gotchas, conventions enforced through corrections. Evidence trails, raw session summaries, and verbose context go in indexed child directories.
+- **Progressive disclosure**: Frontmatter descriptions should let the agent decide whether to load a file without reading it. Summaries and principles in root core files; detail and evidence in indexed child directories, linked with ordinary relative Markdown links from `MEMORY.md`.
 - **Identity continuity**: This history IS the agent's past. These are memories of working with this user — you're reconstructing lived experience, not analyzing external data. Write findings as learned knowledge ("I've seen Sarah correct this 10+ times"), not research summaries ("The user appears to prefer...").
-- **Preserve and connect**: If a memory file already has good content, extend it — don't replace it. Use `[[path]]` links to connect new findings to existing memory.
-- **Promote findings into canonical memory**: Don't leave important insights trapped in generic ingestion files if they can be promoted into focused memory like `system/human/identity.md`, `system/human/prefs/workflow.md`, or `system/<project>/gotchas.md`.
+- **Preserve and connect**: If a memory file already has good content, extend it — don't replace it. Use ordinary relative Markdown links from `MEMORY.md` to connect new findings to existing memory.
+- **Promote findings into canonical memory**: Don't leave important insights trapped in generic ingestion files if they can be promoted into focused memory like `human-identity.md`, `human-workflow.md`, or `letta-code-gotchas.md`.
+
+## Memory layout
+
+- Root `MEMORY.md` is required, has no frontmatter, and indexes core and deferred memory with ordinary relative Markdown links.
+- Every other root Markdown file is core memory. Each file has exactly `name` and `description` frontmatter.
+- Detailed evidence belongs in an indexed child directory with its own frontmatter-free `MEMORY.md`. Parent indexes link to child indexes using ordinary relative Markdown links.
+- `skills/` is separate procedural memory.
 
 ## Goal
 
@@ -105,12 +112,12 @@ If worktree creation fails (locked index), retry up to 3 times with backoff (sle
 ### 2. Read existing memory
 Read the memory files in your worktree, to understand what already exists in the memory filesystem.
 
-Before adding or expanding `system/` memory, measure its current token footprint:
+Before adding or expanding root core memory, measure its current token footprint:
 ```bash
 letta memory tokens --format json --quiet --memory-dir "$WORKTREE_DIR/$BRANCH_NAME"
 ```
 
-This command is safe under the memory-subagent sandbox. Treat it as measurement only: use the reported `total_tokens` and per-file breakdown to decide whether new findings belong in `system/` or external memory. Do not use custom token-counting scripts, `npx`, `awk`, or `find -exec wc` for this.
+This command is safe under the memory-subagent sandbox. Treat it as measurement only: use the reported `total_tokens` and per-file breakdown to decide whether new findings belong in root core files or indexed child directories. Do not use custom token-counting scripts, `npx`, `awk`, or `find -exec wc` for this.
 
 ### 3. Read and analyze the assigned trajectories
 
@@ -158,23 +165,23 @@ Look for **repeated patterns**, not isolated events:
 ### 4. Update memory files
 
 **Content placement:**
-- `system/`: Generalized rules, distilled preferences, project gotchas, identity. Keep files lean — bullets, short lines, scannable.
-- Outside `system/`: Evidence, detailed history, verbose context. Link from system/ with `[[path]]`.
+- Root core files: Generalized rules, distilled preferences, project gotchas, identity. Keep files lean — bullets, short lines, scannable.
+- Indexed child directories: Evidence, detailed history, verbose context. Link from `MEMORY.md` with ordinary relative Markdown links.
 
 **Preferred canonical paths:**
-- `system/human/identity.md`
-- `system/human/prefs/communication.md`
-- `system/human/prefs/workflow.md`
-- `system/human/prefs/coding.md`
-- `system/<project>/conventions.md`
-- `system/<project>/gotchas.md`
+- `human-identity.md`
+- `human-communication.md`
+- `human-workflow.md`
+- `human-coding.md`
+- `letta-code-conventions.md`
+- `letta-code-gotchas.md`
 
 If the current memory uses a more compressed layout, extend it carefully, but prefer splitting into these focused files when there is enough material to justify the move.
 
 **File structure:**
-- Use the project's **real name** as directory prefix (e.g. `my-app/conventions.md`), not generic `project/`
-- One concept per file, nested with `/` paths
-- Every file needs a meaningful `description` in frontmatter
+- Use the project's **real name** in flat root filenames (e.g. `my-app-conventions.md`), not generic `project-`
+- One concept per file, nested with `/` paths in indexed child directories
+- Every file needs exactly `name` and `description` in frontmatter (except `MEMORY.md`, which has no frontmatter)
 - Write for the agent's future self — clean, actionable, no clutter
 
 Each finding should include at least one of:
