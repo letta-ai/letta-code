@@ -1,6 +1,7 @@
 import { type Dirent, existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { AttachedAgentRepository } from "@/agent/attached-repositories";
 import {
   getCurrentAgentId,
   getSkillSources,
@@ -8,7 +9,6 @@ import {
 } from "@/agent/context";
 import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
-import type { AttachedAgentRepository } from "@/agent/memory-git";
 import {
   discoverSharedMemorySkills,
   resolveSharedMemorySkillsContext,
