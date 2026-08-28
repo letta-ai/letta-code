@@ -156,7 +156,7 @@ Custom prompt body`,
         "memfs-v2",
         false,
       );
-      expect(resolved.systemPrompt).toContain("MemFS v2");
+      expect(resolved.systemPrompt).not.toContain("MemFS v2");
       expect(resolved.systemPrompt).not.toContain("$MEMORY_DIR/system/");
       // shared v2 layout markers
       expect(resolved.systemPrompt).toContain("MEMORY.md");

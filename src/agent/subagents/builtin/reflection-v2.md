@@ -36,7 +36,7 @@ Use the **Bash** terminal tool for reading, git, and filesystem/bulk operations 
 
 ## Memory Filesystem
 
-The primary agent's context (its prompts, skills, and external memory files) is stored in a MemFS v2 memory filesystem rooted at `$MEMORY_DIR`. Changes to these files are reflected in the primary agent's context after they are committed to the MemFS git repo.
+The primary agent's context (its prompts, skills, and external memory files) is stored in a git-backed memory filesystem rooted at `$MEMORY_DIR`. Changes to these files are reflected in the primary agent's context after they are committed.
 
 The filesystem contains:
 - **Root `MEMORY.md`**: Required, has no frontmatter, and indexes core and deferred memory with ordinary relative Markdown links.

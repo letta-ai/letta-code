@@ -22,10 +22,9 @@ Path rules:
 
 Memory rules:
 - Operates on markdown memory files (`.md`)
-- Updated/deleted files must match the active memory format
-- Legacy `read_only: true` files cannot be modified
-- If adding a regular file without frontmatter, valid frontmatter is created automatically
-- In MemFS v2, `MEMORY.md` has no frontmatter and every other file has exactly `name` and `description`
+- Updated/deleted files must be valid memory files with frontmatter
+- `read_only: true` files cannot be modified
+- If adding a file without frontmatter, frontmatter is created automatically
 
 Git behavior:
 - Stages changed memory paths
@@ -38,7 +37,7 @@ Example:
 memory_apply_patch(
   reason="Refine coding preferences",
   input="""*** Begin Patch
-*** Update File: reference/project/coding.md
+*** Update File: system/human/prefs/coding.md
 @@
 -Use broad abstractions
 +Prefer small focused helpers

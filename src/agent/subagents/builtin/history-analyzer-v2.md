@@ -24,7 +24,7 @@ Your memory files form the parent agent's identity and knowledge. Follow these p
 - **Preserve and connect**: If a memory file already has good content, extend it — don't replace it. Use ordinary relative Markdown links to connect new findings to existing memory.
 - **Promote findings into canonical memory**: Don't leave durable insights trapped in generic ingestion files if they can be promoted into focused memory like `human-identity.md`, `human-workflow.md`, or `letta-code-gotchas.md`.
 
-## MemFS v2 layout
+## Memory layout
 
 - Root `MEMORY.md` is required, has no frontmatter, and indexes core and deferred memory with ordinary relative Markdown links.
 - Every other root Markdown file is core memory. Each file has exactly `name` and `description` frontmatter.

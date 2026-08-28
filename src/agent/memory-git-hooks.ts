@@ -128,7 +128,7 @@ if [ "$memory_layout_policy" = "root-marker" ] && git cat-file -e ":MEMORY.md" 2
   done < <(git ls-files '*.md')
 
   if [ -n "$errors" ]; then
-    echo "MemFS v2 validation failed:"
+    echo "Memory validation failed:"
     echo -e "$errors"
     exit 1
   fi

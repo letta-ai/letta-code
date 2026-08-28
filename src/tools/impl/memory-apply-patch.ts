@@ -219,7 +219,7 @@ async function applyMemoryPatch(
           op.sourceRelPath !== op.targetRelPath))
     ) {
       throw new Error(
-        "memory_apply_patch: MemFS v2 MEMORY.md indexes cannot be deleted or moved",
+        "memory_apply_patch: MEMORY.md indexes cannot be deleted or moved",
       );
     }
     if (op.kind === "add") {
@@ -682,7 +682,7 @@ function assertMemoryLabelAllowed(
     (label === "system" || label.startsWith("system/"))
   ) {
     throw new Error(
-      "memory_apply_patch: MemFS v2 core memory uses root Markdown files, not system/",
+      "memory_apply_patch: core memory uses root Markdown files, not system/",
     );
   }
   if (
@@ -690,7 +690,7 @@ function assertMemoryLabelAllowed(
     (label === "skills" || label.startsWith("skills/"))
   ) {
     throw new Error(
-      "memory_apply_patch: MemFS v2 skills are managed by the skill/file tooling, not the memory tool",
+      "memory_apply_patch: skills are managed by the skill/file tooling, not the memory tool",
     );
   }
 }

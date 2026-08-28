@@ -430,6 +430,48 @@ describe("memory_apply_patch tool", () => {
     );
   });
 
+  test("shows legacy memory tool assets for API repositories without root MEMORY.md", async () => {
+    await loadSpecificTools(["memory", "memory_apply_patch"]);
+
+    const memorySchema = getToolSchema("memory");
+    expect(memorySchema?.description).toContain("stored inside of `system/`");
+    expect(memorySchema?.description).not.toContain("MemFS v2");
+    expect(
+      memorySchema?.input_schema.properties?.file_path?.description,
+    ).toContain("system/contacts.md");
+    expect(
+      memorySchema?.input_schema.properties?.description?.description,
+    ).toContain("Block description");
+    expect(getToolSchema("memory_apply_patch")?.description).toContain(
+      "valid memory files with frontmatter",
+    );
+  });
+
+  test("shows root-layout memory tool assets without naming the format", async () => {
+    await activateRootMemoryLayout(memoryDir);
+    await loadSpecificTools(["memory", "memory_apply_patch"]);
+
+    const memorySchema = getToolSchema("memory");
+    const patchDescription = getToolSchema("memory_apply_patch")?.description;
+    expect(memorySchema?.description).toContain(
+      "Root and child `MEMORY.md` files are frontmatter-free indexes",
+    );
+    expect(memorySchema?.description).not.toContain("MemFS v2");
+    expect(memorySchema?.description).not.toContain("active memory format");
+    expect(memorySchema?.description).not.toContain("system/");
+    expect(
+      memorySchema?.input_schema.properties?.file_path?.description,
+    ).toContain("human.md or projects/notes.md");
+    expect(
+      memorySchema?.input_schema.properties?.description?.description,
+    ).toContain("unused for frontmatter-free MEMORY.md indexes");
+    expect(patchDescription).toContain(
+      "Root and child `MEMORY.md` files are frontmatter-free indexes",
+    );
+    expect(patchDescription).not.toContain("MemFS v2");
+    expect(patchDescription).not.toContain("Legacy");
+  });
+
   test("prefers scoped agent memory over stale MEMORY_DIR env", async () => {
     const scopedMemoryDir = memoryDir;
     const staleMemoryDir = join(tempRoot, "stale-memory");

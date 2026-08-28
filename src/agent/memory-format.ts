@@ -56,7 +56,7 @@ export function assertMemfsV2MemoryPathIndexed(
   const normalized = relativePath.replace(/\\/g, "/");
   if (normalized === "MEMORY.md") return;
   if (!markerExists("MEMORY.md")) {
-    throw new Error("MemFS v2 requires root MEMORY.md");
+    throw new Error("Memory requires a root MEMORY.md index");
   }
   const directories = normalized.split("/").slice(0, -1);
   let current = "";
@@ -64,9 +64,7 @@ export function assertMemfsV2MemoryPathIndexed(
     current = current ? `${current}/${directory}` : directory;
     const marker = `${current}/MEMORY.md`;
     if (marker !== normalized && !markerExists(marker)) {
-      throw new Error(
-        `MemFS v2 requires ${marker} before writing ${normalized}`,
-      );
+      throw new Error(`Memory requires ${marker} before writing ${normalized}`);
     }
   }
 }

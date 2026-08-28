@@ -291,9 +291,7 @@ async function applyMemoryCommand(
     const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
     assertMemoryLabelAllowed(label, memoryFormat);
     if (memoryFormat === "memfs-v2" && isMemoryIndexPath(`${label}.md`)) {
-      throw new Error(
-        "memory delete: MemFS v2 MEMORY.md indexes cannot be deleted",
-      );
+      throw new Error("memory delete: MEMORY.md indexes cannot be deleted");
     }
     const targetPath = resolveMemoryPath(memoryDir, label);
 
@@ -342,9 +340,7 @@ async function applyMemoryCommand(
       memoryFormat === "memfs-v2" &&
       (isMemoryIndexPath(oldRelPath) || isMemoryIndexPath(newRelPath))
     ) {
-      throw new Error(
-        "memory rename: MemFS v2 MEMORY.md indexes cannot be renamed",
-      );
+      throw new Error("memory rename: MEMORY.md indexes cannot be renamed");
     }
     if (memoryFormat === "memfs-v2") {
       assertMemfsV2MemoryPathIndexed(memoryDir, newRelPath);
@@ -511,7 +507,7 @@ function assertMemoryLabelAllowed(
     (label === "system" || label.startsWith("system/"))
   ) {
     throw new Error(
-      "memory: MemFS v2 core memory uses root Markdown files, not system/",
+      "memory: core memory uses root Markdown files, not system/",
     );
   }
   if (
@@ -519,7 +515,7 @@ function assertMemoryLabelAllowed(
     (label === "skills" || label.startsWith("skills/"))
   ) {
     throw new Error(
-      "memory: MemFS v2 skills are managed by the skill/file tooling, not the memory tool",
+      "memory: skills are managed by the skill/file tooling, not the memory tool",
     );
   }
 }

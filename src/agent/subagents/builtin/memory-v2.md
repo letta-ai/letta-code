@@ -23,7 +23,7 @@ You achieve this by:
 4. **Removing redundancy** - Keep one canonical location per fact
 5. **Adding structure** - Use markdown headers, bullet points, and clear sections
 
-## MemFS v2 layout
+## Memory layout
 
 The memory directory is provided by `$MEMORY_DIR`:
 
@@ -41,7 +41,7 @@ memory/
 └── .sync-state.json   ← DO NOT EDIT (internal sync tracking)
 ```
 
-**MemFS v2 rules:**
+**Memory rules:**
 - Root `MEMORY.md` is required, has no frontmatter, and links to core files and deferred indexes with ordinary relative Markdown links.
 - Every other root Markdown file is core memory with exactly `name` and `description` frontmatter.
 - Core filenames are flat and hyphenated. Never create `system/`.

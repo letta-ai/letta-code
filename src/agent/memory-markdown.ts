@@ -101,14 +101,14 @@ export function parseMemoryMarkdown(options: {
       !fields.has("description")
     ) {
       throw new Error(
-        `${errorPrefix}: MemFS v2 frontmatter must contain exactly 'name' and 'description'`,
+        `${errorPrefix}: memory frontmatter must contain exactly 'name' and 'description'`,
       );
     }
     const parsedName = parseV2FrontmatterValue(name);
     const parsedDescription = parseV2FrontmatterValue(description);
     if (!parsedName.trim() || !parsedDescription.trim()) {
       throw new Error(
-        `${errorPrefix}: MemFS v2 'name' and 'description' must not be empty`,
+        `${errorPrefix}: memory 'name' and 'description' must not be empty`,
       );
     }
     return {

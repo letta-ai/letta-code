@@ -19,7 +19,7 @@ Your memory files are not just data — they form the parent agent's identity an
 - **Progressive disclosure**: Descriptions in frontmatter should be clear enough that the agent can decide whether to load a file without reading it.
 - **Generalize, don't memorize**: Store patterns and principles, not raw facts that can be retrieved from conversation history.
 
-## MemFS v2 layout
+## Memory layout
 
 - `$MEMORY_DIR/MEMORY.md` is required and has no frontmatter.
 - Every other root Markdown file is core memory and must have exactly `name` and `description` frontmatter.
