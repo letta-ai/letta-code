@@ -3,12 +3,11 @@
  **/
 
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { type BackendCapabilities, getBackend } from "@/backend";
 import { apiRequest, getApiRequestConfig } from "@/backend/api/request";
 import { DEFAULT_AGENT_NAME } from "@/constants";
 import { settingsManager } from "@/settings-manager";
-import { debugLog } from "@/utils/debug";
+import { debugWarn } from "@/utils/debug";
 import { getModelContextWindow } from "./available-models";
 import { buildCreateAgentRequest } from "./create-agent-request";
 import { getDefaultMemoryBlocks } from "./memory";
@@ -59,32 +58,28 @@ function isToolsNotFoundError(err: unknown): boolean {
   );
 }
 
-export function shouldAddBaseToolsToServer(
-  baseUrl: string,
-  runtimeEnvironmentDeviceId: string | undefined,
-): boolean {
-  return baseUrl !== LETTA_CLOUD_API_URL || !runtimeEnvironmentDeviceId?.trim();
+export interface AddBaseToolsOptions {
+  quiet?: boolean;
 }
 
-export async function addBaseToolsToServer(): Promise<boolean> {
-  const { apiKey, baseUrl } = await getApiRequestConfig();
-
-  if (
-    !shouldAddBaseToolsToServer(
-      baseUrl,
-      process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID,
-    )
-  ) {
-    debugLog(
-      "bootstrap",
-      "Skipping base-tool bootstrap inside a managed Letta Cloud runtime.",
-    );
-    return false;
+function reportBaseToolsFailure(message: string, quiet: boolean): void {
+  if (quiet) {
+    debugWarn("bootstrap", message);
+  } else {
+    console.warn(message);
   }
+}
+
+export async function addBaseToolsToServer(
+  options: AddBaseToolsOptions = {},
+): Promise<boolean> {
+  const { apiKey } = await getApiRequestConfig();
+  const quiet = options.quiet === true;
 
   if (!apiKey) {
-    console.warn(
+    reportBaseToolsFailure(
       "Cannot auto-populate base tools: missing LETTA_API_KEY for manual endpoint call.",
+      quiet,
     );
     return false;
   }
@@ -93,8 +88,9 @@ export async function addBaseToolsToServer(): Promise<boolean> {
     await apiRequest<void>("POST", "/v1/tools/add-base-tools");
     return true;
   } catch (err) {
-    console.warn(
+    reportBaseToolsFailure(
       `Failed to call /v1/tools/add-base-tools: ${err instanceof Error ? err.message : String(err)}`,
+      quiet,
     );
     return false;
   }
