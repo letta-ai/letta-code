@@ -15,11 +15,16 @@ MemFS is a Git repository projected onto the computer where the agent is
 running. `$MEMORY_DIR` is the repository root. There is no second `memory/`
 directory inside it.
 
+The repository can use either memory layout. Inspect its current tree and the
+memory rules in the system prompt before editing files:
+
 ```text
-$MEMORY_DIR/
-├── .git/
-├── system/       # loaded into the system prompt
-├── reference/    # loaded only when read
+Root layout                         Existing layout
+$MEMORY_DIR/                        $MEMORY_DIR/
+├── MEMORY.md     # root index      ├── system/     # in-context memory
+├── persona.md    # core memory     ├── reference/  # deferred memory
+├── <topic>/                        └── skills/     # agent-owned skills
+│   └── MEMORY.md # child index
 └── skills/       # agent-owned skills
 ```
 
@@ -32,7 +37,7 @@ on the current machine. Do not run `git push` for normal MemFS sync; let the
 harness push after the turn.
 
 Committed memory changes do not alter the current compiled prompt immediately.
-Use `/recompile` when the current conversation must see new `system/` content
+Use `/recompile` when the current conversation must see changed core memory
 right away. Otherwise, the next prompt compilation or conversation will use
 the committed revision.
 
@@ -87,9 +92,13 @@ auth, branch tracking, and agent identity.
 
 ## Uncommitted Changes
 
-Raw file edits must preserve required frontmatter. Markdown files under
-`system/` and `reference/` need a non-empty `description`. `read_only` is
-protected and cannot be added, removed, or changed by the agent.
+Raw file edits must preserve the active layout's rules:
+
+- In the root layout, root and child `MEMORY.md` indexes have no frontmatter.
+  Every other memory Markdown file has exactly `name` and `description`.
+- In the existing layout, Markdown files under `system/` and `reference/` need
+  a non-empty `description`. `read_only` is protected and cannot be added,
+  removed, or changed by the agent.
 
 ```markdown
 ---
@@ -121,7 +130,7 @@ Resolve the conflict markers without deleting required frontmatter, then stage
 the resolved files by name. Finish the operation Git reports:
 
 ```bash
-git -C "$MEMORY_DIR" add system/example.md
+git -C "$MEMORY_DIR" add <resolved-memory-path>
 
 # If git status says a rebase is in progress:
 GIT_EDITOR=true git -C "$MEMORY_DIR" rebase --continue
@@ -163,7 +172,8 @@ MemFS synchronization.
 2. Check whether the backend is cloud-backed or local-only.
 3. Inspect `git status`, the origin URL, and the current Git operation.
 4. Use `/memfs enable` for a missing checkout and `/memfs sync` for a pull.
-5. Preserve frontmatter and finish any existing merge or rebase.
+5. Preserve the active layout's indexes and frontmatter, then finish any
+   existing merge or rebase.
 6. Leave hosted pushes to post-turn sync once the repository is clean.
 7. If the command still fails, rerun it with `LETTA_DEBUG=1` and report the
    redacted error. Never print or copy credential-helper values.

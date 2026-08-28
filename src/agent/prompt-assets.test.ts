@@ -1,17 +1,40 @@
 import { describe, expect, test } from "bun:test";
-
 import {
   buildSystemPrompt,
   isKnownPreset,
   SYSTEM_PROMPTS,
   shouldRecommendDefaultPrompt,
 } from "@/agent/prompt-assets";
+import historyAnalyzerV2Prompt from "@/agent/subagents/builtin/history-analyzer-v2.md";
+import initV2Prompt from "@/agent/subagents/builtin/init-v2.md";
+import memoryV2Prompt from "@/agent/subagents/builtin/memory-v2.md";
+import reflectionV2Prompt from "@/agent/subagents/builtin/reflection-v2.md";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
+import contextDoctorRootPrompt from "@/skills/builtin/context-doctor/ROOT_MEMORY.md";
+import initializingMemoryRootPrompt from "@/skills/builtin/initializing-memory/ROOT_MEMORY.md";
+import memoryApplyPatchV2Prompt from "@/tools/descriptions/MemoryApplyPatchV2.md";
+import memoryV2ToolPrompt from "@/tools/descriptions/MemoryV2.md";
 
 const HOSTED_EXTERNAL_MEMORY_INTRO =
   "External memory is stored outside of the system prompt, including both skills (procedural memory), general-purpose files (markdown files, images, etc.), and shared memory.";
 const LOCAL_EXTERNAL_MEMORY_INTRO =
   "External memory is stored outside of the system prompt, including both skills (procedural memory) and general-purpose files (markdown files, images, etc.).";
+
+const ROOT_ONLY_PROMPT_ASSETS = [
+  initializingMemoryRootPrompt,
+  contextDoctorRootPrompt,
+  initV2Prompt,
+  memoryV2Prompt,
+  reflectionV2Prompt,
+  historyAnalyzerV2Prompt,
+  memoryV2ToolPrompt,
+  memoryApplyPatchV2Prompt,
+];
+const SYSTEM_DIRECTORY_PATH = /(^|[^A-Za-z0-9_-])(?:\$MEMORY_DIR\/)?system\//m;
+
+function containsSystemDirectoryPath(content: string): boolean {
+  return SYSTEM_DIRECTORY_PATH.test(content);
+}
 
 function withoutSharedMemoryGuidance(prompt: string): string {
   expect(prompt).toContain(HOSTED_EXTERNAL_MEMORY_INTRO);
@@ -83,6 +106,57 @@ describe("buildSystemPrompt", () => {
     expect(result).not.toContain("Shared memory");
   });
 
+  test("returns the root-layout full prompt for root memfs mode", () => {
+    const result = buildSystemPrompt("letta", "root-memfs");
+    const preset = SYSTEM_PROMPTS.find((p) => p.id === "letta");
+
+    expect(preset?.rootMemfsContent).toBeDefined();
+    expect(result).toBe(preset?.rootMemfsContent?.trim() ?? "");
+    expect(result).toContain(
+      "Root `MEMORY.md` is a frontmatter-free overview and index",
+    );
+    expect(result).toContain("exactly `name` and `description` frontmatter");
+    expect(result).toContain("#### Shared memory");
+    expect(result).toContain("root `persona.md`");
+    expect(containsSystemDirectoryPath(result)).toBe(false);
+    expect(result).not.toContain("Memory blocks are editable segments");
+  });
+
+  test("system directory matcher ignores filesystem words", () => {
+    expect(
+      containsSystemDirectoryPath("standard filesystem/bash operations"),
+    ).toBe(false);
+    expect(containsSystemDirectoryPath("filesystem/bulk operations")).toBe(
+      false,
+    );
+    expect(containsSystemDirectoryPath("`system/`")).toBe(true);
+    expect(containsSystemDirectoryPath("$MEMORY_DIR/system/persona.md")).toBe(
+      true,
+    );
+  });
+
+  test("root-only prompt assets contain no system directory paths", () => {
+    for (const asset of ROOT_ONLY_PROMPT_ASSETS) {
+      expect(containsSystemDirectoryPath(asset)).toBe(false);
+    }
+  });
+
+  test("root memory tool prompts retain operations and safety guidance", () => {
+    for (const command of [
+      "str_replace",
+      "insert",
+      "delete",
+      "rename",
+      "update_description",
+      "create",
+    ]) {
+      expect(memoryV2ToolPrompt).toContain(`memory(command="${command}"`);
+    }
+    expect(memoryApplyPatchV2Prompt).toContain(
+      "`read_only: true` files cannot be modified",
+    );
+  });
+
   test("memfs prompt documents direct edit commit safeguards", () => {
     const result = buildSystemPrompt("letta", "memfs");
 
@@ -110,7 +184,12 @@ describe("buildSystemPrompt", () => {
   });
 
   test("default prompt variants explain future invocations", () => {
-    for (const mode of ["standard", "memfs", "local-memfs"] as const) {
+    for (const mode of [
+      "standard",
+      "memfs",
+      "root-memfs",
+      "local-memfs",
+    ] as const) {
       const result = buildSystemPrompt("letta", mode);
 
       expect(result).toContain(
@@ -145,6 +224,9 @@ describe("buildSystemPrompt", () => {
     );
     expect(buildSystemPrompt("default", "memfs")).toBe(
       buildSystemPrompt("letta", "memfs"),
+    );
+    expect(buildSystemPrompt("default", "root-memfs")).toBe(
+      buildSystemPrompt("letta", "root-memfs"),
     );
     expect(buildSystemPrompt("default", "local-memfs")).toBe(
       buildSystemPrompt("letta", "local-memfs"),

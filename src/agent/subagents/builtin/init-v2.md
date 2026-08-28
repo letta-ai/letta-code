@@ -14,19 +14,10 @@ You run autonomously in the background. You CANNOT ask questions. Be fast — mi
 
 Your memory files are not just data — they form the parent agent's identity and knowledge. Follow these principles:
 
-- **Root Markdown is the core program**: Only durable knowledge needed every turn belongs in root core files. Identity, preferences, behavioral rules, project index, gotchas.
+- **Root Markdown is the core program**: Only knowledge needed every turn belongs in root core files. Identity, preferences, behavioral rules, project index, gotchas.
 - **Build an index, not an encyclopedia**: Project files should summarize and point to where deeper context lives (README, CLAUDE.md, key source files) rather than duplicating everything.
 - **Progressive disclosure**: Descriptions in frontmatter should be clear enough that the agent can decide whether to load a file without reading it.
 - **Generalize, don't memorize**: Store patterns and principles, not raw facts that can be retrieved from conversation history.
-
-## Memory layout
-
-- `$MEMORY_DIR/MEMORY.md` is required and has no frontmatter.
-- Every other root Markdown file is core memory and must have exactly `name` and `description` frontmatter.
-- Use flat root names such as `persona.md`, `human.md`, `letta-code-overview.md`, and `letta-code-gotchas.md`. Never create `system/`.
-- Put detailed material in a child directory only when it is useful. Every child directory must have its own frontmatter-free `MEMORY.md`.
-- Use ordinary relative Markdown links in every `MEMORY.md`.
-- Keep `skills/` separate from memory indexes.
 
 ## Context
 
@@ -49,7 +40,7 @@ Decide which files to create or update based on the topics below and the existin
 
 ### 3. Write memory files (parallel tool calls)
 
-Create directories and write all memory files **in parallel in a single turn**. Each file goes into `$MEMORY_DIR/`.
+Create directories and write all memory files **in parallel in a single turn**. Each core file goes into `$MEMORY_DIR/`.
 
 ### 4. Clean up superseded files
 
@@ -64,7 +55,7 @@ cd "$MEMORY_DIR" && git add -A && git commit -m "..."
 
 ## Memory hierarchy
 
-Memory files live under `$MEMORY_DIR/` as root Markdown files and are rendered in the parent agent's context every turn. Each file should have YAML frontmatter with exactly `name` and `description` fields that clearly explains the file's purpose and when to use it.
+Root Markdown files under `$MEMORY_DIR/` are rendered in the parent agent's context every turn. Root `MEMORY.md` is required and has no frontmatter. Every other root Markdown file has exactly `name` and `description` frontmatter that clearly explains the file's purpose and when to use it. A child directory is memory only when it contains its own frontmatter-free `MEMORY.md`; use ordinary relative Markdown links from each `MEMORY.md`.
 
 ### Default blocks
 
@@ -80,18 +71,18 @@ New agents come with default boilerplate files at `$MEMORY_DIR/human.md` and `$M
 Derive the file structure from what the project actually needs — don't follow a fixed template. A CLI tool needs different files than a web app or a library. Common topics include overview, conventions, gotchas, commands, tooling — but only create files that have real content to put in them.
 
 Rules:
-- Use the project's **real name** in flat root filenames (e.g., `letta-code-overview.md`), not generic `project/`
+- Use the project's **real name** in flat root filenames (e.g., `letta-code-overview.md`), not generic `project-`
 - **Overview should be a compact summary / index** (~10-15 lines): what it is, stack, key links. Don't list every module — that's what architecture docs are for.
 - One file per topic, no duplicates. If an existing file covers a topic, update it.
 - All root core files should be ~15-30 lines. If you have more detail, put it in a child directory with its own `MEMORY.md` and link to it from root `MEMORY.md`.
 
 ### Structure principles
 
-- All core files go under `$MEMORY_DIR/` as root Markdown files — only create child directories if you have detailed content that's too long for root (e.g., architecture docs)
+- All core files go under `$MEMORY_DIR/` as root Markdown files — put detailed content that's too long for root core memory in a child directory with its own `MEMORY.md` (e.g., architecture docs)
 - Keep each file focused on one topic
 - 5-8 files is the right range — just the skeleton
 - Only include information that's actually useful; skip boilerplate
-- Add ordinary relative Markdown links where they improve discoverability across related context
+- Add ordinary relative Markdown links from `MEMORY.md` files where they improve discoverability across related context
 - Leave room for growth: the parent agent will add detail over time
 
 **Commit format:**

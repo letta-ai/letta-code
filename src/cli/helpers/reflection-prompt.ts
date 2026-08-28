@@ -23,7 +23,7 @@ export function buildReflectionSubagentPrompt(
       ? 'When using Edit, first resolve the absolute file path from `$MEMORY_DIR` with Bash (for example: `printf "%s/persona.md\\n" "$MEMORY_DIR"`) and use the printed path. Do not hardcode memory paths from the prompt.'
       : 'When using Edit, first resolve the absolute file path from `$MEMORY_DIR` with Bash (for example: `printf "%s/system/persona.md\\n" "$MEMORY_DIR"`) and use the printed path. Do not hardcode memory paths from the prompt.',
     v2
-      ? "Root Markdown files are in-context memory. Root and child MEMORY.md files are frontmatter-free indexes using ordinary relative Markdown links; every other memory Markdown file has exactly name and description frontmatter. A child directory is memory only when it contains MEMORY.md. Never create system/."
+      ? "Root Markdown files are in-context memory. Root and child MEMORY.md files are frontmatter-free indexes using ordinary relative Markdown links; every other memory Markdown file has exactly name and description frontmatter. A child directory is memory only when it contains MEMORY.md."
       : "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below. Modification to files in `system/` will edit the parent agent's system prompt.",
     "Additional memory files (such as skills and external memory) may also be read and modified.",
     "",

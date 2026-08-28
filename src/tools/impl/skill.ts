@@ -7,6 +7,7 @@ import {
   getSkillsDirectory,
 } from "@/agent/context";
 import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
+import { detectMemoryFormat } from "@/agent/memory-format";
 import type { AttachedAgentRepository } from "@/agent/memory-git";
 import {
   discoverSharedMemorySkills,
@@ -22,6 +23,8 @@ import {
   PROJECT_SKILLS_DIR,
   SKILLS_DIR,
 } from "@/agent/skills";
+import { getBackend } from "@/backend";
+import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import { queueSkillContent } from "./skill-content-registry";
@@ -100,6 +103,33 @@ interface SkillResources {
   truncated: boolean;
 }
 
+const ROOT_MEMORY_SKILLS = new Set(["initializing-memory", "context-doctor"]);
+
+export function resolveBundledSkillContentPath(input: {
+  skillId: string;
+  bundledSkillPath: string;
+  memoryDir: string | null;
+  localMemfs: boolean;
+}): string {
+  if (
+    !input.localMemfs &&
+    input.memoryDir &&
+    ROOT_MEMORY_SKILLS.has(input.skillId) &&
+    detectMemoryFormat(input.memoryDir, false) === "memfs-v2"
+  ) {
+    return join(dirname(input.bundledSkillPath), "ROOT_MEMORY.md");
+  }
+  return input.bundledSkillPath;
+}
+
+function isLocalMemfsBackend(): boolean {
+  try {
+    return getBackend().capabilities.localMemfs;
+  } catch {
+    return isLocalBackendEnvEnabled(process.env);
+  }
+}
+
 function listSkillResources(skillMdPath: string): SkillResources {
   const skillDir = dirname(skillMdPath);
   const paths: string[] = [];
@@ -119,7 +149,10 @@ function listSkillResources(skillMdPath: string): SkillResources {
       const relativePath = relativeDirectory
         ? `${relativeDirectory}/${entry.name}`
         : entry.name;
-      if (relativePath.toUpperCase() === "SKILL.MD") {
+      if (
+        relativePath.toUpperCase() === "SKILL.MD" ||
+        relativePath.toUpperCase() === "ROOT_MEMORY.MD"
+      ) {
         continue;
       }
       if (paths.length >= MAX_LISTED_SKILL_RESOURCES) {
@@ -219,8 +252,14 @@ export async function readSkillContent(
   const bundledSkill = bundledSkills.find((s) => s.id === skillId);
   if (bundledSkill?.path && isSkillAvailableForAgent(bundledSkill, agentId)) {
     try {
-      const content = await readFile(bundledSkill.path, "utf-8");
-      return { content, path: bundledSkill.path };
+      const path = resolveBundledSkillContentPath({
+        skillId,
+        bundledSkillPath: bundledSkill.path,
+        memoryDir: resolveScopedMemoryDir({ agentId }),
+        localMemfs: isLocalMemfsBackend(),
+      });
+      const content = await readFile(path, "utf-8");
+      return { content, path };
     } catch {
       // Bundled skill path not found, continue to legacy fallback
     }

@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents";
 import { buildSystemPrompt } from "@/agent/prompt-assets";
 import {
   decideManagedSystemPromptUpdate,
   hashSystemPrompt,
+  resolveMemoryPromptMode,
 } from "@/agent/system-prompt-versioning";
 
 function agent(
@@ -18,6 +22,39 @@ function agent(
 }
 
 describe("system prompt versioning", () => {
+  test("selects the root prompt only for API memory with exact root MEMORY.md", () => {
+    const memoryDir = mkdtempSync(join(tmpdir(), "letta-root-prompt-"));
+    try {
+      mkdirSync(join(memoryDir, "nested"));
+      writeFileSync(join(memoryDir, "nested", "MEMORY.md"), "# Nested\n");
+      expect(
+        resolveMemoryPromptMode({
+          localMemfs: false,
+          memoryDir,
+          memfsEnabled: true,
+        }),
+      ).toBe("memfs");
+
+      writeFileSync(join(memoryDir, "MEMORY.md"), "# Memory\n");
+      expect(
+        resolveMemoryPromptMode({
+          localMemfs: false,
+          memoryDir,
+          memfsEnabled: true,
+        }),
+      ).toBe("root-memfs");
+      expect(
+        resolveMemoryPromptMode({
+          localMemfs: true,
+          memoryDir,
+          memfsEnabled: true,
+        }),
+      ).toBe("local-memfs");
+    } finally {
+      rmSync(memoryDir, { recursive: true, force: true });
+    }
+  });
+
   test("hashSystemPrompt is stable and content-sensitive", () => {
     expect(hashSystemPrompt("hello")).toBe(hashSystemPrompt("hello"));
     expect(hashSystemPrompt("hello")).not.toBe(hashSystemPrompt("hello!"));
@@ -61,6 +98,33 @@ describe("system prompt versioning", () => {
     expect(decision.kind).toBe("custom");
   });
 
+  test("does not replace a customized managed prompt when root layout is selected", () => {
+    const storedPrompt = buildSystemPrompt("default", "memfs");
+    const decision = decideManagedSystemPromptUpdate({
+      agent: agent(`${storedPrompt}\n\nUser customization.`),
+      memoryMode: "root-memfs",
+      storedPreset: "default",
+      storedHash: hashSystemPrompt(storedPrompt),
+      storedVersion: "old-version",
+    });
+
+    expect(decision.kind).toBe("custom");
+  });
+
+  test("tracks a bundled root prompt applied by migration", () => {
+    const oldPrompt = buildSystemPrompt("default", "memfs");
+    const rootPrompt = buildSystemPrompt("default", "root-memfs");
+    const decision = decideManagedSystemPromptUpdate({
+      agent: agent(rootPrompt),
+      memoryMode: "root-memfs",
+      storedPreset: "default",
+      storedHash: hashSystemPrompt(oldPrompt),
+      storedVersion: "old-version",
+    });
+
+    expect(decision.kind).toBe("track");
+  });
+
   test("tracks legacy Letta Code agents only when their prompt matches a current preset", () => {
     const currentPrompt = buildSystemPrompt("default", "standard");
 
@@ -96,22 +160,30 @@ describe("system prompt versioning", () => {
     expect(decision.kind).toBe("track");
   });
 
-  test("updates untagged agents with a recognizable legacy Letta Code prompt", () => {
+  test("updates an exact existing-layout preset when root layout is selected", () => {
     const decision = decideManagedSystemPromptUpdate({
-      agent: agent(
-        "You are Letta Code, a state-of-the-art coding agent running within the Letta Code CLI on a user's computer.\n\n## General",
-        [],
-      ),
-      memoryMode: "standard",
+      agent: agent(buildSystemPrompt("default", "memfs")),
+      memoryMode: "root-memfs",
     });
 
     expect(decision.kind).toBe("update");
     if (decision.kind === "update") {
       expect(decision.nextSystemPrompt).toBe(
-        buildSystemPrompt("default", "standard"),
+        buildSystemPrompt("default", "root-memfs"),
       );
       expect(decision.prompt.preset).toBe("default");
     }
+  });
+
+  test("does not replace a prompt merely because it starts like Letta Code", () => {
+    const decision = decideManagedSystemPromptUpdate({
+      agent: agent(
+        "You are Letta Code, a state-of-the-art coding agent running within the Letta Code CLI on a user's computer.\n\nCustom instructions.",
+      ),
+      memoryMode: "root-memfs",
+    });
+
+    expect(decision.kind).toBe("custom");
   });
 
   test("ignores untagged non-Letta-Code agents without prompt provenance", () => {

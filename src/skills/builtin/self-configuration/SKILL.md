@@ -88,15 +88,20 @@ If CLI behavior does not match the docs, stop and inspect `command -v letta`, `t
 
 Use memory when the user wants you to remember, prefer, learn, or change your identity/personality.
 
-Common files:
+Inspect the projected memory tree in the system prompt before choosing paths.
+Letta Code supports two layouts:
 
-| Path | Purpose |
-| --- | --- |
-| `$MEMORY_DIR/system/persona.md` | Identity, voice, behavioral defaults |
-| `$MEMORY_DIR/system/human.md` | Notes about the person you work with |
-| `$MEMORY_DIR/projects/` | Project-specific long-term context |
-| `$MEMORY_DIR/skills/` | Agent-owned reusable skills |
-| `$MEMORY_DIR/relationships/` | Relationship and collaboration notes |
+| Purpose | Root layout | Existing layout |
+| --- | --- | --- |
+| Identity and voice | `$MEMORY_DIR/persona.md` or another root persona file | `$MEMORY_DIR/system/persona.md` |
+| Notes about the user | `$MEMORY_DIR/human.md` or another root human file | `$MEMORY_DIR/system/human.md` |
+| Core memory | Other root Markdown files indexed by `MEMORY.md` | Markdown files under `$MEMORY_DIR/system/` |
+| Deferred memory | Directories with their own `MEMORY.md` | Files outside `$MEMORY_DIR/system/` |
+| Agent-owned skills | `$MEMORY_DIR/skills/` | `$MEMORY_DIR/skills/` |
+
+Use the active layout shown by the prompt and memory tools. Do not create a
+`system/` directory in a root-layout repository or move existing-layout memory
+to the root as part of an unrelated self-configuration request.
 
 After changing memory, inspect and commit the exact changed files. Push/sync according to the current harness reminder or the `syncing-memory-filesystem` skill; some environments sync committed memory automatically.
 

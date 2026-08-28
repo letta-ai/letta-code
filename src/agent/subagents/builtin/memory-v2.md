@@ -44,10 +44,9 @@ memory/
 **Memory rules:**
 - Root `MEMORY.md` is required, has no frontmatter, and links to core files and deferred indexes with ordinary relative Markdown links.
 - Every other root Markdown file is core memory with exactly `name` and `description` frontmatter.
-- Core filenames are flat and hyphenated. Never create `system/`.
 - A child directory is memory only when it has its own frontmatter-free `MEMORY.md`.
 - Every Markdown file in a deferred directory (other than `MEMORY.md`) has exactly `name` and `description` frontmatter.
-- `skills/` is separate procedural memory. Do not reorganize it or link it from memory indexes.
+- `skills/` is separate procedural memory.
 
 **File path → memory label:**
 - Root file path becomes the memory label (e.g., `persona.md` → memory label `persona`)
