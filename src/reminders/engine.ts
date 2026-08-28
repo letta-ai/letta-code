@@ -112,7 +112,7 @@ async function buildSecretsInfoReminder(
       process.platform === "win32"
         ? "`$env:API_KEY = $API_KEY; python script.py`\n`$env:API_KEY = $API_KEY; bun run script.ts`"
         : '`API_KEY="$API_KEY" python3 script.py`\n`API_KEY="$API_KEY" bun run script.ts`';
-    return `${SYSTEM_REMINDER_OPEN}\n${intro}\n${list}\n\nWhen running a shell command, the harness replaces a referenced \`$NAME\` with its real value. Secrets are not exported automatically, so a program you launch will not receive one unless you pass it on the launch line:\n\n${launchExamples}\n\nInside the program, read it normally with \`os.environ["API_KEY"]\` or \`process.env.API_KEY\`.\n\nYou cannot read secret values. Tool output shows \`NAME=<REDACTED>\`, which means the secret is set and working. Keep using \`$NAME\`.\n${SYSTEM_REMINDER_CLOSE}`;
+    return `${SYSTEM_REMINDER_OPEN}\n${intro}\n${list}\n\nWhen a shell command contains \`$NAME\`, the harness loads the matching secret into the child shell's environment; it does not rewrite the command text. The shell expands \`$NAME\` at execution time. If a program needs a secret but the command would not otherwise reference it, include it on the launch line so the harness can detect it:\n\n${launchExamples}\n\nInside the program, read it normally with \`os.environ["API_KEY"]\` or \`process.env.API_KEY\`.\n\nYou cannot read secret values. Tool output shows \`NAME=<REDACTED>\` when a value was injected and then scrubbed from model-visible output. An empty direct \`$NAME\` expansion means that secret was not available to that invocation; do not describe it as command-string replacement.\n${SYSTEM_REMINDER_CLOSE}`;
   } catch (error) {
     debugLog(
       "secrets",
