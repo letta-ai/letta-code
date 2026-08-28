@@ -28,6 +28,23 @@ describe("subcommand router", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("routes feedback help before TUI startup", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      const exitCode = await runSubcommand(["feedback", "--help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain("letta feedback --message <text>");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   test("shows unified server help without starting a server", async () => {
     const messages: string[] = [];
     const originalLog = console.log;
