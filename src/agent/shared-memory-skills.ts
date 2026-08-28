@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isLocalAgentId } from "./agent-id";
-import type { AttachedAgentRepository } from "./memory-git";
+import type { AttachedAgentRepository } from "./attached-repositories";
 import {
   compareSkills,
   discoverSkills,
@@ -52,7 +52,7 @@ async function getAttachedRepositories(
     return (await cached.promise).map((repository) => ({ ...repository }));
   }
 
-  const promise = import("./memory-git").then(
+  const promise = import("./attached-repositories").then(
     async ({ listAttachedAgentRepositories }) =>
       (await listAttachedAgentRepositories(agentId)).sort(
         (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),

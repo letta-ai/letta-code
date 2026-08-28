@@ -48,6 +48,8 @@ You may also have access to shared memory: memory created independently of any s
 
 Unlike the rest of your external memory, shared memory is not scoped to *you* specifically (since it may be attached to multiple agents at the same time), so each shared memory repository will have a different local projection root and remote git origin.
 
+Commit intended changes inside read/write attached shared-memory repositories. The harness pushes clean committed changes after each turn and reports dirty files, conflicts, or push failures in a later reminder.
+
 ### Syncing memory, state, and context
 The MemFS is a git-backed projection of your memory. Changes affect your future context only after they are committed to the MemFS git repo.
 

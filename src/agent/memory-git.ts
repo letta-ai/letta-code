@@ -28,10 +28,10 @@ import {
   getMemfsGitProxyRewriteConfig,
   getMemfsServerUrl,
 } from "@/backend/api/memfs-git-proxy";
-import { apiRequest } from "@/backend/api/request";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getUtf16Bom } from "@/utils/text-files";
 import { GIT_MEMORY_ENABLED_TAG } from "./agent-tags";
+import { listAttachedAgentRepositories } from "./attached-repositories";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 import { withSerializedGitConfigMutation } from "./memory-git-config-lock";
 import {
@@ -312,7 +312,7 @@ async function maybeUpdateRepositoryRemoteOrigin(args: {
   }
 }
 
-async function prepareAttachedRepositoryForGitOps(args: {
+export async function prepareAttachedRepositoryForGitOps(args: {
   agentId: string;
   repositoryName: string;
   directory: string;
@@ -474,7 +474,7 @@ function getMemoryRemoteUrl(agentId: string): string {
  * Reuses the same token resolution flow as getClient()
  * (env var → settings → OAuth refresh).
  */
-async function getAuthToken(): Promise<string> {
+export async function getAuthToken(): Promise<string> {
   const { getBackend } = await import("@/backend");
   const backend = getBackend();
   if (backend.capabilities.localMemfs && !backend.capabilities.remoteMemfs) {
@@ -570,7 +570,7 @@ export function buildNonInteractiveGitEnv(
 const GIT_DEFAULT_TIMEOUT_MS = 60_000; // 60s
 const GIT_CLONE_TIMEOUT_MS = 180_000; // 3min — clone can be slow on cold CI runners
 
-async function runGit(
+export async function runGit(
   cwd: string,
   args: string[],
   token?: string,
@@ -652,7 +652,7 @@ export function isMissingCwdGitError(error: unknown): boolean {
 const gitConfig = (dir: string, args: string[]) =>
   withSerializedGitConfigMutation(dir, () => runGit(dir, args));
 
-async function runGitWithRetry(
+export async function runGitWithRetry(
   cwd: string,
   args: string[],
   token?: string,
@@ -1072,7 +1072,7 @@ function normalizePathspecs(pathspecs: string[]): string[] {
   );
 }
 
-function isNonFastForwardPushError(error: unknown): boolean {
+export function isNonFastForwardPushError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return NON_FAST_FORWARD_PUSH_ERROR_RE.test(message);
 }
@@ -1485,41 +1485,11 @@ export async function initializeLocalMemoryRepo(
   ]);
 }
 
-interface AgentRepositoryResponse {
-  repositories: Array<{
-    id: string;
-    name: string;
-    is_primary: boolean;
-  }>;
-}
-
-export interface AttachedAgentRepository {
-  id: string;
-  name: string;
-}
-
 export interface SyncAgentRepositoriesResult {
   mounted: number;
   skipped: number;
   failed: number;
   summaries: string[];
-}
-
-export async function listAttachedAgentRepositories(
-  agentId: string,
-): Promise<AttachedAgentRepository[]> {
-  const response = await apiRequest<AgentRepositoryResponse>(
-    "GET",
-    `/v1/agents/${encodeURIComponent(agentId)}/repositories`,
-  );
-  return response.repositories
-    .filter(
-      (repository) => !repository.is_primary && repository.name !== "memory",
-    )
-    .map((repository) => ({
-      id: repository.id,
-      name: repository.name,
-    }));
 }
 
 async function syncAttachedRepository(args: {
@@ -1879,7 +1849,7 @@ async function getMemoryGitDir(memoryDir: string): Promise<string> {
   return isAbsolute(gitDir) ? gitDir : join(memoryDir, gitDir);
 }
 
-async function getMemoryConflictSummary(
+export async function getMemoryConflictSummary(
   memoryDir: string,
   statusOut?: string,
 ): Promise<string | null> {
@@ -1927,7 +1897,7 @@ async function getMemoryConflictSummary(
   return parts.join("; ");
 }
 
-async function getMemoryAheadBehind(
+export async function getMemoryAheadBehind(
   memoryDir: string,
 ): Promise<{ ahead: number; behind: number } | null> {
   try {
