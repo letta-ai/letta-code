@@ -1228,12 +1228,12 @@ async function main(): Promise<void> {
       }
       markMilestone("CREDENTIALS_VALIDATED");
 
-      // Ensure base tools exist on the server (first-run-per-machine,
-      // backgrounded for interactive startup). Must run after credentials are
-      // validated so OAuth tokens are available.
+      // Bootstrap after credential validation. Only interactive startup
+      // backgrounds the request.
       if (isValid) {
         const bootstrapPromise = import("@/agent/bootstrap-tools").then(
-          ({ bootstrapBaseToolsIfNeeded }) => bootstrapBaseToolsIfNeeded(),
+          ({ bootstrapBaseToolsIfNeeded }) =>
+            bootstrapBaseToolsIfNeeded({ quiet: isHeadless }),
         );
         if (isHeadless) {
           await bootstrapPromise;
