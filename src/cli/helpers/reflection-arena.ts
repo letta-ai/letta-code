@@ -18,6 +18,7 @@ import {
   maybeUploadReflectionArenaChoiceToHf,
 } from "@/cli/helpers/reflection-arena-hf-upload";
 import { finalizeAutoReflectionCompletion } from "@/cli/helpers/reflection-completion";
+import { isRetryableReflectionArenaModelError } from "@/cli/helpers/reflection-configuration-error";
 import {
   emitReflectionRunEnd,
   emitReflectionRunStart,
@@ -27,7 +28,9 @@ import {
   REFLECTION_AGENT_ID_WAIT_MS,
   type ReflectionFeedbackContext,
   type ReflectionLaunchTriggerSource,
+  recordReflectionConfigurationFailure,
   releaseReflectionLaunch,
+  shouldSuppressReflectionLaunch,
   tryReserveReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
 import {
@@ -166,7 +169,10 @@ export interface LaunchReflectionArenaOptions {
 
 export type LaunchReflectionArenaResult =
   | { launched: true; payloadPath: string; run: ReflectionArenaRun }
-  | { launched: false; reason: "no_payload" | "parent_dirty" };
+  | {
+      launched: false;
+      reason: "configuration_error" | "no_payload" | "parent_dirty";
+    };
 
 export interface FinalizeReflectionArenaChoiceOptions {
   choice: ReflectionArenaChoice;
@@ -629,21 +635,6 @@ function candidateIsFinished(candidate: ReflectionArenaCandidate): boolean {
   return Boolean(candidate.result);
 }
 
-function isRetryableArenaModelError(error: string | undefined): boolean {
-  if (!error) return false;
-  const normalized = error.toLowerCase();
-  return [
-    "model not found",
-    "unknown model",
-    "not-enough-credits",
-    "no credits",
-    "out of credits",
-    "insufficient credits",
-    "exceeded-quota",
-    "llm_insufficient_credits",
-  ].some((marker) => normalized.includes(marker));
-}
-
 function runIsReady(run: ReflectionArenaRun): boolean {
   return (
     run.candidates.length === REFLECTION_ARENA_CANDIDATE_COUNT &&
@@ -681,6 +672,10 @@ async function markCandidateComplete(params: {
 export async function launchReflectionArena(
   options: LaunchReflectionArenaOptions,
 ): Promise<LaunchReflectionArenaResult> {
+  if (shouldSuppressReflectionLaunch(options.agentId, options.triggerSource)) {
+    return { launched: false, reason: "configuration_error" };
+  }
+
   const memoryDir = getScopedMemoryFilesystemRoot(options.agentId);
   if (await reflectionMemoryParentHasChanges(memoryDir)) {
     debugLog(
@@ -780,6 +775,13 @@ export async function startReflectionArenaRun(
             report,
           }) => {
             try {
+              if (!success) {
+                recordReflectionConfigurationFailure({
+                  agentId: options.agentId,
+                  model: resolvedModel ?? model,
+                  error,
+                });
+              }
               const [memoryHead, memoryNoChanges] = await Promise.all([
                 getGitHead(candidate.worktree.worktreeDir),
                 reflectionMemoryWorktreeHasNoChanges(candidate.worktree),
@@ -802,7 +804,7 @@ export async function startReflectionArenaRun(
               if (
                 !success &&
                 model !== REFLECTION_ARENA_MODEL_A_DEFAULT &&
-                isRetryableArenaModelError(error)
+                isRetryableReflectionArenaModelError(error)
               ) {
                 const retryModel =
                   sampleReflectionArenaComparisonModel(attemptedModels);
