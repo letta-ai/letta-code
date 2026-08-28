@@ -145,15 +145,20 @@ async def greet(args: dict[str, Any]) -> dict[str, Any]:
 
 #### `ToolAnnotations`
 
-Re-exported from `mcp.types` (also available as `from claude_agent_sdk import ToolAnnotations`). All fields are optional hints; clients should not rely on them for security decisions.
+Behavioral hints for a tool, passed as the `annotations` argument of [`tool()`](#tool). `ToolAnnotations` extends the MCP SDK's `mcp.types.ToolAnnotations` with a `maxResultSizeChars` field, and you can write each hint in camelCase or snake\_case: `ToolAnnotations(readOnlyHint=True)` and `ToolAnnotations(read_only_hint=True)` are equivalent. You can also pass a plain `mcp.types.ToolAnnotations` wherever the SDK accepts annotations.
 
-| Field             | Type           | Default | Description                                                                                                                                          |
-| :---------------- | :------------- | :------ | :--------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `title`           | `str \| None`  | `None`  | Human-readable title for the tool                                                                                                                    |
-| `readOnlyHint`    | `bool \| None` | `False` | If `True`, the tool does not modify its environment                                                                                                  |
-| `destructiveHint` | `bool \| None` | `True`  | If `True`, the tool may perform destructive updates (only meaningful when `readOnlyHint` is `False`)                                                 |
-| `idempotentHint`  | `bool \| None` | `False` | If `True`, repeated calls with the same arguments have no additional effect (only meaningful when `readOnlyHint` is `False`)                         |
-| `openWorldHint`   | `bool \| None` | `True`  | If `True`, the tool interacts with external entities (for example, web search). If `False`, the tool's domain is closed (for example, a memory tool) |
+The snake\_case names and the typed `maxResultSizeChars` field require Python Agent SDK 0.2.140 or later. Versions 0.1.31 through 0.2.139 re-export `mcp.types.ToolAnnotations` unchanged. On versions 0.1.55 through 0.2.139 you can still pass `maxResultSizeChars` as a keyword argument: the MCP class accepts extra fields, and the SDK forwards the value to Claude Code.
+
+All fields are optional. Clients shouldn't rely on the hints for security decisions.
+
+| Field                | Type           | Default | Description                                                                                                                                                                                                                                                                                                                                                                                                       |
+| :------------------- | :------------- | :------ | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `title`              | `str \| None`  | `None`  | Human-readable title for the tool                                                                                                                                                                                                                                                                                                                                                                                 |
+| `readOnlyHint`       | `bool \| None` | `False` | If `True`, the tool does not modify its environment                                                                                                                                                                                                                                                                                                                                                               |
+| `destructiveHint`    | `bool \| None` | `True`  | If `True`, the tool may perform destructive updates (only meaningful when `readOnlyHint` is `False`)                                                                                                                                                                                                                                                                                                              |
+| `idempotentHint`     | `bool \| None` | `False` | If `True`, repeated calls with the same arguments have no additional effect (only meaningful when `readOnlyHint` is `False`)                                                                                                                                                                                                                                                                                      |
+| `openWorldHint`      | `bool \| None` | `True`  | If `True`, the tool interacts with external entities (for example, web search). If `False`, the tool's domain is closed (for example, a memory tool)                                                                                                                                                                                                                                                              |
+| `maxResultSizeChars` | `int \| None`  | `None`  | Number of characters up to which Claude Code keeps this tool's text result inline in the conversation instead of saving it to a file, up to 500,000. Results that contain images aren't affected. A Claude Code setting rather than an MCP hint: the SDK sends it in the tool's `_meta` as `anthropic/maxResultSizeChars`. See [Raise the limit for a specific tool](/docs/en/mcp#raise-the-limit-for-a-specific-tool) |
 
 ```python theme={null}
 from claude_agent_sdk import tool, ToolAnnotations
@@ -686,13 +691,13 @@ class SdkMcpTool(Generic[T]):
     annotations: ToolAnnotations | None = None
 ```
 
-| Property       | Type                                       | Description                                                                                                |
-| :------------- | :----------------------------------------- | :--------------------------------------------------------------------------------------------------------- |
-| `name`         | `str`                                      | Unique identifier for the tool                                                                             |
-| `description`  | `str`                                      | Human-readable description                                                                                 |
-| `input_schema` | `type[T] \| dict[str, Any]`                | Schema for input validation                                                                                |
-| `handler`      | `Callable[[T], Awaitable[dict[str, Any]]]` | Async function that handles tool execution                                                                 |
-| `annotations`  | `ToolAnnotations \| None`                  | Optional MCP tool annotations (e.g., `readOnlyHint`, `destructiveHint`, `openWorldHint`). From `mcp.types` |
+| Property       | Type                                            | Description                                                                                                      |
+| :------------- | :---------------------------------------------- | :--------------------------------------------------------------------------------------------------------------- |
+| `name`         | `str`                                           | Unique identifier for the tool                                                                                   |
+| `description`  | `str`                                           | Human-readable description                                                                                       |
+| `input_schema` | `type[T] \| dict[str, Any]`                     | Schema for input validation                                                                                      |
+| `handler`      | `Callable[[T], Awaitable[dict[str, Any]]]`      | Async function that handles tool execution                                                                       |
+| `annotations`  | [`ToolAnnotations`](#toolannotations)` \| None` | Optional tool annotations (for example `readOnlyHint`, `destructiveHint`, `openWorldHint`, `maxResultSizeChars`) |
 
 ### `Transport`
 
