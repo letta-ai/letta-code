@@ -886,8 +886,8 @@ describe("reflectionTranscript helper", () => {
     expect(prompt).toContain("<parent_memory>snapshot</parent_memory>");
   });
 
-  test("reflection payload normalizes bounded tool calls and results", async () => {
-    const longArgs = JSON.stringify({ pattern: "a".repeat(500) });
+  test("reflection payload preserves tool calls and bounds results", async () => {
+    const longArgs = JSON.stringify({ pattern: "a".repeat(25_000) });
     const longResult = `BEGIN:${"x".repeat(3_000)}:END`;
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "run a search", messageId: "u1" },
@@ -925,7 +925,7 @@ describe("reflectionTranscript helper", () => {
     expect(toolMsg.tool_calls[0].id).toBe("tc1");
     expect(toolMsg.tool_calls[0].name).toBe("Grep");
     const normalizedArgs = toolMsg.tool_calls[0].args;
-    expect(Array.from(normalizedArgs).length).toBeLessThanOrEqual(300);
+    expect(normalizedArgs).toBe(longArgs);
     expect(JSON.parse(normalizedArgs)).toBeObject();
 
     const toolResult = messages.find(
