@@ -563,10 +563,7 @@ export function buildNonInteractiveGitEnv(
   };
 }
 
-/**
- * Run a git command in the given directory.
- * If a token is provided, passes it as an auth header.
- */
+/** Run git in the given directory, passing a token as an auth header when provided. */
 const GIT_DEFAULT_TIMEOUT_MS = 60_000; // 60s
 const GIT_CLONE_TIMEOUT_MS = 180_000; // 3min — clone can be slow on cold CI runners
 
@@ -596,7 +593,8 @@ export async function runGit(
   } else if (args[0] === "push") {
     loggableArgs = args.map(redactCredentialedHttpsUrl);
   }
-  debugLog("memfs-git", `git ${loggableArgs.join(" ")} (in ${cwd})`);
+  const loggableCommand = redactGitAuthInText(loggableArgs.join(" "));
+  debugLog("memfs-git", `git ${loggableCommand} (in ${cwd})`);
 
   const timeoutMs = options?.timeoutMs ?? GIT_DEFAULT_TIMEOUT_MS;
   let result: Awaited<ReturnType<typeof execFile>>;
