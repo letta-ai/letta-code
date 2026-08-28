@@ -7,7 +7,11 @@ import {
   createReflectionMemoryWorktree,
   type ReflectionMemoryWorktree,
 } from "@/agent/memory-worktree";
-import { finalizeReflectionMemoryWorktreeLaunch } from "@/cli/helpers/reflection-launcher";
+import {
+  clearAutomaticReflectionSuppression,
+  finalizeReflectionMemoryWorktreeLaunch,
+  isAutomaticReflectionSuppressed,
+} from "@/cli/helpers/reflection-launcher";
 import { telemetry } from "@/telemetry";
 
 let tempDir: string;
@@ -66,6 +70,7 @@ async function finalizeLaunch(
 }
 
 beforeEach(() => {
+  clearAutomaticReflectionSuppression("agent-test");
   telemetry.cleanup();
   telemetryState.events = [];
   telemetry.drain = mock(async () => {});
@@ -362,5 +367,64 @@ describe("reflection worktree completion messaging", () => {
       reflection_worktree_id: worktree.id,
       commit_count: 0,
     });
+  });
+
+  test("failed reflection surfaces a model configuration error", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+
+    const result = await finalizeLaunch(worktree, false, {
+      subagentError:
+        '400 {"error":"Model handle not found: openai-proxy/deepseek-v4-flash"}',
+    });
+
+    expect(result.integration.status).toBe("failed");
+    expect(result.completionSuccess).toBe(false);
+    expect(result.completionMessage).toBe(
+      'Reflection failed: Model handle "openai-proxy/deepseek-v4-flash" was not found. Automatic reflection is paused until the model configuration changes; use /reflect to retry.',
+    );
+  });
+
+  test("a transient manual retry does not clear model configuration suppression", async () => {
+    const configurationWorktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    await finalizeLaunch(configurationWorktree, false, {
+      subagentError:
+        '400 {"error":"Model handle not found: openai-proxy/deepseek-v4-flash"}',
+    });
+    expect(isAutomaticReflectionSuppressed("agent-test")).toBe(true);
+
+    const transientWorktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    const result = await finalizeLaunch(transientWorktree, false, {
+      subagentError: "Connection error.",
+    });
+
+    expect(result.completionMessage).toBe(
+      "Tried to reflect, but memory updates were not completed cleanly; will retry later.",
+    );
+    expect(isAutomaticReflectionSuppressed("agent-test")).toBe(true);
+  });
+
+  test("a successful manual retry resumes automatic reflection", async () => {
+    const configurationWorktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    await finalizeLaunch(configurationWorktree, false, {
+      subagentError:
+        '400 {"error":"Model handle not found: openai-proxy/deepseek-v4-flash"}',
+    });
+    expect(isAutomaticReflectionSuppressed("agent-test")).toBe(true);
+
+    const successfulWorktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    const result = await finalizeLaunch(successfulWorktree, true);
+
+    expect(result.completionSuccess).toBe(true);
+    expect(isAutomaticReflectionSuppressed("agent-test")).toBe(false);
   });
 });

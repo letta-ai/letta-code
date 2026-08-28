@@ -10,10 +10,14 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  clearAutomaticReflectionSuppression,
   getReflectionLaunchSkippedMessage,
+  isAutomaticReflectionSuppressed,
   launchReflectionSubagent,
   type ReflectionLaunchOptions,
+  recordReflectionConfigurationFailure,
   shouldRunQueuedReflectionLaunch,
+  shouldSuppressReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
 import {
   REFLECTION_STATE_SCHEMA_VERSION,
@@ -154,6 +158,43 @@ describe("launchReflectionSubagent", () => {
   });
 });
 
+describe("reflection configuration failure suppression", () => {
+  test("suppresses automatic launches but allows manual retries", () => {
+    const agentId = "agent-invalid-reflection-model";
+    clearAutomaticReflectionSuppression(agentId);
+    expect(
+      recordReflectionConfigurationFailure({
+        agentId,
+        model: "openai-proxy/deepseek-v4-flash",
+        error:
+          '400 {"error":"Model handle not found: openai-proxy/deepseek-v4-flash"}',
+      }),
+    ).toBe(true);
+
+    expect(isAutomaticReflectionSuppressed(agentId)).toBe(true);
+    expect(shouldSuppressReflectionLaunch(agentId, "step-count")).toBe(true);
+    expect(shouldSuppressReflectionLaunch(agentId, "compaction-event")).toBe(
+      true,
+    );
+    expect(shouldSuppressReflectionLaunch(agentId, "manual")).toBe(false);
+    clearAutomaticReflectionSuppression(agentId);
+  });
+
+  test("does not suppress automatic reflection for retryable failures", () => {
+    const agentId = "agent-retryable-reflection-failure";
+    clearAutomaticReflectionSuppression(agentId);
+
+    expect(
+      recordReflectionConfigurationFailure({
+        agentId,
+        model: "letta/auto-memory",
+        error: "Connection error.",
+      }),
+    ).toBe(false);
+    expect(isAutomaticReflectionSuppressed(agentId)).toBe(false);
+  });
+});
+
 describe("getReflectionLaunchSkippedMessage", () => {
   test("formats parent-dirty and listener-specific skipped reasons", () => {
     expect(getReflectionLaunchSkippedMessage("cutover")).toContain(
@@ -161,6 +202,9 @@ describe("getReflectionLaunchSkippedMessage", () => {
     );
     expect(getReflectionLaunchSkippedMessage("parent_dirty")).toContain(
       "uncommitted changes",
+    );
+    expect(getReflectionLaunchSkippedMessage("configuration_error")).toContain(
+      "Automatic reflection is paused",
     );
     expect(getReflectionLaunchSkippedMessage("no_payload", "listener")).toBe(
       "No new transcript content to reflect on for this conversation.",
