@@ -61,19 +61,23 @@ function isToolsNotFoundError(err: unknown): boolean {
 
 export function shouldAddBaseToolsToServer(
   baseUrl: string,
-  agentId: string | undefined,
+  runtimeEnvironmentDeviceId: string | undefined,
 ): boolean {
-  return baseUrl !== LETTA_CLOUD_API_URL || !agentId?.trim();
+  return baseUrl !== LETTA_CLOUD_API_URL || !runtimeEnvironmentDeviceId?.trim();
 }
 
 export async function addBaseToolsToServer(): Promise<boolean> {
   const { apiKey, baseUrl } = await getApiRequestConfig();
 
-  const agentId = process.env.LETTA_AGENT_ID || process.env.AGENT_ID;
-  if (!shouldAddBaseToolsToServer(baseUrl, agentId)) {
+  if (
+    !shouldAddBaseToolsToServer(
+      baseUrl,
+      process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID,
+    )
+  ) {
     debugLog(
       "bootstrap",
-      "Skipping base-tool bootstrap inside an agent-scoped Letta Cloud runtime.",
+      "Skipping base-tool bootstrap inside a managed Letta Cloud runtime.",
     );
     return false;
   }
