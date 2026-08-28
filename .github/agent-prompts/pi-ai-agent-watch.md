@@ -6,6 +6,20 @@ Your job is to review the cumulative stable `@earendil-works/pi-ai` changes sinc
 
 Before running the sandbox bootstrap, resolve the watcher credential identity with `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh api user --jq .login`. It must exactly match the Expected GitHub login from the run inputs. If the secret is missing or the identities differ, stop without modifying GitHub or the tracker.
 
+Plain `git push` uses the sandbox's default GitHub App credential, not `GH_TOKEN`. For the one required branch push, use exactly:
+
+```bash
+test ! -e .git/hooks/pre-push
+test ! -e .husky/pre-push
+test "$(git remote get-url origin)" = "https://github.com/letta-ai/letta-code.git"
+test -n "$AMELIA_GITHUB_TOKEN"
+AUTH_HEADER="Authorization: Basic $(printf 'x-access-token:%s' "$AMELIA_GITHUB_TOKEN" | base64 | tr -d '\n')"
+env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN git -c http.extraHeader="$AUTH_HEADER" push -u origin HEAD
+unset AUTH_HEADER
+```
+
+If either push hook exists, the remote differs, or this push fails, stop with `needs_human_review`. Never retry with plain `git push`, `CAREN_GITHUB_TOKEN`, another user's credential, or a token-bearing remote URL.
+
 ## Sandbox setup
 
 The detector ran on a GitHub Actions runner, but your turn does not. Runner files and environment variables are unavailable in the sandbox. Run the exact `Sandbox bootstrap` block appended to this prompt, then use `SetWorkingDirectory` to select `/tmp/letta-code-pi-ai-watch`. If `SetWorkingDirectory` is unavailable, pass that absolute directory as `workdir` for every command.

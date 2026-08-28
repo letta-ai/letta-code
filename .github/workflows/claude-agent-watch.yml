@@ -194,6 +194,18 @@ jobs:
             --output /dev/null \
             "https://api.letta.com/v1/conversations/$CONVERSATION_ID"
 
+      - name: Enforce Amelia PR identity
+        if: always() && steps.detect.outputs.should_run_agent == 'true' && steps.github-identity.outputs.login != ''
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          EXPECTED_GITHUB_LOGIN: ${{ steps.github-identity.outputs.login }}
+          PR_MARKER: "Claude-watch: ${{ steps.detect.outputs.candidate_id }}"
+        run: |
+          bun scripts/agent-watch/verify-pr-identity.ts \
+            --repo letta-ai/letta-code \
+            --marker "$PR_MARKER" \
+            --expected-login "$EXPECTED_GITHUB_LOGIN"
+
       - name: Verify terminal outcome
         if: steps.detect.outputs.should_run_agent == 'true'
         env:

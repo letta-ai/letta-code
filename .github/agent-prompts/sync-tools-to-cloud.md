@@ -8,6 +8,20 @@ Before inspecting or modifying GitHub, resolve the automation identity with `tes
 
 Use only `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN"` for every GitHub CLI operation. Never use the agent's general `$GITHUB_TOKEN` secret or another user's credentials.
 
+Plain `git push` uses the sandbox's default GitHub App credential, not `GH_TOKEN`. For the one required branch push, use exactly:
+
+```bash
+test ! -e .git/hooks/pre-push
+test ! -e .husky/pre-push
+test "$(git remote get-url origin)" = "https://github.com/letta-ai/letta-cloud.git"
+test -n "$AMELIA_GITHUB_TOKEN"
+AUTH_HEADER="Authorization: Basic $(printf 'x-access-token:%s' "$AMELIA_GITHUB_TOKEN" | base64 | tr -d '\n')"
+env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN git -c http.extraHeader="$AUTH_HEADER" push -u origin HEAD
+unset AUTH_HEADER
+```
+
+If either push hook exists, the remote differs, or this push fails, stop without creating a PR. Never retry with plain `git push`, `CAREN_GITHUB_TOKEN`, another user's credential, or a token-bearing remote URL.
+
 ## Source review
 
 Read the source PR metadata and complete diff:

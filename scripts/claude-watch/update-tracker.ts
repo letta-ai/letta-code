@@ -27,6 +27,7 @@ interface Args {
   outcome: ClaudeWatchOutcome | null;
   notes: string;
   prUrl: string | null;
+  expectedGithubLogin: string | null;
   assertTerminal: boolean;
   dryRun: boolean;
 }
@@ -41,6 +42,7 @@ export function parseArgs(argv: string[]): Args {
     outcome: null,
     notes: "",
     prUrl: null,
+    expectedGithubLogin: null,
     assertTerminal: false,
     dryRun: false,
   };
@@ -59,6 +61,8 @@ export function parseArgs(argv: string[]): Args {
       args.outcome = parseOutcome(argv[++index]);
     else if (argument === "--notes") args.notes = argv[++index] ?? "";
     else if (argument === "--pr-url") args.prUrl = argv[++index] ?? null;
+    else if (argument === "--expected-github-login")
+      args.expectedGithubLogin = argv[++index] ?? null;
     else if (argument === "--assert-terminal") args.assertTerminal = true;
     else if (argument === "--dry-run") args.dryRun = true;
     else throw new Error(`Unknown argument: ${argument}`);
@@ -75,8 +79,12 @@ export function parseArgs(argv: string[]): Args {
     if (!args.outcome) throw new Error("--outcome is required");
     if (isTerminalOutcome(args.outcome) && !args.stateCommitSha)
       throw new Error("terminal outcomes require --state-commit-sha");
-    if (args.outcome === "pr_created" && !args.prUrl)
-      throw new Error("--pr-url is required for pr_created");
+    if (args.outcome === "pr_created") {
+      if (!args.prUrl) throw new Error("--pr-url is required for pr_created");
+      if (!args.expectedGithubLogin) {
+        throw new Error("--expected-github-login is required for pr_created");
+      }
+    }
   }
   return args;
 }
@@ -117,15 +125,16 @@ function verifyParityPr(
   repo: string,
   prUrl: string,
   candidateId: string,
+  expectedGithubLogin: string,
 ): void {
   const pr = ghJson<{
     isDraft: boolean;
     author: { login: string };
     body: string | null;
   }>(["pr", "view", prUrl, "--repo", repo, "--json", "isDraft,author,body"]);
-  if (!pr.isDraft || pr.author.login !== "carenthomas") {
+  if (!pr.isDraft || pr.author.login !== expectedGithubLogin) {
     throw new Error(
-      `Parity PR must be a draft authored by carenthomas (got draft=${pr.isDraft}, author=${pr.author.login})`,
+      `Parity PR must be a draft authored by ${expectedGithubLogin} (got draft=${pr.isDraft}, author=${pr.author.login})`,
     );
   }
   if (!pr.body?.includes(`Claude-watch: ${candidateId}`)) {
@@ -164,7 +173,12 @@ export function main(argv = process.argv.slice(2)): void {
     verifyStateCandidate(analysis.candidate_id, args.stateCommitSha as string);
   }
   if (args.outcome === "pr_created") {
-    verifyParityPr(args.repo, args.prUrl as string, analysis.candidate_id);
+    verifyParityPr(
+      args.repo,
+      args.prUrl as string,
+      analysis.candidate_id,
+      args.expectedGithubLogin as string,
+    );
   }
   const next = recordAnalysis(state, {
     analysis,
