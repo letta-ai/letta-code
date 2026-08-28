@@ -1,22 +1,22 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.248:docs:60618fb47c4aeac3ca33478db6461a7ae63e9a1f093ecb9f919ba2b7a0d8b3ed:runtime:4196337dd31b48ef3a170d35dc105c548abf046b184fdf59c89a897ac2a7b388",
-  "package_version": "2.1.248",
-  "npm_integrity": "sha512-X9Xy+cdXNXkD47jj4Ro1mfm573nEwYc7iUuqT0SGHgdufjwFXIEOS6FTGBme6ngG8156dTibrK167sVcKeuntw==",
-  "npm_published_at": "2026-08-27T20:35:36.671Z",
-  "release_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.248",
-  "release_notes_md": "## What's changed\n\n- Added `--restricted` (or `CLAUDE_CODE_RESTRICTED=1`): removes the built-in tools that run commands or code and `WebFetch` (unless named in `--tools`), keeps file tools inside the working directory, refuses `bypassPermissions`, and ignores user, project and local settings files\n- Added `experimental.cacheTtl` (`\"5m\"` or `\"1h\"`) to agent frontmatter: a per-agent prompt cache TTL used when no subagent TTL setting is configured\n- Added `claude self-hosted-runner --client-label <label>` (or `SELF_HOSTED_RUNNER_CLIENT_LABEL`) to override the label the runner registers with (default: hostname)\n- Added server-managed settings diagnostics: a startup warning when the settings fail to load, and a `/doctor` and `/status` line explaining a load failure or why they weren't fetched (Bedrock/Vertex/third-party provider, custom `ANTHROPIC_BASE_URL`)\n- Added a warning in `/web-setup` when the GitHub CLI token lacks the `workflow` scope, since pushes to very large repositories can be rejected without it\n- Added `/usage-credits` for Enterprise organizations billed through AWS Marketplace, self-serve Enterprise, and Enterprise trials, so members can request a higher usage limit from their admin\n- Added cross-session messaging (`SendMessage` / `ListAgents`) between sessions on the same machine on Bedrock, Vertex, and Foundry, and when telemetry is disabled\n- Fixed a prompt-cache miss (and lost extended-thinking context) roughly once an hour in long sessions, caused by tool definitions being re-rendered after an OAuth token refresh\n- Fixed the `ScheduleWakeup` tool definition changing between a session and its `--resume` when the account had entered usage overage, causing a full prompt-cache miss on the resumed session's first turn\n- Fixed Claude Desktop and Cowork sessions disappearing after 30 days: the transcript cleanup now keeps desktop-written sessions while they are in the app (unless org policy manages retention); the new `desktopSessionCleanupPeriodDays` setting caps the exemption\n- Fixed being sent to the login screen when another Claude Code process held the token refresh lock while the session token had expired; the request now fails with a retryable error instead\n- Windows: Fixed the `claude agents` list not responding to the keyboard after detaching from a session, or when launched in a terminal tab left in win32-input-mode\n- Fixed the recommended Console sign-in in `/login` failing with an OAuth error before showing a sign-in URL on machines where it can't be used (for example when `ANTHROPIC_API_KEY` or an API key helper is set); it now falls back to the API-key sign-in\n- Fixed model names in `/model` and fast-mode switch notices to render as code, so suffixes like `[1m]` display literally instead of as a link\n- Fixed `claude agents` skipping the workspace trust prompt when the `CI` environment variable is set\n- Fixed `claude agents` crashing on launch when the PR-status cache held a malformed entry\n- Fixed agent view resurrecting a weeks-old background session after the machine was off: such a session now shows as stopped at its real end, and opening it asks before resuming its saved conversation\n- Fixed agent view sometimes opening an older conversation, and dropping the typed prompt, when starting a new session\n- Fixed `claude agents`: opening a stopped session that you already resumed in another terminal no longer starts a second process on that conversation; the row now says it is open in a terminal\n- Fixed `claude agents` and `claude rm` refusing to delete a session (\"has commits that are not pushed anywhere\") when its worktree branch was already merged into your checked-out default branch (e.g. local `main`) but not yet pushed\n- Fixed background sessions waiting silently when a `PermissionRequest` or `PreToolUse` hook prints an invalid answer: the `claude agents` row now names the hook and the schema error\n- Fixed hooks silently treating a stdout `{…}` object that isn't valid JSON as plain text; it's now reported as a hook error with the parse message\n- Fixed `/mcp` listing a project `.mcp.json` entry that declares the claude.ai connector type under the trusted \"claude.ai\" heading; it now appears under its real scope\n- Fixed MCP servers whose `headersHelper` supplies the `Authorization` header falling into OAuth discovery on a 401 instead of re-running the helper and retrying the call as documented\n- Fixed `/login` to a Claude apps gateway hanging when the managed-settings security approval dialog was required\n- Fixed gateway model discovery (`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`) never running when `apiKeyHelper` is the only credential\n- Fixed `claude logs` leaving mouse tracking, bracketed paste and the alternate screen switched on in the terminal it was run from\n- Fixed the trust dialog's list of repo permission rules showing a garbled character when a long rule was cut off in the middle of an emoji\n- Fixed the permission mode indicator staying hidden behind the \"Press Ctrl-C again to exit\" hint when you press shift+tab right after ctrl+c\n- Fixed `/ultrareview` and locally seeded cloud sessions uploading uncommitted edits to `prod.env`-style and `*.tfvars` files, or to editor swap, temp, and backup copies of credential files (e.g. `key.pem.tmp`, `id_rsa.swo`); they now stay on your machine\n- Fixed Remote Control sessions occasionally never showing a permission prompt or the latest messages on the connected device after the CLI silently reconnected\n- Fixed cloud sessions occasionally failing at startup when the container's session credentials were not yet readable\n- Fixed `claude remote-control` rejecting its own flags (e.g. `--spawn`, `--name`) when a global flag or a wrapper-injected option precedes the subcommand\n- Fixed startup warnings (e.g. \"N MCP servers need authentication\") rendering one column right of the rest of the transcript\n- Fixed a backgrounded worktree session losing its checkout: the background session now holds the worktree's lock while it runs, so cleanup and `git worktree remove` leave it alone\n- Fixed @-mentions of other sessions not matching names typed with non-Latin characters (for example Korean entered through an IME)\n- Fixed an invalid `crossSessionInbound` value being silently ignored: it now warns and holds cross-session messages (user settings) or refuses them (managed settings) until fixed\n- Fixed rate-limit, usage, and fast-mode messages telling you to run `/usage-credits` when that command isn't available for your organization (e.g. hidden with `DISABLE_EXTRA_USAGE_COMMAND`)\n- [VSCode] Fixed a chat tab getting stuck on \"No conversation found\" when its session was never saved; it now starts a new conversation instead\n- Improved the Workflow tool's prompt footprint: its description is now about 1k tokens instead of 5.7k, with the script-writing reference moved into a bundled `workflow-authoring` skill\n- Improved the prompt-footer PR badge to check GitHub less often while the pull request is unchanged; a push or a `gh pr` command still refreshes it right away\n- Improved managed settings: client-side timeout, MCP startup-mode, and stream-watchdog env vars no longer trigger the settings-approval prompt\n- Improved `/ultrareview <PR#>` to check before launch that the GitHub account connected to your Claude account can access the repository, and to explain how to fix it, instead of failing after the cloud session starts\n- Improved cross-session messaging: falls back to a private per-user `/tmp` directory when the default one can't be used, and the notice and `/status` name the directory to fix\n- Changed shift+enter in the agent view dispatch input to insert a newline (matching the prompt); ctrl+enter now dispatches and attaches\n- Changed `/loop`: self-paced dynamic mode and the no-prompt autonomous default are now always available, including on Bedrock/Vertex/Foundry\n- Changed Anthropic telemetry export failures to log at debug level as `[Anthropic telemetry]` instead of `[3P telemetry] OTEL diag error`, so they are not mistaken for your OTel collector failing\n- Changed cross-session messaging in Linux user namespaces: root-equivalent trust for unmapped owners is limited to canonical system directories\n- Changed `SendMessage` from a subagent to another session: the result now notes that any reply is delivered to the parent session's conversation, not to the subagent\n",
-  "release_published_at": "2026-08-27T22:12:20Z",
+  "candidate_id": "claude@2.1.250:docs:a88d7d353872e863ae9c73d4c5ae79d4c744803667e7e2701a198da8ecd05d06:runtime:88a09a63789da330908dea9beaa3882ff3b0ea6b5374fc0e43f3aad185f18f9f",
+  "package_version": "2.1.250",
+  "npm_integrity": "sha512-SsqdHBePKgpoquZdMPbwSZZc2PkQy/qBcekroihILhRdPAAtpXXH49POHl7e6bujj55MaKPk4Wa7gpFXuMKwnA==",
+  "npm_published_at": "2026-08-27T22:27:48.314Z",
+  "release_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.250",
+  "release_notes_md": "## What's changed\n\n- Bug fixes and reliability improvements\n",
+  "release_published_at": "2026-08-28T00:49:16Z",
   "dist_tags": {
-    "latest": "2.1.248",
-    "stable": "2.1.231",
+    "latest": "2.1.250",
+    "stable": "2.1.236",
     "next": "2.1.250"
   },
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
     "index_hash": "5d02fcbe218ca96e28a4d77f6bc1e6498218c700c6ce7001d171d39268db7c70",
     "full_scan": true,
-    "scanned_at": "2026-08-27T23:25:13.227Z",
+    "scanned_at": "2026-08-28T03:23:31.117Z",
     "pages": {
       "https://code.claude.com/docs/_llms/cn.md": {
         "url": "https://code.claude.com/docs/_llms/cn.md",
@@ -110,13 +110,13 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/claude-code-features.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/claude-code-features.md",
-        "hash": "e4b8f72b2ddffd1cd0ba85046c92f8907570d109a8796ea60dca9151a9a1c8cc",
+        "hash": "229365b411e58dc12626222e90f6748e1028c47130c4e94a8a7ef3e783a24f2c",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/claude-code-features.md"
       },
       "https://code.claude.com/docs/en/agent-sdk/cost-tracking.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/cost-tracking.md",
-        "hash": "1b9abe03422f0b782656fbaafe83a357e7b3495b5911af578d7eb7b0484513c9",
+        "hash": "5c42b073608343b16374c144ce9ff7cb3741fa497e936b04d38301d520f99f3b",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/cost-tracking.md"
       },
@@ -200,7 +200,7 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/quickstart.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/quickstart.md",
-        "hash": "56fda91b98e018dec0e4a0ee128f8e9ea0f6201238e25dcaf9f622f15ae24969",
+        "hash": "c98fbe6c52be91cb1a7025dffdf88546a170121342daaacd83c7c385558ebcd6",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/quickstart.md"
       },
@@ -278,7 +278,7 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/typescript.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/typescript.md",
-        "hash": "12dec7e6f142fe03776a530c6ec5ee651992eadf85cd9d6157a7107b78bce55d",
+        "hash": "0f7fce126641a8ba2b81721a1060f00993c53ce51139a3cbbcdca6d00b82eb67",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/typescript.md"
       },
@@ -290,19 +290,19 @@
       },
       "https://code.claude.com/docs/en/agent-teams.md": {
         "url": "https://code.claude.com/docs/en/agent-teams.md",
-        "hash": "4260a139a77192d55d82f05fec79560237ecbfd3d94f35174f9143f3ebda7dd3",
+        "hash": "47eadfdce8e5fc58a9f71bb450ca054456464140d9e646f75c55d56abc66fcb6",
         "watched": false,
         "source_path": null
       },
       "https://code.claude.com/docs/en/agent-view.md": {
         "url": "https://code.claude.com/docs/en/agent-view.md",
-        "hash": "2eed868c3f40c30fbbc5d7ecd7785525fee027afde5dad23f1a6283246699356",
+        "hash": "4f57338abe1133ad5b12165a3d1af8820b949ed1280a74ccfa4d8a4456ce1a6b",
         "watched": false,
         "source_path": null
       },
       "https://code.claude.com/docs/en/agents.md": {
         "url": "https://code.claude.com/docs/en/agents.md",
-        "hash": "2d470eb82b5bc217bbd423db193677c49690ad0b4c4f73a0a9e97530caef6ca0",
+        "hash": "9c04817ac2da54facb24635398c28bafe77c222dc6f23946284fbdf98cf09f74",
         "watched": false,
         "source_path": null
       },
@@ -320,7 +320,7 @@
       },
       "https://code.claude.com/docs/en/artifacts.md": {
         "url": "https://code.claude.com/docs/en/artifacts.md",
-        "hash": "8da99390b70ecc96f51de5c731e65013e2ed35ae338d047b67ff8203380735c4",
+        "hash": "eb101266b428bf79554bfd6ba3c615096c3f662213bdb947475889bd03ab1426",
         "watched": false,
         "source_path": null
       },
@@ -332,13 +332,13 @@
       },
       "https://code.claude.com/docs/en/auto-mode-config.md": {
         "url": "https://code.claude.com/docs/en/auto-mode-config.md",
-        "hash": "881ece7968820f58da39e187fc5cc7d118bdef0cc085646e384d8a2e3c8c32a4",
+        "hash": "09cd04f193b26ac391f256d848ef7ae963c30daf9e348aeff70ecc8cc1f5e9f1",
         "watched": false,
         "source_path": null
       },
       "https://code.claude.com/docs/en/best-practices.md": {
         "url": "https://code.claude.com/docs/en/best-practices.md",
-        "hash": "d8634f18e24cbfb1e65f967c0c99ba443c1daa68b7a3099477ecda7b31f8052c",
+        "hash": "27cf409896c8887c65b0bcc87070c1c37d03e5854cbe542bcfde4ef365b623bf",
         "watched": false,
         "source_path": null
       },
@@ -350,7 +350,7 @@
       },
       "https://code.claude.com/docs/en/changelog.md": {
         "url": "https://code.claude.com/docs/en/changelog.md",
-        "hash": "e3d08d2900cd70df4e2087fc3a15b9f86f55a6944eb3dedd172b7b91a491e72c",
+        "hash": "423384c0b1ca2d15392016d085ccee29453c3b00d97fc9d7c93c139dc67d182d",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/changelog.md"
       },
@@ -380,7 +380,7 @@
       },
       "https://code.claude.com/docs/en/claude-apps-gateway-config.md": {
         "url": "https://code.claude.com/docs/en/claude-apps-gateway-config.md",
-        "hash": "634674631ea462803effc2fb2a5262e718ae31e7006b3b6dcfadde772163784d",
+        "hash": "e554253410c6972a48b110218328d69bb7d2926577bc155382bdd793d647fbee",
         "watched": false,
         "source_path": null
       },
@@ -410,7 +410,7 @@
       },
       "https://code.claude.com/docs/en/claude-apps-gateway.md": {
         "url": "https://code.claude.com/docs/en/claude-apps-gateway.md",
-        "hash": "b10869e5327124f65999009efa5548d4627db2f2787c9306af809f5c82800554",
+        "hash": "7eed921b6f7b5b815452ba0ef3caeb289b6ead545cee79cf311c1be8723c8b3e",
         "watched": false,
         "source_path": null
       },
@@ -428,7 +428,7 @@
       },
       "https://code.claude.com/docs/en/claude-platform-on-aws.md": {
         "url": "https://code.claude.com/docs/en/claude-platform-on-aws.md",
-        "hash": "3eadcc9650ae336d73006b7653a6b6661aec471a16b7c4fd3bc293c69a0c6ab8",
+        "hash": "7a1d2fbefa45f12a5327368d03b7b47240ff9d1cd9483951a2fc952965a029b2",
         "watched": false,
         "source_path": null
       },
@@ -464,7 +464,7 @@
       },
       "https://code.claude.com/docs/en/commands.md": {
         "url": "https://code.claude.com/docs/en/commands.md",
-        "hash": "9aa14d2663424f20d0b390ac993d685c51d7947efa74ce9191f25712faa30d4f",
+        "hash": "8d8372817c2871e57c92d3d09c91b29fa7d9d84a05459c4e7e9b3d9b171a4ad0",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/commands.md"
       },
@@ -506,7 +506,7 @@
       },
       "https://code.claude.com/docs/en/cross-session-messaging.md": {
         "url": "https://code.claude.com/docs/en/cross-session-messaging.md",
-        "hash": "47d7adc6f72b0876d55f130397e9a088e418fe25206f42f160412b213848e00a",
+        "hash": "16b0050fd8fb61f8e5fd4243a428d3f792a50d5173702816071478dfa7ba55cb",
         "watched": false,
         "source_path": null
       },
@@ -524,7 +524,7 @@
       },
       "https://code.claude.com/docs/en/deep-links.md": {
         "url": "https://code.claude.com/docs/en/deep-links.md",
-        "hash": "b2ae72421804bb771a722a88a711ea7fc742dd630cb85e67effa547f626b8299",
+        "hash": "d20562bb5b5d199e84e3dbf6adad50addd8baa8a4ae13d2bb17fc348e8bc51a5",
         "watched": false,
         "source_path": null
       },
@@ -548,7 +548,7 @@
       },
       "https://code.claude.com/docs/en/desktop-scheduled-tasks.md": {
         "url": "https://code.claude.com/docs/en/desktop-scheduled-tasks.md",
-        "hash": "02dae68b604e1323731cb298d98712f97c669ebbab8390ab9896396132d4db2f",
+        "hash": "6c434fdd0a1c943b01087afe7bb37631842bfd9691decf867216648772a88aaa",
         "watched": false,
         "source_path": null
       },
@@ -560,7 +560,7 @@
       },
       "https://code.claude.com/docs/en/desktop.md": {
         "url": "https://code.claude.com/docs/en/desktop.md",
-        "hash": "cebf7cc0df6add9b691e2b7153db056ead56e021271413c44c5e83e5fd438514",
+        "hash": "3707a23673f9f7da13bf830bc86b9cface9c9d9c019687df921fafecb94f4d9a",
         "watched": false,
         "source_path": null
       },
@@ -578,13 +578,13 @@
       },
       "https://code.claude.com/docs/en/env-vars.md": {
         "url": "https://code.claude.com/docs/en/env-vars.md",
-        "hash": "4c58d7fd43621a92e74826d542faa603b3d8f83fdbbe4bef5f336a6554d8f177",
+        "hash": "a49ac1e8a88720193e530b9bbdc8625808acf142ac1a2930e6cb87870ad52188",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/env-vars.md"
       },
       "https://code.claude.com/docs/en/errors.md": {
         "url": "https://code.claude.com/docs/en/errors.md",
-        "hash": "2eb19e1c32a19c94c852698b150b2a1c27cbc86fa88d4a8bd43c72398a3b6975",
+        "hash": "0fd3a6243929fbb7484a0c8176f6193514ff7f56b9e8a4e57686831cf61c8524",
         "watched": false,
         "source_path": null
       },
@@ -596,7 +596,7 @@
       },
       "https://code.claude.com/docs/en/feature-availability.md": {
         "url": "https://code.claude.com/docs/en/feature-availability.md",
-        "hash": "d262352821bae315d4ac5a218d8a938b4e7f0555e73936afad177e0b4c421b21",
+        "hash": "4e6bfeda636e9d3803b85b35d9555453138c28c44b917ab68200d690d90e79b6",
         "watched": false,
         "source_path": null
       },
@@ -644,7 +644,7 @@
       },
       "https://code.claude.com/docs/en/glossary.md": {
         "url": "https://code.claude.com/docs/en/glossary.md",
-        "hash": "8fc70bde63878b28e2ec198e653b0a50c57dd637c8aed382c519d7eac9e9f315",
+        "hash": "7fee0a00f895edf86168efc269325714c60aae8ec808caa5f5250ce8b5f8fffe",
         "watched": false,
         "source_path": null
       },
@@ -668,13 +668,13 @@
       },
       "https://code.claude.com/docs/en/hooks-guide.md": {
         "url": "https://code.claude.com/docs/en/hooks-guide.md",
-        "hash": "a57da1f286b4a15d1ed8ef6a25f545a9b26a69ab49bc9bd053be47404cda12b8",
+        "hash": "93a1db85bed0befbcce47cafdffa1a43e37aa3f7dad4a7dcad348b5ab68ae69b",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/hooks-guide.md"
       },
       "https://code.claude.com/docs/en/hooks.md": {
         "url": "https://code.claude.com/docs/en/hooks.md",
-        "hash": "00e63819460dbc964b554b23eacb89bb793c5d97b99547244242458a5dddc2e6",
+        "hash": "362d291a0eef86e96434b52cf73c997ea86ef7603a099956c1821c4e893b89be",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/hooks.md"
       },
@@ -704,7 +704,7 @@
       },
       "https://code.claude.com/docs/en/large-codebases.md": {
         "url": "https://code.claude.com/docs/en/large-codebases.md",
-        "hash": "71245b0af49d859a170920892012e5989fd1d38548c05e9fad588aeb5b5d56dd",
+        "hash": "5ed38d7ce8bcba9653bc3ffbb487fa348d480f7581ed5279c4ffc5c412149a11",
         "watched": false,
         "source_path": null
       },
@@ -740,13 +740,13 @@
       },
       "https://code.claude.com/docs/en/managed-mcp.md": {
         "url": "https://code.claude.com/docs/en/managed-mcp.md",
-        "hash": "1dc358e524668fb928d62ec84753f1d3c8e0cdd9a563a12b1b3240e507ea8984",
+        "hash": "c6cf869963e1c8611adcdb555e2a7a188689bed98380d632bcc87eb813f432d1",
         "watched": false,
         "source_path": null
       },
       "https://code.claude.com/docs/en/managed-settings.md": {
         "url": "https://code.claude.com/docs/en/managed-settings.md",
-        "hash": "93a2d2c24a1d05a10417ff601d4bade91dbf9d48dec16a784154e24b1756dddb",
+        "hash": "886c5e5ef5d785abf49d3bbef0cf988aa3d5f9357df3156e5c94ea8231a09465",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/managed-settings.md"
       },
@@ -758,7 +758,7 @@
       },
       "https://code.claude.com/docs/en/mcp.md": {
         "url": "https://code.claude.com/docs/en/mcp.md",
-        "hash": "d8a8daf6ec0d21408a124e7d1f6d64cba55f522038223abb716a46b311c47762",
+        "hash": "12e0db40002a402e5a1770a94237841fdd1714524681616f5f4867b54fdc0c0e",
         "watched": false,
         "source_path": null
       },
@@ -782,7 +782,7 @@
       },
       "https://code.claude.com/docs/en/model-config.md": {
         "url": "https://code.claude.com/docs/en/model-config.md",
-        "hash": "153c914ab71eab7bebb084f8e4ac1dd4c808f0e5f799f2c7acbfd9e1e1305cdb",
+        "hash": "21116957c443483da2e02d4f21dd44e8f12aa9cc1be0311dff9877eef4dd6ca0",
         "watched": false,
         "source_path": null
       },
@@ -794,7 +794,7 @@
       },
       "https://code.claude.com/docs/en/network-config.md": {
         "url": "https://code.claude.com/docs/en/network-config.md",
-        "hash": "1f37a0209099389687ee470971b4b6bd9f334ab17635bc000f9579fdfe6e81ba",
+        "hash": "eb8433a4629318f2b8fe56b45f31256f664479b22131d7a7dfd1917effd3c4c9",
         "watched": false,
         "source_path": null
       },
@@ -812,13 +812,13 @@
       },
       "https://code.claude.com/docs/en/permission-modes.md": {
         "url": "https://code.claude.com/docs/en/permission-modes.md",
-        "hash": "9bb77f956c4f3ec4e55081dcb9d622291e2e96254cf692493cd6545553196175",
+        "hash": "637f27d23c88756cf6941fffb51c64ce3890a64220cb34d268e7d2e4033622b6",
         "watched": false,
         "source_path": null
       },
       "https://code.claude.com/docs/en/permissions.md": {
         "url": "https://code.claude.com/docs/en/permissions.md",
-        "hash": "d3cc883043efbd05ae3186d1cb6326a75fda955c420199ddac2028e9f635b1b5",
+        "hash": "d2f9b8352a7d229ff4de37f50b6f60cefef8d30efcce58a10b18cfad707fa1a3",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/permissions.md"
       },
@@ -830,7 +830,7 @@
       },
       "https://code.claude.com/docs/en/plugin-dependencies.md": {
         "url": "https://code.claude.com/docs/en/plugin-dependencies.md",
-        "hash": "0702ffca596d673519c5612e67fc60f85a4cfdfb91af53262740044cecf6336a",
+        "hash": "cc3f69f1e2868e4a242c75a9ad76a26854ae71ac5616e017906e08e6b8e0f975",
         "watched": false,
         "source_path": null
       },
@@ -854,19 +854,19 @@
       },
       "https://code.claude.com/docs/en/plugins-reference.md": {
         "url": "https://code.claude.com/docs/en/plugins-reference.md",
-        "hash": "90fa1e8dfa4c54b7eceaaea8a9d1d8ed514510f4ea035f2213404bec3813fd07",
+        "hash": "8247e2f67a94a249d34e35d55c28b7bce91912ad281a7d1523c707dc1485e39e",
         "watched": false,
         "source_path": null
       },
       "https://code.claude.com/docs/en/plugins.md": {
         "url": "https://code.claude.com/docs/en/plugins.md",
-        "hash": "ccfb44d9b7b388a9d6166214603f6429ec3ab6dca3a6591346b0d513706c2c64",
+        "hash": "d64f8d772d4cf3780a4af8aa0042e7f65b6dc8a5ceeb1ba70ea440946514fc48",
         "watched": false,
         "source_path": null
       },
       "https://code.claude.com/docs/en/prompt-caching.md": {
         "url": "https://code.claude.com/docs/en/prompt-caching.md",
-        "hash": "6f5a50e900949a520ad187e4bcd16710d9f8bdc7568e5d0458717b431bc28bf5",
+        "hash": "8f1d29d0ab8b45651d8d3ae38e0520a10a3bb5bf05c3f94c7a433bfa7e772deb",
         "watched": false,
         "source_path": null
       },
@@ -908,7 +908,7 @@
       },
       "https://code.claude.com/docs/en/scheduled-tasks.md": {
         "url": "https://code.claude.com/docs/en/scheduled-tasks.md",
-        "hash": "33ceb5916c316be838f19a6bd17d28176ca01eac151c14726d60f06e1ab050f1",
+        "hash": "d53b7df219de27767f0f1acd5040eafa2e154c5c9998b0e56e1a07295669f6e3",
         "watched": false,
         "source_path": null
       },
@@ -968,7 +968,7 @@
       },
       "https://code.claude.com/docs/en/server-managed-settings.md": {
         "url": "https://code.claude.com/docs/en/server-managed-settings.md",
-        "hash": "a5dc7874a8267d0556e846cc6088241f92438cb69837ba3efe85c4a8b49e4c53",
+        "hash": "b6831a525ce399236f9a3f717049dcd2b36d6a1015ba996e5d34435d29c272d4",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/server-managed-settings.md"
       },
@@ -986,13 +986,13 @@
       },
       "https://code.claude.com/docs/en/settings-reference.md": {
         "url": "https://code.claude.com/docs/en/settings-reference.md",
-        "hash": "635576acdb3ce7b9313eb7a3261c9a031fee9bd29cdaf771e9a90beb0993d8bd",
+        "hash": "f409640e39d171e06c4fdb84e67250238371dcff82338ffeaea5b1a981bc3540",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings-reference.md"
       },
       "https://code.claude.com/docs/en/settings.md": {
         "url": "https://code.claude.com/docs/en/settings.md",
-        "hash": "bbc2a21f5e1b7b2f3871f221a42eada00ff042a1e9f455b179965a8ff53bf69b",
+        "hash": "62ffdeddf8df4a1c6c09a4916de3f37fe90645c5b7891d1a3ff5c43352b6f775",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings.md"
       },
@@ -1004,7 +1004,7 @@
       },
       "https://code.claude.com/docs/en/skills.md": {
         "url": "https://code.claude.com/docs/en/skills.md",
-        "hash": "f29b942064891bf903676493061f6d59f21c33384cf48cbde616f7e43c6c2327",
+        "hash": "110921ae451b745e6c6403de2ddaf593ec0bc642ba0e24babad72074124c4fda",
         "watched": false,
         "source_path": null
       },
@@ -1022,7 +1022,7 @@
       },
       "https://code.claude.com/docs/en/sub-agents.md": {
         "url": "https://code.claude.com/docs/en/sub-agents.md",
-        "hash": "5d893973dec05b188a7136ca51d3d6a9d3aebffb1f9bafbd341eeb0451cc7dc3",
+        "hash": "4894f9e0061e6817ccef417acde7dd388eed2fa59cbb99c847187318ec75cb19",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/sub-agents.md"
       },
@@ -1040,7 +1040,7 @@
       },
       "https://code.claude.com/docs/en/tools-reference.md": {
         "url": "https://code.claude.com/docs/en/tools-reference.md",
-        "hash": "357c54a1999bff9d6e13ddd8e98b25e93c12c3b9778a59ed88b687d9c0f2f612",
+        "hash": "101dc5fd4a6fed4f8950ea00d60aafe9888e71690e55f941d0a0f593635b7023",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/tools-reference.md"
       },
@@ -1058,7 +1058,7 @@
       },
       "https://code.claude.com/docs/en/ultrareview.md": {
         "url": "https://code.claude.com/docs/en/ultrareview.md",
-        "hash": "dac0e94064bfd048327a7abd9b3c63ea7194629056924347ce01187ec0ef8dc0",
+        "hash": "f421afb6139b3c2ae35b312fb4f0a64c33ced26d547ea4369b490d11f6363a8e",
         "watched": false,
         "source_path": null
       },
@@ -1214,13 +1214,13 @@
       },
       "https://code.claude.com/docs/en/workflows.md": {
         "url": "https://code.claude.com/docs/en/workflows.md",
-        "hash": "46227bfbb34d2a84bf2a6c886ddd523a824f981178c304c709e1c554404b99cc",
+        "hash": "3c9bc58be710a300f3f72e98a068823ad0a927832f83dde2390e7c423c3f9633",
         "watched": false,
         "source_path": null
       },
       "https://code.claude.com/docs/en/worktrees.md": {
         "url": "https://code.claude.com/docs/en/worktrees.md",
-        "hash": "55ae33aa448e2aaa68fda56223dda6d8d12a792dc3b094c7c87fdae9f29dfcda",
+        "hash": "5a215cc0e95047644a74e6d5f406ab94234e76ded08a0fc00130ea16589827d6",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/worktrees.md"
       },
@@ -1232,17 +1232,17 @@
       },
       "https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md": {
         "url": "https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md",
-        "hash": "7352270dab1822f794cd90b12731edee92cb6efa56de2c2a0d238ddf349ea414",
+        "hash": "5d3177183a1ee4ace2d5b8a19e895e786f03dd4082e7899b67117a7f2ee15327",
         "watched": true,
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "60618fb47c4aeac3ca33478db6461a7ae63e9a1f093ecb9f919ba2b7a0d8b3ed"
+    "digest": "a88d7d353872e863ae9c73d4c5ae79d4c744803667e7e2701a198da8ecd05d06"
   },
   "runtime": {
     "probe_contract_version": 2,
-    "version": "2.1.248",
-    "version_output": "2.1.248 (Claude Code)",
+    "version": "2.1.250",
+    "version_output": "2.1.250 (Claude Code)",
     "help_text": "Usage: claude [options] [command] [prompt]\n\nClaude Code - starts an interactive session by default, use -p/--print for\nnon-interactive output\n\nArguments:\n  prompt                                Your prompt\n\nOptions:\n  --add-dir <directories...>            Additional directories to allow tool\n                                        access to\n  --agent <agent>                       Agent for the current session. Overrides\n                                        the 'agent' setting.\n  --agents <json>                       JSON object defining custom agents (e.g.\n                                        '{\"reviewer\": {\"description\": \"Reviews\n                                        code\", \"prompt\": \"You are a code\n                                        reviewer\"}}')\n  --allow-dangerously-skip-permissions  Enable bypassing all permission checks\n                                        as an option, without it being enabled\n                                        by default. Recommended only for\n                                        sandboxes with no internet access.\n  --allowedTools, --allowed-tools <tools...>\n      Comma or space-separated list of tool names to allow (e.g. \"Bash(git *)\n      Edit\")\n  --append-system-prompt <prompt>       Append a system prompt to the default\n                                        system prompt\n  --autocompact <auto|tokens>           Auto-compact window size (auto, or\n                                        100k–1M tokens)\n  --ax-screen-reader                    Render screen-reader friendly output\n                                        (flat text, no decorative borders or\n                                        animations).\n  --bg, --background                    Start the session as a background agent\n                                        and return immediately (manage with\n                                        `claude agents`)\n  --bare                                Minimal mode: skip hooks, LSP, plugin\n                                        sync, attribution, auto-memory,\n                                        background prefetches, keychain reads,\n                                        and CLAUDE.md auto-discovery. Sets\n                                        CLAUDE_CODE_SIMPLE=1. Anthropic auth is\n                                        strictly ANTHROPIC_API_KEY or\n                                        apiKeyHelper via --settings (OAuth and\n                                        keychain are never read). 3P providers\n                                        (Bedrock/Vertex/Foundry) use their own\n                                        credentials. Skills still resolve via\n                                        /skill-name. Explicitly provide context\n                                        via: --system-prompt[-file],\n                                        --append-system-prompt[-file], --add-dir\n                                        (CLAUDE.md dirs), --mcp-config,\n                                        --settings, --agents, --plugin-dir.\n  --betas <betas...>                    Beta headers to include in API requests\n                                        (API key users only)\n  --brief                               Enable SendUserMessage tool for\n                                        agent-to-user communication\n  --chrome                              Enable Claude in Chrome integration\n  --cloud [description|session_id|url]  Create a cloud session with the given\n                                        description, or attach to an existing\n                                        one by session ID or claude.ai/code URL\n  -c, --continue                        Continue the most recent conversation in\n                                        the current directory\n  --dangerously-skip-permissions        Bypass all permission checks.\n                                        Recommended only for sandboxes with no\n                                        internet access.\n  -d, --debug [filter]                  Enable debug mode with optional category\n                                        filtering (e.g., \"api,hooks\" or\n                                        \"!1p,!file\")\n  --debug-file <path>                   Write debug logs to a specific file path\n                                        (implicitly enables debug mode)\n  --disable-slash-commands              Disable all skills\n  --disallowedTools, --disallowed-tools <tools...>\n      Comma or space-separated list of tool names to deny (e.g. \"Bash(git *)\n      Edit\")\n  --effort <level>                      Effort level for the current session\n                                        (low, medium, high, xhigh, max)\n  --environment <environment_id>        Create a new cloud session that runs on\n                                        the given self-hosted environment\n                                        (ccpool_...).\n  --exclude-dynamic-system-prompt-sections\n      Move per-machine sections (cwd, env info, memory paths, git status) from\n      the system prompt into the first user message. Improves cross-user\n      prompt-cache reuse. Only applies with the default system prompt (ignored\n      with --system-prompt). (default: false)\n  --fallback-model <model>              Enable automatic fallback to specified\n                                        model(s) when the default model is\n                                        overloaded or not available. Accepts a\n                                        comma-separated list to try each in\n                                        order. Re-tries the primary at the start\n                                        of each user turn. (only works with\n                                        --print)\n  --file <specs...>                     File resources to download at startup.\n                                        Format: file_id:relative_path (e.g.,\n                                        --file file_abc:doc.txt\n                                        file_def:img.png)\n  --fork-session                        When resuming, create a new session ID\n                                        instead of reusing the original (use\n                                        with --resume or --continue)\n  --forward-subagent-text               Forward subagent text and thinking\n                                        blocks as assistant/user messages with\n                                        parent_tool_use_id set (only works with\n                                        --print and --output-format=stream-json)\n  --from-pr [value]                     Resume a session linked to a PR by PR\n                                        number/URL, or open interactive picker\n                                        with optional search term\n  -h, --help                            Display help for command\n  --ide                                 Automatically connect to IDE on startup\n                                        if exactly one valid IDE is available\n  --include-hook-events                 Include all hook lifecycle events in the\n                                        output stream (only works with\n                                        --output-format=stream-json)\n  --include-partial-messages            Include partial message chunks as they\n                                        arrive (only works with --print and\n                                        --output-format=stream-json)\n  --input-format <format>               Input format (only works with --print):\n                                        \"text\" (default), or \"stream-json\"\n                                        (realtime streaming input) (choices:\n                                        \"text\", \"stream-json\")\n  --json-schema <schema>                JSON Schema for structured output\n                                        validation. Example:\n                                        {\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}\n  --max-budget-usd <amount>             Maximum dollar amount to spend on API\n                                        calls (only works with --print)\n  --mcp-config <configs...>             Load MCP servers from JSON files or\n                                        strings (space-separated)\n  --model <model>                       Model for the current session. Provide\n                                        an alias for the latest model (e.g.\n                                        'fable', 'opus', or 'sonnet') or a\n                                        model's full name (e.g.\n                                        'claude-fable-5').\n  -n, --name <name>                     Set a display name for this session\n                                        (shown in the prompt box, /resume\n                                        picker, and terminal title)\n  --no-chrome                           Disable Claude in Chrome integration\n  --no-session-persistence              Disable session persistence - sessions\n                                        will not be saved to disk and cannot be\n                                        resumed (only works with --print)\n  --output-format <format>              Output format (only works with --print):\n                                        \"text\" (default), \"json\" (single\n                                        result), or \"stream-json\" (realtime\n                                        streaming) (choices: \"text\", \"json\",\n                                        \"stream-json\")\n  --permission-mode <mode>              Permission mode to use for the session\n                                        (choices: \"acceptEdits\", \"auto\",\n                                        \"bypassPermissions\", \"manual\",\n                                        \"dontAsk\", \"plan\")\n  --plugin-dir <path>                   Load a plugin from a directory or .zip\n                                        for this session only (repeatable:\n                                        --plugin-dir A --plugin-dir B.zip)\n                                        (default: [])\n  --plugin-url <url>                    Fetch a plugin .zip from a URL for this\n                                        session only (repeatable: --plugin-url A\n                                        --plugin-url B) (default: [])\n  -p, --print                           Print response and exit (useful for\n                                        pipes). Note: The workspace trust dialog\n                                        is skipped when Claude is run in\n                                        non-interactive mode (via -p, or when\n                                        stdout is not a TTY, e.g. piped or\n                                        redirected output). Only use this in\n                                        directories you trust. Settings files\n                                        that fail validation are silently\n                                        ignored in this mode (no error dialog is\n                                        shown).\n  --prompt-suggestions [value]          Enable prompt suggestions. In print/SDK\n                                        mode, emits a prompt_suggestion message\n                                        after each turn with a predicted next\n                                        user prompt (choices: \"true\", \"false\",\n                                        \"1\", \"0\", \"yes\", \"no\", \"on\", \"off\",\n                                        preset: \"true\")\n  --remote-control [name]               Start an interactive session with Remote\n                                        Control enabled (optionally named)\n  --remote-control-session-name-prefix <prefix>\n      Prefix for auto-generated Remote Control session names (default: hostname)\n  --replay-user-messages                Re-emit user messages from stdin back on\n                                        stdout for acknowledgment (only works\n                                        with --input-format=stream-json and\n                                        --output-format=stream-json)\n  --restricted                          Restricted mode: removes the built-in\n                                        tools that run commands or code (Bash,\n                                        PowerShell, REPL and the other\n                                        code-running tools) and WebFetch unless\n                                        --tools names them, and ignores user,\n                                        project and local settings files\n                                        (managed settings and --settings still\n                                        apply; add --strict-mcp-config to skip\n                                        MCP servers too). Also confines the file\n                                        tools to the working directories\n                                        (--add-dir included), refuses\n                                        bypassPermissions, and lets only a\n                                        person or the configured permission\n                                        handler approve writes to settings, git\n                                        and tool-configuration files.\n  -r, --resume [value]                  Resume a conversation by session ID, or\n                                        open interactive picker with optional\n                                        search term\n  --safe-mode                           Start with all customizations\n                                        (CLAUDE.md, skills, plugins, hooks, MCP\n                                        servers, custom commands and agents,\n                                        output styles, workflows, custom themes,\n                                        keybindings, and more) disabled — useful\n                                        for troubleshooting a broken\n                                        configuration. Admin-managed (policy)\n                                        settings still apply. Auth, model\n                                        selection, built-in tools, and\n                                        permissions work normally. Sets\n                                        CLAUDE_CODE_SAFE_MODE=1.\n  --session-id <uuid>                   Use a specific session ID for the\n                                        conversation (must be a valid UUID)\n  --setting-sources <sources>           Comma-separated list of setting sources\n                                        to load (user, project, local).\n  --settings <file-or-json>             Path to a settings JSON file or a JSON\n                                        string to load additional settings from\n  --strict-mcp-config                   Only use MCP servers from --mcp-config,\n                                        ignoring all other MCP configurations\n  --system-prompt <prompt>              System prompt to use for the session\n  --teleport [session]                  Resume a teleport session, optionally\n                                        specify session ID\n  --tmux                                Create a tmux session for the worktree\n                                        (requires --worktree). Uses iTerm2\n                                        native panes when available; use\n                                        --tmux=classic for traditional tmux.\n  --tools <tools...>                    Specify the list of available tools from\n                                        the built-in set. Use \"\" to disable all\n                                        tools, \"default\" to use all tools, or\n                                        specify tool names (e.g.\n                                        \"Bash,Edit,Read\").\n  --verbose                             Override verbose mode setting from\n                                        config\n  -v, --version                         Output the version number\n  -w, --worktree [name]                 Create a new git worktree for this\n                                        session (optionally specify a name)\n\nCommands:\n  agents [options]                      Manage background agents\n  auth                                  Manage authentication\n  auto-mode                             Inspect or reset auto mode classifier\n                                        configuration\n  doctor                                Check the health of your Claude Code\n                                        installation. Reads settings files in\n                                        the current directory without a trust\n                                        prompt. For a full checkup that can also\n                                        fix issues, run /doctor in a session.\n  gateway [options]                     Run the enterprise auth/telemetry\n                                        gateway\n  import [options] [source]             Import config from another AI coding\n                                        agent into Claude Code\n  install [options] [target]            Install Claude Code native build. Use\n                                        [target] to specify version (stable,\n                                        latest, or specific version)\n  mcp                                   Configure and manage MCP servers\n  plugin|plugins                        Manage Claude Code plugins\n  project                               Manage Claude Code project state\n  setup-token                           Set up a long-lived authentication token\n                                        (requires Claude subscription)\n  ultrareview [options] [target]        Run a cloud-hosted multi-agent code\n                                        review of the current branch (or a PR\n                                        number / base branch) and print the\n                                        findings\n  update|upgrade                        Check for updates and install if\n                                        available",
     "help_hash": "dd59344cc6bb66e7c7332503ced5e9b8a27403f2afb08bf07efd9d37a2c5c85b",
     "doctor": {
@@ -1400,7 +1400,7 @@
         "msg_lifecycle_v1"
       ],
       "stable_fields": {
-        "claude_code_version": "2.1.248",
+        "claude_code_version": "2.1.250",
         "fast_mode_state": "off",
         "output_style": "default",
         "permissionMode": "dontAsk"
@@ -1514,10 +1514,10 @@
         "error": null
       }
     ],
-    "digest": "4196337dd31b48ef3a170d35dc105c548abf046b184fdf59c89a897ac2a7b388"
+    "digest": "88a09a63789da330908dea9beaa3882ff3b0ea6b5374fc0e43f3aad185f18f9f"
   },
-  "fetched_at": "2026-08-27T23:26:14.189Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/33126182613",
-  "state_commit_parent": "94bfaba54b5331abf86bcaa5d39595f56a072bf9",
-  "analysis_parent_sha": "94bfaba54b5331abf86bcaa5d39595f56a072bf9"
+  "fetched_at": "2026-08-28T03:24:43.683Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/33138714398",
+  "state_commit_parent": "0ef6981bac5d104cb04cce2160d36106a8c2fa7c",
+  "analysis_parent_sha": "0ef6981bac5d104cb04cce2160d36106a8c2fa7c"
 }

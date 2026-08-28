@@ -300,10 +300,6 @@ The Agent SDK gives you access to several ways to extend your agent's behavior. 
 | Run deterministic logic on tool calls (audit, block, transform)                                   | [Hooks](/docs/en/agent-sdk/hooks)                  | `hooks` parameter with callbacks, or shell scripts loaded via `settingSources`                                                                                 |
 | Give Claude structured tool access to an external service                                         | [MCP](/docs/en/agent-sdk/mcp)                      | `mcpServers` parameter                                                                                                                                         |
 
-<Tip>
-  **Subagents versus agent teams:** Subagents are ephemeral and isolated: fresh conversation, one task, summary returned to parent. Agent teams coordinate multiple independent Claude Code instances that share a task list and message each other directly. Agent teams are a CLI feature. See [What subagents inherit](/docs/en/agent-sdk/subagents#what-subagents-inherit) and the [agent teams comparison](/docs/en/agent-teams#compare-with-subagents) for details.
-</Tip>
-
 Every feature you enable adds to your agent's context window. For per-feature costs and how these features layer together, see [Extend Claude Code](/docs/en/features-overview#understand-context-costs).
 
 ## Related resources

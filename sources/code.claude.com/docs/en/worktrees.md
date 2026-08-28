@@ -12,7 +12,7 @@ A [git worktree](https://git-scm.com/docs/git-worktree) is a separate working di
   Worktrees require a git repository; for other version control systems, [configure hooks to replace the git logic](#non-git-version-control). In the [desktop app](/docs/en/desktop#work-in-parallel-with-sessions), every new session gets its own worktree automatically.
 </Note>
 
-Worktrees are one of several ways to run Claude in parallel. They isolate file edits, while [subagents](/docs/en/sub-agents) and [agent teams](/docs/en/agent-teams) coordinate the work itself. See [Run agents in parallel](/docs/en/agents) to compare the approaches, or skip ahead to [Isolate subagents with worktrees](#isolate-subagents-with-worktrees) to use worktrees and subagents together.
+Worktrees are one of several ways to run Claude in parallel. They isolate file edits. [Subagents](/docs/en/sub-agents) split work up inside one session, and [cross-session messaging](/docs/en/cross-session-messaging) lets Claude pass findings between the sessions in your worktrees. See [Run agents in parallel](/docs/en/agents) to compare the approaches, or skip ahead to [Isolate subagents with worktrees](#isolate-subagents-with-worktrees) to use worktrees and subagents together.
 
 Most sessions need only the first two sections: [start Claude in a worktree](#start-claude-in-a-worktree), then [clean up when you exit](#clean-up-worktrees). Return to the rest of the page when you need to [resume a session](#resume-a-worktree-session), [change how worktrees are created](#customize-worktree-creation), or [debug a failure](#troubleshooting).
 
@@ -129,11 +129,11 @@ When you [background](/docs/en/agent-view#send-the-session-to-the-background) a 
 
 Claude Code writes a marker into the git metadata of every worktree it creates with git, and the sweep keeps any worktree without one, including a worktree a [`WorktreeCreate` hook](#non-git-version-control) created. Before v2.1.246, the sweep didn't check for the marker, and could remove a worktree you created yourself when an old background-session record pointed at it.
 
-While an agent is running, Claude runs `git worktree lock` on its worktree so that concurrent cleanup cannot remove it. The lock is released when the agent finishes.
+While an agent is running, Claude Code holds a `git worktree lock` on its worktree so that concurrent cleanup can't remove it, and releases the lock when the agent finishes. Claude Code holds the same lock on the worktree it created for a backgrounded session while the session runs, so the sweep leaves the worktree in place and `git worktree remove` refuses to remove it.
 
 The sweep also releases a lock Claude Code set for a session whose process has exited, so a killed background session doesn't leave its worktree permanently locked. The sweep never releases a lock you set yourself with `git worktree lock`. Before v2.1.210, a lock left by a killed session stayed in place until you ran `git worktree unlock`.
 
-To clean up a worktree that the sweep keeps, run `git worktree remove`, adding `--force` if the worktree has uncommitted changes or untracked files.
+To clean up a worktree that the sweep keeps, run `git worktree remove`, adding `--force` if the worktree has uncommitted changes or untracked files. If git refuses because the worktree is locked, run `git worktree unlock` on it first.
 
 ## Customize worktree creation
 
@@ -225,7 +225,7 @@ A worktree gets its own files and branch, but it shares the repository's `.git` 
 
 * **The repository's `.git` directory**: git commands in a worktree write to the main repository's shared `.git` directory, and [sandboxing](/docs/en/sandboxing#filesystem-isolation) allows those writes, so commands such as `git commit` work from inside a worktree with the sandbox enabled.
 * **Plugins**: plugins installed at [project scope](/docs/en/plugins-reference#plugin-installation-scopes) from the main checkout also load in worktrees of the same repository, so you don't need to reinstall them per worktree. Requires Claude Code v2.1.200 or later.
-* **Permission approvals**: choosing "Yes, and don't ask again" for a Bash command in a worktree session saves the rule to the main checkout's `.claude/settings.local.json`, so it applies in the main checkout and in every other worktree of the repository, and it survives the worktree's removal. On Windows and the other cases where Claude Code [keeps the local file in the starting directory](/docs/en/settings#where-claude-code-looks-for-each-file), the rule stays with that worktree. Before v2.1.211, an approval granted in a worktree was saved inside that worktree, didn't apply elsewhere, and was lost when the worktree was removed. See [where approvals are saved](/docs/en/permissions#permission-system).
+* **Permission approvals**: choosing "Yes, and don't ask again" for a Bash command in a worktree session saves the rule to the main checkout's `.claude/settings.local.json`, so it applies in the main checkout and in every other worktree of the repository, and it survives the worktree's removal. On Windows and in the other cases where Claude Code [doesn't use the repository root](/docs/en/settings#where-claude-code-looks-for-each-file), the rule stays with that worktree. Before v2.1.211, an approval granted in a worktree was saved inside that worktree, didn't apply elsewhere, and was lost when the worktree was removed. See [where approvals are saved](/docs/en/permissions#permission-system).
 
 All three apply whether you create the worktree with `--worktree`, with `git worktree add`, or through the [desktop app](/docs/en/desktop#work-in-parallel-with-sessions).
 
@@ -356,9 +356,10 @@ The refusal ending embedded in each error is shared with the interactive notices
 
 ## See also
 
-Worktrees handle file isolation. The related pages below cover delegating work into those isolated checkouts and switching between the sessions you create:
+Worktrees handle file isolation. The related pages below cover delegating work into those isolated checkouts, passing findings between them, and switching between the sessions you create:
 
 * [Subagents](/docs/en/sub-agents): delegate work to isolated agents within a session
+* [Cross-session messaging](/docs/en/cross-session-messaging): let the sessions in your worktrees pass findings to each other
 * [Agent teams](/docs/en/agent-teams): coordinate multiple Claude sessions automatically
 * [Manage sessions](/docs/en/sessions): name, resume, and switch between conversations
 * [Desktop parallel sessions](/docs/en/desktop#work-in-parallel-with-sessions): worktree-backed sessions in the desktop app

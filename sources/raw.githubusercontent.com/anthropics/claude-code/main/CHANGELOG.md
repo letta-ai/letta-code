@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.250
+
+- Bug fixes and reliability improvements
+
 ## 2.1.248
 
 - Added `--restricted` (or `CLAUDE_CODE_RESTRICTED=1`): removes the built-in tools that run commands or code and `WebFetch` (unless named in `--tools`), keeps file tools inside the working directory, refuses `bypassPermissions`, and ignores user, project and local settings files

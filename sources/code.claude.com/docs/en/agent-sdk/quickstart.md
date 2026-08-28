@@ -265,7 +265,7 @@ As it works, the agent prints its reasoning and each tool it calls, ending with 
 This is what makes the Agent SDK different: Claude executes tools directly instead of asking you to implement them.
 
 <Note>
-  If you see "API key not found", make sure you've set the `ANTHROPIC_API_KEY` environment variable in the shell where you run your agent. The SDK doesn't load `.env` files automatically. See the [full troubleshooting guide](/docs/en/troubleshooting) for more help.
+  If you see an authentication error such as `Not logged in` or `Invalid API key`, make sure you've set the `ANTHROPIC_API_KEY` environment variable in the shell where you run your agent. The SDK doesn't load `.env` files automatically. See the [full troubleshooting guide](/docs/en/troubleshooting) for more help.
 </Note>
 
 ### Try other prompts
