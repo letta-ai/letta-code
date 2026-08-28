@@ -5,6 +5,7 @@ import { runCloudMcpSubcommand } from "./cloud-mcp";
 import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
 import { runEnvironmentsSubcommand } from "./environments";
+import { runFeedbackSubcommand } from "./feedback";
 import { runListenSubcommand } from "./listen.tsx";
 import { runLocalBackendSubcommand } from "./local-backend";
 import { runMemorySubcommand } from "./memory";
@@ -42,6 +43,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "connect":
     case "environments":
     case "envs":
+    case "feedback":
     case "install":
     case "memfs":
     case "memory":
@@ -101,6 +103,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runServerSubcommand(rest);
     case "cloud-mcp":
       return runCloudMcpSubcommand(rest);
+    case "feedback":
+      return runFeedbackSubcommand(rest);
     case "remote": // alias
       return runListenSubcommand(rest);
     case "connect":
