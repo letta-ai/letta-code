@@ -59,7 +59,7 @@ env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN git -c http.extraHeader="
 unset AUTH_HEADER
 ```
 
-If either push hook exists or the remote differs, do not expose the credential; return `needs_human_review` instead. Do not run any other repository or package command with the credential present.
+If either push hook exists, the remote differs, or this push fails, do not expose another credential; return `needs_human_review` instead. Never retry with plain `git push`, `CAREN_GITHUB_TOKEN`, another user's credential, or a token-bearing remote URL. Do not run any other repository or package command with the credential present.
 
 ## If the skill is stale
 

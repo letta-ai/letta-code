@@ -98,6 +98,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
       - name: Build Amelia prompt
         id: prompt
         env:
@@ -176,6 +181,18 @@ jobs:
             --data "$(jq -nc --arg summary "$CONVERSATION_NAME" '{summary: $summary}')" \
             --output /dev/null \
             "https://api.letta.com/v1/conversations/$CONVERSATION_ID"
+
+      - name: Enforce Amelia PR identity
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          EXPECTED_GITHUB_LOGIN: ${{ needs.prepare.outputs.expected_github_login }}
+          PR_MARKER: "Builtin-skill-watch: ${{ matrix.candidate_id }}"
+        run: |
+          bun scripts/agent-watch/verify-pr-identity.ts \
+            --repo letta-ai/letta-code \
+            --marker "$PR_MARKER" \
+            --expected-login "$EXPECTED_GITHUB_LOGIN"
 
       - name: Extract Amelia result
         if: always()

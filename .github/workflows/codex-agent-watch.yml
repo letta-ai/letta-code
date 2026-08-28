@@ -147,3 +147,15 @@ jobs:
             --data "$(jq -nc --arg summary "$CONVERSATION_NAME" '{summary: $summary}')" \
             --output /dev/null \
             "https://api.letta.com/v1/conversations/$CONVERSATION_ID"
+
+      - name: Enforce Amelia PR identity
+        if: always() && steps.detect.outputs.should_run_agent == 'true' && steps.github-identity.outputs.login != ''
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          EXPECTED_GITHUB_LOGIN: ${{ steps.github-identity.outputs.login }}
+          PR_MARKER: "Codex-watch: openai/codex ${{ steps.detect.outputs.current_tag }}"
+        run: |
+          bun scripts/agent-watch/verify-pr-identity.ts \
+            --repo letta-ai/letta-code \
+            --marker "$PR_MARKER" \
+            --expected-login "$EXPECTED_GITHUB_LOGIN"
