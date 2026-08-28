@@ -1,5 +1,5 @@
 /**
- * Git hook scripts installed into memfs memory repos.
+ * Git hook scripts installed into agent and shared memory repositories.
  *
  * The pre-commit hook validates memory markdown frontmatter; the post-commit
  * hook mirrors commits to an optional user-configured memory-repository
@@ -287,6 +287,11 @@ export function installPreCommitHook(
     "utf8",
   );
   debugLog("memfs-git", "Installed pre-commit hook");
+}
+
+/** Install root-layout memory validation for an attached shared repository. */
+export function installSharedMemoryPreCommitHook(dir: string): void {
+  installPreCommitHook(dir, true);
 }
 
 /**
