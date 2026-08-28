@@ -88,7 +88,7 @@ describe("shared-memory pre-commit hook", () => {
     if (repo) rmSync(repo, { recursive: true, force: true });
   });
 
-  test("installs root-layout validation requiring name and description", () => {
+  test("requires name and description without a root marker", () => {
     repo = mkdtempSync(join(tmpdir(), "shared-memory-hook-"));
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "Test Agent"], { cwd: repo });
@@ -101,9 +101,8 @@ describe("shared-memory pre-commit hook", () => {
     expect(existsSync(join(repo, ".git", "hooks", "pre-commit"))).toBe(true);
     expect(
       readFileSync(join(repo, ".git", "letta-memory-layout-policy"), "utf8"),
-    ).toBe("root-marker\n");
+    ).toBe("shared-memory\n");
 
-    writeFileSync(join(repo, "MEMORY.md"), "# Shared memory\n");
     writeFileSync(
       join(repo, "missing-name.md"),
       "---\ndescription: Purpose\n---\nBody.\n",
