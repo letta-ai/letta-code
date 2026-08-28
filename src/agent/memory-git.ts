@@ -1092,7 +1092,7 @@ async function prepareMemoryRepoForGitOps(
 ): Promise<void> {
   await maybeUpdateMemoryRemoteOrigin(memoryDir, agentId);
   await configureLocalCredentialHelper(memoryDir, token);
-  installPreCommitHook(memoryDir);
+  installPreCommitHook(memoryDir, true);
   installPostCommitHook(memoryDir);
   await ensureLocalMemfsGitConfig(memoryDir, agentId);
 }
@@ -1380,7 +1380,6 @@ export async function commitMemoryWrite(
   };
 }
 
-/** Check if the memory directory is a git repo */
 export function isGitRepo(agentId: string): boolean {
   return existsSync(join(getScopedMemoryFilesystemRoot(agentId), ".git"));
 }
@@ -1438,6 +1437,7 @@ export async function initializeLocalMemoryRepo(
     authorEmail: `${params.agentId}@letta.com`,
   };
   await prepareLocalOnlyMemoryRepoForGitOps(params.memoryDir, author);
+  installPreCommitHook(params.memoryDir);
 
   if (await hasMemoryHead(params.memoryDir)) {
     return;
@@ -1674,7 +1674,7 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
   await configureLocalCredentialHelper(dir, token);
 
   // Install commit hooks (pre-commit validates frontmatter; post-commit mirrors)
-  installPreCommitHook(dir);
+  installPreCommitHook(dir, true);
   installPostCommitHook(dir);
 
   // Set canonical local git identity (letta.agentId, user.email, user.name)
@@ -1702,7 +1702,7 @@ export async function pullMemory(
 
   // Self-healing: ensure credential helper, hooks, and identity config are current
   await configureLocalCredentialHelper(dir, token);
-  installPreCommitHook(dir);
+  installPreCommitHook(dir, true);
   installPostCommitHook(dir);
   await ensureLocalMemfsGitConfig(dir, agentId);
 

@@ -4,10 +4,22 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
 import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
 import {
+  assertMemfsV2MemoryPathIndexed,
+  detectMemoryFormat,
+  isMemoryIndexPath,
+  type LocalMemoryFormat,
+} from "@/agent/memory-format";
+import {
   assertMemoryRepoCleanForWrite,
   commitMemoryWrite,
   type MemoryWriteSyncMode,
 } from "@/agent/memory-git";
+import {
+  defaultMemoryName,
+  type MemoryMarkdownFrontmatter,
+  parseMemoryMarkdown,
+  renderMemoryMarkdown,
+} from "@/agent/memory-markdown";
 import { readUtf8TextStrict, writeUtf8Text } from "@/utils/text-files";
 import { validateRequiredParams } from "./validation";
 
@@ -39,14 +51,6 @@ interface Hunk {
 async function getMemoryWriteSyncMode(): Promise<MemoryWriteSyncMode> {
   const { getBackend } = await import("@/backend");
   return getBackend().capabilities.localMemfs ? "local" : "remote";
-}
-
-interface ParsedMemoryFile {
-  frontmatter: {
-    description: string;
-    read_only?: string;
-  };
-  body: string;
 }
 
 interface MemoryApplyPatchArgs {
@@ -120,10 +124,15 @@ export async function memory_apply_patch(
   ensureMemoryRepo(memoryDir);
 
   const { agentId, agentName } = await getAgentIdentity();
+  const { getBackend } = await import("@/backend");
+  const memoryFormat = detectMemoryFormat(
+    memoryDir,
+    getBackend().capabilities.localMemfs,
+  );
   const syncMode = await getMemoryWriteSyncMode();
   await assertMemoryRepoCleanForWrite(memoryDir);
 
-  const pathspecs = await applyMemoryPatch(memoryDir, input);
+  const pathspecs = await applyMemoryPatch(memoryDir, input, memoryFormat);
   if (pathspecs.length === 0) {
     throw new Error(
       "memory_apply_patch made no changes: the patch produced no changed paths. " +
@@ -163,8 +172,9 @@ export async function memory_apply_patch(
 async function applyMemoryPatch(
   memoryDir: string,
   input: string,
+  memoryFormat: LocalMemoryFormat,
 ): Promise<string[]> {
-  const ops = parsePatchOperations(memoryDir, input);
+  const ops = parsePatchOperations(memoryDir, input, memoryFormat);
   if (ops.length === 0) {
     throw new Error("memory_apply_patch: no file operations found in patch");
   }
@@ -200,6 +210,18 @@ async function applyMemoryPatch(
   };
 
   for (const op of ops) {
+    if (
+      memoryFormat === "memfs-v2" &&
+      ((op.kind === "delete" && isMemoryIndexPath(op.targetRelPath)) ||
+        (op.kind === "update" &&
+          (isMemoryIndexPath(op.sourceRelPath) ||
+            isMemoryIndexPath(op.targetRelPath)) &&
+          op.sourceRelPath !== op.targetRelPath))
+    ) {
+      throw new Error(
+        "memory_apply_patch: MEMORY.md indexes cannot be deleted or moved",
+      );
+    }
     if (op.kind === "add") {
       const absPath = resolveMemoryFilePath(memoryDir, op.targetLabel);
       if (pendingWrites.has(absPath)) {
@@ -214,7 +236,12 @@ async function applyMemoryPatch(
       }
 
       const rawContent = op.contentLines.join("\n");
-      const rendered = normalizeAddedContent(op.targetLabel, rawContent);
+      const rendered = normalizeAddedContent(
+        op.targetLabel,
+        op.targetRelPath,
+        rawContent,
+        memoryFormat,
+      );
 
       pendingWrites.set(absPath, rendered);
       pendingDeletes.delete(absPath);
@@ -224,7 +251,12 @@ async function applyMemoryPatch(
 
     if (op.kind === "delete") {
       const absPath = resolveMemoryFilePath(memoryDir, op.targetLabel);
-      await loadEditableMemoryFile(absPath, op.targetRelPath);
+      await loadEditableMemoryFile(
+        absPath,
+        op.targetRelPath,
+        op.targetRelPath,
+        memoryFormat,
+      );
       pendingWrites.delete(absPath);
       pendingDeletes.add(absPath);
       affectedPaths.add(toRepoRelative(memoryDir, absPath));
@@ -238,7 +270,11 @@ async function applyMemoryPatch(
       op.sourceRelPath,
       op.sourceRelPath,
     );
-    const currentParsed = parseMemoryFile(currentContent);
+    const currentParsed = parseMemoryFile(
+      currentContent,
+      op.sourceRelPath,
+      memoryFormat,
+    );
     if (currentParsed.frontmatter.read_only === "true") {
       throw new Error(
         `memory_apply_patch: ${op.sourceRelPath} is read_only and cannot be modified`,
@@ -250,7 +286,11 @@ async function applyMemoryPatch(
       nextContent = applyHunk(nextContent, hunk.lines, op.sourceRelPath);
     }
 
-    const validated = parseMemoryFile(nextContent);
+    const validated = parseMemoryFile(
+      nextContent,
+      op.targetRelPath,
+      memoryFormat,
+    );
     if (validated.frontmatter.read_only === "true") {
       throw new Error(
         `memory_apply_patch: ${op.targetRelPath} cannot be written with read_only=true`,
@@ -267,6 +307,23 @@ async function applyMemoryPatch(
         pendingDeletes.add(sourceAbsPath);
       }
       affectedPaths.add(toRepoRelative(memoryDir, sourceAbsPath));
+    }
+  }
+
+  if (memoryFormat === "memfs-v2") {
+    const markerExists = (relativePath: string) => {
+      const absolutePath = resolveMemoryPath(memoryDir, relativePath);
+      return (
+        pendingWrites.has(absolutePath) ||
+        (!pendingDeletes.has(absolutePath) && existsSync(absolutePath))
+      );
+    };
+    for (const absolutePath of pendingWrites.keys()) {
+      assertMemfsV2MemoryPathIndexed(
+        memoryDir,
+        toRepoRelative(memoryDir, absolutePath),
+        markerExists,
+      );
     }
   }
 
@@ -293,6 +350,7 @@ async function applyMemoryPatch(
 function parsePatchOperations(
   memoryDir: string,
   input: string,
+  memoryFormat: LocalMemoryFormat,
 ): ParsedPatchOp[] {
   const lines = input.split(/\r?\n/);
   const beginIndex = lines.findIndex(
@@ -330,6 +388,7 @@ function parsePatchOperations(
     if (line.startsWith("*** Add File:")) {
       const rawPath = line.replace("*** Add File:", "").trim();
       const label = normalizeMemoryLabel(memoryDir, rawPath, "Add File path");
+      assertMemoryLabelAllowed(label, memoryFormat);
       const targetRelPath = `${label}.md`;
 
       i += 1;
@@ -370,6 +429,7 @@ function parsePatchOperations(
         rawSourcePath,
         "Update File path",
       );
+      assertMemoryLabelAllowed(sourceLabel, memoryFormat);
       let targetLabel = sourceLabel;
 
       i += 1;
@@ -382,6 +442,7 @@ function parsePatchOperations(
             rawTargetPath,
             "Move to path",
           );
+          assertMemoryLabelAllowed(targetLabel, memoryFormat);
           i += 1;
         }
       }
@@ -451,6 +512,7 @@ function parsePatchOperations(
         rawPath,
         "Delete File path",
       );
+      assertMemoryLabelAllowed(label, memoryFormat);
       ops.push({
         kind: "delete",
         targetLabel: label,
@@ -468,18 +530,35 @@ function parsePatchOperations(
   return ops;
 }
 
-function normalizeAddedContent(label: string, rawContent: string): string {
-  try {
-    const parsed = parseMemoryFile(rawContent);
-    return renderMemoryFile(parsed.frontmatter, parsed.body);
-  } catch {
+function normalizeAddedContent(
+  label: string,
+  relativePath: string,
+  rawContent: string,
+  memoryFormat: LocalMemoryFormat,
+): string {
+  if (
+    rawContent.startsWith("---\n") ||
+    (memoryFormat === "memfs-v2" && isMemoryIndexPath(relativePath))
+  ) {
+    const parsed = parseMemoryFile(rawContent, relativePath, memoryFormat);
     return renderMemoryFile(
-      {
-        description: `Memory block ${label}`,
-      },
-      rawContent,
+      parsed.frontmatter,
+      parsed.body,
+      relativePath,
+      memoryFormat,
     );
   }
+  return renderMemoryFile(
+    {
+      ...(memoryFormat === "memfs-v2"
+        ? { name: defaultMemoryName(label) }
+        : {}),
+      description: `Memory block ${label}`,
+    },
+    rawContent,
+    relativePath,
+    memoryFormat,
+  );
 }
 
 function resolveMemoryDir(): string {
@@ -594,6 +673,28 @@ function normalizeRelativeMemoryLabel(
   return segments.join("/");
 }
 
+function assertMemoryLabelAllowed(
+  label: string,
+  memoryFormat: LocalMemoryFormat,
+): void {
+  if (
+    memoryFormat === "memfs-v2" &&
+    (label === "system" || label.startsWith("system/"))
+  ) {
+    throw new Error(
+      "memory_apply_patch: core memory uses root Markdown files, not system/",
+    );
+  }
+  if (
+    memoryFormat === "memfs-v2" &&
+    (label === "skills" || label.startsWith("skills/"))
+  ) {
+    throw new Error(
+      "memory_apply_patch: skills are managed by the skill/file tooling, not the memory tool",
+    );
+  }
+}
+
 function memoryPrefixError(memoryDir: string): string {
   return `The memory_apply_patch tool can only be used to modify files in {${memoryDir}} or provided as a relative path`;
 }
@@ -624,7 +725,9 @@ function toRepoRelative(memoryDir: string, absolutePath: string): string {
 async function loadEditableMemoryFile(
   filePath: string,
   sourcePath: string,
-): Promise<ParsedMemoryFile> {
+  relativePath: string,
+  memoryFormat: LocalMemoryFormat,
+) {
   const content = await readUtf8TextStrict(filePath).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
@@ -632,7 +735,7 @@ async function loadEditableMemoryFile(
     );
   });
 
-  const parsed = parseMemoryFile(content);
+  const parsed = parseMemoryFile(content, relativePath, memoryFormat);
   if (parsed.frontmatter.read_only === "true") {
     throw new Error(
       `memory_apply_patch: ${sourcePath} is read_only and cannot be modified`,
@@ -641,78 +744,32 @@ async function loadEditableMemoryFile(
   return parsed;
 }
 
-function parseMemoryFile(content: string): ParsedMemoryFile {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) {
-    throw new Error(
-      "memory_apply_patch: target file is missing required frontmatter",
-    );
-  }
-
-  const frontmatterText = match[1] ?? "";
-  const body = match[2] ?? "";
-
-  let description: string | undefined;
-  let readOnly: string | undefined;
-
-  for (const line of frontmatterText.split(/\r?\n/)) {
-    const idx = line.indexOf(":");
-    if (idx <= 0) continue;
-
-    const key = line.slice(0, idx).trim();
-    const value = line.slice(idx + 1).trim();
-
-    if (key === "description") {
-      description = value;
-    } else if (key === "read_only") {
-      readOnly = value;
-    }
-  }
-
-  if (!description || !description.trim()) {
-    throw new Error(
-      "memory_apply_patch: target file frontmatter is missing 'description'",
-    );
-  }
-
-  return {
-    frontmatter: {
-      description,
-      ...(readOnly !== undefined ? { read_only: readOnly } : {}),
-    },
-    body,
-  };
+function parseMemoryFile(
+  content: string,
+  relativePath: string,
+  memoryFormat: LocalMemoryFormat,
+) {
+  return parseMemoryMarkdown({
+    content,
+    relativePath,
+    format: memoryFormat,
+    errorPrefix: "memory_apply_patch",
+  });
 }
 
 function renderMemoryFile(
-  frontmatter: { description: string; read_only?: string },
+  frontmatter: MemoryMarkdownFrontmatter,
   body: string,
+  relativePath: string,
+  memoryFormat: LocalMemoryFormat,
 ): string {
-  const description = frontmatter.description.trim();
-  if (!description) {
-    throw new Error("memory_apply_patch: 'description' must not be empty");
-  }
-
-  const lines = [
-    "---",
-    `description: ${sanitizeFrontmatterValue(description)}`,
-  ];
-
-  if (frontmatter.read_only !== undefined) {
-    lines.push(`read_only: ${frontmatter.read_only}`);
-  }
-
-  lines.push("---");
-
-  const header = lines.join("\n");
-  if (!body) {
-    return `${header}\n`;
-  }
-  return `${header}\n${body}`;
-}
-
-function sanitizeFrontmatterValue(value: string): string {
-  return value.replace(/\r?\n/g, " ").trim();
+  return renderMemoryMarkdown({
+    frontmatter,
+    body,
+    relativePath,
+    format: memoryFormat,
+    errorPrefix: "memory_apply_patch",
+  });
 }
 
 async function isMissing(filePath: string): Promise<boolean> {
