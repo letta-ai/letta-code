@@ -6,6 +6,7 @@ import {
   parseReviewResult,
   type TrackerIssueView,
   validatePullRequestView,
+  validateReconciledPullRequestView,
   validateTrackerIssueView,
 } from "./update-tracker.ts";
 
@@ -79,6 +80,21 @@ describe("watcher PR validation", () => {
       ),
     ).toThrow("outside the selected skill scope");
   });
+
+  test("accepts a merged exact-candidate PR only during reconciliation", () => {
+    const merged = validPullRequest({
+      isDraft: false,
+      mergedAt: "2026-08-27T00:00:00Z",
+      state: "MERGED",
+    });
+
+    expect(() =>
+      validateReconciledPullRequestView(merged, URL, analysis(), LOGIN),
+    ).not.toThrow();
+    expect(() =>
+      validatePullRequestView(merged, URL, analysis(), LOGIN),
+    ).toThrow("open and draft");
+  });
 });
 
 describe("watcher analysis validation", () => {
@@ -135,7 +151,7 @@ describe("watcher result validation", () => {
       evidence: evidence(current),
     };
     expect(() => parseReviewResult({ ...base, secret: "no" }, current)).toThrow(
-      "does not match",
+      "unknown or missing fields",
     );
     expect(() =>
       parseReviewResult(

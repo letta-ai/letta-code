@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /** Validates a daily skill-review batch and updates the tracker once. */
 
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   type BuiltinSkillWatchAnalysis,
@@ -9,6 +9,10 @@ import {
   DEFAULT_TARGET_REPO,
 } from "./analysis.ts";
 import { createIssueComment, editIssueBody } from "./github.ts";
+import {
+  discoverReviewArtifacts,
+  formatFailureReceipt,
+} from "./result-artifacts.ts";
 import {
   hasTerminalCandidate,
   parseTrackerState,
@@ -103,6 +107,7 @@ function main(): void {
   let state = parseTrackerState(original.body);
   let failed = false;
   const outcomes: ValidatedOutcome[] = [];
+  const artifacts = discoverReviewArtifacts(args.resultsDir as string);
 
   for (const candidate of manifest.candidates) {
     const analysisPath = join(
@@ -130,14 +135,14 @@ function main(): void {
     analysis.workflow_run_url = workflowRunUrl(pending.workflow_run_id);
     assertAnalysisIdentity(received, analysis);
 
-    const resultPath = join(
-      args.resultsDir as string,
-      `builtin-skill-result-${received.skill}`,
-      "result.json",
-    );
+    const resultPath = artifacts.results.get(received.candidate_id);
     try {
-      if (!existsSync(resultPath)) {
-        throw new Error("Amelia result artifact is missing");
+      if (!resultPath) {
+        const receipt = artifacts.failures.get(received.candidate_id);
+        if (receipt) throw new Error(formatFailureReceipt(receipt));
+        throw new Error(
+          `Amelia result artifact is missing for ${received.candidate_id}`,
+        );
       }
       const result = readReviewResult(resultPath, analysis);
       if (result.pr_url) {

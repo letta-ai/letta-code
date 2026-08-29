@@ -29,6 +29,27 @@ describe("review evidence", () => {
     expect(digestReviewEvidence(evidence)).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  test("accepts RFC 3339 UTC timestamps without milliseconds", () => {
+    expect(() =>
+      parseReviewEvidence({
+        schema_version: 1,
+        candidate_id: "candidate",
+        skill: "creating-skills",
+        sources: [
+          {
+            locator: "src/skills/builtin/creating-skills/SKILL.md",
+            revision: "a".repeat(40),
+            content_digest: null,
+            retrieved_at: "2026-08-26T00:00:00Z",
+            excerpt: "current source",
+            claims: ["checked current source"],
+          },
+        ],
+        probes: [],
+      }),
+    ).not.toThrow();
+  });
+
   test("requires at least one source", () => {
     expect(() =>
       parseReviewEvidence({
@@ -38,7 +59,7 @@ describe("review evidence", () => {
         sources: [],
         probes: [],
       }),
-    ).toThrow("sources are invalid");
+    ).toThrow("between 1 and 5 sources");
   });
 
   test("rejects malformed digests and timestamps", () => {
@@ -59,28 +80,51 @@ describe("review evidence", () => {
         ],
         probes: [],
       }),
-    ).toThrow("sources are invalid");
+    ).toThrow("content_digest is invalid");
   });
 
-  test("rejects evidence too large for the tracker", () => {
+  test("accepts production-sized evidence larger than the old tracker limit", () => {
+    const evidence = parseReviewEvidence({
+      schema_version: 1,
+      candidate_id: "candidate",
+      skill: "creating-skills",
+      sources: Array.from({ length: 5 }, (_, index) => ({
+        locator: `https://docs.letta.com/source-${index}`,
+        revision: "a".repeat(40),
+        content_digest: "b".repeat(64),
+        retrieved_at: "2026-08-26T00:00:00.000Z",
+        excerpt: "q".repeat(300),
+        claims: Array.from({ length: 5 }, () => "z".repeat(300)),
+      })),
+      probes: [],
+    });
+
+    expect(Buffer.byteLength(JSON.stringify(evidence), "utf8")).toBeGreaterThan(
+      650,
+    );
+  });
+
+  test("still rejects evidence larger than an issue comment can safely hold", () => {
     expect(() =>
       parseReviewEvidence({
         schema_version: 1,
         candidate_id: "candidate",
         skill: "creating-skills",
-        sources: [
-          {
-            locator: "x".repeat(500),
-            revision: "y".repeat(300),
-            content_digest: null,
-            retrieved_at: "2026-08-26T00:00:00.000Z",
-            excerpt: "q".repeat(300),
-            claims: ["z".repeat(500)],
-          },
-        ],
-        probes: [],
+        sources: Array.from({ length: 5 }, (_, index) => ({
+          locator: `https://docs.letta.com/${"x".repeat(450)}-${index}`,
+          revision: "y".repeat(300),
+          content_digest: null,
+          retrieved_at: "2026-08-26T00:00:00.000Z",
+          excerpt: "q".repeat(300),
+          claims: Array.from({ length: 5 }, () => "z".repeat(500)),
+        })),
+        probes: Array.from({ length: 5 }, () => ({
+          command: "c".repeat(500),
+          result_digest: "d".repeat(64),
+          summary: "s".repeat(500),
+        })),
       }),
-    ).toThrow("exceeds 650 bytes");
+    ).toThrow("exceeds 16384 bytes");
   });
 
   test("requires a revision or digest and rejects unknown fields", () => {
@@ -100,7 +144,7 @@ describe("review evidence", () => {
         sources: [source],
         probes: [],
       }),
-    ).toThrow("sources are invalid");
+    ).toThrow("requires a revision or content_digest");
     expect(() =>
       parseReviewEvidence({
         schema_version: 1,
@@ -109,6 +153,6 @@ describe("review evidence", () => {
         sources: [{ ...source, content_digest: "a".repeat(64), secret: "no" }],
         probes: [],
       }),
-    ).toThrow("sources are invalid");
+    ).toThrow("unknown or missing fields");
   });
 });

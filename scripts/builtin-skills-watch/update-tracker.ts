@@ -37,6 +37,7 @@ export interface PullRequestView {
   files: Array<{ path: string }>;
   headRefOid: string;
   isDraft: boolean;
+  mergedAt?: string | null;
   state: string;
   url: string;
 }
@@ -337,19 +338,35 @@ export function parseReviewResult(
       "notes",
       "pr_url",
       "evidence",
-    ]) ||
-    value.schema_version !== 1 ||
+    ])
+  ) {
+    throw new Error("Review result has unknown or missing fields");
+  }
+  if (value.schema_version !== 1) {
+    throw new Error("Review result must use schema version 1");
+  }
+  if (
     value.candidate_id !== analysis.candidate_id ||
-    value.skill !== analysis.skill ||
-    (value.outcome !== "no_drift" &&
-      value.outcome !== "pr_created" &&
-      value.outcome !== "needs_human_review") ||
-    typeof value.notes !== "string" ||
-    value.notes.length === 0 ||
-    value.notes.length > 120 ||
-    (value.pr_url !== null && typeof value.pr_url !== "string")
+    value.skill !== analysis.skill
   ) {
     throw new Error("Review result does not match the pending candidate");
+  }
+  if (
+    value.outcome !== "no_drift" &&
+    value.outcome !== "pr_created" &&
+    value.outcome !== "needs_human_review"
+  ) {
+    throw new Error("Review result outcome is invalid");
+  }
+  if (
+    typeof value.notes !== "string" ||
+    value.notes.length === 0 ||
+    value.notes.length > 120
+  ) {
+    throw new Error("Review result notes must contain 1 to 120 characters");
+  }
+  if (value.pr_url !== null && typeof value.pr_url !== "string") {
+    throw new Error("Review result pr_url must be a string or null");
   }
   if (
     (value.outcome === "pr_created") !==
@@ -381,28 +398,61 @@ export function verifyPullRequest(
   analysis: BuiltinSkillWatchAnalysis,
   expectedGithubLogin: string,
 ): void {
+  verifyPullRequestIdentity(expectedGithubLogin);
+  const pullRequest = getPullRequest(repo, prUrl);
+  validatePullRequestView(pullRequest, prUrl, analysis, expectedGithubLogin);
+  verifyPullRequestAncestry(repo, pullRequest, analysis);
+}
+
+export function verifyReconciledPullRequest(
+  repo: string,
+  prUrl: string,
+  analysis: BuiltinSkillWatchAnalysis,
+  expectedGithubLogin: string,
+): void {
+  verifyPullRequestIdentity(expectedGithubLogin);
+  const pullRequest = getPullRequest(repo, prUrl);
+  validateReconciledPullRequestView(
+    pullRequest,
+    prUrl,
+    analysis,
+    expectedGithubLogin,
+  );
+  verifyPullRequestAncestry(repo, pullRequest, analysis);
+}
+
+function verifyPullRequestIdentity(expectedGithubLogin: string): void {
   const authenticatedLogin = ghJson<{ login: string }>(["api", "user"]).login;
   if (authenticatedLogin !== expectedGithubLogin) {
     throw new Error(
       `Authenticated GitHub login ${authenticatedLogin} does not match ${expectedGithubLogin}`,
     );
   }
+}
+
+function getPullRequest(repo: string, prUrl: string): PullRequestView {
   const match = prUrl.match(
     /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)\/?$/,
   );
   if (!match || match[1] !== repo) {
     throw new Error(`PR URL must belong to https://github.com/${repo}`);
   }
-  const pullRequest = ghJson<PullRequestView>([
+  return ghJson<PullRequestView>([
     "pr",
     "view",
     match[2] as string,
     "--repo",
     repo,
     "--json",
-    "author,baseRefName,body,files,headRefOid,isDraft,state,url",
+    "author,baseRefName,body,files,headRefOid,isDraft,mergedAt,state,url",
   ]);
-  validatePullRequestView(pullRequest, prUrl, analysis, expectedGithubLogin);
+}
+
+function verifyPullRequestAncestry(
+  repo: string,
+  pullRequest: PullRequestView,
+  analysis: BuiltinSkillWatchAnalysis,
+): void {
   const comparison = ghJson<{
     status: string;
     merge_base_commit: { sha: string };
@@ -424,6 +474,33 @@ export function validatePullRequestView(
   analysis: BuiltinSkillWatchAnalysis,
   expectedGithubLogin: string,
 ): void {
+  validatePullRequestScope(pullRequest, prUrl, analysis, expectedGithubLogin);
+  if (pullRequest.state !== "OPEN" || !pullRequest.isDraft) {
+    throw new Error("Watcher PR must be open and draft");
+  }
+}
+
+export function validateReconciledPullRequestView(
+  pullRequest: PullRequestView,
+  prUrl: string,
+  analysis: BuiltinSkillWatchAnalysis,
+  expectedGithubLogin: string,
+): void {
+  validatePullRequestScope(pullRequest, prUrl, analysis, expectedGithubLogin);
+  const isOpenDraft = pullRequest.state === "OPEN" && pullRequest.isDraft;
+  const isMerged =
+    pullRequest.state === "MERGED" && typeof pullRequest.mergedAt === "string";
+  if (!isOpenDraft && !isMerged) {
+    throw new Error("Reconciled watcher PR must be an open draft or merged");
+  }
+}
+
+function validatePullRequestScope(
+  pullRequest: PullRequestView,
+  prUrl: string,
+  analysis: BuiltinSkillWatchAnalysis,
+  expectedGithubLogin: string,
+): void {
   if (pullRequest.url !== prUrl.replace(/\/$/, "")) {
     throw new Error(`PR URL mismatch: ${pullRequest.url}`);
   }
@@ -431,9 +508,6 @@ export function validatePullRequestView(
     throw new Error(
       `PR author ${pullRequest.author.login} does not match ${expectedGithubLogin}`,
     );
-  }
-  if (pullRequest.state !== "OPEN" || !pullRequest.isDraft) {
-    throw new Error("Watcher PR must be open and draft");
   }
   if (pullRequest.baseRefName !== "main") {
     throw new Error("Watcher PR must target main");
