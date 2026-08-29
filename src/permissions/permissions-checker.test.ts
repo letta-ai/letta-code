@@ -961,3 +961,67 @@ test("dual eval attaches shadow decision when enabled", () => {
     }
   }
 });
+
+// ============================================================================
+// Read deny rules apply to Grep/Glob search paths
+// ============================================================================
+
+test("Read deny rule blocks Grep/Glob searching the denied directory", () => {
+  for (const tool of ["Grep", "Glob"] as const) {
+    const result = checkPermission(
+      tool,
+      { pattern: "secret", path: "secrets" },
+      { allow: [], deny: ["Read(secrets/**)"], ask: [] },
+      "/Users/test/project",
+    );
+    expect(result.decision).toBe("deny");
+    expect(result.matchedRule).toBe("Read(secrets/**)");
+  }
+});
+
+test("Read deny rule does not block Grep/Glob searching a different directory", () => {
+  for (const tool of ["Grep", "Glob"] as const) {
+    const result = checkPermission(
+      tool,
+      { pattern: "secret", path: "src" },
+      { allow: [], deny: ["Read(secrets/**)"], ask: [] },
+      "/Users/test/project",
+    );
+    expect(result.decision).toBe("allow");
+  }
+});
+
+test("Grep deny rule and absolute path Read deny rules still work", () => {
+  const r1 = checkPermission(
+    "Grep",
+    { pattern: "secret", path: "secrets" },
+    { allow: [], deny: ["Grep(secrets)"], ask: [] },
+    "/Users/test/project",
+  );
+  expect(r1.decision).toBe("deny");
+  expect(r1.matchedRule).toBe("Grep(secrets)");
+
+  if (process.platform !== "win32") {
+    const r2 = checkPermission(
+      "Grep",
+      { pattern: "secret", path: "/Users/test/secrets" },
+      { allow: [], deny: ["Read(/Users/test/secrets/**)"], ask: [] },
+      "/Users/test/project",
+    );
+    expect(r2.decision).toBe("deny");
+    expect(r2.matchedRule).toBe("Read(/Users/test/secrets/**)");
+  }
+});
+
+test("Read deny rule blocks tool aliases canonicalized to Grep/Glob", () => {
+  for (const alias of ["grep_files", "glob_gemini"] as const) {
+    const result = checkPermission(
+      alias,
+      { pattern: "secret", path: "secrets" },
+      { allow: [], deny: ["Read(secrets/**)"], ask: [] },
+      "/Users/test/project",
+    );
+    expect(result.decision).toBe("deny");
+    expect(result.matchedRule).toBe("Read(secrets/**)");
+  }
+});

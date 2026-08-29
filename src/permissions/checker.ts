@@ -293,6 +293,37 @@ function checkPermissionForEngine(
     permissionToolName === toolName
       ? query
       : buildPermissionQuery(originalQueryTool, toolArgs, engine);
+
+  // Grep and Glob search the directory their `path` argument resolves to.
+  // Read deny rules must also apply to that directory, so build Read queries
+  // with the same path to check against deny patterns.
+  // We check both Read(path) for exact matches and Read(path/**) for directory
+  // scope matches, so Read(secrets/**) denies Grep searching the secrets dir.
+  const searchPath =
+    canonicalTool === "Grep" || canonicalTool === "Glob"
+      ? extractFilePath(toolArgs)
+      : null;
+  const searchReadQueries = searchPath
+    ? [`Read(${searchPath})`, `Read(${searchPath}/**)`]
+    : null;
+
+  // Check if a Read deny rule matches a Grep/Glob search path
+  const checkReadDeny = (pattern: string, traceStage: string): boolean => {
+    if (!searchReadQueries) return false;
+    const matched = searchReadQueries.some((q) =>
+      matchesPattern("Read", q, pattern, workingDirectory, engine),
+    );
+    if (matched)
+      traceEvent(
+        trace,
+        traceStage,
+        `Read deny rule applied to ${canonicalTool}`,
+        pattern,
+        true,
+      );
+    return matched;
+  };
+
   const matchesRule = (pattern: string, includeOriginal = false): boolean =>
     matchesPattern(
       permissionToolName,
@@ -368,6 +399,17 @@ function checkPermissionForEngine(
           trace,
         };
       }
+      // Read deny rules also apply to Grep/Glob search paths
+      if (checkReadDeny(pattern, "deny-rule")) {
+        return {
+          result: {
+            decision: "deny",
+            matchedRule: pattern,
+            reason: `Matched Read deny rule for ${canonicalTool}`,
+          },
+          trace,
+        };
+      }
     }
   }
 
@@ -381,6 +423,17 @@ function checkPermissionForEngine(
           decision: "deny",
           matchedRule: `${pattern} (CLI)`,
           reason: "Matched --disallowedTools flag",
+        },
+        trace,
+      };
+    }
+    // Read disallow rules also apply to Grep/Glob search paths
+    if (checkReadDeny(pattern, "cli-disallow-rule")) {
+      return {
+        result: {
+          decision: "deny",
+          matchedRule: `${pattern} (CLI)`,
+          reason: `Matched Read disallow rule for ${canonicalTool}`,
         },
         trace,
       };
