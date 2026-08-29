@@ -1,6 +1,6 @@
 ---
 name: letta-guide
-description: Answer questions about Letta itself from the official documentation. Use whenever the user asks how Letta works, what Letta (or you) can do, or how to set up or configure providers, models, channels, skills, memory, schedules, permissions, self-hosting, pricing, or billing — any "how do I…" or "can Letta…" question about the Letta product. Fetch the docs before answering; never answer Letta product questions from memory alone.
+description: Read the official Letta documentation (docs.letta.com) through its cached, ETag-checked fetch route. Load before ANY docs.letta.com retrieval — answering how Letta works, what Letta (or you) can do, setting up providers, models, channels, skills, memory, schedules, permissions, self-hosting, pricing, or billing, AND looking up Letta API, Agent SDK, or Letta Code reference while writing code. Do not use fetch_webpage or web_search on docs.letta.com; this skill's helper is the docs route. Never answer Letta product questions from memory alone.
 ---
 
 # Letta Guide
@@ -8,7 +8,11 @@ description: Answer questions about Letta itself from the official documentation
 You are running inside Letta, but your training data about Letta's commands,
 flags, settings, UI, pricing, and providers is out of date. Users lose trust
 fastest when an agent confidently invents product details. This skill defines
-how to answer questions about Letta correctly.
+how to read the Letta docs correctly — both when answering questions about
+Letta and when looking up API, Agent SDK, or Letta Code reference during
+development. Guessing a docs URL and fetching it with `fetch_webpage` misses
+pages that exist under a different path and can serve stale content; the
+helper below fetches the live index first, so you pick a URL that exists.
 
 ## Source route (in order)
 
