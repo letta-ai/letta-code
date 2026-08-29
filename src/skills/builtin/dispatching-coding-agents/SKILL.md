@@ -66,7 +66,7 @@ Different agents have different strengths. Track what works in your memory over 
 - Use `--max-budget-usd N` (Claude Code) to cap spend on exploratory tasks
 
 ### Known quirks
-- **Claude Code can hang on large repos** with unrestricted tools — consider `--allowedTools "Read Grep Glob"` (no Bash) and shorter timeouts for research tasks
+- **Claude Code can hang on large repos** with unrestricted tools — consider `--tools "Read,Grep,Glob"` (no Bash) and shorter timeouts for research tasks
 - **Codex compactions can destroy long trajectories** — for very long tasks, prefer multiple shorter sessions over one marathon
 - **Opus tends to over-generate** — produces more code than necessary. Good for exploration, verify before applying.
 
@@ -119,7 +119,7 @@ Have one agent write code or create a plan, then dispatch another to review:
 ```bash
 # Codex has a native review command:
 codex review --uncommitted    # Review all local changes
-codex exec review "Focus on error handling and edge cases"
+codex review "Focus on error handling and edge cases"
 
 # Claude Code — pass the diff inline:
 claude -p "Review the following diff for correctness, edge cases, and missed error handling:\n\n$(git diff)" \
@@ -135,7 +135,7 @@ cd /path/to/repo && claude -p "Read /tmp/my-plan.md and critique it. What am I m
 
 ## Handling Failures
 
-- **Timeout**: If an agent times out (especially Claude Code on large repos), try: (1) a shorter, more focused prompt, (2) restricting tools with `--allowedTools`, (3) switching to Codex which handles large repos better
+- **Timeout**: If an agent times out (especially Claude Code on large repos), try: (1) a shorter, more focused prompt, (2) restricting tools with `--tools`, (3) switching to Codex which handles large repos better
 - **Garbage output**: If results are incoherent, the prompt was probably too vague. Rewrite with more specific file paths and clearer instructions.
 - **Session errors**: Claude Code can hit "stale approval from interrupted session" — `--dangerously-skip-permissions` prevents this. If Codex errors, start a fresh `exec` session.
 - **Compaction mid-task**: If a Codex session runs long enough to compact, it may lose earlier context. Break long tasks into smaller sequential sessions.
@@ -153,9 +153,10 @@ claude -p "YOUR PROMPT" --model MODEL --dangerously-skip-permissions
 | `-p` / `--print` | Non-interactive mode, prints response and exits |
 | `--dangerously-skip-permissions` | Skip approval prompts (prevents stale approval errors on timeout) |
 | `--model MODEL` | Alias or model name accepted by the installed CLI; omit to use the configured default |
-| `--effort LEVEL` | `low`, `medium`, `high` — controls reasoning depth |
+| `--effort LEVEL` | `low`, `medium`, `high`, `xhigh`, `max` — controls reasoning depth |
 | `--append-system-prompt "..."` | Inject additional system instructions |
-| `--allowedTools "Bash Edit Read"` | Restrict available tools |
+| `--allowedTools "Bash(git log *)" "Read"` | Tools that execute without prompting for permission |
+| `--tools "Bash,Edit,Read"` | Restrict which built-in tools are available |
 | `--max-budget-usd N` | Cap spend for the invocation |
 | `--add-dir DIR` | Allow access to an additional directory; does not change the working directory |
 | `--output-format json` | Structured output with `session_id`, `cost_usd`, `duration_ms` |
@@ -175,7 +176,7 @@ codex exec "YOUR PROMPT" --sandbox workspace-write
 | `--sandbox MODE` | Select a read-only or writable sandbox |
 | `-C DIR` | Set working directory |
 | `--search` | Enable web search tool |
-| `review` | Native code review — `codex review --uncommitted` or `codex exec review "prompt"` |
+| `review` | Native code review — `codex review --uncommitted` or `codex review "prompt"` |
 
 ## Session Management
 

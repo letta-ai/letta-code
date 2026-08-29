@@ -41,4 +41,19 @@ describe("dispatching-coding-agents skill", () => {
     expect(skill).not.toContain("--full-auto");
     expect(skill).not.toMatch(/Bash tool.{0,40}`workdir`/i);
   });
+
+  test("uses --tools for restricting available tools, not --allowedTools", () => {
+    expect(skill).toContain("--tools");
+    expect(skill).not.toMatch(/--allowedTools.*Restrict/);
+  });
+
+  test("documents current Claude Code effort levels", () => {
+    expect(skill).toContain("`xhigh`");
+    expect(skill).toContain("`max`");
+  });
+
+  test("uses codex review for native review command, not codex exec review", () => {
+    expect(skill).toContain('codex review "Focus on error handling');
+    expect(skill).not.toContain("codex exec review");
+  });
 });
