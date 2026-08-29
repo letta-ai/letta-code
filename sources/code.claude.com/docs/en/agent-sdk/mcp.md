@@ -858,11 +858,13 @@ If Claude sees tools but doesn't use them, check that you've granted permission 
 
 ### Connection timeouts
 
-MCP server connections time out after 30 seconds by default. Claude Code applies that limit to the connection attempt only; to change how long a running tool call may take, set [`MCP_TOOL_TIMEOUT`](/docs/en/env-vars). If your server takes longer to start, the connection fails. Raise the connection limit with the [`MCP_TIMEOUT`](/docs/en/env-vars) environment variable, in milliseconds. For servers that need more startup time, also consider:
+MCP server connections time out after 30 seconds by default. To change how long a running tool call may take, set [`MCP_TOOL_TIMEOUT`](/docs/en/env-vars). If your server takes longer to start, the connection fails. Raise the connection limit with the [`MCP_TIMEOUT`](/docs/en/env-vars) environment variable, in milliseconds. For servers that need more startup time, also consider:
 
 * Using a lighter-weight server if available
 * Pre-warming the server before starting your agent
 * Checking server logs for slow initialization causes
+
+In TypeScript, you can set the tool-call limit for a single [SDK MCP server](#sdk-mcp-servers) by passing [`timeout` to `createSdkMcpServer()`](/docs/en/agent-sdk/typescript#createsdkmcpserver).
 
 ### Tool output exceeds maximum allowed tokens
 

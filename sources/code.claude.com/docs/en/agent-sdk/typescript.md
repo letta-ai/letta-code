@@ -177,18 +177,20 @@ function createSdkMcpServer(options: {
   instructions?: string;
   tools?: Array<SdkMcpToolDefinition<any>>;
   alwaysLoad?: boolean;
+  timeout?: number;
 }): McpSdkServerConfigWithInstance;
 ```
 
 #### Parameters
 
-| Parameter              | Type                          | Description                                                                                                                                                                                          |
-| :--------------------- | :---------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `options.name`         | `string`                      | The name of the MCP server                                                                                                                                                                           |
-| `options.version`      | `string`                      | Optional version string                                                                                                                                                                              |
-| `options.instructions` | `string`                      | Optional server instructions, returned from `initialize` and surfaced to the model as an MCP instructions block                                                                                      |
-| `options.tools`        | `Array<SdkMcpToolDefinition>` | Array of tool definitions created with [`tool()`](#tool)                                                                                                                                             |
-| `options.alwaysLoad`   | `boolean`                     | When `true`, every tool from this server stays in the initial prompt and is never deferred behind [tool search](/docs/en/agent-sdk/tool-search). Combines with per-tool `alwaysLoad` in [`tool()`](#tool) |
+| Parameter              | Type                          | Description                                                                                                                                                                                                                                                         |
+| :--------------------- | :---------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `options.name`         | `string`                      | The name of the MCP server                                                                                                                                                                                                                                          |
+| `options.version`      | `string`                      | Optional version string                                                                                                                                                                                                                                             |
+| `options.instructions` | `string`                      | Optional server instructions, returned from `initialize` and surfaced to the model as an MCP instructions block                                                                                                                                                     |
+| `options.tools`        | `Array<SdkMcpToolDefinition>` | Array of tool definitions created with [`tool()`](#tool)                                                                                                                                                                                                            |
+| `options.alwaysLoad`   | `boolean`                     | When `true`, every tool from this server stays in the initial prompt and is never deferred behind [tool search](/docs/en/agent-sdk/tool-search). Combines with per-tool `alwaysLoad` in [`tool()`](#tool)                                                                |
+| `options.timeout`      | `number`                      | Timeout in milliseconds for this server's tool calls. Claude Code applies it to this server in place of [`MCP_TOOL_TIMEOUT`](/docs/en/env-vars). Pass a whole number of at least 1000. Claude Code ignores other values. Requires TypeScript Agent SDK v0.3.248 or later |
 
 ### `listSessions()`
 
@@ -1056,6 +1058,7 @@ type McpHttpServerConfig = {
 type McpSdkServerConfigWithInstance = {
   type: "sdk";
   name: string;
+  timeout?: number;
   instance: McpServer;
 };
 ```

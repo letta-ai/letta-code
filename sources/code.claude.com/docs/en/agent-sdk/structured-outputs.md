@@ -34,7 +34,7 @@ Consider a recipe app where an agent searches the web and brings back recipes. W
   </Accordion>
 
   <Accordion title="With structured outputs">
-    ```json theme={null}
+    ```jsonc theme={null}
     {
       "name": "Chocolate Chip Cookies",
       "prep_time_minutes": 15,

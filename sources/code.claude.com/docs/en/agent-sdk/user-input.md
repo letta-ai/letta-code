@@ -12,7 +12,7 @@ Claude requests user input in two situations: when it needs **permission to use 
 
 For clarifying questions, Claude generates the questions and options. Your role is to present them to users and return their selections. You can't add your own questions to this flow; if you need to ask users something yourself, do that separately in your application logic.
 
-The callback can stay pending indefinitely. Execution remains paused until your callback returns, and the SDK only cancels the wait when the query itself is cancelled. If a user might take longer to respond than your process can reasonably stay running, return the [`defer` hook decision](/docs/en/hooks#defer-a-tool-call-for-later), which lets the process exit and resume later from the persisted session.
+The callback can stay pending indefinitely. Execution remains paused until your callback returns, and the SDK only cancels the wait when the query itself is cancelled. If a user might take longer to respond than your process can reasonably stay running, register a [`PreToolUse` hook](/docs/en/agent-sdk/hooks) that returns the [`defer` decision](/docs/en/hooks#defer-a-tool-call-for-later) instead of waiting in the callback, so the process can exit and resume later from the persisted session.
 
 This guide shows you how to detect each type of request and respond appropriately.
 
@@ -624,7 +624,7 @@ Return an `answers` object mapping each question's `question` field to the selec
 
 For multi-select questions, pass an array of labels or join them with `", "`. For per-question free text such as an "Other" option, put the user's text in `answers[question]` as shown in [Support free-text input](#support-free-text-input). Set `response` only when your UI lets the user dismiss the question card and type a general reply that isn't an answer to any specific question. When `response` is set, Claude receives "The user responded: …" instead of the per-question answer list.
 
-```json theme={null}
+```jsonc theme={null}
 {
   "questions": [
     // ...

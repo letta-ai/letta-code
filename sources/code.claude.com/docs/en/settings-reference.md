@@ -835,7 +835,7 @@ The key has no effect on Amazon Bedrock, Google Cloud's Agent Platform, or Micro
 
 Turn [extended thinking](/docs/en/model-config#extended-thinking) off for every session by setting this to `false`. Thinking is on by default, so `true` changes nothing. Most people set this through `/config` rather than by editing the file.
 
-On models that always think, such as Fable 5, `false` has no effect. On [third-party providers](/docs/en/third-party-integrations) Claude Code omits the `thinking` parameter instead of turning thinking off, so adaptive-reasoning models may still think.
+On models that always think, such as Fable 5, `false` has no effect. On [third-party providers](/docs/en/third-party-integrations) Claude Code omits the `thinking` parameter instead of turning thinking off, so adaptive-reasoning models may still think. With thinking turned off on the Anthropic API, Claude Code sends effort `high` instead of a higher level to models it knows [don't accept that combination](/docs/en/errors#effort-isnt-available-with-thinking-turned-off), such as Opus 5.
 
 * **Scope**: [`Any file`](#scopes)
 * **Type**: Boolean
@@ -4911,7 +4911,7 @@ Pick the default [cloud environment](/docs/en/cloud-environments) for cloud sess
 
 * **Scope**: [`Any file`](#scopes). For a self-hosted environment ID, user or managed settings, or the `--settings` flag only.
 * **Type**: string, an environment ID such as `env_...` or `ccpool_...`
-* **Default**: unset, so Claude Code uses the Anthropic-hosted environment when one is in your list, and otherwise the first environment it finds
+* **Default**: unset, so Claude Code uses the Anthropic-hosted environment when your list has one, and otherwise the first environment in your list that isn't a [Remote Control bridge environment](/docs/en/cloud-environments#the-default-environment), or the first environment when every one is a bridge environment
 * **Per-session overrides**: `--environment` takes precedence over this key for the one cloud session it creates
 
 ```json settings.json theme={null}
