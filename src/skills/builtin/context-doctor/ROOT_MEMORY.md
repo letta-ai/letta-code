@@ -24,12 +24,12 @@ Below are additional common issues with context and how they can be resolved:
 #### System prompt bloat
 Root Markdown files compiled into the system prompt should take up about 10% of the total context size (usually ~15-20K tokens). This is a soft target, not a hard requirement.
 
-Use the built-in CLI to evaluate token usage of the system prompt:
+To evaluate token usage of the system prompt, you can use:
 ```bash
 letta memory tokens --format json --quiet
 ```
 
-The command reports `total_tokens` and per-file estimates for core memory. It is only a measurement tool; decide whether to intervene based on the actual context and the guidance below.
+**Note:** This command currently scans `system/` and returns 0 tokens for root-layout agents. Until it supports root-layout memory, manually review root Markdown file sizes to assess bloat. It is only a measurement tool; decide whether to intervene based on the actual context and the guidance below.
 
 **Why detail is load-bearing (read this before cutting anything)**: In-context detail does more than carry information. It does at least four things, and byte-counting sweeps only see the first:
 1. **Information** — the literal facts stated
