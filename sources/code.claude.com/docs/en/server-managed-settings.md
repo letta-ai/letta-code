@@ -188,8 +188,8 @@ Delivered payloads parse tolerantly with the same rules as the other managed sou
 
 Server-managed delivery adds these behaviors:
 
-* The cache at `~/.claude/remote-settings.json` stores the salvaged payload with invalid entries removed. The raw invalid payload is never persisted.
-* When no field in the payload can be salvaged, Claude Code rejects the payload, keeps the last-accepted cached settings, and writes `Remote settings: Settings validation failed - no fields could be salvaged` to the debug log. With `forceRemoteSettingsRefresh` set, the CLI exits instead.
+* The cache at `~/.claude/remote-settings.json` stores the salvaged payload with invalid entries removed, apart from invalid `cleanupPeriodDays` and `desktopSessionCleanupPeriodDays` values, which stay in the cached copy and are never applied.
+* When no field in the payload can be salvaged and the payload isn't only those retention keys, Claude Code rejects the payload, keeps the last-accepted cached settings, and writes `Remote settings: Settings validation failed - no fields could be salvaged` to the debug log. With `forceRemoteSettingsRefresh` set, the CLI exits instead.
 * The [security approval dialog](#security-approval-dialogs) evaluates the salvaged payload, so a stripped invalid entry is never presented for approval and never executes.
 
 To debug delivery issues, run `claude --debug-file <path>` and search the log for `Remote settings`. Validate a payload change with `claude doctor` on a test machine before rolling it out to the organization.
