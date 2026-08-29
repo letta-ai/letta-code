@@ -93,13 +93,19 @@ letta -p --from-agent $LETTA_AGENT_ID \
   "What do you know about the authentication system?"
 ```
 
-**Response:**
+**Response (with `--output-format json`):**
 ```json
 {
-  "conversation_id": "conversation-xyz789",
-  "response": "The authentication system uses JWT tokens...",
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "The authentication system uses JWT tokens...",
   "agent_id": "agent-abc123",
-  "agent_name": "BackendExpert"
+  "conversation_id": "conversation-xyz789",
+  "environment": { "source": "same-environment" },
+  "duration_ms": 3420,
+  "num_turns": 1,
+  "usage": { ... }
 }
 ```
 
