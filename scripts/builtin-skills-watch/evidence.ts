@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 const MAX_SOURCES = 5;
 const MAX_PROBES = 5;
 const MAX_CLAIMS_PER_SOURCE = 5;
-const MAX_SERIALIZED_BYTES = 650;
+const MAX_SERIALIZED_BYTES = 16 * 1024;
 
 export interface EvidenceSource {
   locator: string;
@@ -51,29 +51,24 @@ export function parseReviewEvidence(value: unknown): ReviewEvidence {
   if (
     !Array.isArray(value.sources) ||
     value.sources.length === 0 ||
-    value.sources.length > MAX_SOURCES ||
-    !value.sources.every(isEvidenceSource)
+    value.sources.length > MAX_SOURCES
   ) {
-    throw new TypeError("review evidence sources are invalid");
+    throw new TypeError("review evidence must include between 1 and 5 sources");
   }
-  if (
-    !Array.isArray(value.probes) ||
-    value.probes.length > MAX_PROBES ||
-    !value.probes.every(isEvidenceProbe)
-  ) {
-    throw new TypeError("review evidence probes are invalid");
+  if (!Array.isArray(value.probes) || value.probes.length > MAX_PROBES) {
+    throw new TypeError("review evidence must include at most 5 probes");
   }
   const evidence: ReviewEvidence = {
     schema_version: 1,
     candidate_id: value.candidate_id,
     skill: value.skill,
-    sources: value.sources,
-    probes: value.probes,
+    sources: value.sources.map(parseEvidenceSource),
+    probes: value.probes.map(parseEvidenceProbe),
   };
   if (
     Buffer.byteLength(JSON.stringify(evidence), "utf8") > MAX_SERIALIZED_BYTES
   ) {
-    throw new TypeError("review evidence exceeds 650 bytes");
+    throw new TypeError("review evidence exceeds 16384 bytes");
   }
   return evidence;
 }
@@ -82,44 +77,77 @@ export function digestReviewEvidence(evidence: ReviewEvidence): string {
   return createHash("sha256").update(JSON.stringify(evidence)).digest("hex");
 }
 
-function isEvidenceSource(value: unknown): value is EvidenceSource {
-  return (
-    isRecord(value) &&
-    hasExactKeys(value, [
+function parseEvidenceSource(value: unknown, index: number): EvidenceSource {
+  const description = `review evidence source ${index + 1}`;
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
       "locator",
       "revision",
       "content_digest",
       "retrieved_at",
       "excerpt",
       "claims",
-    ]) &&
-    isBoundedString(value.locator, 500) &&
-    (value.revision === null || isBoundedString(value.revision, 300)) &&
-    (value.content_digest === null || isDigest(value.content_digest)) &&
-    (value.revision !== null || value.content_digest !== null) &&
-    isIsoTimestamp(value.retrieved_at) &&
-    isBoundedString(value.excerpt, 300) &&
-    Array.isArray(value.claims) &&
-    value.claims.length > 0 &&
-    value.claims.length <= MAX_CLAIMS_PER_SOURCE &&
-    value.claims.every((claim) => isBoundedString(claim, 500))
-  );
+    ])
+  ) {
+    throw new TypeError(`${description} has unknown or missing fields`);
+  }
+  if (!isBoundedString(value.locator, 500)) {
+    throw new TypeError(`${description} locator is invalid`);
+  }
+  if (value.revision !== null && !isBoundedString(value.revision, 300)) {
+    throw new TypeError(`${description} revision is invalid`);
+  }
+  if (value.content_digest !== null && !isDigest(value.content_digest)) {
+    throw new TypeError(`${description} content_digest is invalid`);
+  }
+  if (value.revision === null && value.content_digest === null) {
+    throw new TypeError(`${description} requires a revision or content_digest`);
+  }
+  if (!isIsoTimestamp(value.retrieved_at)) {
+    throw new TypeError(`${description} retrieved_at is not an ISO timestamp`);
+  }
+  if (!isBoundedString(value.excerpt, 300)) {
+    throw new TypeError(`${description} excerpt is invalid`);
+  }
+  if (
+    !Array.isArray(value.claims) ||
+    value.claims.length === 0 ||
+    value.claims.length > MAX_CLAIMS_PER_SOURCE ||
+    !value.claims.every((claim) => isBoundedString(claim, 500))
+  ) {
+    throw new TypeError(`${description} claims are invalid`);
+  }
+  return value as unknown as EvidenceSource;
 }
 
-function isEvidenceProbe(value: unknown): value is EvidenceProbe {
-  return (
-    isRecord(value) &&
-    hasExactKeys(value, ["command", "result_digest", "summary"]) &&
-    isBoundedString(value.command, 500) &&
-    isDigest(value.result_digest) &&
-    isBoundedString(value.summary, 500)
-  );
+function parseEvidenceProbe(value: unknown, index: number): EvidenceProbe {
+  const description = `review evidence probe ${index + 1}`;
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["command", "result_digest", "summary"])
+  ) {
+    throw new TypeError(`${description} has unknown or missing fields`);
+  }
+  if (!isBoundedString(value.command, 500)) {
+    throw new TypeError(`${description} command is invalid`);
+  }
+  if (!isDigest(value.result_digest)) {
+    throw new TypeError(`${description} result_digest is invalid`);
+  }
+  if (!isBoundedString(value.summary, 500)) {
+    throw new TypeError(`${description} summary is invalid`);
+  }
+  return value as unknown as EvidenceProbe;
 }
 
 function isIsoTimestamp(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const parsed = new Date(value);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+  return (
+    !Number.isNaN(parsed.getTime()) &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)
+  );
 }
 
 function isDigest(value: unknown): value is string {

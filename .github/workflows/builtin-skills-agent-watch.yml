@@ -26,6 +26,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      pull-requests: write
     outputs:
       expected_github_login: ${{ steps.github-identity.outputs.login }}
       matrix: ${{ steps.detect.outputs.matrix }}
@@ -46,10 +47,34 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Resolve Amelia GitHub identity
+        id: github-identity
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+        run: |
+          login=$(gh api user --jq .login)
+          echo "login=$login" >> "$GITHUB_OUTPUT"
+          echo "Authenticated GitHub login: $login"
+
+      - name: Reconcile existing watcher PRs
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          EXPECTED_GITHUB_LOGIN: ${{ steps.github-identity.outputs.login }}
+        run: |
+          ARGS=(
+            --tracker-issue 4065
+            --expected-github-login "$EXPECTED_GITHUB_LOGIN"
+          )
+          if [ "$DRY_RUN" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          bun scripts/builtin-skills-watch/reconcile-results.ts "${ARGS[@]}"
+
       - name: Prepare built-in skill audits
         id: detect
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
           REQUESTED_SKILL: ${{ inputs.skill }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
@@ -74,16 +99,6 @@ jobs:
             ${{ runner.temp }}/builtin-skills-watch-analyses
           retention-days: 3
 
-      - name: Resolve Amelia GitHub identity
-        if: steps.detect.outputs.should_run_agent == 'true'
-        id: github-identity
-        env:
-          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
-        run: |
-          login=$(gh api user --jq .login)
-          echo "login=$login" >> "$GITHUB_OUTPUT"
-          echo "Authenticated GitHub login: $login"
-
   review:
     needs: prepare
     if: needs.prepare.outputs.should_run_agent == 'true'
@@ -93,6 +108,7 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - name: Checkout
@@ -116,6 +132,13 @@ jobs:
           AUDIT_AT: ${{ matrix.audit_at }}
           PREVIOUS_AUDIT_BASE64: ${{ matrix.previous_audit_base64 }}
         run: |
+          WATCH_ROOT="/tmp/letta-code-builtin-skills-watch-$GITHUB_RUN_ID-$SKILL"
+          WATCH_REPO="$WATCH_ROOT/repo"
+          WATCH_ANALYSES="$WATCH_ROOT/analyses"
+          WATCH_ANALYSIS="$WATCH_ROOT/analysis.json"
+          WATCH_MANIFEST="$WATCH_ROOT/manifest.json"
+          WATCH_EVIDENCE="$WATCH_ROOT/evidence.json"
+          WATCH_RESULT="$WATCH_ROOT/result.json"
           {
             echo "prompt<<AMELIA_PROMPT_EOF"
             cat .github/agent-prompts/builtin-skills-agent-watch.md
@@ -130,6 +153,11 @@ jobs:
             echo "- Current commit: $CURRENT_SHA"
             echo "- Skill digest: $SKILL_DIGEST"
             echo "- Audit timestamp: $AUDIT_AT"
+            echo "- Sandbox workspace: $WATCH_ROOT"
+            echo "- Repository checkout: $WATCH_REPO"
+            echo "- Analysis file: $WATCH_ANALYSIS"
+            echo "- Evidence file: $WATCH_EVIDENCE"
+            echo "- Result file: $WATCH_RESULT"
             echo
             echo "## Sandbox bootstrap"
             echo
@@ -137,16 +165,17 @@ jobs:
             echo
             echo '```bash'
             echo 'set -euo pipefail'
-            echo 'rm -rf /tmp/letta-code-builtin-skills-watch /tmp/builtin-skills-watch-analyses'
+            echo "rm -rf \"$WATCH_ROOT\""
+            echo "mkdir -p \"$WATCH_ROOT\""
             # The token expands later in Amelia's sandbox.
             # shellcheck disable=SC2016
-            echo 'test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh repo clone letta-ai/letta-code /tmp/letta-code-builtin-skills-watch -- --no-checkout'
-            echo 'cd /tmp/letta-code-builtin-skills-watch'
+            echo "test -n \"\$AMELIA_GITHUB_TOKEN\" && GITHUB_TOKEN= GH_TOKEN=\"\$AMELIA_GITHUB_TOKEN\" gh repo clone letta-ai/letta-code \"$WATCH_REPO\" -- --no-checkout"
+            echo "cd \"$WATCH_REPO\""
             echo "env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN git checkout \"$CURRENT_SHA\""
             echo 'env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN bun install --frozen-lockfile'
-            echo "env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=letta-ai/letta-code GITHUB_RUN_ID=\"$GITHUB_RUN_ID\" bun scripts/builtin-skills-watch/agent-watch.ts --dry-run --skill \"$SKILL\" --current-sha \"$CURRENT_SHA\" --audit-at \"$AUDIT_AT\" --previous-audit-base64 \"$PREVIOUS_AUDIT_BASE64\" --analysis-dir /tmp/builtin-skills-watch-analyses --manifest-file /tmp/builtin-skills-watch-manifest.json > /tmp/builtin-skills-watch-analysis.log"
-            echo "cp /tmp/builtin-skills-watch-analyses/\"$SKILL\".json /tmp/builtin-skills-watch-analysis.json"
-            echo "jq -e '.candidate_id == \"$CANDIDATE_ID\" and .skill == \"$SKILL\" and .current_sha == \"$CURRENT_SHA\" and .skill_digest == \"$SKILL_DIGEST\"' /tmp/builtin-skills-watch-analysis.json > /dev/null"
+            echo "env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=letta-ai/letta-code GITHUB_RUN_ID=\"$GITHUB_RUN_ID\" bun scripts/builtin-skills-watch/agent-watch.ts --dry-run --skill \"$SKILL\" --current-sha \"$CURRENT_SHA\" --audit-at \"$AUDIT_AT\" --previous-audit-base64 \"$PREVIOUS_AUDIT_BASE64\" --analysis-dir \"$WATCH_ANALYSES\" --manifest-file \"$WATCH_MANIFEST\" > \"$WATCH_ROOT/analysis.log\""
+            echo "cp \"$WATCH_ANALYSES/$SKILL.json\" \"$WATCH_ANALYSIS\""
+            echo "jq -e '.candidate_id == \"$CANDIDATE_ID\" and .skill == \"$SKILL\" and .current_sha == \"$CURRENT_SHA\" and .skill_digest == \"$SKILL_DIGEST\"' \"$WATCH_ANALYSIS\" > /dev/null"
             echo '```'
             echo "AMELIA_PROMPT_EOF"
           } >> "$GITHUB_OUTPUT"
@@ -155,6 +184,8 @@ jobs:
       - name: Ask Amelia to audit built-in skill
         id: review
         uses: letta-ai/letta-code-action@4b8e508a523ff576fee09be1432d6f39158c272c
+        env:
+          LETTA_REQUEST_TIMEOUT_MS: "2700000"
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
           github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
@@ -182,6 +213,19 @@ jobs:
             --output /dev/null \
             "https://api.letta.com/v1/conversations/$CONVERSATION_ID"
 
+      - name: Cancel failed watcher turn
+        if: always() && steps.review.outcome == 'failure' && steps.review.outputs.conversation_id != ''
+        continue-on-error: true
+        env:
+          LETTA_API_KEY: ${{ secrets.AMELIA_LETTA_API_KEY }}
+          CONVERSATION_ID: ${{ steps.review.outputs.conversation_id }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $LETTA_API_KEY" \
+            --output /dev/null \
+            "https://api.letta.com/v1/conversations/$CONVERSATION_ID/cancel"
+
       - name: Enforce Amelia PR identity
         if: always()
         env:
@@ -197,30 +241,53 @@ jobs:
       - name: Extract Amelia result
         if: always()
         env:
+          CANDIDATE_ID: ${{ matrix.candidate_id }}
+          CONVERSATION_ID: ${{ steps.review.outputs.conversation_id }}
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
           REVIEW_OUTCOME: ${{ steps.review.outcome }}
+          SKILL: ${{ matrix.skill }}
         run: |
+          result_dir="$RUNNER_TEMP/builtin-skill-result"
+          mkdir -p "$result_dir"
+          write_failure() {
+            jq -n \
+              --arg candidate_id "$CANDIDATE_ID" \
+              --arg skill "$SKILL" \
+              --arg kind "$1" \
+              --arg message "$2" \
+              --arg conversation_id "$CONVERSATION_ID" \
+              '{schema_version: 1, candidate_id: $candidate_id, skill: $skill, kind: $kind, message: $message, conversation_id: (if $conversation_id == "" then null else $conversation_id end)}' \
+              > "$result_dir/failure.json"
+          }
           if [ "$REVIEW_OUTCOME" != "success" ]; then
+            write_failure action_failed "Letta Code Action failed before returning a result"
             exit 0
           fi
           if [ ! -f "$EXECUTION_FILE" ]; then
-            echo "Amelia execution file is missing" >&2
-            exit 1
+            write_failure execution_file_missing "Letta Code Action returned no execution file"
+            exit 0
           fi
           result=$(jq -r '[.[] | select(.type == "result" and (.result | type) == "string")] | last | (.result // "" | split("\n") | map(gsub("^\\s+|\\s+$"; "") | select(length > 0)) | last // "")' "$EXECUTION_FILE")
-          if [ "${#result}" -gt 8192 ] || [[ ! "$result" =~ ^SKILL_WATCH_RESULT\ [A-Za-z0-9+/=]+$ ]]; then
-            echo "Unexpected Amelia result format" >&2
-            exit 1
+          if [ "${#result}" -gt 32768 ] || [[ ! "$result" =~ ^SKILL_WATCH_RESULT\ [A-Za-z0-9+/=]+$ ]]; then
+            write_failure result_marker_missing "Final response did not contain one bounded SKILL_WATCH_RESULT line"
+            exit 0
           fi
-          mkdir -p "$RUNNER_TEMP/builtin-skill-result"
-          printf '%s' "${result#SKILL_WATCH_RESULT }" | base64 --decode > "$RUNNER_TEMP/builtin-skill-result/result.json"
+          if ! printf '%s' "${result#SKILL_WATCH_RESULT }" | base64 --decode > "$result_dir/result.json"; then
+            rm -f "$result_dir/result.json"
+            write_failure result_decode_failed "SKILL_WATCH_RESULT was not valid base64"
+            exit 0
+          fi
+          if ! jq -e . "$result_dir/result.json" > /dev/null; then
+            rm -f "$result_dir/result.json"
+            write_failure result_decode_failed "SKILL_WATCH_RESULT did not decode to JSON"
+          fi
 
       - name: Upload Amelia result
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: builtin-skill-result-${{ matrix.skill }}
-          path: ${{ runner.temp }}/builtin-skill-result/result.json
+          path: ${{ runner.temp }}/builtin-skill-result
           if-no-files-found: ignore
           retention-days: 3
 
@@ -259,6 +326,7 @@ jobs:
         with:
           pattern: builtin-skill-result-*
           path: ${{ runner.temp }}/results
+          merge-multiple: false
 
       - name: Validate and record every result
         env:
