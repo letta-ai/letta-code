@@ -6,7 +6,7 @@
 
 > A guide to securing Claude Code and Agent SDK deployments with isolation, credential management, and network controls
 
-Claude Code and the Agent SDK are powerful tools that can execute code, access files, and interact with external services on your behalf.
+Claude Code and the Agent SDK can execute code, access files, and interact with external services on your behalf.
 
 Unlike traditional software that follows predetermined code paths, these tools generate their actions dynamically based on context and goals. This flexibility is what makes them useful, but it also means their behavior can be influenced by the content they process: files, webpages, or user input. This is sometimes called prompt injection. For example, if a repository's README contains unusual instructions, Claude Code might incorporate those into its actions in ways the operator didn't anticipate. This guide covers practical ways to reduce this risk.
 

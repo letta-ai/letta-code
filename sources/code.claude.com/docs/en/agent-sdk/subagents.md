@@ -227,7 +227,7 @@ This bypasses automatic matching and directly invokes the named subagent.
 
 ### Dynamic agent configuration
 
-You can create agent definitions dynamically based on runtime conditions. This example creates a security reviewer with different strictness levels, using a more powerful model for strict reviews.
+You can create agent definitions dynamically based on runtime conditions. This example creates a security reviewer with different strictness levels, using a more capable model for strict reviews.
 
 <CodeGroup>
   ```python Python theme={null}
