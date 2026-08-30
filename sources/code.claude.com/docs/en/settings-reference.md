@@ -1667,7 +1667,7 @@ An unsandboxed retry goes through the regular permission flow: a prompt in Manua
 
 ### `sandbox.filesystem`
 
-Control which paths sandboxed commands can read and write. By default they can write to the working directory, any directories you add with `--add-dir`, and the session temp directory, and can read the rest of the filesystem, including credential files. Widen or narrow that with the four path lists, or switch the filesystem layer off with `disabled`. See [Filesystem isolation](/docs/en/sandboxing#filesystem-isolation) for the default boundaries.
+Control which paths sandboxed commands can read and write. By default they can write to the working directory, the session temp directory, and directories you add with `--add-dir`, `/add-dir`, or `permissions.additionalDirectories`, and can read the rest of the filesystem, including credential files. Widen or narrow that with the four path lists, or switch the filesystem layer off with `disabled`. See [Filesystem isolation](/docs/en/sandboxing#filesystem-isolation) for the default boundaries.
 
 * **Scope**: [`Any file`](#scopes)
 * **Type**: object with `allowWrite`, `denyWrite`, `denyRead`, and `allowRead` arrays, plus the `allowManagedReadPathsOnly` and `disabled` Booleans
@@ -1713,11 +1713,11 @@ Claude Code also removes a trailing `/**`, so `~/build/**` and `~/build` cover t
 
 ### `sandbox.filesystem.allowWrite`
 
-Add paths where sandboxed commands can write, beyond the working directory, the directories you've added with `--add-dir` or `/add-dir`, and the session temp directory. Use it when a subprocess such as `kubectl` or a build tool needs to write outside the project.
+Add paths where sandboxed commands can write, beyond the working directory, the session temp directory, and the directories you've added with `--add-dir`, `/add-dir`, or `permissions.additionalDirectories`. Use it when a subprocess such as `kubectl` or a build tool needs to write outside the project.
 
 * **Scope**: [`Any file`](#scopes)
 * **Type**: array of path strings, using the [sandbox path prefixes](#sandbox-path-prefixes)
-* **Default**: unset, so sandboxed commands can write only to the working directory, any directories you've added with `--add-dir` or `/add-dir`, and the session temp directory
+* **Default**: unset, so sandboxed commands can write to the working directory, the session temp directory, directories you've added with `--add-dir` or `/add-dir`, and directories in [`permissions.additionalDirectories`](#permissions-additionaldirectories)
 
 This lets a build write under `/tmp/build` and lets `kubectl` update your kubeconfig:
 
@@ -5469,7 +5469,9 @@ This example runs the helper with a 5-second timeout and re-runs it every five m
 
 #### Write the helper output
 
-Claude Code runs the helper with no arguments, sets `CLAUDE_CODE_VERSION` in its environment, and reads a JSON envelope from stdout, capped at 1 MB. Put the settings under a `managedSettings` key. A bare settings object with no `managedSettings` key parses with `managedSettings` undefined and applies nothing, and Claude Code reports no error:
+Claude Code runs the helper with no arguments, sets `CLAUDE_CODE_VERSION` in its environment, and reads a JSON envelope from stdout, capped at 1 MiB.
+
+Put the settings under a `managedSettings` key. A bare settings object with no `managedSettings` key parses with `managedSettings` undefined and applies nothing, and Claude Code reports no error:
 
 ```json theme={null}
 {
@@ -5479,14 +5481,36 @@ Claude Code runs the helper with no arguments, sets `CLAUDE_CODE_VERSION` in its
 }
 ```
 
-When the helper emits `managedSettings`, that object becomes the only managed settings source for the run: Claude Code ignores the MDM, file, and HKCU sources, reads the [cross-source keys](/docs/en/managed-settings#keys-read-from-every-admin-source) from the helper's output alone, and never merges [parent settings](/docs/en/managed-settings#parent-settings-from-embedding-hosts). The startup `forceRemoteSettingsRefresh` check runs before the helper and reads any admin source. A helper that exits 0 without emitting `managedSettings` contributes no managed settings, and the other sources apply as usual. When the helper exits non-zero at startup, Claude Code prints the error and refuses to start, so a helper that needs outage resilience should serve from its own cache and exit `0`.
+When the helper emits `managedSettings`, that object becomes the only managed settings source for the run: Claude Code ignores the MDM, file, and HKCU sources, reads the [cross-source keys](/docs/en/managed-settings#keys-read-from-every-admin-source) from the helper's output alone, and never merges [parent settings](/docs/en/managed-settings#parent-settings-from-embedding-hosts).
+
+The startup `forceRemoteSettingsRefresh` check runs before the helper and reads any admin source. A helper that exits 0 with an envelope that omits `managedSettings` contributes no managed settings, and the other sources apply as usual.
+
+#### Helper failures
+
+A helper run fails when:
+
+* `path` breaks the rules in [`policyHelper.path`](#policyhelper-path).
+* No regular file is at `path`. Claude Code checks for the file before starting the helper, within the same `timeoutMs` budget, so an unresponsive network mount can cause the run to fail.
+* The helper exits non-zero, is still running when `timeoutMs` elapses, or doesn't start at all, for example because it isn't executable.
+* The helper writes more than 1 MiB to stdout or to stderr.
+* stdout isn't a single JSON object, or its `managedSettings` has a [schema violation Claude Code can't repair](/docs/en/managed-settings#find-entries-claude-code-dropped).
+
+When the startup run fails, Claude Code prints the reason and refuses to start. After a non-zero exit or a timeout, the message includes the helper's stderr. The refusal covers interactive sessions, `claude -p`, Agent SDK sessions, [background sessions](/docs/en/agent-view), and most subcommands.
+
+The refusal is deliberate, so a helper that needs outage resilience should serve from its own cache and exit `0`.
+
+When a background refresh fails, Claude Code keeps the last successful policy in effect. Claude Code runs each refresh under the same `timeoutMs` and failure rules as the startup run. With `--debug`, Claude Code writes the helper's stderr from every run to the [debug log](/docs/en/debug-your-config).
+
+Claude Code reports an invalid `policyHelper` value as a [dropped entry](/docs/en/managed-settings#find-entries-claude-code-dropped) and starts the session on the remaining managed settings without running a helper. Invalid values include a bare path string and a `timeoutMs` below [its minimum](#policyhelper-timeoutms).
+
+To turn a helper off, remove the key from the source that sets it.
 
 ### `policyHelper.path`
 
-Name the helper executable Claude Code runs. Claude Code refuses to start when the path isn't absolute, or on Windows when it doesn't end in `.exe`.
+Name the helper executable Claude Code runs. For what happens when the path breaks the rules below, see [Helper failures](#helper-failures).
 
 * **Scope**: [`Managed`](#scopes). Read from the macOS plist, the Windows HKLM registry, or the managed settings file, wherever [`policyHelper`](#policyhelper) is read.
-* **Type**: string, an absolute path in normalized form, without `.` or `..` segments
+* **Type**: string, an absolute path in normalized form, without `.` or `..` segments; on Windows, a drive-letter or UNC path that ends in `.exe`
 * **Default**: none; required when `policyHelper` is set
 
 ```json managed-settings.json theme={null}

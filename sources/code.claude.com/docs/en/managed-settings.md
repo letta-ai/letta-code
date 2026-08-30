@@ -192,7 +192,7 @@ To confirm which sources combined on a machine, [read the `Setting sources` line
 
 A [`policyHelper`](/docs/en/settings-reference#policyhelper) is an executable your MDM policy or managed settings file names, and Claude Code runs it to compute managed settings at startup. When the selected source configures one and the helper emits a `managedSettings` object, that output changes what Claude Code reads:
 
-* **The emitted `managedSettings` object is the only managed settings for the session**, including for the [keys it otherwise reads from every admin source](#keys-read-from-every-admin-source), apart from `forceRemoteSettingsRefresh`, which Claude Code checks in every admin source at startup before the helper runs. A helper that exits 0 without emitting one contributes nothing, and the sources apply as usual; a helper that fails stops Claude Code from starting, as the [`policyHelper`](/docs/en/settings-reference#policyhelper) entry describes
+* **The emitted `managedSettings` object is the only managed settings for the session**, including for the [keys it otherwise reads from every admin source](#keys-read-from-every-admin-source), apart from `forceRemoteSettingsRefresh`, which Claude Code checks in every admin source at startup before the helper runs. For which helper runs fail, and what Claude Code does when one does, see [Helper failures](/docs/en/settings-reference#helper-failures)
 
 Claude Code selects the source at startup, and that selection decides whether a helper runs. The [`policyHelper`](/docs/en/settings-reference#policyhelper) entry says which sources can configure a helper.
 
