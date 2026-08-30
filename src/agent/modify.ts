@@ -440,7 +440,7 @@ export async function updateAgentLLMConfig(
   });
 
   const finalAgent = await backend.retrieveAgent(agentId, {
-    include: ["agent.secrets", "agent.tools", "agent.tags"],
+    include: ["agent.tools", "agent.tags"],
   });
   return finalAgent;
 }
@@ -793,10 +793,10 @@ export async function updateAgentSystemPrompt(
       }
     }
 
-    // Re-fetch agent to get updated state (include relationships so
-    // callers that rely on agent.tags/tools/secrets aren't broken).
+    // Re-fetch agent to get updated state (include relationships so callers
+    // that rely on agent.tags/tools aren't broken). Secrets use their own API.
     const agent = await backend.retrieveAgent(agentId, {
-      include: ["agent.secrets", "agent.tools", "agent.tags"],
+      include: ["agent.tools", "agent.tags"],
     });
 
     return {

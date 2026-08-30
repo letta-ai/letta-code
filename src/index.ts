@@ -2010,7 +2010,7 @@ async function main(): Promise<void> {
           } else {
             try {
               const agent = await backend.retrieveAgent(agentIdArg, {
-                include: ["agent.secrets", "agent.tools", "agent.tags"],
+                include: ["agent.tools", "agent.tags"],
               });
               setValidatedAgent(agent);
               resolvedAgent = agent;
@@ -2036,7 +2036,7 @@ async function main(): Promise<void> {
           } else {
             try {
               const agent = await backend.retrieveAgent(selectedGlobalAgentId, {
-                include: ["agent.secrets", "agent.tools", "agent.tags"],
+                include: ["agent.tools", "agent.tags"],
               });
               setValidatedAgent(agent);
               resolvedAgent = agent;

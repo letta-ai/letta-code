@@ -28,6 +28,9 @@ const retrieveAgentMock = mock((_agentId: string, _options?: unknown) =>
     secrets: [] as Array<{ key: string; value: string }>,
   }),
 );
+const listAgentSecretsMock = mock((_agentId: string) =>
+  Promise.resolve([] as Array<{ key: string; value: string }>),
+);
 
 const updateAgentMock = mock(
   (_agentId: string, _body: unknown, _options?: unknown) =>
@@ -67,13 +70,16 @@ const capabilities = {
 describe("/secret command", () => {
   beforeEach(() => {
     retrieveAgentMock.mockReset();
+    listAgentSecretsMock.mockReset();
     updateAgentMock.mockReset();
     retrieveAgentMock.mockResolvedValue({ secrets: [] });
+    listAgentSecretsMock.mockResolvedValue([]);
     updateAgentMock.mockResolvedValue({ id: AGENT_ID });
     setCurrentAgentId(AGENT_ID);
     clearSecretsCache(AGENT_ID);
     __testOverrideSecretsBackend({
       capabilities,
+      listAgentSecrets: listAgentSecretsMock,
       retrieveAgent: retrieveAgentMock,
       updateAgent: updateAgentMock,
     });
@@ -92,15 +98,14 @@ describe("/secret command", () => {
   });
 
   test("list refreshes server secrets instead of trusting an empty local cache", async () => {
-    retrieveAgentMock.mockResolvedValueOnce({
-      secrets: [{ key: "CLOUDFLARE_API_TOKEN", value: "cf-token" }],
-    });
+    listAgentSecretsMock.mockResolvedValueOnce([
+      { key: "CLOUDFLARE_API_TOKEN", value: "cf-token" },
+    ]);
 
     const result = await handleSecretCommand(["list"]);
 
-    expect(retrieveAgentMock).toHaveBeenCalledWith(AGENT_ID, {
-      include: ["agent.secrets"],
-    });
+    expect(listAgentSecretsMock).toHaveBeenCalledWith(AGENT_ID);
+    expect(retrieveAgentMock).not.toHaveBeenCalled();
     expect(result.output).toContain("Available secrets (1):");
     expect(result.output).toContain("$CLOUDFLARE_API_TOKEN");
     expect(result.output).not.toContain("No secrets stored");
@@ -110,9 +115,9 @@ describe("/secret command", () => {
   });
 
   test("set refreshes before patching so existing server secrets are preserved", async () => {
-    retrieveAgentMock.mockResolvedValueOnce({
-      secrets: [{ key: "CLOUDFLARE_API_TOKEN", value: "cf-token" }],
-    });
+    listAgentSecretsMock.mockResolvedValueOnce([
+      { key: "CLOUDFLARE_API_TOKEN", value: "cf-token" },
+    ]);
 
     const result = await handleSecretCommand(["set", "new_token", "new-value"]);
 
@@ -127,9 +132,9 @@ describe("/secret command", () => {
   });
 
   test("unset refreshes before checking whether the secret exists", async () => {
-    retrieveAgentMock.mockResolvedValueOnce({
-      secrets: [{ key: "CLOUDFLARE_API_TOKEN", value: "cf-token" }],
-    });
+    listAgentSecretsMock.mockResolvedValueOnce([
+      { key: "CLOUDFLARE_API_TOKEN", value: "cf-token" },
+    ]);
 
     const result = await handleSecretCommand(["unset", "CLOUDFLARE_API_TOKEN"]);
 

@@ -1164,7 +1164,7 @@ export async function handleHeadlessCommand(
         specifiedConversationId,
       );
       agent = await backend.retrieveAgent(conversation.agent_id, {
-        include: ["agent.secrets", "agent.tools", "agent.tags"],
+        include: ["agent.tools", "agent.tags"],
       });
     } catch (error) {
       trackHeadlessBoundaryError(
@@ -1223,7 +1223,7 @@ export async function handleHeadlessCommand(
   if (!agent && specifiedAgentId) {
     try {
       agent = await backend.retrieveAgent(specifiedAgentId, {
-        include: ["agent.secrets", "agent.tools", "agent.tags"],
+        include: ["agent.tools", "agent.tags"],
       });
     } catch (_error) {
       if (specifiedAgentIdFromAmbientBackendSwitch) {

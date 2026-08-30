@@ -323,7 +323,7 @@ export function scheduleManagedSystemPromptUpdate({
       );
       if (onUpdated) {
         const updatedAgent = await getBackend().retrieveAgent(agent.id, {
-          include: ["agent.secrets", "agent.tools", "agent.tags"],
+          include: ["agent.tools", "agent.tags"],
         });
         onUpdated(updatedAgent);
       }
