@@ -16,6 +16,9 @@ import type {
 const retrieveAgentMock = mock(
   async (_agentId: string, _options?: unknown) => ({ id: "agent-1" }),
 );
+const getMock = mock(async (_path: string) => [
+  { key: "API_KEY", value: "secret-value" },
+]);
 const updateAgentMock = mock(
   async (_agentId: string, _body: unknown, _options?: unknown) => ({
     id: "agent-1",
@@ -88,6 +91,7 @@ const forkConversationMock = mock(
   async (_conversationId: string, _options?: unknown) => ({ id: "conv-fork" }),
 );
 const getClientMock = mock(async () => ({
+  get: getMock,
   agents: {
     create: createAgentMock,
     retrieve: retrieveAgentMock,
@@ -135,6 +139,7 @@ describe("APIBackend", () => {
     configureBackendMode("api");
     getClientMock.mockClear();
     createAgentMock.mockClear();
+    getMock.mockClear();
     retrieveAgentMock.mockClear();
     updateAgentMock.mockClear();
     retrieveConversationMock.mockClear();
@@ -217,6 +222,7 @@ describe("APIBackend", () => {
     } as unknown as RunMessageStreamBody;
 
     await backend.retrieveAgent("agent-1", { include: ["agent.tools"] });
+    await backend.listAgentSecrets("agent/1");
     await backend.updateAgent("agent-1", agentUpdateBody);
     await backend.createAgent(agentCreateBody);
     await backend.retrieveConversation("conv-1");
@@ -239,10 +245,11 @@ describe("APIBackend", () => {
     await backend.streamRunMessages("run-1", runStreamBody);
     await backend.forkConversation("conv-1", { agentId: "agent-1" });
 
-    expect(getClientMock).toHaveBeenCalledTimes(17);
+    expect(getClientMock).toHaveBeenCalledTimes(18);
     expect(retrieveAgentMock).toHaveBeenCalledWith("agent-1", {
       include: ["agent.tools"],
     });
+    expect(getMock).toHaveBeenCalledWith("/v1/agents/agent%2F1/secrets");
     expect(updateAgentMock).toHaveBeenCalledWith(
       "agent-1",
       agentUpdateBody,
