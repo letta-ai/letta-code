@@ -2,9 +2,6 @@ import { parseArgs } from "node:util";
 import { getBackend } from "@/backend";
 import { getClient as getDefaultClient } from "@/backend/api/client";
 import {
-  attachUnifiedMcpServer,
-  detachUnifiedMcpServer,
-  listRegisteredMcpServers,
   listUnifiedMcpServers,
   listUnifiedMcpTools,
   runUnifiedMcpTool,
@@ -20,8 +17,7 @@ import {
   type McpToolDefinition,
   type McpToolResult,
 } from "@/mcp-client";
-import { buildMcpServerConfig, parseMcpTransport } from "@/mcp-config";
-import { clearMcpOAuthCredentials, createMcpOAuthSession } from "@/mcp-oauth";
+import { createMcpOAuthSession } from "@/mcp-oauth";
 import { formatClientMcpToolName } from "@/mcp-runtime";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
@@ -82,17 +78,13 @@ interface ToolCatalog {
 
 export interface McpSubcommandDependencies {
   initializeSettings?: () => Promise<void>;
-  flushSettings?: () => Promise<void>;
   getLocalServers?: (agentId: string) => McpServerConfig[];
-  setLocalServers?: (agentId: string, servers: McpServerConfig[]) => void;
   connectLocalServer?: typeof connectMcpServer;
   createOAuthSession?: typeof createMcpOAuthSession;
-  clearOAuthCredentials?: typeof clearMcpOAuthCredentials;
   getClient?: () => Promise<UnifiedMcpClient>;
   isServerMcpAvailable?: () => boolean;
   readFile?: (path: string) => Promise<string>;
   readStdin?: () => Promise<string>;
-  cwd?: () => string;
   env?: NodeJS.ProcessEnv;
   stdout?: (message: string) => void;
   stderr?: (message: string) => void;
@@ -102,7 +94,6 @@ interface ParsedMcpArgs {
   action?: string;
   target?: string;
   values: ReturnType<typeof parseMcpArgs>["values"];
-  childCommand: string[];
 }
 
 class McpCliError extends Error {
@@ -124,14 +115,6 @@ function parseMcpArgs(argv: string[]) {
       help: { type: "boolean", short: "h" },
       agent: { type: "string" },
       "agent-id": { type: "string" },
-      transport: { type: "string" },
-      url: { type: "string" },
-      cwd: { type: "string" },
-      env: { type: "string", multiple: true },
-      header: { type: "string", multiple: true },
-      "auth-env": { type: "string" },
-      "no-verify": { type: "boolean" },
-      force: { type: "boolean" },
       args: { type: "string" },
       "args-file": { type: "string" },
     },
@@ -141,10 +124,7 @@ function parseMcpArgs(argv: string[]) {
 }
 
 function parseCommandLine(argv: string[]): ParsedMcpArgs {
-  const separator = argv.indexOf("--");
-  const commandArgs = separator === -1 ? argv : argv.slice(0, separator);
-  const childCommand = separator === -1 ? [] : argv.slice(separator + 1);
-  const parsed = parseMcpArgs(commandArgs);
+  const parsed = parseMcpArgs(argv);
   const [action, target, ...extra] = parsed.positionals;
   if (extra.length > 0) {
     throw new McpCliError(
@@ -152,17 +132,11 @@ function parseCommandLine(argv: string[]): ParsedMcpArgs {
       `Unexpected positional arguments: ${extra.join(" ")}`,
     );
   }
-  return { action, target, values: parsed.values, childCommand };
+  return { action, target, values: parsed.values };
 }
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
-}
-
-function stringValues(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
 }
 
 function getLocalServers(
@@ -486,58 +460,6 @@ async function buildToolCatalog(
   }
 }
 
-function buildLocalConfig(
-  parsed: ParsedMcpArgs,
-  deps: McpSubcommandDependencies,
-): McpServerConfig {
-  const name = parsed.target;
-  let transport: ReturnType<typeof parseMcpTransport>;
-  try {
-    transport = parseMcpTransport(stringValue(parsed.values.transport));
-  } catch (error) {
-    throw new McpCliError(
-      "invalid_arguments",
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-  if (!name || !transport) {
-    throw new McpCliError(
-      "invalid_arguments",
-      "A server name and --transport are required for a new connection",
-    );
-  }
-
-  try {
-    return buildMcpServerConfig(name, {
-      transport,
-      url: stringValue(parsed.values.url),
-      cwd: stringValue(parsed.values.cwd),
-      env: stringValues(parsed.values.env),
-      headers: stringValues(parsed.values.header),
-      authEnv: stringValue(parsed.values["auth-env"]),
-      childCommand: parsed.childCommand,
-      defaultCwd: (deps.cwd ?? process.cwd)(),
-    });
-  } catch (error) {
-    throw new McpCliError(
-      "invalid_arguments",
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-}
-
-async function saveLocalServers(
-  deps: McpSubcommandDependencies,
-  agentId: string,
-  servers: McpServerConfig[],
-): Promise<void> {
-  (
-    deps.setLocalServers ??
-    ((id, value) => settingsManager.setMcpServers(id, value))
-  )(agentId, servers);
-  await (deps.flushSettings ?? (() => settingsManager.flush()))();
-}
-
 function mcpToolResultFromServer(result: UnifiedMcpRunResult): McpToolResult {
   const success = result.status === "success";
   const value = result.funcReturn;
@@ -625,230 +547,6 @@ async function runGet(
     selector,
   );
   printJson(stdout, serverDetails(server));
-  return 0;
-}
-
-async function runAdd(
-  parsed: ParsedMcpArgs,
-  deps: McpSubcommandDependencies,
-  agentId: string,
-  stdout: (message: string) => void,
-): Promise<number> {
-  let transport: ReturnType<typeof parseMcpTransport>;
-  try {
-    transport = parseMcpTransport(stringValue(parsed.values.transport));
-  } catch (error) {
-    throw new McpCliError(
-      "invalid_arguments",
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-  if (!transport) {
-    const selector = parsed.target;
-    if (!selector) {
-      throw new McpCliError(
-        "invalid_arguments",
-        "Usage: letta mcp add <server>",
-      );
-    }
-    if (!serverMcpAvailable(deps)) {
-      throw new McpCliError(
-        "server_not_found",
-        `No registered MCP server named '${selector}' is available`,
-      );
-    }
-    const client = await getServerClient(deps);
-    const available = await listRegisteredMcpServers(client);
-    const matches = available.filter(
-      (server) => server.server_name === selector || server.id === selector,
-    );
-    if (matches.length !== 1) {
-      throw new McpCliError(
-        matches.length === 0 ? "server_not_found" : "ambiguous_server_name",
-        matches.length === 0
-          ? `No registered MCP server named '${selector}' is available`
-          : `Multiple registered MCP servers are named '${selector}'`,
-      );
-    }
-    const server = matches[0];
-    if (!server?.id) {
-      throw new McpCliError(
-        "server_not_found",
-        `MCP server '${selector}' has no stable id`,
-      );
-    }
-    await attachUnifiedMcpServer(client, agentId, server.id);
-    const tools = await listUnifiedMcpTools(client, agentId, server.id);
-    printJson(stdout, {
-      ok: true,
-      server: {
-        name: server.server_name,
-        transport:
-          server.mcp_server_type === "streamable_http"
-            ? "streamable_http"
-            : server.mcp_server_type,
-      },
-      toolCount: tools.length,
-    });
-    return 0;
-  }
-
-  const config = buildLocalConfig(parsed, deps);
-  const existing = await listUnifiedServers(deps, agentId);
-  if (existing.some((target) => serverSummary(target).name === config.name)) {
-    throw new McpCliError(
-      "server_already_exists",
-      `MCP server '${config.name}' is already available`,
-    );
-  }
-
-  let toolCount: number | undefined;
-  if (parsed.values["no-verify"] !== true) {
-    const connection = await connectConfiguredServer(
-      deps,
-      agentId,
-      config,
-      true,
-    );
-    try {
-      toolCount = connection.tools.length;
-    } finally {
-      await connection.close();
-    }
-  }
-  await saveLocalServers(deps, agentId, [
-    ...getLocalServers(deps, agentId),
-    config,
-  ]);
-  printJson(stdout, {
-    ok: true,
-    server: serverSummary({ kind: "client", config }),
-    ...(toolCount !== undefined ? { toolCount } : {}),
-  });
-  return 0;
-}
-
-async function runRemove(
-  deps: McpSubcommandDependencies,
-  agentId: string,
-  selector: string | undefined,
-  stdout: (message: string) => void,
-): Promise<number> {
-  if (!selector) {
-    throw new McpCliError(
-      "invalid_arguments",
-      "Usage: letta mcp remove <server>",
-    );
-  }
-  const target = resolveServer(
-    await listUnifiedServers(deps, agentId),
-    selector,
-  );
-  if (target.kind === "server") {
-    await detachUnifiedMcpServer(
-      await getServerClient(deps),
-      agentId,
-      target.server.id,
-    );
-  } else {
-    if (
-      target.config.transport === "http" ||
-      target.config.transport === "sse"
-    ) {
-      await (deps.clearOAuthCredentials ?? clearMcpOAuthCredentials)(
-        agentId,
-        target.config.name,
-        target.config.url,
-      );
-    }
-    await saveLocalServers(
-      deps,
-      agentId,
-      getLocalServers(deps, agentId).filter(
-        (config) => config.name !== target.config.name,
-      ),
-    );
-  }
-  printJson(stdout, { ok: true, name: serverSummary(target).name });
-  return 0;
-}
-
-async function runLogin(
-  deps: McpSubcommandDependencies,
-  agentId: string,
-  selector: string | undefined,
-  force: boolean,
-  stdout: (message: string) => void,
-): Promise<number> {
-  if (!selector) {
-    throw new McpCliError(
-      "invalid_arguments",
-      "Usage: letta mcp login <server>",
-    );
-  }
-  const target = resolveServer(
-    await listUnifiedServers(deps, agentId),
-    selector,
-  );
-  let status = "not_applicable";
-  if (target.kind === "server") {
-    status = "not_required";
-  } else if (
-    target.config.transport === "http" ||
-    target.config.transport === "sse"
-  ) {
-    if (hasAuthorizationHeader(target.config)) {
-      status = "not_required";
-    } else {
-      if (force) {
-        await (deps.clearOAuthCredentials ?? clearMcpOAuthCredentials)(
-          agentId,
-          target.config.name,
-          target.config.url,
-        );
-      }
-      const connection = await connectConfiguredServer(
-        deps,
-        agentId,
-        target.config,
-        true,
-      );
-      await connection.close();
-      status = "authenticated";
-    }
-  }
-  printJson(stdout, { ok: true, name: serverSummary(target).name, status });
-  return 0;
-}
-
-async function runLogout(
-  deps: McpSubcommandDependencies,
-  agentId: string,
-  selector: string | undefined,
-  stdout: (message: string) => void,
-): Promise<number> {
-  if (!selector) {
-    throw new McpCliError(
-      "invalid_arguments",
-      "Usage: letta mcp logout <server>",
-    );
-  }
-  const target = resolveServer(
-    await listUnifiedServers(deps, agentId),
-    selector,
-  );
-  let status = "not_applicable";
-  if (
-    target.kind === "client" &&
-    (target.config.transport === "http" || target.config.transport === "sse") &&
-    !hasAuthorizationHeader(target.config)
-  ) {
-    const removed = await (
-      deps.clearOAuthCredentials ?? clearMcpOAuthCredentials
-    )(agentId, target.config.name, target.config.url);
-    status = removed ? "logged_out" : "not_authenticated";
-  }
-  printJson(stdout, { ok: true, name: serverSummary(target).name, status });
   return 0;
 }
 
@@ -961,20 +659,6 @@ export async function runMcpSubcommand(
         return await runList(deps, agentId, stdout);
       case "get":
         return await runGet(deps, agentId, parsed.target, stdout);
-      case "add":
-        return await runAdd(parsed, deps, agentId, stdout);
-      case "remove":
-        return await runRemove(deps, agentId, parsed.target, stdout);
-      case "login":
-        return await runLogin(
-          deps,
-          agentId,
-          parsed.target,
-          parsed.values.force === true,
-          stdout,
-        );
-      case "logout":
-        return await runLogout(deps, agentId, parsed.target, stdout);
       case "tools":
       case "list-tools":
       case "list_tools":

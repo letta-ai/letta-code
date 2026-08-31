@@ -19,16 +19,12 @@ interface TestHarness {
   deps: McpSubcommandDependencies;
   stdout: string[];
   stderr: string[];
-  saved: McpServerConfig[][];
-  flushes: { count: number };
 }
 
 interface CloudHarness {
   deps: McpSubcommandDependencies;
   stdout: string[];
   stderr: string[];
-  puts: string[];
-  deletes: string[];
   posts: Array<{ path: string; body: unknown }>;
 }
 
@@ -36,33 +32,20 @@ function localHarness(
   options: {
     servers?: McpServerConfig[];
     connection?: ConnectedMcpServer;
-    connectError?: Error;
   } = {},
 ): TestHarness {
-  let servers = options.servers ?? [];
+  const servers = options.servers ?? [];
   const stdout: string[] = [];
   const stderr: string[] = [];
-  const saved: McpServerConfig[][] = [];
-  const flushes = { count: 0 };
   return {
     stdout,
     stderr,
-    saved,
-    flushes,
     deps: {
       env: { AGENT_ID: "agent-1" },
       initializeSettings: async () => {},
       isServerMcpAvailable: () => false,
       getLocalServers: () => servers,
-      setLocalServers: (_agentId, value) => {
-        servers = value;
-        saved.push(value);
-      },
-      flushSettings: async () => {
-        flushes.count++;
-      },
       connectLocalServer: async () => {
-        if (options.connectError) throw options.connectError;
         if (!options.connection) throw new Error("Unexpected MCP connection");
         return options.connection;
       },
@@ -117,13 +100,10 @@ function cloudHarness(
   options: {
     getResponses?: Record<string, unknown>;
     postResponses?: Record<string, unknown>;
-    globalServers?: Array<Record<string, unknown>>;
   } = {},
 ): CloudHarness {
   const stdout: string[] = [];
   const stderr: string[] = [];
-  const puts: string[] = [];
-  const deletes: string[] = [];
   const posts: Array<{ path: string; body: unknown }> = [];
   const client: UnifiedMcpClient = {
     get: async (path) => options.getResponses?.[path] ?? [],
@@ -131,23 +111,10 @@ function cloudHarness(
       posts.push({ path, body: request?.body });
       return options.postResponses?.[path] ?? {};
     },
-    put: async (path) => {
-      puts.push(path);
-      return {};
-    },
-    delete: async (path) => {
-      deletes.push(path);
-      return {};
-    },
-    mcpServers: {
-      list: async () => (options.globalServers ?? []) as never[],
-    },
   };
   return {
     stdout,
     stderr,
-    puts,
-    deletes,
     posts,
     deps: {
       env: { LETTA_AGENT_ID: "agent-cloud" },
@@ -181,6 +148,9 @@ describe("mcp subcommand", () => {
     ).toBe(0);
     expect(output[0]).toContain("letta mcp tools");
     expect(output[0]).toContain("letta mcp call");
+    for (const action of ["add", "remove", "login", "logout"]) {
+      expect(output[0]).not.toContain(`letta mcp ${action}`);
+    }
   });
 
   test("returns a structured agent requirement error", async () => {
@@ -243,128 +213,19 @@ describe("mcp subcommand", () => {
     });
   });
 
-  test("verifies a local add before persisting it", async () => {
-    const closes = { count: 0 };
-    const harness = localHarness({ connection: fakeConnection({ closes }) });
-    expect(
-      await runMcpSubcommand(
-        [
-          "add",
-          "files",
-          "--transport",
-          "stdio",
-          "--cwd",
-          "/repo",
-          "--",
-          "npx",
-          "-y",
-          "server-filesystem",
-          ".",
-        ],
-        harness.deps,
-      ),
-    ).toBe(0);
-    expect(harness.saved).toEqual([
-      [
-        {
-          name: "files",
-          transport: "stdio",
-          command: "npx",
-          args: ["-y", "server-filesystem", "."],
-          cwd: "/repo",
+  test("rejects configuration and authentication commands", async () => {
+    for (const action of ["add", "remove", "login", "logout"]) {
+      const harness = localHarness();
+      expect(await runMcpSubcommand([action, "everything"], harness.deps)).toBe(
+        1,
+      );
+      expect(JSON.parse(harness.stderr[0] ?? "{}")).toEqual({
+        error: {
+          code: "unknown_command",
+          message: `Unknown mcp command '${action}'`,
         },
-      ],
-    ]);
-    expect(harness.flushes.count).toBe(1);
-    expect(closes.count).toBe(1);
-  });
-
-  test("does not persist a local add that cannot connect", async () => {
-    const harness = localHarness({
-      connectError: new Error("connection failed"),
-    });
-    expect(
-      await runMcpSubcommand(
-        ["add", "broken", "--transport", "stdio", "--", "missing"],
-        harness.deps,
-      ),
-    ).toBe(1);
-    expect(harness.saved).toEqual([]);
-    expect(harness.flushes.count).toBe(0);
-  });
-
-  test("logs in and out with the selected local server's OAuth identity", async () => {
-    const closes = { count: 0 };
-    const clears: Array<{ agentId: string; name: string; url: string }> = [];
-    const harness = localHarness({
-      servers: [
-        {
-          name: "notion",
-          transport: "http",
-          url: "https://mcp.notion.example/mcp",
-        },
-      ],
-      connection: fakeConnection({ closes }),
-    });
-    harness.deps.createOAuthSession = async () => ({
-      authProvider: {} as never,
-      close: async () => {},
-    });
-    harness.deps.clearOAuthCredentials = async (agentId, name, url) => {
-      clears.push({ agentId, name, url });
-      return true;
-    };
-
-    expect(
-      await runMcpSubcommand(["login", "notion", "--force"], harness.deps),
-    ).toBe(0);
-    expect(JSON.parse(harness.stdout[0] ?? "{}")).toEqual({
-      ok: true,
-      name: "notion",
-      status: "authenticated",
-    });
-    expect(closes.count).toBe(1);
-
-    expect(await runMcpSubcommand(["logout", "notion"], harness.deps)).toBe(0);
-    expect(JSON.parse(harness.stdout[1] ?? "{}")).toEqual({
-      ok: true,
-      name: "notion",
-      status: "logged_out",
-    });
-    expect(clears).toEqual([
-      {
-        agentId: "agent-1",
-        name: "notion",
-        url: "https://mcp.notion.example/mcp",
-      },
-      {
-        agentId: "agent-1",
-        name: "notion",
-        url: "https://mcp.notion.example/mcp",
-      },
-    ]);
-  });
-
-  test("removes local configuration and its OAuth credentials", async () => {
-    const clears: string[] = [];
-    const harness = localHarness({
-      servers: [
-        {
-          name: "notion",
-          transport: "http",
-          url: "https://mcp.notion.example/mcp",
-        },
-      ],
-    });
-    harness.deps.clearOAuthCredentials = async (_agentId, name) => {
-      clears.push(name);
-      return true;
-    };
-
-    expect(await runMcpSubcommand(["remove", "notion"], harness.deps)).toBe(0);
-    expect(harness.saved).toEqual([[]]);
-    expect(harness.flushes.count).toBe(1);
-    expect(clears).toEqual(["notion"]);
+      });
+    }
   });
 
   test("tools returns bare generated schemas and always closes", async () => {
@@ -669,41 +530,5 @@ describe("mcp subcommand", () => {
         (tool: { name: string }) => tool.name,
       ),
     ).toEqual(["mcp__duplicate__search", "mcp__duplicate__search_2"]);
-  });
-
-  test("adds and removes an existing cloud server through hidden ids", async () => {
-    const serverPath = "/v1/agents/agent-cloud/mcp-servers";
-    const toolsPath = `${serverPath}/mcp-1/tools`;
-    const harness = cloudHarness({
-      globalServers: [
-        {
-          id: "mcp-1",
-          server_name: "github",
-          mcp_server_type: "streamable_http",
-          server_url: "https://mcp.example.com/mcp",
-        },
-      ],
-      getResponses: {
-        [toolsPath]: [],
-        [serverPath]: [
-          {
-            id: "mcp-1",
-            server_name: "github",
-            mcp_server_type: "streamable_http",
-            server_url: "https://mcp.example.com/mcp",
-          },
-        ],
-      },
-    });
-    expect(await runMcpSubcommand(["add", "github"], harness.deps)).toBe(0);
-    expect(harness.puts).toEqual([`${serverPath}/mcp-1`]);
-    expect(JSON.parse(harness.stdout[0] ?? "{}")).toEqual({
-      ok: true,
-      server: { name: "github", transport: "streamable_http" },
-      toolCount: 0,
-    });
-
-    expect(await runMcpSubcommand(["remove", "github"], harness.deps)).toBe(0);
-    expect(harness.deletes).toEqual([`${serverPath}/mcp-1`]);
   });
 });

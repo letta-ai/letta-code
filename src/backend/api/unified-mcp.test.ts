@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { UnifiedMcpClient } from "./unified-mcp";
 import {
-  attachUnifiedMcpServer,
-  detachUnifiedMcpServer,
   listUnifiedMcpServers,
   listUnifiedMcpTools,
   runUnifiedMcpTool,
@@ -11,8 +9,6 @@ import {
 function clientFixture(options: {
   get?: Record<string, unknown>;
   post?: Record<string, unknown>;
-  puts?: string[];
-  deletes?: string[];
   posts?: Array<{ path: string; body: unknown }>;
 }): UnifiedMcpClient {
   return {
@@ -21,15 +17,6 @@ function clientFixture(options: {
       options.posts?.push({ path, body: request?.body });
       return options.post?.[path] ?? {};
     },
-    put: async (path) => {
-      options.puts?.push(path);
-      return {};
-    },
-    delete: async (path) => {
-      options.deletes?.push(path);
-      return {};
-    },
-    mcpServers: { list: async () => [] },
   };
 }
 
@@ -91,14 +78,10 @@ describe("unified MCP API adapter", () => {
     ]);
   });
 
-  test("uses SDK request options for run and association mutations", async () => {
-    const puts: string[] = [];
-    const deletes: string[] = [];
+  test("uses SDK request options for tool execution", async () => {
     const posts: Array<{ path: string; body: unknown }> = [];
     const runPath = "/v1/agents/agent-1/mcp-servers/mcp-1/tools/tool-1/run";
     const client = clientFixture({
-      puts,
-      deletes,
       posts,
       post: {
         [runPath]: { status: "success", func_return: "created" },
@@ -119,13 +102,8 @@ describe("unified MCP API adapter", () => {
       stdout: undefined,
       stderr: undefined,
     });
-    await attachUnifiedMcpServer(client, "agent-1", "mcp-1");
-    await detachUnifiedMcpServer(client, "agent-1", "mcp-1");
-
     expect(posts).toEqual([
       { path: runPath, body: { args: { title: "Bug" } } },
     ]);
-    expect(puts).toEqual(["/v1/agents/agent-1/mcp-servers/mcp-1"]);
-    expect(deletes).toEqual(["/v1/agents/agent-1/mcp-servers/mcp-1"]);
   });
 });

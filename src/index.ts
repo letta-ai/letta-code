@@ -216,7 +216,7 @@ SUBCOMMANDS
   letta mods enable <package-spec>
   letta mods disable <package-spec>
   letta mods remove <package-spec>
-  letta mcp list|get|add|remove|login|logout|tools|call ... [--agent <id>]
+  letta mcp list|get|tools|call ... [--agent <id>]
   letta server [--env-name <name> | --listen [url]] [options]
   letta connect <provider> [options]
   letta install <thing> [--agent <id> | -n <name>]

@@ -1,20 +1,12 @@
-import type { McpServerListResponse } from "@letta-ai/letta-client/resources/mcp-servers/mcp-servers";
 import { isRecord } from "@/utils/type-guards";
 
 // Keep this adapter separate from mcp-servers.ts. That module backs the legacy
 // `letta cloud-mcp` contract, whose request and output shapes stay frozen while
 // the unified `letta mcp` command replaces it.
-export type RegisteredMcpServer = McpServerListResponse[number];
-
 /** Structural API surface used only by the unified `letta mcp` command. */
 export interface UnifiedMcpClient {
   get(path: string): Promise<unknown>;
   post(path: string, options?: { body?: unknown }): Promise<unknown>;
-  put(path: string, options?: { body?: unknown }): Promise<unknown>;
-  delete(path: string): Promise<unknown>;
-  mcpServers: {
-    list(): Promise<RegisteredMcpServer[]>;
-  };
 }
 
 export interface UnifiedMcpServer {
@@ -208,45 +200,4 @@ export async function runUnifiedMcpTool(params: {
     "Running agent MCP tool",
   );
   return parseRunResult(value);
-}
-
-export function attachUnifiedMcpServer(
-  client: UnifiedMcpClient,
-  agentId: string,
-  mcpServerId: string,
-  timeoutMs = 10_000,
-): Promise<unknown> {
-  return withTimeout(
-    client.put(
-      `/v1/agents/${encodeURIComponent(agentId)}/mcp-servers/${encodeURIComponent(mcpServerId)}`,
-    ),
-    timeoutMs,
-    "Connecting MCP server to agent",
-  );
-}
-
-export function detachUnifiedMcpServer(
-  client: UnifiedMcpClient,
-  agentId: string,
-  mcpServerId: string,
-  timeoutMs = 10_000,
-): Promise<unknown> {
-  return withTimeout(
-    client.delete(
-      `/v1/agents/${encodeURIComponent(agentId)}/mcp-servers/${encodeURIComponent(mcpServerId)}`,
-    ),
-    timeoutMs,
-    "Disconnecting MCP server from agent",
-  );
-}
-
-export function listRegisteredMcpServers(
-  client: UnifiedMcpClient,
-  timeoutMs = 10_000,
-): Promise<RegisteredMcpServer[]> {
-  return withTimeout(
-    client.mcpServers.list(),
-    timeoutMs,
-    "Listing registered MCP servers",
-  );
 }
