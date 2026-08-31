@@ -16,7 +16,12 @@
  * File limits count the complete staged file, including frontmatter.
  */
 
-export const MEMORY_CONSTRAINTS_CONFIG_PATH = ".memfs.config.json";
+import {
+  MEMORY_CONSTRAINTS_CONFIG_PATH,
+  MEMORY_CONSTRAINTS_CONFIG_VERSION,
+} from "@/memory-constraints";
+
+export { MEMORY_CONSTRAINTS_CONFIG_PATH } from "@/memory-constraints";
 export const MEMORY_CONSTRAINTS_VALIDATOR_NAME = "letta-memory-constraints.cjs";
 export const MEMORY_CONSTRAINTS_UPDATE_ENV = "LETTA_MEMORY_CONSTRAINTS_UPDATE";
 
@@ -27,6 +32,7 @@ const { readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
 
 const CONFIG_PATH = ${JSON.stringify(MEMORY_CONSTRAINTS_CONFIG_PATH)};
+const CONFIG_VERSION = ${JSON.stringify(MEMORY_CONSTRAINTS_CONFIG_VERSION)};
 const CONFIG_UPDATE_ENV = ${JSON.stringify(MEMORY_CONSTRAINTS_UPDATE_ENV)};
 const LAYOUT_POLICY_FILE = "letta-memory-layout-policy";
 const ALLOWED_CONFIG_KEYS = new Set([
@@ -142,8 +148,8 @@ function parseConfig(content, errors) {
     }
   }
 
-  if (value.version !== 1) {
-    errors.push(CONFIG_PATH + ": version must be 1");
+  if (value.version !== CONFIG_VERSION) {
+    errors.push(CONFIG_PATH + ": version must be " + CONFIG_VERSION);
   }
 
   if (

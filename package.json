@@ -22,6 +22,8 @@
     "dist/app-server-client.cjs.map",
     "dist/memory-confinement.js",
     "dist/memory-confinement.js.map",
+    "dist/memory-constraints.js",
+    "dist/memory-constraints.js.map",
     "dist/mcp-client.js",
     "dist/mcp-client.js.map",
     "dist/agent-presets.js",
@@ -57,6 +59,11 @@
       "types": "./dist/types/memory-confinement.d.ts",
       "import": "./dist/memory-confinement.js",
       "default": "./dist/memory-confinement.js"
+    },
+    "./memory-constraints": {
+      "types": "./dist/types/memory-constraints.d.ts",
+      "import": "./dist/memory-constraints.js",
+      "default": "./dist/memory-constraints.js"
     },
     "./mcp-client": {
       "types": "./dist/types/mcp-client.d.ts",
@@ -210,6 +217,9 @@
       ],
       "memory-confinement": [
         "./dist/types/memory-confinement.d.ts"
+      ],
+      "memory-constraints": [
+        "./dist/types/memory-constraints.d.ts"
       ],
       "mcp-client": [
         "./dist/types/mcp-client.d.ts"
