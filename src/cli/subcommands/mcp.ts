@@ -68,7 +68,6 @@ type ToolTarget =
 interface CatalogTool {
   schema: McpToolDefinition;
   target: ToolTarget;
-  serverKey: string;
 }
 
 interface ToolCatalog {
@@ -343,12 +342,9 @@ function serverName(target: ServerTarget): string {
 async function buildToolCatalog(
   deps: McpSubcommandDependencies,
   agentId: string,
-  serverSelector?: string,
+  options: { serverSelector?: string; toolName?: string } = {},
 ): Promise<ToolCatalog> {
   const servers = await listUnifiedServers(deps, agentId);
-  const selectedKey = serverSelector
-    ? serverKey(resolveServer(servers, serverSelector))
-    : undefined;
   const aliases = assignMcpServerAliases(
     servers.map((target) => ({
       key: serverKey(target),
@@ -356,9 +352,23 @@ async function buildToolCatalog(
       kind: target.kind,
     })),
   );
-  const activeServers = selectedKey
-    ? servers.filter((target) => serverKey(target) === selectedKey)
-    : servers;
+  let activeServers = servers;
+  if (options.serverSelector) {
+    const selectedKey = serverKey(
+      resolveServer(servers, options.serverSelector),
+    );
+    activeServers = servers.filter(
+      (target) => serverKey(target) === selectedKey,
+    );
+  } else if (options.toolName) {
+    activeServers = servers.filter((target) => {
+      const alias = aliases.get(serverKey(target));
+      return (
+        alias !== undefined &&
+        options.toolName?.startsWith(`mcp__${alias}__`) === true
+      );
+    });
+  }
   const catalog: CatalogTool[] = [];
   const connections: ConnectedMcpServer[] = [];
   const usedNames = new Set<string>();
@@ -401,7 +411,6 @@ async function buildToolCatalog(
               serverId: server.id,
               toolId: tool.id,
             },
-            serverKey: `server:${server.id}`,
           });
         }
       }
@@ -439,7 +448,6 @@ async function buildToolCatalog(
         catalog.push({
           schema: { ...tool, name },
           target: { kind: "client", connection, rawName: tool.name },
-          serverKey: `client:${config.name}`,
         });
       }
     }
@@ -556,7 +564,7 @@ async function runTools(
   serverSelector: string | undefined,
   stdout: (message: string) => void,
 ): Promise<number> {
-  const catalog = await buildToolCatalog(deps, agentId, serverSelector);
+  const catalog = await buildToolCatalog(deps, agentId, { serverSelector });
   try {
     printJson(
       stdout,
@@ -586,7 +594,7 @@ async function runCall(
     stringValue(parsed.values["args-file"]),
     deps,
   );
-  const catalog = await buildToolCatalog(deps, agentId);
+  const catalog = await buildToolCatalog(deps, agentId, { toolName });
   try {
     const tool = catalog.tools.find(
       (candidate) => candidate.schema.name === toolName,

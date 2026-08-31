@@ -27,7 +27,10 @@ export function assignMcpServerAliases(
     ...targets.filter((target) => target.kind === "client"),
   ];
   for (const target of ordered) {
-    aliases.set(target.key, uniqueMcpName(normalizeMcpName(target.name), used));
+    aliases.set(
+      target.key,
+      uniqueMcpName(normalizeMcpName(target.name).replace(/_{2,}/g, "_"), used),
+    );
   }
   return aliases;
 }

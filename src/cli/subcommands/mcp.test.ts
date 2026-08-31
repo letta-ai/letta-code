@@ -255,6 +255,92 @@ describe("mcp subcommand", () => {
     expect(closes.count).toBe(1);
   });
 
+  test("uses saved OAuth state non-interactively for tools and call", async () => {
+    const oauth = { authProvider: {} as never, close: async () => {} };
+    const oauthRequests: Array<{
+      agentId: string;
+      name: string;
+      url: string;
+      interactive: boolean;
+    }> = [];
+    const connectorOAuth: unknown[] = [];
+    const harness = localHarness({
+      servers: [
+        {
+          name: "notion",
+          transport: "http",
+          url: "https://mcp.notion.example/mcp",
+        },
+      ],
+    });
+    harness.deps.createOAuthSession = async (agentId, name, url, options) => {
+      oauthRequests.push({
+        agentId,
+        name,
+        url,
+        interactive: options?.interactive ?? false,
+      });
+      return oauth;
+    };
+    harness.deps.connectLocalServer = async (_config, options) => {
+      connectorOAuth.push(options?.oauth);
+      return fakeConnection();
+    };
+
+    expect(await runMcpSubcommand(["tools", "notion"], harness.deps)).toBe(0);
+    expect(
+      await runMcpSubcommand(
+        ["call", "mcp__notion__search_exact-name"],
+        harness.deps,
+      ),
+    ).toBe(0);
+    expect(oauthRequests).toEqual([
+      {
+        agentId: "agent-1",
+        name: "notion",
+        url: "https://mcp.notion.example/mcp",
+        interactive: false,
+      },
+      {
+        agentId: "agent-1",
+        name: "notion",
+        url: "https://mcp.notion.example/mcp",
+        interactive: false,
+      },
+    ]);
+    expect(connectorOAuth).toEqual([oauth, oauth]);
+  });
+
+  test("reports when saved OAuth state cannot authorize a server", async () => {
+    const harness = localHarness({
+      servers: [
+        {
+          name: "notion",
+          transport: "http",
+          url: "https://mcp.notion.example/mcp",
+        },
+      ],
+    });
+    harness.deps.createOAuthSession = async () => ({
+      authProvider: {} as never,
+      close: async () => {},
+    });
+    harness.deps.connectLocalServer = async () => {
+      throw new Error(
+        "MCP authentication requires user authorization. Open /mcp and press R to sign in.",
+      );
+    };
+
+    expect(await runMcpSubcommand(["tools", "notion"], harness.deps)).toBe(1);
+    expect(JSON.parse(harness.stderr[0] ?? "{}")).toEqual({
+      error: {
+        code: "mcp_error",
+        message:
+          "MCP authentication requires user authorization. Open /mcp and press R to sign in.",
+      },
+    });
+  });
+
   test("call accepts the exact listed name and returns the bare MCP result", async () => {
     const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
     const closes = { count: 0 };
@@ -502,6 +588,42 @@ describe("mcp subcommand", () => {
     expect(JSON.parse(harness.stdout[0] ?? "[]")[0].name).toBe(
       "mcp__selected__echo",
     );
+  });
+
+  test("call does not connect to unrelated servers", async () => {
+    const attempted: string[] = [];
+    const calls: string[] = [];
+    const harness = localHarness({
+      servers: [
+        { name: "selected", transport: "stdio", command: "selected" },
+        { name: "unavailable", transport: "stdio", command: "unavailable" },
+      ],
+    });
+    harness.deps.connectLocalServer = async (config) => {
+      attempted.push(config.name);
+      if (config.name === "unavailable") throw new Error("unavailable");
+      return {
+        name: config.name,
+        tools: [
+          {
+            name: "echo",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+        callTool: async (name) => {
+          calls.push(name);
+          return { content: [{ type: "text", text: "selected" }] };
+        },
+        close: async () => {},
+      };
+    };
+
+    expect(
+      await runMcpSubcommand(["call", "mcp__selected__echo"], harness.deps),
+    ).toBe(0);
+    expect(harness.stderr).toEqual([]);
+    expect(attempted).toEqual(["selected"]);
+    expect(calls).toEqual(["echo"]);
   });
 
   test("suffixes duplicate server-side tool names instead of failing", async () => {
