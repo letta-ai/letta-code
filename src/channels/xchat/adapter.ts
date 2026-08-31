@@ -106,7 +106,6 @@ function createSdkLogger(): XChatSdkLoggerLike {
 async function waitForPollToSettle(poll: Promise<void>): Promise<void> {
   await new Promise<void>((resolve) => {
     const timer = setTimeout(resolve, STOP_POLL_WAIT_MS);
-    timer.unref?.();
     void poll.then(
       () => {
         clearTimeout(timer);
