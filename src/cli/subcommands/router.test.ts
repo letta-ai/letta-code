@@ -45,6 +45,24 @@ describe("subcommand router", () => {
     }
   });
 
+  test("routes unified MCP help before TUI startup", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      const exitCode = await runSubcommand(["mcp", "--help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain("letta mcp tools");
+      expect(messages.join("\n")).toContain("letta mcp call");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   test("shows unified server help without starting a server", async () => {
     const messages: string[] = [];
     const originalLog = console.log;
@@ -177,6 +195,7 @@ describe("subcommand router", () => {
     expect(subcommandNeedsEarlyBackendMode("environments")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("envs")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("memory")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("mcp")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("mods")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("sandbox")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("teleport")).toBe(true);

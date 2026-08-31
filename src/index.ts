@@ -181,19 +181,18 @@ USAGE
   letta environments ... List available remote environments (JSON-only)
   letta teleport ...    Move the current conversation between environments
   letta messages ...    Messages subcommands (JSON-only)
+  letta mcp ...         List and call MCP servers available to an agent
+  letta cloud-mcp ...   Legacy server-side MCP commands (JSON-only)
   letta mods ...        List and manage local mods
   letta sandbox ...     Transfer files to or from the current Cloud sandbox
   letta server ...      Run a remote environment, channels, or the App Server
-  letta cloud-mcp ...  Use MCP servers connected to an agent
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
   letta setup           Re-run first-run setup
   letta install ...     Install a skill or mod package
   letta skills ...      List or delete installed agent skills
-
 OPTIONS
 ${renderCliOptionsHelp()}
-
 SUBCOMMANDS
   letta memory status --agent <id>
   letta memory diff --agent <id>
@@ -211,12 +210,13 @@ SUBCOMMANDS
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
+  letta cloud-mcp list|tools|run ... [--agent <id>]
   letta mods list [--agent <id>]
   letta mods package <mod-file> --name <package-name> [--out <dir>]
   letta mods enable <package-spec>
   letta mods disable <package-spec>
   letta mods remove <package-spec>
-  letta cloud-mcp list|tools|run ... [--agent <id>]
+  letta mcp list|get|tools|call ... [--agent <id>]
   letta server [--env-name <name> | --listen [url]] [options]
   letta connect <provider> [options]
   letta install <thing> [--agent <id> | -n <name>]
