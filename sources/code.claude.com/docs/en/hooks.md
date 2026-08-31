@@ -744,7 +744,7 @@ Only [`SessionStart`](#sessionstart) hooks can receive a `model` field, and Clau
 
 There is no `$CLAUDE_MODEL` environment variable. The hook can read `$ANTHROPIC_MODEL` if you set it in your shell, but that value doesn't change when you switch models with `/model` during a session.
 
-A hook process inherits the parent environment, apart from the `OTEL_*` exporter variables that Claude Code [removes from every subprocess it spawns](/docs/en/monitoring-usage#administrator-configuration), including hooks.
+A hook process inherits the parent environment, apart from the `OTEL_*` exporter variables that Claude Code [removes from every subprocess it spawns](/docs/en/monitoring-usage#administrator-configuration) and, when [`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`](/docs/en/env-vars#variables) is set to `1`, the variables it strips.
 
 For example, a `PreToolUse` hook for a Bash command receives this on stdin:
 
