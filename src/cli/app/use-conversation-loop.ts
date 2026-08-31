@@ -810,7 +810,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
               },
             );
-
             // Resolve stale approval conflict: fetch real pending approvals, auto-deny, retry.
             // Shares llmApiErrorRetriesRef budget with LLM transient-error retries (max 3 per turn).
             // Resets on each processConversation entry and on success.
@@ -848,7 +847,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               buffersRef.current.interrupted = false;
               continue;
             }
-
             // Check for 409 "conversation busy" error - retry with exponential backoff
             if (preStreamAction === "retry_conversation_busy") {
               conversationBusyRetriesRef.current += 1;
@@ -1811,6 +1809,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 toolContextId: approvalToolContextIdRef.current,
                 toolLoopGuard: toolLoopGuardRef.current,
                 workingDirectory: getCurrentWorkingDirectory(),
+                runId: currentRunId,
               });
 
             // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)
@@ -1938,6 +1937,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                         toolContextId: approvalToolContextId,
                         toolLoopGuard: toolLoopGuardRef.current,
                         workingDirectory: getCurrentWorkingDirectory(),
+                        runId: currentRunId,
                       },
                     )
                   : [];

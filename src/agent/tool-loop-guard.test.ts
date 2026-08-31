@@ -187,6 +187,15 @@ describe("ToolLoopGuard", () => {
     });
   });
 
+  test("reports each prevented tool call only once", () => {
+    const guard = createToolLoopGuard();
+    expect(guard.recordPrevention("call-1")).toBe(true);
+    expect(guard.recordPrevention("call-1")).toBe(false);
+    expect(guard.recordPrevention("call-2")).toBe(true);
+    guard.reset();
+    expect(guard.recordPrevention("call-1")).toBe(true);
+  });
+
   test("annotates string returns only after fingerprinting the raw result", () => {
     const guard = createToolLoopGuard();
     const first = guard.observeResult(call, success);

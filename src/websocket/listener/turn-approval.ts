@@ -243,6 +243,7 @@ export async function handleApprovalStop(params: {
       agentId,
       toolContextId: turnToolContextId ?? undefined,
       toolLoopGuard,
+      runId: classificationRunId,
     },
   );
   const classificationEnd: ApprovalClassificationEndMessage = {
@@ -555,6 +556,7 @@ export async function handleApprovalStop(params: {
         agentId && conversationId ? { agentId, conversationId } : undefined,
       onFileWrite,
       toolLoopGuard,
+      runId: executionRunId,
     });
   } catch (error) {
     // Execution threw before results exist, so the normal finished-events

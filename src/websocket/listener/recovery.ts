@@ -709,6 +709,7 @@ export async function resolveRecoveredApprovalResponse(
               }
             : undefined,
         toolLoopGuard: toolLoopGuard ?? undefined,
+        runId: executionRunId,
       });
     } catch (error) {
       // Execution threw before results exist, so the finished-events

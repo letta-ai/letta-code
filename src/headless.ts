@@ -385,7 +385,6 @@ function parseReflectionOverrides(
   }
   return overrides;
 }
-
 async function prepareHeadlessToolExecutionContext(params: {
   agentId: string;
   conversationId: string;
@@ -417,7 +416,6 @@ async function prepareHeadlessToolExecutionContext(params: {
     ),
   };
 }
-
 function isTurnInputArray(
   value: unknown,
 ): value is Array<MessageCreate | ApprovalCreate> {
@@ -426,7 +424,6 @@ function isTurnInputArray(
     value.every((item) => typeof item === "object" && item !== null)
   );
 }
-
 type HeadlessTurnStartEmission =
   | { cancelled: false; input: Array<MessageCreate | ApprovalCreate> }
   | { cancelled: true; reason: string };
@@ -487,7 +484,6 @@ async function emitHeadlessTurnStartCancellationOutput(options: {
     console.error(`Error: ${options.reason}`);
   }
 }
-
 function writeBidirectionalTurnStartCancellation(options: {
   agent: AgentState;
   conversationId: string;
@@ -2794,6 +2790,7 @@ ${SYSTEM_REMINDER_CLOSE}
             toolContextId: turnToolContextId ?? undefined,
             toolLoopGuard,
             workingDirectory: getCurrentWorkingDirectory(),
+            runId: lastRunId ?? undefined,
           });
 
         const decisions: Decision[] = [
@@ -2838,6 +2835,7 @@ ${SYSTEM_REMINDER_CLOSE}
             toolContextId: turnToolContextId ?? undefined,
             toolLoopGuard,
             workingDirectory: getCurrentWorkingDirectory(),
+            runId: lastRunId ?? undefined,
           },
         );
 
@@ -4725,6 +4723,7 @@ async function runBidirectionalMode(
                 toolContextId: turnToolContextId ?? undefined,
                 toolLoopGuard,
                 workingDirectory: getCurrentWorkingDirectory(),
+                runId: result.lastRunId ?? undefined,
               });
 
             const decisions: Decision[] = [
@@ -4795,6 +4794,7 @@ async function runBidirectionalMode(
                 toolContextId: turnToolContextId ?? undefined,
                 toolLoopGuard,
                 workingDirectory: getCurrentWorkingDirectory(),
+                runId: result.lastRunId ?? undefined,
               },
             );
 

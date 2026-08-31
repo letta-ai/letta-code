@@ -212,6 +212,7 @@ export class ToolLoopGuard {
   private lastPairFingerprint: string | null = null;
   private consecutiveIdenticalPairs = 0;
   private blockedCallFingerprint: string | null = null;
+  private reportedToolCallIds = new Set<string>();
 
   preflight(call: ToolLoopCall): ToolLoopPreflight {
     const callFingerprint = fingerprintToolCall(call);
@@ -230,6 +231,12 @@ export class ToolLoopGuard {
 
   isBlocked(call: ToolLoopCall): boolean {
     return this.blockedCallFingerprint === fingerprintToolCall(call);
+  }
+
+  recordPrevention(toolCallId: string): boolean {
+    if (this.reportedToolCallIds.has(toolCallId)) return false;
+    this.reportedToolCallIds.add(toolCallId);
+    return true;
   }
 
   observeResult(
@@ -300,6 +307,7 @@ export class ToolLoopGuard {
     this.lastPairFingerprint = null;
     this.consecutiveIdenticalPairs = 0;
     this.blockedCallFingerprint = null;
+    this.reportedToolCallIds.clear();
   }
 
   private activateCall(callFingerprint: string): void {

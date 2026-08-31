@@ -15,6 +15,7 @@ import {
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { telemetry } from "@/telemetry";
 import {
   executeTool,
   isModToolParallelSafeForContext,
@@ -389,6 +390,7 @@ export async function executeApprovalBatch(
     parentScope?: { agentId: string; conversationId: string };
     onFileWrite?: (filePath: string, content: string) => void;
     toolLoopGuard?: ToolLoopGuard;
+    runId?: string;
   },
 ): Promise<ApprovalResult[]> {
   const toolContextId =
@@ -448,17 +450,21 @@ export async function executeApprovalBatch(
 
   // Repeated calls in one model response must be observed between executions;
   // otherwise a five-call batch can bypass the preflight threshold entirely.
-  if ([...loopCallCounts.values()].some((count) => count > 1)) {
+  const toolLoopGuard = options?.toolLoopGuard;
+  if (
+    toolLoopGuard &&
+    [...loopCallCounts.values()].some((count) => count > 1)
+  ) {
     const explicitlyApproved = new Set(
       [...loopCalls.values()]
-        .filter((call) => options?.toolLoopGuard?.isBlocked(call))
+        .filter((call) => toolLoopGuard.isBlocked(call))
         .map(fingerprintToolCall),
     );
     for (let index = 0; index < decisions.length; index += 1) {
       const decision = decisions[index];
       if (!decision) continue;
       const call = loopCalls.get(index);
-      const preflight = call ? options?.toolLoopGuard?.preflight(call) : null;
+      const preflight = call ? toolLoopGuard.preflight(call) : null;
       if (
         decision.type === "approve" &&
         call &&
@@ -482,6 +488,14 @@ export async function executeApprovalBatch(
           tool_return: reason,
           status: "error",
         });
+        if (toolLoopGuard.recordPrevention(decision.approval.toolCallId)) {
+          telemetry.trackError(
+            "tool_loop_prevented",
+            `Blocked repeated ${decision.approval.toolName} call ${decision.approval.toolCallId} after ${preflight.consecutiveIdenticalPairs} identical call/result pairs`,
+            "tool_loop_guard:execution_blocked",
+            { runId: options?.runId },
+          );
+        }
         continue;
       }
       results[index] = await executeSingleDecision(decision, onChunk, {
@@ -604,6 +618,7 @@ export async function executeAutoAllowedTools(
     workingDirectory?: string;
     onFileWrite?: (filePath: string, content: string) => void;
     toolLoopGuard?: ToolLoopGuard;
+    runId?: string;
   },
 ): Promise<AutoAllowedResult[]> {
   const decisions: ApprovalDecision[] = autoAllowed.map((ac) => ({
