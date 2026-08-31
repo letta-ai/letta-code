@@ -1,6 +1,5 @@
 import type { ToolLoopGuard } from "@/agent/tool-loop-guard";
 import type { ApprovalContext } from "@/permissions/analyzer";
-import { telemetry } from "@/telemetry";
 import { checkToolPermission, getToolSchema } from "@/tools/manager";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
 import { debugWarn } from "@/utils/debug";
@@ -213,14 +212,13 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
     }
     if (loopPreflight?.blocked && decision === "allow") {
       decision = "ask";
-      if (opts.toolLoopGuard?.recordPrevention(approval.toolCallId)) {
-        telemetry.trackError(
-          "tool_loop_prevented",
-          `Required approval for repeated ${toolName} call ${approval.toolCallId} after ${loopPreflight.consecutiveIdenticalPairs} identical call/result pairs`,
-          "tool_loop_guard:approval_required",
-          { runId: opts.runId },
-        );
-      }
+      opts.toolLoopGuard?.recordPrevention({
+        action: "approval_required",
+        toolName,
+        toolCallId: approval.toolCallId,
+        repeatCount: loopPreflight.consecutiveIdenticalPairs,
+        runId: opts.runId,
+      });
     }
 
     const needsHumanApproval = decision === "ask" || decision === "alwaysAsk";

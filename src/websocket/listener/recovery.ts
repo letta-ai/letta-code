@@ -20,6 +20,7 @@ import { getBackend } from "@/backend";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { formatPermissionDenial } from "@/permissions/format-denial";
+import { trackToolLoopPrevention } from "@/telemetry";
 import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type {
@@ -560,7 +561,9 @@ export async function resolveRecoveredApprovalResponse(
           initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
         })
       : null;
-  const toolLoopGuard = recoveryLease ? createToolLoopGuard() : null;
+  const toolLoopGuard = recoveryLease
+    ? createToolLoopGuard({ onPrevention: trackToolLoopPrevention })
+    : null;
   let continuationFinalized = false;
 
   try {

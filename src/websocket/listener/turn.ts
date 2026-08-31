@@ -31,7 +31,7 @@ import {
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import type { ErrorInfo } from "@/cli/helpers/stream-processor";
-import { telemetry } from "@/telemetry";
+import { telemetry, trackToolLoopPrevention } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { debugLog, isDebugEnabled } from "@/utils/debug";
@@ -174,7 +174,9 @@ async function handleIncomingMessageInner(
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
-  const toolLoopGuard = existingToolLoopGuard ?? createToolLoopGuard();
+  const toolLoopGuard =
+    existingToolLoopGuard ??
+    createToolLoopGuard({ onPrevention: trackToolLoopPrevention });
   const turnLease =
     existingTurnLease ??
     runtime.turnLifecycle.begin({
@@ -791,7 +793,6 @@ async function handleIncomingMessageInner(
           );
           continue;
         }
-
         const effectiveStopReason: StopReasonType = turnAbortSignal.aborted
           ? "cancelled"
           : (stopReason as StopReasonType) || "error";
@@ -838,7 +839,6 @@ async function handleIncomingMessageInner(
         runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
         break;
       }
-
       const approvalResult = await handleApprovalStop({
         approvals,
         runtime,

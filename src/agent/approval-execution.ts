@@ -15,7 +15,6 @@ import {
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
-import { telemetry } from "@/telemetry";
 import {
   executeTool,
   isModToolParallelSafeForContext,
@@ -488,14 +487,13 @@ export async function executeApprovalBatch(
           tool_return: reason,
           status: "error",
         });
-        if (toolLoopGuard.recordPrevention(decision.approval.toolCallId)) {
-          telemetry.trackError(
-            "tool_loop_prevented",
-            `Blocked repeated ${decision.approval.toolName} call ${decision.approval.toolCallId} after ${preflight.consecutiveIdenticalPairs} identical call/result pairs`,
-            "tool_loop_guard:execution_blocked",
-            { runId: options?.runId },
-          );
-        }
+        toolLoopGuard.recordPrevention({
+          action: "execution_blocked",
+          toolName: decision.approval.toolName,
+          toolCallId: decision.approval.toolCallId,
+          repeatCount: preflight.consecutiveIdenticalPairs,
+          runId: options?.runId,
+        });
         continue;
       }
       results[index] = await executeSingleDecision(decision, onChunk, {

@@ -53,6 +53,14 @@ export type ToolLoopGuardSnapshot = {
   blocked: boolean;
 };
 
+export type ToolLoopPrevention = {
+  action: "approval_required" | "execution_blocked";
+  toolName: string;
+  toolCallId: string;
+  repeatCount: number;
+  runId?: string;
+};
+
 function canonicalizeValue(
   value: unknown,
   ancestors: Set<object>,
@@ -214,6 +222,10 @@ export class ToolLoopGuard {
   private blockedCallFingerprint: string | null = null;
   private reportedToolCallIds = new Set<string>();
 
+  constructor(
+    private readonly onPrevention?: (event: ToolLoopPrevention) => void,
+  ) {}
+
   preflight(call: ToolLoopCall): ToolLoopPreflight {
     const callFingerprint = fingerprintToolCall(call);
     this.activateCall(callFingerprint);
@@ -233,9 +245,10 @@ export class ToolLoopGuard {
     return this.blockedCallFingerprint === fingerprintToolCall(call);
   }
 
-  recordPrevention(toolCallId: string): boolean {
-    if (this.reportedToolCallIds.has(toolCallId)) return false;
-    this.reportedToolCallIds.add(toolCallId);
+  recordPrevention(event: ToolLoopPrevention): boolean {
+    if (this.reportedToolCallIds.has(event.toolCallId)) return false;
+    this.reportedToolCallIds.add(event.toolCallId);
+    this.onPrevention?.(event);
     return true;
   }
 
@@ -321,6 +334,8 @@ export class ToolLoopGuard {
   }
 }
 
-export function createToolLoopGuard(): ToolLoopGuard {
-  return new ToolLoopGuard();
+export function createToolLoopGuard(options?: {
+  onPrevention?: (event: ToolLoopPrevention) => void;
+}): ToolLoopGuard {
+  return new ToolLoopGuard(options?.onPrevention);
 }

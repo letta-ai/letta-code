@@ -176,7 +176,7 @@ import {
 } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-import { telemetry } from "@/telemetry";
+import { telemetry, trackToolLoopPrevention } from "@/telemetry";
 import {
   releaseToolExecutionContext,
   type ToolExecutionResult,
@@ -322,10 +322,8 @@ function buildStartupCommandHints(options: {
       break;
     }
   }
-
   return dedupedHints;
 }
-
 function hasConversationContent(lines: Line[]): boolean {
   return lines.some((line) => {
     switch (line.kind) {
@@ -589,7 +587,9 @@ export function App({
       reason: string;
     }>
   >([]);
-  const toolLoopGuardRef = useRef(createToolLoopGuard());
+  const toolLoopGuardRef = useRef(
+    createToolLoopGuard({ onPrevention: trackToolLoopPrevention }),
+  );
   const executingToolCallIdsRef = useRef<string[]>([]);
   const interruptQueuedRef = useRef(false);
   // Prevents interrupt handler from queueing results while approvals are in-flight.

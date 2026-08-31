@@ -10,17 +10,33 @@ function readSource(relativePath: string): string {
 }
 
 describe("tool loop prevention telemetry wiring", () => {
-  test("approval escalation reports a run-scoped error event", () => {
+  test("approval escalation reports run-scoped prevention metadata", () => {
     const source = readSource("../cli/helpers/approval-classification.ts");
-    expect(source).toContain('"tool_loop_prevented"');
-    expect(source).toContain('"tool_loop_guard:approval_required"');
+    expect(source).toContain('action: "approval_required"');
     expect(source).toContain("runId: opts.runId");
   });
 
-  test("same-batch execution blocking reports the same error type", () => {
+  test("same-batch execution reports run-scoped prevention metadata", () => {
     const source = readSource("../agent/approval-execution.ts");
-    expect(source).toContain('"tool_loop_prevented"');
-    expect(source).toContain('"tool_loop_guard:execution_blocked"');
+    expect(source).toContain('action: "execution_blocked"');
     expect(source).toContain("runId: options?.runId");
+  });
+
+  test("production guards send prevention events through error telemetry", () => {
+    const telemetrySource = readSource("./index.ts");
+    expect(telemetrySource).toContain('"tool_loop_prevented"');
+    expect(telemetrySource).toContain("tool_loop_guard:");
+    expect(telemetrySource).toContain("event.action");
+
+    for (const path of [
+      "../cli/app/AppCoordinator.tsx",
+      "../headless.ts",
+      "../websocket/listener/turn.ts",
+      "../websocket/listener/recovery.ts",
+    ]) {
+      expect(readSource(path)).toContain(
+        "onPrevention: trackToolLoopPrevention",
+      );
+    }
   });
 });

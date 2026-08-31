@@ -188,12 +188,24 @@ describe("ToolLoopGuard", () => {
   });
 
   test("reports each prevented tool call only once", () => {
-    const guard = createToolLoopGuard();
-    expect(guard.recordPrevention("call-1")).toBe(true);
-    expect(guard.recordPrevention("call-1")).toBe(false);
-    expect(guard.recordPrevention("call-2")).toBe(true);
+    const reported: string[] = [];
+    const guard = createToolLoopGuard({
+      onPrevention: (event) => reported.push(event.toolCallId),
+    });
+    const event = {
+      action: "approval_required" as const,
+      toolName: "Bash",
+      toolCallId: "call-1",
+      repeatCount: 4,
+    };
+    expect(guard.recordPrevention(event)).toBe(true);
+    expect(guard.recordPrevention(event)).toBe(false);
+    expect(guard.recordPrevention({ ...event, toolCallId: "call-2" })).toBe(
+      true,
+    );
+    expect(reported).toEqual(["call-1", "call-2"]);
     guard.reset();
-    expect(guard.recordPrevention("call-1")).toBe(true);
+    expect(guard.recordPrevention(event)).toBe(true);
   });
 
   test("annotates string returns only after fingerprinting the raw result", () => {

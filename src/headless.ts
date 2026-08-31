@@ -9,7 +9,11 @@ import type {
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
+import {
+  getTerminalTelemetrySurface,
+  telemetry,
+  trackToolLoopPrevention,
+} from "@/telemetry";
 import {
   trackBoundaryError,
   trackEndTurnNoAssistant,
@@ -516,7 +520,6 @@ function writeBidirectionalTurnStartCancellation(options: {
   };
   writeWireMessage(resultMsg);
 }
-
 async function emitHeadlessTurnStart(options: {
   agent: AgentState;
   conversationId: string;
@@ -542,7 +545,6 @@ async function emitHeadlessTurnStart(options: {
     return { cancelled: false, input: options.input };
   }
 }
-
 async function emitHeadlessTurnEnd(options: {
   agent: AgentState;
   conversationId: string;
@@ -571,7 +573,6 @@ async function emitHeadlessTurnEnd(options: {
     return undefined;
   }
 }
-
 async function sendScopedApprovalMessages(params: {
   agentId: string;
   conversationId: string;
@@ -596,7 +597,6 @@ async function sendScopedApprovalMessages(params: {
     },
   );
 }
-
 async function flushAndExit(code: number): Promise<never> {
   const flushWritable = (stream: NodeJS.WriteStream): Promise<void> =>
     new Promise((resolve) => {
@@ -612,7 +612,6 @@ async function flushAndExit(code: number): Promise<never> {
 
   process.exit(code);
 }
-
 // For one-shot headless outputs (json/text), await the final stdout write before
 // exiting so CI pipes don't occasionally observe an empty stdout buffer.
 async function writeFinalHeadlessStdout(text: string): Promise<void> {
@@ -624,7 +623,6 @@ async function writeFinalHeadlessStdout(text: string): Promise<void> {
     process.stdout.write(text, () => resolve());
   });
 }
-
 type ReplyEnvironmentMetadata =
   | {
       source: "same-environment";
@@ -656,7 +654,6 @@ function buildEnvironmentResponseMetadata(params: {
     name: params.environment.connectionName,
   };
 }
-
 function formatAgentReplyMetadata(params: {
   agentId: string;
   conversationId: string;
@@ -668,7 +665,6 @@ function formatAgentReplyMetadata(params: {
     ...(params.environment ? { environment: params.environment } : {}),
   });
 }
-
 function isCloudEnvironmentSelector(
   selector: string | boolean | undefined,
 ): boolean {
@@ -2311,7 +2307,9 @@ ${SYSTEM_REMINDER_CLOSE}
   let emptyResponseRetries = 0;
   let conversationBusyRetries = 0;
   let chatgptPlanSwaps = 0;
-  const toolLoopGuard = createToolLoopGuard();
+  const toolLoopGuard = createToolLoopGuard({
+    onPrevention: trackToolLoopPrevention,
+  });
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
 
@@ -4400,7 +4398,9 @@ async function runBidirectionalMode(
           buffers.order.push(userLineId);
         }
         let numTurns = 0;
-        const toolLoopGuard = createToolLoopGuard();
+        const toolLoopGuard = createToolLoopGuard({
+          onPrevention: trackToolLoopPrevention,
+        });
         let lastStopReason: StopReasonType | null = null; // Track for result subtype
         let sawStreamError = false; // Track if we emitted an error during streaming
         let preStreamTransientRetries = 0;
