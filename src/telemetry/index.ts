@@ -41,7 +41,8 @@ export interface TelemetryEvent {
     | "reflection_start"
     | "reflection_end"
     | "reflection_worktree_cleanup"
-    | "reflection_arena_vote";
+    | "reflection_arena_vote"
+    | "external_memory_read";
   timestamp: string;
   data: Record<string, unknown>;
 }
@@ -78,6 +79,25 @@ export interface ToolUsageData {
   response_length?: number;
   error_type?: string;
   stderr?: string;
+}
+
+export interface ExternalMemoryReadData {
+  access_kind: "list" | "read" | "search";
+  conversation_id?: string;
+  duration_ms: number;
+  limit?: number;
+  offset?: number;
+  response_length?: number;
+  success: boolean;
+  target_count: number;
+  targets: Array<{
+    path: string;
+    repository_name?: string;
+    repository_type: "agent_memory" | "attached_repository";
+  }>;
+  targets_truncated: boolean;
+  tool_call_id?: string;
+  tool_name: string;
 }
 
 export interface ErrorData {
@@ -460,25 +480,31 @@ class TelemetryManager {
       | SessionStartData
       | SessionEndData
       | ToolUsageData
+      | ExternalMemoryReadData
       | ErrorData
       | UserInputData
       | ReflectionStartData
       | ReflectionEndData
       | ReflectionWorktreeCleanupData
       | ReflectionArenaVoteData,
+    options?: { agentId?: string },
   ) {
     if (!this.isTelemetryEnabled()) {
       return;
     }
 
+    const scopedAgentId = options?.agentId;
     const event: TelemetryEvent = {
       type,
       timestamp: new Date().toISOString(),
       data: {
         ...data,
         session_id: this.sessionId,
-        agent_id: this.currentAgentId || undefined,
-        agent_origin: this.currentAgentOrigin || undefined,
+        agent_id: scopedAgentId ?? this.currentAgentId ?? undefined,
+        agent_origin:
+          !scopedAgentId || scopedAgentId === this.currentAgentId
+            ? (this.currentAgentOrigin ?? undefined)
+            : undefined,
         surface: this.surface,
         backend: resolveTelemetryBackend(),
       },
@@ -709,6 +735,10 @@ class TelemetryManager {
       stderr,
     };
     this.track("tool_usage", data);
+  }
+
+  trackExternalMemoryRead(data: ExternalMemoryReadData, agentId?: string) {
+    this.track("external_memory_read", data, { agentId });
   }
 
   /**

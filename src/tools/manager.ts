@@ -61,6 +61,7 @@ import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
 import { serializeClientTools } from "./client-tool-serialization";
+import { trackBuiltInToolUsage } from "./external-memory-read-telemetry";
 import { normalizeExternalToolResultContent } from "./external-tool-content";
 import { toolFilter } from "./filter";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
@@ -80,6 +81,9 @@ import {
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 import { TOOL_PERMISSIONS } from "./tool-permissions";
+import type { ToolExecutionResult, ToolReturnContent } from "./tool-result";
+
+export type { ToolExecutionResult, ToolReturnContent } from "./tool-result";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 
@@ -442,21 +446,6 @@ interface ToolDefinition {
   modelForm: ModelFacingToolForm;
   fn: (args: ToolArgs) => Promise<unknown>;
 }
-
-import type {
-  ImageContent,
-  TextContent,
-} from "@letta-ai/letta-client/resources/agents/messages";
-
-// Tool return content can be a string or array of text/image content parts
-export type ToolReturnContent = string | Array<TextContent | ImageContent>;
-
-export type ToolExecutionResult = {
-  toolReturn: ToolReturnContent;
-  status: "success" | "error";
-  stdout?: string[];
-  stderr?: string[];
-};
 
 type ToolRegistry = Map<string, ToolDefinition>;
 
@@ -1698,7 +1687,7 @@ function isStringArray(value: unknown): value is string[] {
  */
 function isMultimodalContent(
   arr: unknown[],
-): arr is Array<TextContent | ImageContent> {
+): arr is Extract<ToolReturnContent, unknown[]> {
   return arr.every(
     (item) => isRecord(item) && (item.type === "text" || item.type === "image"),
   );
@@ -2704,19 +2693,24 @@ async function executeToolInner(
         internalName,
       );
 
-      // Track tool usage (calculate size for multimodal content)
       const responseSize =
         typeof flattenedResponse === "string"
           ? flattenedResponse.length
           : JSON.stringify(flattenedResponse).length;
-      telemetry.trackToolUsage(
-        internalName,
-        toolStatus === "success",
-        duration,
-        responseSize,
-        toolStatus === "error" ? "tool_error" : undefined,
-        stderr ? stderr.join("\n") : undefined,
-      );
+      trackBuiltInToolUsage({
+        agentId: scopedAgentId,
+        args: enhancedArgs,
+        conversationId: executionScope.conversationId,
+        durationMs: duration,
+        errorType: toolStatus === "error" ? "tool_error" : undefined,
+        memoryDir: modContext.memfs?.memoryDir,
+        responseLength: responseSize,
+        stderr: stderr ? stderr.join("\n") : undefined,
+        success: toolStatus === "success",
+        toolCallId: options?.toolCallId,
+        toolName: internalName,
+        workingDirectory,
+      });
 
       const hookFeedback = await collectPostToolHookFeedback(
         {
@@ -2767,15 +2761,20 @@ async function executeToolInner(
           ? error.message
           : String(error);
 
-      // Track tool usage error
-      telemetry.trackToolUsage(
-        internalName,
-        false,
-        duration,
-        errorMessage.length,
+      trackBuiltInToolUsage({
+        agentId: scopedAgentId,
+        args,
+        conversationId: executionScope.conversationId,
+        durationMs: duration,
         errorType,
-        errorMessage,
-      );
+        memoryDir: modContext.memfs?.memoryDir,
+        responseLength: errorMessage.length,
+        stderr: errorMessage,
+        success: false,
+        toolCallId: options?.toolCallId,
+        toolName: internalName,
+        workingDirectory,
+      });
 
       const hookFeedback = await collectPostToolHookFeedback(
         {
