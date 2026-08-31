@@ -12,6 +12,7 @@ import {
 } from "react";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import type { SessionStats } from "@/agent/stats";
+import type { ToolLoopGuard } from "@/agent/tool-loop-guard";
 import {
   type Buffers,
   markIncompleteToolsAsCancelled,
@@ -31,6 +32,7 @@ import { flushEligibleLinesBeforeReentry } from "@/cli/helpers/subagent-turn-sta
 import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import type { PermissionMode } from "@/permissions/mode";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   analyzeToolApproval,
   checkToolPermission,
@@ -120,6 +122,7 @@ type ApprovalFlowContext = {
   syncTrajectoryElapsedBase: () => void;
   tempModelOverrideRef: MutableRefObject<string | null>;
   toolAbortControllerRef: MutableRefObject<AbortController | null>;
+  toolLoopGuardRef: MutableRefObject<ToolLoopGuard>;
   toolResultsInFlightRef: MutableRefObject<boolean>;
   updateStreamingOutput: (
     toolCallId: string,
@@ -182,6 +185,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     syncTrajectoryElapsedBase,
     tempModelOverrideRef,
     toolAbortControllerRef,
+    toolLoopGuardRef,
     toolResultsInFlightRef,
     updateStreamingOutput,
     userCancelledRef,
@@ -199,7 +203,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         setApprovalContexts(contexts);
         return;
       }
-
       try {
         const analyzedContexts = await Promise.all(
           approvals.map(async (approval) => {
@@ -222,7 +225,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     },
     [setApprovalContexts, setPendingApprovals],
   );
-
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects; .current is read dynamically at call time.
   const recoverRestoredPendingApprovals = useCallback(
     async (
@@ -232,7 +234,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       if (approvals.length === 0) {
         return;
       }
-
       const generationAtStart = conversationGenerationRef.current;
       const batchKey = buildApprovalBatchKey(approvals);
       const currentRecovery = restoredApprovalRecoveryRef.current;
@@ -243,7 +244,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       ) {
         return;
       }
-
       restoredApprovalRecoveryRef.current = {
         batchKey,
         generation: generationAtStart,
@@ -272,7 +272,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           };
           return;
         }
-
         if (hasQueuedRealResults) {
           setNeedsEagerApprovalCheck(false);
           restoredApprovalRecoveryRef.current = {
@@ -282,13 +281,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           };
           return;
         }
-
         await restorePendingApprovalUi(approvals);
         setNeedsEagerApprovalCheck(false);
         if (options.notifyOnManualApproval) {
           sendDesktopNotification("Approval needed");
         }
-
         restoredApprovalRecoveryRef.current = {
           batchKey,
           generation: generationAtStart,
@@ -323,7 +320,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       setPendingApprovals,
     ],
   );
-
   // biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the intentional reset trigger; generation ref is read dynamically.
   useEffect(() => {
     void conversationId;
@@ -472,6 +468,8 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
               abortSignal: approvalAbortController.signal,
               onStreamingOutput: updateStreamingOutput,
               toolContextId: approvalToolContextId,
+              toolLoopGuard: toolLoopGuardRef.current,
+              workingDirectory: getCurrentWorkingDirectory(),
             },
           );
         } finally {
@@ -897,6 +895,8 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
               {
                 onStreamingOutput: updateStreamingOutput,
                 toolContextId: approvalToolContextId,
+                toolLoopGuard: toolLoopGuardRef.current,
+                workingDirectory: getCurrentWorkingDirectory(),
               },
             );
 

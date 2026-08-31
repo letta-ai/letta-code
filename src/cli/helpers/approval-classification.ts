@@ -1,3 +1,4 @@
+import type { ToolLoopGuard } from "@/agent/tool-loop-guard";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { checkToolPermission, getToolSchema } from "@/tools/manager";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
@@ -14,6 +15,7 @@ export type ClassifiedApproval<TContext = ApprovalContext | null> = {
   parsedArgs: Record<string, unknown>;
   missingRequiredArgs?: string[];
   denyReason?: string;
+  toolLoopReason?: string;
 };
 
 export type ApprovalClassification<TContext = ApprovalContext | null> = {
@@ -38,6 +40,7 @@ export type ClassifyApprovalsOptions<TContext = ApprovalContext | null> = {
   permissionModeState?: PermissionModeState;
   agentId?: string;
   toolContextId?: string | null;
+  toolLoopGuard?: ToolLoopGuard;
 };
 
 export async function getMissingRequiredArgs(
@@ -197,8 +200,16 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
       ? await opts.getContext(toolName, parsedArgs, opts.workingDirectory)
       : null;
     let decision = permission.decision;
+    const loopPreflight = opts.toolLoopGuard?.preflight({
+      toolName,
+      toolArgs: parsedArgs,
+      workingDirectory: opts.workingDirectory,
+    });
 
     if (opts.alwaysRequiresUserInput?.(toolName) && decision === "allow") {
+      decision = "ask";
+    }
+    if (loopPreflight?.blocked && decision === "allow") {
       decision = "ask";
     }
 
@@ -220,6 +231,9 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
       permission,
       context,
       parsedArgs,
+      ...(loopPreflight?.reason
+        ? { toolLoopReason: loopPreflight.reason }
+        : {}),
     };
 
     if (needsHumanApproval) {

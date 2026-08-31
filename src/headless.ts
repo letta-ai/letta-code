@@ -65,6 +65,7 @@ import type { MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
+import { createToolLoopGuard } from "./agent/tool-loop-guard";
 import {
   type BackendMode,
   type ConversationCreateBody,
@@ -228,7 +229,6 @@ function trackHeadlessBoundaryError(
     context,
   });
 }
-
 function reportAndExitHeadless(
   errorType: string,
   error: unknown,
@@ -240,7 +240,6 @@ function reportAndExitHeadless(
   );
   process.exit(1);
 }
-
 async function reportStartupErrorAndExit(
   errorType: string,
   error: unknown,
@@ -262,10 +261,8 @@ async function reportStartupErrorAndExit(
   } else {
     console.error(`Error: ${message}`);
   }
-
   return await flushAndExit(1);
 }
-
 export type BidirectionalQueuedInput = QueuedTurnInput<
   MessageCreate["content"]
 >;
@@ -277,7 +274,6 @@ export function mergeBidirectionalQueuedInput(
     normalizeUserContent: (content) => content,
   });
 }
-
 function trackTelemetryUserInputFromContent(
   content: MessageCreate["content"],
   modelId: string,
@@ -288,27 +284,23 @@ function trackTelemetryUserInputFromContent(
   }
   telemetry.trackUserInput(inputText, "user", modelId);
 }
-
 function shouldTrackTelemetryForQueuedMessage(
   queuedKind?: QueuedMessage["kind"],
 ): boolean {
   return queuedKind !== "task_notification";
 }
-
 function contentToTaskNotificationText(
   content: MessageCreate["content"],
 ): string {
   if (typeof content === "string") {
     return content;
   }
-
   return content
     .flatMap((part) =>
       part.type === "text" && typeof part.text === "string" ? [part.text] : [],
     )
     .join("");
 }
-
 function toBidirectionalQueuedInput(
   content: MessageCreate["content"],
   queuedKind?: QueuedMessage["kind"],
@@ -319,13 +311,11 @@ function toBidirectionalQueuedInput(
       text: contentToTaskNotificationText(content),
     };
   }
-
   return {
     kind: "user",
     content,
   };
 }
-
 /**
  * Decide what an incoming `control_request: interrupt` should do, given the
  * current turn state. Extracted as a pure function so the policy is unit-
@@ -350,7 +340,6 @@ export function decideInterruptAction(state: {
   if (state.turnStarting) return "latch";
   return "noop";
 }
-
 export const __headlessTestUtils = {
   trackTelemetryUserInputFromContent,
   shouldTrackTelemetryForQueuedMessage,
@@ -368,7 +357,6 @@ function parseReflectionOverrides(
   if (!triggerRaw && !stepCountRaw) {
     return {};
   }
-
   const overrides: ReflectionOverrides = {};
 
   if (triggerRaw !== undefined) {
@@ -383,7 +371,6 @@ function parseReflectionOverrides(
     }
     overrides.trigger = triggerRaw;
   }
-
   if (stepCountRaw !== undefined) {
     try {
       overrides.stepCount = parsePositiveIntFlag({
@@ -2329,6 +2316,7 @@ ${SYSTEM_REMINDER_CLOSE}
   let emptyResponseRetries = 0;
   let conversationBusyRetries = 0;
   let chatgptPlanSwaps = 0;
+  const toolLoopGuard = createToolLoopGuard();
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
 
@@ -2804,6 +2792,8 @@ ${SYSTEM_REMINDER_CLOSE}
             requireArgsForAutoApprove: true,
             missingNameReason: "Tool call incomplete - missing name",
             toolContextId: turnToolContextId ?? undefined,
+            toolLoopGuard,
+            workingDirectory: getCurrentWorkingDirectory(),
           });
 
         const decisions: Decision[] = [
@@ -2817,7 +2807,8 @@ ${SYSTEM_REMINDER_CLOSE}
             return {
               type: "deny" as const,
               approval: ac.approval,
-              reason: "Tool requires approval (headless mode)",
+              reason:
+                ac.toolLoopReason ?? "Tool requires approval (headless mode)",
             };
           }),
           ...autoDenied.map((ac) => ({
@@ -2845,6 +2836,8 @@ ${SYSTEM_REMINDER_CLOSE}
           {
             abortSignal: sigintSignal,
             toolContextId: turnToolContextId ?? undefined,
+            toolLoopGuard,
+            workingDirectory: getCurrentWorkingDirectory(),
           },
         );
 
@@ -4409,6 +4402,7 @@ async function runBidirectionalMode(
           buffers.order.push(userLineId);
         }
         let numTurns = 0;
+        const toolLoopGuard = createToolLoopGuard();
         let lastStopReason: StopReasonType | null = null; // Track for result subtype
         let sawStreamError = false; // Track if we emitted an error during streaming
         let preStreamTransientRetries = 0;
@@ -4729,6 +4723,8 @@ async function runBidirectionalMode(
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
                 toolContextId: turnToolContextId ?? undefined,
+                toolLoopGuard,
+                workingDirectory: getCurrentWorkingDirectory(),
               });
 
             const decisions: Decision[] = [
@@ -4795,7 +4791,11 @@ async function runBidirectionalMode(
             const executedResults = await executeApprovalBatch(
               decisions,
               undefined,
-              { toolContextId: turnToolContextId ?? undefined },
+              {
+                toolContextId: turnToolContextId ?? undefined,
+                toolLoopGuard,
+                workingDirectory: getCurrentWorkingDirectory(),
+              },
             );
 
             emitLocalToolReturns(executedResults, sessionId);

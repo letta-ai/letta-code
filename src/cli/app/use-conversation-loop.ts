@@ -45,6 +45,7 @@ import {
   clearCompletedSubagents,
   hasActiveSubagents,
 } from "@/agent/subagent-state";
+import type { ToolLoopGuard } from "@/agent/tool-loop-guard";
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import {
   type Buffers,
@@ -107,6 +108,7 @@ import { formatPermissionDenial } from "@/permissions/format-denial";
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { analyzeToolApproval, type ToolExecutionResult } from "@/tools/manager";
@@ -159,7 +161,6 @@ function makeExecutionPhaseHook(
     return undefined;
   };
 }
-
 function hasUserMessageInput(
   input: Array<MessageCreate | ApprovalCreate>,
 ): boolean {
@@ -172,7 +173,6 @@ function hasUserMessageInput(
       item.role === "user",
   );
 }
-
 function isTurnInputArray(
   value: unknown,
 ): value is Array<MessageCreate | ApprovalCreate> {
@@ -181,7 +181,6 @@ function isTurnInputArray(
     value.every((item) => typeof item === "object" && item !== null)
   );
 }
-
 type ConversationLoopContext = {
   abortControllerRef: MutableRefObject<AbortController | null>;
   agentIdRef: MutableRefObject<string>;
@@ -266,6 +265,7 @@ type ConversationLoopContext = {
   syncTrajectoryTokenBase: () => void;
   tempModelOverrideRef: MutableRefObject<string | null>;
   toolAbortControllerRef: MutableRefObject<AbortController | null>;
+  toolLoopGuardRef: MutableRefObject<ToolLoopGuard>;
   toolResultsInFlightRef: MutableRefObject<boolean>;
   trajectoryRunTokenStartRef: MutableRefObject<number>;
   trajectorySegmentStartRef: MutableRefObject<number | null>;
@@ -360,6 +360,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     syncTrajectoryTokenBase,
     tempModelOverrideRef,
     toolAbortControllerRef,
+    toolLoopGuardRef,
     toolResultsInFlightRef,
     trajectoryRunTokenStartRef,
     trajectorySegmentStartRef,
@@ -385,21 +386,18 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       ) {
         return false;
       }
-
       const hasUserMessage = currentInput.some(
         (item) => item.type === "message" && item.role === "user",
       );
       if (!hasUserMessage) {
         return false;
       }
-
       const availableModels = await getAvailableModelHandles({
         forceRefresh: true,
       });
       if (availableModels.handles.size > 0) {
         return false;
       }
-
       const currentSettings =
         await settingsManager.getSettingsWithSecureTokens();
       const hasCloudAuth = Boolean(
@@ -407,7 +405,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           currentSettings.refreshToken ||
           currentSettings.env?.LETTA_API_KEY,
       );
-
       setThinkingMessage(getRandomThinkingVerb());
       await sleep(250);
 
@@ -428,12 +425,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         if (abortControllerRef.current?.signal.aborted) {
           break;
         }
-
         const currentLine = buffersRef.current.byId.get(lineId);
         if (!currentLine || currentLine.kind !== "assistant") {
           break;
         }
-
         buffersRef.current.byId.set(lineId, {
           ...currentLine,
           text: currentLine.text + chunk,
@@ -600,6 +595,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
 
       // Reset retry counters for new conversation turns (fresh budget per user message)
       if (!allowReentry) {
+        toolLoopGuardRef.current.reset();
         llmApiErrorRetriesRef.current = 0;
         emptyResponseRetriesRef.current = 0;
         conversationBusyRetriesRef.current = 0;
@@ -1826,6 +1822,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 missingNameReason:
                   "Tool call incomplete - missing name or arguments",
                 toolContextId: approvalToolContextIdRef.current,
+                toolLoopGuard: toolLoopGuardRef.current,
+                workingDirectory: getCurrentWorkingDirectory(),
               });
 
             // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)
@@ -1951,6 +1949,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                         abortSignal: autoAllowedAbortController.signal,
                         onStreamingOutput: updateStreamingOutput,
                         toolContextId: approvalToolContextId,
+                        toolLoopGuard: toolLoopGuardRef.current,
+                        workingDirectory: getCurrentWorkingDirectory(),
                       },
                     )
                   : [];

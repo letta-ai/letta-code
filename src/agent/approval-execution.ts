@@ -7,6 +7,7 @@ import type {
   ToolReturn,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
+import type { ToolLoopGuard } from "@/agent/tool-loop-guard";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -383,6 +384,7 @@ export async function executeApprovalBatch(
     workingDirectory?: string;
     parentScope?: { agentId: string; conversationId: string };
     onFileWrite?: (filePath: string, content: string) => void;
+    toolLoopGuard?: ToolLoopGuard;
   },
 ): Promise<ApprovalResult[]> {
   const toolContextId =
@@ -471,8 +473,51 @@ export async function executeApprovalBatch(
     }),
   ]);
 
-  // Filter out nulls (shouldn't happen, but TypeScript needs this)
-  return results.filter((r): r is ApprovalResult => r !== null);
+  const orderedResults = results.filter(
+    (result): result is ApprovalResult => result !== null,
+  );
+  if (!options?.toolLoopGuard) {
+    return orderedResults;
+  }
+
+  const workingDirectory =
+    options.workingDirectory ?? getCurrentWorkingDirectory();
+  for (let index = 0; index < decisions.length; index += 1) {
+    const decision = decisions[index];
+    const result = results[index];
+    if (!decision || decision.type !== "approve" || result?.type !== "tool") {
+      continue;
+    }
+
+    const observation = options.toolLoopGuard.observeResult(
+      {
+        toolName: decision.approval.toolName,
+        toolArgs: decision.approval.toolArgs,
+        workingDirectory,
+      },
+      {
+        status: result.status,
+        toolReturn: result.tool_return,
+      },
+    );
+    if (!observation.warning) {
+      continue;
+    }
+
+    result.tool_return = observation.annotatedToolReturn;
+    onChunk?.({
+      message_type: "tool_return_message",
+      id: "dummy",
+      date: new Date().toISOString(),
+      tool_call_id: result.tool_call_id,
+      tool_return: getDisplayableToolReturn(result.tool_return),
+      status: result.status,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    });
+  }
+
+  return orderedResults;
 }
 
 /**
@@ -498,6 +543,7 @@ export async function executeAutoAllowedTools(
     toolContextId?: string;
     workingDirectory?: string;
     onFileWrite?: (filePath: string, content: string) => void;
+    toolLoopGuard?: ToolLoopGuard;
   },
 ): Promise<AutoAllowedResult[]> {
   const decisions: ApprovalDecision[] = autoAllowed.map((ac) => ({

@@ -44,6 +44,7 @@ import {
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
 } from "@/agent/subagent-state";
+import { createToolLoopGuard } from "@/agent/tool-loop-guard";
 import { getBackend, isLocalBackendEnabled } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
@@ -291,7 +292,6 @@ function buildStartupCommandHints(options: {
           "→ **/init**      initialize your agent's memory",
           "→ **/remember**  teach your agent",
         ];
-
   const onboardingHints: string[] = [];
 
   if (isLocalBackend && !hasAvailableLocalModels) {
@@ -300,18 +300,15 @@ function buildStartupCommandHints(options: {
       "→ **/connect**   configure your llm api keys",
     );
   }
-
   if (!hasMessages) {
     onboardingHints.push(
       "→ **/rename**    name your agent",
       "→ **/init**      initialize your agent's memory",
     );
   }
-
   if (!hasCloudCredentials) {
     onboardingHints.push("→ **/login**     sign in with Letta");
   }
-
   const dedupedHints: string[] = [];
   const seenHints = new Set<string>();
 
@@ -592,6 +589,7 @@ export function App({
       reason: string;
     }>
   >([]);
+  const toolLoopGuardRef = useRef(createToolLoopGuard());
   const executingToolCallIdsRef = useRef<string[]>([]);
   const interruptQueuedRef = useRef(false);
   // Prevents interrupt handler from queueing results while approvals are in-flight.
@@ -3835,6 +3833,7 @@ export function App({
     syncTrajectoryTokenBase,
     tempModelOverrideRef,
     toolAbortControllerRef,
+    toolLoopGuardRef,
     toolResultsInFlightRef,
     trajectoryRunTokenStartRef,
     trajectorySegmentStartRef,
@@ -3904,6 +3903,7 @@ export function App({
     syncTrajectoryElapsedBase,
     tempModelOverrideRef,
     toolAbortControllerRef,
+    toolLoopGuardRef,
     toolResultsInFlightRef,
     updateStreamingOutput,
     userCancelledRef,
