@@ -519,6 +519,39 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(queued[0]?.content).not.toContain("Loaded from .skills.");
   });
 
+  test("loads a project skill instead of a bundled skill with the same name", async () => {
+    const skillName = "browser-use";
+    const projectRoot = join(tempRoot, "project-root");
+    const projectSkillDir = join(projectRoot, ".agents", "skills", skillName);
+
+    currentSkillsDirectory = join(projectRoot, ".skills");
+    mkdirSync(projectSkillDir, { recursive: true });
+    writeFileSync(
+      join(projectSkillDir, "SKILL.md"),
+      [
+        "---",
+        "name: browser-use",
+        "description: project browser controller",
+        "---",
+        "",
+        "Loaded from the project override.",
+      ].join("\n"),
+      "utf8",
+    );
+    process.env.USER_CWD = projectRoot;
+
+    const result = await runScopedSkill({
+      skill: skillName,
+      toolCallId: "tc-bundled-override",
+    });
+
+    expect(result.message).toBe(`Launching skill: ${skillName}`);
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain("Loaded from the project override.");
+    expect(queued[0]?.content).not.toContain("# Browser Use\n");
+  });
+
   test("renders skill directory substitutions", () => {
     const rendered = renderSkillContent(
       "deploy",
