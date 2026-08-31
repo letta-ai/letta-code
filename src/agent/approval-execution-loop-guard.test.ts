@@ -50,7 +50,7 @@ describe("executeApprovalBatch tool loop guard", () => {
       );
     }
 
-    expect(chunks).toHaveLength(3);
+    expect(chunks).toHaveLength(4);
     expect(chunks.at(-1)).toContain(
       "next identical call will be stopped for explicit user approval",
     );

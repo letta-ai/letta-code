@@ -6,6 +6,14 @@ import type {
 
 const WARNING_THRESHOLD = 2;
 const BLOCK_THRESHOLD = 4;
+const PRESENTATION_ONLY_DESCRIPTION_TOOLS = new Set([
+  "Bash",
+  "exec_command",
+  "run_shell_command",
+  "RunShellCommand",
+  "shell_command",
+  "ShellCommand",
+]);
 
 export type ToolLoopCall = {
   toolName: string;
@@ -108,8 +116,11 @@ export function hashToolLoopValue(value: unknown): string {
     .digest("hex");
 }
 
-/** Parse JSON tool arguments and remove only the top-level display description. */
-export function normalizeToolLoopArgs(toolArgs: unknown): unknown {
+/** Parse JSON tool arguments and remove known presentation-only fields. */
+export function normalizeToolLoopArgs(
+  toolName: string,
+  toolArgs: unknown,
+): unknown {
   let parsedArgs = toolArgs;
   if (typeof toolArgs === "string") {
     const trimmed = toolArgs.trim();
@@ -133,16 +144,19 @@ export function normalizeToolLoopArgs(toolArgs: unknown): unknown {
     return parsedArgs;
   }
 
-  const { description: _description, ...semanticArgs } = parsedArgs as Record<
-    string,
-    unknown
-  >;
-  return semanticArgs;
+  if (PRESENTATION_ONLY_DESCRIPTION_TOOLS.has(toolName)) {
+    const { description: _description, ...semanticArgs } = parsedArgs as Record<
+      string,
+      unknown
+    >;
+    return semanticArgs;
+  }
+  return parsedArgs;
 }
 
 export function canonicalizeToolCall(call: ToolLoopCall): string {
   return canonicalizeToolLoopValue({
-    args: normalizeToolLoopArgs(call.toolArgs),
+    args: normalizeToolLoopArgs(call.toolName, call.toolArgs),
     toolName: call.toolName,
     workingDirectory: call.workingDirectory,
   });

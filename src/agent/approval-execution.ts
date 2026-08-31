@@ -450,7 +450,11 @@ export async function executeApprovalBatch(
   const execute = async (i: number) => {
     const decision = decisions[i];
     if (decision) {
-      results[i] = await executeSingleDecision(decision, onChunk, {
+      const resultChunk =
+        options?.toolLoopGuard && decision.type === "approve"
+          ? undefined
+          : onChunk;
+      results[i] = await executeSingleDecision(decision, resultChunk, {
         ...options,
         toolContextId,
       });
@@ -500,10 +504,6 @@ export async function executeApprovalBatch(
         toolReturn: result.tool_return,
       },
     );
-    if (!observation.warning) {
-      continue;
-    }
-
     result.tool_return = observation.annotatedToolReturn;
     onChunk?.({
       message_type: "tool_return_message",

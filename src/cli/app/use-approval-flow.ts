@@ -323,12 +323,13 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the intentional reset trigger; generation ref is read dynamically.
   useEffect(() => {
     void conversationId;
+    toolLoopGuardRef.current.reset();
     restoredApprovalRecoveryRef.current = {
       batchKey: null,
       generation: conversationGenerationRef.current,
       status: "idle",
     };
-  }, [conversationId, restoredApprovalRecoveryRef]);
+  }, [conversationId, restoredApprovalRecoveryRef, toolLoopGuardRef]);
 
   // Restore pending approval from startup when ready.
   useEffect(() => {
@@ -372,7 +373,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           setAutoDeniedApprovals([]);
           return;
         }
-
         // Snapshot current state before clearing dialog
         const approvalResultsSnapshot = [...approvalResults];
         const autoHandledSnapshot = [...autoHandledResults];

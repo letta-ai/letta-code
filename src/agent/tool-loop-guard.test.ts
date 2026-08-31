@@ -11,10 +11,10 @@ import {
 } from "@/agent/tool-loop-guard";
 
 const call: ToolLoopCall = {
-  toolName: "Read",
+  toolName: "Bash",
   toolArgs: JSON.stringify({
-    file_path: "src/index.ts",
-    description: "Read the entry point",
+    command: "git status",
+    description: "Show working tree status",
   }),
   workingDirectory: "/workspace/project",
 };
@@ -27,10 +27,10 @@ const success: ToolLoopResult = {
 describe("tool call canonicalization", () => {
   test("parses args, sorts object keys, and ignores top-level description", () => {
     const reordered: ToolLoopCall = {
-      toolName: "Read",
+      toolName: "Bash",
       toolArgs: {
         description: "A different UI label",
-        file_path: "src/index.ts",
+        command: "git status",
       },
       workingDirectory: "/workspace/project",
     };
@@ -65,6 +65,20 @@ describe("tool call canonicalization", () => {
     );
   });
 
+  test("keeps description when it changes tool behavior", () => {
+    expect(
+      fingerprintToolCall({
+        toolName: "Memory",
+        toolArgs: { command: "update_description", description: "First" },
+      }),
+    ).not.toBe(
+      fingerprintToolCall({
+        toolName: "Memory",
+        toolArgs: { command: "update_description", description: "Second" },
+      }),
+    );
+  });
+
   test("includes tool name and working directory", () => {
     expect(fingerprintToolCall(call)).not.toBe(
       fingerprintToolCall({ ...call, toolName: "Write" }),
@@ -75,10 +89,10 @@ describe("tool call canonicalization", () => {
   });
 
   test("keeps malformed string args distinct and strips no nested fields", () => {
-    expect(normalizeToolLoopArgs("{not-json-a")).toBe("{not-json-a");
-    expect(normalizeToolLoopArgs("{not-json-b")).toBe("{not-json-b");
+    expect(normalizeToolLoopArgs("Bash", "{not-json-a")).toBe("{not-json-a");
+    expect(normalizeToolLoopArgs("Bash", "{not-json-b")).toBe("{not-json-b");
     expect(
-      normalizeToolLoopArgs({
+      normalizeToolLoopArgs("Bash", {
         description: "display only",
         nested: { description: "keep me" },
       }),
@@ -142,7 +156,10 @@ describe("ToolLoopGuard", () => {
     }
     expect(guard.preflight(call).blocked).toBe(true);
 
-    const differentCall = { ...call, toolArgs: { file_path: "README.md" } };
+    const differentCall = {
+      ...call,
+      toolArgs: { command: "git status --short" },
+    };
     expect(guard.preflight(differentCall).allowed).toBe(true);
     expect(guard.snapshot()).toMatchObject({
       consecutiveIdenticalPairs: 0,
