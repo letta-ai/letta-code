@@ -181,7 +181,7 @@ USAGE
   letta environments ... List available remote environments (JSON-only)
   letta teleport ...    Move the current conversation between environments
   letta messages ...    Messages subcommands (JSON-only)
-  letta mcp ...         Manage and call MCP servers available to an agent
+  letta mcp ...         List, search, and call MCP servers available to an agent
   letta cloud-mcp ...   Legacy server-side MCP commands (JSON-only)
   letta mods ...        List and manage local mods
   letta sandbox ...     Transfer files to or from the current Cloud sandbox
@@ -216,7 +216,7 @@ SUBCOMMANDS
   letta mods enable <package-spec>
   letta mods disable <package-spec>
   letta mods remove <package-spec>
-  letta mcp list|get|add|remove|login|logout|tools|call ... [--agent <id>]
+  letta mcp list|get|tools|search|call ... [--agent <id>]
   letta server [--env-name <name> | --listen [url]] [options]
   letta connect <provider> [options]
   letta install <thing> [--agent <id> | -n <name>]

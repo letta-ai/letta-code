@@ -1,38 +1,31 @@
 import { describe, expect, test } from "bun:test";
-import type { UnifiedMcpClient } from "@/backend/api/unified-mcp";
-import { runMcpSearch } from "./mcp-search";
-
-function searchClient(
-  calls: Array<{ path: string; body: unknown }>,
-): Pick<UnifiedMcpClient, "post"> {
-  return {
-    post: async (path, options) => {
-      calls.push({ path, body: options?.body });
-      return [
-        {
-          tool: {
-            id: "tool-1",
-            json_schema: {
-              name: "mcp__betterstack__render_chart",
-              description: "Render a chart",
-              parameters: { type: "object", properties: {} },
-            },
-          },
-          combined_score: 0.5,
-        },
-      ];
-    },
-  };
-}
+import type { McpToolDefinition } from "@/mcp-client";
+import {
+  type McpSearchRequest,
+  mergeMcpSearchResults,
+  runMcpSearch,
+  searchLocalMcpTools,
+} from "./mcp-search";
 
 describe("runMcpSearch", () => {
   test("uses hybrid search with a default limit of five", async () => {
-    const calls: Array<{ path: string; body: unknown }> = [];
+    const requests: McpSearchRequest[] = [];
     const stdout: string[] = [];
     await expect(
       runMcpSearch({
-        getClient: async () => searchClient(calls),
-        agentId: "agent-1",
+        searchTools: async (request) => {
+          requests.push(request);
+          return [
+            {
+              tool: {
+                name: "mcp__betterstack__render_chart",
+                description: "Render a chart",
+                parameters: { type: "object", properties: {} },
+              },
+              score: 0.5,
+            },
+          ];
+        },
         query: " charts ",
         mode: undefined,
         limit: undefined,
@@ -40,11 +33,8 @@ describe("runMcpSearch", () => {
       }),
     ).resolves.toBe(0);
 
-    expect(calls).toEqual([
-      {
-        path: "/v1/agents/agent-1/mcp-servers/tools/search",
-        body: { query: "charts", search_mode: "hybrid", limit: 5 },
-      },
+    expect(requests).toEqual([
+      { query: "charts", searchMode: "hybrid", limit: 5 },
     ]);
     expect(JSON.parse(stdout[0] ?? "[]")).toEqual([
       {
@@ -60,31 +50,29 @@ describe("runMcpSearch", () => {
   });
 
   test("passes explicit search mode and limit", async () => {
-    const calls: Array<{ path: string; body: unknown }> = [];
+    const requests: McpSearchRequest[] = [];
     await runMcpSearch({
-      getClient: async () => searchClient(calls),
-      agentId: "agent-1",
+      searchTools: async (request) => {
+        requests.push(request);
+        return [];
+      },
       query: "charts",
       mode: "fts",
       limit: "2",
       stdout: () => {},
     });
-    expect(calls[0]?.body).toEqual({
-      query: "charts",
-      search_mode: "fts",
-      limit: 2,
-    });
+    expect(requests).toEqual([
+      { query: "charts", searchMode: "fts", limit: 2 },
+    ]);
   });
 
-  test("rejects missing queries and invalid options", async () => {
-    const client = searchClient([]);
-    let clientRequests = 0;
+  test("rejects missing queries and invalid options before searching", async () => {
+    let searches = 0;
     const base = {
-      getClient: async () => {
-        clientRequests++;
-        return client;
+      searchTools: async () => {
+        searches++;
+        return [];
       },
-      agentId: "agent-1",
       query: "charts",
       mode: undefined,
       limit: undefined,
@@ -99,6 +87,115 @@ describe("runMcpSearch", () => {
     await expect(runMcpSearch({ ...base, limit: "101" })).rejects.toMatchObject(
       { code: "invalid_arguments" },
     );
-    expect(clientRequests).toBe(0);
+    expect(searches).toBe(0);
+  });
+});
+
+describe("merged MCP search results", () => {
+  test("combines local and server results by score with a stable limit", () => {
+    expect(
+      mergeMcpSearchResults(
+        [
+          { tool: { name: "mcp__server__charts" }, score: 0.008 },
+          { tool: { name: "mcp__server__other" }, score: 0.007 },
+        ],
+        [
+          { tool: { name: "mcp__local__exact" }, score: 1 },
+          { tool: { name: "mcp__local__schema-only" }, score: 0.25 },
+        ],
+        4,
+      ),
+    ).toEqual([
+      { tool: { name: "mcp__local__exact" }, score: 1 },
+      { tool: { name: "mcp__server__charts" }, score: 1 },
+      { tool: { name: "mcp__server__other" }, score: 0.5 },
+      { tool: { name: "mcp__local__schema-only" }, score: 0.125 },
+    ]);
+  });
+});
+
+describe("local MCP tool search", () => {
+  const tools: McpToolDefinition[] = [
+    {
+      name: "mcp__everything__echo",
+      title: "Echo Tool",
+      description: "Echoes back the input message",
+      inputSchema: {
+        type: "object",
+        properties: { message: { type: "string" } },
+      },
+    },
+    {
+      name: "mcp__everything__get_tiny_image",
+      description: "Returns a tiny test image",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "mcp__everything__print_env",
+      description: "Returns an environment value",
+      inputSchema: {
+        type: "object",
+        properties: { variableName: { type: "string" } },
+      },
+    },
+  ];
+
+  test("ranks local names and descriptions without an API index", () => {
+    expect(
+      searchLocalMcpTools({
+        tools,
+        query: "echo messages",
+        searchMode: "hybrid",
+        limit: 5,
+      }),
+    ).toEqual([
+      {
+        tool: {
+          name: "mcp__everything__echo",
+          title: "Echo Tool",
+          description: "Echoes back the input message",
+          parameters: {
+            type: "object",
+            properties: { message: { type: "string" } },
+          },
+        },
+        score: 0.75,
+      },
+    ]);
+  });
+
+  test("searches input schema fields, enforces limits, and has stable ties", () => {
+    expect(
+      searchLocalMcpTools({
+        tools,
+        query: "string",
+        searchMode: "fts",
+        limit: 1,
+      }),
+    ).toEqual([
+      {
+        tool: {
+          name: "mcp__everything__echo",
+          title: "Echo Tool",
+          description: "Echoes back the input message",
+          parameters: {
+            type: "object",
+            properties: { message: { type: "string" } },
+          },
+        },
+        score: 0.25,
+      },
+    ]);
+  });
+
+  test("rejects vector mode because local agents have no MCP embedding index", () => {
+    expect(() =>
+      searchLocalMcpTools({
+        tools,
+        query: "echo",
+        searchMode: "vector",
+        limit: 5,
+      }),
+    ).toThrow("Vector MCP tool search is unavailable with the local backend");
   });
 });

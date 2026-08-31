@@ -26,6 +26,36 @@ describe("MCP CLI tool names", () => {
     expect([...aliases.values()]).toEqual(["foo", "foo_2", "foo_3"]);
   });
 
+  test("keeps the tool-name separator out of server aliases", () => {
+    expect(
+      assignMcpServerAliases([
+        { key: "server:1", name: "foo bar", kind: "server" },
+        { key: "client:1", name: "foo__bar", kind: "client" },
+      ]),
+    ).toEqual(
+      new Map([
+        ["server:1", "foo_bar"],
+        ["client:1", "foo_bar_2"],
+      ]),
+    );
+  });
+
+  test("assigns same-kind collision suffixes by stable key", () => {
+    const targets = [
+      { key: "server:b", name: "foo_bar", kind: "server" as const },
+      { key: "server:a", name: "foo bar", kind: "server" as const },
+    ];
+    expect(assignMcpServerAliases(targets)).toEqual(
+      assignMcpServerAliases([...targets].reverse()),
+    );
+    expect(assignMcpServerAliases(targets)).toEqual(
+      new Map([
+        ["server:a", "foo_bar"],
+        ["server:b", "foo_bar_2"],
+      ]),
+    );
+  });
+
   test("rewrites server-generated names with the assigned alias", () => {
     expect(
       formatServerMcpToolName(

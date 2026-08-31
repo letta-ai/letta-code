@@ -45,12 +45,6 @@ export function printMcpUsage(stdout: (message: string) => void): void {
 Usage:
   letta mcp list [--agent <id>]
   letta mcp get <server> [--agent <id>]
-  letta mcp add <server> [--agent <id>]
-  letta mcp add <name> --transport stdio [--cwd <path>] [--env KEY=VALUE] -- <command> [args...]
-  letta mcp add <name> --transport <http|sse> --url <url> [--header "Name: value"] [--auth-env <env>]
-  letta mcp remove <server> [--agent <id>]
-  letta mcp login <server> [--force] [--agent <id>]
-  letta mcp logout <server> [--agent <id>]
   letta mcp tools [server] [--agent <id>]
   letta mcp search <query> [--mode <hybrid|vector|fts>] [--limit <n>] [--agent <id>]
   letta mcp call <tool-name> [--args '<json>' | --args-file <path|->] [--agent <id>]
@@ -58,27 +52,15 @@ Usage:
 Commands:
   list      List MCP servers available to the agent
   get       Print one server's redacted connection configuration
-  add       Make an existing server available, or configure a new connection
-  remove    Make a server unavailable to the agent
-  login     Authenticate an OAuth-protected MCP server
-  logout    Remove saved MCP OAuth credentials
   tools     Print complete MCP tool schemas; names are accepted by call
-  search    Search tools from MCP servers connected to the agent
+  search    Search tools available to the agent
   call      Call one exact tool name and print an MCP CallToolResult
 
 Options:
   --agent <id>       Agent ID. Defaults to LETTA_AGENT_ID or AGENT_ID
   --agent-id <id>    Alias for --agent
-  --transport <type> stdio, http, streamable_http, or sse
-  --url <url>        HTTP/SSE MCP endpoint
-  --cwd <path>       Working directory for a stdio server
-  --env KEY=VALUE    Repeatable stdio environment variable
-  --header "K: V"    Repeatable HTTP/SSE header
-  --auth-env <name>  Build an Authorization bearer header from an environment variable
-  --no-verify        Save a new connection without calling tools/list first
-  --force            Clear saved OAuth state before login
-  --mode <mode>       Search mode: hybrid (default), vector, or fts
-  --limit <n>         Search result limit from 1 to 100 (default: 5)
+  --mode <mode>      Search mode: hybrid (default), vector, or fts
+  --limit <n>        Search result limit from 1 to 100 (default: 5)
   --args <json>      JSON object passed to a tool
   --args-file <path> Read tool arguments from a file; use - for stdin
   -h, --help         Show this help

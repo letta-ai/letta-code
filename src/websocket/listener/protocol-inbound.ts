@@ -40,7 +40,6 @@ import type {
   ChatGPTUsageReadCommand,
   CheckoutBranchCommand,
   ClientToolsetConfig,
-  ConnectProviderCommand,
   ConversationCompactCommand,
   ConversationCreateCommand,
   ConversationListCommand,
@@ -122,6 +121,10 @@ import {
   isGetCwdMapCommand,
   isSetBootWorkingDirectoryCommand,
 } from "./cwd-protocol-inbound";
+
+export { isConnectProviderCommand } from "./connect-provider-protocol-inbound";
+
+import { isConnectProviderCommand } from "./connect-provider-protocol-inbound";
 import {
   isExternalToolCallResponseCommand,
   isRuntimeExternalToolsUpdateCommand,
@@ -136,7 +139,6 @@ import {
   isObjectRecord,
   isRuntimeScope,
   isStringArray,
-  isStringRecord,
 } from "./protocol-validation";
 import {
   isRuntimeStartClientInfo,
@@ -931,28 +933,6 @@ export function isListConnectProvidersCommand(
     c.type === "list_connect_providers" &&
     typeof c.request_id === "string" &&
     c.target === "local"
-  );
-}
-
-export function isConnectProviderCommand(
-  value: unknown,
-): value is ConnectProviderCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    target?: unknown;
-    provider_id?: unknown;
-    auth_method_id?: unknown;
-    fields?: unknown;
-  };
-  return (
-    c.type === "connect_provider" &&
-    typeof c.request_id === "string" &&
-    c.target === "local" &&
-    typeof c.provider_id === "string" &&
-    (c.auth_method_id === undefined || typeof c.auth_method_id === "string") &&
-    isStringRecord(c.fields)
   );
 }
 

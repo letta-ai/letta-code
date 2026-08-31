@@ -22,12 +22,19 @@ export function assignMcpServerAliases(
 ): Map<string, string> {
   const aliases = new Map<string, string>();
   const used = new Set<string>();
+  const byStableKey = (
+    left: McpServerNamingTarget,
+    right: McpServerNamingTarget,
+  ) => left.key.localeCompare(right.key);
   const ordered = [
-    ...targets.filter((target) => target.kind === "server"),
-    ...targets.filter((target) => target.kind === "client"),
+    ...targets.filter((target) => target.kind === "server").sort(byStableKey),
+    ...targets.filter((target) => target.kind === "client").sort(byStableKey),
   ];
   for (const target of ordered) {
-    aliases.set(target.key, uniqueMcpName(normalizeMcpName(target.name), used));
+    aliases.set(
+      target.key,
+      uniqueMcpName(normalizeMcpName(target.name).replace(/_{2,}/g, "_"), used),
+    );
   }
   return aliases;
 }
