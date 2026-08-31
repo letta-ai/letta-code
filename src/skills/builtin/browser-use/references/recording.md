@@ -1,21 +1,15 @@
-# Recording CDP video
+# Recording video with Page.startScreencast
 
-Use `Page.startScreencast` only for a Chromium browser controlled through CDP.
-Prefer the environment's existing screen recorder when the task needs the full
-browser chrome, OS cursor, or non-Chromium output.
-
-Screencast frames arrive when the page paints rather than at a constant frame
-rate. Acknowledge every frame immediately:
+Screencast frames arrive when Chrome paints, not at a constant frame rate.
+Acknowledge every frame immediately or Chrome stops sending them:
 
 ```ts
 let latestFrame: Buffer | undefined;
 
-function handleEvent(message: any) {
-  if (message.method !== "Page.screencastFrame") return;
-  latestFrame = Buffer.from(message.params.data, "base64");
-  void send("Page.screencastFrameAck", {
-    sessionId: message.params.sessionId,
-  });
+function handleEvent(msg: any) {
+  if (msg.method !== "Page.screencastFrame") return;
+  latestFrame = Buffer.from(msg.params.data, "base64");
+  void send("Page.screencastFrameAck", { sessionId: msg.params.sessionId });
 }
 
 await send("Page.startScreencast", {
@@ -27,20 +21,17 @@ await send("Page.startScreencast", {
 });
 ```
 
-Sample the latest frame on a fixed timer, then encode the numbered files at the
-same frame rate:
+To produce a standard constant-frame-rate video, sample `latestFrame` on a
+fixed timer into numbered JPEGs while the flow runs, then encode:
 
 ```ts
-let frameNumber = 0;
+let frameNo = 0;
 const sampler = setInterval(() => {
   if (latestFrame) {
-    const name = `frames/frame-${String(frameNumber++).padStart(6, "0")}.jpg`;
-    void Bun.write(name, latestFrame);
+    void Bun.write(`frames/frame-${String(frameNo++).padStart(6, "0")}.jpg`, latestFrame);
   }
-}, 100);
-
-// Perform the browser flow.
-
+}, 100); // 10 fps
+// ... perform the flow ...
 clearInterval(sampler);
 await send("Page.stopScreencast");
 ```
@@ -50,11 +41,20 @@ ffmpeg -y -framerate 10 -i frames/frame-%06d.jpg \
   -c:v libx264 -crf 18 -pix_fmt yuv420p -movflags +faststart demo.mp4
 ```
 
-- Seed `latestFrame` with `Page.captureScreenshot` so an idle opening scene is
-  not blank.
+- Seed `latestFrame` with a `Page.captureScreenshot` before starting so an
+  idle opening scene is not blank.
 - Stop the screencast in a `finally` block.
-- Fix viewport size and device scale factor for deterministic output.
-- Add a synthetic cursor only when the recording needs to show pointer motion;
-  CDP screencast frames do not include the OS pointer.
-- Verify the video with `ffprobe` and inspect representative extracted frames.
-- Never expose credentials or sensitive fields in the recording.
+- Verify with `ffprobe`, extract a few representative frames with `ffmpeg`,
+  and inspect them before reporting success.
+
+## Demo polish
+
+- Fix the viewport size and `--force-device-scale-factor=1`.
+- Use a clean profile and reset app state before the final take.
+- Rehearse the entire flow once before recording.
+- Add a visible synthetic cursor (an absolutely-positioned element moved via
+  `Runtime.evaluate`) — CDP frames do not include the OS pointer.
+- Pause briefly after meaningful actions so viewers can follow.
+- Never expose credentials: use a dedicated non-sensitive demo token and mask
+  password fields.
+- End on the completed result for several seconds.

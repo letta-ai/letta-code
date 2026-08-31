@@ -24,7 +24,7 @@ test("scopes the memory filesystem skill to repository operations", async () => 
   );
 });
 
-test("bundles a portable browser-use fallback", async () => {
+test("bundles the cloud browser-use guidance with a local fallback", async () => {
   const skills = await getBundledSkills();
   const skill = skills.find((candidate) => candidate.id === "browser-use");
   if (!skill) {
@@ -33,13 +33,18 @@ test("bundles a portable browser-use fallback", async () => {
 
   const content = readFileSync(skill.path, "utf8");
 
-  expect(skill.description).toContain("Control a rendered web browser");
-  expect(content).toContain("### Chromium family");
-  expect(content).toContain("### Firefox");
-  expect(content).toContain("### Safari and WebKit");
-  expect(content).toContain("environment-specific skills with this same name");
-  expect(content).not.toContain("/root/.letta/cloud-skills");
-  expect(content).not.toContain("start-letta-desktop");
+  expect(skill.description).toContain("Control a real browser");
+  expect(content).toContain(
+    "## Managed cloud sandbox default: visible browser",
+  );
+  expect(content).toContain(
+    "/root/.letta/cloud-skills/browser-use/scripts/open-visible-browser.sh",
+  );
+  expect(content).toContain("Install Chrome on the current computer");
+  expect(content).toContain(
+    "Teleport the conversation back to its Cloud sandbox",
+  );
+  expect(content).not.toContain("@puppeteer/browsers install");
 });
 
 test("keeps memory repository repair guidance aligned with the harness", async () => {
