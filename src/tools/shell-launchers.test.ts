@@ -11,6 +11,19 @@ import {
   selectAvailableShellLauncher,
 } from "@/tools/impl/shell-launchers";
 
+function quotePowerShellLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+// Use the built-in Windows native application instead of assuming a separate
+// `node` executable is installed alongside the Bun test runner.
+const WINDOWS_COMMAND_INTERPRETER =
+  process.env.ComSpec ?? process.env.COMSPEC ?? "cmd.exe";
+
+function nativeExitCommand(exitCode: number): string {
+  return `& ${quotePowerShellLiteral(WINDOWS_COMMAND_INTERPRETER)} /d /s /c ${quotePowerShellLiteral(`exit ${exitCode}`)}`;
+}
+
 describe("Shell Launchers", () => {
   test("builds launchers for a command", () => {
     const launchers = buildShellLaunchers("echo hello");
@@ -181,9 +194,9 @@ describe("Shell Launchers", () => {
       });
 
       test("preserves native and explicit hook exit codes", () => {
-        expect(runPowerShellHook('node -e "process.exit(0)"')).toBe(0);
-        expect(runPowerShellHook('node -e "process.exit(1)"')).toBe(1);
-        expect(runPowerShellHook('node -e "process.exit(2)"')).toBe(2);
+        expect(runPowerShellHook(nativeExitCommand(0))).toBe(0);
+        expect(runPowerShellHook(nativeExitCommand(1))).toBe(1);
+        expect(runPowerShellHook(nativeExitCommand(2))).toBe(2);
         expect(runPowerShellHook("exit 7")).toBe(7);
       });
 
@@ -194,7 +207,7 @@ describe("Shell Launchers", () => {
           ),
         ).toBe(1);
         expect(
-          runPowerShellHook('node -e "process.exit(2)"; Write-Output handled'),
+          runPowerShellHook(`${nativeExitCommand(2)}; Write-Output handled`),
         ).toBe(0);
       });
 
@@ -202,7 +215,7 @@ describe("Shell Launchers", () => {
         for (const errorAction of ["SilentlyContinue", "Ignore"]) {
           expect(
             runPowerShellHook(
-              `node -e "process.exit(2)"; Get-Item -LiteralPath 'Z:\\missing-letta-hook-path' -ErrorAction ${errorAction}`,
+              `${nativeExitCommand(2)}; Get-Item -LiteralPath 'Z:\\missing-letta-hook-path' -ErrorAction ${errorAction}`,
             ),
           ).toBe(1);
         }
@@ -211,7 +224,7 @@ describe("Shell Launchers", () => {
       test("preserves a final native block after an earlier cmdlet failure", () => {
         expect(
           runPowerShellHook(
-            "Get-Item -LiteralPath 'Z:\\\\missing-letta-hook-path' -ErrorAction SilentlyContinue; node -e \"process.exit(2)\"",
+            `Get-Item -LiteralPath 'Z:\\\\missing-letta-hook-path' -ErrorAction SilentlyContinue; ${nativeExitCommand(2)}`,
           ),
         ).toBe(2);
       });
@@ -219,7 +232,7 @@ describe("Shell Launchers", () => {
       test("preserves native blocks when native errors populate PowerShell error state", () => {
         expect(
           runPowerShellHook(
-            '$PSNativeCommandUseErrorActionPreference = $true; node -e "process.exit(2)"',
+            `$PSNativeCommandUseErrorActionPreference = $true; ${nativeExitCommand(2)}`,
           ),
         ).toBe(2);
       });
@@ -227,14 +240,14 @@ describe("Shell Launchers", () => {
       test("does not reuse a native error after an ignored final cmdlet failure", () => {
         expect(
           runPowerShellHook(
-            "$PSNativeCommandUseErrorActionPreference = $true; node -e \"process.exit(2)\"; Get-Item -LiteralPath 'Z:\\missing-letta-hook-path' -ErrorAction Ignore",
+            `$PSNativeCommandUseErrorActionPreference = $true; ${nativeExitCommand(2)}; Get-Item -LiteralPath 'Z:\\missing-letta-hook-path' -ErrorAction Ignore`,
           ),
         ).toBe(1);
       });
 
       test("does not reuse a native exit after a language failure", () => {
         expect(
-          runPowerShellHook('node -e "process.exit(2)"; $null.NoSuchMethod()'),
+          runPowerShellHook(`${nativeExitCommand(2)}; $null.NoSuchMethod()`),
         ).toBe(1);
       });
 
@@ -256,12 +269,10 @@ describe("Shell Launchers", () => {
       test("preserves the contract on Windows PowerShell 5.1", () => {
         const executable =
           "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
-        expect(runPowerShellHook('node -e "process.exit(2)"', executable)).toBe(
-          2,
-        );
+        expect(runPowerShellHook(nativeExitCommand(2), executable)).toBe(2);
         expect(
           runPowerShellHook(
-            'node -e "process.exit(2)"; $null.NoSuchMethod()',
+            `${nativeExitCommand(2)}; $null.NoSuchMethod()`,
             executable,
           ),
         ).toBe(1);
@@ -270,7 +281,7 @@ describe("Shell Launchers", () => {
       test("preserves native blocks invoked through a PowerShell alias", () => {
         expect(
           runPowerShellHook(
-            'Set-Alias letta-test-node node; letta-test-node -e "process.exit(2)"',
+            `Set-Alias letta-test-native ${quotePowerShellLiteral(WINDOWS_COMMAND_INTERPRETER)}; letta-test-native /d /s /c ${quotePowerShellLiteral("exit 2")}`,
           ),
         ).toBe(2);
       });
