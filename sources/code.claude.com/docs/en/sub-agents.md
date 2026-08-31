@@ -338,7 +338,7 @@ To find files in an `agents` directory whose frontmatter doesn't parse, run `cla
 
 ### Choose a model
 
-The `model` field controls which [AI model](/docs/en/model-config) the subagent uses:
+The `model` field controls which model the subagent uses:
 
 * **Model alias**: use one of the available aliases: `sonnet`, `opus`, `haiku`, or `fable`
 * **Full model ID**: use a full model ID such as `claude-opus-5` or `claude-sonnet-5`. Accepts the same values as the `--model` flag
