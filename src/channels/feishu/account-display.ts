@@ -1,21 +1,6 @@
 import type { FeishuDomain } from "@/channels/types";
-import { isRecord } from "@/utils/type-guards";
+import { FEISHU_BOT_INFO_PATH, parseFeishuBotInfo } from "./bot-info";
 import { loadFeishuModule, resolveFeishuSdkDomain } from "./runtime";
-
-function readBotName(payload: unknown): string | undefined {
-  if (!isRecord(payload)) {
-    return undefined;
-  }
-  const bot = isRecord(payload.bot) ? payload.bot : payload;
-  const name =
-    (typeof bot.app_name === "string" && bot.app_name.trim()) ||
-    (typeof bot.name === "string" && bot.name.trim()) ||
-    (isRecord(payload.data) &&
-      typeof payload.data.app_name === "string" &&
-      payload.data.app_name.trim()) ||
-    "";
-  return name || undefined;
-}
 
 export async function resolveFeishuAccountDisplayName(options: {
   appId: string;
@@ -37,10 +22,10 @@ export async function resolveFeishuAccountDisplayName(options: {
       return undefined;
     }
     const result = await client.request({
-      url: "/open-apis/bot/v3/info",
+      url: FEISHU_BOT_INFO_PATH,
       method: "GET",
     });
-    return readBotName(result);
+    return parseFeishuBotInfo(result).name;
   } catch {
     return undefined;
   }

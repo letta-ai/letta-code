@@ -3,8 +3,11 @@ import {
   __testResetFeishuAppIdOwners,
   createFeishuAdapter,
 } from "@/channels/feishu/adapter";
-import type { LarkRuntimeModuleLike } from "@/channels/feishu/internal-types";
-import { FEISHU_API_DOMAINS } from "@/channels/feishu/internal-types";
+import { FEISHU_BOT_INFO_PATH } from "@/channels/feishu/bot-info";
+import {
+  FEISHU_API_DOMAINS,
+  type LarkRuntimeModuleLike,
+} from "@/channels/feishu/internal-types";
 import type {
   FeishuChannelAccount,
   InboundChannelMessage,
@@ -34,6 +37,9 @@ class FakeClient {
   }));
   readonly reply = mock(async (_request: unknown) => ({
     data: { message_id: "om_reply" },
+  }));
+  readonly request = mock(async (_config: unknown) => ({
+    bot: { open_id: "ou_bot", app_name: "Letta" },
   }));
 
   constructor(config: { domain?: unknown }) {
@@ -129,7 +135,6 @@ function botMentionEvent(overrides?: {
         mentions: [
           {
             key: "@_user_1",
-            mentioned_type: "bot",
             id: { open_id: "ou_bot" },
           },
         ],
@@ -259,6 +264,65 @@ describe("feishu adapter", () => {
     expect(request.data.content).toContain(
       "Something went wrong while processing that message",
     );
+    await adapter.stop();
+  });
+
+  test("resolves bot open_id and delivers official-shaped group @mentions", async () => {
+    const adapter = createFeishuAdapter(account(), {
+      loadRuntimeModule: async () => fakeRuntime(),
+    });
+    const received: InboundChannelMessage[] = [];
+    adapter.onMessage = async (msg) => {
+      received.push(msg);
+    };
+    await adapter.start();
+    expect(FakeClient.instances[0]?.request).toHaveBeenCalledWith({
+      url: FEISHU_BOT_INFO_PATH,
+      method: "GET",
+    });
+    await FakeWSClient.instances[0]?.emitReceive(botMentionEvent());
+    await flush();
+    expect(received).toHaveLength(1);
+    expect(received[0]?.isMention).toBe(true);
+    expect(received[0]?.routedBy).toBe("mention");
+    await adapter.stop();
+  });
+
+  test("mention-only groups drop @mentions that are not this bot", async () => {
+    const adapter = createFeishuAdapter(account(), {
+      loadRuntimeModule: async () => fakeRuntime(),
+    });
+    const received: InboundChannelMessage[] = [];
+    adapter.onMessage = async (msg) => {
+      received.push(msg);
+    };
+    await adapter.start();
+    await FakeWSClient.instances[0]?.emitReceive({
+      header: { event_id: "evt_user", event_type: "im.message.receive_v1" },
+      event: {
+        sender: {
+          sender_id: { open_id: "ou_user" },
+          sender_type: "user",
+        },
+        message: {
+          message_id: "om_user_mention",
+          chat_id: "oc_group",
+          chat_type: "group",
+          message_type: "text",
+          content: '{"text":"@_user_1 hello"}',
+          mentions: [
+            {
+              key: "@_user_1",
+              mentioned_type: "bot",
+              id: { open_id: "ou_tom" },
+              name: "Tom",
+            },
+          ],
+        },
+      },
+    });
+    await flush();
+    expect(received).toHaveLength(0);
     await adapter.stop();
   });
 });

@@ -10,7 +10,6 @@ export interface FeishuSenderId {
 export interface FeishuMention {
   key?: string;
   name?: string;
-  mentioned_type?: string;
   id?: FeishuSenderId;
 }
 
@@ -109,14 +108,17 @@ export function isFeishuBotMention(
   mentions: FeishuMention[],
   botOpenId?: string | null,
 ): boolean {
-  if (mentions.some((mention) => mention.mentioned_type === "bot")) {
-    return true;
-  }
+  // `im.message.receive_v1` mention objects carry `key`, `id.open_id`, and
+  // `name`. Do not match on `mentioned_type` — that field is absent from the
+  // live payload even though some doc tables list it.
+  // https://open.feishu.cn/document/server-docs/im-v1/message/events/receive
   const trimmedBotOpenId = botOpenId?.trim();
   if (!trimmedBotOpenId) {
     return false;
   }
-  return mentions.some((mention) => mention.id?.open_id === trimmedBotOpenId);
+  return mentions.some(
+    (mention) => mention.id?.open_id?.trim() === trimmedBotOpenId,
+  );
 }
 
 function extractPostText(value: unknown): string {

@@ -5,6 +5,7 @@ import type {
   FeishuChannelAccount,
   OutboundChannelMessage,
 } from "@/channels/types";
+import { FEISHU_BOT_INFO_PATH, parseFeishuBotInfo } from "./bot-info";
 import { evaluateFeishuReceiveEvent } from "./ingress";
 import type {
   LarkClientLike,
@@ -64,6 +65,25 @@ function releaseFeishuAppId(appId: string, accountId: string): void {
   }
 }
 
+async function resolveBotOpenId(api: LarkClientLike): Promise<string | null> {
+  if (typeof api.request !== "function") {
+    return null;
+  }
+  try {
+    const result = await api.request({
+      url: FEISHU_BOT_INFO_PATH,
+      method: "GET",
+    });
+    return parseFeishuBotInfo(result).openId ?? null;
+  } catch (error) {
+    console.warn(
+      "[Feishu] Could not resolve bot open_id from /open-apis/bot/v3/info:",
+      error instanceof Error ? error.message : error,
+    );
+    return null;
+  }
+}
+
 function readCreatedMessageId(result: unknown): string {
   if (
     result &&
@@ -87,6 +107,7 @@ export function createFeishuAdapter(
   let client: LarkClientLike | null = null;
   let wsClient: LarkWsClientLike | null = null;
   let running = false;
+  let botOpenId: string | null = null;
   let adapter!: ChannelAdapter;
   const seenMessageIds = new Map<string, number>();
   const loadRuntime = options?.loadRuntimeModule ?? loadFeishuModule;
@@ -123,7 +144,7 @@ export function createFeishuAdapter(
       const decision = evaluateFeishuReceiveEvent(data, {
         accountId: config.accountId,
         groupMode: config.groupMode,
-        botOpenId: null,
+        botOpenId,
       });
       if (decision.action === "drop") {
         return;
@@ -186,6 +207,12 @@ export function createFeishuAdapter(
             : {}),
         };
         client = new Lark.Client(clientConfig);
+        botOpenId = await resolveBotOpenId(client);
+        if (!botOpenId) {
+          console.warn(
+            "[Feishu] Bot open_id is unknown; mention-only groups will drop @mentions until /open-apis/bot/v3/info succeeds.",
+          );
+        }
         wsClient = new Lark.WSClient(clientConfig);
         const dispatcher: LarkEventDispatcherLike = new Lark.EventDispatcher(
           {},
@@ -201,6 +228,7 @@ export function createFeishuAdapter(
             releaseFeishuAppId(appId, config.accountId);
             client = null;
             wsClient = null;
+            botOpenId = null;
             console.error(
               "[Feishu] WebSocket connection failed:",
               error instanceof Error ? error.message : error,
@@ -215,6 +243,7 @@ export function createFeishuAdapter(
         releaseFeishuAppId(appId, config.accountId);
         client = null;
         wsClient = null;
+        botOpenId = null;
         throw error;
       }
     },
@@ -232,6 +261,7 @@ export function createFeishuAdapter(
       }
       client = null;
       wsClient = null;
+      botOpenId = null;
       seenMessageIds.clear();
       console.log("[Feishu] Bot stopped");
     },

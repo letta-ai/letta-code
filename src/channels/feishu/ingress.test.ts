@@ -131,19 +131,62 @@ describe("feishu ingress", () => {
         mentions: [
           {
             key: "@_user_1",
-            mentioned_type: "bot",
             id: { open_id: "ou_bot" },
             name: "Letta",
           },
         ],
       }),
-      { accountId: "acct-1", groupMode: "mention-only" },
+      {
+        accountId: "acct-1",
+        groupMode: "mention-only",
+        botOpenId: "ou_bot",
+      },
     );
     expect(decision.action).toBe("deliver");
     if (decision.action !== "deliver") return;
     expect(decision.inbound.isMention).toBe(true);
     expect(decision.inbound.routedBy).toBe("mention");
     expect(decision.inbound.text).toBe("hello");
+  });
+
+  test("mentioned_type is ignored; bot open_id must match", () => {
+    const fakeType = evaluateFeishuReceiveEvent(
+      groupEvent({
+        content: '{"text":"@_user_1 hello"}',
+        mentions: [
+          {
+            key: "@_user_1",
+            mentioned_type: "bot",
+            id: { open_id: "ou_someone_else" },
+            name: "Tom",
+          },
+        ],
+      }),
+      { accountId: "acct-1", groupMode: "mention-only" },
+    );
+    expect(fakeType).toEqual({ action: "drop", reason: "mention_required" });
+
+    const userMention = evaluateFeishuReceiveEvent(
+      groupEvent({
+        content: '{"text":"@_user_1 hello"}',
+        mentions: [
+          {
+            key: "@_user_1",
+            id: { open_id: "ou_tom" },
+            name: "Tom",
+          },
+        ],
+      }),
+      {
+        accountId: "acct-1",
+        groupMode: "mention-only",
+        botOpenId: "ou_bot",
+      },
+    );
+    expect(userMention).toEqual({
+      action: "drop",
+      reason: "mention_required",
+    });
   });
 
   test("@all / @_all only is not a bot mention", () => {
