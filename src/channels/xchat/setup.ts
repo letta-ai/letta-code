@@ -7,6 +7,7 @@ import {
 import type { CustomChannelAccount, DmPolicy } from "@/channels/types";
 import {
   DEFAULT_XCHAT_BOOTSTRAP_LOOKBACK_MINUTES,
+  DEFAULT_XCHAT_MEDIA_MAX_BYTES,
   DEFAULT_XCHAT_POLL_INTERVAL_MS,
 } from "./account";
 import {
@@ -103,27 +104,6 @@ export async function runXChatSetup(): Promise<boolean> {
       return false;
     }
 
-    const policyInput = (
-      await rl.question("DM policy (pairing, allowlist, open) [pairing]: ")
-    ).trim();
-    const dmPolicy = (policyInput || "pairing") as DmPolicy;
-    if (!["pairing", "allowlist", "open"].includes(dmPolicy)) {
-      console.error(`Invalid DM policy "${dmPolicy}". Setup cancelled.`);
-      return false;
-    }
-
-    let allowedUsers: string[] = [];
-    if (dmPolicy === "allowlist") {
-      const raw = await rl.question(
-        "Enter allowed X user IDs (comma-separated): ",
-      );
-      allowedUsers = raw
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean);
-    }
-
-    const now = new Date().toISOString();
     const username = identity.username.trim();
     const displayName = username ? `@${username}` : "X Chat";
     const existingAccount = (
@@ -134,6 +114,41 @@ export async function runXChatSetup(): Promise<boolean> {
         (candidate.displayName === displayName ||
           candidate.config.bot_token === token),
     ) as CustomChannelAccount | undefined;
+    const existingPolicy = existingAccount?.dmPolicy ?? "pairing";
+    const policyInput = (
+      await rl.question(
+        `DM policy (pairing, allowlist, open) [${existingPolicy}]: `,
+      )
+    ).trim();
+    const dmPolicy = (policyInput || existingPolicy) as DmPolicy;
+    if (!["pairing", "allowlist", "open"].includes(dmPolicy)) {
+      console.error(`Invalid DM policy "${dmPolicy}". Setup cancelled.`);
+      return false;
+    }
+
+    let allowedUsers = [...(existingAccount?.allowedUsers ?? [])];
+    if (dmPolicy === "allowlist") {
+      const raw = await rl.question(
+        `Enter allowed X user IDs (comma-separated)${allowedUsers.length > 0 ? ` [${allowedUsers.join(",")}]` : ""}: `,
+      );
+      if (raw.trim()) {
+        allowedUsers = raw
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean);
+      }
+    }
+    const existingTranscribeVoice =
+      existingAccount?.config.transcribe_voice === true;
+    const transcriptionInput = await rl.question(
+      `Transcribe voice messages when OPENAI_API_KEY is set? [${existingTranscribeVoice ? "Y/n" : "y/N"}]: `,
+    );
+    const transcriptionAnswer = transcriptionInput.trim();
+    const transcribeVoice = transcriptionAnswer
+      ? /^(y|yes)$/i.test(transcriptionAnswer)
+      : existingTranscribeVoice;
+
+    const now = new Date().toISOString();
     const storedActivityToken = existingAccount?.config.activity_token;
     const activityToken =
       activityTokenInput ||
@@ -161,8 +176,23 @@ export async function runXChatSetup(): Promise<boolean> {
         ...(configuredPeerUserIds.length > 0
           ? { peer_user_ids: configuredPeerUserIds }
           : {}),
-        poll_interval_ms: DEFAULT_XCHAT_POLL_INTERVAL_MS,
-        bootstrap_lookback_minutes: DEFAULT_XCHAT_BOOTSTRAP_LOOKBACK_MINUTES,
+        poll_interval_ms:
+          typeof existingAccount?.config.poll_interval_ms === "number"
+            ? existingAccount.config.poll_interval_ms
+            : DEFAULT_XCHAT_POLL_INTERVAL_MS,
+        bootstrap_lookback_minutes:
+          typeof existingAccount?.config.bootstrap_lookback_minutes === "number"
+            ? existingAccount.config.bootstrap_lookback_minutes
+            : DEFAULT_XCHAT_BOOTSTRAP_LOOKBACK_MINUTES,
+        download_media:
+          typeof existingAccount?.config.download_media === "boolean"
+            ? existingAccount.config.download_media
+            : true,
+        media_max_bytes:
+          typeof existingAccount?.config.media_max_bytes === "number"
+            ? existingAccount.config.media_max_bytes
+            : DEFAULT_XCHAT_MEDIA_MAX_BYTES,
+        transcribe_voice: transcribeVoice,
       },
       createdAt: existingAccount?.createdAt ?? now,
       updatedAt: now,

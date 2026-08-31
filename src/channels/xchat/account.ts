@@ -1,8 +1,9 @@
 import type { CustomChannelAccount } from "@/channels/types";
 import { isRecord } from "@/utils/type-guards";
 
-export const DEFAULT_XCHAT_POLL_INTERVAL_MS = 4_000;
+export const DEFAULT_XCHAT_POLL_INTERVAL_MS = 8_000;
 export const DEFAULT_XCHAT_BOOTSTRAP_LOOKBACK_MINUTES = 10;
+export const DEFAULT_XCHAT_MEDIA_MAX_BYTES = 25 * 1024 * 1024;
 
 export interface XChatAccountSettings {
   botToken: string;
@@ -11,6 +12,9 @@ export interface XChatAccountSettings {
   peerUserIds: string[];
   pollIntervalMs: number;
   bootstrapLookbackMinutes: number;
+  downloadMedia: boolean;
+  mediaMaxBytes: number;
+  transcribeVoice: boolean;
 }
 
 function readString(config: Record<string, unknown>, key: string): string {
@@ -66,6 +70,15 @@ export function readXChatAccountSettings(
       min: 0,
       max: 2_880,
     }),
+    downloadMedia: config.download_media !== false,
+    mediaMaxBytes: readBoundedNumber({
+      config,
+      key: "media_max_bytes",
+      fallback: DEFAULT_XCHAT_MEDIA_MAX_BYTES,
+      min: 1_024,
+      max: 50 * 1024 * 1024,
+    }),
+    transcribeVoice: config.transcribe_voice === true,
   };
 }
 

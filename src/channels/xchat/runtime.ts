@@ -32,16 +32,59 @@ export interface XChatSdkMessageLike {
   raw?: unknown;
 }
 
+export interface XChatSdkIncomingEventLike {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  encodedEvent: string;
+  conversationKeyVersion?: unknown;
+  conversationKeyChangeEvent?: unknown;
+  conversationToken?: unknown;
+  encryptedConversationKey?: unknown;
+  createdAtMsec?: unknown;
+  messageEventSignature?: unknown;
+  sequenceId?: string;
+}
+
+export interface XChatSdkReactionLike {
+  added: boolean;
+  emoji?: { name?: string };
+  rawEmoji?: string;
+  messageId: string;
+  threadId: string;
+  user: {
+    userId: string;
+    userName?: string;
+    fullName?: string;
+    isMe?: boolean;
+  };
+  raw?: unknown;
+}
+
+export interface XChatSdkWebhookOptionsLike {
+  waitUntil?(task: Promise<unknown>): void;
+}
+
 export interface XChatSdkAdapterLike {
   readonly botUserId?: string;
   readonly cryptoStatus: string;
   readonly userName: string;
+  getXdkClient?(): XChatApiClientLike;
   initialize(host: unknown): Promise<void>;
   disconnect?(): Promise<void>;
   fetchMessages(
     threadId: string,
     options?: { limit?: number; cursor?: string },
   ): Promise<{ messages: XChatSdkMessageLike[]; nextCursor?: string }>;
+  handleIncomingEvent?(
+    event: XChatSdkIncomingEventLike,
+  ): Promise<XChatSdkMessageLike | null>;
+  handleWebhook?(
+    request: Request,
+    options?: XChatSdkWebhookOptionsLike,
+  ): Promise<Response>;
+  startTyping?(threadId: string): Promise<void>;
+  stopTyping?(conversationId: string): void;
   postMessage(
     threadId: string,
     message:
@@ -77,6 +120,7 @@ export interface XChatSdkModuleLike {
     botToken: string;
     pin: string;
     verifySignatures?: boolean;
+    disableWebhookVerification?: boolean;
     sendReadReceipts?: boolean;
     logger?: XChatSdkLoggerLike;
   }): XChatSdkAdapterLike;
@@ -98,6 +142,27 @@ export interface XChatConversationLike {
 
 export interface XChatApiClientLike {
   chat: {
+    mediaUploadInitialize?(body: {
+      conversationId: string;
+      totalBytes: number;
+    }): Promise<unknown>;
+    mediaUploadAppend?(
+      sessionId: string,
+      body: {
+        conversationId: string;
+        mediaHashKey: string;
+        media: string;
+        segmentIndex: number;
+      },
+    ): Promise<unknown>;
+    mediaUploadFinalize?(
+      sessionId: string,
+      body: {
+        conversationId: string;
+        mediaHashKey: string;
+        numParts: string;
+      },
+    ): Promise<unknown>;
     getConversation?(conversationId: string): Promise<{
       data?: XChatConversationLike;
     }>;

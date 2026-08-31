@@ -1,23 +1,43 @@
 import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
+import { evaluateChannelSenderAccess } from "@/channels/access-control";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
 import type {
   ChannelAdapter,
   ChannelAdapterStartOptions,
   ChannelControlRequestEvent,
+  ChannelTurnLifecycleEvent,
+  ChannelTurnSource,
   CustomChannelAccount,
   InboundChannelMessage,
   OutboundChannelMessage,
 } from "@/channels/types";
 import { debugLog, debugWarn } from "@/utils/debug";
-import { isRecord } from "@/utils/type-guards";
 import {
   assertXChatAccountConfigured,
   readXChatAccountSettings,
   type XChatAccountSettings,
 } from "./account";
-import { describeXChatAttachments, inferXChatUploadMimeType } from "./media";
+import { XChatDeliveryQueue } from "./delivery-queue";
+import { collectXChatAttachments, inferXChatUploadMimeType } from "./media";
+import { patchXChatMediaUploadConversationIds } from "./media-upload-compat";
 import { XChatPollState } from "./poll-state";
+import {
+  activityBackfillIsUnauthorized,
+  fromThreadId,
+  isGroupConversation,
+  isRateLimitError,
+  messageSequenceId,
+  messageTimestamp,
+  rateLimitDelayMs,
+  rawEventId,
+  rawEventIsUnverified,
+  rawEventTimestamp,
+  readActivityEvent,
+  readReplyContext,
+  safeErrorMessage,
+  toThreadId,
+} from "./protocol";
 import {
   loadXChatSdkModule,
   loadXChatXdkModule,
@@ -26,17 +46,19 @@ import {
   type XChatSdkAdapterLike,
   type XChatSdkLoggerLike,
   type XChatSdkMessageLike,
+  type XChatSdkReactionLike,
+  type XChatSdkWebhookOptionsLike,
 } from "./runtime";
 
 const XCHAT_CHANNEL_ID = "xchat";
-const XCHAT_THREAD_PREFIX = "xchat:";
 const MAX_CONVERSATION_PAGES = 10;
 const MAX_MESSAGES_PER_POLL = 50;
 const MAX_MESSAGE_PAGES_PER_POLL = 1_000;
-const MAX_POLL_BACKOFF_MS = 60_000;
 const ACTIVITY_RECONNECT_MS = 5_000;
+const MAX_IN_FLIGHT_ACTIVITY_EVENTS = 32;
 const DIRECT_REPLY_DEDUP_WINDOW_MS = 5_000;
 const MAX_RECENT_DIRECT_REPLIES = 1_000;
+const MAX_RECENT_REACTION_EVENTS = 1_000;
 const SWEEP_WITH_ACTIVITY_MS = 60_000;
 const SWEEP_WITHOUT_ACTIVITY_MS = 8_000;
 const STOP_POLL_WAIT_MS = 250;
@@ -60,38 +82,6 @@ async function runSerializedXChatInitialization<T>(
   }
 }
 
-function toThreadId(chatId: string): string {
-  return chatId.startsWith(XCHAT_THREAD_PREFIX)
-    ? chatId
-    : `${XCHAT_THREAD_PREFIX}${chatId}`;
-}
-
-function fromThreadId(threadId: string): string {
-  const conversationId = threadId.startsWith(XCHAT_THREAD_PREFIX)
-    ? threadId.slice(XCHAT_THREAD_PREFIX.length)
-    : threadId;
-  return /^\d+-\d+$/.test(conversationId)
-    ? conversationId.replace("-", ":")
-    : conversationId;
-}
-
-function safeErrorMessage(error: unknown): string {
-  if (!(error instanceof Error)) return "unknown error";
-  return error.message.replace(/xcbot_[A-Za-z0-9._-]+/g, "[redacted]");
-}
-
-function activityBackfillIsUnauthorized(error: unknown): boolean {
-  if (!isRecord(error) || !isRecord(error.data)) return false;
-  const errors = error.data.errors;
-  if (!Array.isArray(errors)) return false;
-  return errors.some(
-    (entry) =>
-      isRecord(entry) &&
-      typeof entry.message === "string" &&
-      entry.message.includes("backfill_minutes"),
-  );
-}
-
 function createSdkLogger(): XChatSdkLoggerLike {
   const logger: XChatSdkLoggerLike = {
     debug(message) {
@@ -111,39 +101,6 @@ function createSdkLogger(): XChatSdkLoggerLike {
     },
   };
   return logger;
-}
-
-function messageTimestamp(message: XChatSdkMessageLike): number {
-  const value = message.metadata?.dateSent;
-  const timestamp = value instanceof Date ? value.getTime() : Number(value);
-  return Number.isFinite(timestamp) ? timestamp : Date.now();
-}
-
-function messageSequenceId(message: XChatSdkMessageLike): string | undefined {
-  if (!isRecord(message.raw)) return undefined;
-  const event = message.raw.event;
-  const decrypted = message.raw.decrypted;
-  for (const source of [event, decrypted]) {
-    if (!isRecord(source)) continue;
-    const value = source.sequenceId ?? source.sequence_id;
-    if (typeof value === "string" && /^\d+$/.test(value)) return value;
-    if (typeof value === "number" && Number.isSafeInteger(value)) {
-      return String(value);
-    }
-  }
-  return undefined;
-}
-
-function isGroupConversation(conversationId: string): boolean {
-  return conversationId.startsWith("g");
-}
-
-function isRateLimitError(error: unknown): boolean {
-  if (isRecord(error)) {
-    const status = error.status ?? error.statusCode;
-    if (status === 429) return true;
-  }
-  return /\b429\b|too many requests/i.test(safeErrorMessage(error));
 }
 
 async function waitForPollToSettle(poll: Promise<void>): Promise<void> {
@@ -178,16 +135,20 @@ export class XChatChannelAdapter implements ChannelAdapter {
   private activityStream: XChatActivityStreamLike | null = null;
   private activityAbortController: AbortController | null = null;
   private activityTask: Promise<void> | null = null;
+  private readonly activityDeliveries = new Set<Promise<void>>();
   private activityBackfillSupported = true;
   private readonly discoveredConversationIds = new Set<string>();
   private readonly resolvedPeerUserIds = new Set<string>();
+  private readonly typingChatIds = new Set<string>();
   private nextConversationSweepAtMs = 0;
   private readonly recentDirectReplies = new Map<
     string,
     { text: string; sentAtMs: number }
   >();
+  private readonly recentReactionEventIds = new Set<string>();
   private running = false;
   private activePoll: Promise<void> | null = null;
+  private readonly deliveryQueue = new XChatDeliveryQueue();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private pollDelayMs: number;
   private startupLogger?: (message: string) => void;
@@ -214,6 +175,9 @@ export class XChatChannelAdapter implements ChannelAdapter {
       botToken: this.settings.botToken,
       pin: this.settings.pin,
       verifySignatures: true,
+      // Activity events come from X's authenticated stream. We pass them
+      // through the SDK's webhook parser so it also routes reaction events.
+      disableWebhookVerification: true,
       sendReadReceipts: true,
       logger: createSdkLogger(),
     });
@@ -234,10 +198,25 @@ export class XChatChannelAdapter implements ChannelAdapter {
         sdkAdapter.initialize({
           getLogger: () => createSdkLogger(),
           getUserName: () => sdkAdapter.userName,
-          handleIncomingMessage: async () => {},
-          processReaction: async () => {},
+          handleIncomingMessage: async (
+            _adapter: unknown,
+            threadId: string,
+            message: XChatSdkMessageLike,
+          ) => {
+            await this.deliverMessage(fromThreadId(threadId), message, false);
+            this.pollState.save();
+          },
+          processReaction: (
+            reaction: XChatSdkReactionLike,
+            options?: XChatSdkWebhookOptionsLike,
+          ) => {
+            const delivery = this.deliverReaction(reaction);
+            options?.waitUntil?.(delivery);
+            return delivery;
+          },
         }),
       );
+      patchXChatMediaUploadConversationIds(sdkAdapter);
       if (sdkAdapter.cryptoStatus !== "ready") {
         throw new Error(
           `X Chat encryption is ${sdkAdapter.cryptoStatus}; check the configured PIN.`,
@@ -251,14 +230,15 @@ export class XChatChannelAdapter implements ChannelAdapter {
     this.sdkAdapter = sdkAdapter;
     this.apiClient = apiClient;
     this.activityClient = activityClient;
+    this.pollDelayMs = this.fallbackSweepIntervalMs();
     this.running = true;
     try {
       await this.pollNow();
     } catch (error) {
       if (isRateLimitError(error)) {
-        this.pollDelayMs = Math.min(
-          Math.max(this.settings.pollIntervalMs, this.pollDelayMs * 2),
-          MAX_POLL_BACKOFF_MS,
+        this.pollDelayMs = rateLimitDelayMs(
+          error,
+          Math.max(this.fallbackSweepIntervalMs(), this.pollDelayMs * 2),
         );
         debugWarn(
           "X Chat",
@@ -287,6 +267,7 @@ export class XChatChannelAdapter implements ChannelAdapter {
 
   async stop(): Promise<void> {
     this.running = false;
+    this.stopAllTyping();
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -312,6 +293,11 @@ export class XChatChannelAdapter implements ChannelAdapter {
     if (this.activityTask) {
       await waitForPollToSettle(this.activityTask);
       this.activityTask = null;
+    }
+    if (this.activityDeliveries.size > 0) {
+      await waitForPollToSettle(
+        Promise.all([...this.activityDeliveries]).then(() => undefined),
+      );
     }
     const sdkAdapter = this.sdkAdapter;
     this.sdkAdapter = null;
@@ -380,10 +366,12 @@ export class XChatChannelAdapter implements ChannelAdapter {
           },
         ],
       });
+      this.stopTyping(message.chatId);
       return { messageId: sent.id };
     }
 
     const sent = await sdkAdapter.postMessage(threadId, message.text);
+    this.stopTyping(message.chatId);
     return { messageId: sent.id };
   }
 
@@ -422,6 +410,25 @@ export class XChatChannelAdapter implements ChannelAdapter {
     );
   }
 
+  async handleTurnLifecycleEvent(
+    event: ChannelTurnLifecycleEvent,
+  ): Promise<void> {
+    if (!this.running) return;
+    if (event.type === "queued") {
+      await this.startTyping(event.source);
+      return;
+    }
+    if (event.type === "processing") {
+      await Promise.all(
+        event.sources.map((source) => this.startTyping(source)),
+      );
+      return;
+    }
+    for (const source of event.sources) {
+      this.stopTyping(source.chatId);
+    }
+  }
+
   async pollNow(): Promise<void> {
     if (!this.running) return;
     if (this.activePoll) return this.activePoll;
@@ -452,7 +459,7 @@ export class XChatChannelAdapter implements ChannelAdapter {
           if (isRateLimitError(error)) throw error;
         }
       }
-      this.pollDelayMs = this.settings.pollIntervalMs;
+      this.pollDelayMs = this.fallbackSweepIntervalMs();
     } finally {
       this.pollState.save();
     }
@@ -465,9 +472,9 @@ export class XChatChannelAdapter implements ChannelAdapter {
       void this.pollNow()
         .catch((error) => {
           debugWarn("X Chat", `poll failed: ${safeErrorMessage(error)}`);
-          this.pollDelayMs = Math.min(
-            Math.max(this.settings.pollIntervalMs, this.pollDelayMs * 2),
-            MAX_POLL_BACKOFF_MS,
+          this.pollDelayMs = rateLimitDelayMs(
+            error,
+            Math.max(this.fallbackSweepIntervalMs(), this.pollDelayMs * 2),
           );
         })
         .finally(() => this.scheduleNextPoll());
@@ -532,6 +539,47 @@ export class XChatChannelAdapter implements ChannelAdapter {
     return [...ids];
   }
 
+  private fallbackSweepIntervalMs(): number {
+    return this.activityClient
+      ? SWEEP_WITH_ACTIVITY_MS
+      : Math.max(SWEEP_WITHOUT_ACTIVITY_MS, this.settings.pollIntervalMs);
+  }
+
+  private async startTyping(source: ChannelTurnSource): Promise<void> {
+    if (
+      source.channel !== XCHAT_CHANNEL_ID ||
+      source.accountId !== this.accountId ||
+      isGroupConversation(source.chatId)
+    ) {
+      return;
+    }
+    const sdkAdapter = this.sdkAdapter;
+    if (!sdkAdapter?.startTyping) return;
+    if (this.typingChatIds.has(source.chatId)) return;
+    this.typingChatIds.add(source.chatId);
+    try {
+      await sdkAdapter.startTyping(toThreadId(source.chatId));
+    } catch (error) {
+      this.typingChatIds.delete(source.chatId);
+      debugWarn(
+        "X Chat",
+        `typing indicator failed: ${safeErrorMessage(error)}`,
+      );
+    }
+  }
+
+  private stopTyping(chatId: string): void {
+    if (!this.typingChatIds.delete(chatId)) return;
+    this.sdkAdapter?.stopTyping?.(chatId);
+  }
+
+  private stopAllTyping(): void {
+    for (const chatId of this.typingChatIds) {
+      this.sdkAdapter?.stopTyping?.(chatId);
+    }
+    this.typingChatIds.clear();
+  }
+
   private async startActivityDiscovery(): Promise<void> {
     const apiClient = this.requireApiClient();
     const activityClient = this.activityClient;
@@ -572,7 +620,10 @@ export class XChatChannelAdapter implements ChannelAdapter {
         try {
           for await (const event of stream) {
             if (!this.running) return;
-            this.handleActivityEvent(event);
+            if (this.activityDeliveries.size >= MAX_IN_FLIGHT_ACTIVITY_EVENTS) {
+              await Promise.race(this.activityDeliveries);
+            }
+            this.trackActivityEvent(event);
           }
         } catch (error) {
           if (this.running) {
@@ -630,17 +681,113 @@ export class XChatChannelAdapter implements ChannelAdapter {
     }
   }
 
-  private handleActivityEvent(event: unknown): void {
-    if (!isRecord(event)) return;
-    const envelope = isRecord(event.data) ? event.data : event;
-    const payload = isRecord(envelope.payload) ? envelope.payload : envelope;
-    const rawConversationId = payload.conversationId ?? payload.conversation_id;
-    if (typeof rawConversationId !== "string" || !rawConversationId) return;
-    const conversationId = fromThreadId(rawConversationId);
+  private async handleActivityEvent(event: unknown): Promise<void> {
+    const { incoming, conversationId } = readActivityEvent(event);
+    if (!conversationId) return;
     if (isGroupConversation(conversationId)) return;
     this.discoveredConversationIds.add(conversationId);
-    void this.pollNow().catch((error) => {
-      debugWarn("X Chat", `activity poll failed: ${safeErrorMessage(error)}`);
+    if (!incoming || !this.sdkAdapter) return;
+    try {
+      if (this.sdkAdapter.handleWebhook) {
+        const body = JSON.stringify({
+          data: {
+            event_type: "chat.received",
+            payload: {
+              id: incoming.id,
+              conversation_id: incoming.conversationId,
+              sender_id: incoming.senderId,
+              encoded_event: incoming.encodedEvent,
+              conversation_key_version: incoming.conversationKeyVersion,
+              conversation_key_change_event:
+                incoming.conversationKeyChangeEvent,
+              conversation_token: incoming.conversationToken,
+              encrypted_conversation_key: incoming.encryptedConversationKey,
+              created_at_msec: incoming.createdAtMsec,
+              message_event_signature: incoming.messageEventSignature,
+              sequence_id: incoming.sequenceId,
+            },
+          },
+        });
+        const pending: Promise<unknown>[] = [];
+        const response = await this.sdkAdapter.handleWebhook(
+          new Request("http://localhost/xchat-activity", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body,
+          }),
+          { waitUntil: (task) => pending.push(task) },
+        );
+        if (!response.ok) {
+          throw new Error(
+            `X Chat SDK rejected activity event (${response.status})`,
+          );
+        }
+        await Promise.all(pending);
+      } else {
+        await this.sdkAdapter.handleIncomingEvent?.(incoming);
+      }
+    } catch (error) {
+      debugWarn(
+        "X Chat",
+        `activity event failed: ${safeErrorMessage(error)}; the safety sweep will retry it`,
+      );
+    }
+  }
+
+  private async deliverReaction(reaction: XChatSdkReactionLike): Promise<void> {
+    const conversationId = fromThreadId(reaction.threadId);
+    await this.deliveryQueue.run(conversationId, async () => {
+      if (!this.running || reaction.user.isMe) return;
+      if (rawEventIsUnverified(reaction.raw)) return;
+      const eventId = rawEventId(reaction.raw);
+      if (eventId && this.recentReactionEventIds.has(eventId)) return;
+
+      const rawEmoji = reaction.rawEmoji?.trim();
+      const emoji = rawEmoji || reaction.emoji?.name?.trim();
+      if (!emoji || !reaction.messageId) return;
+      await this.onMessage?.({
+        channel: XCHAT_CHANNEL_ID,
+        accountId: this.account.accountId,
+        chatId: conversationId,
+        senderId: reaction.user.userId,
+        senderName:
+          reaction.user.fullName || reaction.user.userName || undefined,
+        chatLabel: reaction.user.userName,
+        text: `X Chat reaction ${reaction.added ? "added" : "removed"}: ${emoji}`,
+        timestamp: rawEventTimestamp(reaction.raw),
+        messageId: eventId ?? reaction.messageId,
+        threadId: null,
+        raw: reaction.raw,
+        chatType: "direct",
+        routedBy: "dm",
+        reaction: {
+          action: reaction.added ? "added" : "removed",
+          emoji,
+          targetMessageId: reaction.messageId,
+        },
+      });
+      if (eventId) {
+        this.recentReactionEventIds.add(eventId);
+        while (this.recentReactionEventIds.size > MAX_RECENT_REACTION_EVENTS) {
+          const oldest = this.recentReactionEventIds.values().next().value;
+          if (typeof oldest !== "string") break;
+          this.recentReactionEventIds.delete(oldest);
+        }
+      }
+    });
+  }
+
+  private trackActivityEvent(event: unknown): void {
+    let delivery: Promise<void>;
+    delivery = this.handleActivityEvent(event).catch((error) => {
+      debugWarn(
+        "X Chat",
+        `activity event dispatch failed: ${safeErrorMessage(error)}`,
+      );
+    });
+    this.activityDeliveries.add(delivery);
+    void delivery.finally(() => {
+      this.activityDeliveries.delete(delivery);
     });
   }
 
@@ -689,44 +836,12 @@ export class XChatChannelAdapter implements ChannelAdapter {
     );
     for (const message of messages) {
       if (!this.running) break;
-      const timestamp = messageTimestamp(message);
-      if (
-        !message.id ||
-        this.pollState.has(
-          conversationId,
-          message.id,
-          timestamp,
-          messageSequenceId(message),
-        )
-      ) {
-        continue;
-      }
-      const shouldDeliver =
-        message.author?.isMe !== true &&
-        (!bootstrapping || timestamp >= cutoff);
-
-      if (shouldDeliver) {
-        const attachments = describeXChatAttachments(
-          message.id,
-          message.attachments ?? [],
-        );
-        await this.onMessage?.({
-          channel: XCHAT_CHANNEL_ID,
-          accountId: this.account.accountId,
-          chatId: conversationId,
-          senderId: message.author.userId,
-          senderName:
-            message.author.fullName || message.author.userName || undefined,
-          chatLabel: message.author.userName,
-          text: message.text,
-          timestamp,
-          messageId: message.id,
-          threadId: null,
-          raw: message.raw,
-          chatType: "direct",
-          routedBy: "dm",
-          attachments: attachments.length > 0 ? attachments : undefined,
-        });
+      const delivered = await this.deliverMessage(
+        conversationId,
+        message,
+        bootstrapping && messageTimestamp(message) < cutoff,
+      );
+      if (delivered) {
         await sdkAdapter
           .markAsRead?.(threadId, message.id, message)
           .catch((error) => {
@@ -736,13 +851,73 @@ export class XChatChannelAdapter implements ChannelAdapter {
             );
           });
       }
-      this.pollState.add(
-        conversationId,
-        message.id,
-        timestamp,
-        messageSequenceId(message),
-      );
     }
+  }
+
+  private async deliverMessage(
+    conversationId: string,
+    message: XChatSdkMessageLike,
+    suppressDelivery: boolean,
+  ): Promise<boolean> {
+    return this.deliveryQueue.run(conversationId, () =>
+      this.deliverMessageUnlocked(conversationId, message, suppressDelivery),
+    );
+  }
+
+  private async deliverMessageUnlocked(
+    conversationId: string,
+    message: XChatSdkMessageLike,
+    suppressDelivery: boolean,
+  ): Promise<boolean> {
+    if (!this.running) return false;
+    const timestamp = messageTimestamp(message);
+    const sequenceId = messageSequenceId(message);
+    if (
+      !message.id ||
+      this.pollState.has(conversationId, message.id, timestamp, sequenceId)
+    ) {
+      return false;
+    }
+    const shouldDeliver = message.author?.isMe !== true && !suppressDelivery;
+    if (shouldDeliver) {
+      const canProcessMedia =
+        evaluateChannelSenderAccess({
+          account: this.account,
+          channelId: XCHAT_CHANNEL_ID,
+          senderId: message.author.userId,
+          chatType: "direct",
+        }) === "allow";
+      const attachments = await collectXChatAttachments({
+        accountId: this.accountId,
+        chatId: conversationId,
+        messageId: message.id,
+        attachments: message.attachments ?? [],
+        downloadMedia: this.settings.downloadMedia && canProcessMedia,
+        mediaMaxBytes: this.settings.mediaMaxBytes,
+        transcribeVoice: this.settings.transcribeVoice && canProcessMedia,
+      });
+      if (!this.running) return false;
+      await this.onMessage?.({
+        channel: XCHAT_CHANNEL_ID,
+        accountId: this.account.accountId,
+        chatId: conversationId,
+        senderId: message.author.userId,
+        senderName:
+          message.author.fullName || message.author.userName || undefined,
+        chatLabel: message.author.userName,
+        text: message.text,
+        timestamp,
+        messageId: message.id,
+        threadId: null,
+        raw: message.raw,
+        chatType: "direct",
+        routedBy: "dm",
+        attachments: attachments.length > 0 ? attachments : undefined,
+        replyContext: readReplyContext(message.raw),
+      });
+    }
+    this.pollState.add(conversationId, message.id, timestamp, sequenceId);
+    return shouldDeliver;
   }
 
   private requireSdkAdapter(): XChatSdkAdapterLike {

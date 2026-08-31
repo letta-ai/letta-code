@@ -361,6 +361,7 @@ test("keeps polling healthy conversations when one conversation fails", async ()
 });
 
 test("starts and schedules a retry when the initial poll is rate limited", async () => {
+  const resetAtSeconds = Math.ceil((Date.now() + 4 * 60_000) / 1_000);
   const sdkAdapter: XChatSdkAdapterLike = {
     cryptoStatus: "ready",
     userName: "bot",
@@ -374,7 +375,12 @@ test("starts and schedules a retry when the initial poll is rate limited", async
   const apiClient: XChatApiClientLike = {
     chat: {
       getConversations: async () => {
-        throw { status: 429 };
+        throw {
+          status: 429,
+          headers: new Headers({
+            "x-rate-limit-reset": String(resetAtSeconds),
+          }),
+        };
       },
     },
     users: {
@@ -395,6 +401,9 @@ test("starts and schedules a retry when the initial poll is rate limited", async
   const adapter = createXChatAdapter(makeAccount());
   await expect(adapter.start()).resolves.toBeUndefined();
   expect(adapter.isRunning()).toBe(true);
+  expect(
+    (adapter as unknown as { pollDelayMs: number }).pollDelayMs,
+  ).toBeGreaterThan(3 * 60_000);
   await adapter.stop();
 });
 
@@ -483,6 +492,75 @@ test("sends text, reactions, and attachments through the encrypted adapter", asy
       files: [{ filename: "example.txt" }],
     },
   });
+  await adapter.stop();
+});
+
+test("shows typing during an X Chat turn and clears it on finish", async () => {
+  const typing: string[] = [];
+  const sdkAdapter: XChatSdkAdapterLike = {
+    cryptoStatus: "ready",
+    userName: "bot",
+    initialize: async () => {},
+    disconnect: async () => {},
+    fetchMessages: async () => ({ messages: [] }),
+    startTyping: async (threadId) => {
+      typing.push(`start:${threadId}`);
+    },
+    stopTyping: (conversationId) => {
+      typing.push(`stop:${conversationId}`);
+    },
+    postMessage: async () => ({ id: "sent" }),
+    addReaction: async () => {},
+    removeReaction: async () => {},
+  };
+  const apiClient: XChatApiClientLike = {
+    chat: { getConversations: async () => ({ data: [] }) },
+    users: {
+      getMe: async () => ({ data: { id: "bot-user" } }),
+      getPublicKey: async () => ({ data: [{}] }),
+    },
+  };
+  __testOverrideXChatRuntime({
+    sdk: async () => ({ createXchatAdapter: () => sdkAdapter }),
+    xdk: async () => ({
+      Client: class {
+        chat = apiClient.chat;
+        users = apiClient.users;
+      },
+    }),
+  });
+
+  const adapter = createXChatAdapter(makeAccount());
+  await adapter.start();
+  const source = {
+    channel: "xchat",
+    accountId: "xchat-test",
+    chatId: "sender:bot-user",
+    chatType: "direct" as const,
+    senderId: "sender",
+    messageId: "message-1",
+    threadId: null,
+    agentId: "agent-1",
+    conversationId: "conversation-1",
+  };
+  await adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    sources: [source],
+    outcome: "completed",
+    stopReason: "end_turn",
+  });
+
+  expect(typing).toEqual([
+    "start:xchat:sender:bot-user",
+    "stop:sender:bot-user",
+  ]);
   await adapter.stop();
 });
 
@@ -632,32 +710,149 @@ test("bounds shutdown while a message fetch is blocked", async () => {
   await start;
 });
 
+test("does not deliver media after X Chat stops", async () => {
+  let handleIncomingMessage:
+    | ((
+        adapter: unknown,
+        threadId: string,
+        message: XChatSdkMessageLike,
+      ) => Promise<void>)
+    | undefined;
+  let releaseMedia: () => void = () => {};
+  let markMediaStarted: () => void = () => {};
+  const mediaStarted = new Promise<void>((resolve) => {
+    markMediaStarted = resolve;
+  });
+  const mediaReleased = new Promise<void>((resolve) => {
+    releaseMedia = resolve;
+  });
+  const sdkAdapter: XChatSdkAdapterLike = {
+    cryptoStatus: "ready",
+    userName: "bot",
+    initialize: async (host) => {
+      handleIncomingMessage = (
+        host as {
+          handleIncomingMessage: typeof handleIncomingMessage;
+        }
+      ).handleIncomingMessage;
+    },
+    disconnect: async () => {},
+    fetchMessages: async () => ({ messages: [] }),
+    postMessage: async () => ({ id: "unused" }),
+    addReaction: async () => {},
+    removeReaction: async () => {},
+  };
+  const apiClient: XChatApiClientLike = {
+    chat: { getConversations: async () => ({ data: [] }) },
+    users: {
+      getMe: async () => ({ data: {} }),
+      getPublicKey: async () => ({ data: [] }),
+    },
+  };
+  __testOverrideXChatRuntime({
+    sdk: async () => ({ createXchatAdapter: () => sdkAdapter }),
+    xdk: async () => ({
+      Client: class {
+        chat = apiClient.chat;
+        users = apiClient.users;
+      },
+    }),
+  });
+
+  const received: string[] = [];
+  const adapter = createXChatAdapter(makeAccount());
+  adapter.onMessage = async (message) => {
+    received.push(message.messageId ?? "");
+  };
+  await adapter.start();
+  const message = makeMessage({
+    id: "stopping-message",
+    text: "stopping",
+    conversationId: "dm-conversation",
+  });
+  message.attachments = [
+    {
+      type: "image",
+      size: 4,
+      fetchData: async () => {
+        markMediaStarted();
+        await mediaReleased;
+        return Buffer.from("test");
+      },
+    },
+  ];
+  const delivery = handleIncomingMessage?.(
+    sdkAdapter,
+    "xchat:dm-conversation",
+    message,
+  );
+  await mediaStarted;
+  await adapter.stop();
+  releaseMedia();
+  await delivery;
+
+  expect(received).toEqual([]);
+});
+
 test("discovers Message request conversations through the activity stream", async () => {
   const subscriptions: string[] = [];
+  let activityFetches = 0;
   let activityConnections = 0;
+  let attachmentFetched = false;
   let streamCancelled = false;
+  let handleIncomingMessage:
+    | ((
+        adapter: unknown,
+        threadId: string,
+        message: XChatSdkMessageLike,
+      ) => Promise<void>)
+    | undefined;
   let releaseActivityStream: () => void = () => {};
   const activityStreamDone = new Promise<void>((resolve) => {
     releaseActivityStream = resolve;
   });
+  const requestMessage = makeMessage({
+    id: "request-message",
+    text: "message request",
+    conversationId: "request-conversation",
+  });
+  requestMessage.attachments = [
+    {
+      type: "image",
+      name: "unpaired.png",
+      mimeType: "image/png",
+      size: 4,
+      fetchData: async () => {
+        attachmentFetched = true;
+        return Buffer.from("test");
+      },
+    },
+  ];
   const sdkAdapter: XChatSdkAdapterLike = {
     botUserId: "bot-user",
     cryptoStatus: "ready",
     userName: "bot",
-    initialize: async () => {},
+    initialize: async (host) => {
+      handleIncomingMessage = (
+        host as {
+          handleIncomingMessage: typeof handleIncomingMessage;
+        }
+      ).handleIncomingMessage;
+    },
     disconnect: async () => {},
     async fetchMessages(threadId) {
+      activityFetches += 1;
       return threadId === "xchat:request-conversation"
-        ? {
-            messages: [
-              makeMessage({
-                id: "request-message",
-                text: "message request",
-                conversationId: "request-conversation",
-              }),
-            ],
-          }
+        ? { messages: [requestMessage] }
         : { messages: [] };
+    },
+    async handleIncomingEvent(event) {
+      await handleIncomingMessage?.(
+        sdkAdapter,
+        `xchat:${event.conversationId}`,
+        requestMessage,
+      );
+      return requestMessage;
     },
     postMessage: async () => ({ id: "unused" }),
     addReaction: async () => {},
@@ -709,7 +904,23 @@ test("discovers Message request conversations through the activity stream", asyn
             yield {
               data: {
                 eventType: "chat.received",
-                payload: { conversation_id: "request-conversation" },
+                payload: {
+                  id: "request-message",
+                  conversation_id: "request-conversation",
+                  sender_id: "sender-user",
+                  encoded_event: "encrypted-message",
+                },
+              },
+            };
+            yield {
+              data: {
+                eventType: "chat.received",
+                payload: {
+                  id: "request-message",
+                  conversation_id: "request-conversation",
+                  sender_id: "sender-user",
+                  encoded_event: "encrypted-message",
+                },
               },
             };
             await activityStreamDone;
@@ -739,17 +950,20 @@ test("discovers Message request conversations through the activity stream", asyn
   });
 
   const received: string[] = [];
-  const adapter = createXChatAdapter(
-    makeAccount({ activity_token: "app-bearer" }),
-  );
+  const account = makeAccount({ activity_token: "app-bearer" });
+  account.dmPolicy = "pairing";
+  const adapter = createXChatAdapter(account);
   adapter.onMessage = async (message) => {
     received.push(message.messageId ?? "");
   };
   await adapter.start();
   await new Promise((resolve) => setTimeout(resolve, 20));
+  await adapter.pollNow();
 
   expect(subscriptions).toEqual(["chat.received", "chat.conversation.join"]);
   expect(received).toEqual(["request-message"]);
+  expect(activityFetches).toBe(1);
+  expect(attachmentFetched).toBe(false);
   expect(activityConnections).toBe(2);
   await adapter.stop();
   expect(streamCancelled).toBe(true);

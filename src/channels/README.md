@@ -172,13 +172,33 @@ a server running at that URL. Do not set a dummy `LETTA_BASE_URL` for
 
 ## X Chat
 
-The X Chat channel uses end-to-end encryption. It polls the X Chat API for new
-conversations and decrypts each message with the bot's registered keys. It
-verifies message signatures before it delivers messages to an agent.
+The X Chat channel supports encrypted direct messages. It uses the X activity
+stream for live delivery and polling for startup and missed events. Letta Code
+verifies each message signature before it delivers the message to an agent.
 
-Create the bot and register its keys with the [official X Chat bot
-flow](https://docs.x.com/xchat/bots). Keep the bot token and registration PIN.
-Then run the following commands:
+Before you configure Letta Code:
+
+1. Create a dedicated X bot account and an X developer app.
+2. Create an OAuth 2.0 user token for the bot. Grant `dm.read`, `dm.write`,
+   `tweet.read`, `users.read`, and `media.write` scopes.
+3. Register the bot's X Chat encryption keys with the X Chat bot flow.
+4. Keep the `xcbot_...` bot token and the PIN that unlocks the registered keys.
+5. Create an app-only Bearer token for the same X developer app. This token is
+   optional, but Message-request discovery requires it.
+
+Letta Code validates the registered key identity. It does not register a new
+X Chat key identity during channel setup.
+
+Set the credentials in your shell, or enter them when the setup command asks:
+
+```bash
+export XCHAT_BOT_TOKEN='xcbot_...'
+export XCHAT_PIN='...'
+export X_BEARER_TOKEN='...'
+```
+
+Do not put these values in Git or shell startup files. Run the following
+commands:
 
 ```bash
 letta channels install xchat
@@ -186,28 +206,44 @@ letta channels configure xchat
 letta server --channels xchat
 ```
 
-The setup command reads `XCHAT_BOT_TOKEN`, `XCHAT_PIN`, and the optional
-`X_BEARER_TOKEN` from the process environment. It stores these values through
-the channel credential store. Do not put them in Git.
+The setup command stores the bot token, PIN, and app Bearer token in the channel
+credential store. The listener must use the same credential store. If you store
+the credentials in the operating-system keyring, run setup and the listener
+with `LETTA_CHANNEL_CREDENTIALS_STORE=keyring`.
 
 `X_BEARER_TOKEN` is the app-only Bearer token for the app that issued the bot
-token. The X activity stream uses it to discover DMs in Message requests.
-Without it, `GET /2/chat/conversations` returns only the primary inbox. Ask
-people to follow the bot before they send a DM if you do not configure the app
-Bearer token.
+token. Letta Code creates the `chat.received` and `chat.conversation.join`
+subscriptions when the listener starts. The X activity stream uses this token
+to discover DMs in Message requests. Without it,
+`GET /2/chat/conversations` returns only the primary inbox. Ask people to follow
+the bot before they send a DM if you do not configure the app Bearer token.
 
 Set `XCHAT_PEER_USER_IDS` to a comma-separated list of known sender IDs when
 the activity stream is unavailable. The adapter resolves and polls those
 direct-message conversations explicitly.
 
+Send the bot a DM after the listener starts. Approve the pending chat in the
+Channels UI, or bind the pairing code from the listener machine:
+
+```bash
+letta agents list
+letta channels pair \
+  --channel xchat \
+  --code XXXXXX \
+  --agent <agent-id> \
+  --conversation default
+```
+
 The channel supports direct messages. Group chats are disabled because the
 upstream adapter cannot bind an asynchronous reply to its source message. The
 `MessageChannel` tool can send text, upload files, add reactions, and remove
-reactions. It does not support explicit reply targets.
+reactions. Inbound messages include reactions and reply previews. X limits a
+reply preview to 140 characters. Outbound explicit reply targets are disabled.
 
-Inbound attachments include their name, type, and declared size. Letta Code
-does not download inbound X Chat media. The upstream adapter downloads the
-complete encrypted blob before it can check the decrypted size.
+Letta Code downloads inbound attachments after it authorizes the sender. The
+default limit is 25 MiB per attachment. You can change the download setting and
+size limit in the channel account. Enable voice transcription during setup to
+transcribe downloaded voice messages with `OPENAI_API_KEY`.
 
 The channel stores message IDs in
 `~/.letta/channels/xchat/poll-state-<account-id>.json`. This file prevents
