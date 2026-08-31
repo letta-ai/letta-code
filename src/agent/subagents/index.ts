@@ -106,8 +106,6 @@ export interface SubagentConfig {
   skills: string[];
   /** Whether this subagent should fork the parent conversation before launch. */
   fork: boolean;
-  /** Whether this subagent should run in the background by default. */
-  background: boolean;
   /** Filesystem and env launch behavior for this subagent. */
   launchProfile: SubagentLaunchProfile;
 }
@@ -200,10 +198,6 @@ function parseLaunchProfile(
   return launchProfile === "memory-subagent" ? "memory-subagent" : "default";
 }
 
-function parseBackgroundDefault(background: string | undefined): boolean {
-  return background?.toLowerCase() !== "false";
-}
-
 /**
  * Validate subagent frontmatter
  * Only validates required fields - optional fields are validated at runtime where needed
@@ -286,9 +280,6 @@ function applySubagentOverlay(
     fork: hasFrontmatterField(frontmatter, "fork")
       ? getStringField(frontmatter, "fork")?.toLowerCase() === "true"
       : inherited.fork,
-    background: hasFrontmatterField(frontmatter, "background")
-      ? parseBackgroundDefault(getStringField(frontmatter, "background"))
-      : inherited.background,
     launchProfile: hasFrontmatterField(frontmatter, "launchProfile")
       ? parseLaunchProfile(getStringField(frontmatter, "launchProfile"))
       : inherited.launchProfile,
@@ -343,9 +334,6 @@ function parseSubagentContent(
     recommendedModelSource: hasModel ? options.modelSource : undefined,
     skills: parseSkills(getStringField(frontmatter, "skills")),
     fork: getStringField(frontmatter, "fork")?.toLowerCase() === "true",
-    background: parseBackgroundDefault(
-      getStringField(frontmatter, "background"),
-    ),
     launchProfile: parseLaunchProfile(
       getStringField(frontmatter, "launchProfile"),
     ),

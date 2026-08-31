@@ -304,7 +304,6 @@ describe("buildSubagentArgs", () => {
     recommendedModel: "inherit",
     skills: [],
     fork: false,
-    background: false,
     launchProfile: "default",
   };
 
