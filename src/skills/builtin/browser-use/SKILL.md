@@ -115,4 +115,3 @@ Browser automation acts with the authority of the controlled profile.
   accept consequential dialogs without explicit authorization.
 - Never print credentials, cookies, authorization headers, or sensitive page
   bodies into logs or the conversation.
-

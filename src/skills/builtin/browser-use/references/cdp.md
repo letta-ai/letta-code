@@ -148,4 +148,3 @@ Common causes:
 
 Close the WebSocket and browser process created for the task unless the user
 asked to keep the visible window for review or takeover.
-
