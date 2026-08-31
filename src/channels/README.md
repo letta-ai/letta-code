@@ -1,10 +1,12 @@
 # Channel plugins
 
 Letta Code channels connect agents to external chat systems. Telegram, Slack,
-and Discord are first-party bundled plugins with custom Desktop UI. User-defined
-plugins are loaded from `~/.letta/channels/<channel-id>/` and run headlessly:
-they can receive inbound messages, participate in pairing/routing, and extend
-the shared `MessageChannel` tool, but they do not get custom Desktop screens.
+and Discord are first-party bundled plugins with custom Desktop UI. WhatsApp,
+Signal, and Feishu / Lark are first-party plugins without custom Desktop
+screens (generic `configSchema` is enough). User-defined plugins are loaded
+from `~/.letta/channels/<channel-id>/` and run headlessly: they can receive
+inbound messages, participate in pairing/routing, and extend the shared
+`MessageChannel` tool, but they do not get custom Desktop screens.
 
 ## Directory layout
 
@@ -298,6 +300,52 @@ broad message events makes mention-only delivery apply to the whole Slack app
 instead. Restart the listener after editing `accounts.json` so the running Slack
 adapter loads the new policy.
 
+## Feishu / Lark
+
+The bundled Feishu channel uses the Open Platform **persistent connection**
+(WebSocket). It is a self-built-app transport: store apps and HTTP webhooks
+are not supported in v1. Configure with `letta channels configure feishu` or
+by writing `~/.letta/channels/feishu/accounts.json`.
+
+Required Open Platform setup:
+
+1. Create a **self-built** app (Feishu at `open.feishu.cn`, or Lark at
+   `open.larksuite.com`).
+2. Enable bot capability.
+3. Subscribe to `im.message.receive_v1`.
+4. Choose **persistent connection**, not a request URL / webhook.
+5. Grant `im:message.p2p_msg:readonly`, `im:message.group_at_msg:readonly`,
+   and `im:message:send_as_bot`.
+6. Publish a version and add the bot to groups.
+
+Account fields:
+
+- `app_id` / `app_secret` — Open Platform credentials. The secret is stored
+  in the channel credential store and redacted as `has_app_secret` in
+  snapshots.
+- `domain` — `"feishu"` (default, `https://open.feishu.cn`) or `"lark"`
+  (`https://open.larksuite.com`). Using the wrong domain fails auth.
+- `group_mode` — `"mention-only"` (default) or `"open"`. Mention-only matches
+  Feishu's default group @bot event scope. `@all` / `@_all` are not treated
+  as bot mentions.
+- `agent_id` — Letta agent for group @mentions and non-pairing DMs.
+- Pairing and allowlists use Feishu `open_id` values (`ou_...`). Group chat
+  IDs are `oc_...`. Topics use `thread_id` (`omt_...`).
+
+**One running listener per App ID.** Persistent connection is cluster mode:
+if Desktop and `letta server` both connect with the same App ID, Feishu
+delivers each event to one connection at random. Starting a second adapter
+for an App ID that is already running fails.
+
+Install the Node SDK once per machine with `letta channels install feishu`
+(`@larksuiteoapi/node-sdk`). Feishu slash commands (`/status`, `/cancel`)
+are sent as **plain text** in the chat — there is no native Feishu slash
+menu in v1.
+
+Restart the listener after editing `accounts.json` so credentials, domain,
+and group-mode policy reload. Open group mode also needs the all-group-messages
+event scope on the Open Platform app; mention-only matches the default `@bot`
+scope.
 
 ## First-party vs user plugins
 

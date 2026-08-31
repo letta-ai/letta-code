@@ -30,6 +30,7 @@ import {
   DEFAULT_SLACK_PERMISSION_MODE,
   isCustomChannelAccount,
   isDiscordChannelAccount,
+  isFeishuChannelAccount,
   isFirstPartyChannelId,
   isSignalChannelAccount,
   isSlackChannelAccount,
@@ -49,6 +50,8 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   allowed_channels: "allowedChannels",
   allowed_groups: "allowedGroups",
   allow_bots: "allowBots",
+  app_id: "appId",
+  app_secret: "appSecret",
   group_policy: "groupPolicy",
   user_allowed_commands: "userAllowedCommands",
   auto_thread_on_mention: "autoThreadOnMention",
@@ -110,6 +113,9 @@ function getSecretFieldPaths(account: ChannelAccount): string[] {
   }
   if (isTelegramChannelAccount(account) || isDiscordChannelAccount(account)) {
     return ["token"];
+  }
+  if (isFeishuChannelAccount(account)) {
+    return ["appSecret"];
   }
   if (
     isCustomChannelAccount(account) ||
@@ -418,6 +424,16 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
   }
   if (isTelegramChannelAccount(next)) {
     next.richPrivateChatDefault = next.richPrivateChatDefault !== false;
+  }
+  if (isFeishuChannelAccount(next)) {
+    next.appId = typeof next.appId === "string" ? next.appId : "";
+    next.appSecret = typeof next.appSecret === "string" ? next.appSecret : "";
+    next.domain = next.domain === "lark" ? "lark" : "feishu";
+    next.groupMode = next.groupMode === "open" ? "open" : "mention-only";
+    next.agentId =
+      typeof next.agentId === "string" && next.agentId.trim().length > 0
+        ? next.agentId
+        : null;
   }
   return next;
 }
