@@ -163,17 +163,18 @@ export function resolveCreatedAgentMemfsConfig(
     options.capabilities.localMemfs ||
     (options.capabilities.remoteMemfs && options.isLettaCloud) ||
     options.requestedMemoryPromptMode === "memfs" ||
+    options.requestedMemoryPromptMode === "root-memfs" ||
     options.requestedMemoryPromptMode === "local-memfs";
   const enableMemfs = options.isSubagent ? false : supported;
-  const memoryPromptMode =
-    (options.requestedMemoryPromptMode !== "standard"
+  const requestedMemoryPromptMode =
+    options.requestedMemoryPromptMode !== "standard"
       ? options.requestedMemoryPromptMode
-      : undefined) ??
-    (enableMemfs
-      ? options.capabilities.localMemfs
-        ? "local-memfs"
-        : "memfs"
-      : "standard");
+      : undefined;
+  const memoryPromptMode = !enableMemfs
+    ? "standard"
+    : options.capabilities.localMemfs
+      ? "local-memfs"
+      : (requestedMemoryPromptMode ?? "root-memfs");
 
   return { enableMemfs, memoryPromptMode };
 }

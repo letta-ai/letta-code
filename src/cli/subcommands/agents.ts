@@ -151,9 +151,7 @@ async function runCreateAction(
     ? await buildCreateAgentOptionsForPersonality({
         personalityId: personality,
       })
-    : {
-        memoryPromptMode: "memfs",
-      };
+    : {};
 
   if (typeof values.name === "string") {
     options.name = values.name;

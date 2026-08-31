@@ -14,6 +14,7 @@ import {
   labelFromRelativePath,
   renderMemoryFilesystemTree,
   stampMemfsTagOnCreateBody,
+  stampRootMemoryOnCreateBody,
 } from "@/agent/memory-filesystem";
 import { DIRECTORY_LIMIT_ENV } from "@/utils/directory-limits";
 
@@ -180,6 +181,45 @@ describe("stampMemfsTagOnCreateBody", () => {
       tags: null,
     };
     expect(stampMemfsTagOnCreateBody(body, TAG).tags).toEqual([TAG]);
+  });
+});
+
+describe("stampRootMemoryOnCreateBody", () => {
+  test("adds a root index before existing memory blocks", () => {
+    const body = {
+      memory_blocks: [{ label: "persona", value: "Persistent persona" }],
+    };
+
+    expect(
+      stampRootMemoryOnCreateBody(body).memory_blocks?.map(
+        (block) => block.label,
+      ),
+    ).toEqual(["MEMORY", "persona"]);
+  });
+
+  test("creates a root index when memory blocks are absent", () => {
+    const body: {
+      memory_blocks?: Array<{
+        label: string;
+        value: string;
+        description?: string;
+      }>;
+    } = {};
+    expect(stampRootMemoryOnCreateBody(body).memory_blocks).toEqual([
+      {
+        label: "MEMORY",
+        value: "# Memory\n",
+        description: "Root memory index.",
+      },
+    ]);
+  });
+
+  test("preserves a caller-provided root index", () => {
+    const body = {
+      memory_blocks: [{ label: "MEMORY", value: "# Custom\n" }],
+    };
+
+    expect(stampRootMemoryOnCreateBody(body)).toBe(body);
   });
 });
 

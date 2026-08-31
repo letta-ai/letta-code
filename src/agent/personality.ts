@@ -121,7 +121,7 @@ export async function buildCreateAgentOptionsForPersonality(params: {
     description: description ?? personality.description,
     model: model ?? personality.defaultModel,
     tags: [...getPersonalityCreationTags(personalityId), ...(tags ?? [])],
-    memoryPromptMode: "memfs",
+    memoryPromptMode: environment === "local" ? "local-memfs" : "root-memfs",
     memoryBlocks: buildPersonalityMemoryBlocks(
       personalityId,
       defaultMemoryBlocks,

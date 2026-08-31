@@ -21,13 +21,23 @@ describe("created agent MemFS defaults", () => {
         capabilities: remoteMemfsBackend,
         isLettaCloud: true,
       }),
-    ).toEqual({ enableMemfs: true, memoryPromptMode: "memfs" });
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "root-memfs" });
   });
 
   test("defaults to local MemFS on the local backend", () => {
     expect(
       resolveCreatedAgentMemfsConfig({
         capabilities: localMemfsBackend,
+        isLettaCloud: false,
+      }),
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "local-memfs" });
+  });
+
+  test("keeps local creation on the supported local memory prompt", () => {
+    expect(
+      resolveCreatedAgentMemfsConfig({
+        capabilities: localMemfsBackend,
+        requestedMemoryPromptMode: "root-memfs",
         isLettaCloud: false,
       }),
     ).toEqual({ enableMemfs: true, memoryPromptMode: "local-memfs" });
@@ -50,7 +60,7 @@ describe("created agent MemFS defaults", () => {
         requestedMemoryPromptMode: "standard",
         isLettaCloud: true,
       }),
-    ).toEqual({ enableMemfs: true, memoryPromptMode: "memfs" });
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "root-memfs" });
   });
 
   test("self-hosted servers without memfs support stay standard", () => {
