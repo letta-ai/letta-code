@@ -7,7 +7,7 @@ import {
   estimateSystemPromptTokensFromMemoryDir,
   estimateSystemTokens,
   SYSTEM_PROMPT_BYTES_PER_TOKEN,
-} from "@/utils/system-prompt-size";
+} from "@/agent/system-prompt-size";
 
 describe("estimateSystemTokens", () => {
   test("returns 0 for empty string", () => {
@@ -52,6 +52,35 @@ describe("estimateSystemPromptSize", () => {
     const result = estimateSystemPromptSize(tmpRoot);
     expect(result.total).toBe(0);
     expect(result.files).toEqual([]);
+  });
+
+  test("counts root Markdown files for MemFS v2", () => {
+    writeFileSync(join(tmpRoot, "MEMORY.md"), "abcd");
+    writeFileSync(join(tmpRoot, "persona.md"), "abcdefgh");
+    writeFileSync(join(tmpRoot, "notes.txt"), "a".repeat(100));
+    mkdirSync(join(tmpRoot, "reference"));
+    writeFileSync(join(tmpRoot, "reference", "MEMORY.md"), "a".repeat(100));
+    mkdirSync(join(tmpRoot, "system"));
+    writeFileSync(join(tmpRoot, "system", "legacy.md"), "a".repeat(100));
+
+    const result = estimateSystemPromptSize(tmpRoot);
+
+    expect(result.total).toBe(3);
+    expect(result.files).toEqual([
+      { path: "MEMORY.md", tokens: 1 },
+      { path: "persona.md", tokens: 2 },
+    ]);
+  });
+
+  test("keeps local MemFS on v1 when root MEMORY.md exists", () => {
+    writeFileSync(join(tmpRoot, "MEMORY.md"), "a".repeat(100));
+    mkdirSync(join(tmpRoot, "system"));
+    writeFileSync(join(tmpRoot, "system", "persona.md"), "abcd");
+
+    const result = estimateSystemPromptSize(tmpRoot, true);
+
+    expect(result.total).toBe(1);
+    expect(result.files).toEqual([{ path: "system/persona.md", tokens: 1 }]);
   });
 
   test("sums tokens across files in system/", () => {
