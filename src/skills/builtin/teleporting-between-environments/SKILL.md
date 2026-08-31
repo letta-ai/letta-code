@@ -1,6 +1,6 @@
 ---
 name: teleporting-between-environments
-description: Moves the current agent conversation to Cloud, Desktop Local, or another Cloud-registered environment while coordinating machine-local files and setup. Use when the user says "let's continue this task on cloud", asks to continue or move work on another connected computer, wants to teleport between environments, or needs to upload or download artifacts before a handoff.
+description: Moves the current agent conversation to Cloud, Desktop Local, or another Cloud-registered environment while coordinating machine-local files and setup. Use when the user says "let's continue this task on cloud", asks to continue or move work on another connected computer, wants to teleport between environments, or needs to upload or download artifacts before a handoff. Also use when the user wants to add or register a new computer to run on (e.g. their own laptop) — such as someone running on Cloud asking how to connect their local environment.
 ---
 
 # Teleporting Between Environments
