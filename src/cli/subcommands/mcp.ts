@@ -25,7 +25,14 @@ import { clearMcpOAuthCredentials, createMcpOAuthSession } from "@/mcp-oauth";
 import { formatClientMcpToolName } from "@/mcp-runtime";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
-import { loadMcpToolArgs, printMcpUsage, resolveMcpAgentId } from "./mcp-io";
+import {
+  loadMcpToolArgs,
+  McpCliError,
+  printMcpError,
+  printMcpUsage,
+  resolveMcpAgentId,
+} from "./mcp-io";
+import { runMcpSearch } from "./mcp-search";
 import {
   assignMcpServerAliases,
   formatServerMcpToolName,
@@ -105,18 +112,6 @@ interface ParsedMcpArgs {
   childCommand: string[];
 }
 
-class McpCliError extends Error {
-  readonly code: string;
-  readonly hint?: string;
-
-  constructor(code: string, message: string, hint?: string) {
-    super(message);
-    this.name = "McpCliError";
-    this.code = code;
-    this.hint = hint;
-  }
-}
-
 function parseMcpArgs(argv: string[]) {
   return parseArgs({
     args: argv,
@@ -132,6 +127,8 @@ function parseMcpArgs(argv: string[]) {
       "auth-env": { type: "string" },
       "no-verify": { type: "boolean" },
       force: { type: "boolean" },
+      mode: { type: "string" },
+      limit: { type: "string" },
       args: { type: "string" },
       "args-file": { type: "string" },
     },
@@ -578,29 +575,6 @@ function printJson(stdout: (message: string) => void, value: unknown): void {
   stdout(JSON.stringify(value, null, 2));
 }
 
-function printError(stderr: (message: string) => void, error: unknown): void {
-  const normalized =
-    error instanceof McpCliError
-      ? error
-      : new McpCliError(
-          "mcp_error",
-          error instanceof Error ? error.message : String(error),
-        );
-  stderr(
-    JSON.stringify(
-      {
-        error: {
-          code: normalized.code,
-          message: normalized.message,
-          ...(normalized.hint ? { hint: normalized.hint } : {}),
-        },
-      },
-      null,
-      2,
-    ),
-  );
-}
-
 async function runList(
   deps: McpSubcommandDependencies,
   agentId: string,
@@ -928,7 +902,7 @@ export async function runMcpSubcommand(
   try {
     parsed = parseCommandLine(argv);
   } catch (error) {
-    printError(stderr, error);
+    printMcpError(stderr, error);
     return 1;
   }
 
@@ -943,7 +917,7 @@ export async function runMcpSubcommand(
     deps.env ?? process.env,
   );
   if (!agentId) {
-    printError(
+    printMcpError(
       stderr,
       new McpCliError(
         "agent_id_required",
@@ -979,6 +953,21 @@ export async function runMcpSubcommand(
       case "list-tools":
       case "list_tools":
         return await runTools(deps, agentId, parsed.target, stdout);
+      case "search":
+        if (!serverMcpAvailable(deps)) {
+          throw new McpCliError(
+            "server_mcp_unavailable",
+            "MCP tool search requires a Letta server backend",
+          );
+        }
+        return await runMcpSearch({
+          getClient: () => getServerClient(deps),
+          agentId,
+          query: parsed.target,
+          mode: stringValue(parsed.values.mode),
+          limit: stringValue(parsed.values.limit),
+          stdout,
+        });
       case "call":
       case "run":
       case "run-tool":
@@ -991,7 +980,7 @@ export async function runMcpSubcommand(
         );
     }
   } catch (error) {
-    printError(stderr, error);
+    printMcpError(stderr, error);
     return 1;
   }
 }

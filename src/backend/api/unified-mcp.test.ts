@@ -6,6 +6,7 @@ import {
   listUnifiedMcpServers,
   listUnifiedMcpTools,
   runUnifiedMcpTool,
+  searchUnifiedMcpTools,
 } from "./unified-mcp";
 
 function clientFixture(options: {
@@ -89,6 +90,80 @@ describe("unified MCP API adapter", () => {
         annotations: { destructiveHint: false },
       },
     ]);
+  });
+
+  test("searches agent MCP tools and keeps only schemas and scores", async () => {
+    const posts: Array<{ path: string; body: unknown }> = [];
+    const searchPath = "/v1/agents/agent-1/mcp-servers/tools/search";
+    const client = clientFixture({
+      posts,
+      post: {
+        [searchPath]: [
+          {
+            tool: {
+              id: "tool-1",
+              json_schema: {
+                name: "mcp__betterstack__render_chart",
+                parameters: { type: "object", properties: {} },
+              },
+              source_code: "not returned",
+            },
+            embedded_text: "not returned",
+            fts_rank: 2,
+            vector_rank: 1,
+            combined_score: 0.25,
+          },
+          {
+            tool: { id: "tool-2", json_schema: null },
+            combined_score: 0.125,
+          },
+        ],
+      },
+    });
+
+    await expect(
+      searchUnifiedMcpTools({
+        client,
+        agentId: "agent-1",
+        query: "charts",
+        searchMode: "hybrid",
+        limit: 5,
+      }),
+    ).resolves.toEqual([
+      {
+        jsonSchema: {
+          name: "mcp__betterstack__render_chart",
+          parameters: { type: "object", properties: {} },
+        },
+        score: 0.25,
+      },
+      { jsonSchema: null, score: 0.125 },
+    ]);
+    expect(posts).toEqual([
+      {
+        path: searchPath,
+        body: { query: "charts", search_mode: "hybrid", limit: 5 },
+      },
+    ]);
+  });
+
+  test("rejects malformed MCP tool search results", async () => {
+    const searchPath = "/v1/agents/agent-1/mcp-servers/tools/search";
+    const client = clientFixture({
+      post: {
+        [searchPath]: [{ tool: {}, combined_score: 0.25 }],
+      },
+    });
+
+    await expect(
+      searchUnifiedMcpTools({
+        client,
+        agentId: "agent-1",
+        query: "charts",
+        searchMode: "hybrid",
+        limit: 5,
+      }),
+    ).rejects.toThrow("Invalid MCP tool search result");
   });
 
   test("uses SDK request options for run and association mutations", async () => {

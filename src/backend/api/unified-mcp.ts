@@ -47,6 +47,13 @@ export interface UnifiedMcpRunResult {
   stderr?: unknown;
 }
 
+export type UnifiedMcpSearchMode = "vector" | "fts" | "hybrid";
+
+export interface UnifiedMcpSearchResult {
+  jsonSchema: Record<string, unknown> | null;
+  score: number;
+}
+
 function stringField(
   value: Record<string, unknown>,
   key: string,
@@ -128,6 +135,19 @@ function parseTool(value: unknown): UnifiedMcpTool | null {
   };
 }
 
+function parseSearchResult(value: unknown): UnifiedMcpSearchResult | null {
+  if (!isRecord(value) || !isRecord(value.tool)) return null;
+  const jsonSchema = value.tool.json_schema;
+  const score = value.combined_score;
+  if (
+    (jsonSchema !== null && !isRecord(jsonSchema)) ||
+    typeof score !== "number"
+  ) {
+    return null;
+  }
+  return { jsonSchema, score };
+}
+
 function parseRunResult(value: unknown): UnifiedMcpRunResult {
   if (!isRecord(value)) throw new Error("Invalid MCP tool run response");
   return {
@@ -189,6 +209,40 @@ export async function listUnifiedMcpTools(
   );
   if (!Array.isArray(value)) return [];
   return value.map(parseTool).filter((tool) => tool !== null);
+}
+
+export async function searchUnifiedMcpTools(params: {
+  client: Pick<UnifiedMcpClient, "post">;
+  agentId: string;
+  query: string;
+  searchMode: UnifiedMcpSearchMode;
+  limit: number;
+  timeoutMs?: number;
+}): Promise<UnifiedMcpSearchResult[]> {
+  const value = await withTimeout(
+    params.client.post(
+      `/v1/agents/${encodeURIComponent(params.agentId)}/mcp-servers/tools/search`,
+      {
+        body: {
+          query: params.query,
+          search_mode: params.searchMode,
+          limit: params.limit,
+        },
+      },
+    ),
+    params.timeoutMs ?? 60_000,
+    "Searching agent MCP tools",
+  );
+  if (!Array.isArray(value)) {
+    throw new Error("Invalid MCP tool search response");
+  }
+  const results: UnifiedMcpSearchResult[] = [];
+  for (const item of value) {
+    const result = parseSearchResult(item);
+    if (!result) throw new Error("Invalid MCP tool search result");
+    results.push(result);
+  }
+  return results;
 }
 
 export async function runUnifiedMcpTool(params: {

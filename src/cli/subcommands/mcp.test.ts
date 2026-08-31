@@ -180,6 +180,7 @@ describe("mcp subcommand", () => {
       }),
     ).toBe(0);
     expect(output[0]).toContain("letta mcp tools");
+    expect(output[0]).toContain("letta mcp search");
     expect(output[0]).toContain("letta mcp call");
   });
 
@@ -392,6 +393,69 @@ describe("mcp subcommand", () => {
       },
     ]);
     expect(closes.count).toBe(1);
+  });
+
+  test("dispatches search through the agent-scoped server endpoint", async () => {
+    const searchPath = "/v1/agents/agent-cloud/mcp-servers/tools/search";
+    const harness = cloudHarness({
+      postResponses: {
+        [searchPath]: [
+          {
+            tool: {
+              id: "tool-1",
+              json_schema: {
+                name: "mcp__betterstack__render_chart",
+                parameters: { type: "object", properties: {} },
+              },
+            },
+            combined_score: 0.25,
+          },
+        ],
+      },
+    });
+
+    expect(
+      await runMcpSubcommand(
+        ["search", "charts", "--mode", "vector", "--limit", "3"],
+        harness.deps,
+      ),
+    ).toBe(0);
+    expect(harness.posts).toEqual([
+      {
+        path: searchPath,
+        body: { query: "charts", search_mode: "vector", limit: 3 },
+      },
+    ]);
+    expect(JSON.parse(harness.stdout[0] ?? "[]")).toEqual([
+      {
+        tool: {
+          name: "mcp__betterstack__render_chart",
+          parameters: { type: "object", properties: {} },
+        },
+        rank: 1,
+        score: 0.25,
+      },
+    ]);
+  });
+
+  test("validates search options before creating the server client", async () => {
+    const harness = cloudHarness();
+    let clientRequests = 0;
+    harness.deps.getClient = async () => {
+      clientRequests++;
+      throw new Error("client should not be created");
+    };
+
+    expect(
+      await runMcpSubcommand(
+        ["search", "charts", "--limit", "0"],
+        harness.deps,
+      ),
+    ).toBe(1);
+    expect(clientRequests).toBe(0);
+    expect(JSON.parse(harness.stderr[0] ?? "{}").error.code).toBe(
+      "invalid_arguments",
+    );
   });
 
   test("call accepts the exact listed name and returns the bare MCP result", async () => {
