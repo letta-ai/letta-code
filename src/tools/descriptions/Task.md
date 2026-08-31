@@ -44,7 +44,8 @@ When deploying an existing agent, only `general-purpose` is supported: full read
   - Tool access is controlled by subagent_type
 
 - **conversation_id**: Resume from an existing conversation (e.g., "conv-xyz789")
-  - Does NOT require agent_id (conversation IDs are unique and encode the agent)
+  - Normal `conv-...` IDs are globally unique and do not require `agent_id`
+  - If a prior invocation returns the conversation ID `default`, pass both that invocation's `agent_id` and `conversation_id: "default"`; `default` is agent-scoped and cannot identify an agent by itself
   - Continues from the conversation's existing message history
   - Use this to continue context from:
     - A prior Agent tool invocation that returned a conversation_id
@@ -64,6 +65,14 @@ Agent({
 // Continue an existing conversation
 Agent({
   conversation_id: "conv-xyz789",
+  description: "Continue implementation",
+  prompt: "Now implement the fix we discussed"
+})
+
+// Continue an agent's default conversation
+Agent({
+  agent_id: "agent-abc123",
+  conversation_id: "default",
   description: "Continue implementation",
   prompt: "Now implement the fix we discussed"
 })
