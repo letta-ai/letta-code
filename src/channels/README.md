@@ -176,15 +176,19 @@ The X Chat channel supports encrypted direct messages. It uses the X activity
 stream for live delivery and polling for startup and missed events. Letta Code
 verifies each message signature before it delivers the message to an agent.
 
-Before you configure Letta Code:
+Before you configure Letta Code, complete the [official X Chat bot
+flow](https://docs.x.com/xchat/bots):
 
-1. Create a dedicated X bot account and an X developer app.
-2. Create an OAuth 2.0 user token for the bot. Grant `dm.read`, `dm.write`,
-   `tweet.read`, `users.read`, and `media.write` scopes.
-3. Register the bot's X Chat encryption keys with the X Chat bot flow.
-4. Keep the `xcbot_...` bot token and the PIN that unlocks the registered keys.
-5. Create an app-only Bearer token for the same X developer app. This token is
-   optional, but Message-request discovery requires it.
+1. Create a dedicated X bot account in an X developer app.
+2. Grant the bot `dm.read`, `dm.write`, `tweet.read`, `users.read`,
+   `media.write`, and `offline.access` OAuth 2.0 scopes.
+3. Generate the bot token. Keep the `xcbot_...` value.
+4. Select **Register chat keys**. The flow must generate a keypair, store the
+   private keys in Juicebox under your PIN, and register the public keys with X.
+   Keep the PIN.
+5. Open **Apps > your app > Keys & Tokens > App-Only Authentication**. Create or
+   copy the app Bearer token. It must come from the same app as the bot token.
+   This token is optional, but Message-request discovery requires it.
 
 Letta Code validates the registered key identity. It does not register a new
 X Chat key identity during channel setup.
@@ -206,10 +210,16 @@ letta channels configure xchat
 letta server --channels xchat
 ```
 
-The setup command stores the bot token, PIN, and app Bearer token in the channel
-credential store. The listener must use the same credential store. If you store
-the credentials in the operating-system keyring, run setup and the listener
-with `LETTA_CHANNEL_CREDENTIALS_STORE=keyring`.
+The install command adds the X Chat runtime packages. The setup command
+validates the bot identity and PIN. It then stores the bot token, PIN, and app
+Bearer token in the channel credential store. The listener must use the same
+credential store. If you use the operating-system keyring, run both commands
+with the keyring setting:
+
+```bash
+LETTA_CHANNEL_CREDENTIALS_STORE=keyring letta channels configure xchat
+LETTA_CHANNEL_CREDENTIALS_STORE=keyring letta server --channels xchat
+```
 
 `X_BEARER_TOKEN` is the app-only Bearer token for the app that issued the bot
 token. Letta Code creates the `chat.received` and `chat.conversation.join`
@@ -237,8 +247,8 @@ letta channels pair \
 The channel supports direct messages. Group chats are disabled because the
 upstream adapter cannot bind an asynchronous reply to its source message. The
 `MessageChannel` tool can send text, upload files, add reactions, and remove
-reactions. Inbound messages include reactions and reply previews. X limits a
-reply preview to 140 characters. Outbound explicit reply targets are disabled.
+reactions. Inbound messages include reactions and reply previews. Outbound
+explicit reply targets are disabled.
 
 Letta Code downloads inbound attachments after it authorizes the sender. The
 default limit is 25 MiB per attachment. You can change the download setting and
@@ -249,6 +259,21 @@ The channel stores message IDs in
 `~/.letta/channels/xchat/poll-state-<account-id>.json`. This file prevents
 duplicate delivery after a restart. On the first start, the channel delivers
 messages from the last 10 minutes and records older messages without delivery.
+
+### X Chat key troubleshooting
+
+`letta channels configure xchat` stops if the PIN cannot unlock the registered
+private keys. A `Juicebox recovery failed: reason=NotRegistered` error means X
+registered a public key but did not store its matching private key in
+Juicebox. Registering keys again can consume X's 24-hour key-registration quota
+without repairing the key pair. Do not rotate the bot token to repair this
+error. Bot-token rotation does not change the X Chat keys.
+
+Wait for the quota to reset or contact X Developer Support before you register
+another key. If you use the [Chat XDK](https://github.com/xdevplatform/chat-xdk)
+to repair the registration, generate the keys, store them in Juicebox, and
+register the matching public keys in one process. Confirm that the same PIN can
+unlock the identity before you configure Letta Code.
 
 ## Channel slash commands
 
