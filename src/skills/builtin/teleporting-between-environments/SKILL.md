@@ -39,6 +39,24 @@ letta sandbox download <sandbox-path> [--to <local-path>]
 
 Do not invent `letta teleport push`, `pull`, or remote file-listing commands. No sandbox ID or wake command is needed.
 
+## Connecting a local computer
+
+If the user's computer does not appear in `letta teleport list`, walk them through connecting it. Full instructions: https://docs.letta.com/platform/computers/byom
+
+**Letta Desktop (Remote Access):**
+
+1. Install the Letta app.
+2. Open app settings (Preferences → General) and enable **"Allow remote access"**. Show the user `assets/allow-remote-access.png` from this skill's directory — it shows the toggle and the field that sets the name displayed in the environment picker.
+3. The desktop then appears as a target in the environment picker and in `letta teleport list`.
+
+**CLI (register any machine as a named remote environment):**
+
+1. Install the Letta CLI (`npm install -g @letta-ai/letta-code`) and authenticate.
+2. Run `letta server --env-name "<name>"` on the machine to connect.
+3. The machine opens an outbound WebSocket connection to Letta Cloud and becomes selectable by that name.
+
+A remote environment is a running Letta Code process that connects a machine to the user's Letta account; tool execution happens on the chosen machine while agent memory stays consistent across environments.
+
 ## Prepare the handoff
 
 Before teleporting:
