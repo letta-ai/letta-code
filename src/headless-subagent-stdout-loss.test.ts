@@ -164,8 +164,11 @@ async function runStdoutLossScenario(
 
   provider.server.stop(true);
 
-  const toolResults = provider.toolResults.join("\n");
-  const outputFile = toolResults.match(/Output file: ([^\\"]+)/)?.[1];
+  const toolResultMessages = provider.toolResults.map(
+    (result) => JSON.parse(result) as string,
+  );
+  const toolResults = toolResultMessages.join("\n");
+  const outputFile = toolResults.match(/Output file: ([^\r\n]+)/)?.[1];
   const taskOutput = outputFile ? readFileSync(outputFile, "utf-8") : "";
 
   return {
