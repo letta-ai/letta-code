@@ -23,7 +23,7 @@
   "src/cli/subcommands/skills.ts": 1264,
   "src/headless.ts": 4994,
   "src/hooks/integration.test.ts": 1147,
-  "src/index.ts": 2775,
+  "src/index.ts": 2774,
   "src/mods/learning-harness.ts": 2434,
   "src/mods/mod-engine.test.ts": 2153,
   "src/mods/mod-engine.ts": 1838,
