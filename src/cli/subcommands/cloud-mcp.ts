@@ -2,6 +2,8 @@ import { parseArgs } from "node:util";
 import { getBackend } from "@/backend";
 import { getClient as getDefaultClient } from "@/backend/api/client";
 import {
+  type AgentConnectedMcpServer,
+  type AgentConnectedMcpTool,
   listAgentConnectedMcpServers,
   listAgentConnectedMcpTools,
   runAgentConnectedMcpTool,
@@ -23,12 +25,14 @@ interface CloudMcpCommandResult {
 }
 
 interface CloudMcpListResult extends CloudMcpCommandResult {
-  servers: Awaited<ReturnType<typeof listAgentConnectedMcpServers>>;
+  servers: Array<
+    Pick<AgentConnectedMcpServer, "id" | "serverName" | "serverType" | "target">
+  >;
 }
 
 interface CloudMcpToolsResult extends CloudMcpCommandResult {
   mcp_server_id: string;
-  tools: Awaited<ReturnType<typeof listAgentConnectedMcpTools>>;
+  tools: Array<Pick<AgentConnectedMcpTool, "id" | "name" | "description">>;
 }
 
 interface CloudMcpRunResult extends CloudMcpCommandResult {
@@ -181,9 +185,15 @@ export async function runCloudMcpSubcommand(
       action === "list-servers" ||
       action === "list_servers"
     ) {
+      const servers = await listAgentConnectedMcpServers(client, agentId);
       printJson(stdout, {
         agent_id: agentId,
-        servers: await listAgentConnectedMcpServers(client, agentId),
+        servers: servers.map(({ id, serverName, serverType, target }) => ({
+          id,
+          serverName,
+          serverType,
+          target,
+        })),
       });
       return 0;
     }
@@ -197,10 +207,19 @@ export async function runCloudMcpSubcommand(
         stderr("Usage: letta cloud-mcp tools <mcp-server-id> [--agent <id>]");
         return 1;
       }
+      const tools = await listAgentConnectedMcpTools(
+        client,
+        agentId,
+        mcpServerId,
+      );
       printJson(stdout, {
         agent_id: agentId,
         mcp_server_id: mcpServerId,
-        tools: await listAgentConnectedMcpTools(client, agentId, mcpServerId),
+        tools: tools.map(({ id, name, description }) => ({
+          id,
+          name,
+          description,
+        })),
       });
       return 0;
     }

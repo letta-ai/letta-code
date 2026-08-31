@@ -62,11 +62,13 @@ function stubClient(overrides: {
 }): ServerMcpClient {
   return {
     get: async (path: string) => overrides.getResponses?.[path] ?? [],
-    post: async (path: string, body?: unknown) => {
+    post: async (path: string, options) => {
       overrides.postCalls?.push(path);
-      overrides.postBodies?.push(body);
+      overrides.postBodies?.push(options?.body);
       return overrides.postResponses?.[path] ?? {};
     },
+    put: async () => ({}),
+    delete: async () => ({}),
     mcpServers: {
       list: async () => overrides.servers ?? [],
       refresh: async () => ({}),
@@ -232,6 +234,7 @@ describe("agent-connected MCP server API", () => {
         serverName: "exa",
         serverType: "streamable_http",
         target: "https://mcp.example.com/mcp",
+        serverUrl: "https://mcp.example.com/mcp",
       },
     ]);
   });
@@ -248,7 +251,12 @@ describe("agent-connected MCP server API", () => {
     await expect(
       listAgentConnectedMcpTools(client, "agent-1", "mcp_server-1"),
     ).resolves.toEqual([
-      { id: "tool-1", name: "web_search", description: "Search" },
+      {
+        id: "tool-1",
+        name: "web_search",
+        description: "Search",
+        inputSchema: { type: "object", properties: {} },
+      },
     ]);
   });
 

@@ -91,7 +91,7 @@ export async function replaceClientMcpServers(
         }
         const tools = connection.tools.map((tool) => {
           const name = uniqueToolName(
-            `mcp__${normalizeName(config.name)}__${normalizeName(tool.name)}`,
+            formatClientMcpToolName(config.name, tool.name),
             usedToolNames,
           );
           const definition: ExternalToolDefinition = {
@@ -190,7 +190,15 @@ function uniqueToolName(base: string, used: Set<string>): string {
   return name;
 }
 
-function normalizeName(value: string): string {
+/** Return the model-facing name for a tool from a client-connected MCP server. */
+export function formatClientMcpToolName(
+  serverName: string,
+  toolName: string,
+): string {
+  return `mcp__${normalizeMcpName(serverName)}__${normalizeMcpName(toolName)}`;
+}
+
+function normalizeMcpName(value: string): string {
   const normalized = value.replace(/[^a-zA-Z0-9_-]/g, "_");
   return normalized || "tool";
 }
