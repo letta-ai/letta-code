@@ -1,6 +1,6 @@
 ---
 name: self-configuration
-description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, agent secrets, and local runtime settings. Use when the user asks how this agent or conversation is configured, or asks you to change how you behave or how the harness runs you.
+description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, agent secrets, and local runtime settings. Use when the user asks how this agent or conversation is configured, asks you to change how you behave or how the harness runs you, or renames you — the agent name is a server field, so a rename needs an agent patch, not just a memory edit.
 license: MIT
 ---
 
@@ -157,6 +157,8 @@ npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
 ### Name and description
 
 Name and description are agent-level metadata. Do not pass them with `--target conversation`. Values must be non-empty; the helper does not clear metadata by accident.
+
+When the user renames you, this patch is the authoritative change — editing a name written in persona memory does not change the agent's actual name. Do both: patch the agent name here, then update any memory file that states your name so they agree.
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
