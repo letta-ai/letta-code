@@ -10,6 +10,13 @@ This page is generated from the [CHANGELOG.md on GitHub](https://github.com/anth
 
 Run `claude --version` to check your installed version.
 
+<Update label="2.1.252" description="August 31, 2026">
+  * Fixed Bash commands failing with "task output swap refused (tasks dir moved or linked)" on some Macs
+  * Fixed "always allow" not saving in a project that has no .claude/settings.local.json yet
+  * Fixed Remote Control sessions hosted by Claude Desktop or VS Code stalling for minutes after a tool finished when the connection to claude.ai was degraded
+  * Fixed background task notifications with very large failure output (for example git errors on a full disk) making the conversation exceed the API request size limit
+</Update>
+
 <Update label="2.1.251" description="August 28, 2026">
   * Added `PreModelSwitch` and `PostModelSwitch` hook events (block, confirm, or annotate a model switch); `SessionStart` resume hooks now receive session staleness and the estimated re-cache cost
   * Added live streaming of a foreground subagent's tool calls and results to Remote Control clients (background subagents, the default, still show status only)
