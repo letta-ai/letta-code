@@ -24,6 +24,7 @@ interface ScenarioSummary {
   code: number | null;
   spawnArgvs: string[][];
   toolResults: string;
+  taskOutput: string;
   stdoutTail: string;
   stderrTail: string;
 }
@@ -51,11 +52,11 @@ describe("headless subagent stdout loss", () => {
     expect(summary.spawnArgvs, formatSummary(summary)).toHaveLength(2);
     // The retry must preserve the original spawn arguments verbatim.
     expect(summary.spawnArgvs[1]).toEqual(summary.spawnArgvs[0]);
-    // The recovered report reaches the model as a successful tool result.
-    expect(summary.toolResults, formatSummary(summary)).toContain(
+    // The recovered report reaches the background task transcript.
+    expect(summary.taskOutput, formatSummary(summary)).toContain(
       "SUBAGENT-REPORT-OK",
     );
-    expect(summary.toolResults, formatSummary(summary)).not.toContain(
+    expect(summary.taskOutput, formatSummary(summary)).not.toContain(
       "Failed to parse subagent output",
     );
   }, 90_000);
@@ -66,7 +67,7 @@ describe("headless subagent stdout loss", () => {
     expect(summary.code, formatSummary(summary)).toBe(0);
     expect(summary.spawnArgvs, formatSummary(summary)).toHaveLength(2);
     expect(summary.spawnArgvs[1]).toEqual(summary.spawnArgvs[0]);
-    expect(summary.toolResults, formatSummary(summary)).toContain(
+    expect(summary.taskOutput, formatSummary(summary)).toContain(
       "SUBAGENT-REPORT-OK",
     );
   }, 90_000);
@@ -163,10 +164,15 @@ async function runStdoutLossScenario(
 
   provider.server.stop(true);
 
+  const toolResults = provider.toolResults.join("\n");
+  const outputFile = toolResults.match(/Output file: ([^\\"]+)/)?.[1];
+  const taskOutput = outputFile ? readFileSync(outputFile, "utf-8") : "";
+
   return {
     code,
     spawnArgvs: readSpawnArgvs(childStateDir),
-    toolResults: provider.toolResults.join("\n"),
+    toolResults,
+    taskOutput,
     stdoutTail: tail(stdout),
     stderrTail: tail(stderr),
   };
@@ -308,7 +314,6 @@ function startMockProvider(): {
                               description: "run test subagent",
                               prompt: "produce the test report",
                               subagent_type: "general-purpose",
-                              run_in_background: false,
                             }),
                           },
                         },

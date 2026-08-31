@@ -69,34 +69,8 @@ describe("built-in subagents", () => {
     expect(configs.init?.launchProfile).toBe("memory-subagent");
   });
 
-  test("subagents run in the background by default", async () => {
-    const configs = await getAllSubagentConfigs();
-
-    for (const name of [
-      "fork",
-      "general-purpose",
-      "history-analyzer",
-      "init",
-      "memory",
-      "recall",
-      "reflection",
-    ]) {
-      expect(configs[name]?.background).toBe(true);
-    }
-  });
-
-  test("custom subagents can explicitly opt out of the background default", async () => {
+  test("legacy background metadata does not affect subagent config", async () => {
     tempDir = createTempProjectDir();
-    writeCustomSubagent(
-      tempDir,
-      "background-worker.md",
-      `---
-name: background-worker
-description: Custom background worker
-tools: Read
----
-Custom prompt body`,
-    );
     writeCustomSubagent(
       tempDir,
       "foreground-worker.md",
@@ -111,8 +85,7 @@ Custom prompt body`,
 
     const configs = await getAllSubagentConfigs(tempDir);
 
-    expect(configs["background-worker"]?.background).toBe(true);
-    expect(configs["foreground-worker"]?.background).toBe(false);
+    expect(configs["foreground-worker"]).not.toHaveProperty("background");
   });
 
   test("reflection exposes only Edit among first-class file tools", async () => {
@@ -252,7 +225,6 @@ Custom prompt body`,
     expect(config?.allowedTools).toEqual(builtIn?.allowedTools);
     expect(config?.skills).toEqual(builtIn?.skills);
     expect(config?.fork).toBe(builtIn?.fork);
-    expect(config?.background).toBe(builtIn?.background);
     expect(config?.launchProfile).toBe(builtIn?.launchProfile);
     expect(config?.recommendedModel).toBe("auto");
     expect(config?.recommendedModelSource).toBe("user");
@@ -268,14 +240,12 @@ name: reflection
 description: Focused reflection
 tools: Read
 model: auto
-background: false
 ---`,
     );
 
     const config = (await getAllSubagentConfigs(tempDir)).reflection;
     expect(config?.description).toBe("Focused reflection");
     expect(config?.allowedTools).toEqual(["Read"]);
-    expect(config?.background).toBe(false);
     expect(config?.launchProfile).toBe("memory-subagent");
   });
 

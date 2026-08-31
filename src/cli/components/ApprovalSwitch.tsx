@@ -190,7 +190,7 @@ function getTaskInfo(approval: ApprovalRequest): TaskInfo | null {
           : "(no description)",
       prompt: typeof args.prompt === "string" ? args.prompt : "(no prompt)",
       model: typeof args.model === "string" ? args.model : undefined,
-      isBackground: args.run_in_background === true,
+      isBackground: true,
     };
   } catch {
     return {
