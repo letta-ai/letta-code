@@ -14,8 +14,11 @@ import {
   getActiveTasks,
   getTask,
   listTasks,
+  pauseTask,
   readCronFile,
+  recordTaskQueued,
   releaseSchedulerLease,
+  resumeTask,
   updateTask,
   verifySchedulerLease,
   withLock,
@@ -135,6 +138,17 @@ describe("addTask", () => {
       /Invalid cron expression "0 0 \*\/32 \* \*"/,
     );
     expect(readCronFile().tasks).toHaveLength(0);
+  });
+
+  test("counts paused schedules toward the per-agent limit", () => {
+    for (let index = 0; index < 50; index += 1) {
+      const { task } = addTask(makeInput({ prompt: `task ${index}` }));
+      pauseTask(task.id);
+    }
+
+    expect(() => addTask(makeInput({ prompt: "one too many" }))).toThrow(
+      /50 active or paused tasks \(max 50\)/,
+    );
   });
 });
 
@@ -262,11 +276,110 @@ describe("updateTask", () => {
   });
 });
 
+describe("pauseTask and resumeTask", () => {
+  test("pause and resume are atomic, persisted, and idempotent", () => {
+    const { task } = addTask(makeInput());
+
+    expect(pauseTask(task.id)).toMatchObject({
+      success: true,
+      found: true,
+      task: { status: "paused" },
+    });
+    expect(pauseTask(task.id)).toMatchObject({
+      success: true,
+      found: true,
+      task: { status: "paused" },
+    });
+    expect(getActiveTasks()).toHaveLength(0);
+
+    expect(resumeTask(task.id)).toMatchObject({
+      success: true,
+      found: true,
+      task: { status: "active" },
+    });
+    expect(resumeTask(task.id)).toMatchObject({
+      success: true,
+      found: true,
+      task: { status: "active" },
+    });
+  });
+
+  test("overdue one-off resume requires and stores a new future time", () => {
+    const oldTime = new Date("2026-08-26T01:00:00.000Z");
+    const { task } = addTask(
+      makeInput({ recurring: false, scheduled_for: oldTime }),
+    );
+    expect(pauseTask(task.id).success).toBe(true);
+
+    expect(
+      resumeTask(task.id, undefined, new Date("2026-08-26T02:00:00.000Z")),
+    ).toMatchObject({
+      success: false,
+      found: true,
+      task: { status: "paused", scheduled_for: oldTime.toISOString() },
+    });
+
+    const futureTime = new Date("2026-08-26T03:00:00.000Z");
+    expect(
+      resumeTask(task.id, futureTime, new Date("2026-08-26T02:00:00.000Z")),
+    ).toMatchObject({
+      success: true,
+      found: true,
+      task: { status: "active", scheduled_for: futureTime.toISOString() },
+    });
+  });
+
+  test("terminal schedules cannot pause or resume", () => {
+    const { task } = addTask(makeInput());
+    updateTask(task.id, (candidate) => {
+      candidate.status = "cancelled";
+    });
+
+    expect(pauseTask(task.id)).toMatchObject({ success: false, found: true });
+    expect(resumeTask(task.id)).toMatchObject({ success: false, found: true });
+  });
+});
+
+describe("recordTaskQueued", () => {
+  test.each([
+    { recurring: true, initialStatus: "active" as const },
+    { recurring: true, initialStatus: "paused" as const },
+    { recurring: false, initialStatus: "active" as const },
+    { recurring: false, initialStatus: "paused" as const },
+  ])(
+    "manual run preserves $initialStatus status and automatic timing when recurring=$recurring",
+    ({ recurring, initialStatus }) => {
+      const scheduledFor = new Date("2026-08-27T12:00:00.000Z");
+      const { task } = addTask(
+        makeInput({
+          recurring,
+          scheduled_for: recurring ? undefined : scheduledFor,
+        }),
+      );
+      if (initialStatus === "paused") pauseTask(task.id);
+      const queuedAt = new Date("2026-08-26T03:00:00.000Z");
+
+      const updated = recordTaskQueued(task.id, "manual", queuedAt);
+
+      expect(updated).toMatchObject({
+        status: initialStatus,
+        scheduled_for: recurring ? null : scheduledFor.toISOString(),
+        fired_at: null,
+        fire_count: 1,
+        last_run_reason: recurring ? "scheduled_time_matched" : "one_off_due",
+        last_run_at: queuedAt.toISOString(),
+      });
+    },
+  );
+});
+
 describe("getActiveTasks", () => {
   test("returns only active tasks", () => {
     addTask(makeInput());
-    const t2 = addTask(makeInput({ prompt: "echo world" }));
-    updateTask(t2.task.id, (t) => {
+    const paused = addTask(makeInput({ prompt: "echo paused" }));
+    const cancelled = addTask(makeInput({ prompt: "echo cancelled" }));
+    pauseTask(paused.task.id);
+    updateTask(cancelled.task.id, (t) => {
       t.status = "cancelled";
     });
     const active = getActiveTasks();
@@ -367,6 +480,24 @@ describe("garbageCollect", () => {
     const removed = garbageCollect();
     expect(removed).toBe(0);
     expect(getTask(task.id)).not.toBeNull();
+  });
+
+  test("keeps paused and unknown future statuses regardless of age", () => {
+    const paused = addTask(makeInput({ prompt: "paused" })).task;
+    const future = addTask(makeInput({ prompt: "future" })).task;
+    const twoDaysAgo = new Date(
+      Date.now() - 2 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    pauseTask(paused.id);
+    overwriteTask(paused.id, { created_at: twoDaysAgo });
+    const data = readCronFile();
+    const futureTask = data.tasks.find((task) => task.id === future.id);
+    if (!futureTask) throw new Error("expected future task");
+    Object.assign(futureTask, { status: "waiting", created_at: twoDaysAgo });
+    writeFileSync(_CRON_PATH, JSON.stringify(data, null, 2));
+
+    expect(garbageCollect()).toBe(0);
+    expect(listTasks().map((task) => task.id)).toEqual([paused.id, future.id]);
   });
 });
 

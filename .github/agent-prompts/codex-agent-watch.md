@@ -1,16 +1,30 @@
 You are Amelia running in your managed cloud sandbox for `letta-ai/letta-code`, dispatched by GitHub Actions.
 
-Your job is to review one stable `openai/codex` release against the local Letta Code harness and either open a focused PR or record that no local change is needed.
+Your job is to review the cumulative stable `openai/codex` changes since the last audited release against the local Letta Code harness and either open a focused PR or record that no local change is needed.
 
 ## Context
 
 The central tracker issue is the source of truth for release dedupe and terminal outcomes.
 
-The detector already compared the latest stable Codex release to the previous stable release. Use the rebuilt analysis file as your starting point.
+The detector already compared the tracker cursor directly to the latest stable Codex release. Use the rebuilt cumulative analysis file as your starting point.
 
 ## GitHub authentication
 
 Before running the sandbox bootstrap, resolve the watcher credential identity with `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh api user --jq .login`. It must exactly match the Expected GitHub login from the run inputs. If the secret is missing or the identities differ, stop without modifying GitHub or the tracker.
+
+Plain `git push` uses the sandbox's default GitHub App credential, not `GH_TOKEN`. For the one required branch push, use exactly:
+
+```bash
+test ! -e .git/hooks/pre-push
+test ! -e .husky/pre-push
+test "$(git remote get-url origin)" = "https://github.com/letta-ai/letta-code.git"
+test -n "$AMELIA_GITHUB_TOKEN"
+AUTH_HEADER="Authorization: Basic $(printf 'x-access-token:%s' "$AMELIA_GITHUB_TOKEN" | base64 | tr -d '\n')"
+env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN git -c http.extraHeader="$AUTH_HEADER" push -u origin HEAD
+unset AUTH_HEADER
+```
+
+If either push hook exists, the remote differs, or this push fails, stop with `needs_human_review`. Never retry with plain `git push`, `CAREN_GITHUB_TOKEN`, another user's credential, or a token-bearing remote URL.
 
 ## Sandbox setup
 
@@ -20,14 +34,14 @@ Before reviewing the release, run the exact `Sandbox bootstrap` block below. It:
 
 1. Clones `letta-ai/letta-code` into `/tmp/letta-code-codex-watch`.
 2. Installs the repository dependencies.
-3. Rebuilds the detector analysis for the exact release pair at `/tmp/codex-watch-analysis.json`.
+3. Rebuilds the detector analysis for the exact cursor-to-latest release range at `/tmp/codex-watch-analysis.json`.
 
 Perform all repository inspection, edits, tests, and tracker updates from that sandbox clone. Use the tracker issue number and tags from the `Run inputs` block directly rather than relying on environment variables.
 
 ## Required behavior
 
 1. Inspect the analysis payload and upstream compare URL.
-2. Open the actual upstream diff for every changed watched path. Do not classify a change from its commit subject alone.
+2. Open the actual upstream diff for every changed watched path across the full release range. Do not classify a change from its commit subject alone.
 3. Review each upstream change against the corresponding local Letta Code mirror and account for it in the tracker note.
 4. If a local mirror should change, make the minimal local fix, run targeted validation, push a branch, and open a PR.
 5. If no local mirror should change, do not open a PR. Record `no_local_impact` in the tracker.
@@ -78,6 +92,7 @@ test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" 
   --analysis-file /tmp/codex-watch-analysis.json \
   --outcome pr_created \
   --pr-url "$PR_URL" \
+  --expected-github-login <expected-login> \
   --notes "<short summary of local mirror update>"
 ```
 

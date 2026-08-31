@@ -1,9 +1,9 @@
 # Memory
 A convenience tool for memories stored in the memory directory (`$MEMORY_DIR`) that automatically commits changes. The harness pushes clean committed memory changes after the turn for remote MemFS agents.
 
-Files stored inside of `system/` eventually become part of the agent's system prompt, so are always in the context window and do not need to be re-read. Other files only have metadata in the system prompt, so may need to be explicitly read to be updated. 
+Files stored inside of `system/` eventually become part of the agent's system prompt, so are always in the context window and do not need to be re-read. Other files only have metadata in the system prompt, so may need to be explicitly read to be updated.
 
-Supported operations on memory files:  
+Supported operations on memory files:
 - `str_replace`
 - `insert`
 - `delete` (files, or directories recursively)
@@ -23,16 +23,16 @@ When creating or deleting files, check for `[[path]]` references in other memory
 Examples:
 
 ```python
-# Replace text in a memory file 
+# Replace text in a memory file
 memory(command="str_replace", reason="Update theme preference", file_path="system/human/preferences.md", old_string="theme: dark", new_string="theme: light")
 
 # Insert text at line 5
 memory(command="insert", reason="Add note about meeting", file_path="reference/history/meeting-notes.md", insert_line=5, insert_text="New note here")
 
-# Delete a memory file 
+# Delete a memory file
 memory(command="delete", reason="Remove stale notes", file_path="reference/history/old_notes.md")
 
-# Rename a memory file 
+# Rename a memory file
 memory(command="rename", reason="Promote temp notes", old_path="reference/history/temp.md", new_path="reference/history/permanent.md")
 
 # Update a block description

@@ -165,6 +165,7 @@ jobs:
           echo "conversation_name=$GITHUB_WORKFLOW $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
       - name: Ask Amelia to review Claude Code drift
+        id: review
         if: steps.detect.outputs.should_run_agent == 'true'
         uses: letta-ai/letta-code-action@4b8e508a523ff576fee09be1432d6f39158c272c
         with:
@@ -172,12 +173,38 @@ jobs:
           github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
           agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
           environment: cloud
-          letta_args: >-
-            --new --name "${{ steps.prompt.outputs.conversation_name }}"
+          letta_args: --new
           track_progress: ""
           tracking_comment: "false"
           model: auto
           prompt: ${{ steps.prompt.outputs.prompt }}
+
+      - name: Name watcher conversation
+        if: always() && steps.review.outputs.conversation_id != ''
+        env:
+          LETTA_API_KEY: ${{ secrets.AMELIA_LETTA_API_KEY }}
+          CONVERSATION_ID: ${{ steps.review.outputs.conversation_id }}
+          CONVERSATION_NAME: ${{ steps.prompt.outputs.conversation_name }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request PATCH \
+            --header "Authorization: Bearer $LETTA_API_KEY" \
+            --header "Content-Type: application/json" \
+            --data "$(jq -nc --arg summary "$CONVERSATION_NAME" '{summary: $summary}')" \
+            --output /dev/null \
+            "https://api.letta.com/v1/conversations/$CONVERSATION_ID"
+
+      - name: Enforce Amelia PR identity
+        if: always() && steps.detect.outputs.should_run_agent == 'true' && steps.github-identity.outputs.login != ''
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          EXPECTED_GITHUB_LOGIN: ${{ steps.github-identity.outputs.login }}
+          PR_MARKER: "Claude-watch: ${{ steps.detect.outputs.candidate_id }}"
+        run: |
+          bun scripts/agent-watch/verify-pr-identity.ts \
+            --repo letta-ai/letta-code \
+            --marker "$PR_MARKER" \
+            --expected-login "$EXPECTED_GITHUB_LOGIN"
 
       - name: Verify terminal outcome
         if: steps.detect.outputs.should_run_agent == 'true'

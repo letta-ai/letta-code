@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.30.32",
+  "version": "0.31.7",
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
   "packageManager": "bun@1.3.10",
@@ -22,6 +22,8 @@
     "dist/app-server-client.cjs.map",
     "dist/memory-confinement.js",
     "dist/memory-confinement.js.map",
+    "dist/memory-constraints.js",
+    "dist/memory-constraints.js.map",
     "dist/mcp-client.js",
     "dist/mcp-client.js.map",
     "dist/agent-presets.js",
@@ -37,7 +39,9 @@
     "dist/channels-telegram.js",
     "dist/channels-telegram.js.map",
     "dist/types",
-    "docs"
+    "docs",
+    "dist/agent-presets-*.js",
+    "dist/agent-presets-*.js.map"
   ],
   "exports": {
     ".": "./letta.js",
@@ -55,6 +59,11 @@
       "types": "./dist/types/memory-confinement.d.ts",
       "import": "./dist/memory-confinement.js",
       "default": "./dist/memory-confinement.js"
+    },
+    "./memory-constraints": {
+      "types": "./dist/types/memory-constraints.d.ts",
+      "import": "./dist/memory-constraints.js",
+      "default": "./dist/memory-constraints.js"
     },
     "./mcp-client": {
       "types": "./dist/types/mcp-client.d.ts",
@@ -119,7 +128,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.84.3",
+    "@earendil-works/pi-ai": "^0.84.4",
     "@janhapke/sharp-electron": "0.35.3-electron.1",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
@@ -208,6 +217,9 @@
       ],
       "memory-confinement": [
         "./dist/types/memory-confinement.d.ts"
+      ],
+      "memory-constraints": [
+        "./dist/types/memory-constraints.d.ts"
       ],
       "mcp-client": [
         "./dist/types/mcp-client.d.ts"

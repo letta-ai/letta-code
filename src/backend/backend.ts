@@ -161,6 +161,11 @@ export interface BackendCapabilities {
   localMemfs: boolean;
 }
 
+export interface AgentSecret {
+  key: string;
+  value: string;
+}
+
 export interface Backend {
   readonly capabilities: BackendCapabilities;
 
@@ -183,6 +188,9 @@ export interface Backend {
     body: AgentUpdateBody,
     options?: AgentUpdateOptions,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["update"]>>>;
+
+  /** Optional until every backend supports server-backed agent secrets. */
+  listAgentSecrets?(agentId: string): Promise<AgentSecret[]>;
 
   createAgent(
     body: AgentCreateBody,
@@ -337,6 +345,13 @@ export class APIBackend implements Backend {
   async retrieveAgent(agentId: string, options?: AgentRetrieveOptions) {
     const client = await this.getClient();
     return client.agents.retrieve(agentId, options);
+  }
+
+  async listAgentSecrets(agentId: string): Promise<AgentSecret[]> {
+    const client = await this.getClient();
+    return client.get<AgentSecret[]>(
+      `/v1/agents/${encodeURIComponent(agentId)}/secrets`,
+    );
   }
 
   async listAgents(body?: AgentListBody) {

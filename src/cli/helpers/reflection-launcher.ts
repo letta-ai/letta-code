@@ -2,6 +2,7 @@ import {
   getScopedMemoryFilesystemRoot,
   isLettaCloud,
 } from "@/agent/memory-filesystem";
+import { detectMemoryFormat } from "@/agent/memory-format";
 import {
   buildReflectionIntegrationMemoryScope,
   buildReflectionMemoryScope,
@@ -28,6 +29,7 @@ import {
   type MemorySubagentSuccessMessageOverride,
 } from "@/cli/helpers/memory-subagent-completion";
 import { finalizeAutoReflectionCompletion } from "@/cli/helpers/reflection-completion";
+import { classifyReflectionConfigurationError } from "@/cli/helpers/reflection-configuration-error";
 import {
   buildReflectionIntegrationConversationTitle,
   buildReflectionIntegrationPrompt,
@@ -64,6 +66,10 @@ export const REFLECTION_AGENT_ID_WAIT_MS = 30_000;
 
 const reservedReflectionAgentIds = new Set<string>();
 const pendingReflectionLaunches = new Map<string, ReflectionLaunchOptions>();
+const suppressedAutomaticReflections = new Map<
+  string,
+  { model?: string; message: string }
+>();
 
 export type ReflectionLaunchTriggerSource =
   | "manual"
@@ -73,6 +79,7 @@ export type ReflectionLaunchSkippedReason =
   | "memfs_disabled"
   | "cutover"
   | "already_active"
+  | "configuration_error"
   | "parent_dirty"
   | "no_payload"
   | "error";
@@ -88,6 +95,8 @@ export function getReflectionLaunchSkippedMessage(
       return surface === "listener"
         ? "A reflection agent is already running for this conversation."
         : "A reflection agent is already running in the background.";
+    case "configuration_error":
+      return "Automatic reflection is paused because its model configuration is invalid. Fix the reflection model or provider, run /reload, then use /reflect to retry.";
     case "memfs_disabled":
       return surface === "listener"
         ? "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead."
@@ -274,6 +283,44 @@ export function tryReserveReflectionLaunch(agentId: string): boolean {
   return true;
 }
 
+export function isAutomaticReflectionSuppressed(agentId: string): boolean {
+  return suppressedAutomaticReflections.has(agentId);
+}
+
+export function shouldSuppressReflectionLaunch(
+  agentId: string,
+  triggerSource: ReflectionLaunchTriggerSource,
+): boolean {
+  return triggerSource !== "manual" && isAutomaticReflectionSuppressed(agentId);
+}
+
+export function clearAutomaticReflectionSuppression(agentId: string): void {
+  suppressedAutomaticReflections.delete(agentId);
+}
+
+export function recordReflectionConfigurationFailure(params: {
+  agentId: string;
+  model?: string;
+  error?: string;
+}): boolean {
+  const configurationError = classifyReflectionConfigurationError(params.error);
+  if (!configurationError) return false;
+
+  suppressedAutomaticReflections.set(params.agentId, {
+    model: params.model,
+    message: configurationError.message,
+  });
+  const pendingLaunch = pendingReflectionLaunches.get(params.agentId);
+  if (pendingLaunch?.triggerSource !== "manual") {
+    pendingReflectionLaunches.delete(params.agentId);
+  }
+  debugWarn(
+    "memory",
+    `Pausing automatic reflection for ${params.agentId}: ${configurationError.message}`,
+  );
+  return true;
+}
+
 export function releaseReflectionLaunch(agentId: string): void {
   reservedReflectionAgentIds.delete(agentId);
   schedulePendingReflectionLaunch(agentId);
@@ -356,6 +403,8 @@ function resolveCompletionConversationId(
 
 function getReflectionCompletionMessage(
   integration: ReflectionMemoryWorktreeFinalizeResult,
+  subagentError?: string,
+  automaticReflectionPaused = false,
 ): MemorySubagentSuccessMessageOverride | undefined {
   switch (integration.status) {
     case "merged":
@@ -368,10 +417,19 @@ function getReflectionCompletionMessage(
       return "Tried to reflect, but memory updates conflicted with newer changes; will retry later.";
     case "dirty_uncommitted":
       return "Tried to reflect, but memory changes were not committed cleanly; will retry later.";
-    case "failed":
-      return integration.failurePhase === "integration"
-        ? `${integration.summary} Will retry later.`
-        : "Tried to reflect, but memory updates were not completed cleanly; will retry later.";
+    case "failed": {
+      if (integration.failurePhase === "integration") {
+        return `${integration.summary} Will retry later.`;
+      }
+      const configurationError =
+        classifyReflectionConfigurationError(subagentError);
+      if (!configurationError) {
+        return "Tried to reflect, but memory updates were not completed cleanly; will retry later.";
+      }
+      return automaticReflectionPaused
+        ? `Reflection failed: ${configurationError.message} Automatic reflection is paused until the model configuration changes; use /reflect to retry.`
+        : `Reflection failed: ${configurationError.message} Fix the reflection model configuration, then use /reflect to retry.`;
+    }
   }
 }
 
@@ -460,6 +518,11 @@ export async function prepareReflectionMemoryWorktreeLaunch(params: {
   reflectionPrompt: string;
 }> {
   const memoryDir = getScopedMemoryFilesystemRoot(params.agentId);
+  const backend = getBackend();
+  const memoryFormat = detectMemoryFormat(
+    memoryDir,
+    backend.capabilities.localMemfs,
+  );
   const worktree = await createReflectionMemoryWorktree({
     parentMemoryDir: memoryDir,
   });
@@ -471,7 +534,10 @@ export async function prepareReflectionMemoryWorktreeLaunch(params: {
       params.reflectionPromptOverride ??
       buildReflectionSubagentPrompt({
         instruction: params.instruction,
-        parentMemory: await buildParentMemorySnapshot(worktree.worktreeDir),
+        parentMemory: await buildParentMemorySnapshot(worktree.worktreeDir, {
+          memoryFormat,
+        }),
+        memoryFormat,
       });
     return { worktree, reflectionPrompt };
   } catch (error) {
@@ -511,6 +577,17 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   completionMessage: string;
   integrationConversationId?: string;
 }> {
+  const configurationFailure =
+    !params.subagentSuccess &&
+    recordReflectionConfigurationFailure({
+      agentId: params.agentId,
+      model: params.model ?? undefined,
+      error: params.subagentError,
+    });
+  if (params.subagentSuccess) {
+    clearAutomaticReflectionSuppression(params.agentId);
+  }
+
   let integrationRun: ReflectionIntegrationOutcome | undefined;
   if (params.subagentSuccess && params.mergePolicy === "explicit") {
     const state = params.knownNoChanges
@@ -566,7 +643,11 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
       error: completionSuccess ? undefined : params.subagentError,
       subagentAgentId: params.subagentAgentId,
       skipRecompile: !reflectionIntegrationShouldRecompile(integration),
-      successMessageOverride: getReflectionCompletionMessage(integration),
+      successMessageOverride: getReflectionCompletionMessage(
+        integration,
+        params.subagentError,
+        configurationFailure,
+      ),
     },
     {
       recompileByConversation: params.recompileByConversation,
@@ -657,6 +738,15 @@ export async function launchReflectionSubagent(
       `Skipping reflection launch (${triggerSource}) because server-side reflection owns this agent`,
     );
     return { launched: false, reason: "cutover" };
+  }
+
+  if (shouldSuppressReflectionLaunch(agentId, triggerSource)) {
+    const suppressed = suppressedAutomaticReflections.get(agentId);
+    debugLog(
+      "memory",
+      `Skipping automatic reflection (${triggerSource}) because model configuration is invalid${suppressed?.model ? ` for ${suppressed.model}` : ""}`,
+    );
+    return { launched: false, reason: "configuration_error" };
   }
 
   if (!tryReserveReflectionLaunch(agentId)) {

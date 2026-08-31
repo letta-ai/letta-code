@@ -175,9 +175,7 @@ USAGE
   letta -p "..."        One-off prompt in headless mode (no TTY UI)
 
   # maintenance
-  letta update          Manually check for updates and install if available
-  letta upgrade         Alias for \`letta update\`
-  letta --update/--upgrade Aliases for \`letta update\`
+  letta update          Check for updates and install (aliases: upgrade, --update, --upgrade)
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta environments ... List available remote environments (JSON-only)
@@ -186,6 +184,7 @@ USAGE
   letta mods ...        List and manage local mods
   letta sandbox ...     Transfer files to or from the current Cloud sandbox
   letta server ...      Run a remote environment, channels, or the App Server
+  letta cloud-mcp ...  Use MCP servers connected to an agent
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
   letta setup           Re-run first-run setup
@@ -217,6 +216,7 @@ SUBCOMMANDS
   letta mods enable <package-spec>
   letta mods disable <package-spec>
   letta mods remove <package-spec>
+  letta cloud-mcp list|tools|run ... [--agent <id>]
   letta server [--env-name <name> | --listen [url]] [options]
   letta connect <provider> [options]
   letta install <thing> [--agent <id> | -n <name>]
@@ -1228,12 +1228,12 @@ async function main(): Promise<void> {
       }
       markMilestone("CREDENTIALS_VALIDATED");
 
-      // Ensure base tools exist on the server (first-run-per-machine,
-      // backgrounded for interactive startup). Must run after credentials are
-      // validated so OAuth tokens are available.
+      // Bootstrap after credential validation. Only interactive startup
+      // backgrounds the request.
       if (isValid) {
         const bootstrapPromise = import("@/agent/bootstrap-tools").then(
-          ({ bootstrapBaseToolsIfNeeded }) => bootstrapBaseToolsIfNeeded(),
+          ({ bootstrapBaseToolsIfNeeded }) =>
+            bootstrapBaseToolsIfNeeded({ quiet: isHeadless }),
         );
         if (isHeadless) {
           await bootstrapPromise;
@@ -2010,7 +2010,7 @@ async function main(): Promise<void> {
           } else {
             try {
               const agent = await backend.retrieveAgent(agentIdArg, {
-                include: ["agent.secrets", "agent.tools", "agent.tags"],
+                include: ["agent.tools", "agent.tags"],
               });
               setValidatedAgent(agent);
               resolvedAgent = agent;
@@ -2036,7 +2036,7 @@ async function main(): Promise<void> {
           } else {
             try {
               const agent = await backend.retrieveAgent(selectedGlobalAgentId, {
-                include: ["agent.secrets", "agent.tools", "agent.tags"],
+                include: ["agent.tools", "agent.tags"],
               });
               setValidatedAgent(agent);
               resolvedAgent = agent;

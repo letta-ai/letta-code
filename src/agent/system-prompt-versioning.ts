@@ -5,8 +5,11 @@ import { settingsManager } from "@/settings-manager";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getVersion } from "@/version";
 import { LETTA_CODE_ORIGIN_TAG, LETTA_CODE_SUBAGENT_TAG } from "./agent-tags";
+import { resolveScopedMemoryDir } from "./memory-filesystem";
+import { detectMemoryFormat } from "./memory-format";
 import {
   buildSystemPrompt,
+  getSystemPromptVariantContents,
   isKnownPreset,
   type MemoryPromptMode,
   SYSTEM_PROMPTS,
@@ -70,14 +73,31 @@ export function recordManagedSystemPrompt(
   );
 }
 
-export function getMemoryPromptModeForAgent(agentId: string): MemoryPromptMode {
-  const backend = getBackend();
-  if (backend.capabilities.localMemfs) {
+export function resolveMemoryPromptMode(input: {
+  localMemfs: boolean;
+  memoryDir: string | null;
+  memfsEnabled: boolean;
+}): MemoryPromptMode {
+  if (input.localMemfs) {
     return "local-memfs";
   }
-  return settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
-    ? "memfs"
-    : "standard";
+  if (
+    input.memoryDir &&
+    detectMemoryFormat(input.memoryDir, false) === "memfs-v2"
+  ) {
+    return "root-memfs";
+  }
+  return input.memfsEnabled ? "memfs" : "standard";
+}
+
+export function getMemoryPromptModeForAgent(agentId: string): MemoryPromptMode {
+  const backend = getBackend();
+  return resolveMemoryPromptMode({
+    localMemfs: backend.capabilities.localMemfs,
+    memoryDir: resolveScopedMemoryDir({ agentId }),
+    memfsEnabled:
+      settingsManager.isReady && settingsManager.isMemfsEnabled(agentId),
+  });
 }
 
 function isLettaCodePrimaryAgent(agent: AgentState): boolean {
@@ -88,24 +108,16 @@ function isLettaCodePrimaryAgent(agent: AgentState): boolean {
   );
 }
 
-function findMatchingCurrentPreset(
-  systemPrompt: string,
-  memoryMode: MemoryPromptMode,
-): string | undefined {
+function findMatchingCurrentPreset(systemPrompt: string): string | undefined {
   for (const preset of SYSTEM_PROMPTS) {
-    if (buildSystemPrompt(preset.id, memoryMode) === systemPrompt) {
+    if (
+      getSystemPromptVariantContents(preset).some(
+        (content) => content.trim() === systemPrompt.trim(),
+      )
+    ) {
       return preset.id;
     }
   }
-
-  if (
-    systemPrompt.startsWith(
-      "You are Letta Code, a state-of-the-art coding agent running within the Letta Code CLI",
-    )
-  ) {
-    return "default";
-  }
-
   return undefined;
 }
 
@@ -140,6 +152,20 @@ export function decideManagedSystemPromptUpdate(input: {
       }
 
       if (currentHash !== storedHash) {
+        const expectedCurrentPrompt = buildSystemPrompt(
+          storedPreset,
+          memoryMode,
+        );
+        if (currentSystemPrompt === expectedCurrentPrompt) {
+          return {
+            kind: "track",
+            prompt: managedPrompt(
+              storedPreset,
+              memoryMode,
+              currentSystemPrompt,
+            ),
+          };
+        }
         return {
           kind: "custom",
           reason: "agent prompt differs from stored managed prompt hash",
@@ -190,10 +216,7 @@ export function decideManagedSystemPromptUpdate(input: {
     return { kind: "noop", reason: "agent is a Letta Code subagent" };
   }
 
-  const matchingPreset = findMatchingCurrentPreset(
-    currentSystemPrompt,
-    memoryMode,
-  );
+  const matchingPreset = findMatchingCurrentPreset(currentSystemPrompt);
   if (!matchingPreset) {
     if (isLettaCodePrimaryAgent(agent)) {
       return {
@@ -300,7 +323,7 @@ export function scheduleManagedSystemPromptUpdate({
       );
       if (onUpdated) {
         const updatedAgent = await getBackend().retrieveAgent(agent.id, {
-          include: ["agent.secrets", "agent.tools", "agent.tags"],
+          include: ["agent.tools", "agent.tags"],
         });
         onUpdated(updatedAgent);
       }

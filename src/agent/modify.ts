@@ -440,7 +440,7 @@ export async function updateAgentLLMConfig(
   });
 
   const finalAgent = await backend.retrieveAgent(agentId, {
-    include: ["agent.secrets", "agent.tools", "agent.tags"],
+    include: ["agent.tools", "agent.tags"],
   });
   return finalAgent;
 }
@@ -753,17 +753,12 @@ export async function updateAgentSystemPrompt(
     const { resolveAndBuildSystemPrompt } = await import(
       "@/agent/system-prompt-resolution"
     );
-    const { recordManagedSystemPrompt } = await import(
-      "@/agent/system-prompt-versioning"
-    );
+    const { getMemoryPromptModeForAgent, recordManagedSystemPrompt } =
+      await import("@/agent/system-prompt-versioning");
     const { settingsManager } = await import("@/settings-manager");
 
     const backend = getBackend();
-    const memoryMode = backend.capabilities.localMemfs
-      ? "local-memfs"
-      : settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
-        ? "memfs"
-        : "standard";
+    const memoryMode = getMemoryPromptModeForAgent(agentId);
 
     const systemPromptContent = await resolveAndBuildSystemPrompt(
       systemPromptId,
@@ -798,10 +793,10 @@ export async function updateAgentSystemPrompt(
       }
     }
 
-    // Re-fetch agent to get updated state (include relationships so
-    // callers that rely on agent.tags/tools/secrets aren't broken).
+    // Re-fetch agent to get updated state (include relationships so callers
+    // that rely on agent.tags/tools aren't broken). Secrets use their own API.
     const agent = await backend.retrieveAgent(agentId, {
-      include: ["agent.secrets", "agent.tools", "agent.tags"],
+      include: ["agent.tools", "agent.tags"],
     });
 
     return {
@@ -833,16 +828,19 @@ export async function updateAgentSystemPromptMemfs(
 ): Promise<SystemPromptUpdateResult> {
   try {
     const { settingsManager } = await import("@/settings-manager");
-    const { isKnownPreset, buildSystemPrompt } = await import(
-      "@/agent/prompt-assets"
-    );
-    const { hashSystemPrompt, recordManagedSystemPrompt } = await import(
-      "@/agent/system-prompt-versioning"
-    );
+    const {
+      isKnownPreset,
+      buildSystemPrompt,
+      getSystemPromptVariantContents,
+      SYSTEM_PROMPTS,
+    } = await import("@/agent/prompt-assets");
+    const {
+      getMemoryPromptModeForAgent,
+      hashSystemPrompt,
+      recordManagedSystemPrompt,
+    } = await import("@/agent/system-prompt-versioning");
 
-    const newMode = getBackend().capabilities.localMemfs
-      ? "local-memfs"
-      : "memfs";
+    const newMode = getMemoryPromptModeForAgent(agentId);
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
       : undefined;
@@ -865,14 +863,15 @@ export async function updateAgentSystemPromptMemfs(
       }
 
       if (!storedHash && settingsManager.isReady) {
-        const currentMode = settingsManager.isMemfsEnabled(agentId)
-          ? getBackend().capabilities.localMemfs
-            ? "local-memfs"
-            : "memfs"
-          : "standard";
-        if (
-          currentSystemPrompt !== buildSystemPrompt(storedPreset, currentMode)
-        ) {
+        const preset = SYSTEM_PROMPTS.find(
+          (candidate) => candidate.id === storedPreset,
+        );
+        const matchesBundledVariant =
+          preset &&
+          getSystemPromptVariantContents(preset).some(
+            (content) => content.trim() === currentSystemPrompt.trim(),
+          );
+        if (!matchesBundledVariant) {
           settingsManager.setSystemPromptCustom(agentId);
           return {
             success: true,

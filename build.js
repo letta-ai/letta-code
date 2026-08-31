@@ -184,6 +184,18 @@ await Bun.build({
 });
 
 await Bun.build({
+  entrypoints: ["./src/memory-constraints.ts"],
+  outdir: "./dist",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "memory-constraints.js",
+  },
+});
+
+await Bun.build({
   entrypoints: ["./src/app-server-client.ts"],
   outdir: "./dist",
   target: "node",
@@ -197,6 +209,11 @@ await Bun.build({
 
 // Browser-safe agent creation presets (personalities, prompts, tags) for
 // surfaces that create Letta Code agents through Core (e.g. the chat web app).
+for (const output of readdirSync(join(__dirname, "dist"))) {
+  if (/^agent-presets-.+\.js(?:\.map)?$/.test(output)) {
+    rmSync(join(__dirname, "dist", output));
+  }
+}
 await Bun.build({
   entrypoints: ["./src/agent-presets.ts"],
   outdir: "./dist",
@@ -204,8 +221,13 @@ await Bun.build({
   format: "esm",
   minify: false,
   sourcemap: "external",
+  splitting: true,
   naming: {
     entry: "agent-presets.js",
+    chunk: "agent-presets-[name].js",
+  },
+  define: {
+    __AGENT_PRESETS_BUNDLE__: "true",
   },
   loader: {
     ".md": "text",

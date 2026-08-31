@@ -119,13 +119,17 @@ describe("secrets info reminders", () => {
     expect(text).toContain("The agent secrets were updated");
     expect(text).toContain("$PLAYGROUND_AGENT_ID");
     expect(text).toContain(
-      "the harness replaces a referenced `$NAME` with its real value",
+      "the harness loads the matching secret into the child shell's environment",
     );
-    expect(text).toContain("Secrets are not exported automatically");
+    expect(text).toContain("it does not rewrite the command text");
+    expect(text).toContain("The shell expands `$NAME` at execution time");
     expect(text).toContain('os.environ["API_KEY"]');
     expect(text).toContain("process.env.API_KEY");
     expect(text).toContain(
-      "Tool output shows `NAME=<REDACTED>`, which means the secret is set and working",
+      "Tool output shows `NAME=<REDACTED>` when a value was injected and then scrubbed",
+    );
+    expect(text).toContain(
+      "An empty direct `$NAME` expansion means that secret was not available to that invocation",
     );
     if (process.platform === "win32") {
       expect(text).toContain("$env:API_KEY = $API_KEY; python script.py");

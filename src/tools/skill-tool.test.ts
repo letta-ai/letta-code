@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getRepositoryMountDir } from "@/agent/memory-git";
@@ -9,11 +15,13 @@ import { clearTools, executeTool, loadSpecificTools } from "@/tools/manager";
 import SkillSchema from "@/tools/schemas/Skill.json";
 
 const TEST_AGENT_ID = "agent-skill-memfs-test";
+const SYSTEM_DIRECTORY_PATH = /(^|[^A-Za-z0-9_-])(?:\$MEMORY_DIR\/)?system\//m;
 let currentSkillsDirectory: string | null = null;
 
 const {
   readSkillContent,
   renderSkillContent,
+  resolveBundledSkillContentPath,
   skill,
   wrapSkillContent,
   wrapSkillPrompt,
@@ -104,6 +112,67 @@ describe("Skill tool memory filesystem lookup", () => {
         "agent-local-skill-test",
       ),
     ).rejects.toThrow('Skill "image-generation" not found');
+  });
+
+  test("selects root variants only for API repositories with root MEMORY.md", () => {
+    const memoryDir = join(tempRoot, "root-memory");
+    const bundledPath = join(tempRoot, "initializing-memory", "SKILL.md");
+    mkdirSync(memoryDir, { recursive: true });
+
+    expect(
+      resolveBundledSkillContentPath({
+        skillId: "initializing-memory",
+        bundledSkillPath: bundledPath,
+        memoryDir,
+        localMemfs: false,
+      }),
+    ).toBe(bundledPath);
+
+    writeFileSync(join(memoryDir, "MEMORY.md"), "# Memory\n");
+    expect(
+      resolveBundledSkillContentPath({
+        skillId: "initializing-memory",
+        bundledSkillPath: bundledPath,
+        memoryDir,
+        localMemfs: false,
+      }),
+    ).toEndWith(join("initializing-memory", "ROOT_MEMORY.md"));
+    expect(
+      resolveBundledSkillContentPath({
+        skillId: "initializing-memory",
+        bundledSkillPath: bundledPath,
+        memoryDir,
+        localMemfs: true,
+      }),
+    ).toBe(bundledPath);
+  });
+
+  test("selected root skill variants contain no system directory paths", () => {
+    const memoryDir = join(tempRoot, "root-skill-memory");
+    mkdirSync(memoryDir, { recursive: true });
+    writeFileSync(join(memoryDir, "MEMORY.md"), "# Memory\n");
+
+    for (const skillId of ["initializing-memory", "context-doctor"]) {
+      const bundledSkillPath = join(
+        import.meta.dir,
+        "..",
+        "skills",
+        "builtin",
+        skillId,
+        "SKILL.md",
+      );
+      const selectedPath = resolveBundledSkillContentPath({
+        skillId,
+        bundledSkillPath,
+        memoryDir,
+        localMemfs: false,
+      });
+
+      expect(selectedPath).toEndWith(join(skillId, "ROOT_MEMORY.md"));
+      expect(
+        SYSTEM_DIRECTORY_PATH.test(readFileSync(selectedPath, "utf8")),
+      ).toBe(false);
+    }
   });
 
   test("loads skills from MEMORY_DIR/skills", async () => {
@@ -385,6 +454,37 @@ describe("Skill tool memory filesystem lookup", () => {
     );
   });
 
+  test("loads a nested skill by its frontmatter name", async () => {
+    const projectRoot = join(tempRoot, "project-root");
+    const skillsRoot = join(projectRoot, ".skills");
+    const computerUseDir = join(skillsRoot, "computer-use");
+    const cuaDriverDir = join(computerUseDir, "references", "cua-driver");
+
+    currentSkillsDirectory = skillsRoot;
+    mkdirSync(cuaDriverDir, { recursive: true });
+    writeFileSync(
+      join(computerUseDir, "SKILL.md"),
+      "---\nname: computer-use\ndescription: managed computer use\n---\n",
+      "utf8",
+    );
+    writeFileSync(
+      join(cuaDriverDir, "SKILL.md"),
+      "---\nname: cua-driver\ndescription: Cua Driver reference\n---\n\nLoaded by frontmatter name.",
+      "utf8",
+    );
+    process.env.USER_CWD = projectRoot;
+
+    const result = await runScopedSkill({
+      skill: "cua-driver",
+      toolCallId: "tc-nested-frontmatter-name",
+    });
+
+    expect(result.message).toBe("Launching skill: cua-driver");
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain("Loaded by frontmatter name.");
+  });
+
   test("loads canonical .agents/skills project skills before legacy .skills", async () => {
     const skillName = "canonical-project-skill";
     const projectRoot = join(tempRoot, "project-root");
@@ -417,6 +517,39 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(queued).toHaveLength(1);
     expect(queued[0]?.content).toContain("Loaded from .agents/skills.");
     expect(queued[0]?.content).not.toContain("Loaded from .skills.");
+  });
+
+  test("loads a project skill instead of a bundled skill with the same name", async () => {
+    const skillName = "browser-use";
+    const projectRoot = join(tempRoot, "project-root");
+    const projectSkillDir = join(projectRoot, ".agents", "skills", skillName);
+
+    currentSkillsDirectory = join(projectRoot, ".skills");
+    mkdirSync(projectSkillDir, { recursive: true });
+    writeFileSync(
+      join(projectSkillDir, "SKILL.md"),
+      [
+        "---",
+        "name: browser-use",
+        "description: project browser controller",
+        "---",
+        "",
+        "Loaded from the project override.",
+      ].join("\n"),
+      "utf8",
+    );
+    process.env.USER_CWD = projectRoot;
+
+    const result = await runScopedSkill({
+      skill: skillName,
+      toolCallId: "tc-bundled-override",
+    });
+
+    expect(result.message).toBe(`Launching skill: ${skillName}`);
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain("Loaded from the project override.");
+    expect(queued[0]?.content).not.toContain("# Browser Use\n");
   });
 
   test("renders skill directory substitutions", () => {

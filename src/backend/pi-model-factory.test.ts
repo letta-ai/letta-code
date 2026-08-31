@@ -2,12 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
-import { streamSimple } from "@earendil-works/pi-ai/api/openai-completions";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { getBuiltinModels as getModels } from "@earendil-works/pi-ai/providers/all";
 import {
   applyPiEnvOverrides,
-  patchTemporaryPiAiOpenRouterThinkingMap,
   reasoningForSettings,
   resolvePiModelForAgent,
   resolveZaiConnection,
@@ -65,22 +63,17 @@ describe("pi model factory", () => {
     );
   });
 
-  test("temporarily patches pi-ai OpenRouter metadata until issue 8454 ships", () => {
-    const piModel = {
-      id: "google/gemini-3.7-flash",
-      name: "Gemini 3.7 Flash",
-      api: "openai-completions",
-      provider: "openrouter",
-      reasoning: true,
-      input: ["text"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 1_048_576,
-      maxTokens: 65_536,
-    } as Model<"openai-completions">;
-
-    const patched = patchTemporaryPiAiOpenRouterThinkingMap(piModel);
-
-    expect(patched.thinkingLevelMap).toEqual({
+  test("pi-ai 0.84.4+ generates thinkingLevelMap for OpenRouter mandatory-reasoning models", () => {
+    // pi-ai 0.84.4 fixed https://github.com/earendil-works/pi/issues/8454:
+    // the generated OpenRouter catalog now derives thinkingLevelMap from
+    // OpenRouter's reasoning metadata, so the temporary local patch is no
+    // longer needed. Verify the catalog includes the map for a model that
+    // previously required the workaround.
+    const model = getModels("openrouter").find(
+      (entry) => entry.id === "google/gemini-3.7-flash",
+    );
+    expect(model).toBeDefined();
+    expect(model?.thinkingLevelMap).toEqual({
       off: null,
       minimal: null,
       low: "low",
@@ -89,93 +82,21 @@ describe("pi model factory", () => {
       xhigh: null,
       max: null,
     });
-    expect(getSupportedThinkingLevels(patched)).toEqual([
+    expect(getSupportedThinkingLevels(model!)).toEqual([
       "low",
       "medium",
       "high",
     ]);
     expect(
-      reasoningForSettings({}, "openrouter/google/gemini-3.7-flash", patched),
+      reasoningForSettings({}, "openrouter/google/gemini-3.7-flash", model),
     ).toBeUndefined();
-    expect(
-      reasoningForSettings(
-        { reasoning_effort: "minimal" },
-        "openrouter/google/gemini-3.7-flash",
-        patched,
-      ),
-    ).toBe("low");
     expect(
       reasoningForSettings(
         { reasoning_effort: "high" },
         "openrouter/google/gemini-3.7-flash",
-        patched,
+        model,
       ),
     ).toBe("high");
-  });
-
-  test("temporary metadata makes pi-ai omit disabled OpenRouter reasoning", async () => {
-    const bodies: unknown[] = [];
-    const model = patchTemporaryPiAiOpenRouterThinkingMap({
-      id: "google/gemini-3.7-flash",
-      name: "Gemini 3.7 Flash",
-      api: "openai-completions",
-      provider: "openrouter",
-      baseUrl: "https://openrouter.test/api/v1",
-      reasoning: true,
-      input: ["text"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 1_048_576,
-      maxTokens: 65_536,
-    } as Model<"openai-completions">);
-    const fetchImpl = (async (
-      _input: Parameters<typeof fetch>[0],
-      init?: RequestInit,
-    ) => {
-      bodies.push(JSON.parse(String(init?.body)));
-      return new Response(
-        [
-          'data: {"id":"response-1","choices":[{"delta":{"content":"ok"},"finish_reason":null}]}',
-          'data: {"id":"response-1","choices":[{"delta":{},"finish_reason":"stop"}]}',
-          "data: [DONE]",
-          "",
-        ].join("\n"),
-        { headers: { "content-type": "text/event-stream" } },
-      );
-    }) as typeof fetch;
-
-    await streamSimple(
-      model,
-      { messages: [{ role: "user", content: "hello", timestamp: 0 }] },
-      { apiKey: "test-key", fetch: fetchImpl },
-    ).result();
-
-    expect(bodies).toHaveLength(1);
-    expect(bodies[0]).not.toHaveProperty("reasoning");
-  });
-
-  test("limits the temporary pi-ai patch to OpenRouter models without metadata", () => {
-    const model = {
-      id: "google/gemini-3.7-flash",
-      name: "Gemini 3.7 Flash",
-      api: "openai-completions",
-      provider: "registered-provider",
-      reasoning: true,
-      input: ["text"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 1_048_576,
-      maxTokens: 65_536,
-    } as Model<"openai-completions">;
-    const existingMap = { off: "none", high: "high" };
-    const openRouterModel = {
-      ...model,
-      provider: "openrouter",
-      thinkingLevelMap: existingMap,
-    } as Model<"openai-completions">;
-
-    expect(patchTemporaryPiAiOpenRouterThinkingMap(model)).toBe(model);
-    expect(patchTemporaryPiAiOpenRouterThinkingMap(openRouterModel)).toBe(
-      openRouterModel,
-    );
   });
 
   test("reuses a lone zAI key on the published coding-plan endpoint", async () => {

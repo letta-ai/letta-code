@@ -28,6 +28,23 @@ describe("subcommand router", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("routes feedback help before TUI startup", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      const exitCode = await runSubcommand(["feedback", "--help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain("letta feedback --message <text>");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   test("shows unified server help without starting a server", async () => {
     const messages: string[] = [];
     const originalLog = console.log;
@@ -94,22 +111,8 @@ describe("subcommand router", () => {
     }
   });
 
-  test("routes dream help", async () => {
-    const messages: string[] = [];
-    const originalLog = console.log;
-    console.log = (message?: unknown) => {
-      messages.push(String(message));
-    };
-
-    try {
-      const exitCode = await runSubcommand(["dream", "--help"]);
-
-      expect(exitCode).toBe(0);
-      expect(messages.join("\n")).toContain("Usage:");
-      expect(messages.join("\n")).toContain("letta dream");
-    } finally {
-      console.log = originalLog;
-    }
+  test("does not register the removed dream subcommand", async () => {
+    expect(await runSubcommand(["dream", "--help"])).toBeNull();
   });
 
   test("routes environments help", async () => {
@@ -169,7 +172,7 @@ describe("subcommand router", () => {
   test("identifies backend-aware subcommands for early backend selection", () => {
     expect(subcommandNeedsEarlyBackendMode("app-server")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("connect")).toBe(true);
-    expect(subcommandNeedsEarlyBackendMode("dream")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("dream")).toBe(false);
     expect(subcommandNeedsEarlyBackendMode("server")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("environments")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("envs")).toBe(true);

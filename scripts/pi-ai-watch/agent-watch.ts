@@ -3,7 +3,6 @@
 import { appendFileSync, writeFileSync } from "node:fs";
 import {
   createIssueWithBody,
-  editIssueBody,
   ensureLabels,
   findIssueByExactTitle,
   getIssueBody,
@@ -13,12 +12,11 @@ import {
   analyzePiAiRelease,
   compareStableVersions,
   DEFAULT_TARGET_REPO,
-  findNextStableRelease,
+  findLatestStableReleaseAfter,
   listStableReleases,
   readInstalledVersion,
 } from "./release-analysis.ts";
 import {
-  advanceMergedPr,
   getPendingPrForCursor,
   hasCompletedRange,
   initialTrackerState,
@@ -82,7 +80,7 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const installedVersion = readInstalledVersion();
   const tracker = ensureTrackerIssue(args, installedVersion);
-  let state = parseTrackerState(tracker.body);
+  const state = parseTrackerState(tracker.body);
   const releases = await listStableReleases();
   let previousVersion = args.previousVersion;
   let currentVersion = args.currentVersion;
@@ -109,19 +107,16 @@ async function main(): Promise<void> {
             `Merged pi-ai PR ${status.url} targets ${pending.version}, but main still declares ${installedVersion}`,
           );
         }
-        state = advanceMergedPr(state, pending.version);
-        if (!args.dryRun) {
-          editIssueBody(args.repo, tracker.number, renderTrackerBody(state));
-        }
       } else {
-        console.log(
-          `Retrying ${pending.version}; prior PR was closed unmerged.`,
-        );
+        console.log(`Prior pi-ai PR ${status.url} was closed unmerged.`);
       }
     }
 
-    const next = findNextStableRelease(releases, state.audit_cursor_version);
-    if (!next) {
+    const latest = findLatestStableReleaseAfter(
+      releases,
+      state.audit_cursor_version,
+    );
+    if (!latest) {
       console.log(
         `No stable pi-ai release after ${state.audit_cursor_version}.`,
       );
@@ -134,7 +129,7 @@ async function main(): Promise<void> {
       return;
     }
     previousVersion = state.audit_cursor_version;
-    currentVersion = next.version;
+    currentVersion = latest.version;
   }
 
   const analysis = await analyzePiAiRelease({

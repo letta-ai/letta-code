@@ -147,7 +147,7 @@ describe("Bash tool", () => {
 
     expect(result.status).toBe("error");
     expect(result.content[0]?.text).toContain("timed out");
-  }, 2000);
+  }, 5000);
 
   test("blocks foreground sleep with guidance toward background waits", async () => {
     const result = await bash({

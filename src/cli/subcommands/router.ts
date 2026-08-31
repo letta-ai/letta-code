@@ -1,10 +1,11 @@
 import { runAgentsSubcommand } from "./agents";
 import { runBackendSubcommand } from "./backend";
 import { runChannelsSubcommand } from "./channels";
+import { runCloudMcpSubcommand } from "./cloud-mcp";
 import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
-import { runDreamSubcommand } from "./dream";
 import { runEnvironmentsSubcommand } from "./environments";
+import { runFeedbackSubcommand } from "./feedback";
 import { runListenSubcommand } from "./listen.tsx";
 import { runLocalBackendSubcommand } from "./local-backend";
 import { runMemorySubcommand } from "./memory";
@@ -40,9 +41,9 @@ export function subcommandNeedsEarlyBackendMode(
     case "channel-gateway":
     case "agents":
     case "connect":
-    case "dream":
     case "environments":
     case "envs":
+    case "feedback":
     case "install":
     case "memfs":
     case "memory":
@@ -52,6 +53,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "sandbox":
     case "secret":
     case "server":
+    case "cloud-mcp":
     case "shared-memory":
     case "skills":
     case "teleport":
@@ -99,6 +101,10 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runTeleportSubcommand(rest);
     case "server":
       return runServerSubcommand(rest);
+    case "cloud-mcp":
+      return runCloudMcpSubcommand(rest);
+    case "feedback":
+      return runFeedbackSubcommand(rest);
     case "remote": // alias
       return runListenSubcommand(rest);
     case "connect":
@@ -115,8 +121,6 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runSkillsSubcommand(rest);
     case "cron":
       return runCronSubcommand(rest);
-    case "dream":
-      return runDreamSubcommand(rest);
     case "channels":
       return runChannelsSubcommand(rest);
     case "channel-gateway": {

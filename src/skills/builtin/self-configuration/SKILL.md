@@ -1,6 +1,6 @@
 ---
 name: self-configuration
-description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, agent secrets, and local runtime settings. Use when the user asks how this agent or conversation is configured, or asks you to change how you behave or how the harness runs you.
+description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, agent secrets, and local runtime settings. Use when the user asks how this agent or conversation is configured, asks you to change how you behave or how the harness runs you, or renames you.
 license: MIT
 ---
 
@@ -88,15 +88,20 @@ If CLI behavior does not match the docs, stop and inspect `command -v letta`, `t
 
 Use memory when the user wants you to remember, prefer, learn, or change your identity/personality.
 
-Common files:
+Inspect the projected memory tree in the system prompt before choosing paths.
+Letta Code supports two layouts:
 
-| Path | Purpose |
-| --- | --- |
-| `$MEMORY_DIR/system/persona.md` | Identity, voice, behavioral defaults |
-| `$MEMORY_DIR/system/human.md` | Notes about the person you work with |
-| `$MEMORY_DIR/projects/` | Project-specific long-term context |
-| `$MEMORY_DIR/skills/` | Agent-owned reusable skills |
-| `$MEMORY_DIR/relationships/` | Relationship and collaboration notes |
+| Purpose | Root layout | Existing layout |
+| --- | --- | --- |
+| Identity and voice | `$MEMORY_DIR/persona.md` or another root persona file | `$MEMORY_DIR/system/persona.md` |
+| Notes about the user | `$MEMORY_DIR/human.md` or another root human file | `$MEMORY_DIR/system/human.md` |
+| Core memory | Other root Markdown files indexed by `MEMORY.md` | Markdown files under `$MEMORY_DIR/system/` |
+| Deferred memory | Directories with their own `MEMORY.md` | Files outside `$MEMORY_DIR/system/` |
+| Agent-owned skills | `$MEMORY_DIR/skills/` | `$MEMORY_DIR/skills/` |
+
+Use the active layout shown by the prompt and memory tools. Do not create a
+`system/` directory in a root-layout repository or move existing-layout memory
+to the root as part of an unrelated self-configuration request.
 
 After changing memory, inspect and commit the exact changed files. Push/sync according to the current harness reminder or the `syncing-memory-filesystem` skill; some environments sync committed memory automatically.
 
@@ -152,6 +157,8 @@ npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
 ### Name and description
 
 Name and description are agent-level metadata. Do not pass them with `--target conversation`. Values must be non-empty; the helper does not clear metadata by accident.
+
+When the user renames you, this patch is the authoritative change — editing a name written in persona memory does not change the agent's actual name. Do both: patch the agent name here, then update any memory file that states your name so they agree.
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
@@ -257,7 +264,11 @@ Selected global settings keys:
 | `preferredBackendMode` | Startup backend preference, `api` or `local` |
 | `channelCredentialsStore` | Channel token storage, `file`, `keyring`, or `auto` |
 | `reflectionTrigger` / `reflectionStepCount` | Default reflection cadence |
+| `reflectionMerge` / `reflectionMergeInstructions` | Reflection change integration policy |
 | `reflectionSettingsByAgent` | Per-agent reflection cadence |
+| `conversationSwitchAlertEnabled` | Send system-reminder when switching conversations/agents |
+| `createDefaultAgents` | Create Memo/Incognito default agents on startup (default: true) |
+| `windowTitle` | Configurable terminal window title fields |
 | `permissions` | Allow/deny/ask/alwaysAsk rules |
 | `env` | User-wide environment variables for Letta Code |
 | `experiments` | Feature flags |
@@ -271,7 +282,7 @@ Toolset values currently include `auto`, `default`, `codex`, `codex_snake`, `gem
 
 ## Permissions
 
-Permissions decide whether tool calls are allowed, denied, or require approval. User/global permission rules affect all agents using that settings file: `allow` can weaken review, while `deny` and `alwaysAsk` can brick workflows. Valid modes are `standard`, `acceptEdits`, and `unrestricted`; legacy `default` maps to `standard`, while `bypassPermissions` and `fullAccess` map to `unrestricted`. The default mode is `unrestricted` unless startup flags or settings override it.
+Permissions decide whether tool calls are allowed, denied, or require approval. User/global permission rules affect all agents using that settings file: `allow` can weaken review, while `deny` and `alwaysAsk` can brick workflows. Valid modes are `standard`, `acceptEdits`, `unrestricted`, and `strict`; legacy `default` maps to `standard`, while `bypassPermissions` and `fullAccess` map to `unrestricted`. The default mode is `unrestricted` unless startup flags or settings override it.
 
 The removed `memory` mode is invalid; memory access is governed by normal tool permissions plus the server/filesystem checks on the path used. These helper guardrails do not restrict raw Bash/API access. `permissions.mode` supplies a persisted startup default, rule lists still take precedence, and channel accounts have their own `defaultPermissionMode`. Inspect all three when channel approvals differ from the interactive CLI.
 

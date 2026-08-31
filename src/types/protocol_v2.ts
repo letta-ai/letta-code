@@ -30,6 +30,7 @@ import type {
   MessageListParams,
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type { ChatGPTOAuthConfig } from "@/types/chatgpt-oauth";
 import type {
   AppServerInfoCommand,
   AppServerInfoResponseMessage,
@@ -58,7 +59,10 @@ import type {
   RuntimeStartCreateAgentOptions,
   RuntimeStartCreateConversationOptions,
 } from "./runtime-start-protocol";
-import type { CronRunLogPage, CronTask } from "./schedule-protocol";
+import type {
+  CronProtocolCommand,
+  CronProtocolResponseMessage,
+} from "./schedule-protocol";
 import type * as TeleportProtocol from "./teleport-protocol";
 
 export type * from "./approval-classification-protocol";
@@ -1305,14 +1309,13 @@ export interface ConnectProviderCommand {
   type: "connect_provider";
   /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Provider store to write. MVP supports local provider storage. */
   target: ConnectProviderStorageTarget;
-  /** Provider id from list_connect_providers. */
   provider_id: string;
   /** Optional auth method id for providers with multiple auth methods. */
   auth_method_id?: string;
-  /** User-provided connection fields keyed by field id. */
   fields: Record<string, string>;
+  provider_name?: string;
+  oauth_config?: ChatGPTOAuthConfig;
 }
 
 export interface DisconnectProviderCommand {
@@ -1550,95 +1553,6 @@ export interface UpdateToolsetResponseMessage {
   current_toolset?: ToolsetName;
   current_toolset_preference?: ToolsetPreference;
   error?: string;
-}
-
-export interface CronListCommand {
-  type: "cron_list";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-  /** Optional agent filter. */
-  agent_id?: string;
-  /** Optional conversation filter. */
-  conversation_id?: string;
-}
-
-export interface CronAddCommand {
-  type: "cron_add";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-  agent_id: string;
-  /**
-   * Conversation target for scheduled fires.
-   * - omitted/"new": create a fresh conversation for every fire
-   * - "default": agent default conversation
-   * - any other string: existing conversation id
-   */
-  conversation_id?: string;
-  name: string;
-  description: string;
-  cron: string;
-  timezone?: string;
-  recurring: boolean;
-  prompt: string;
-  /** Optional ISO timestamp for one-shot tasks. */
-  scheduled_for?: string | null;
-}
-
-export interface CronGetCommand {
-  type: "cron_get";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-  task_id: string;
-}
-
-export interface CronRunsCommand {
-  type: "cron_runs";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-  task_id: string;
-  /** Maximum run-log entries to return. */
-  limit?: number;
-  /** Page offset for run-log entries. */
-  offset?: number;
-  /** Optional run id filter. */
-  run_id?: string;
-}
-
-export interface CronTriggerCommand {
-  type: "cron_trigger";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-  task_id: string;
-}
-
-export interface CronUpdateCommand {
-  type: "cron_update";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-  task_id: string;
-  name?: string;
-  description?: string;
-  conversation_id?: string;
-  cron?: string;
-  timezone?: string;
-  recurring?: boolean;
-  prompt?: string;
-  /** Optional ISO timestamp for one-shot tasks. */
-  scheduled_for?: string | null;
-}
-
-export interface CronDeleteCommand {
-  type: "cron_delete";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-  task_id: string;
-}
-
-export interface CronDeleteAllCommand {
-  type: "cron_delete_all";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-  agent_id: string;
 }
 
 export interface SkillEnableCommand {
@@ -2005,74 +1919,6 @@ export interface ChannelRouteUpdateCommand {
   account_id?: string;
   chat_id: string;
   runtime: AgentRuntimeScope;
-}
-
-export interface CronListResponseMessage {
-  type: "cron_list_response";
-  request_id: string;
-  tasks: CronTask[];
-  success: boolean;
-  error?: string;
-}
-
-export interface CronAddResponseMessage {
-  type: "cron_add_response";
-  request_id: string;
-  success: boolean;
-  task?: CronTask;
-  warning?: string;
-  error?: string;
-}
-
-export interface CronGetResponseMessage {
-  type: "cron_get_response";
-  request_id: string;
-  success: boolean;
-  found: boolean;
-  task: CronTask | null;
-  error?: string;
-}
-
-export interface CronRunsResponseMessage {
-  type: "cron_runs_response";
-  request_id: string;
-  success: boolean;
-  page?: CronRunLogPage;
-  error?: string;
-}
-
-export interface CronTriggerResponseMessage {
-  type: "cron_trigger_response";
-  request_id: string;
-  success: boolean;
-  found: boolean;
-  task?: CronTask;
-  error?: string;
-}
-
-export interface CronUpdateResponseMessage {
-  type: "cron_update_response";
-  request_id: string;
-  success: boolean;
-  task?: CronTask;
-  error?: string;
-}
-
-export interface CronDeleteResponseMessage {
-  type: "cron_delete_response";
-  request_id: string;
-  success: boolean;
-  found: boolean;
-  error?: string;
-}
-
-export interface CronDeleteAllResponseMessage {
-  type: "cron_delete_all_response";
-  request_id: string;
-  success: boolean;
-  agent_id: string;
-  deleted: number;
-  error?: string;
 }
 
 export interface CronsUpdatedMessage {
@@ -2661,14 +2507,7 @@ export type WsProtocolCommand =
   | ChatGPTUsageReadCommand
   | UpdateModelCommand
   | UpdateToolsetCommand
-  | CronListCommand
-  | CronAddCommand
-  | CronGetCommand
-  | CronRunsCommand
-  | CronTriggerCommand
-  | CronUpdateCommand
-  | CronDeleteCommand
-  | CronDeleteAllCommand
+  | CronProtocolCommand
   | SkillEnableCommand
   | SkillDisableCommand
   | CreateAgentCommand
@@ -2764,14 +2603,7 @@ export type WsProtocolMessage =
   | ChatGPTUsageReadResponseMessage
   | UpdateModelResponseMessage
   | UpdateToolsetResponseMessage
-  | CronListResponseMessage
-  | CronAddResponseMessage
-  | CronGetResponseMessage
-  | CronRunsResponseMessage
-  | CronTriggerResponseMessage
-  | CronUpdateResponseMessage
-  | CronDeleteResponseMessage
-  | CronDeleteAllResponseMessage
+  | CronProtocolResponseMessage
   | CronsUpdatedMessage
   | SkillEnableResponseMessage
   | SkillDisableResponseMessage

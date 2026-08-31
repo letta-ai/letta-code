@@ -21,7 +21,7 @@ function analysis(
   return {
     previous_tag: "rust-v0.1.0",
     current_tag: tag,
-    is_adjacent_release: true,
+    is_latest_release: true,
     release_url: `https://github.com/openai/codex/releases/tag/${tag}`,
     release_notes_md: "",
     verdict,
@@ -166,7 +166,7 @@ describe("tracker state", () => {
   test("fails closed on a cumulative legacy replay", () => {
     const cumulative = {
       ...analysis("rust-v0.5.0", "tool-surface review needed"),
-      is_adjacent_release: false,
+      is_latest_release: false,
     };
     const state = recordAnalysis(emptyTrackerState(), {
       analysis: cumulative,
@@ -250,14 +250,14 @@ describe("tracker state", () => {
     expect(getCodexAuditCursorTag(state)).toBe("rust-v0.2.0");
   });
 
-  test("does not advance for an explicit non-adjacent range", () => {
+  test("does not advance for an explicit non-latest range", () => {
     const initial = upsertTrackerEntry(
       emptyTrackerState(),
       entry(1, "no_local_impact"),
     );
     const cumulative = {
       ...analysis("rust-v0.5.0", "tool-surface review needed"),
-      is_adjacent_release: false,
+      is_latest_release: false,
     };
     const state = recordAnalysis(initial, {
       analysis: cumulative,
@@ -273,7 +273,7 @@ describe("tracker state", () => {
     ).toBe("rust-v0.1.0");
   });
 
-  test("advances across an already audited adjacent range", () => {
+  test("advances across an already audited latest range", () => {
     let state = upsertTrackerEntry(
       emptyTrackerState(),
       entry(1, "no_local_impact"),

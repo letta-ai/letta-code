@@ -36,13 +36,16 @@ describe("letta memory tokens", () => {
   let tmpRoot: string;
   let priorMemoryDir: string | undefined;
   let priorAgentId: string | undefined;
+  let priorLocalBackend: string | undefined;
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), "memory-tokens-"));
     priorMemoryDir = process.env.MEMORY_DIR;
     priorAgentId = process.env.LETTA_AGENT_ID;
+    priorLocalBackend = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
     delete process.env.MEMORY_DIR;
     delete process.env.LETTA_AGENT_ID;
+    delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
   });
 
   afterEach(() => {
@@ -57,10 +60,21 @@ describe("letta memory tokens", () => {
     } else {
       delete process.env.LETTA_AGENT_ID;
     }
+    if (priorLocalBackend !== undefined) {
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = priorLocalBackend;
+    } else {
+      delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+    }
   });
 
   function writeSystemFile(relativePath: string, content: string): void {
     const full = join(tmpRoot, "system", relativePath);
+    mkdirSync(join(full, ".."), { recursive: true });
+    writeFileSync(full, content);
+  }
+
+  function writeRootFile(relativePath: string, content: string): void {
+    const full = join(tmpRoot, relativePath);
     mkdirSync(join(full, ".."), { recursive: true });
     writeFileSync(full, content);
   }
@@ -100,6 +114,56 @@ describe("letta memory tokens", () => {
       const code = await runMemorySubcommand(["tokens", "--quiet"]);
       expect(code).toBe(0);
       expect(capture.stdout.join("\n")).toContain("Total: 1 tokens");
+    } finally {
+      restore();
+    }
+  });
+
+  test("counts root Markdown files for MemFS v2", async () => {
+    writeRootFile("MEMORY.md", "abcd");
+    writeRootFile("persona.md", "abcdefgh");
+    writeRootFile("reference/MEMORY.md", "a".repeat(100));
+    writeSystemFile("legacy.md", "a".repeat(100));
+    const { capture, restore } = captureConsole();
+    try {
+      const code = await runMemorySubcommand([
+        "tokens",
+        "--memory-dir",
+        tmpRoot,
+        "--format",
+        "json",
+      ]);
+      expect(code).toBe(0);
+      expect(JSON.parse(capture.stdout.join("\n"))).toEqual({
+        total_tokens: 3,
+        files: [
+          { path: "MEMORY.md", tokens: 1 },
+          { path: "persona.md", tokens: 2 },
+        ],
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  test("keeps local MemFS on the v1 system directory layout", async () => {
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+    writeRootFile("MEMORY.md", "a".repeat(100));
+    writeSystemFile("persona.md", "abcd");
+    const { capture, restore } = captureConsole();
+    try {
+      const code = await runMemorySubcommand([
+        "tokens",
+        "--memory-dir",
+        tmpRoot,
+        "--format",
+        "json",
+      ]);
+      expect(code).toBe(0);
+      expect(JSON.parse(capture.stdout.join("\n"))).toEqual({
+        total_tokens: 1,
+        files: [{ path: "system/persona.md", tokens: 1 }],
+      });
     } finally {
       restore();
     }

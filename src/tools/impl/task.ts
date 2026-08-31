@@ -6,6 +6,7 @@
  */
 
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import { updateConversationLLMConfig } from "@/agent/modify";
 import {
   completeSubagent,
   generateSubagentId,
@@ -17,10 +18,16 @@ import {
   clearSubagentConfigCache,
   discoverSubagents,
   getAllSubagentConfigs,
+  type SubagentConfig,
   type SubagentMemoryScope,
 } from "@/agent/subagents";
 import { spawnSubagent } from "@/agent/subagents/manager";
-import { getBackend } from "@/backend";
+import {
+  type ForkModelOverride,
+  getPrimaryAgentModelHandle,
+  resolveForkModelOverride,
+} from "@/agent/subagents/subagent-model";
+import { type Backend, getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
@@ -52,7 +59,6 @@ interface TaskArgs {
   model?: string;
   agent_id?: string; // Deploy an existing agent instead of creating new
   conversation_id?: string; // Resume from an existing conversation
-  run_in_background?: boolean; // Run the task in background
   max_turns?: number; // Maximum number of agentic turns
   toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
   signal?: AbortSignal; // Injected by executeTool for interruption handling
@@ -649,6 +655,84 @@ export async function inheritForkToolset(
   await settingsManager.flush();
 }
 
+interface ForkParentConversationParams {
+  backend: Backend;
+  parentAgentId: string;
+  parentConversationId: string;
+  config: SubagentConfig;
+  model?: string;
+  signal?: AbortSignal;
+}
+
+interface ForkParentConversationDependencies {
+  resolveModelOverride?: () => Promise<ForkModelOverride | null>;
+  updateConversationModel?: (
+    conversationId: string,
+    modelHandle: string,
+    updateArgs?: Record<string, unknown>,
+  ) => Promise<unknown>;
+  inheritToolset?: typeof inheritForkToolset;
+}
+
+/** Fork the parent conversation, then apply fork-only runtime configuration. */
+export async function forkParentConversation(
+  params: ForkParentConversationParams,
+  dependencies: ForkParentConversationDependencies = {},
+) {
+  // Resolve and validate before creating the hidden conversation. Invalid
+  // model IDs should not leave an orphan fork behind.
+  const modelOverride = await (
+    dependencies.resolveModelOverride ??
+    (async () => {
+      const parent = await getPrimaryAgentModelHandle({
+        agentId: params.parentAgentId,
+        conversationId: params.parentConversationId,
+      });
+      return resolveForkModelOverride({
+        userModel: params.model,
+        recommendedModel: params.config.recommendedModel,
+        recommendedModelSource: params.config.recommendedModelSource,
+        parentModelHandle: parent.handle,
+      });
+    })
+  )();
+
+  const forkedConversation = await params.backend.forkConversation(
+    params.parentConversationId,
+    {
+      ...(params.parentConversationId === "default"
+        ? { agentId: params.parentAgentId }
+        : {}),
+      hidden: true,
+      signal: params.signal,
+    },
+  );
+
+  try {
+    if (modelOverride) {
+      const updateConversationModel =
+        dependencies.updateConversationModel ?? updateConversationLLMConfig;
+      await updateConversationModel(
+        forkedConversation.id,
+        modelOverride.modelHandle,
+        modelOverride.updateArgs,
+      );
+    }
+    await (dependencies.inheritToolset ?? inheritForkToolset)(
+      params.parentAgentId,
+      params.parentConversationId,
+      forkedConversation.id,
+    );
+  } catch (error) {
+    await params.backend
+      .deleteConversation?.(forkedConversation.id)
+      .catch(() => undefined);
+    throw error;
+  }
+
+  return forkedConversation;
+}
+
 /**
  * Task tool - Launch a specialized subagent to handle complex tasks
  */
@@ -735,17 +819,14 @@ export async function task(args: TaskArgs): Promise<string> {
     try {
       const parentAgentId = getCurrentAgentId();
       const parentConvId = getConversationId() ?? "default";
-      // Mark the forked conversation as hidden so it doesn't clutter the
-      // parent agent's conversation list in the ADE. The subagent still
-      // reads/writes this conversation normally — only archive status is
-      // affected. The forked conversation remains retrievable by id, so a
-      // direct link still opens it.
-      const forkedConv = await getBackend().forkConversation(parentConvId, {
-        ...(parentConvId === "default" ? { agentId: parentAgentId } : {}),
-        hidden: true,
+      const forkedConv = await forkParentConversation({
+        backend: getBackend(),
+        parentAgentId,
+        parentConversationId: parentConvId,
+        config,
+        model,
         signal,
       });
-      await inheritForkToolset(parentAgentId, parentConvId, forkedConv.id);
       effectiveAgentId = parentAgentId;
       effectiveConversationId = forkedConv.id;
     } catch (error) {
@@ -757,168 +838,29 @@ export async function task(args: TaskArgs): Promise<string> {
 
   const prompt = inputPrompt;
 
-  const isBackground = args.run_in_background ?? config.background;
   const resolvedParentScope = resolveNotificationScope(args.parentScope);
 
-  // Handle background execution
-  if (isBackground) {
-    const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
-      subagentType: subagent_type,
-      prompt,
-      description,
-      model,
-      toolCallId,
-      existingAgentId: effectiveAgentId,
-      existingConversationId: effectiveConversationId,
-      maxTurns: args.max_turns,
-      forkedContext: config.fork,
-      parentScope: resolvedParentScope,
-    });
-
-    await waitForBackgroundSubagentLink(subagentId, null, signal);
-
-    // Extract Letta agent ID from subagent state (available after link resolves)
-    const linkedAgent = getSubagentSnapshot().agents.find(
-      (a) => a.id === subagentId,
-    );
-    const agentId = linkedAgent?.agentId ?? null;
-    const agentIdLine = agentId ? `\nAgent ID: ${agentId}` : "";
-
-    return `Task running in background with task ID: ${taskId}${agentIdLine}\nOutput file: ${outputFile}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll, sleep-wait, or check the output file. Just continue with your current work.`;
-  }
-
-  // Register subagent with state store for UI display (foreground path)
-  const subagentId = generateSubagentId();
-  registerSubagent(
-    subagentId,
-    subagent_type,
-    description,
-    toolCallId,
-    false,
-    false,
-    resolvedParentScope,
+  const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
+    subagentType: subagent_type,
     prompt,
+    description,
+    model,
+    toolCallId,
+    existingAgentId: effectiveAgentId,
+    existingConversationId: effectiveConversationId,
+    maxTurns: args.max_turns,
+    forkedContext: config.fork,
+    parentScope: resolvedParentScope,
+  });
+
+  await waitForBackgroundSubagentLink(subagentId, null, signal);
+
+  // Extract Letta agent ID from subagent state (available after link resolves)
+  const linkedAgent = getSubagentSnapshot().agents.find(
+    (a) => a.id === subagentId,
   );
+  const agentId = linkedAgent?.agentId ?? null;
+  const agentIdLine = agentId ? `\nAgent ID: ${agentId}` : "";
 
-  // Foreground tasks now also write transcripts so users can inspect full output
-  // even when inline content is truncated.
-  const foregroundTaskId = getNextTaskId();
-  const outputFile = createBackgroundOutputFile(foregroundTaskId);
-  writeTaskTranscriptStart(outputFile, description, subagent_type);
-
-  try {
-    // See spawnBackgroundSubagentTask for rationale: capture parentAgentId
-    // synchronously here to avoid the async-drift race inside spawnSubagent.
-    const parentAgentIdForSpawn = resolvedParentScope?.agentId;
-    const result = await spawnSubagent(
-      subagent_type,
-      prompt,
-      model,
-      subagentId,
-      signal,
-      effectiveAgentId,
-      effectiveConversationId,
-      args.max_turns,
-      config.fork,
-      parentAgentIdForSpawn,
-      undefined,
-      resolvedParentScope?.conversationId,
-    );
-
-    await copyGitHubPullRequestTags(
-      result.conversationId,
-      resolvedParentScope?.conversationId,
-      undefined,
-      signal,
-    );
-
-    // Mark subagent as completed in state store
-    completeSubagent(subagentId, {
-      success: result.success,
-      error: result.error,
-      totalTokens: result.totalTokens,
-    });
-
-    // Run SubagentStop hooks (fire-and-forget)
-    runSubagentStopHooks(
-      subagent_type,
-      subagentId,
-      result.success,
-      result.error,
-      result.agentId,
-      result.conversationId,
-    ).catch(() => {
-      // Silently ignore hook errors
-    });
-
-    if (!result.success) {
-      const errorMessage = result.error || "Subagent execution failed";
-      const failedResult: TaskRunResult = {
-        ...result,
-        error: errorMessage,
-      };
-      const header = buildTaskResultHeader(
-        subagent_type,
-        subagentId,
-        failedResult,
-        "error",
-      );
-      writeTaskTranscriptResult(outputFile, failedResult, header);
-      return `${header}\n\nError: ${errorMessage}\nOutput file: ${outputFile}`;
-    }
-
-    // Include stable subagent metadata so orchestrators can attribute results.
-    // Keep the tool return type as a string for compatibility.
-    const header = buildTaskResultHeader(
-      subagent_type,
-      subagentId,
-      result,
-      "success",
-    );
-
-    const fullOutput = `${header}\n\n${result.report}`;
-    writeTaskTranscriptResult(outputFile, result, header);
-
-    const userCwd = getCurrentWorkingDirectory();
-
-    // Apply truncation to prevent excessive token usage (same pattern as Bash tool)
-    const { content: truncatedOutput } = truncateByChars(
-      fullOutput,
-      LIMITS.TASK_OUTPUT_CHARS,
-      "Task",
-      { workingDirectory: userCwd, toolName: "Task" },
-    );
-
-    return `${truncatedOutput}\nOutput file: ${outputFile}`;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const header = buildTaskResultHeader(
-      subagent_type,
-      subagentId,
-      {
-        agentId: effectiveAgentId ?? "",
-        conversationId: effectiveConversationId,
-      },
-      "error",
-    );
-    completeSubagent(subagentId, { success: false, error: errorMessage });
-
-    // Run SubagentStop hooks for error case (fire-and-forget)
-    runSubagentStopHooks(
-      subagent_type,
-      subagentId,
-      false,
-      errorMessage,
-      effectiveAgentId,
-      effectiveConversationId,
-    ).catch(() => {
-      // Silently ignore hook errors
-    });
-
-    appendToOutputFile(
-      outputFile,
-      `${header}\n\n[error] ${errorMessage}\n\n[Task failed]\n`,
-    );
-    return `${header}\n\nError: ${errorMessage}\nOutput file: ${outputFile}`;
-  }
+  return `Task running in background with task ID: ${taskId}${agentIdLine}\nOutput file: ${outputFile}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll, sleep-wait, or check the output file. Just continue with your current work.`;
 }

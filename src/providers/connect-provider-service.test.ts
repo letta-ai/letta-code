@@ -3,6 +3,7 @@ import type { ProviderResponse } from "@/backend/api/providers";
 import type { ByokProvider } from "@/providers/byok-providers";
 import {
   buildConnectProviderEntries,
+  resolveChatGPTOAuthConnection,
   resolveProviderConnectionFields,
 } from "@/providers/connect-provider-service";
 
@@ -422,6 +423,52 @@ describe("connect provider service", () => {
     expect(() =>
       resolveProviderConnectionFields(provider, { fields: {} }),
     ).toThrow("uses OAuth");
+  });
+
+  test("accepts completed ChatGPT OAuth credentials with a provider alias", () => {
+    const provider: ByokProvider = {
+      id: "codex",
+      displayName: "ChatGPT / Codex plan",
+      description: "Connect ChatGPT",
+      providerType: "chatgpt_oauth",
+      providerName: "chatgpt-plus-pro",
+      isOAuth: true,
+    };
+    const oauthConfig = {
+      access_token: "access-token",
+      id_token: "id-token",
+      refresh_token: "refresh-token",
+      account_id: "account-id",
+      expires_at: 1_800_000_000_000,
+    };
+
+    expect(
+      resolveChatGPTOAuthConnection(provider, {
+        providerName: "chatgpt-work",
+        oauthConfig,
+      }),
+    ).toEqual({ providerName: "chatgpt-work", oauthConfig });
+  });
+
+  test("rejects ChatGPT OAuth credentials for another provider", () => {
+    const provider: ByokProvider = {
+      id: "anthropic",
+      displayName: "Claude API",
+      description: "Connect Claude API",
+      providerType: "anthropic",
+      providerName: "lc-anthropic",
+    };
+
+    expect(() =>
+      resolveChatGPTOAuthConnection(provider, {
+        oauthConfig: {
+          access_token: "access-token",
+          id_token: "id-token",
+          account_id: "account-id",
+          expires_at: 1_800_000_000_000,
+        },
+      }),
+    ).toThrow("does not accept ChatGPT OAuth");
   });
 
   test("requires all selected auth method fields", () => {

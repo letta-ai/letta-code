@@ -64,6 +64,7 @@ import { serializeClientTools } from "./client-tool-serialization";
 import { normalizeExternalToolResultContent } from "./external-tool-content";
 import { toolFilter } from "./filter";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
+import { resolveBackendSpecificToolAssets } from "./memory-tool-assets";
 import {
   functionToolForm,
   type JsonSchema,
@@ -81,36 +82,6 @@ import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 import { TOOL_PERMISSIONS } from "./tool-permissions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
-
-async function resolveBackendSpecificToolDescription(
-  name: string,
-  description: string,
-): Promise<string> {
-  let isLocalMemfs = false;
-  try {
-    const { getBackend } = await import("@/backend");
-    isLocalMemfs = getBackend().capabilities.localMemfs;
-  } catch {
-    isLocalMemfs = false;
-  }
-  if (!isLocalMemfs) return description;
-
-  if (name === "memory_apply_patch") {
-    return description.replace(
-      "The harness pushes clean committed memory changes after the turn for remote MemFS agents.",
-      "Local backend MemFS has no Letta remote; memory changes are committed locally.",
-    );
-  }
-
-  if (name === "memory") {
-    return description.replace(
-      "The harness pushes clean committed memory changes after the turn for remote MemFS agents.",
-      "Local backend MemFS has no Letta remote; memory changes are committed locally.",
-    );
-  }
-
-  return description;
-}
 
 function resolvedModelForm(
   base: ModelFacingToolForm,
@@ -1390,15 +1361,17 @@ async function buildSpecificToolRegistry(
       throw new Error(`Tool implementation not found for ${internalName}`);
     }
 
-    const description = await resolveBackendSpecificToolDescription(
+    const resolvedAssets = await resolveBackendSpecificToolAssets(
       internalName,
       definition.description,
+      definition.schema as JsonSchema,
     );
+    const { description, inputSchema } = resolvedAssets;
 
     const toolSchema: ToolSchema = {
       name: internalName,
       description,
-      input_schema: definition.schema as JsonSchema,
+      input_schema: inputSchema,
     };
 
     newRegistry.set(internalName, {
@@ -1406,7 +1379,7 @@ async function buildSpecificToolRegistry(
       modelForm: resolvedModelForm(
         definition.modelForm,
         description,
-        definition.schema as JsonSchema,
+        inputSchema,
       ),
       fn: definition.impl,
     });
@@ -1498,10 +1471,13 @@ async function buildRegistryForModel(
         throw new Error(`Tool implementation not found for ${name}`);
       }
 
-      let description = await resolveBackendSpecificToolDescription(
+      const resolvedAssets = await resolveBackendSpecificToolAssets(
         name,
         definition.description,
+        definition.schema as JsonSchema,
       );
+      let { description } = resolvedAssets;
+      const { inputSchema } = resolvedAssets;
       if (name === "Task" && discoveredSubagents.length > 0) {
         description = injectSubagentsIntoTaskDescription(
           description,
@@ -1512,7 +1488,7 @@ async function buildRegistryForModel(
       const toolSchema: ToolSchema = {
         name,
         description,
-        input_schema: definition.schema as JsonSchema,
+        input_schema: inputSchema,
       };
 
       newRegistry.set(name, {
@@ -1520,7 +1496,7 @@ async function buildRegistryForModel(
         modelForm: resolvedModelForm(
           definition.modelForm,
           description,
-          definition.schema as JsonSchema,
+          inputSchema,
         ),
         fn: definition.impl,
       });

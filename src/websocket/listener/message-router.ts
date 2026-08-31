@@ -1,7 +1,7 @@
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type WebSocket from "ws";
 import {
-  estimateSystemPromptTokensFromMemoryDir,
+  estimateActiveMemorySystemPromptTokens,
   setSystemPromptDoctorState,
 } from "@/cli/helpers/system-prompt-warning";
 import { settingsManager } from "@/settings-manager";
@@ -897,7 +897,7 @@ export function createListenerMessageHandler(
                 "@/agent/memory-filesystem"
               );
               const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-              const tokens = estimateSystemPromptTokensFromMemoryDir(memoryDir);
+              const tokens = estimateActiveMemorySystemPromptTokens(memoryDir);
               setSystemPromptDoctorState(agentId, tokens);
             } catch {
               // best-effort

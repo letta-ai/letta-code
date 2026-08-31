@@ -21,6 +21,9 @@ import {
 
 type SecretsBackend = {
   capabilities: { serverSecrets: boolean };
+  listAgentSecrets?: (
+    agentId: string,
+  ) => Promise<Array<{ key?: string; value?: string }>>;
   retrieveAgent: (
     agentId: string,
     options?: { include?: string[] },
@@ -369,15 +372,19 @@ export async function initSecretsFromServer(
     setCache(agentId, {});
     return;
   }
-  const agent =
-    cachedAgent ??
-    (await backend.retrieveAgent(agentId, {
-      include: ["agent.secrets"],
-    }));
+  const agentSecrets =
+    cachedAgent?.secrets ??
+    (backend.listAgentSecrets
+      ? await backend.listAgentSecrets(agentId)
+      : (
+          await backend.retrieveAgent(agentId, {
+            include: ["agent.secrets"],
+          })
+        ).secrets);
 
   const secrets: Record<string, string> = {};
-  if (agent.secrets && Array.isArray(agent.secrets)) {
-    for (const env of agent.secrets) {
+  if (Array.isArray(agentSecrets)) {
+    for (const env of agentSecrets) {
       if (env.key && env.value) {
         secrets[env.key] = env.value;
       }

@@ -1,18 +1,20 @@
 import { type Dirent, existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { AttachedAgentRepository } from "@/agent/attached-repositories";
 import {
   getCurrentAgentId,
   getSkillSources,
   getSkillsDirectory,
 } from "@/agent/context";
 import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
-import type { AttachedAgentRepository } from "@/agent/memory-git";
+import { detectMemoryFormat } from "@/agent/memory-format";
 import {
   discoverSharedMemorySkills,
   resolveSharedMemorySkillsContext,
 } from "@/agent/shared-memory-skills";
 import {
+  discoverSkills,
   GLOBAL_SKILLS_DIR,
   getAgentSkillsDir,
   getBundledSkills,
@@ -21,6 +23,8 @@ import {
   PROJECT_SKILLS_DIR,
   SKILLS_DIR,
 } from "@/agent/skills";
+import { getBackend } from "@/backend";
+import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import { queueSkillContent } from "./skill-content-registry";
@@ -40,6 +44,29 @@ interface SkillResult {
 
 export interface ReadSkillContentOptions {
   attachedRepositories?: readonly AttachedAgentRepository[];
+}
+
+async function readSkillFromRoot(
+  skillsRoot: string,
+  skillId: string,
+): Promise<{ content: string; path: string } | null> {
+  const discovery = await discoverSkills(skillsRoot, undefined, {
+    sources: ["project"],
+    skipBundled: true,
+  });
+  const discoveredSkill = discovery.skills.find(
+    (candidate) => candidate.id === skillId,
+  );
+  if (!discoveredSkill) {
+    return null;
+  }
+
+  try {
+    const content = await readFile(discoveredSkill.path, "utf-8");
+    return { content, path: discoveredSkill.path };
+  } catch {
+    return null;
+  }
 }
 
 function getMemorySkillsDirs(agentId?: string): string[] {
@@ -76,6 +103,33 @@ interface SkillResources {
   truncated: boolean;
 }
 
+const ROOT_MEMORY_SKILLS = new Set(["initializing-memory", "context-doctor"]);
+
+export function resolveBundledSkillContentPath(input: {
+  skillId: string;
+  bundledSkillPath: string;
+  memoryDir: string | null;
+  localMemfs: boolean;
+}): string {
+  if (
+    !input.localMemfs &&
+    input.memoryDir &&
+    ROOT_MEMORY_SKILLS.has(input.skillId) &&
+    detectMemoryFormat(input.memoryDir, false) === "memfs-v2"
+  ) {
+    return join(dirname(input.bundledSkillPath), "ROOT_MEMORY.md");
+  }
+  return input.bundledSkillPath;
+}
+
+function isLocalMemfsBackend(): boolean {
+  try {
+    return getBackend().capabilities.localMemfs;
+  } catch {
+    return isLocalBackendEnvEnabled(process.env);
+  }
+}
+
 function listSkillResources(skillMdPath: string): SkillResources {
   const skillDir = dirname(skillMdPath);
   const paths: string[] = [];
@@ -95,7 +149,10 @@ function listSkillResources(skillMdPath: string): SkillResources {
       const relativePath = relativeDirectory
         ? `${relativeDirectory}/${entry.name}`
         : entry.name;
-      if (relativePath.toUpperCase() === "SKILL.MD") {
+      if (
+        relativePath.toUpperCase() === "SKILL.MD" ||
+        relativePath.toUpperCase() === "ROOT_MEMORY.MD"
+      ) {
         continue;
       }
       if (paths.length >= MAX_LISTED_SKILL_RESOURCES) {
@@ -141,38 +198,25 @@ export async function readSkillContent(
     skillsDir,
   ]);
   for (const projectSkillsDir of projectSkillsDirs) {
-    const projectSkillPath = join(projectSkillsDir, skillId, "SKILL.md");
-    try {
-      const content = await readFile(projectSkillPath, "utf-8");
-      return { content, path: projectSkillPath };
-    } catch {
-      // Not in this project skills directory, continue
+    const result = await readSkillFromRoot(projectSkillsDir, skillId);
+    if (result) {
+      return result;
     }
   }
 
   // 2. Try agent memory skills directory (if agentId provided)
   if (agentId) {
-    const agentSkillPath = join(
-      getAgentSkillsDir(agentId),
-      skillId,
-      "SKILL.md",
-    );
-    try {
-      const content = await readFile(agentSkillPath, "utf-8");
-      return { content, path: agentSkillPath };
-    } catch {
-      // Not in agent dir, continue
+    const result = await readSkillFromRoot(getAgentSkillsDir(agentId), skillId);
+    if (result) {
+      return result;
     }
   }
 
   // 3. Try agent memory skills fallback directories
   for (const memorySkillsDir of getMemorySkillsDirs(agentId)) {
-    const memorySkillPath = join(memorySkillsDir, skillId, "SKILL.md");
-    try {
-      const content = await readFile(memorySkillPath, "utf-8");
-      return { content, path: memorySkillPath };
-    } catch {
-      // Not in this memory skills dir, continue
+    const result = await readSkillFromRoot(memorySkillsDir, skillId);
+    if (result) {
+      return result;
     }
   }
 
@@ -198,12 +242,9 @@ export async function readSkillContent(
   }
 
   // 5. Try global skills directory
-  const globalSkillPath = join(GLOBAL_SKILLS_DIR, skillId, "SKILL.md");
-  try {
-    const content = await readFile(globalSkillPath, "utf-8");
-    return { content, path: globalSkillPath };
-  } catch {
-    // Not in global, continue
+  const globalResult = await readSkillFromRoot(GLOBAL_SKILLS_DIR, skillId);
+  if (globalResult) {
+    return globalResult;
   }
 
   // 6. Try bundled skills (lowest priority)
@@ -211,8 +252,14 @@ export async function readSkillContent(
   const bundledSkill = bundledSkills.find((s) => s.id === skillId);
   if (bundledSkill?.path && isSkillAvailableForAgent(bundledSkill, agentId)) {
     try {
-      const content = await readFile(bundledSkill.path, "utf-8");
-      return { content, path: bundledSkill.path };
+      const path = resolveBundledSkillContentPath({
+        skillId,
+        bundledSkillPath: bundledSkill.path,
+        memoryDir: resolveScopedMemoryDir({ agentId }),
+        localMemfs: isLocalMemfsBackend(),
+      });
+      const content = await readFile(path, "utf-8");
+      return { content, path };
     } catch {
       // Bundled skill path not found, continue to legacy fallback
     }
