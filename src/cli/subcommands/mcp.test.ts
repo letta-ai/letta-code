@@ -626,6 +626,58 @@ describe("mcp subcommand", () => {
     expect(calls).toEqual(["echo"]);
   });
 
+  test("call keeps collision aliases stable when server order changes", async () => {
+    const serverPath = "/v1/agents/agent-cloud/mcp-servers";
+    const toolsAPath = `${serverPath}/mcp-a/tools`;
+    const toolsBPath = `${serverPath}/mcp-b/tools`;
+    const runBPath = `${toolsBPath}/tool-b/run`;
+    const serverA = {
+      id: "mcp-a",
+      server_name: "foo bar",
+      mcp_server_type: "streamable_http",
+      server_url: "https://a.example.com/mcp",
+    };
+    const serverB = {
+      id: "mcp-b",
+      server_name: "foo_bar",
+      mcp_server_type: "streamable_http",
+      server_url: "https://b.example.com/mcp",
+    };
+    let serverLists = 0;
+    const posts: string[] = [];
+    const client: UnifiedMcpClient = {
+      get: async (path) => {
+        if (path === serverPath) {
+          serverLists++;
+          return serverLists === 1 ? [serverB, serverA] : [serverA, serverB];
+        }
+        if (path === toolsAPath)
+          return [{ id: "tool-a", name: "mcp__foo_bar__search" }];
+        if (path === toolsBPath)
+          return [{ id: "tool-b", name: "mcp__foo_bar__search" }];
+        return [];
+      },
+      post: async (path) => {
+        posts.push(path);
+        return { status: "success", func_return: "server-b" };
+      },
+    };
+    const harness = cloudHarness();
+    harness.deps.getClient = async () => client;
+
+    expect(await runMcpSubcommand(["tools"], harness.deps)).toBe(0);
+    expect(
+      JSON.parse(harness.stdout[0] ?? "[]").map(
+        (tool: { name: string }) => tool.name,
+      ),
+    ).toContain("mcp__foo_bar_2__search");
+
+    expect(
+      await runMcpSubcommand(["call", "mcp__foo_bar_2__search"], harness.deps),
+    ).toBe(0);
+    expect(posts).toEqual([runBPath]);
+  });
+
   test("suffixes duplicate server-side tool names instead of failing", async () => {
     const serverPath = "/v1/agents/agent-cloud/mcp-servers";
     const toolsPath = `${serverPath}/mcp-1/tools`;

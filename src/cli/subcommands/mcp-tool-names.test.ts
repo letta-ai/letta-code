@@ -40,6 +40,22 @@ describe("MCP CLI tool names", () => {
     );
   });
 
+  test("assigns same-kind collision suffixes by stable key", () => {
+    const targets = [
+      { key: "server:b", name: "foo_bar", kind: "server" as const },
+      { key: "server:a", name: "foo bar", kind: "server" as const },
+    ];
+    expect(assignMcpServerAliases(targets)).toEqual(
+      assignMcpServerAliases([...targets].reverse()),
+    );
+    expect(assignMcpServerAliases(targets)).toEqual(
+      new Map([
+        ["server:a", "foo_bar"],
+        ["server:b", "foo_bar_2"],
+      ]),
+    );
+  });
+
   test("rewrites server-generated names with the assigned alias", () => {
     expect(
       formatServerMcpToolName(
