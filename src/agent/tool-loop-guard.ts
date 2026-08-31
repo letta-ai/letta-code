@@ -228,6 +228,10 @@ export class ToolLoopGuard {
     };
   }
 
+  isBlocked(call: ToolLoopCall): boolean {
+    return this.blockedCallFingerprint === fingerprintToolCall(call);
+  }
+
   observeResult(
     call: ToolLoopCall,
     rawResult: ToolLoopResult,

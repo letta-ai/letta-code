@@ -26,12 +26,11 @@ function repeatedDecision(toolCallId: string): ApprovalDecision {
 describe("executeApprovalBatch tool loop guard", () => {
   test("preserves a consecutive pair streak across approval batches", async () => {
     const guard = createToolLoopGuard();
-    const chunks: string[] = [];
 
     for (let attempt = 1; attempt <= 4; attempt += 1) {
       const [result] = await executeApprovalBatch(
         [repeatedDecision(`call-${attempt}`)],
-        (chunk) => chunks.push(chunk.tool_return),
+        undefined,
         {
           toolLoopGuard: guard,
           workingDirectory: "/workspace/project",
@@ -50,10 +49,6 @@ describe("executeApprovalBatch tool loop guard", () => {
       );
     }
 
-    expect(chunks).toHaveLength(4);
-    expect(chunks.at(-1)).toContain(
-      "next identical call will be stopped for explicit user approval",
-    );
     expect(
       guard.preflight({
         toolName: "Bash",
@@ -61,6 +56,69 @@ describe("executeApprovalBatch tool loop guard", () => {
         workingDirectory: "/workspace/project",
       }),
     ).toMatchObject({ allowed: false, consecutiveIdenticalPairs: 4 });
+  });
+
+  test("does not emit a second terminal chunk when adding a warning", async () => {
+    const guard = createToolLoopGuard();
+    const chunks: string[] = [];
+    const missingTool = (toolCallId: string): ApprovalDecision => ({
+      type: "approve",
+      approval: {
+        toolCallId,
+        toolName: "missing_loop_guard_test_tool",
+        toolArgs: "{}",
+      },
+    });
+
+    await executeApprovalBatch(
+      [missingTool("missing-1")],
+      (chunk) => chunks.push(chunk.tool_return),
+      { toolLoopGuard: guard, workingDirectory: "/workspace/project" },
+    );
+    const [second] = await executeApprovalBatch(
+      [missingTool("missing-2")],
+      (chunk) => chunks.push(chunk.tool_return),
+      { toolLoopGuard: guard, workingDirectory: "/workspace/project" },
+    );
+
+    expect(chunks).toHaveLength(2);
+    expect(chunks[1]).not.toContain("Tool loop warning");
+    expect(second?.type).toBe("tool");
+    if (second?.type !== "tool" || typeof second.tool_return !== "string") {
+      throw new Error("expected text tool result");
+    }
+    expect(second.tool_return).toContain("Tool loop warning");
+  });
+
+  test("stops the fifth identical call inside one approval batch", async () => {
+    const guard = createToolLoopGuard();
+    const decisions = Array.from({ length: 6 }, (_, index) =>
+      repeatedDecision(`batch-call-${index + 1}`),
+    );
+
+    const results = await executeApprovalBatch(decisions, undefined, {
+      toolLoopGuard: guard,
+      workingDirectory: "/workspace/project",
+    });
+
+    expect(results).toHaveLength(6);
+    for (const result of results.slice(0, 4)) {
+      expect(result.type).toBe("tool");
+      if (result.type !== "tool" || typeof result.tool_return !== "string") {
+        throw new Error("expected text tool result");
+      }
+      expect(result.tool_return).toContain("fatal: not a git repository");
+    }
+    for (const result of results.slice(4)) {
+      expect(result.type).toBe("tool");
+      if (result.type !== "tool" || typeof result.tool_return !== "string") {
+        throw new Error("expected text tool result");
+      }
+      expect(result.status).toBe("error");
+      expect(result.tool_return).toContain(
+        "stopped after 4 consecutive identical",
+      );
+    }
   });
 
   test("does not carry warning annotations into result fingerprints", async () => {

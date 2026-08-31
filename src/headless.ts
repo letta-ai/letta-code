@@ -383,7 +383,6 @@ function parseReflectionOverrides(
       );
     }
   }
-
   return overrides;
 }
 
@@ -2753,6 +2752,7 @@ ${SYSTEM_REMINDER_CLOSE}
           } else {
             currentInput = continueTurnStartEmission.input;
           }
+          toolLoopGuard.reset();
           continue;
         }
 

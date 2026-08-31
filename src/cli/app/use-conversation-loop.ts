@@ -437,7 +437,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         refreshDerived();
         await sleep(chunk === "\n" ? 70 : 120);
       }
-
       const finalLine = buffersRef.current.byId.get(lineId);
       if (finalLine && finalLine.kind === "assistant") {
         buffersRef.current.byId.set(lineId, {
@@ -461,7 +460,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       setThinkingMessage,
     ],
   );
-
   // Core streaming function - iterative loop that processes conversation turns
   // biome-ignore lint/correctness/useExhaustiveDependencies: blanket suppression — this callback has ~16 omitted deps (refs, stable functions, etc.). Refs are safe (read .current dynamically), but the blanket ignore also hides any genuinely missing reactive deps. If stale-closure bugs appear in processConversation, audit the dep array here first.
   const processConversation = useCallback(
@@ -542,7 +540,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       if (myGeneration !== conversationGenerationRef.current) {
         return;
       }
-
       // Guard against concurrent processConversation calls
       // This can happen if user submits two messages in quick succession
       // Uses dedicated ref (not streamingRef) since streaming may be set early for UI responsiveness
@@ -576,7 +573,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           turnStartCancelReason = null;
         }
       }
-
       const hasApprovalInput = currentInput.some(
         (item) => item.type === "approval",
       );
@@ -602,7 +598,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         quotaAutoSwapAttemptedRef.current = false;
         chatgptPlanSwapsRef.current = 0;
       }
-
       // Track last run ID for error reporting (accessible in catch block)
       let currentRunId: string | undefined;
       let preserveTranscriptStartForApproval = false;
@@ -620,18 +615,15 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           userCancelledRef.current = false;
           return;
         }
-
         // Check if user hit escape before we started
         if (userCancelledRef.current) {
           userCancelledRef.current = false; // Reset for next time
           return;
         }
-
         // Double-check we haven't become stale between entry and try block
         if (myGeneration !== conversationGenerationRef.current) {
           return;
         }
-
         setStreaming(true);
         openTrajectorySegment();
         setNetworkPhase("upload");
@@ -647,7 +639,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         ) {
           return;
         }
-
         // Recover interrupted message only after explicit user interrupt:
         // if cache contains ONLY user messages, prepend them.
         // Note: type="message" is a local discriminator (not in SDK types) to distinguish from approvals
@@ -700,7 +691,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           pendingInterruptRecoveryConversationIdRef.current = null;
           lastSentInputRef.current = originalInput;
         }
-
         // Clear any stale pending tool calls from previous turns
         // If we're sending a new message, old pending state is no longer relevant
         // Pass false to avoid setting interrupted=true, which causes race conditions
@@ -727,7 +717,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         ) {
           clearCompletedSubagents();
         }
-
         let highestSeqIdSeen: number | null = null;
 
         while (true) {
@@ -746,7 +735,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
             return;
           }
-
           // Inject queued skill content as user message parts (LET-7353)
           // This centralizes skill content injection so all approval-send paths
           // automatically get skill SKILL.md content alongside tool results.
@@ -767,7 +755,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               },
             ];
           }
-
           // Stream one turn - use ref to always get the latest conversationId
           // Wrap in try-catch to handle pre-stream desync errors (when sendMessageStream
           // throws before streaming begins, e.g., retry after LLM error when backend
@@ -806,7 +793,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 ? preStreamError.status
                 : "none",
             );
-
             // Extract error detail using shared helper (handles nested/direct/message shapes)
             const errorDetail = extractConflictDetail(preStreamError);
 
@@ -1556,6 +1542,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
 
             if (turnEndContinue) {
               const continueOtid = randomUUID();
+              toolLoopGuardRef.current.reset();
               setTimeout(() => {
                 processConversation(
                   [
@@ -2200,6 +2187,19 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
 
             // Show approval dialog for tools that need user input
+            const toolLoopReason = needsUserInput.find(
+              (approval) => approval.toolLoopReason,
+            )?.toolLoopReason;
+            if (toolLoopReason) {
+              const statusId = uid("status");
+              buffersRef.current.byId.set(statusId, {
+                kind: "status",
+                id: statusId,
+                lines: [toolLoopReason],
+              });
+              buffersRef.current.order.push(statusId);
+              refreshDerived();
+            }
             setPendingApprovals(needsUserInput.map((ac) => ac.approval));
             setApprovalContexts(
               needsUserInput

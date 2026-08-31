@@ -345,6 +345,7 @@ export async function handleApprovalStop(params: {
           tool_call_id: ac.approval.toolCallId,
           ...buildApprovalSuggestionPayload(ac.context),
           blocked_path: null,
+          ...(ac.toolLoopReason ? { reason: ac.toolLoopReason } : {}),
           ...(diffs.length > 0 ? { diffs } : {}),
         },
         agent_id: agentId,
