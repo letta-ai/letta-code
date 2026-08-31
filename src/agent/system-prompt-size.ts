@@ -12,6 +12,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { detectMemoryFormat } from "@/agent/memory-format";
 
 export const SYSTEM_PROMPT_BYTES_PER_TOKEN = 4;
 
@@ -62,19 +63,35 @@ function walkMarkdownFiles(dir: string): string[] {
 }
 
 /**
- * Estimate total token usage of files under `<memoryDir>/system/`, with a per-file breakdown.
+ * Estimate total token usage of core memory Markdown, with a per-file breakdown.
  *
- * Returns { total: 0, files: [] } when `system/` does not exist (instead of throwing).
+ * MemFS v1 counts Markdown files recursively under `system/`. MemFS v2 counts
+ * root-level Markdown files. A root `MEMORY.md` selects v2 only for API-backed
+ * memory; local MemFS remains v1.
+ *
+ * Returns { total: 0, files: [] } when the core memory path does not exist.
  */
 export function estimateSystemPromptSize(
   memoryDir: string,
+  localMemfs = false,
 ): SystemPromptSizeEstimate {
-  const systemDir = join(memoryDir, "system");
-  if (!existsSync(systemDir)) {
+  if (!existsSync(memoryDir)) {
     return { total: 0, files: [] };
   }
 
-  const files = walkMarkdownFiles(systemDir).sort();
+  const memoryFormat = detectMemoryFormat(memoryDir, localMemfs);
+  const files =
+    memoryFormat === "memfs-v2"
+      ? readdirSync(memoryDir, { withFileTypes: true })
+          .filter(
+            (entry) =>
+              !entry.name.startsWith(".") &&
+              entry.isFile() &&
+              entry.name.endsWith(".md"),
+          )
+          .map((entry) => join(memoryDir, entry.name))
+          .sort()
+      : walkMarkdownFiles(join(memoryDir, "system")).sort();
   const rows: FileEstimate[] = [];
 
   for (const filePath of files) {
@@ -92,6 +109,7 @@ export function estimateSystemPromptSize(
  */
 export function estimateSystemPromptTokensFromMemoryDir(
   memoryDir: string,
+  localMemfs = false,
 ): number {
-  return estimateSystemPromptSize(memoryDir).total;
+  return estimateSystemPromptSize(memoryDir, localMemfs).total;
 }

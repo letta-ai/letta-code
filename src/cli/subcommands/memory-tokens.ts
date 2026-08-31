@@ -2,7 +2,7 @@ import {
   estimateSystemPromptSize,
   type FileEstimate,
   type SystemPromptSizeEstimate,
-} from "@/utils/system-prompt-size";
+} from "@/agent/system-prompt-size";
 
 const DEFAULT_TOP = 20;
 const USAGE_EXIT = 64;
@@ -14,6 +14,7 @@ export interface MemoryTokensOptions {
   top: string | undefined;
   format: string | undefined;
   quiet: boolean;
+  localMemfs: boolean;
 }
 
 function parsePositiveInt(
@@ -100,7 +101,7 @@ export async function runMemoryTokensAction(
 
   let estimate: SystemPromptSizeEstimate;
   try {
-    estimate = estimateSystemPromptSize(memoryDir);
+    estimate = estimateSystemPromptSize(memoryDir, options.localMemfs);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Failed to read memory dir: ${message}`);
