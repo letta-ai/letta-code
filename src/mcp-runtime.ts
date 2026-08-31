@@ -198,7 +198,7 @@ export function formatClientMcpToolName(
   return `mcp__${normalizeMcpName(serverName)}__${normalizeMcpName(toolName)}`;
 }
 
-function normalizeMcpName(value: string): string {
+export function normalizeMcpName(value: string): string {
   const normalized = value.replace(/[^a-zA-Z0-9_-]/g, "_");
   return normalized || "tool";
 }

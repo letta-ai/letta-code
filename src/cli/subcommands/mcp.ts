@@ -2,16 +2,16 @@ import { parseArgs } from "node:util";
 import { getBackend } from "@/backend";
 import { getClient as getDefaultClient } from "@/backend/api/client";
 import {
-  type AgentConnectedMcpServer,
-  type AgentMcpToolRunResult,
-  connectAgentMcpServer,
-  disconnectAgentMcpServer,
-  listAgentConnectedMcpServers,
-  listAgentConnectedMcpTools,
-  listServerMcpServers,
-  runAgentConnectedMcpTool,
-  type ServerMcpClient,
-} from "@/backend/api/mcp-servers";
+  attachUnifiedMcpServer,
+  detachUnifiedMcpServer,
+  listRegisteredMcpServers,
+  listUnifiedMcpServers,
+  listUnifiedMcpTools,
+  runUnifiedMcpTool,
+  type UnifiedMcpClient,
+  type UnifiedMcpRunResult,
+  type UnifiedMcpServer,
+} from "@/backend/api/unified-mcp";
 import {
   type ConnectedMcpServer,
   connectMcpServer,
@@ -26,6 +26,11 @@ import { formatClientMcpToolName } from "@/mcp-runtime";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import { loadMcpToolArgs, printMcpUsage, resolveMcpAgentId } from "./mcp-io";
+import {
+  assignMcpServerAliases,
+  formatServerMcpToolName,
+  uniqueMcpName,
+} from "./mcp-tool-names";
 
 type McpTransport = "stdio" | "streamable_http" | "sse";
 
@@ -50,7 +55,7 @@ type McpServerDetails =
 
 type ServerTarget =
   | { kind: "client"; config: McpServerConfig }
-  | { kind: "server"; server: AgentConnectedMcpServer };
+  | { kind: "server"; server: UnifiedMcpServer };
 
 type ToolTarget =
   | {
@@ -83,7 +88,7 @@ export interface McpSubcommandDependencies {
   connectLocalServer?: typeof connectMcpServer;
   createOAuthSession?: typeof createMcpOAuthSession;
   clearOAuthCredentials?: typeof clearMcpOAuthCredentials;
-  getClient?: () => Promise<ServerMcpClient>;
+  getClient?: () => Promise<UnifiedMcpClient>;
   isServerMcpAvailable?: () => boolean;
   readFile?: (path: string) => Promise<string>;
   readStdin?: () => Promise<string>;
@@ -178,9 +183,9 @@ function serverMcpAvailable(deps: McpSubcommandDependencies): boolean {
 
 async function getServerClient(
   deps: McpSubcommandDependencies,
-): Promise<ServerMcpClient> {
+): Promise<UnifiedMcpClient> {
   if (deps.getClient) return deps.getClient();
-  return (await getDefaultClient()) as ServerMcpClient;
+  return (await getDefaultClient()) as UnifiedMcpClient;
 }
 
 function localTransport(config: McpServerConfig): McpTransport {
@@ -188,7 +193,7 @@ function localTransport(config: McpServerConfig): McpTransport {
   return config.transport ?? "stdio";
 }
 
-function serverTransport(server: AgentConnectedMcpServer): McpTransport {
+function serverTransport(server: UnifiedMcpServer): McpTransport {
   if (server.serverType === "streamable_http") return "streamable_http";
   if (server.serverType === "sse") return "sse";
   return "stdio";
@@ -276,7 +281,7 @@ async function listUnifiedServers(
   );
   if (!serverMcpAvailable(deps)) return local;
   const client = await getServerClient(deps);
-  const connected = await listAgentConnectedMcpServers(client, agentId);
+  const connected = await listUnifiedMcpServers(client, agentId);
   return [
     ...local,
     ...connected.map((server): ServerTarget => ({ kind: "server", server })),
@@ -349,21 +354,16 @@ async function connectConfiguredServer(
   });
 }
 
-function uniqueToolName(base: string, used: Set<string>): string {
-  let name = base;
-  let suffix = 2;
-  while (used.has(name)) {
-    name = `${base}_${suffix}`;
-    suffix++;
-  }
-  used.add(name);
-  return name;
-}
-
 function serverKey(target: ServerTarget): string {
   return target.kind === "client"
     ? `client:${target.config.name}`
     : `server:${target.server.id}`;
+}
+
+function serverName(target: ServerTarget): string {
+  return target.kind === "client"
+    ? target.config.name
+    : target.server.serverName;
 }
 
 async function buildToolCatalog(
@@ -375,12 +375,22 @@ async function buildToolCatalog(
   const selectedKey = serverSelector
     ? serverKey(resolveServer(servers, serverSelector))
     : undefined;
+  const aliases = assignMcpServerAliases(
+    servers.map((target) => ({
+      key: serverKey(target),
+      name: serverName(target),
+      kind: target.kind,
+    })),
+  );
+  const activeServers = selectedKey
+    ? servers.filter((target) => serverKey(target) === selectedKey)
+    : servers;
   const catalog: CatalogTool[] = [];
   const connections: ConnectedMcpServer[] = [];
   const usedNames = new Set<string>();
 
   try {
-    const serverTargets = servers.filter(
+    const serverTargets = activeServers.filter(
       (target): target is Extract<ServerTarget, { kind: "server" }> =>
         target.kind === "server",
     );
@@ -389,12 +399,17 @@ async function buildToolCatalog(
       const toolLists = await Promise.all(
         serverTargets.map(async ({ server }) => ({
           server,
-          tools: await listAgentConnectedMcpTools(client, agentId, server.id),
+          tools: await listUnifiedMcpTools(client, agentId, server.id),
         })),
       );
       for (const { server, tools } of toolLists) {
+        const alias = aliases.get(`server:${server.id}`);
+        if (!alias) throw new Error("MCP server alias was not assigned");
         for (const tool of tools) {
-          const name = uniqueToolName(tool.name, usedNames);
+          const name = uniqueMcpName(
+            formatServerMcpToolName(server.serverName, alias, tool.name),
+            usedNames,
+          );
           catalog.push({
             schema: {
               name,
@@ -418,7 +433,7 @@ async function buildToolCatalog(
       }
     }
 
-    const clientTargets = servers.filter(
+    const clientTargets = activeServers.filter(
       (target): target is Extract<ServerTarget, { kind: "client" }> =>
         target.kind === "client",
     );
@@ -440,9 +455,11 @@ async function buildToolCatalog(
     for (const result of settled) {
       if (result.status !== "fulfilled") continue;
       const { config, connection } = result.value;
+      const alias = aliases.get(`client:${config.name}`);
+      if (!alias) throw new Error("MCP server alias was not assigned");
       for (const tool of connection.tools) {
-        const name = uniqueToolName(
-          formatClientMcpToolName(config.name, tool.name),
+        const name = uniqueMcpName(
+          formatClientMcpToolName(alias, tool.name),
           usedNames,
         );
         catalog.push({
@@ -454,9 +471,7 @@ async function buildToolCatalog(
     }
 
     return {
-      tools: selectedKey
-        ? catalog.filter((tool) => tool.serverKey === selectedKey)
-        : catalog,
+      tools: catalog,
       close: async () => {
         await Promise.allSettled(
           connections.map((connection) => connection.close()),
@@ -523,7 +538,7 @@ async function saveLocalServers(
   await (deps.flushSettings ?? (() => settingsManager.flush()))();
 }
 
-function mcpToolResultFromServer(result: AgentMcpToolRunResult): McpToolResult {
+function mcpToolResultFromServer(result: UnifiedMcpRunResult): McpToolResult {
   const success = result.status === "success";
   const value = result.funcReturn;
   let normalized: McpToolResult;
@@ -643,7 +658,7 @@ async function runAdd(
       );
     }
     const client = await getServerClient(deps);
-    const available = await listServerMcpServers(client);
+    const available = await listRegisteredMcpServers(client);
     const matches = available.filter(
       (server) => server.server_name === selector || server.id === selector,
     );
@@ -662,8 +677,8 @@ async function runAdd(
         `MCP server '${selector}' has no stable id`,
       );
     }
-    await connectAgentMcpServer(client, agentId, server.id);
-    const tools = await listAgentConnectedMcpTools(client, agentId, server.id);
+    await attachUnifiedMcpServer(client, agentId, server.id);
+    const tools = await listUnifiedMcpTools(client, agentId, server.id);
     printJson(stdout, {
       ok: true,
       server: {
@@ -730,7 +745,7 @@ async function runRemove(
     selector,
   );
   if (target.kind === "server") {
-    await disconnectAgentMcpServer(
+    await detachUnifiedMcpServer(
       await getServerClient(deps),
       agentId,
       target.server.id,
@@ -888,7 +903,7 @@ async function runCall(
       tool.target.kind === "client"
         ? await tool.target.connection.callTool(tool.target.rawName, args)
         : mcpToolResultFromServer(
-            await runAgentConnectedMcpTool({
+            await runUnifiedMcpTool({
               client: await getServerClient(deps),
               agentId,
               mcpServerId: tool.target.serverId,

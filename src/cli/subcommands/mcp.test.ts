@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";
-import type { Tool } from "@letta-ai/letta-client/resources/tools";
-import type { ServerMcpClient } from "@/backend/api/mcp-servers";
+import type { UnifiedMcpClient } from "@/backend/api/unified-mcp";
 import type {
   ConnectedMcpServer,
   McpServerConfig,
@@ -114,10 +113,6 @@ function fakeConnection(
   };
 }
 
-function emptyTools(): AsyncIterable<Tool> {
-  return (async function* () {})();
-}
-
 function cloudHarness(
   options: {
     getResponses?: Record<string, unknown>;
@@ -130,7 +125,7 @@ function cloudHarness(
   const puts: string[] = [];
   const deletes: string[] = [];
   const posts: Array<{ path: string; body: unknown }> = [];
-  const client: ServerMcpClient = {
+  const client: UnifiedMcpClient = {
     get: async (path) => options.getResponses?.[path] ?? [],
     post: async (path, request) => {
       posts.push({ path, body: request?.body });
@@ -146,14 +141,6 @@ function cloudHarness(
     },
     mcpServers: {
       list: async () => (options.globalServers ?? []) as never[],
-      refresh: async () => ({}),
-    },
-    agents: {
-      tools: {
-        list: () => emptyTools(),
-        attach: async () => ({}),
-        detach: async () => ({}),
-      },
     },
   };
   return {
@@ -616,12 +603,44 @@ describe("mcp subcommand", () => {
 
     expect(await runMcpSubcommand(["tools", "foo bar"], harness.deps)).toBe(0);
     expect(JSON.parse(harness.stdout[0] ?? "[]")[0].name).toBe(
-      "mcp__foo_bar__search_2",
+      "mcp__foo_bar_2__search",
     );
     expect(
-      await runMcpSubcommand(["call", "mcp__foo_bar__search_2"], harness.deps),
+      await runMcpSubcommand(["call", "mcp__foo_bar_2__search"], harness.deps),
     ).toBe(0);
     expect(calls).toEqual([{ name: "search", args: {} }]);
+  });
+
+  test("scoped tools does not connect to unrelated servers", async () => {
+    const attempted: string[] = [];
+    const harness = localHarness({
+      servers: [
+        { name: "selected", transport: "stdio", command: "selected" },
+        { name: "unavailable", transport: "stdio", command: "unavailable" },
+      ],
+    });
+    harness.deps.connectLocalServer = async (config) => {
+      attempted.push(config.name);
+      if (config.name === "unavailable") throw new Error("unavailable");
+      return {
+        name: config.name,
+        tools: [
+          {
+            name: "echo",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+        callTool: async () => ({ content: [] }),
+        close: async () => {},
+      };
+    };
+
+    expect(await runMcpSubcommand(["tools", "selected"], harness.deps)).toBe(0);
+    expect(harness.stderr).toEqual([]);
+    expect(attempted).toEqual(["selected"]);
+    expect(JSON.parse(harness.stdout[0] ?? "[]")[0].name).toBe(
+      "mcp__selected__echo",
+    );
   });
 
   test("suffixes duplicate server-side tool names instead of failing", async () => {

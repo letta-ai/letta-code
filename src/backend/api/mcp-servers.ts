@@ -31,9 +31,7 @@ export interface McpToolSchema {
  */
 export interface ServerMcpClient {
   get(path: string): Promise<unknown>;
-  post(path: string, options?: { body?: unknown }): Promise<unknown>;
-  put(path: string, options?: { body?: unknown }): Promise<unknown>;
-  delete(path: string): Promise<unknown>;
+  post(path: string, body?: unknown): Promise<unknown>;
   mcpServers: {
     list(): Promise<ServerMcpServer[]>;
     refresh(
@@ -74,22 +72,12 @@ export interface AgentConnectedMcpServer {
   serverName: string;
   serverType: string;
   target: string;
-  command?: string;
-  args?: string[];
-  serverUrl?: string;
 }
 
 export interface AgentConnectedMcpTool {
   id: string;
   name: string;
-  title?: string;
   description?: string | null;
-  inputSchema: Record<string, unknown>;
-  outputSchema?: Record<string, unknown>;
-  annotations?: Record<string, unknown>;
-  execution?: Record<string, unknown>;
-  _meta?: Record<string, unknown>;
-  icons?: Array<Record<string, unknown>>;
 }
 
 export interface AgentMcpToolRunResult {
@@ -121,21 +109,16 @@ function parseAgentConnectedMcpServer(
     return null;
   }
 
-  const serverUrl = getString(value, "server_url") ?? undefined;
-  const command = getString(value, "command") ?? undefined;
-  const args = Array.isArray(value.args)
-    ? value.args.filter((item): item is string => typeof item === "string")
-    : [];
-  const target = serverUrl ?? [command, ...args].filter(Boolean).join(" ");
+  const target =
+    getString(value, "server_url") ??
+    [
+      getString(value, "command"),
+      ...(Array.isArray(value.args) ? value.args : []),
+    ]
+      .filter((item): item is string => typeof item === "string")
+      .join(" ");
 
-  return {
-    id,
-    serverName,
-    serverType,
-    target,
-    ...(serverUrl ? { serverUrl } : {}),
-    ...(command ? { command, args } : {}),
-  };
+  return { id, serverName, serverType, target };
 }
 
 function parseAgentConnectedMcpTool(
@@ -152,48 +135,7 @@ function parseAgentConnectedMcpTool(
   }
 
   const description = getString(value, "description");
-  const jsonSchema = isRecord(value.json_schema) ? value.json_schema : {};
-  const inputSchema = isRecord(jsonSchema.parameters)
-    ? jsonSchema.parameters
-    : isRecord(value.args_json_schema)
-      ? value.args_json_schema
-      : { type: "object", properties: {} };
-  const title = getString(value, "title") ?? getString(jsonSchema, "title");
-  const outputSchema =
-    recordField(value, "outputSchema", "output_schema") ??
-    recordField(jsonSchema, "outputSchema", "output_schema");
-  const annotations =
-    recordField(value, "annotations") ?? recordField(jsonSchema, "annotations");
-  const execution =
-    recordField(value, "execution") ?? recordField(jsonSchema, "execution");
-  const meta = recordField(value, "_meta") ?? recordField(jsonSchema, "_meta");
-  const iconsValue = value.icons ?? jsonSchema.icons;
-  const icons = Array.isArray(iconsValue)
-    ? iconsValue.filter(isRecord)
-    : undefined;
-  return {
-    id,
-    name,
-    ...(title ? { title } : {}),
-    description,
-    inputSchema,
-    ...(outputSchema ? { outputSchema } : {}),
-    ...(annotations ? { annotations } : {}),
-    ...(execution ? { execution } : {}),
-    ...(meta ? { _meta: meta } : {}),
-    ...(icons ? { icons } : {}),
-  };
-}
-
-function recordField(
-  value: Record<string, unknown>,
-  ...names: string[]
-): Record<string, unknown> | undefined {
-  for (const name of names) {
-    const field = value[name];
-    if (isRecord(field)) return field;
-  }
-  return undefined;
+  return { id, name, description };
 }
 
 function parseAgentMcpToolRunResult(value: unknown): AgentMcpToolRunResult {
@@ -296,45 +238,13 @@ export async function runAgentConnectedMcpTool(params: {
   const result = await withTimeout(
     params.client.post(
       `/v1/agents/${encodeURIComponent(params.agentId)}/mcp-servers/${encodeURIComponent(params.mcpServerId)}/tools/${encodeURIComponent(params.toolId)}/run`,
-      { body: { args: params.args } },
+      { args: params.args },
     ),
     params.timeoutMs ?? 60_000,
     "Running agent-connected MCP tool",
   );
 
   return parseAgentMcpToolRunResult(result);
-}
-
-/** Make an existing Letta-server MCP server available to an agent. */
-export function connectAgentMcpServer(
-  client: ServerMcpClient,
-  agentId: string,
-  mcpServerId: string,
-  timeoutMs = 10_000,
-): Promise<unknown> {
-  return withTimeout(
-    client.put(
-      `/v1/agents/${encodeURIComponent(agentId)}/mcp-servers/${encodeURIComponent(mcpServerId)}`,
-    ),
-    timeoutMs,
-    "Connecting MCP server to agent",
-  );
-}
-
-/** Remove an agent's association with a Letta-server MCP server. */
-export function disconnectAgentMcpServer(
-  client: ServerMcpClient,
-  agentId: string,
-  mcpServerId: string,
-  timeoutMs = 10_000,
-): Promise<unknown> {
-  return withTimeout(
-    client.delete(
-      `/v1/agents/${encodeURIComponent(agentId)}/mcp-servers/${encodeURIComponent(mcpServerId)}`,
-    ),
-    timeoutMs,
-    "Disconnecting MCP server from agent",
-  );
 }
 
 /** List a server's tools live from the MCP server (name-keyed legacy route). */
