@@ -3,10 +3,11 @@ import {
   execFile,
 } from "node:child_process";
 import { accessSync, constants, realpathSync } from "node:fs";
-import { readdir, rm } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { withFileLock } from "@/utils/file-lock";
 import { getVersion } from "@/version";
 
 const execFileAsync = promisify(execFile);
@@ -45,8 +46,18 @@ const INSTALL_ARG_PREFIX: Record<PackageManager, string[]> = {
 
 const VALID_PACKAGE_MANAGERS = new Set<string>(Object.keys(INSTALL_ARG_PREFIX));
 const NPM_PREFIX_TIMEOUT_MS = 5000;
+const GLOBAL_ROOT_TIMEOUT_MS = 5000;
 const UPDATE_INSTALL_TIMEOUT_MS = 60_000;
+const UPDATE_LOCK_STALE_MS = 180_000;
+const UPDATE_LOCK_TIMEOUT_MS = 185_000;
+const UPDATE_LOCK_RETRY_MS = 100;
+const UPDATE_LOCK_FILENAME = ".letta-update.lock";
 type FetchImpl = typeof fetch;
+
+type UpdateInstallContext = {
+  installPath: string;
+  lockPath: string;
+};
 
 export interface SelfUpdateStatus {
   supported: boolean;
@@ -152,12 +163,127 @@ function getResolvedEntrypoint(): string {
 }
 
 function findInstalledPackagePath(resolvedPath: string): string | null {
-  const marker = `${join("node_modules", "@letta-ai", "letta-code")}`;
-  const index = resolvedPath.lastIndexOf(marker);
-  if (index === -1) {
+  const packageNames = new Set([
+    resolveUpdatePackageName(),
+    DEFAULT_UPDATE_PACKAGE_NAME,
+  ]);
+  for (const packageName of packageNames) {
+    const marker = join("node_modules", packageName);
+    const index = resolvedPath.lastIndexOf(marker);
+    if (index !== -1) {
+      return resolvedPath.slice(0, index + marker.length);
+    }
+  }
+  return null;
+}
+
+function getInstalledPackagePath(): string | null {
+  return findInstalledPackagePath(getResolvedEntrypoint());
+}
+
+async function getPackageManagerGlobalRoot(
+  packageManager: PackageManager,
+): Promise<string | null> {
+  if (packageManager === "bun") return null;
+
+  try {
+    const { stdout } = await runUpdateCommand(
+      packageManager,
+      ["root", "-g"],
+      GLOBAL_ROOT_TIMEOUT_MS,
+    );
+    const root = stdout.trim();
+    if (!root) return null;
+    try {
+      accessSync(root, constants.F_OK);
+      return root;
+    } catch {
+      debugLog(`${packageManager} global root does not exist:`, root);
+      return null;
+    }
+  } catch (error) {
+    debugLog(`Failed to resolve ${packageManager} global root:`, error);
     return null;
   }
-  return resolvedPath.slice(0, index + marker.length);
+}
+
+async function getUpdateInstallContext(): Promise<UpdateInstallContext | null> {
+  const packageManager = detectPackageManager();
+  const globalRoot = await getPackageManagerGlobalRoot(packageManager);
+  if (globalRoot) {
+    return {
+      installPath: join(globalRoot, resolveUpdatePackageName()),
+      lockPath: join(globalRoot, UPDATE_LOCK_FILENAME),
+    };
+  }
+
+  const runningInstallPath = getInstalledPackagePath();
+  if (!runningInstallPath) return null;
+  const fallbackGlobalRoot = dirname(dirname(runningInstallPath));
+
+  return {
+    installPath: join(fallbackGlobalRoot, resolveUpdatePackageName()),
+    // npm and bun installs keep their global node_modules root stable while
+    // replacing the scoped package below it.
+    lockPath: join(fallbackGlobalRoot, UPDATE_LOCK_FILENAME),
+  };
+}
+
+async function readInstalledPackageVersion(
+  installPath: string,
+): Promise<string> {
+  try {
+    const raw = await readFile(join(installPath, "package.json"), "utf8");
+    const manifest = JSON.parse(raw) as { version?: unknown };
+    if (typeof manifest.version === "string") {
+      return manifest.version;
+    }
+  } catch (error) {
+    debugLog("Failed to read installed package version:", error);
+  }
+
+  return getVersion();
+}
+
+function isLockPermissionError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return code === "EACCES" || code === "EPERM" || code === "EROFS";
+}
+
+async function withUpdateLock<T>(
+  fn: (context: UpdateInstallContext | null) => Promise<T>,
+): Promise<T> {
+  const context = await getUpdateInstallContext();
+  if (!context) {
+    debugLog(
+      "Could not resolve a stable update lock path; continuing unlocked",
+    );
+    return fn(null);
+  }
+
+  let enteredCriticalSection = false;
+  try {
+    return await withFileLock(
+      context.lockPath,
+      () => {
+        enteredCriticalSection = true;
+        return fn(context);
+      },
+      {
+        staleMs: UPDATE_LOCK_STALE_MS,
+        timeoutMs: UPDATE_LOCK_TIMEOUT_MS,
+        retryMs: UPDATE_LOCK_RETRY_MS,
+      },
+    );
+  } catch (error) {
+    if (enteredCriticalSection || !isLockPermissionError(error)) throw error;
+
+    // Preserve the previous updater behavior for root-owned global installs.
+    // The package manager will produce its normal actionable permissions error;
+    // a process that cannot create this sibling lock cannot mutate the install.
+    debugLog("Update lock is not writable; continuing without it:", error);
+    return fn(context);
+  }
 }
 
 function canWritePath(path: string): boolean {
@@ -279,7 +405,23 @@ function isRunningLocally(): boolean {
 export async function checkForUpdate(
   fetchImpl: FetchImpl = fetch,
 ): Promise<UpdateCheckResult> {
-  const currentVersion = getVersion();
+  return checkForVersionUpdate(getVersion(), fetchImpl);
+}
+
+async function checkInstalledPackageForUpdate(
+  context: UpdateInstallContext | null,
+  fetchImpl: FetchImpl = fetch,
+): Promise<UpdateCheckResult> {
+  const installedVersion = context
+    ? await readInstalledPackageVersion(context.installPath)
+    : getVersion();
+  return checkForVersionUpdate(installedVersion, fetchImpl);
+}
+
+async function checkForVersionUpdate(
+  currentVersion: string,
+  fetchImpl: FetchImpl,
+): Promise<UpdateCheckResult> {
   debugLog("Current version:", currentVersion);
 
   // Skip auto-update for prerelease versions (e.g., 0.2.0-next.3)
@@ -520,20 +662,45 @@ export async function checkAndAutoUpdate(): Promise<
 
   const result = await checkForUpdate();
 
-  if (result.updateAvailable) {
+  if (!result.updateAvailable) return undefined;
+
+  return withUpdateLock(async (context) => {
+    // Another Letta process may have completed the global install while this
+    // one waited. getVersion() is bundled into the already-running process, so
+    // re-read package.json from disk before deciding to mutate the install.
+    const lockedResult = await checkInstalledPackageForUpdate(context);
+    if (!lockedResult.updateAvailable) {
+      if (
+        lockedResult.currentVersion !== getVersion() &&
+        isSignificantUpdate(getVersion(), lockedResult.currentVersion)
+      ) {
+        return {
+          updateApplied: true,
+          latestVersion: lockedResult.currentVersion,
+        };
+      }
+      return undefined;
+    }
+
     const updateResult = await performUpdate();
     if (updateResult.enotemptyFailed) {
       return { enotemptyFailed: true };
     }
     if (
       updateResult.success &&
-      result.latestVersion &&
-      isSignificantUpdate(result.currentVersion, result.latestVersion)
+      lockedResult.latestVersion &&
+      isSignificantUpdate(
+        lockedResult.currentVersion,
+        lockedResult.latestVersion,
+      )
     ) {
-      return { updateApplied: true, latestVersion: result.latestVersion };
+      return {
+        updateApplied: true,
+        latestVersion: lockedResult.latestVersion,
+      };
     }
-  }
-  return undefined;
+    return undefined;
+  });
 }
 
 export async function manualUpdate(options?: {
@@ -565,23 +732,62 @@ export async function manualUpdate(options?: {
     };
   }
 
-  const progressLog = options?.progressLog ?? console.log;
-  progressLog(
-    `Updating from ${result.currentVersion} to ${result.latestVersion}...`,
-  );
+  try {
+    return await withUpdateLock(async (context) => {
+      const lockedResult = await checkInstalledPackageForUpdate(context);
 
-  const updateResult = await performUpdate(progressLog);
+      if (lockedResult.checkFailed) {
+        return {
+          success: false,
+          message:
+            "Could not check for updates (network error). Try again later.",
+        };
+      }
 
-  if (updateResult.success) {
+      if (!lockedResult.updateAvailable) {
+        if (lockedResult.currentVersion !== getVersion()) {
+          return {
+            success: true,
+            message: `Updated to ${lockedResult.currentVersion} by another Letta process. Restart Letta Code to use the new version.`,
+          };
+        }
+        return {
+          success: true,
+          message: `Already on latest version (${lockedResult.currentVersion})`,
+        };
+      }
+
+      const progressLog = options?.progressLog ?? console.log;
+      progressLog(
+        `Updating from ${lockedResult.currentVersion} to ${lockedResult.latestVersion}...`,
+      );
+
+      const updateResult = await performUpdate(progressLog);
+
+      if (updateResult.success) {
+        return {
+          success: true,
+          message: `Updated to ${lockedResult.latestVersion}. Restart Letta Code to use the new version.`,
+        };
+      }
+
+      const installCmd = buildInstallCommand(detectPackageManager());
+      return {
+        success: false,
+        message: `Update failed: ${updateResult.error}\n\nTo update manually: ${installCmd}`,
+      };
+    });
+  } catch (error) {
+    trackBoundaryError({
+      errorType: "auto_update_coordinated_flow_failed",
+      error,
+      context: "updater_coordinated_flow",
+    });
+    const message = error instanceof Error ? error.message : String(error);
+    const installCmd = buildInstallCommand(detectPackageManager());
     return {
-      success: true,
-      message: `Updated to ${result.latestVersion}. Restart Letta Code to use the new version.`,
+      success: false,
+      message: `Update failed: ${message}\n\nTo update manually: ${installCmd}`,
     };
   }
-
-  const installCmd = buildInstallCommand(detectPackageManager());
-  return {
-    success: false,
-    message: `Update failed: ${updateResult.error}\n\nTo update manually: ${installCmd}`,
-  };
 }
