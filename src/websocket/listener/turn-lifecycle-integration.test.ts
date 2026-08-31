@@ -6,6 +6,7 @@ import {
   setCurrentAgentId,
 } from "@/agent/context";
 import { createToolLoopGuard } from "@/agent/tool-loop-guard";
+import { classifyApprovalsWithSuggestions } from "./approval-suggestions";
 import { openListenerConnection } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
@@ -201,17 +202,27 @@ describe("listener turn lifecycle integration", () => {
       turnLease,
       toolLoopGuard,
       buildSendOptions: () => ({}) as never,
+      dependencies: {
+        classifyApprovals: (approvals, options) =>
+          classifyApprovalsWithSuggestions(approvals, {
+            ...options,
+            // This test covers listener transport of the loop reason. The
+            // classifier unit test separately covers real schema validation.
+            requireArgsForAutoApprove: false,
+          }),
+      },
     });
-    await waitForPendingApproval(runtime);
-
-    const request = sentPayloads
-      .map((payload) => JSON.parse(payload) as Record<string, unknown>)
-      .find((message) => message.type === "control_request");
-    expect(
-      (request?.request as Record<string, unknown> | undefined)?.reason,
-    ).toContain("stopped after 4 consecutive identical");
-
-    clearConversationRuntimeState(runtime);
+    try {
+      await waitForPendingApproval(runtime);
+      const request = sentPayloads
+        .map((payload) => JSON.parse(payload) as Record<string, unknown>)
+        .find((message) => message.type === "control_request");
+      expect(
+        (request?.request as Record<string, unknown> | undefined)?.reason,
+      ).toContain("stopped after 4 consecutive identical");
+    } finally {
+      clearConversationRuntimeState(runtime);
+    }
     expect((await approvalResultPromise).kind).toBe("interrupted");
   });
 
