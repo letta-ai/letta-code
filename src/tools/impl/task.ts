@@ -6,6 +6,7 @@
  */
 
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import { updateConversationLLMConfig } from "@/agent/modify";
 import {
   completeSubagent,
   generateSubagentId,
@@ -17,10 +18,16 @@ import {
   clearSubagentConfigCache,
   discoverSubagents,
   getAllSubagentConfigs,
+  type SubagentConfig,
   type SubagentMemoryScope,
 } from "@/agent/subagents";
 import { spawnSubagent } from "@/agent/subagents/manager";
-import { getBackend } from "@/backend";
+import {
+  type ForkModelOverride,
+  getPrimaryAgentModelHandle,
+  resolveForkModelOverride,
+} from "@/agent/subagents/subagent-model";
+import { type Backend, getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
@@ -648,6 +655,84 @@ export async function inheritForkToolset(
   await settingsManager.flush();
 }
 
+interface ForkParentConversationParams {
+  backend: Backend;
+  parentAgentId: string;
+  parentConversationId: string;
+  config: SubagentConfig;
+  model?: string;
+  signal?: AbortSignal;
+}
+
+interface ForkParentConversationDependencies {
+  resolveModelOverride?: () => Promise<ForkModelOverride | null>;
+  updateConversationModel?: (
+    conversationId: string,
+    modelHandle: string,
+    updateArgs?: Record<string, unknown>,
+  ) => Promise<unknown>;
+  inheritToolset?: typeof inheritForkToolset;
+}
+
+/** Fork the parent conversation, then apply fork-only runtime configuration. */
+export async function forkParentConversation(
+  params: ForkParentConversationParams,
+  dependencies: ForkParentConversationDependencies = {},
+) {
+  // Resolve and validate before creating the hidden conversation. Invalid
+  // model IDs should not leave an orphan fork behind.
+  const modelOverride = await (
+    dependencies.resolveModelOverride ??
+    (async () => {
+      const parent = await getPrimaryAgentModelHandle({
+        agentId: params.parentAgentId,
+        conversationId: params.parentConversationId,
+      });
+      return resolveForkModelOverride({
+        userModel: params.model,
+        recommendedModel: params.config.recommendedModel,
+        recommendedModelSource: params.config.recommendedModelSource,
+        parentModelHandle: parent.handle,
+      });
+    })
+  )();
+
+  const forkedConversation = await params.backend.forkConversation(
+    params.parentConversationId,
+    {
+      ...(params.parentConversationId === "default"
+        ? { agentId: params.parentAgentId }
+        : {}),
+      hidden: true,
+      signal: params.signal,
+    },
+  );
+
+  try {
+    if (modelOverride) {
+      const updateConversationModel =
+        dependencies.updateConversationModel ?? updateConversationLLMConfig;
+      await updateConversationModel(
+        forkedConversation.id,
+        modelOverride.modelHandle,
+        modelOverride.updateArgs,
+      );
+    }
+    await (dependencies.inheritToolset ?? inheritForkToolset)(
+      params.parentAgentId,
+      params.parentConversationId,
+      forkedConversation.id,
+    );
+  } catch (error) {
+    await params.backend
+      .deleteConversation?.(forkedConversation.id)
+      .catch(() => undefined);
+    throw error;
+  }
+
+  return forkedConversation;
+}
+
 /**
  * Task tool - Launch a specialized subagent to handle complex tasks
  */
@@ -734,17 +819,14 @@ export async function task(args: TaskArgs): Promise<string> {
     try {
       const parentAgentId = getCurrentAgentId();
       const parentConvId = getConversationId() ?? "default";
-      // Mark the forked conversation as hidden so it doesn't clutter the
-      // parent agent's conversation list in the ADE. The subagent still
-      // reads/writes this conversation normally — only archive status is
-      // affected. The forked conversation remains retrievable by id, so a
-      // direct link still opens it.
-      const forkedConv = await getBackend().forkConversation(parentConvId, {
-        ...(parentConvId === "default" ? { agentId: parentAgentId } : {}),
-        hidden: true,
+      const forkedConv = await forkParentConversation({
+        backend: getBackend(),
+        parentAgentId,
+        parentConversationId: parentConvId,
+        config,
+        model,
         signal,
       });
-      await inheritForkToolset(parentAgentId, parentConvId, forkedConv.id);
       effectiveAgentId = parentAgentId;
       effectiveConversationId = forkedConv.id;
     } catch (error) {
