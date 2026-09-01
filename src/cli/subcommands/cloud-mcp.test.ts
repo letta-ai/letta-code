@@ -132,6 +132,25 @@ describe("cloud-mcp subcommand", () => {
     expect(stdout.join("\n")).toContain('"serverName": "exa"');
   });
 
+  test("lists minimal server associations from the production API", async () => {
+    const { stdout, deps } = createDeps({
+      getResponses: {
+        "/v1/agents/agent-1/mcp-servers": [
+          { id: "mcp_server-1", server_name: "LaunchDarkly" },
+        ],
+      },
+    });
+
+    await withEnv({ LETTA_AGENT_ID: "agent-1" }, async () => {
+      const exitCode = await runCloudMcpSubcommand(["list"], deps);
+
+      expect(exitCode).toBe(0);
+    });
+
+    expect(stdout.join("\n")).toContain('"serverName": "LaunchDarkly"');
+    expect(stdout.join("\n")).toContain('"serverType": "unknown"');
+  });
+
   test("lists tools for a connected server", async () => {
     const { stdout, deps } = createDeps({
       getResponses: {

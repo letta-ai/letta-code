@@ -236,6 +236,28 @@ describe("agent-connected MCP server API", () => {
     ]);
   });
 
+  test("keeps minimal agent association records", async () => {
+    const client = stubClient({
+      getResponses: {
+        "/v1/agents/agent-1/mcp-servers": [
+          { id: "mcp_server-1", server_name: "LaunchDarkly" },
+          { server_name: "missing id" },
+        ],
+      },
+    });
+
+    await expect(
+      listAgentConnectedMcpServers(client, "agent-1"),
+    ).resolves.toEqual([
+      {
+        id: "mcp_server-1",
+        serverName: "LaunchDarkly",
+        serverType: "unknown",
+        target: "",
+      },
+    ]);
+  });
+
   test("lists tools for one associated server", async () => {
     const client = stubClient({
       getResponses: {

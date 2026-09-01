@@ -104,10 +104,11 @@ function parseAgentConnectedMcpServer(
 
   const id = getString(value, "id");
   const serverName = getString(value, "server_name");
-  const serverType = getString(value, "mcp_server_type");
-  if (!id || !serverName || !serverType) {
+  if (!id || !serverName) {
     return null;
   }
+
+  const serverType = getString(value, "mcp_server_type") ?? "unknown";
 
   const target =
     getString(value, "server_url") ??
