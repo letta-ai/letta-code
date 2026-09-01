@@ -5,6 +5,7 @@ export {
   type CancelReason,
   type CronRunOutcome,
   type CronRunReason,
+  type CronSchedulerScope,
   type CronStateChangeResult,
   type CronTask,
   type CronTaskStatus,

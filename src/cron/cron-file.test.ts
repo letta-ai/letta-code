@@ -405,6 +405,29 @@ describe("scheduler lease", () => {
     expect(verifySchedulerLease("wrong-token")).toBe(false);
   });
 
+  test("cloud and local schedulers hold independent leases", () => {
+    const cloudToken = claimSchedulerLease("cloud");
+    const localToken = claimSchedulerLease("local");
+
+    expect(verifySchedulerLease(cloudToken, "cloud")).toBe(true);
+    expect(verifySchedulerLease(localToken, "local")).toBe(true);
+    expect(verifySchedulerLease(cloudToken, "local")).toBe(false);
+
+    releaseSchedulerLease(cloudToken, "cloud");
+    expect(verifySchedulerLease(cloudToken, "cloud")).toBe(false);
+    expect(verifySchedulerLease(localToken, "local")).toBe(true);
+  });
+
+  test("legacy all-schedule leases exclude scoped schedulers", () => {
+    const allToken = claimSchedulerLease();
+    expect(() => claimSchedulerLease("local")).toThrow("Scheduler lease held");
+    releaseSchedulerLease(allToken);
+
+    const localToken = claimSchedulerLease("local");
+    expect(() => claimSchedulerLease()).toThrow("Scoped scheduler lease held");
+    releaseSchedulerLease(localToken, "local");
+  });
+
   test("takes over a stale lease when the same PID belongs to a different process incarnation", () => {
     __testOverrideReadProcessIdentity((pid) =>
       pid === process.pid ? { startTicks: "200", bootId: "boot-a" } : null,

@@ -18,8 +18,10 @@ import {
   getIntendedCronOccurrence,
   handleMissedOneShot,
   handleTaskPreflight,
+  resolveCronSchedulerScope,
   startScheduler,
   stopScheduler,
+  taskMatchesCronSchedulerScope,
   wrapCronPrompt,
 } from "@/cron/scheduler";
 import type { ListenerTransport } from "@/websocket/listener/transport";
@@ -197,6 +199,28 @@ describe("per-minute deduplication", () => {
     const key1 = `${d1.getUTCFullYear()}-${String(d1.getUTCMonth() + 1).padStart(2, "0")}-${String(d1.getUTCDate()).padStart(2, "0")}T${String(d1.getUTCHours()).padStart(2, "0")}:${String(d1.getUTCMinutes()).padStart(2, "0")}`;
     const key2 = `${d2.getUTCFullYear()}-${String(d2.getUTCMonth() + 1).padStart(2, "0")}-${String(d2.getUTCDate()).padStart(2, "0")}T${String(d2.getUTCHours()).padStart(2, "0")}:${String(d2.getUTCMinutes()).padStart(2, "0")}`;
     expect(key1).not.toBe(key2);
+  });
+});
+
+describe("scheduler backend scope", () => {
+  const cloudTask = { agent_id: "agent-cloud" } as CronTask;
+  const localTask = {
+    agent_id: "agent-local-123",
+  } as CronTask;
+
+  test("defaults to all schedules for standalone listeners", () => {
+    expect(resolveCronSchedulerScope(undefined)).toBe("all");
+    expect(taskMatchesCronSchedulerScope(cloudTask, "all")).toBe(true);
+    expect(taskMatchesCronSchedulerScope(localTask, "all")).toBe(true);
+  });
+
+  test("partitions cloud and local agent schedules", () => {
+    expect(resolveCronSchedulerScope("cloud")).toBe("cloud");
+    expect(resolveCronSchedulerScope("local")).toBe("local");
+    expect(taskMatchesCronSchedulerScope(cloudTask, "cloud")).toBe(true);
+    expect(taskMatchesCronSchedulerScope(localTask, "cloud")).toBe(false);
+    expect(taskMatchesCronSchedulerScope(cloudTask, "local")).toBe(false);
+    expect(taskMatchesCronSchedulerScope(localTask, "local")).toBe(true);
   });
 });
 
