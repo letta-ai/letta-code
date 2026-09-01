@@ -179,19 +179,17 @@ verifies each message signature before it delivers the message to an agent.
 Before you configure Letta Code, complete the [official X Chat bot
 flow](https://docs.x.com/xchat/bots):
 
-1. Create a dedicated X bot account in an X developer app.
-2. Grant the bot `dm.read`, `dm.write`, `tweet.read`, `users.read`,
-   `media.write`, and `offline.access` OAuth 2.0 scopes.
-3. Generate the bot token. Keep the `xcbot_...` value.
-4. Select **Register chat keys**. The flow must generate a keypair, store the
-   private keys in Juicebox under your PIN, and register the public keys with X.
-   Keep the PIN.
+1. Create or select an X developer project and app.
+2. Create a programmatic bot in that project with the default `dm.read`,
+   `dm.write`, `tweet.read`, `users.read`, and `media.write` scopes.
+3. Keep the one-time `xcbot_...` token returned when the bot is created.
+4. Choose and keep an encryption PIN. Do not click the X Developer Portal
+   **Register chat keys** button or use a separate registration helper. Letta
+   Code provisions the key safely during setup if no existing identity can be
+   recovered.
 5. Open **Apps > your app > Keys & Tokens > App-Only Authentication**. Create or
    copy the app Bearer token. It must come from the same app as the bot token.
    This token is optional, but Message-request discovery requires it.
-
-Letta Code validates the registered key identity. It does not register a new
-X Chat key identity during channel setup.
 
 Set the credentials in your shell, or enter them when the setup command asks:
 
@@ -199,6 +197,8 @@ Set the credentials in your shell, or enter them when the setup command asks:
 export XCHAT_BOT_TOKEN='xcbot_...'
 export XCHAT_PIN='...'
 export X_BEARER_TOKEN='...'
+# Optional exact version override:
+export XCHAT_SIGNING_KEY_VERSION='...'
 ```
 
 Do not put these values in Git or shell startup files. Run the following
@@ -210,11 +210,19 @@ letta channels configure xchat
 letta server --channels xchat
 ```
 
-The install command adds the X Chat runtime packages. The setup command
-validates the bot identity and PIN. It then stores the bot token, PIN, and app
-Bearer token in the channel credential store. The listener must use the same
-credential store. If you use the operating-system keyring, run both commands
-with the keyring setting:
+The install command adds the X Chat runtime packages. Setup first checks
+registered key versions read-only without writing to X. If the newest version
+returns `NotRegistered`, it tries older versions from newest to oldest. If none
+can be recovered, one explicit `REGISTER` confirmation gates new key publication.
+Setup checkpoints the private identity before the rate-limited X write,
+reconciles interrupted requests, stores the same identity in Juicebox, and
+verifies a fresh recovery before saving the account. A 429 keeps the checkpoint
+so rerunning setup after the reported reset resumes the same identity. An
+interruption also keeps the checkpoint so a rerun does not generate another
+identity. Invalid PINs and other errors stop immediately. Setting
+`XCHAT_SIGNING_KEY_VERSION` requires an exact version and disables fallback and
+registration. The listener must use the same credential store. If you use the
+operating-system keyring, run both commands with the keyring setting:
 
 ```bash
 LETTA_CHANNEL_CREDENTIALS_STORE=keyring letta channels configure xchat
@@ -262,18 +270,20 @@ messages from the last 10 minutes and records older messages without delivery.
 
 ### X Chat key troubleshooting
 
-`letta channels configure xchat` stops if the PIN cannot unlock the registered
-private keys. A `Juicebox recovery failed: reason=NotRegistered` error means X
-registered a public key but did not store its matching private key in
-Juicebox. Registering keys again can consume X's 24-hour key-registration quota
-without repairing the key pair. Do not rotate the bot token to repair this
-error. Bot-token rotation does not change the X Chat keys.
+`letta channels configure xchat` checks registered key versions without writing
+to X. If the newest version returns
+`Juicebox recovery failed: reason=NotRegistered`, setup tries older versions
+from newest to oldest and saves the first recoverable identity. It does not
+continue after an invalid PIN or any other error. Set
+`XCHAT_SIGNING_KEY_VERSION` only when you need to require an exact version.
 
-Wait for the quota to reset or contact X Developer Support before you register
-another key. If you use the [Chat XDK](https://github.com/xdevplatform/chat-xdk)
-to repair the registration, generate the keys, store them in Juicebox, and
-register the matching public keys in one process. Confirm that the same PIN can
-unlock the identity before you configure Letta Code.
+Do not click **Register chat keys** or run a separate registration helper after
+`NotRegistered`. These actions can create another public key without preserving
+its private half and can consume X's 24-hour key-registration quota. Rerun
+`letta channels configure xchat` instead. It resumes any saved identity and
+does not report success until the registered version unlocks from Juicebox.
+Rotating the bot token is unrelated to key recovery. Do it only if X rejects
+the token itself.
 
 ## Channel slash commands
 
