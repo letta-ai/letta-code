@@ -1,10 +1,8 @@
 import { parseArgs } from "node:util";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { getBackend } from "@/backend";
-import {
-  getClient as getDefaultClient,
-  getServerUrl,
-} from "@/backend/api/client";
+import { getClient as getDefaultClient } from "@/backend/api/client";
+import { getServerUrl } from "@/backend/api/server-url";
 import {
   listUnifiedMcpServers,
   listUnifiedMcpTools,

@@ -155,7 +155,8 @@ async function defaultListServerSideServers(
   if (!serverSideAvailable) {
     return null;
   }
-  const { getClient, getServerUrl } = await import("@/backend/api/client");
+  const { getClient } = await import("@/backend/api/client");
+  const { getServerUrl } = await import("@/backend/api/server-url");
   const { LETTA_CLOUD_API_URL } = await import("@/auth/oauth");
   const { listUnifiedMcpServers, listUnifiedMcpTools } = await import(
     "@/backend/api/unified-mcp"
