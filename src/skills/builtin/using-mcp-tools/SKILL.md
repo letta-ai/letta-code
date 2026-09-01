@@ -64,4 +64,3 @@ OAuth: a local http/sse server with no `Authorization` header uses the OAuth flo
 - Summarize relevant results instead of pasting large raw payloads.
 - If `list` is empty, no MCP servers are available: ask the user to connect one to the agent on the Letta Cloud MCP servers page or configure a local one in the Letta Code app.
 - If a cloud-connected server shows no tools, its tools were never synced. Ask the user to resync it from the MCP servers page; the CLI has no refresh action.
-- The legacy `letta cloud-mcp` command uses different routes and IDs; do not mix it with `letta mcp`.
