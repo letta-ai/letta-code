@@ -125,17 +125,25 @@ async function buildSecretsInfoReminder(
 /** Re-check the MCP server list at most this often for mid-session changes. */
 const MCP_SERVERS_REFRESH_MS = 5 * 60 * 1000;
 
-export interface McpServersReminderDependencies {
-  getLocalServerNames?: (agentId: string) => string[];
-  /** Returns cloud-connected server names, or null when unavailable. */
-  listServerSideNames?: (agentId: string) => Promise<string[] | null>;
+export interface McpServerReminderEntry {
+  name: string;
+  /** Tool count when cheaply known (cloud-synced tools); null otherwise. */
+  toolCount: number | null;
 }
 
-async function defaultListServerSideNames(
+export interface McpServersReminderDependencies {
+  getLocalServerNames?: (agentId: string) => string[];
+  /** Returns cloud-connected servers, or null when unavailable. */
+  listServerSideServers?: (
+    agentId: string,
+  ) => Promise<McpServerReminderEntry[] | null>;
+}
+
+async function defaultListServerSideServers(
   agentId: string,
-): Promise<string[] | null> {
+): Promise<McpServerReminderEntry[] | null> {
   // An unavailable backend means no server-side MCP; local names are still
-  // valid. A failed fetch on an available backend throws instead, so a
+  // valid. A failed server fetch on an available backend throws instead, so a
   // transient API error never reports an incomplete server list.
   let serverSideAvailable = false;
   try {
@@ -148,12 +156,30 @@ async function defaultListServerSideNames(
     return null;
   }
   const { getClient } = await import("@/backend/api/client");
-  const { listUnifiedMcpServers } = await import("@/backend/api/unified-mcp");
+  const { listUnifiedMcpServers, listUnifiedMcpTools } = await import(
+    "@/backend/api/unified-mcp"
+  );
   const client = (await getClient()) as Parameters<
     typeof listUnifiedMcpServers
   >[0];
   const servers = await listUnifiedMcpServers(client, agentId, 3_000);
-  return servers.map((server) => server.serverName);
+  return Promise.all(
+    servers.map(async (server) => ({
+      name: server.serverName,
+      // Tool counts read the server-synced tool rows; a miscounted server
+      // still lists by name.
+      toolCount: await listUnifiedMcpTools(client, agentId, server.id, 3_000)
+        .then((tools) => tools.length)
+        .catch(() => null),
+    })),
+  );
+}
+
+function formatMcpServerEntry(entry: McpServerReminderEntry): string {
+  if (entry.toolCount === null) {
+    return entry.name;
+  }
+  return `${entry.name} (${entry.toolCount} ${entry.toolCount === 1 ? "tool" : "tools"})`;
 }
 
 export async function buildMcpServersInfoReminderText(
@@ -174,20 +200,28 @@ export async function buildMcpServersInfoReminderText(
     // refresh interval instead of on every turn.
     context.state.lastMcpServersFetchedAtMs = now;
 
-    const names = (
+    const localNames = (
       deps.getLocalServerNames ??
       ((agentId: string) =>
         settingsManager.getMcpServers(agentId).map((server) => server.name))
     )(context.agent.id);
-    const serverSideNames = await (
-      deps.listServerSideNames ?? defaultListServerSideNames
+    const entries: McpServerReminderEntry[] = localNames.map((name) => ({
+      name,
+      toolCount: null,
+    }));
+    const serverSideEntries = await (
+      deps.listServerSideServers ?? defaultListServerSideServers
     )(context.agent.id);
-    if (serverSideNames) {
-      names.push(...serverSideNames);
+    if (serverSideEntries) {
+      entries.push(...serverSideEntries);
     }
 
-    const uniqueNames = Array.from(new Set(names));
-    const namesKey = uniqueNames.join("\0");
+    const uniqueEntries = [
+      ...new Map(entries.map((entry) => [entry.name, entry])).values(),
+    ];
+    const namesKey = uniqueEntries
+      .map((entry) => `${entry.name}\u0001${entry.toolCount ?? ""}`)
+      .join("\0");
     if (
       context.state.hasSentMcpServersInfo &&
       context.state.lastSentMcpServerNamesKey === namesKey
@@ -197,10 +231,11 @@ export async function buildMcpServersInfoReminderText(
     context.state.hasSentMcpServersInfo = true;
     context.state.lastSentMcpServerNamesKey = namesKey;
 
-    if (uniqueNames.length === 0) {
+    if (uniqueEntries.length === 0) {
       return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: None\n${SYSTEM_REMINDER_CLOSE}`;
     }
-    return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${uniqueNames.join(", ")}\nFind their tools with \`letta mcp search "<what you want to do>"\` and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`.\n${SYSTEM_REMINDER_CLOSE}`;
+    const rendered = uniqueEntries.map(formatMcpServerEntry).join(", ");
+    return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${rendered}\nFind their tools with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server> [--full]\`, and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`.\n${SYSTEM_REMINDER_CLOSE}`;
   } catch (error) {
     debugLog(
       "mcp",

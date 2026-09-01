@@ -22,7 +22,7 @@ describe("mcp servers info reminder", () => {
     const state = createSharedReminderState();
     const deps: McpServersReminderDependencies = {
       getLocalServerNames: () => [],
-      listServerSideNames: async () => null,
+      listServerSideServers: async () => null,
     };
 
     const initial = await buildReminder(state, deps);
@@ -31,17 +31,22 @@ describe("mcp servers info reminder", () => {
     expect(await buildReminder(state, deps)).toBeNull();
   });
 
-  test("lists local and cloud server names with usage instructions", async () => {
+  test("lists local and cloud servers with tool counts and usage instructions", async () => {
     const state = createSharedReminderState();
     const text = await buildReminder(state, {
-      getLocalServerNames: () => ["exa"],
-      listServerSideNames: async () => ["betterstack", "exa"],
+      getLocalServerNames: () => ["filesystem"],
+      listServerSideServers: async () => [
+        { name: "betterstack", toolCount: 111 },
+        { name: "Exa", toolCount: 1 },
+        { name: "uncounted", toolCount: null },
+      ],
     });
 
     expect(text).toContain(
-      "MCP servers with available tools: exa, betterstack",
+      "MCP servers with available tools: filesystem, betterstack (111 tools), Exa (1 tool), uncounted",
     );
     expect(text).toContain('letta mcp search "<what you want to do>"');
+    expect(text).toContain("letta mcp tools <server> [--full]");
     expect(text).toContain("letta mcp call <tool-name>");
   });
 
@@ -49,7 +54,7 @@ describe("mcp servers info reminder", () => {
     const state = createSharedReminderState();
     const text = await buildReminder(state, {
       getLocalServerNames: () => ["exa"],
-      listServerSideNames: async () => {
+      listServerSideServers: async () => {
         throw new Error("api down");
       },
     });
@@ -59,24 +64,27 @@ describe("mcp servers info reminder", () => {
 
   test("re-emits when the server list changes after the refresh interval", async () => {
     const state = createSharedReminderState();
-    let names = ["exa"];
+    let servers = [{ name: "exa", toolCount: 2 }];
     const deps: McpServersReminderDependencies = {
-      getLocalServerNames: () => [...names],
-      listServerSideNames: async () => null,
+      getLocalServerNames: () => [],
+      listServerSideServers: async () => [...servers],
     };
 
     expect(await buildReminder(state, deps)).toContain(
-      "MCP servers with available tools: exa",
+      "MCP servers with available tools: exa (2 tools)",
     );
 
-    names = ["exa", "betterstack"];
+    servers = [
+      { name: "exa", toolCount: 2 },
+      { name: "betterstack", toolCount: 111 },
+    ];
     // Within the refresh interval nothing is re-fetched or emitted.
     expect(await buildReminder(state, deps)).toBeNull();
 
     // Force the refresh window to elapse.
     state.lastMcpServersFetchedAtMs = 0;
     expect(await buildReminder(state, deps)).toContain(
-      "MCP servers with available tools: exa, betterstack",
+      "MCP servers with available tools: exa (2 tools), betterstack (111 tools)",
     );
 
     // Unchanged list after another elapsed window stays silent.
