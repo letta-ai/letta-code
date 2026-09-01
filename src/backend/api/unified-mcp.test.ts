@@ -11,6 +11,7 @@ function clientFixture(options: {
   get?: Record<string, unknown>;
   post?: Record<string, unknown>;
   posts?: Array<{ path: string; body: unknown }>;
+  registered?: Array<Record<string, unknown>>;
 }): UnifiedMcpClient {
   return {
     get: async (path) => options.get?.[path] ?? [],
@@ -18,10 +19,63 @@ function clientFixture(options: {
       options.posts?.push({ path, body: request?.body });
       return options.post?.[path] ?? {};
     },
+    ...(options.registered
+      ? { mcpServers: { list: async () => options.registered ?? [] } }
+      : {}),
   };
 }
 
 describe("unified MCP API adapter", () => {
+  test("enriches minimal agent associations from the registered server catalog", async () => {
+    const serverPath = "/v1/agents/agent-1/mcp-servers";
+    const client = clientFixture({
+      get: {
+        [serverPath]: [{ id: "mcp-1", server_name: "Exa" }],
+      },
+      registered: [
+        {
+          id: "mcp-1",
+          server_name: "Exa",
+          mcp_server_type: "streamable_http",
+          server_url: "https://mcp.example.com/mcp?token=secret",
+        },
+      ],
+    });
+
+    await expect(listUnifiedMcpServers(client, "agent-1")).resolves.toEqual([
+      {
+        id: "mcp-1",
+        serverName: "Exa",
+        serverType: "streamable_http",
+        target: "https://mcp.example.com/mcp?token=secret",
+        serverUrl: "https://mcp.example.com/mcp?token=secret",
+      },
+    ]);
+  });
+
+  test("keeps minimal associations when registered server enrichment fails", async () => {
+    const serverPath = "/v1/agents/agent-1/mcp-servers";
+    const client: UnifiedMcpClient = {
+      get: async (path) =>
+        path === serverPath ? [{ id: "mcp-1", server_name: "Exa" }] : [],
+      post: async () => ({}),
+      mcpServers: {
+        list: async () => {
+          throw new Error("catalog unavailable");
+        },
+      },
+    };
+
+    await expect(listUnifiedMcpServers(client, "agent-1")).resolves.toEqual([
+      {
+        id: "mcp-1",
+        serverName: "Exa",
+        serverType: "unknown",
+        target: "",
+      },
+    ]);
+  });
+
   test("parses rich server and tool records without changing legacy helpers", async () => {
     const serverPath = "/v1/agents/agent-1/mcp-servers";
     const toolsPath = `${serverPath}/mcp-1/tools`;

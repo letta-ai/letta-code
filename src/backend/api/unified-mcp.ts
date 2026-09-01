@@ -7,6 +7,9 @@ import { isRecord } from "@/utils/type-guards";
 export interface UnifiedMcpClient {
   get(path: string): Promise<unknown>;
   post(path: string, options?: { body?: unknown }): Promise<unknown>;
+  mcpServers?: {
+    list(): Promise<unknown[]>;
+  };
 }
 
 export interface UnifiedMcpServer {
@@ -65,17 +68,32 @@ function recordField(
   return undefined;
 }
 
-function parseServer(value: unknown): UnifiedMcpServer | null {
+function parseServer(
+  value: unknown,
+  registered: Record<string, unknown> | undefined,
+): UnifiedMcpServer | null {
   if (!isRecord(value)) return null;
   const id = stringField(value, "id");
-  const serverName = stringField(value, "server_name");
-  const serverType = stringField(value, "mcp_server_type");
-  if (!id || !serverName || !serverType) return null;
+  const serverName =
+    stringField(value, "server_name") ??
+    (registered ? stringField(registered, "server_name") : null);
+  const serverType =
+    stringField(value, "mcp_server_type") ??
+    (registered ? stringField(registered, "mcp_server_type") : null) ??
+    "unknown";
+  if (!id || !serverName) return null;
 
-  const serverUrl = stringField(value, "server_url") ?? undefined;
-  const command = stringField(value, "command") ?? undefined;
-  const args = Array.isArray(value.args)
-    ? value.args.filter((item): item is string => typeof item === "string")
+  const serverUrl =
+    stringField(value, "server_url") ??
+    (registered ? stringField(registered, "server_url") : null) ??
+    undefined;
+  const command =
+    stringField(value, "command") ??
+    (registered ? stringField(registered, "command") : null) ??
+    undefined;
+  const argsValue = value.args ?? registered?.args;
+  const args = Array.isArray(argsValue)
+    ? argsValue.filter((item): item is string => typeof item === "string")
     : [];
   const target = serverUrl ?? [command, ...args].filter(Boolean).join(" ");
   return {
@@ -186,7 +204,35 @@ export async function listUnifiedMcpServers(
     "Listing agent MCP servers",
   );
   if (!Array.isArray(value)) return [];
-  return value.map(parseServer).filter((server) => server !== null);
+  const needsEnrichment = value.some(
+    (item) => isRecord(item) && !stringField(item, "mcp_server_type"),
+  );
+  const registeredById = new Map<string, Record<string, unknown>>();
+  if (needsEnrichment && client.mcpServers) {
+    try {
+      const registered = await withTimeout(
+        client.mcpServers.list(),
+        timeoutMs,
+        "Listing registered MCP servers",
+      );
+      for (const item of registered) {
+        if (!isRecord(item)) continue;
+        const id = stringField(item, "id");
+        if (id) registeredById.set(id, item);
+      }
+    } catch {
+      // The association id/name still owns tool listing and execution. Keep it
+      // with unknown transport when optional connection metadata is unavailable.
+    }
+  }
+  return value
+    .map((item) => {
+      const registered = isRecord(item)
+        ? registeredById.get(stringField(item, "id") ?? "")
+        : undefined;
+      return parseServer(item, registered);
+    })
+    .filter((server) => server !== null);
 }
 
 export async function listUnifiedMcpTools(

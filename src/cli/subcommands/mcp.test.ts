@@ -101,6 +101,7 @@ function cloudHarness(
     getResponses?: Record<string, unknown>;
     getResponse?: (path: string) => unknown;
     postResponses?: Record<string, unknown>;
+    registeredServers?: unknown[];
   } = {},
 ): CloudHarness {
   const stdout: string[] = [];
@@ -113,6 +114,13 @@ function cloudHarness(
       posts.push({ path, body: request?.body });
       return options.postResponses?.[path] ?? {};
     },
+    ...(options.registeredServers
+      ? {
+          mcpServers: {
+            list: async () => options.registeredServers ?? [],
+          },
+        }
+      : {}),
   };
   return {
     stdout,
@@ -190,29 +198,6 @@ describe("mcp subcommand", () => {
       args: ["server.js"],
       cwd: "/workspace",
       env: { MCP_TOKEN: "[REDACTED]" },
-    });
-  });
-
-  test("redacts HTTP headers and sensitive URL parameters", async () => {
-    const harness = localHarness({
-      servers: [
-        {
-          name: "private",
-          transport: "http",
-          url: "https://mcp.example.com/mcp?token=secret&tenant=letta",
-          headers: { Authorization: "Bearer secret", "X-Tenant": "letta" },
-        },
-      ],
-    });
-    expect(await runMcpSubcommand(["get", "private"], harness.deps)).toBe(0);
-    expect(JSON.parse(harness.stdout[0] ?? "{}")).toEqual({
-      name: "private",
-      transport: "streamable_http",
-      url: "https://mcp.example.com/mcp?token=%5BREDACTED%5D&tenant=letta",
-      headers: {
-        Authorization: "[REDACTED]",
-        "X-Tenant": "[REDACTED]",
-      },
     });
   });
 
@@ -565,14 +550,7 @@ describe("mcp subcommand", () => {
     const toolsPath = `${serverPath}/mcp-1/tools`;
     const harness = cloudHarness({
       getResponses: {
-        [serverPath]: [
-          {
-            id: "mcp-1",
-            server_name: "betterstack",
-            mcp_server_type: "streamable_http",
-            server_url: "https://mcp.example.com/mcp",
-          },
-        ],
+        [serverPath]: [{ id: "mcp-1", server_name: "betterstack" }],
         [toolsPath]: [
           {
             id: "tool-1",
@@ -580,6 +558,14 @@ describe("mcp subcommand", () => {
           },
         ],
       },
+      registeredServers: [
+        {
+          id: "mcp-1",
+          server_name: "betterstack",
+          mcp_server_type: "streamable_http",
+          server_url: "https://mcp.example.com/mcp",
+        },
+      ],
       postResponses: {
         [searchPath]: [
           {

@@ -40,7 +40,7 @@ import {
   uniqueMcpName,
 } from "./mcp-tool-names";
 
-type McpTransport = "stdio" | "streamable_http" | "sse";
+type McpTransport = "stdio" | "streamable_http" | "sse" | "unknown";
 
 interface McpServerSummary {
   name: string;
@@ -59,7 +59,8 @@ type McpServerDetails =
       transport: "streamable_http" | "sse";
       url: string;
       headers: Record<string, string>;
-    });
+    })
+  | (McpServerSummary & { transport: "unknown" });
 
 type ServerTarget =
   | { kind: "client"; config: McpServerConfig }
@@ -171,7 +172,8 @@ function localTransport(config: McpServerConfig): McpTransport {
 function serverTransport(server: UnifiedMcpServer): McpTransport {
   if (server.serverType === "streamable_http") return "streamable_http";
   if (server.serverType === "sse") return "sse";
-  return "stdio";
+  if (server.serverType === "stdio") return "stdio";
+  return "unknown";
 }
 
 function serverSummary(target: ServerTarget): McpServerSummary {
@@ -220,6 +222,9 @@ function serverDetails(target: ServerTarget): McpServerDetails {
   }
 
   const server = target.server;
+  if (server.serverType === "unknown") {
+    return { name: server.serverName, transport: "unknown" };
+  }
   if (server.serverType === "stdio") {
     return {
       name: server.serverName,
