@@ -39,7 +39,7 @@ Notes:
   - Operates on the current agent/conversation from LETTA_AGENT_ID /
     LETTA_CONVERSATION_ID (or AGENT_ID / CONVERSATION_ID), falling back to the
     last active session.
-  - Requires a Letta Cloud agent and a non-virtual conversation.
+  - Requires a Letta Cloud agent and an active conversation.
   - list: prints accessible online remote environments as JSON.
   - cloud: teleports to the agent's Cloud sandbox.
   - local: teleports to the one online Desktop environment. Desktop Remote
@@ -87,11 +87,7 @@ export function resolveTeleportSession(
   if (isLocalAgentId(session.agentId)) {
     throw new Error("Teleport requires a Letta Cloud agent");
   }
-  if (
-    !session.conversationId ||
-    session.conversationId === "default" ||
-    session.conversationId === "new"
-  ) {
+  if (!session.conversationId || session.conversationId === "new") {
     throw new Error("Teleport requires an active conversation");
   }
   return session;
