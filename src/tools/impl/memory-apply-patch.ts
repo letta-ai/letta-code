@@ -540,7 +540,15 @@ function normalizeAddedContent(
     rawContent.startsWith("---\n") ||
     (memoryFormat === "memfs-v2" && isMemoryIndexPath(relativePath))
   ) {
-    parseMemoryFile(rawContent, relativePath, memoryFormat);
+    const parsed = parseMemoryFile(rawContent, relativePath, memoryFormat);
+    if (memoryFormat === "memfs-v2" && isMemoryIndexPath(relativePath)) {
+      return renderMemoryFile(
+        parsed.frontmatter,
+        parsed.body,
+        relativePath,
+        memoryFormat,
+      );
+    }
     return rawContent;
   }
   return renderMemoryFile(
