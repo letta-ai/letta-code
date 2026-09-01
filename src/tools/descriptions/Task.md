@@ -132,7 +132,9 @@ Note: `fork` cannot be combined with `agent_id` or `conversation_id`.
 
 ## Running on a Remote Environment
 
-Pass `environment` to run the subagent's turn on a connected environment (another computer running Letta Code) or on the agent's Cloud sandbox (`environment: "cloud"`) instead of this machine. The remote runtime executes the turn with its own working directory and local tools.
+Pass `environment` to run the subagent's turn on a connected environment (another computer running Letta Code) instead of this machine. The remote runtime executes the turn with its own working directory and local tools.
+
+`environment: "cloud"` provisions a Cloud sandbox for the subagent's conversation and runs the turn there. Sandboxes are per-conversation: this is a separate machine from wherever you are running now, even if you are already in a Cloud sandbox.
 
 ```typescript
 // Fork this conversation and run the work on a connected computer
@@ -143,7 +145,7 @@ Agent({
   prompt: "Run the integration suite in the checkout on this machine and report failures."
 })
 
-// Deploy an existing agent into its Cloud sandbox
+// Deploy an existing agent into a fresh Cloud sandbox
 Agent({
   agent_id: "agent-abc123",
   environment: "cloud",
