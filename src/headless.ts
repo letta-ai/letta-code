@@ -2218,8 +2218,8 @@ ${SYSTEM_REMINDER_CLOSE}
       agentId: agent.id,
       conversationId,
       otid,
+      deviceId: environment.deviceId,
     });
-    const resultText = environmentResult.text;
     const stats = sessionStats.getSnapshot();
 
     if (outputFormat === "json") {
@@ -2232,7 +2232,7 @@ ${SYSTEM_REMINDER_CLOSE}
             duration_ms: Math.round(stats.totalWallMs),
             duration_api_ms: Math.round(stats.totalApiMs),
             num_turns: 1,
-            result: resultText,
+            result: environmentResult.text,
             agent_id: publicAgentId,
             conversation_id: conversationId,
             environment: responseEnvironment,
@@ -2256,7 +2256,7 @@ ${SYSTEM_REMINDER_CLOSE}
         duration_ms: Math.round(stats.totalWallMs),
         duration_api_ms: Math.round(stats.totalApiMs),
         num_turns: 1,
-        result: resultText,
+        result: environmentResult.text,
         agent_id: publicAgentId,
         conversation_id: conversationId,
         environment: responseEnvironment,
@@ -2270,7 +2270,7 @@ ${SYSTEM_REMINDER_CLOSE}
       };
       writeWireMessage(resultEvent);
     } else {
-      await writeFinalHeadlessStdout(`${resultText}\n`);
+      await writeFinalHeadlessStdout(`${environmentResult.text}\n`);
     }
 
     await exitHeadless(0, "headless_environment_message_complete");
