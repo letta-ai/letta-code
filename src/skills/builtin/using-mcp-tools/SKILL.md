@@ -1,6 +1,6 @@
 ---
 name: using-mcp-tools
-description: Reference for the `letta mcp` CLI, which finds and invokes MCP tools available to this agent. A system reminder already lists your connected MCP servers and the basic search/call commands; invoke this skill when you need more — checking a tool's schema before calling it, passing large or file-based arguments, tuning search, inspecting server configuration and auth, or troubleshooting missing servers, tools, and errors.
+description: Reference for the `letta mcp` CLI, which finds and invokes MCP tools available to this agent. A system reminder already lists your connected MCP servers and the basic search/schema/call commands; invoke this skill when you need more — browsing a server's tools, passing large or file-based arguments, tuning search, inspecting server configuration and auth, or troubleshooting missing servers, tools, and errors.
 ---
 
 # Using MCP tools
@@ -12,7 +12,8 @@ description: Reference for the `letta mcp` CLI, which finds and invokes MCP tool
 ```bash
 letta mcp list                                # servers: [{name, transport}]
 letta mcp get <server>                        # one server's connection configuration
-letta mcp tools [server] [--full]             # tool names + descriptions; --full adds complete schemas
+letta mcp tools [server]                      # tool names + descriptions only
+letta mcp tools [server] --full               # ...including every tool's complete schema
 letta mcp schema <tool-name>                  # one tool's complete schema
 letta mcp search <query> [--mode] [--limit]   # ranked tool schemas: [{tool, rank, score}]
 letta mcp call <tool-name> [--args | --args-file]  # run a tool, print a CallToolResult
@@ -22,8 +23,8 @@ Every command accepts `--agent <id>`, defaulting to `LETTA_AGENT_ID`/`AGENT_ID` 
 
 ## Workflow
 
-1. **Search** by describing what you want to do: `letta mcp search "create a calendar event"`. Each result's `tool.name` (shaped like `mcp__<server>__<tool>`) is the exact callable name, and `tool` includes its full schema.
-2. **Check the schema first** for any tool whose arguments you have not seen — a name from a `tools` listing, a reminder, or memory: `letta mcp schema <tool-name>`. Do not guess arguments; required fields fail with avoidable round trips.
+1. **Search** by describing what you want to do: `letta mcp search "create a calendar event"`. Each result's `tool.name` (shaped like `mcp__<server>__<tool>`) is the exact callable name, and `tool` includes its full schema — after a search you can call directly.
+2. **Fetch the schema only for names found without one** — from a plain `tools` listing, a reminder, or memory: `letta mcp schema <tool-name>` (or use `tools <server> --full` to get all schemas at once). Do not guess arguments; missing required fields cost avoidable round trips.
 3. **Call** with the exact name and a JSON object: `letta mcp call <tool-name> --args '{"key":"value"}'`.
 
 Never invent tool names — `call` and `schema` require a name printed by `search` or `tools`.
