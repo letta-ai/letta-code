@@ -3,6 +3,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import {
   deriveReasoningEffort,
+  getErrorHintForStopReason,
   mapHandleToLlmConfigPatch,
   providerTypeFromModelSettings,
   providerTypeFromUpdateArgs,
@@ -102,5 +103,51 @@ describe("model config helpers", () => {
         null,
       ),
     ).toBeNull();
+  });
+
+  test("does not blame OpenAI for an OpenAI-compatible Moonshot model", () => {
+    expect(
+      getErrorHintForStopReason(
+        "llm_api_error",
+        "kimi-k3",
+        "openai",
+        "moonshot/kimi-k3",
+      ),
+    ).toBe(
+      "Downstream provider is experiencing errors. Use /model to swap to a model from a different provider, or try again later.",
+    );
+  });
+
+  test("does not blame OpenAI for a Kimi Coding model", () => {
+    expect(
+      getErrorHintForStopReason(
+        "llm_api_error",
+        "kimi-for-coding",
+        "openai",
+        "moonshot_coding/kimi-for-coding",
+      ),
+    ).not.toContain("OpenAI");
+  });
+
+  test("keeps the OpenAI status hint for an OpenAI model", () => {
+    expect(
+      getErrorHintForStopReason(
+        "llm_api_error",
+        "gpt-5",
+        "openai",
+        "openai/gpt-5",
+      ),
+    ).toContain("Downstream provider (OpenAI) is experiencing errors");
+  });
+
+  test("keeps the Anthropic status hint for an Anthropic model", () => {
+    expect(
+      getErrorHintForStopReason(
+        "llm_api_error",
+        "claude-sonnet-4-6",
+        "anthropic",
+        "anthropic/claude-sonnet-4-6",
+      ),
+    ).toContain("Downstream provider (Anthropic) is experiencing errors");
   });
 });

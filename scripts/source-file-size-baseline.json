@@ -9,7 +9,7 @@
   "src/cli/app/AppView.tsx": 1735,
   "src/cli/app/use-approval-flow.ts": 1163,
   "src/cli/app/use-configuration-handlers.ts": 1421,
-  "src/cli/app/use-conversation-loop.ts": 2912,
+  "src/cli/app/use-conversation-loop.ts": 2897,
   "src/cli/app/use-submit-handler.ts": 4075,
   "src/cli/components/AgentSelector.tsx": 1104,
   "src/cli/components/InputRich.tsx": 2225,
