@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
-import { getServerUrl } from "@/backend/api/client";
 import { getServerHealth } from "@/backend/api/health";
 import { submitTelemetryMetadata } from "@/backend/api/metadata";
+import { getServerUrl } from "@/backend/api/server-url";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { settingsManager } from "@/settings-manager";
 import { debugLogFile } from "@/utils/debug";

@@ -29,6 +29,7 @@ function createDeps(): {
       initializeSettings: mock(() => Promise.resolve()),
       getDeviceId: () => "device-1",
       getApiKey: () => "api-key-1",
+      getClientType: () => "cli",
       submitFeedback: async (apiKey, deviceId, payload) => {
         submissions.push({ apiKey, deviceId, payload });
       },
@@ -88,16 +89,20 @@ describe("feedback subcommand", () => {
     expect(submissions[0]?.payload).toMatchObject({
       message: "The agent ignored my instruction.",
       feature: "letta-code-agent-feedback",
+      submission_source: "agent_skill",
+      client_type: "cli",
       platform: process.platform,
       agent_id: "agent-1",
       conversation_id: "conv-1",
     });
     expect(Object.keys(submissions[0]?.payload ?? {}).sort()).toEqual([
       "agent_id",
+      "client_type",
       "conversation_id",
       "feature",
       "message",
       "platform",
+      "submission_source",
       "version",
     ]);
   });

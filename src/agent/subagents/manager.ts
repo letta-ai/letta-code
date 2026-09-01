@@ -210,6 +210,12 @@ interface BuildSubagentArgsOptions {
    * to the child instead of `--system <type>`. Only applies to new agents.
    */
   systemPromptOverride?: string;
+  /**
+   * Route the child's turn to a connected environment (`--environment`).
+   * The child resolves the selector and fails fast if the device is offline,
+   * ambiguous, or does not support environment-routed messaging.
+   */
+  environment?: string;
 }
 
 /**
@@ -233,6 +239,10 @@ export function buildSubagentArgs(
 
   if (options.backendMode) {
     args.push("--backend", options.backendMode);
+  }
+
+  if (options.environment) {
+    args.push("--environment", options.environment);
   }
 
   if (isDeployingExisting) {
@@ -356,6 +366,7 @@ async function executeSubagent(
   transcriptPath?: string,
   memoryScope?: SubagentMemoryScope,
   systemPromptOverride?: string,
+  environment?: string,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
@@ -404,6 +415,7 @@ async function executeSubagent(
         promptTransport: "stdin",
         parentAgentId,
         systemPromptOverride,
+        environment,
       },
     );
 
@@ -595,6 +607,9 @@ async function executeSubagent(
             maxTurns,
             parentAgentIdOverride,
             transcriptPath,
+            undefined, // memoryScope
+            undefined, // systemPromptOverride
+            environment,
           );
         }
       }
@@ -622,6 +637,7 @@ async function executeSubagent(
           transcriptPath,
           memoryScope,
           systemPromptOverride,
+          environment,
         );
       }
 
@@ -718,6 +734,7 @@ async function executeSubagent(
           transcriptPath,
           memoryScope,
           systemPromptOverride,
+          environment,
         );
       }
     }
@@ -827,6 +844,7 @@ export async function spawnSubagent(
   parentConversationId?: string,
   memoryScope?: SubagentMemoryScope,
   systemPromptOverride?: string,
+  environment?: string,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   let config = allConfigs[type];
@@ -960,6 +978,7 @@ export async function spawnSubagent(
     transcriptPath,
     memoryScope,
     effectiveSystemPromptOverride,
+    environment,
   );
 
   return result;

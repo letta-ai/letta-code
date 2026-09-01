@@ -10,7 +10,7 @@ const managerSource = readFileSync(
 describe("executeSubagent provider fallback wiring", () => {
   test("forwards parentAgentIdOverride through the provider retry call", () => {
     const retryCallMatch = managerSource.match(
-      /return executeSubagent\(\s*type,\s*config,\s*primaryModel,\s*userPrompt,\s*subagentId,\s*true,\s*\/\/ Mark as retry to prevent infinite loops\s*signal,\s*undefined,\s*\/\/ existingAgentId\s*undefined,\s*\/\/ existingConversationId\s*maxTurns,\s*parentAgentIdOverride,\s*transcriptPath,\s*\);/s,
+      /return executeSubagent\(\s*type,\s*config,\s*primaryModel,\s*userPrompt,\s*subagentId,\s*true,\s*\/\/ Mark as retry to prevent infinite loops\s*signal,\s*undefined,\s*\/\/ existingAgentId\s*undefined,\s*\/\/ existingConversationId\s*maxTurns,\s*parentAgentIdOverride,\s*transcriptPath,\s*undefined,\s*\/\/ memoryScope\s*undefined,\s*\/\/ systemPromptOverride\s*environment,\s*\);/s,
     );
 
     expect(retryCallMatch).toBeTruthy();
@@ -19,7 +19,7 @@ describe("executeSubagent provider fallback wiring", () => {
 
 describe("executeSubagent lost-output retry wiring", () => {
   const retryCallPattern =
-    /return executeSubagent\(\s*type,\s*config,\s*model,\s*userPrompt,\s*subagentId,\s*true,\s*\/\/ Mark as retry to prevent infinite loops\s*signal,\s*existingAgentId,\s*existingConversationId,\s*maxTurns,\s*parentAgentIdOverride,\s*transcriptPath,\s*memoryScope,\s*systemPromptOverride,\s*\);/gs;
+    /return executeSubagent\(\s*type,\s*config,\s*model,\s*userPrompt,\s*subagentId,\s*true,\s*\/\/ Mark as retry to prevent infinite loops\s*signal,\s*existingAgentId,\s*existingConversationId,\s*maxTurns,\s*parentAgentIdOverride,\s*transcriptPath,\s*memoryScope,\s*systemPromptOverride,\s*environment,\s*\);/gs;
 
   test("retries once with the original payload when the child reports lost stdout or its output looks truncated", () => {
     const retryCalls = managerSource.match(retryCallPattern);

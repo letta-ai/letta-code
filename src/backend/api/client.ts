@@ -105,19 +105,6 @@ const sdkLogger = {
   },
 };
 
-/**
- * Get the current Letta server URL from environment or settings.
- * Used for cache keys and API operations.
- */
-export function getServerUrl(): string {
-  const settings = settingsManager.getSettings();
-  return (
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL
-  );
-}
-
 export {
   getMemfsGitProxyRewriteConfig,
   getMemfsServerUrl,

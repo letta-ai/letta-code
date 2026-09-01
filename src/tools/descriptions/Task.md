@@ -130,6 +130,37 @@ Agent({ subagent_type: "fork", description: "Implement component B", prompt: "..
 
 Note: `fork` cannot be combined with `agent_id` or `conversation_id`.
 
+## Running on Another Computer
+
+Pass `computer` to run the subagent's turn on another connected computer instead of this machine. Works with any subagent type. The call fails fast if the named device is offline, ambiguous, or too old to support routing.
+
+`computer: "cloud"` provisions a Cloud sandbox for the subagent's conversation and runs the turn there. Sandboxes are per-conversation: this is a separate machine from wherever you are running now, even if you are already in a Cloud sandbox.
+
+Omit `computer` to run the subagent on the current machine. That is the default and the right choice for almost all tasks — the subagent shares your working directory and files. Only set `computer` when the task specifically needs another machine (its files, its OS, or an isolated sandbox).
+
+```typescript
+// Fork this conversation and run the work on a connected computer
+Agent({
+  subagent_type: "fork",
+  computer: "office-mac",
+  description: "Run integration tests",
+  prompt: "Run the integration suite in the checkout on this machine and report failures."
+})
+
+// Deploy an existing agent into a fresh Cloud sandbox
+Agent({
+  agent_id: "agent-abc123",
+  computer: "cloud",
+  description: "Build release artifacts",
+  prompt: "Build and upload the release artifacts."
+})
+```
+
+Behavior notes:
+- The remote turn runs with the remote machine's working directory, tools, and skills. Subagent-type tool restrictions (e.g. recall's read-only toolset) travel with the turn on current servers; older servers ignore them.
+- The remote turn's final assistant message is returned as the task result. Token and step statistics are not available for remote runs.
+- The wait tracks turn liveness (new messages, run activity, device online) with an absolute one-hour ceiling rather than a fixed timeout.
+
 ## Concurrency and Safety:
 
 - **Safe**: Multiple read-only agents (e.g. recall, history-analyzer) running in parallel

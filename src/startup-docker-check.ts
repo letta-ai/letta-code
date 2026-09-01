@@ -1,5 +1,5 @@
-import { getServerUrl } from "./backend/api/client";
 import { getServerHealth } from "./backend/api/health";
+import { getServerUrl } from "./backend/api/server-url";
 import { isVersionBelow } from "./utils/version";
 
 const MINIMUM_DOCKER_VERSION = "0.16.6";
