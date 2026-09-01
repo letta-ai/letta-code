@@ -172,9 +172,10 @@ a server running at that URL. Do not set a dummy `LETTA_BASE_URL` for
 
 ## X Chat
 
-The X Chat channel supports encrypted direct messages. It uses the X activity
-stream for live delivery and polling for startup and missed events. Letta Code
-verifies each message signature before it delivers the message to an agent.
+The X Chat channel supports encrypted direct messages. It receives live events
+over the X activity stream and polls the primary inbox and configured
+conversations for startup history and missed events. Letta Code verifies each
+message signature before it delivers the message to an agent.
 
 Before you configure Letta Code, complete the [official X Chat bot
 flow](https://docs.x.com/xchat/bots):
@@ -189,7 +190,7 @@ flow](https://docs.x.com/xchat/bots):
    recovered.
 5. Open **Apps > your app > Keys & Tokens > App-Only Authentication**. Create or
    copy the app Bearer token. It must come from the same app as the bot token.
-   This token is optional, but Message-request discovery requires it.
+   This token is optional and enables the live X activity stream.
 
 Set the credentials in your shell, or enter them when the setup command asks:
 
@@ -231,17 +232,20 @@ LETTA_CHANNEL_CREDENTIALS_STORE=keyring letta server --channels xchat
 
 `X_BEARER_TOKEN` is the app-only Bearer token for the app that issued the bot
 token. Letta Code creates the `chat.received` and `chat.conversation.join`
-subscriptions when the listener starts. The X activity stream uses this token
-to discover DMs in Message requests. Without it,
-`GET /2/chat/conversations` returns only the primary inbox. Ask people to follow
-the bot before they send a DM if you do not configure the app Bearer token.
+subscriptions when the listener starts. X does not provide an endpoint that
+lists pending Message requests. `GET /2/chat/conversations` lists only the
+primary inbox and can return no rows with `has_message_requests: true`. If the
+activity stream does not emit a known sender's request, set
+`XCHAT_PEER_USER_IDS` to that sender's X user ID, rerun
+`letta channels configure xchat`, and restart the listener. The adapter resolves
+and polls that direct conversation explicitly whether or not the activity
+stream is configured.
 
-Set `XCHAT_PEER_USER_IDS` to a comma-separated list of known sender IDs when
-the activity stream is unavailable. The adapter resolves and polls those
-direct-message conversations explicitly.
-
-Send the bot a DM after the listener starts. Approve the pending chat in the
-Channels UI, or bind the pairing code from the listener machine:
+Send the bot a DM after the listener starts. The pairing code is stored on the
+listener machine before Letta Code tries to send it through X Chat and remains
+valid for 15 minutes. If the reply does not arrive, find the pending chat and
+code in the Channels UI or `~/.letta/channels/xchat/pairing.yaml`. Approve it in
+the Channels UI, or bind the code from the listener machine:
 
 ```bash
 letta agents list
@@ -251,6 +255,10 @@ letta channels pair \
   --agent <agent-id> \
   --conversation default
 ```
+
+The listener loads a fresh CLI pairing on the sender's next inbound message
+without a restart. The message that created the pairing code is not delivered
+to the agent, so send another message after approval.
 
 The channel supports direct messages. Group chats are disabled because the
 upstream adapter cannot bind an asynchronous reply to its source message. The
