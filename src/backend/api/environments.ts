@@ -121,6 +121,31 @@ export function describeEnvironment(
   return `${environment.connectionName} (${environment.deviceId}, ${status})`;
 }
 
+/** True when the selector names the agent's Cloud sandbox rather than a connected environment. */
+export function isCloudEnvironmentSelector(
+  selector: string | boolean | undefined,
+): boolean {
+  if (typeof selector !== "string") return false;
+  const normalized = selector.trim().toLowerCase();
+  return normalized === "cloud" || normalized === "cloud-sandbox";
+}
+
+/**
+ * Returns a human-readable reason when the target environment's listener does
+ * not support environment-routed messaging (the v2-input protocol), or null
+ * when routing is supported.
+ */
+export function getEnvironmentRoutedMessagingUnsupportedReason(
+  environment: EnvironmentConnection,
+): string | null {
+  if (environment.metadata?.environmentMessageProtocol === "v2-input") {
+    return null;
+  }
+  return `Environment ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
+    environment.metadata?.lettaCodeVersion ?? "unknown"
+  } and does not advertise environment-routed headless messaging support. Update that runtime or omit the environment selector to run locally.`;
+}
+
 export async function resolveDesktopEnvironmentConnectionId(
   list: typeof listEnvironments = listEnvironments,
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {

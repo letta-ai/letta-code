@@ -130,6 +130,33 @@ Agent({ subagent_type: "fork", description: "Implement component B", prompt: "..
 
 Note: `fork` cannot be combined with `agent_id` or `conversation_id`.
 
+## Running on a Remote Environment
+
+Pass `environment` to run the subagent's turn on a connected environment (another computer running Letta Code) or on the agent's Cloud sandbox (`environment: "cloud"`) instead of this machine. The remote runtime executes the turn with its own working directory and local tools.
+
+```typescript
+// Fork this conversation and run the work on a connected computer
+Agent({
+  subagent_type: "fork",
+  environment: "office-mac",
+  description: "Run integration tests",
+  prompt: "Run the integration suite in the checkout on this machine and report failures."
+})
+
+// Deploy an existing agent into its Cloud sandbox
+Agent({
+  agent_id: "agent-abc123",
+  environment: "cloud",
+  description: "Build release artifacts",
+  prompt: "Build and upload the release artifacts."
+})
+```
+
+Requirements and behavior:
+- Only valid with `fork` subagents or when deploying an existing agent (`agent_id`/`conversation_id`). Fresh named subagent types (e.g. `general-purpose`) cannot be dispatched remotely.
+- The target environment must be online and running a Letta Code version that supports environment-routed messaging; otherwise the call returns an error.
+- The remote turn's final assistant message is returned as the task result. Token and step statistics are not available for remote runs.
+
 ## Concurrency and Safety:
 
 - **Safe**: Multiple read-only agents (e.g. recall, history-analyzer) running in parallel

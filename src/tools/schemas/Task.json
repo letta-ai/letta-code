@@ -24,6 +24,10 @@
     "conversation_id": {
       "type": "string",
       "description": "Resume from an existing conversation. Does NOT require agent_id (conversation IDs are unique and encode the agent)."
+    },
+    "environment": {
+      "type": "string",
+      "description": "Run the subagent on a connected environment (another computer) instead of this machine. Pass an environment name/connection ID, or \"cloud\" for the agent's Cloud sandbox. Only valid with fork subagents or when deploying an existing agent (agent_id/conversation_id)."
     }
   },
   "required": ["description", "prompt", "subagent_type"],

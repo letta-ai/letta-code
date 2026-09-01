@@ -23,6 +23,11 @@ import {
 } from "@/agent/subagents";
 import { spawnSubagent } from "@/agent/subagents/manager";
 import {
+  executeRemoteSubagent,
+  type RemoteEnvironmentRouting,
+  resolveRemoteEnvironmentRouting,
+} from "@/agent/subagents/remote-environment";
+import {
   type ForkModelOverride,
   getPrimaryAgentModelHandle,
   resolveForkModelOverride,
@@ -48,6 +53,11 @@ import {
   scheduleBackgroundTaskCleanup,
   setBackgroundTaskOutput,
 } from "./process_manager.js";
+import {
+  prependRemoteTaskReminder,
+  resolveRemoteTaskTarget,
+  validateTaskEnvironmentRequest,
+} from "./task-environment";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation";
 
@@ -59,6 +69,7 @@ interface TaskArgs {
   model?: string;
   agent_id?: string; // Deploy an existing agent instead of creating new
   conversation_id?: string; // Resume from an existing conversation
+  environment?: string; // Run the subagent's conversation on a connected environment
   max_turns?: number; // Maximum number of agentic turns
   toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
   signal?: AbortSignal; // Injected by executeTool for interruption handling
@@ -107,6 +118,16 @@ export interface SpawnBackgroundSubagentTaskArgs {
   transcriptPath?: string;
   /** Optional exact memory scope for harness-created memory worktrees. */
   memoryScope?: SubagentMemoryScope;
+  /**
+   * When set, the subagent turn is routed to a connected environment instead
+   * of spawning a local child process. Requires an existing conversation
+   * (fork or deploy-existing); `agentId`/`conversationId` identify it.
+   */
+  remoteEnvironment?: {
+    routing: RemoteEnvironmentRouting;
+    agentId: string;
+    conversationId: string;
+  };
   /**
    * When true, skip injecting the completion notification into the primary
    * agent's message queue and hide from SubagentGroupDisplay.
@@ -161,6 +182,7 @@ export interface SpawnBackgroundSubagentTaskResult {
 
 interface SpawnBackgroundSubagentTaskDeps {
   spawnSubagentImpl: typeof spawnSubagent;
+  executeRemoteSubagentImpl: typeof executeRemoteSubagent;
   copyGitHubPullRequestTagsImpl: typeof copyGitHubPullRequestTags;
   addToMessageQueueImpl: typeof addToMessageQueue;
   formatTaskNotificationImpl: typeof formatTaskNotification;
@@ -366,6 +388,7 @@ export function spawnBackgroundSubagentTask(
     onComplete,
     transcriptPath,
     memoryScope,
+    remoteEnvironment,
     deps,
   } = args;
   const shouldEmitCompletionNotification =
@@ -374,6 +397,8 @@ export function spawnBackgroundSubagentTask(
   const resolvedParentScope = resolveNotificationScope(parentScope);
 
   const spawnSubagentFn = deps?.spawnSubagentImpl ?? spawnSubagent;
+  const executeRemoteSubagentFn =
+    deps?.executeRemoteSubagentImpl ?? executeRemoteSubagent;
   const copyGitHubPullRequestTagsFn =
     deps?.copyGitHubPullRequestTagsImpl ?? copyGitHubPullRequestTags;
   const addToMessageQueueFn = deps?.addToMessageQueueImpl ?? addToMessageQueue;
@@ -429,22 +454,32 @@ export function spawnBackgroundSubagentTask(
   // is the authoritative value — the listener and App.tsx both derive it
   // from their own closure-captured agentId.
   const parentAgentIdForSpawn = resolvedParentScope?.agentId;
-  spawnSubagentFn(
-    subagentType,
-    prompt,
-    model,
-    subagentId,
-    abortController.signal,
-    existingAgentId,
-    existingConversationId,
-    maxTurns,
-    forkedContext,
-    parentAgentIdForSpawn,
-    transcriptPath,
-    resolvedParentScope?.conversationId,
-    memoryScope,
-    systemPromptOverride,
-  )
+  const executionPromise = remoteEnvironment
+    ? executeRemoteSubagentFn({
+        routing: remoteEnvironment.routing,
+        agentId: remoteEnvironment.agentId,
+        conversationId: remoteEnvironment.conversationId,
+        prompt,
+        subagentId,
+        signal: abortController.signal,
+      })
+    : spawnSubagentFn(
+        subagentType,
+        prompt,
+        model,
+        subagentId,
+        abortController.signal,
+        existingAgentId,
+        existingConversationId,
+        maxTurns,
+        forkedContext,
+        parentAgentIdForSpawn,
+        transcriptPath,
+        resolvedParentScope?.conversationId,
+        memoryScope,
+        systemPromptOverride,
+      );
+  executionPromise
     .then(async (result) => {
       await copyGitHubPullRequestTagsFn(
         result.conversationId,
@@ -809,6 +844,22 @@ export async function task(args: TaskArgs): Promise<string> {
   if (!config) {
     return `Error: Invalid subagent type "${subagent_type}"`;
   }
+
+  const environmentSelector =
+    typeof args.environment === "string" ? args.environment.trim() : "";
+  if (environmentSelector) {
+    const validationError = validateTaskEnvironmentRequest({
+      fork: Boolean(config.fork),
+      isDeployingExisting,
+      localBackend: getBackend().capabilities.localMemfs,
+      conversationId: args.conversation_id,
+      agentId: args.agent_id,
+    });
+    if (validationError) {
+      return validationError;
+    }
+  }
+
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;
 
@@ -836,7 +887,37 @@ export async function task(args: TaskArgs): Promise<string> {
     }
   }
 
-  const prompt = inputPrompt;
+  let prompt = inputPrompt;
+
+  let remoteEnvironment:
+    | SpawnBackgroundSubagentTaskArgs["remoteEnvironment"]
+    | undefined;
+  if (environmentSelector) {
+    try {
+      const target = await resolveRemoteTaskTarget({
+        backend: getBackend(),
+        agentId: effectiveAgentId,
+        conversationId: effectiveConversationId,
+      });
+      effectiveAgentId = target.agentId;
+      effectiveConversationId = target.conversationId;
+      const routing = await resolveRemoteEnvironmentRouting(
+        environmentSelector,
+        target,
+      );
+      remoteEnvironment = { routing, ...target };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      return `Error: Failed to route to environment "${environmentSelector}": ${errorMessage}`;
+    }
+    prompt = await prependRemoteTaskReminder({
+      prompt,
+      subagentType: subagent_type,
+      fork: Boolean(config.fork),
+      deployedAgentId: args.agent_id,
+    });
+  }
 
   const resolvedParentScope = resolveNotificationScope(args.parentScope);
 
@@ -851,6 +932,7 @@ export async function task(args: TaskArgs): Promise<string> {
     maxTurns: args.max_turns,
     forkedContext: config.fork,
     parentScope: resolvedParentScope,
+    remoteEnvironment,
   });
 
   await waitForBackgroundSubagentLink(subagentId, null, signal);

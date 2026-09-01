@@ -735,7 +735,7 @@ async function executeSubagent(
 /**
  * Build a system reminder prefix for deployed agents
  */
-function buildDeploySystemReminder(
+export function buildDeploySystemReminder(
   senderAgentName: string,
   senderAgentId: string,
 ): string {
@@ -761,7 +761,7 @@ export function recallPromptForBackend(backendMode?: BackendMode): string {
     : recallSubagentPrompt;
 }
 
-function buildForkSystemReminder(
+export function buildForkSystemReminder(
   subagentType?: string,
   backendMode?: BackendMode,
 ): string {
