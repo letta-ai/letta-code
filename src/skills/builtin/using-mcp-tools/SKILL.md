@@ -21,14 +21,6 @@ letta mcp call <tool-name> [--args | --args-file]  # run a tool, print a CallToo
 
 Every command accepts `--agent <id>`, defaulting to `LETTA_AGENT_ID`/`AGENT_ID` — do not pass it unless targeting another agent.
 
-## Workflow
-
-1. **Search** by describing what you want to do: `letta mcp search "create a calendar event"`. Each result's `tool.name` (shaped like `mcp__<server>__<tool>`) is the exact callable name, and `tool` includes its full schema — after a search you can call directly.
-2. **Fetch the schema only for names found without one** — from a plain `tools` listing, a reminder, or memory: `letta mcp schema <tool-name>` (or use `tools <server> --full` to get all schemas at once). Do not guess arguments; missing required fields cost avoidable round trips.
-3. **Call** with the exact name and a JSON object: `letta mcp call <tool-name> --args '{"key":"value"}'`.
-
-Never invent tool names — `call` and `schema` require a name printed by `search` or `tools`.
-
 ## Search options
 
 - `--mode <hybrid|vector|fts>` — default `hybrid`. `vector` uses server-side embeddings and covers only cloud-connected servers; `fts` and `hybrid` also rank local tools lexically. Agents on a local backend cannot use `vector`.
