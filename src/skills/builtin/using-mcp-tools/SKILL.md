@@ -5,7 +5,7 @@ description: Reference for the `letta mcp` CLI, which finds and invokes MCP tool
 
 # Using MCP tools
 
-`letta mcp` gives the agent one unified view of every MCP server it can reach: servers connected to the agent in Letta Cloud and servers configured locally on this machine. It works from any surface where the agent runs — cloud sandboxes (chat.letta.com), Letta Desktop, and terminals. All output is JSON.
+`letta mcp` gives the agent one unified view of every MCP server it can reach: servers connected to the agent in Letta Cloud and servers configured locally on this machine. Local MCP tools are deferred to this CLI instead of being attached directly to every model request. It works from any surface where the agent runs — cloud sandboxes (chat.letta.com), Letta Desktop, and terminals. All output is JSON.
 
 ## Commands
 

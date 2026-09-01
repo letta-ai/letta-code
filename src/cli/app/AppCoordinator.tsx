@@ -239,7 +239,7 @@ import type {
   QueuedOverlayAction,
   StaticItem,
 } from "./types";
-import { closeMcp, useAgentMcpServers } from "./use-agent-mcp-servers";
+import { closeMcp, useMcpCleanup } from "./use-agent-mcp-servers";
 import { useApprovalFlow } from "./use-approval-flow";
 import { useBashHandlers } from "./use-bash-handlers";
 import { useConfigurationHandlers } from "./use-configuration-handlers";
@@ -2385,7 +2385,7 @@ export function App({
   useEffect(() => {
     buffersRef.current.agentId = agentState?.id;
   }, [agentState?.id]);
-  useAgentMcpServers(agentState?.id);
+  useMcpCleanup(agentState?.id);
   // Cache precomputed diffs from approval dialogs for tool return rendering
   // Key: toolCallId or "toolCallId:filePath" for Patch operations
   const precomputedDiffsRef = useRef<Map<string, AdvancedDiffSuccess>>(
