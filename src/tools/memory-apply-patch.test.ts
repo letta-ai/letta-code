@@ -271,6 +271,48 @@ describe("memory_apply_patch tool", () => {
     expect(authorEmail).toBe(`${TEST_AGENT_ID}@letta.com`);
   });
 
+  test("preserves supplied frontmatter fields when adding memory files", async () => {
+    const memoryContent = [
+      "---",
+      'description: "Ops card: exact details"',
+      "limit: 10000",
+      "metadata:",
+      "  owner: co",
+      "---",
+      "Remember the exact operating state.",
+    ].join("\n");
+    const skillContent = [
+      "---",
+      "name: exact-memory-work",
+      "description: Preserve skill frontmatter on add.",
+      "disable-model-invocation: true",
+      "---",
+      "# Exact memory work",
+    ].join("\n");
+
+    await runScopedMemoryApplyPatch({
+      reason: "Preserve complete add frontmatter",
+      input: [
+        "*** Begin Patch",
+        "*** Add File: ops/cards/exact.md",
+        ...memoryContent.split("\n").map((line) => `+${line}`),
+        "*** Add File: skills/exact-memory-work/SKILL.md",
+        ...skillContent.split("\n").map((line) => `+${line}`),
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    expect(await runGit(memoryDir, ["show", "HEAD:ops/cards/exact.md"])).toBe(
+      memoryContent,
+    );
+    expect(
+      await runGit(memoryDir, [
+        "show",
+        "HEAD:skills/exact-memory-work/SKILL.md",
+      ]),
+    ).toBe(skillContent);
+  });
+
   test("commits locally without requiring a remote for local backend MemFS", async () => {
     await runGit(memoryDir, ["remote", "remove", "origin"]);
     __testSetBackend(
