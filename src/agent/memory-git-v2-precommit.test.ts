@@ -356,7 +356,7 @@ describe("legacy MemFS pre-commit hook", () => {
     mkdirSync(join(repo, "system"));
     writeFileSync(
       join(repo, "system", "notes.md"),
-      "---\ndescription: Test memory\n---\n" + "n".repeat(100),
+      `---\ndescription: Test memory\n---\n${"n".repeat(100)}`,
     );
     execFileSync("git", ["add", "system/notes.md"], { cwd: repo });
 
