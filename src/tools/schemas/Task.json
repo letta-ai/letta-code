@@ -25,9 +25,9 @@
       "type": "string",
       "description": "Resume from an existing conversation. Does NOT require agent_id (conversation IDs are unique and encode the agent)."
     },
-    "environment": {
+    "computer": {
       "type": "string",
-      "description": "Run the subagent on a connected environment (another computer) instead of this machine. Pass an environment name/connection ID, or \"cloud\" to provision a Cloud sandbox for the subagent's conversation. Fails fast if the device is offline or does not support routing. Omit this field to run on the current machine (the default) — only set it when the task specifically needs to run elsewhere."
+      "description": "Run the subagent on another connected computer instead of this machine. Pass a computer name/connection ID, or \"cloud\" to provision a Cloud sandbox for the subagent's conversation. Fails fast if the device is offline or does not support routing. Omit this field to run on the current machine (the default) — only set it when the task specifically needs to run elsewhere."
     }
   },
   "required": ["description", "prompt", "subagent_type"],

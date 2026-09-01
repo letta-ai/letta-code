@@ -59,7 +59,7 @@ interface TaskArgs {
   model?: string;
   agent_id?: string; // Deploy an existing agent instead of creating new
   conversation_id?: string; // Resume from an existing conversation
-  environment?: string; // Route the subagent's turn to a connected environment
+  computer?: string; // Route the subagent's turn to a connected computer
   max_turns?: number; // Maximum number of agentic turns
   toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
   signal?: AbortSignal; // Injected by executeTool for interruption handling
@@ -861,8 +861,8 @@ export async function task(args: TaskArgs): Promise<string> {
     forkedContext: config.fork,
     parentScope: resolvedParentScope,
     environment:
-      typeof args.environment === "string" && args.environment.trim()
-        ? args.environment.trim()
+      typeof args.computer === "string" && args.computer.trim()
+        ? args.computer.trim()
         : undefined,
   });
 
