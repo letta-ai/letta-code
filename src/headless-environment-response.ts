@@ -169,8 +169,6 @@ export async function waitForEnvironmentAssistantMessage(params: {
   pollIntervalMs?: number;
   onlineCheckIntervalMs?: number;
   runStatusIntervalMs?: number;
-  /** Optional abort signal; aborting stops polling and rejects. */
-  signal?: AbortSignal;
   /** Injectable for deterministic tests. */
   deps?: {
     now?: () => number;
@@ -204,9 +202,6 @@ export async function waitForEnvironmentAssistantMessage(params: {
   let inputSequenceId: number | null = null;
 
   while (true) {
-    if (params.signal?.aborted) {
-      throw new Error("Aborted while waiting for environment turn completion");
-    }
     const page =
       params.conversationId === "default"
         ? await params.backend.listAgentMessages(params.agentId, {

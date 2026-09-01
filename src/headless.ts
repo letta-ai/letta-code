@@ -73,8 +73,6 @@ import {
 } from "./backend";
 import {
   type EnvironmentConnection,
-  getEnvironmentRoutedMessagingUnsupportedReason,
-  isCloudEnvironmentSelector,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
   sendEnvironmentMessage,
@@ -690,6 +688,25 @@ function formatAgentReplyMetadata(params: {
     conversation_id: params.conversationId,
     ...(params.environment ? { environment: params.environment } : {}),
   });
+}
+
+function isCloudEnvironmentSelector(
+  selector: string | boolean | undefined,
+): boolean {
+  if (typeof selector !== "string") return false;
+  const normalized = selector.trim().toLowerCase();
+  return normalized === "cloud" || normalized === "cloud-sandbox";
+}
+
+function getEnvironmentRoutedMessagingUnsupportedReason(
+  environment: EnvironmentConnection,
+): string | null {
+  if (environment.metadata?.environmentMessageProtocol === "v2-input") {
+    return null;
+  }
+  return `Environment ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
+    environment.metadata?.lettaCodeVersion ?? "unknown"
+  } and does not advertise environment-routed headless messaging support. Update that runtime or omit --environment to use same-environment messaging.`;
 }
 
 export async function handleHeadlessCommand(

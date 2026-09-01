@@ -27,7 +27,7 @@
     },
     "environment": {
       "type": "string",
-      "description": "Run the subagent on a connected environment (another computer) instead of this machine. Pass an environment name/connection ID, or \"cloud\" to provision a Cloud sandbox for the subagent's conversation. Only valid with fork subagents or when deploying an existing agent (agent_id/conversation_id)."
+      "description": "Run the subagent on a connected environment (another computer) instead of this machine. Pass an environment name/connection ID, or \"cloud\" to provision a Cloud sandbox for the subagent's conversation. Fails fast if the device is offline or does not support routing."
     }
   },
   "required": ["description", "prompt", "subagent_type"],

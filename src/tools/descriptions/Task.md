@@ -132,7 +132,7 @@ Note: `fork` cannot be combined with `agent_id` or `conversation_id`.
 
 ## Running on a Remote Environment
 
-Pass `environment` to run the subagent's turn on a connected environment (another computer running Letta Code) instead of this machine. The remote runtime executes the turn with its own working directory and local tools.
+Pass `environment` to run the subagent's turn on a connected environment (another computer running Letta Code) instead of this machine. Works with any subagent type. The call fails fast if the named device is offline, ambiguous, or too old to support routing.
 
 `environment: "cloud"` provisions a Cloud sandbox for the subagent's conversation and runs the turn there. Sandboxes are per-conversation: this is a separate machine from wherever you are running now, even if you are already in a Cloud sandbox.
 
@@ -154,10 +154,10 @@ Agent({
 })
 ```
 
-Requirements and behavior:
-- Only valid with `fork` subagents or when deploying an existing agent (`agent_id`/`conversation_id`). Fresh named subagent types (e.g. `general-purpose`) cannot be dispatched remotely.
-- The target environment must be online and running a Letta Code version that supports environment-routed messaging; otherwise the call returns an error.
+Behavior notes:
+- The remote turn runs with the remote machine's working directory, tools, and skills. Subagent-type tool restrictions (e.g. recall's read-only toolset) are not enforced on the remote side.
 - The remote turn's final assistant message is returned as the task result. Token and step statistics are not available for remote runs.
+- Remote turns currently time out after 10 minutes.
 
 ## Concurrency and Safety:
 
