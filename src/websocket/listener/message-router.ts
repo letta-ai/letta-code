@@ -68,10 +68,10 @@ import { parseListenerReadyMessage } from "./split-stream-lifecycle";
 import {
   buildTeleportContinuationMessages,
   clearPriorReadyTeleports,
+  handleTeleportFailure,
   handleTeleportProbe,
   handleTeleportRequest,
   isRuntimeTeleportPending,
-  takeFailedTeleport,
 } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
@@ -294,41 +294,15 @@ export function createListenerMessageHandler(
       }
 
       if (parsed.type === "teleport_failed") {
-        const pending = takeFailedTeleport({
+        handleTeleportFailure({
           listener: runtime,
-          teleportId: parsed.teleport_id,
-          agentId: parsed.runtime.agent_id,
-          conversationId: parsed.runtime.conversation_id,
+          command: parsed,
+          socket,
+          onStatusChange: opts.onStatusChange,
+          getOrCreateScopedRuntime,
+          runDetachedListenerTask,
+          processIncomingMessage,
         });
-        const approvals = pending?.continuation?.approvals;
-        if (pending && approvals && approvals.length > 0) {
-          const scopedRuntime = getOrCreateScopedRuntime(
-            runtime,
-            pending.agentId,
-            pending.conversationId,
-          );
-          runDetachedListenerTask("teleport_failed", async () => {
-            await processIncomingMessage(
-              {
-                type: "message",
-                connectionId: pending.connectionId,
-                agentId: pending.agentId,
-                conversationId: pending.conversationId,
-                messages: [
-                  {
-                    type: "approval",
-                    approvals,
-                    otid: parsed.teleport_id,
-                  },
-                ],
-              },
-              socket,
-              scopedRuntime,
-              opts.onStatusChange,
-              pending.connectionId,
-            );
-          });
-        }
         return;
       }
 
