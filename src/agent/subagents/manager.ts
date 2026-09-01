@@ -205,6 +205,8 @@ interface BuildSubagentArgsOptions {
   platform?: NodeJS.Platform;
   extraTools?: string[];
   parentAgentId?: string | null;
+  /** Run the child turn on a connected computer or Cloud sandbox. */
+  computer?: string;
   /**
    * Replace the subagent's configured persona: pass `--system-custom <text>`
    * to the child instead of `--system <type>`. Only applies to new agents.
@@ -233,6 +235,10 @@ export function buildSubagentArgs(
 
   if (options.backendMode) {
     args.push("--backend", options.backendMode);
+  }
+
+  if (options.computer) {
+    args.push("--computer", options.computer);
   }
 
   if (isDeployingExisting) {
@@ -356,6 +362,7 @@ async function executeSubagent(
   transcriptPath?: string,
   memoryScope?: SubagentMemoryScope,
   systemPromptOverride?: string,
+  computer?: string,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
@@ -404,6 +411,7 @@ async function executeSubagent(
         promptTransport: "stdin",
         parentAgentId,
         systemPromptOverride,
+        computer,
       },
     );
 
@@ -595,6 +603,9 @@ async function executeSubagent(
             maxTurns,
             parentAgentIdOverride,
             transcriptPath,
+            undefined,
+            undefined,
+            computer,
           );
         }
       }
@@ -622,6 +633,7 @@ async function executeSubagent(
           transcriptPath,
           memoryScope,
           systemPromptOverride,
+          computer,
         );
       }
 
@@ -718,6 +730,7 @@ async function executeSubagent(
           transcriptPath,
           memoryScope,
           systemPromptOverride,
+          computer,
         );
       }
     }
@@ -827,6 +840,7 @@ export async function spawnSubagent(
   parentConversationId?: string,
   memoryScope?: SubagentMemoryScope,
   systemPromptOverride?: string,
+  computer?: string,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   let config = allConfigs[type];
@@ -960,6 +974,7 @@ export async function spawnSubagent(
     transcriptPath,
     memoryScope,
     effectiveSystemPromptOverride,
+    computer,
   );
 
   return result;

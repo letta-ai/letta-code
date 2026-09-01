@@ -65,6 +65,8 @@ describe("shared CLI arg schema", () => {
     expect(help).toContain("LETTA_DISABLE_MODS=1 letta");
     expect(help).toContain("--memfs-startup <m>");
     expect(help).toContain("--stateless");
+    expect(help).toContain("--computer <selector>");
+    expect(help).not.toContain("--environment");
     expect(help).toContain("Default: text");
     expect(help).not.toContain("--run");
     expect(help).not.toContain("--dev-backend");
@@ -115,6 +117,35 @@ describe("shared CLI arg schema", () => {
     expect(parsed.values["pre-load-skills"]).toBe("skill-a,skill-b");
     expect(parsed.values["max-turns"]).toBe("3");
     expect(parsed.values["dev-backend"]).toBe("fake-headless");
+  });
+
+  test("uses --computer while retaining hidden environment aliases", () => {
+    const primary = parseCliArgs(
+      preprocessCliArgs([
+        "node",
+        "script",
+        "-p",
+        "hello",
+        "--computer",
+        "work-laptop",
+      ]),
+      true,
+    );
+    expect(primary.values.computer).toBe("work-laptop");
+
+    const legacy = parseCliArgs(
+      preprocessCliArgs([
+        "node",
+        "script",
+        "-p",
+        "hello",
+        "--environment",
+        "device-123",
+      ]),
+      true,
+    );
+    expect(legacy.values.environment).toBe("device-123");
+    expect(renderCliOptionsHelp()).not.toContain("--environment");
   });
 
   test("recognizes backend mode flag in strict mode", () => {

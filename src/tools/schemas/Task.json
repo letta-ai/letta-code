@@ -17,6 +17,10 @@
       "type": "string",
       "description": "Optional model to use for this agent. If not specified, inherits from parent. Prefer lighter models for quick, straightforward tasks to minimize cost and latency."
     },
+    "computer": {
+      "type": "string",
+      "description": "Optional computer selector: 'cloud', a connected computer name, device ID, or connection ID. Use only when the task must run somewhere other than the current computer; otherwise omit it. Available for cloud/API-backed agents."
+    },
     "agent_id": {
       "type": "string",
       "description": "Deploy an existing agent instead of creating a new one. Starts a new conversation with that agent."

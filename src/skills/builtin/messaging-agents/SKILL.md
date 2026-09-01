@@ -66,15 +66,15 @@ Results include `agent_id` for each matching message.
 letta -p --from-agent $LETTA_AGENT_ID --agent <id> "message text"
 ```
 
-When no `--environment` is specified, the target agent will run in the same
-environment as the caller agent.
+When no `--computer` is specified, the target agent will run on the caller's
+current computer.
 
-To route the target agent turn through a specific remote/local environment:
+To run the target agent turn on a specific connected computer:
 
 ```bash
 letta -p --from-agent $LETTA_AGENT_ID \
   --agent <id> \
-  --environment <name-or-device-id-or-connection-id> \
+  --computer <name-or-device-id-or-connection-id> \
   "message text"
 ```
 
@@ -83,7 +83,7 @@ letta -p --from-agent $LETTA_AGENT_ID \
 |-----|----------|-------------|
 | `--agent <id>` | Yes | Target agent ID to message |
 | `--from-agent <id>` | Yes | Sender agent ID (injects agent-to-agent system reminder) |
-| `--environment <selector>` | No | Route through an online environment by connection name, device ID, or connection ID |
+| `--computer <selector>` | No | Run on an online computer selected by connection name, device ID, or connection ID |
 | `"message text"` | Yes | Message body (positional after flags) |
 
 **Example:**
@@ -109,7 +109,7 @@ letta -p --from-agent $LETTA_AGENT_ID \
 letta -p --from-agent $LETTA_AGENT_ID --conversation <id> "message text"
 ```
 
-Add `--environment <selector>` to continue the conversation on a specific environment.
+Add `--computer <selector>` to continue the conversation on a specific computer.
 
 ### Discovering Environments
 
@@ -120,23 +120,23 @@ letta envs list --online-only
 ```
 
 Use `connectionName`, `deviceId`, or `connectionId` from the JSON output as the
-`--environment` selector. If a name is ambiguous, prefer `deviceId` or
+`--computer` selector. If a name is ambiguous, prefer `deviceId` or
 `connectionId`. In `environments list`, the current local runtime is marked with
 `"isCurrent": true`.
 
-To force the target agent onto the current registered Letta Code environment,
-resolve the current environment and pass its `connectionId`:
+To force the target agent onto the current registered Letta Code computer,
+resolve the current connection and pass its `connectionId`:
 
 ```bash
-CURRENT_ENV=$(letta environments current | jq -r .connectionId)
+CURRENT_COMPUTER=$(letta environments current | jq -r .connectionId)
 letta -p --from-agent $LETTA_AGENT_ID \
   --agent agent-abc123 \
-  --environment "$CURRENT_ENV" \
-  "Run on my same machine/environment."
+  --computer "$CURRENT_COMPUTER" \
+  "Run on my current computer."
 ```
 
-Omit `--environment` when you want the target agent to run in the same
-environment as the caller agent.
+Omit `--computer` when you want the target agent to run on the caller's current
+computer.
 
 **Arguments:**
 | Arg | Required | Description |

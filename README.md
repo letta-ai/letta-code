@@ -79,13 +79,13 @@ Get the current environment for routing another agent onto this same machine:
 ```bash
 letta environments current
 ```
-Route a headless message through a specific environment:
+Run a headless message on a specific computer:
 ```bash
-letta -p --agent <agent-id> --environment "work-laptop" "hello from that machine"
+letta -p --agent <agent-id> --computer "work-laptop" "hello from that machine"
 ```
-Use `--environment cloud` to start or reuse the target agent's cloud sandbox.
-Agent-to-agent headless messages without `--environment` keep the original
-same-environment behavior.
+Use `--computer cloud` to start or reuse the target agent's cloud sandbox.
+Agent-to-agent headless messages without `--computer` run on the current
+computer.
 See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments.
 
 ## Installing external skills

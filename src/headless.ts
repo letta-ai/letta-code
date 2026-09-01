@@ -701,9 +701,9 @@ function getEnvironmentRoutedMessagingUnsupportedReason(
   if (environment.metadata?.environmentMessageProtocol === "v2-input") {
     return null;
   }
-  return `Environment ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
+  return `Computer ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
     environment.metadata?.lettaCodeVersion ?? "unknown"
-  } and does not advertise environment-routed headless messaging support. Update that runtime or omit --environment to use same-environment messaging.`;
+  } and does not advertise computer-routed headless messaging support. Update that runtime or omit --computer to use this computer.`;
 }
 
 export async function handleHeadlessCommand(
@@ -824,10 +824,9 @@ export async function handleHeadlessCommand(
   // --new: Create a new conversation (for concurrent sessions)
   let forceNewConversation = values.new ?? false;
   const fromAgentId = values["from-agent"];
-  const explicitEnvironmentSelector = values.environment || values.env;
+  const computerSelector = values.computer || values.environment || values.env;
   const usesRemoteEnvironment =
-    typeof explicitEnvironmentSelector === "string" &&
-    explicitEnvironmentSelector.trim().length > 0;
+    typeof computerSelector === "string" && computerSelector.trim().length > 0;
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -1746,7 +1745,7 @@ export async function handleHeadlessCommand(
   }
   if (usesRemoteEnvironment && isBidirectionalMode) {
     console.error(
-      "Error: remote environment routing cannot be used with --input-format stream-json",
+      "Error: --computer cannot be used with --input-format stream-json",
     );
     process.exit(1);
   }
@@ -2129,7 +2128,7 @@ ${SYSTEM_REMINDER_CLOSE}
   );
 
   if (usesRemoteEnvironment) {
-    const environmentSelector = String(explicitEnvironmentSelector);
+    const environmentSelector = String(computerSelector);
     const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
     const environmentRouting = useCloudSandbox
       ? await resolveAgentSandboxConnectionId(agent.id, { conversationId })

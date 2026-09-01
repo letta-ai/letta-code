@@ -23,6 +23,9 @@ When using the Agent tool, you must specify a subagent_type parameter to select 
 - When the agent is done, it will return a single message back to you along with its conversation ID. You can use this ID to resume the agent later if needed for follow-up work.
 - Provide clear, detailed prompts so the agent can work autonomously and return exactly the information you need.
 - Agents with "access to current context" can see the full conversation history before the tool call. When using these agents, you can write concise prompts that reference earlier context (e.g., "investigate the error discussed above") instead of repeating information. The agent will receive all prior messages and understand the context.
+- The `computer` parameter is optional. Omit it for normal delegation so the agent runs on the current computer and can access the current working directory.
+- Set `computer` only when the task specifically needs files, tools, or credentials on another connected computer, or when it should run in a Cloud sandbox. It accepts `"cloud"`, a computer name, a device ID, or a connection ID, and is available only for cloud/API-backed agents. Pass it again on a resumed conversation when that turn must run there.
+- Do not set `computer` merely to run work in parallel or in the background; those behaviors do not require another computer.
 - The agent's outputs should generally be trusted
 - Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent
 - If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
@@ -67,6 +70,14 @@ Agent({
   conversation_id: "conv-xyz789",
   description: "Continue implementation",
   prompt: "Now implement the fix we discussed"
+})
+
+// Run on another connected computer only when its local resources are needed
+Agent({
+  subagent_type: "general-purpose",
+  computer: "work-laptop",
+  description: "Test local project",
+  prompt: "Run the test suite in the project on this computer"
 })
 
 // Continue an agent's default conversation

@@ -57,6 +57,7 @@ interface TaskArgs {
   prompt?: string;
   description?: string;
   model?: string;
+  computer?: string;
   agent_id?: string; // Deploy an existing agent instead of creating new
   conversation_id?: string; // Resume from an existing conversation
   max_turns?: number; // Maximum number of agentic turns
@@ -88,6 +89,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
   prompt: string;
   description: string;
   model?: string;
+  /** Optional remote computer or Cloud sandbox selector. */
+  computer?: string;
   /** Replace the subagent's configured system prompt/persona (advanced). */
   systemPromptOverride?: string;
   toolCallId?: string;
@@ -353,6 +356,7 @@ export function spawnBackgroundSubagentTask(
     prompt,
     description,
     model,
+    computer,
     systemPromptOverride,
     toolCallId,
     existingAgentId,
@@ -444,6 +448,7 @@ export function spawnBackgroundSubagentTask(
     resolvedParentScope?.conversationId,
     memoryScope,
     systemPromptOverride,
+    computer,
   )
     .then(async (result) => {
       await copyGitHubPullRequestTagsFn(
@@ -781,6 +786,10 @@ export async function task(args: TaskArgs): Promise<string> {
     );
   }
 
+  if (args.computer && getBackend().capabilities.localMemfs) {
+    return "Error: computer is only available for cloud/API-backed agents";
+  }
+
   // Extract validated params
   const inputPrompt = args.prompt as string;
   const description = args.description as string;
@@ -845,6 +854,7 @@ export async function task(args: TaskArgs): Promise<string> {
     prompt,
     description,
     model,
+    computer: args.computer,
     toolCallId,
     existingAgentId: effectiveAgentId,
     existingConversationId: effectiveConversationId,

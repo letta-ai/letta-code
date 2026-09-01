@@ -371,6 +371,37 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--no-memfs");
   });
 
+  test("passes an optional computer selector to the headless child", () => {
+    const args = buildSubagentArgs(
+      "test-subagent",
+      baseConfig,
+      null,
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { backendMode: "api", computer: "work-laptop" },
+    );
+
+    expect(args).toContain("--computer");
+    expect(args[args.indexOf("--computer") + 1]).toBe("work-laptop");
+  });
+
+  test("omits --computer for normal same-computer delegation", () => {
+    const args = buildSubagentArgs(
+      "test-subagent",
+      baseConfig,
+      null,
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { backendMode: "api" },
+    );
+
+    expect(args).not.toContain("--computer");
+  });
+
   test("deploys existing subagent agents without --new-agent (keeps memfs)", () => {
     const args = buildSubagentArgs(
       "test-subagent",

@@ -87,13 +87,13 @@ If the command reports an offline, stale, unsupported, same-source, or startup e
    letta teleport local
    ```
 
-### Run a separate headless turn on an environment
+### Run a separate headless turn on a computer
 
-Use `--environment` when a separate headless invocation, rather than the current conversation handoff, should execute on Cloud or another online environment:
+Use `--computer` when a separate headless invocation, rather than the current conversation handoff, should execute on Cloud or another online computer:
 
 ```bash
-letta -p --conversation <id> --environment cloud "<prompt>"
-letta -p --conversation <id> --environment <name|device-id|connection-id> "<prompt>"
+letta -p --conversation <id> --computer cloud "<prompt>"
+letta -p --conversation <id> --computer <name|device-id|connection-id> "<prompt>"
 ```
 
 This routes that headless message only. Use `letta teleport ...` to move the currently executing conversation.
