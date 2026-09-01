@@ -1,9 +1,9 @@
 ---
-name: using-mcp
-description: Uses MCP tools available to this agent through the `letta mcp` CLI. To use a tool, this skill is not required — run `letta mcp search "<what you want to do>"` to get ranked tool schemas, then `letta mcp call <tool-name> --args '{"key":"value"}'` with the exact `name` from the results. Load this skill to list or inspect MCP servers, tune search modes and limits, pass large arguments, or troubleshoot missing servers, tools, or errors.
+name: using-mcp-tools
+description: Find and invoke available MCP tools using `letta mcp search "<what you want to do>"` to get ranked tool schemas, then `letta mcp call <tool-name> --args '{"key":"value"}'` with the exact `name` from the results. Invoke this skill only if you need additional functionality such as listing available servers, configuring tool search, or troubleshooting MCP.
 ---
 
-# Using MCP
+# Using MCP tools
 
 `letta mcp` gives the agent one unified view of every MCP server it can reach: servers configured locally on this machine and servers connected to the agent in Letta Cloud. It works from any surface where the agent runs: cloud sandboxes (chat.letta.com), Letta Desktop, and terminals. All output is JSON.
 

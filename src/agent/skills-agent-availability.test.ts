@@ -29,7 +29,11 @@ describe("isSkillAvailableForAgent", () => {
   });
 
   test("keeps other bundled skills for local agents", () => {
-    for (const id of ["scheduling-tasks", "submitting-feedback", "using-mcp"]) {
+    for (const id of [
+      "scheduling-tasks",
+      "submitting-feedback",
+      "using-mcp-tools",
+    ]) {
       const skill: Skill = { ...baseSkill, id };
       expect(isSkillAvailableForAgent(skill, "agent-local-123")).toBe(true);
     }
