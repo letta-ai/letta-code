@@ -7,7 +7,7 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { ONBOARDING_ORIGIN_TAG } from "@/agent/agent-tags";
 import type { Backend } from "@/backend";
-import { getServerUrl } from "@/backend/api/client";
+import { getServerUrl } from "@/backend/api/server-url";
 import { settingsManager } from "@/settings-manager";
 import { type CreateAgentOptions, createAgent } from "./create";
 import { parseMdxFrontmatter } from "./memory";

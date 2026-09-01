@@ -7,6 +7,7 @@ import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
+import { isCloudServerUrl } from "./api/server-url";
 import {
   type BackendMode,
   resolveBackendMode,
@@ -159,6 +160,12 @@ export interface BackendCapabilities {
   byokProviderRefresh: boolean;
   localModelCatalog: boolean;
   localMemfs: boolean;
+  /**
+   * Whether subagent turns can be routed to other computers (connected
+   * environments / Cloud sandboxes). Cloud-only: the environments API does
+   * not exist on local or self-hosted backends.
+   */
+  environmentRouting: boolean;
 }
 
 export interface AgentSecret {
@@ -315,16 +322,21 @@ interface APIBackendDeps {
 }
 
 export class APIBackend implements Backend {
-  readonly capabilities: BackendCapabilities = {
-    remoteMemfs: true,
-    serverSideToolManagement: true,
-    serverSecrets: true,
-    agentFileImportExport: true,
-    promptRecompile: true,
-    byokProviderRefresh: true,
-    localModelCatalog: false,
-    localMemfs: false,
-  };
+  get capabilities(): BackendCapabilities {
+    return {
+      remoteMemfs: true,
+      serverSideToolManagement: true,
+      serverSecrets: true,
+      agentFileImportExport: true,
+      promptRecompile: true,
+      byokProviderRefresh: true,
+      localModelCatalog: false,
+      localMemfs: false,
+      // Environment routing only exists on Letta Cloud; an APIBackend pointed
+      // at a self-hosted or remote app server has no environments API.
+      environmentRouting: isCloudServerUrl(),
+    };
+  }
 
   private readonly getApiClientOverride?: GetAPIClient;
   private readonly forkConversationOverride?: ForkConversation;

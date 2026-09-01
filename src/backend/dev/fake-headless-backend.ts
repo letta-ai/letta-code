@@ -8,6 +8,7 @@ import type { Conversation } from "@letta-ai/letta-client/resources/conversation
 import { mapModelHandleToLlmConfigPatch } from "@/agent/model-handles";
 import type {
   Backend,
+  BackendCapabilities,
   ConversationCreateBody,
   ConversationMessageCreateBody,
   ConversationMessageListBody,
@@ -181,17 +182,20 @@ export interface HeadlessBackendOptions {
 
 const FAKE_HEADLESS_MODEL = "dev/fake-headless";
 
+export const HEADLESS_BACKEND_CAPABILITIES: BackendCapabilities = {
+  remoteMemfs: false,
+  serverSideToolManagement: false,
+  serverSecrets: false,
+  agentFileImportExport: false,
+  promptRecompile: false,
+  byokProviderRefresh: false,
+  localModelCatalog: true,
+  localMemfs: false,
+  environmentRouting: false,
+};
+
 export class HeadlessBackend implements Backend {
-  readonly capabilities = {
-    remoteMemfs: false,
-    serverSideToolManagement: false,
-    serverSecrets: false,
-    agentFileImportExport: false,
-    promptRecompile: false,
-    byokProviderRefresh: false,
-    localModelCatalog: true,
-    localMemfs: false,
-  };
+  readonly capabilities = HEADLESS_BACKEND_CAPABILITIES;
 
   protected readonly store: LocalStore;
   private readonly executor: HeadlessTurnExecutor;
