@@ -136,6 +136,8 @@ Pass `environment` to run the subagent's turn on a connected environment (anothe
 
 `environment: "cloud"` provisions a Cloud sandbox for the subagent's conversation and runs the turn there. Sandboxes are per-conversation: this is a separate machine from wherever you are running now, even if you are already in a Cloud sandbox.
 
+Omit `environment` to run the subagent on the current machine. That is the default and the right choice for almost all tasks — the subagent shares your working directory and files. Only set `environment` when the task specifically needs another machine (its files, its OS, or an isolated sandbox).
+
 ```typescript
 // Fork this conversation and run the work on a connected computer
 Agent({
