@@ -145,7 +145,7 @@ import {
   emitLocalToolReturns,
 } from "./headless-tool-events";
 import { computeDiffPreviews } from "./helpers/diff-preview";
-import { closeClientMcpServers, replaceClientMcpServers } from "./mcp-runtime";
+import { closeClientMcpServers } from "./mcp-runtime";
 import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import type { ModAdapter } from "./mods/mod-adapter";
 import { getTurnStartCancel } from "./mods/turn-start-cancel";
@@ -1396,14 +1396,6 @@ export async function handleHeadlessCommand(
   markMilestone("HEADLESS_AGENT_RESOLVED");
   const publicAgentId = ephemeralFlag ? null : agent.id;
   telemetry.setCurrentAgent(publicAgentId, agent.tags);
-  if (!ephemeralFlag) {
-    await replaceClientMcpServers(
-      agent.id,
-      settingsManager.getMcpServers(agent.id),
-      { stderr: "pipe" },
-    );
-  }
-
   const isResumingAgent =
     !ephemeralFlag && !!(specifiedAgentId || (!forceNew && !fromAfFile));
   // Refresh presets before applying optional model/system-prompt overrides.
