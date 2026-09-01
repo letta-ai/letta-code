@@ -10,9 +10,15 @@ import {
   DEFAULT_XCHAT_MEDIA_MAX_BYTES,
   DEFAULT_XCHAT_POLL_INTERVAL_MS,
 } from "./account";
+import { patchXChatPublicKeyVersionSelection } from "./public-key-version-compat";
+import {
+  completeXChatRegistrationCheckpoint,
+  provisionXChatIdentity,
+} from "./registration";
 import {
   ensureXChatRuntimeInstalled,
   loadXChatSdkModule,
+  loadXChatXdkModule,
   type XChatSdkLoggerLike,
 } from "./runtime";
 
@@ -33,15 +39,21 @@ const SETUP_LOGGER: XChatSdkLoggerLike = {
 export async function validateXChatCredentials(
   botToken: string,
   pin: string,
+  signingKeyVersion = "",
 ): Promise<{ userId?: string; username: string }> {
   const sdk = await loadXChatSdkModule();
   const adapter = sdk.createXchatAdapter({
     botToken,
     pin,
+    ...(signingKeyVersion ? { signingKeyVersion } : {}),
     verifySignatures: true,
     sendReadReceipts: false,
     logger: SETUP_LOGGER,
   });
+  const assertPublicKeyVersionPinned = patchXChatPublicKeyVersionSelection(
+    adapter,
+    signingKeyVersion,
+  );
   try {
     await adapter.initialize({
       getLogger: () => SETUP_LOGGER,
@@ -49,6 +61,7 @@ export async function validateXChatCredentials(
       handleIncomingMessage: async () => {},
       processReaction: async () => {},
     });
+    assertPublicKeyVersionPinned();
     if (adapter.cryptoStatus !== "ready") {
       throw new Error(
         `X Chat encryption is ${adapter.cryptoStatus}; check the configured PIN.`,
@@ -58,6 +71,112 @@ export async function validateXChatCredentials(
   } finally {
     await adapter.disconnect?.();
   }
+}
+
+interface ValidatedXChatIdentity {
+  userId?: string;
+  username: string;
+  signingKeyVersion: string;
+}
+
+export class XChatNoRecoverableIdentityError extends Error {
+  readonly userId: string;
+
+  constructor(userId: string, message: string, cause?: Error) {
+    super(message, { cause });
+    this.name = "XChatNoRecoverableIdentityError";
+    this.userId = userId;
+  }
+}
+
+function publicKeyVersion(row: Record<string, unknown>): string {
+  return String(
+    row.publicKeyVersion ?? row.public_key_version ?? row.version ?? "",
+  ).trim();
+}
+
+function isJuiceboxNotRegistered(error: unknown): boolean {
+  return (error instanceof Error ? error.message : String(error)).includes(
+    "NotRegistered",
+  );
+}
+
+async function listXChatPublicKeyVersions(
+  botToken: string,
+): Promise<{ userId: string; versions: string[] }> {
+  const xdk = await loadXChatXdkModule();
+  const client = new xdk.Client({ accessToken: botToken });
+  const me = await client.users.getMe();
+  const userId = me.data?.id?.trim();
+  if (!userId) {
+    throw new Error("The X API did not return a bot user ID.");
+  }
+  const response = await client.users.getPublicKey(userId, {
+    publicKeyFields: ["public_key_version", "juicebox_config"],
+  });
+  const versions = [...new Set((response.data ?? []).map(publicKeyVersion))]
+    .filter(Boolean)
+    .sort((left, right) => Number(right) - Number(left));
+  return { userId, versions };
+}
+
+/**
+ * Validate the newest recoverable registered identity without writing keys.
+ * Only NotRegistered advances to an older version. Invalid PINs, auth errors,
+ * missing versions, and every other failure stop immediately.
+ */
+export async function resolveXChatCredentials(
+  botToken: string,
+  pin: string,
+  requestedVersion = "",
+  allowRequestedVersionFallback = false,
+): Promise<ValidatedXChatIdentity> {
+  const requested = requestedVersion.trim();
+  const inventory = await listXChatPublicKeyVersions(botToken);
+  if (inventory.versions.length === 0) {
+    throw new XChatNoRecoverableIdentityError(
+      inventory.userId,
+      "This bot has no registered X Chat key versions.",
+    );
+  }
+  const versions = requested
+    ? [
+        requested,
+        ...(allowRequestedVersionFallback
+          ? inventory.versions.filter((version) => version !== requested)
+          : []),
+      ]
+    : inventory.versions;
+  let lastNotRegistered: Error | null = null;
+
+  for (const version of versions) {
+    try {
+      const identity = await validateXChatCredentials(botToken, pin, version);
+      if (identity.userId && identity.userId !== inventory.userId) {
+        throw new Error(
+          "The X Chat key inventory and validated bot identity do not match.",
+        );
+      }
+      return { ...identity, signingKeyVersion: version };
+    } catch (error) {
+      if (
+        (!requested || allowRequestedVersionFallback) &&
+        isJuiceboxNotRegistered(error)
+      ) {
+        lastNotRegistered =
+          error instanceof Error ? error : new Error(String(error));
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new XChatNoRecoverableIdentityError(
+    inventory.userId,
+    "None of the registered X Chat key versions can be recovered from " +
+      "Juicebox with this PIN.",
+    lastNotRegistered ?? undefined,
+  );
 }
 
 export async function runXChatSetup(): Promise<boolean> {
@@ -83,21 +202,73 @@ export async function runXChatSetup(): Promise<boolean> {
       console.error("No encryption PIN provided. Setup cancelled.");
       return false;
     }
-    const envActivityToken = readEnv("X_BEARER_TOKEN");
     const peerUserIds = readEnv("XCHAT_PEER_USER_IDS")
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const activityTokenInput =
-      envActivityToken ||
-      (
-        await rl.question(
-          "Enter the app-only Bearer token for Message requests (optional): ",
-        )
-      ).trim();
+
+    const existingAccounts = await listChannelAccountsWithSecrets("xchat");
+    const existingAccountByToken = existingAccounts.find(
+      (candidate) =>
+        candidate.channel === "xchat" && candidate.config.bot_token === token,
+    ) as CustomChannelAccount | undefined;
+    const envSigningKeyVersion = readEnv("XCHAT_SIGNING_KEY_VERSION");
+    const storedSigningKeyVersion =
+      existingAccountByToken?.config.signing_key_version;
+    const requestedSigningKeyVersion =
+      envSigningKeyVersion ||
+      (typeof storedSigningKeyVersion === "string"
+        ? storedSigningKeyVersion
+        : "");
 
     console.log("\nValidating bot identity and encryption PIN...");
-    const identity = await validateXChatCredentials(token, pin);
+    let identity: ValidatedXChatIdentity;
+    try {
+      identity = await resolveXChatCredentials(
+        token,
+        pin,
+        requestedSigningKeyVersion,
+        !envSigningKeyVersion && Boolean(storedSigningKeyVersion),
+      );
+    } catch (error) {
+      if (
+        !(error instanceof XChatNoRecoverableIdentityError) ||
+        envSigningKeyVersion
+      ) {
+        throw error;
+      }
+      console.log(`\n${error.message}`);
+      console.log(
+        "Letta Code can create one identity safely: it checkpoints private keys before the rate-limited X write, resumes the same key after interruption, stores it in Juicebox, and verifies a fresh recovery.",
+      );
+      const confirmation = (
+        await rl.question(
+          "Type REGISTER to create and publish one X Chat identity, or press Enter to cancel: ",
+        )
+      ).trim();
+      if (confirmation !== "REGISTER") {
+        console.error("X Chat registration cancelled; no key was written.");
+        return false;
+      }
+      const provisioned = await provisionXChatIdentity(token, pin, {
+        status: (message) => console.log(`  ${message}`),
+      });
+      const validated = await validateXChatCredentials(
+        token,
+        pin,
+        provisioned.signingKeyVersion,
+      );
+      if (validated.userId && validated.userId !== provisioned.userId) {
+        throw new Error(
+          "The provisioned X Chat identity and validated bot user do not match.",
+        );
+      }
+      identity = {
+        ...validated,
+        userId: validated.userId ?? provisioned.userId,
+        signingKeyVersion: provisioned.signingKeyVersion,
+      };
+    }
     const userId = identity.userId?.trim();
     if (!userId) {
       console.error("The X API did not return a bot user ID.");
@@ -106,14 +277,20 @@ export async function runXChatSetup(): Promise<boolean> {
 
     const username = identity.username.trim();
     const displayName = username ? `@${username}` : "X Chat";
-    const existingAccount = (
-      await listChannelAccountsWithSecrets("xchat")
-    ).find(
+    const existingAccount = existingAccounts.find(
       (candidate) =>
         candidate.channel === "xchat" &&
         (candidate.displayName === displayName ||
           candidate.config.bot_token === token),
     ) as CustomChannelAccount | undefined;
+    const envActivityToken = readEnv("X_BEARER_TOKEN");
+    const activityTokenInput =
+      envActivityToken ||
+      (
+        await rl.question(
+          "Enter the app-only Bearer token for Message requests (optional): ",
+        )
+      ).trim();
     const existingPolicy = existingAccount?.dmPolicy ?? "pairing";
     const policyInput = (
       await rl.question(
@@ -172,6 +349,7 @@ export async function runXChatSetup(): Promise<boolean> {
       config: {
         bot_token: token,
         pin,
+        signing_key_version: identity.signingKeyVersion,
         ...(activityToken ? { activity_token: activityToken } : {}),
         ...(configuredPeerUserIds.length > 0
           ? { peer_user_ids: configuredPeerUserIds }
@@ -198,8 +376,11 @@ export async function runXChatSetup(): Promise<boolean> {
       updatedAt: now,
     };
     await upsertChannelAccountWithSecrets("xchat", account);
+    completeXChatRegistrationCheckpoint(userId, identity.signingKeyVersion);
 
-    console.log(`\nX Chat configured for ${account.displayName}.`);
+    console.log(
+      `\nX Chat configured for ${account.displayName} with key version ${identity.signingKeyVersion}.`,
+    );
     console.log("Start the listener with: letta server --channels xchat");
     console.log(
       "Send the bot a message, then pair the chat with the code it returns.",

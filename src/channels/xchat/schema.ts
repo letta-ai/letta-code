@@ -22,6 +22,16 @@ export const XCHAT_CONFIG_SCHEMA: ChannelConfigSchema = {
       restartRequired: true,
     },
     {
+      key: "signing_key_version",
+      label: "Encryption key version",
+      description:
+        "Registered X Chat public key version whose Juicebox identity should be unlocked.",
+      type: "text",
+      required: false,
+      scope: "account",
+      restartRequired: true,
+    },
+    {
       key: "activity_token",
       label: "App Bearer token",
       description:

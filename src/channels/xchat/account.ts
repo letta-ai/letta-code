@@ -8,6 +8,7 @@ export const DEFAULT_XCHAT_MEDIA_MAX_BYTES = 25 * 1024 * 1024;
 export interface XChatAccountSettings {
   botToken: string;
   pin: string;
+  signingKeyVersion: string;
   activityToken: string;
   peerUserIds: string[];
   pollIntervalMs: number;
@@ -54,6 +55,7 @@ export function readXChatAccountSettings(
   return {
     botToken: readString(config, "bot_token"),
     pin: readString(config, "pin"),
+    signingKeyVersion: readString(config, "signing_key_version"),
     activityToken: readString(config, "activity_token"),
     peerUserIds: readStringArray(config, "peer_user_ids"),
     pollIntervalMs: readBoundedNumber({

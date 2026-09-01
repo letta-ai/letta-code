@@ -38,6 +38,7 @@ import {
   safeErrorMessage,
   toThreadId,
 } from "./protocol";
+import { patchXChatPublicKeyVersionSelection } from "./public-key-version-compat";
 import {
   loadXChatSdkModule,
   loadXChatXdkModule,
@@ -173,6 +174,9 @@ export class XChatChannelAdapter implements ChannelAdapter {
     const sdkAdapter = sdkModule.createXchatAdapter({
       botToken: this.settings.botToken,
       pin: this.settings.pin,
+      ...(this.settings.signingKeyVersion
+        ? { signingKeyVersion: this.settings.signingKeyVersion }
+        : {}),
       verifySignatures: true,
       // Activity events come from X's authenticated stream. We pass them
       // through the SDK's webhook parser so it also routes reaction events.
@@ -180,6 +184,10 @@ export class XChatChannelAdapter implements ChannelAdapter {
       sendReadReceipts: true,
       logger: createSdkLogger(),
     });
+    const assertPublicKeyVersionPinned = patchXChatPublicKeyVersionSelection(
+      sdkAdapter,
+      this.settings.signingKeyVersion,
+    );
     const apiClient = new xdkModule.Client({
       accessToken: this.settings.botToken,
       headers: { "user-agent": "letta-code-xchat/0.1" },
@@ -215,6 +223,7 @@ export class XChatChannelAdapter implements ChannelAdapter {
           },
         }),
       );
+      assertPublicKeyVersionPinned();
       patchXChatMediaUploadConversationIds(sdkAdapter);
       if (sdkAdapter.cryptoStatus !== "ready") {
         throw new Error(

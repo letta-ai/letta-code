@@ -254,7 +254,12 @@ test("first-party X Chat channel exposes runtime and account schema", () => {
     id: "xchat",
     displayName: "X Chat",
     firstParty: true,
-    runtimeModules: ["@chat-adapter/x/chat", "@xdevplatform/xdk"],
+    runtimeModules: [
+      "@chat-adapter/x/chat",
+      "@xdevplatform/chat-xdk",
+      "@xdevplatform/xdk",
+      "juicebox-sdk/juicebox-sdk_bg.js",
+    ],
     configSchema: {
       version: 1,
     },

@@ -137,7 +137,12 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
         "@xdevplatform/xdk@0.6.6",
         "juicebox-sdk@0.3.7",
       ],
-      runtimeModules: ["@chat-adapter/x/chat", "@xdevplatform/xdk"],
+      runtimeModules: [
+        "@chat-adapter/x/chat",
+        "@xdevplatform/chat-xdk",
+        "@xdevplatform/xdk",
+        "juicebox-sdk/juicebox-sdk_bg.js",
+      ],
       source: "first-party",
       firstParty: true,
       configSchema: XCHAT_CONFIG_SCHEMA,
