@@ -46,6 +46,8 @@ export async function buildConnectProviderResponse(
     target: command.target,
     providerId: command.provider_id,
     ...(command.auth_method_id ? { authMethodId: command.auth_method_id } : {}),
+    ...(command.provider_name ? { providerName: command.provider_name } : {}),
+    ...(command.oauth_config ? { oauthConfig: command.oauth_config } : {}),
     fields: command.fields,
   });
   clearAvailableModelsCache();

@@ -10,6 +10,7 @@ export type SharedReminderId =
   | "conversation-bootstrap"
   | "agent-info"
   | "secrets-info"
+  | "mcp-servers-info"
   | "permission-mode"
   | "memory-git-sync"
   | "command-io"
@@ -51,6 +52,16 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
     {
       id: "secrets-info",
       description: "Available secret names for $SECRET_NAME substitution",
+      modes: [
+        "interactive",
+        "headless-one-shot",
+        "headless-bidirectional",
+        "listen",
+      ],
+    },
+    {
+      id: "mcp-servers-info",
+      description: "MCP servers with tools available through letta mcp",
       modes: [
         "interactive",
         "headless-one-shot",

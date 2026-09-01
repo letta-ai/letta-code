@@ -11,11 +11,7 @@ const baseSkill: Skill = {
 
 describe("isSkillAvailableForAgent", () => {
   test("excludes bundled cloud-only skills for local agents", async () => {
-    for (const id of [
-      "image-generation",
-      "managing-shared-memory",
-      "using-cloud-mcp",
-    ]) {
+    for (const id of ["image-generation", "managing-shared-memory"]) {
       const skill: Skill = { ...baseSkill, id };
       expect(isSkillAvailableForAgent(skill, "agent-local-123")).toBe(false);
       expect(isSkillAvailableForAgent(skill, "agent-123")).toBe(true);
@@ -33,7 +29,11 @@ describe("isSkillAvailableForAgent", () => {
   });
 
   test("keeps other bundled skills for local agents", () => {
-    for (const id of ["scheduling-tasks", "submitting-feedback"]) {
+    for (const id of [
+      "scheduling-tasks",
+      "submitting-feedback",
+      "using-mcp-tools",
+    ]) {
       const skill: Skill = { ...baseSkill, id };
       expect(isSkillAvailableForAgent(skill, "agent-local-123")).toBe(true);
     }

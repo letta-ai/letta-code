@@ -1,13 +1,13 @@
 import { runAgentsSubcommand } from "./agents";
 import { runBackendSubcommand } from "./backend";
 import { runChannelsSubcommand } from "./channels";
-import { runCloudMcpSubcommand } from "./cloud-mcp";
 import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
 import { runEnvironmentsSubcommand } from "./environments";
 import { runFeedbackSubcommand } from "./feedback";
 import { runListenSubcommand } from "./listen.tsx";
 import { runLocalBackendSubcommand } from "./local-backend";
+import { runMcpSubcommand } from "./mcp";
 import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
 import { runModsSubcommand } from "./mods";
@@ -48,12 +48,12 @@ export function subcommandNeedsEarlyBackendMode(
     case "memfs":
     case "memory":
     case "messages":
+    case "mcp":
     case "mods":
     case "remote":
     case "sandbox":
     case "secret":
     case "server":
-    case "cloud-mcp":
     case "shared-memory":
     case "skills":
     case "teleport":
@@ -88,6 +88,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runServerSubcommand(asLegacyAppServerCommand(rest));
     case "messages":
       return runMessagesSubcommand(rest);
+    case "mcp":
+      return runMcpSubcommand(rest);
     case "environments":
     case "envs":
       return runEnvironmentsSubcommand(rest);
@@ -101,8 +103,6 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runTeleportSubcommand(rest);
     case "server":
       return runServerSubcommand(rest);
-    case "cloud-mcp":
-      return runCloudMcpSubcommand(rest);
     case "feedback":
       return runFeedbackSubcommand(rest);
     case "remote": // alias

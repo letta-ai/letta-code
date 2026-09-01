@@ -339,6 +339,27 @@ describe("buildSubagentArgs", () => {
     expect(tagsValue).toBe("type:explore");
   });
 
+  test("threads the environment selector through as --environment", () => {
+    const args = buildSubagentArgs(
+      "explore",
+      baseConfig,
+      null,
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { environment: "office-mac" },
+    );
+
+    expect(args[args.indexOf("--environment") + 1]).toBe("office-mac");
+  });
+
+  test("omits --environment by default", () => {
+    const args = buildSubagentArgs("explore", baseConfig, null, "hello");
+
+    expect(args).not.toContain("--environment");
+  });
+
   test("does not tag when deploying an existing agent (fork/recall)", () => {
     const args = buildSubagentArgs(
       "fork",

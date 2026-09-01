@@ -30,7 +30,7 @@ import {
   getBackend,
   isLocalBackendEnabled,
 } from "@/backend";
-import { getServerUrl } from "@/backend/api/client";
+import { getServerUrl } from "@/backend/api/server-url";
 import type { BtwState } from "@/cli/components/BtwPane";
 import {
   type Buffers,

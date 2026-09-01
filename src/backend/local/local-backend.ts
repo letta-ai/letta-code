@@ -14,7 +14,10 @@ import type {
   ConversationMessageStreamBody,
   ConversationRecompileBody,
 } from "@/backend/backend";
-import { HeadlessBackend } from "@/backend/dev/headless-backend";
+import {
+  HEADLESS_BACKEND_CAPABILITIES,
+  HeadlessBackend,
+} from "@/backend/dev/headless-backend";
 import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import type {
@@ -244,13 +247,8 @@ function formatMidConversationMemoryUpdate(
 
 export class LocalBackend extends HeadlessBackend {
   override readonly capabilities: BackendCapabilities = {
-    remoteMemfs: false,
-    serverSideToolManagement: false,
-    serverSecrets: false,
-    agentFileImportExport: false,
+    ...HEADLESS_BACKEND_CAPABILITIES,
     promptRecompile: true,
-    byokProviderRefresh: false,
-    localModelCatalog: true,
     localMemfs: true,
   };
 
