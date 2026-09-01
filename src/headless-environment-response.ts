@@ -3,7 +3,12 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { Message as LettaMessage } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { Backend } from "@/backend";
-import type { SendEnvironmentMessageBody } from "@/backend/api/environments";
+import {
+  type EnvironmentConnection,
+  getEnvironmentConnection,
+  isEnvironmentOnline,
+  type SendEnvironmentMessageBody,
+} from "@/backend/api/environments";
 import { toolFilter } from "@/tools/filter";
 
 /**
@@ -109,20 +114,94 @@ function messageSequenceId(message: LettaMessage): number | null {
   return typeof sequenceId === "number" ? sequenceId : null;
 }
 
+/** Absolute ceiling on an environment-routed turn. */
+const DEFAULT_MAX_WAIT_MS = 60 * 60_000;
+/** Give up when nothing observable happens for this long. */
+const DEFAULT_INACTIVITY_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_ONLINE_CHECK_INTERVAL_MS = 30_000;
+const DEFAULT_RUN_STATUS_INTERVAL_MS = 10_000;
+/** A completed run should have written its assistant message; allow a short lag. */
+const COMPLETED_WITHOUT_TEXT_GRACE_MS = 15_000;
+
+/**
+ * Ceiling for waiting on an environment-routed turn. Overridable with
+ * LETTA_ENVIRONMENT_TIMEOUT_MS (milliseconds); defaults to one hour.
+ */
+export function resolveEnvironmentMaxWaitMs(): number {
+  const raw = process.env.LETTA_ENVIRONMENT_TIMEOUT_MS;
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return DEFAULT_MAX_WAIT_MS;
+}
+
+function isTerminalRunStatus(status: string | undefined): boolean {
+  return (
+    status === "completed" || status === "failed" || status === "cancelled"
+  );
+}
+
+/**
+ * Wait for the assistant reply of an environment-routed turn.
+ *
+ * The remote turn runs on another machine; this poller only observes the
+ * conversation through the API. Instead of a single wall-clock timeout, it
+ * keeps waiting while there is evidence the turn is alive (new messages, a
+ * run that is still running, the device still online) and fails when:
+ *
+ * - the device goes offline (checked every `onlineCheckIntervalMs` when
+ *   `deviceId` is provided);
+ * - the run reaches a terminal state without an assistant reply;
+ * - nothing observable happens for `inactivityTimeoutMs`; or
+ * - the absolute ceiling `maxWaitMs` is hit (default one hour, overridable
+ *   with LETTA_ENVIRONMENT_TIMEOUT_MS).
+ */
 export async function waitForEnvironmentAssistantMessage(params: {
   backend: Backend;
   agentId: string;
   conversationId: string;
   otid: string;
-  timeoutMs?: number;
+  /** Device to liveness-check while waiting. Omitting skips online checks. */
+  deviceId?: string;
+  maxWaitMs?: number;
+  inactivityTimeoutMs?: number;
   pollIntervalMs?: number;
+  onlineCheckIntervalMs?: number;
+  runStatusIntervalMs?: number;
+  /** Injectable for deterministic tests. */
+  deps?: {
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+    getEnvironmentConnection?: (
+      deviceId: string,
+    ) => Promise<EnvironmentConnection>;
+  };
 }): Promise<{ text: string; stopReason: StopReasonType | null }> {
-  const timeoutMs = params.timeoutMs ?? 10 * 60_000;
+  const now = params.deps?.now ?? Date.now;
+  const sleep =
+    params.deps?.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const fetchEnvironment =
+    params.deps?.getEnvironmentConnection ?? getEnvironmentConnection;
+  const maxWaitMs = params.maxWaitMs ?? resolveEnvironmentMaxWaitMs();
+  const inactivityTimeoutMs =
+    params.inactivityTimeoutMs ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
   const pollIntervalMs = params.pollIntervalMs ?? 1_000;
-  const deadline = Date.now() + timeoutMs;
+  const onlineCheckIntervalMs =
+    params.onlineCheckIntervalMs ?? DEFAULT_ONLINE_CHECK_INTERVAL_MS;
+  const runStatusIntervalMs =
+    params.runStatusIntervalMs ?? DEFAULT_RUN_STATUS_INTERVAL_MS;
+
+  const startedAt = now();
+  let lastProgressAt = startedAt;
+  let lastOnlineCheckAt = startedAt;
+  let lastRunStatusCheckAt = 0;
+  let highestSequenceId: number | null = null;
+  let completedWithoutTextAt: number | null = null;
   let inputSequenceId: number | null = null;
 
-  while (Date.now() < deadline) {
+  while (true) {
     const page =
       params.conversationId === "default"
         ? await params.backend.listAgentMessages(params.agentId, {
@@ -136,6 +215,19 @@ export async function waitForEnvironmentAssistantMessage(params: {
           });
 
     const messages = pageItems<LettaMessage>(page);
+
+    // Any new message in the conversation counts as progress.
+    for (const message of messages) {
+      const sequenceId = messageSequenceId(message);
+      if (
+        sequenceId !== null &&
+        (highestSequenceId === null || sequenceId > highestSequenceId)
+      ) {
+        highestSequenceId = sequenceId;
+        lastProgressAt = now();
+      }
+    }
+
     if (inputSequenceId === null) {
       const inputMessage = messages.find(
         (message) =>
@@ -166,37 +258,93 @@ export async function waitForEnvironmentAssistantMessage(params: {
         },
         null,
       );
-      const assistant = newerMessages
-        .filter((message) => {
-          const sequenceId = messageSequenceId(message);
-          return (
-            isAssistantMessage(message) &&
-            sequenceId !== null &&
-            (nextUserSequenceId === null || sequenceId < nextUserSequenceId)
-          );
-        })
+      const turnMessages = newerMessages.filter((message) => {
+        const sequenceId = messageSequenceId(message);
+        return (
+          sequenceId !== null &&
+          (nextUserSequenceId === null || sequenceId < nextUserSequenceId)
+        );
+      });
+      const assistant = turnMessages
+        .filter((message) => isAssistantMessage(message))
         .sort(
           (a, b) => (messageSequenceId(b) ?? 0) - (messageSequenceId(a) ?? 0),
         )[0];
-      const runId = messageRunId(assistant);
-      if (runId) {
-        const run = await params.backend.retrieveRun(runId);
-        if (
-          (run.status === "completed" ||
-            run.status === "failed" ||
-            run.status === "cancelled") &&
-          run.stop_reason !== "requires_approval"
-        ) {
+      // Tool calls and reasoning also carry the turn's run_id, so a run can be
+      // observed (and liveness-checked) before any assistant message exists.
+      const newestRunId =
+        messageRunId(assistant) ??
+        turnMessages
+          .sort(
+            (a, b) => (messageSequenceId(b) ?? 0) - (messageSequenceId(a) ?? 0),
+          )
+          .map((message) => messageRunId(message))
+          .find((id) => id !== null) ??
+        null;
+      const shouldCheckRun =
+        newestRunId !== null &&
+        (assistant !== undefined ||
+          now() - lastRunStatusCheckAt >= runStatusIntervalMs);
+      if (newestRunId && shouldCheckRun) {
+        lastRunStatusCheckAt = now();
+        const run = await params.backend.retrieveRun(newestRunId);
+        if (!isTerminalRunStatus(run.status)) {
+          // The run is still executing; that is progress even when the
+          // conversation has been quiet (e.g. one long tool call).
+          lastProgressAt = now();
+        } else if (run.stop_reason !== "requires_approval") {
           const text = assistant ? extractMessageText(assistant).trim() : "";
           if (text.length > 0) {
             return { text, stopReason: run.stop_reason ?? null };
+          }
+          if (run.status === "failed" || run.status === "cancelled") {
+            throw new Error(
+              `Environment turn run ${newestRunId} ${run.status} without an assistant reply` +
+                (run.stop_reason ? ` (stop reason: ${run.stop_reason})` : ""),
+            );
+          }
+          // Completed without text: allow a short lag for the assistant
+          // message to land, then give up.
+          completedWithoutTextAt ??= now();
+          if (
+            now() - completedWithoutTextAt >=
+            COMPLETED_WITHOUT_TEXT_GRACE_MS
+          ) {
+            throw new Error(
+              `Environment turn run ${newestRunId} completed without an assistant reply`,
+            );
           }
         }
       }
     }
 
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-  }
+    if (params.deviceId && now() - lastOnlineCheckAt >= onlineCheckIntervalMs) {
+      lastOnlineCheckAt = now();
+      let offline = false;
+      try {
+        const connection = await fetchEnvironment(params.deviceId);
+        offline = !isEnvironmentOnline(connection);
+      } catch {
+        // Transient lookup failure; the other liveness checks still apply.
+      }
+      if (offline) {
+        throw new Error(
+          `Environment device ${params.deviceId} went offline before the turn completed`,
+        );
+      }
+    }
 
-  throw new Error("Timed out waiting for environment turn completion");
+    if (now() - lastProgressAt >= inactivityTimeoutMs) {
+      throw new Error(
+        `No activity from the environment turn for ${inactivityTimeoutMs}ms (no new messages and no running run); giving up`,
+      );
+    }
+    if (now() - startedAt >= maxWaitMs) {
+      throw new Error(
+        `Environment turn did not complete within ${maxWaitMs}ms (set LETTA_ENVIRONMENT_TIMEOUT_MS to raise the ceiling)`,
+      );
+    }
+
+    await sleep(pollIntervalMs);
+  }
 }

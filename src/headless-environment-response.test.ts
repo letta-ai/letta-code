@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { EnvironmentConnection } from "@/backend/api/environments";
 import {
   buildEnvironmentCreateMessageBody,
+  resolveEnvironmentMaxWaitMs,
   waitForEnvironmentAssistantMessage,
 } from "@/headless-environment-response";
 import { toolFilter } from "@/tools/filter";
@@ -123,7 +125,7 @@ describe("headless environment-routed responses", () => {
       conversationId: "conv-env",
       otid: "otid-requested",
       pollIntervalMs: 0,
-      timeoutMs: 1_000,
+      maxWaitMs: 1_000,
     });
 
     expect(result).toEqual({
@@ -181,7 +183,7 @@ describe("headless environment-routed responses", () => {
       conversationId: "conv-env",
       otid: "otid-requested",
       pollIntervalMs: 0,
-      timeoutMs: 1_000,
+      maxWaitMs: 1_000,
     });
 
     expect(result).toEqual({
@@ -236,5 +238,289 @@ describe("buildEnvironmentCreateMessageBody", () => {
     });
 
     expect("client_tool_allowlist" in body).toBe(false);
+  });
+});
+
+function toolMessage(id: string, runId: string, sequenceId: number) {
+  return {
+    id,
+    message_type: "tool_call_message",
+    date: "2026-07-07T12:00:00.000Z",
+    run_id: runId,
+    seq_id: sequenceId,
+  };
+}
+
+/** Fake clock: sleep() advances time instead of waiting. */
+function makeClock() {
+  let t = 0;
+  return {
+    now: () => t,
+    sleep: async (ms: number) => {
+      t += Math.max(ms, 1);
+    },
+  };
+}
+
+function onlineConnection(deviceId: string): EnvironmentConnection {
+  return {
+    id: "env-row",
+    connectionId: "conn-1",
+    deviceId,
+    connectionName: "test",
+    organizationId: "org-1",
+    podId: "pod-1",
+    connectedAt: Date.now(),
+    lastHeartbeat: Date.now(),
+    lastSeenAt: Date.now(),
+    firstSeenAt: Date.now(),
+  };
+}
+
+function offlineConnection(deviceId: string): EnvironmentConnection {
+  return {
+    ...onlineConnection(deviceId),
+    connectionId: null,
+    lastHeartbeat: null,
+  };
+}
+
+describe("environment turn liveness", () => {
+  const baseMessages = [
+    userMessage("msg-user", "otid-1", "run-1", 10),
+    toolMessage("msg-tool", "run-1", 11),
+  ];
+
+  test("keeps waiting past ten minutes while the run is still executing", async () => {
+    const clock = makeClock();
+    let runStatus = "running";
+    let listCalls = 0;
+    const backend = {
+      async retrieveRun(runId: string) {
+        return {
+          id: runId,
+          status: runStatus,
+          stop_reason: runStatus === "completed" ? "end_turn" : null,
+        };
+      },
+      async listConversationMessages() {
+        listCalls += 1;
+        // Flip to completed after ~15 simulated minutes of polling.
+        if (clock.now() >= 15 * 60_000 && runStatus === "running") {
+          runStatus = "completed";
+          return [
+            ...baseMessages,
+            assistantMessage(
+              "msg-final",
+              "done after a long tool call",
+              "run-1",
+              12,
+            ),
+          ];
+        }
+        return baseMessages;
+      },
+    };
+
+    const result = await waitForEnvironmentAssistantMessage({
+      backend: backend as never,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      otid: "otid-1",
+      pollIntervalMs: 1_000,
+      deps: clock,
+    });
+
+    expect(result.text).toBe("done after a long tool call");
+    expect(clock.now()).toBeGreaterThan(10 * 60_000);
+    expect(listCalls).toBeGreaterThan(600);
+  });
+
+  test("fails fast when the run fails without an assistant reply", async () => {
+    const clock = makeClock();
+    const backend = {
+      async retrieveRun(runId: string) {
+        return { id: runId, status: "failed", stop_reason: "error" };
+      },
+      async listConversationMessages() {
+        return baseMessages;
+      },
+    };
+
+    await expect(
+      waitForEnvironmentAssistantMessage({
+        backend: backend as never,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        otid: "otid-1",
+        pollIntervalMs: 1_000,
+        deps: clock,
+      }),
+    ).rejects.toThrow(/run run-1 failed without an assistant reply/);
+    expect(clock.now()).toBeLessThan(60_000);
+  });
+
+  test("fails when the run completes without an assistant reply after the grace period", async () => {
+    const clock = makeClock();
+    const backend = {
+      async retrieveRun(runId: string) {
+        return { id: runId, status: "completed", stop_reason: "end_turn" };
+      },
+      async listConversationMessages() {
+        return baseMessages;
+      },
+    };
+
+    await expect(
+      waitForEnvironmentAssistantMessage({
+        backend: backend as never,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        otid: "otid-1",
+        pollIntervalMs: 1_000,
+        runStatusIntervalMs: 1_000,
+        deps: clock,
+      }),
+    ).rejects.toThrow(/completed without an assistant reply/);
+    expect(clock.now()).toBeLessThan(60_000);
+  });
+
+  test("fails when the device goes offline while waiting", async () => {
+    const clock = makeClock();
+    const backend = {
+      async retrieveRun(runId: string) {
+        return { id: runId, status: "running", stop_reason: null };
+      },
+      async listConversationMessages() {
+        return baseMessages;
+      },
+    };
+
+    await expect(
+      waitForEnvironmentAssistantMessage({
+        backend: backend as never,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        otid: "otid-1",
+        deviceId: "device-1",
+        pollIntervalMs: 1_000,
+        deps: {
+          ...clock,
+          getEnvironmentConnection: async () => offlineConnection("device-1"),
+        },
+      }),
+    ).rejects.toThrow(/device device-1 went offline/);
+    // First online check fires at the 30s interval, well before inactivity.
+    expect(clock.now()).toBeLessThan(60_000);
+  });
+
+  test("ignores transient connection-lookup failures", async () => {
+    const clock = makeClock();
+    let lookups = 0;
+    const backend = {
+      async retrieveRun(runId: string) {
+        if (clock.now() >= 90_000) {
+          return { id: runId, status: "completed", stop_reason: "end_turn" };
+        }
+        return { id: runId, status: "running", stop_reason: null };
+      },
+      async listConversationMessages() {
+        if (clock.now() >= 90_000) {
+          return [
+            ...baseMessages,
+            assistantMessage("msg-final", "made it", "run-1", 12),
+          ];
+        }
+        return baseMessages;
+      },
+    };
+
+    const result = await waitForEnvironmentAssistantMessage({
+      backend: backend as never,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      otid: "otid-1",
+      deviceId: "device-1",
+      pollIntervalMs: 1_000,
+      deps: {
+        ...clock,
+        getEnvironmentConnection: async () => {
+          lookups += 1;
+          throw new Error("HTTP 503");
+        },
+      },
+    });
+
+    expect(result.text).toBe("made it");
+    expect(lookups).toBeGreaterThan(0);
+  });
+
+  test("fails after sustained inactivity even below the absolute ceiling", async () => {
+    const clock = makeClock();
+    const backend = {
+      async retrieveRun() {
+        throw new Error("should not be called: no run visible");
+      },
+      async listConversationMessages() {
+        return []; // the listener never picked up the turn
+      },
+    };
+
+    await expect(
+      waitForEnvironmentAssistantMessage({
+        backend: backend as never,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        otid: "otid-1",
+        pollIntervalMs: 1_000,
+        inactivityTimeoutMs: 5 * 60_000,
+        deps: clock,
+      }),
+    ).rejects.toThrow(/No activity from the environment turn for 300000ms/);
+    expect(clock.now()).toBeLessThan(6 * 60_000);
+  });
+
+  test("fails at the absolute ceiling even while the run stays alive", async () => {
+    const clock = makeClock();
+    const backend = {
+      async retrieveRun(runId: string) {
+        return { id: runId, status: "running", stop_reason: null };
+      },
+      async listConversationMessages() {
+        return baseMessages;
+      },
+    };
+
+    await expect(
+      waitForEnvironmentAssistantMessage({
+        backend: backend as never,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        otid: "otid-1",
+        pollIntervalMs: 1_000,
+        maxWaitMs: 2 * 60_000,
+        deps: clock,
+      }),
+    ).rejects.toThrow(/did not complete within 120000ms/);
+  });
+});
+
+describe("resolveEnvironmentMaxWaitMs", () => {
+  test("defaults to one hour and honors LETTA_ENVIRONMENT_TIMEOUT_MS", () => {
+    const previous = process.env.LETTA_ENVIRONMENT_TIMEOUT_MS;
+    try {
+      delete process.env.LETTA_ENVIRONMENT_TIMEOUT_MS;
+      expect(resolveEnvironmentMaxWaitMs()).toBe(60 * 60_000);
+      process.env.LETTA_ENVIRONMENT_TIMEOUT_MS = "7200000";
+      expect(resolveEnvironmentMaxWaitMs()).toBe(7_200_000);
+      process.env.LETTA_ENVIRONMENT_TIMEOUT_MS = "not-a-number";
+      expect(resolveEnvironmentMaxWaitMs()).toBe(60 * 60_000);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.LETTA_ENVIRONMENT_TIMEOUT_MS;
+      } else {
+        process.env.LETTA_ENVIRONMENT_TIMEOUT_MS = previous;
+      }
+    }
   });
 });
