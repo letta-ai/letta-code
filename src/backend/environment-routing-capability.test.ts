@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { isCloudServerUrl } from "@/backend/api/client";
+import { isCloudServerUrl } from "@/backend/api/server-url";
 import { APIBackend } from "@/backend/backend";
 
 const originalBaseUrl = process.env.LETTA_BASE_URL;

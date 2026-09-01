@@ -18,7 +18,7 @@ import {
   getScopedMemoryFilesystemRoot,
   resolveScopedMemoryDir,
 } from "@/agent/memory-filesystem";
-import { getServerUrl } from "@/backend/api/client";
+import { getServerUrl } from "@/backend/api/server-url";
 import { isLocalBackendMemfsDisabledForProcess } from "@/backend/local/paths";
 import {
   getCurrentWorkingDirectory,

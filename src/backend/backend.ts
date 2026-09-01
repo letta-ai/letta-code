@@ -3,11 +3,11 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { getClient } from "./api/client";
-import { isCloudServerUrl } from "./api/client";
 import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
+import { isCloudServerUrl } from "./api/server-url";
 import {
   type BackendMode,
   resolveBackendMode,
