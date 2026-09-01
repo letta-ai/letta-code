@@ -104,8 +104,8 @@ describe("teleport subcommand", () => {
     ).toThrow("requires a Letta Cloud agent");
   });
 
-  test("rejects virtual default conversation", () => {
-    expect(() =>
+  test("accepts the virtual default conversation", () => {
+    expect(
       resolveTeleportSession(
         {
           LETTA_AGENT_ID: "agent-1",
@@ -113,7 +113,7 @@ describe("teleport subcommand", () => {
         },
         null,
       ),
-    ).toThrow("requires an active conversation");
+    ).toEqual({ agentId: "agent-1", conversationId: "default" });
   });
 
   test("rejects virtual new conversation", () => {
