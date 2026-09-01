@@ -1,11 +1,39 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { AgentRuntimeStatusSnapshot } from "@/backend/api/agents";
 import type { EnvironmentConnection } from "@/backend/api/environments";
+import { ApiRequestError } from "@/backend/api/request";
 import {
   buildEnvironmentCreateMessageBody,
   resolveEnvironmentMaxWaitMs,
   waitForEnvironmentAssistantMessage,
 } from "@/headless-environment-response";
 import { toolFilter } from "@/tools/filter";
+
+/** Pins the wait to the run-based fallback (server without the route). */
+const runtimeStatusUnavailable =
+  async (): Promise<AgentRuntimeStatusSnapshot> => {
+    throw new ApiRequestError("Not Found", 404, "");
+  };
+
+function runtimeSnapshot(
+  conversationId: string,
+  state: "IDLE" | "PENDING_DELIVERY" | "ACTIVE" | "ACTIVE_UNATTRIBUTED",
+  loopStatus: string | null = null,
+): AgentRuntimeStatusSnapshot {
+  return {
+    agent_id: "agent-1",
+    snapshot_at: 0,
+    statuses: [
+      {
+        conversation_id: conversationId,
+        state,
+        loop_state: loopStatus === null ? null : { status: loopStatus },
+        active_run_ids: [],
+        last_activity_at: 0,
+      },
+    ],
+  };
+}
 
 function assistantMessage(
   id: string,
@@ -126,6 +154,7 @@ describe("headless environment-routed responses", () => {
       otid: "otid-requested",
       pollIntervalMs: 0,
       maxWaitMs: 1_000,
+      deps: { getAgentRuntimeStatus: runtimeStatusUnavailable },
     });
 
     expect(result).toEqual({
@@ -184,6 +213,7 @@ describe("headless environment-routed responses", () => {
       otid: "otid-requested",
       pollIntervalMs: 0,
       maxWaitMs: 1_000,
+      deps: { getAgentRuntimeStatus: runtimeStatusUnavailable },
     });
 
     expect(result).toEqual({
@@ -328,7 +358,7 @@ describe("environment turn liveness", () => {
       conversationId: "conv-1",
       otid: "otid-1",
       pollIntervalMs: 1_000,
-      deps: clock,
+      deps: { ...clock, getAgentRuntimeStatus: runtimeStatusUnavailable },
     });
 
     expect(result.text).toBe("done after a long tool call");
@@ -354,7 +384,7 @@ describe("environment turn liveness", () => {
         conversationId: "conv-1",
         otid: "otid-1",
         pollIntervalMs: 1_000,
-        deps: clock,
+        deps: { ...clock, getAgentRuntimeStatus: runtimeStatusUnavailable },
       }),
     ).rejects.toThrow(/run run-1 failed without an assistant reply/);
     expect(clock.now()).toBeLessThan(60_000);
@@ -379,7 +409,7 @@ describe("environment turn liveness", () => {
         otid: "otid-1",
         pollIntervalMs: 1_000,
         runStatusIntervalMs: 1_000,
-        deps: clock,
+        deps: { ...clock, getAgentRuntimeStatus: runtimeStatusUnavailable },
       }),
     ).rejects.toThrow(/completed without an assistant reply/);
     expect(clock.now()).toBeLessThan(60_000);
@@ -406,6 +436,7 @@ describe("environment turn liveness", () => {
         pollIntervalMs: 1_000,
         deps: {
           ...clock,
+          getAgentRuntimeStatus: runtimeStatusUnavailable,
           getEnvironmentConnection: async () => offlineConnection("device-1"),
         },
       }),
@@ -444,6 +475,7 @@ describe("environment turn liveness", () => {
       pollIntervalMs: 1_000,
       deps: {
         ...clock,
+        getAgentRuntimeStatus: runtimeStatusUnavailable,
         getEnvironmentConnection: async () => {
           lookups += 1;
           throw new Error("HTTP 503");
@@ -474,7 +506,7 @@ describe("environment turn liveness", () => {
         otid: "otid-1",
         pollIntervalMs: 1_000,
         inactivityTimeoutMs: 5 * 60_000,
-        deps: clock,
+        deps: { ...clock, getAgentRuntimeStatus: runtimeStatusUnavailable },
       }),
     ).rejects.toThrow(/No activity from the environment turn for 300000ms/);
     expect(clock.now()).toBeLessThan(6 * 60_000);
@@ -499,9 +531,168 @@ describe("environment turn liveness", () => {
         otid: "otid-1",
         pollIntervalMs: 1_000,
         maxWaitMs: 2 * 60_000,
-        deps: clock,
+        deps: { ...clock, getAgentRuntimeStatus: runtimeStatusUnavailable },
       }),
     ).rejects.toThrow(/did not complete within 120000ms/);
+  });
+});
+
+describe("runtime-status wait mode", () => {
+  const baseMessages = [
+    userMessage("msg-user", "otid-1", "run-1", 10),
+    toolMessage("msg-tool", "run-1", 11),
+  ];
+
+  test("a non-IDLE record is progress: waits past inactivity with no new messages and no run polling", async () => {
+    const clock = makeClock();
+    let runRetrievals = 0;
+    let statusCalls = 0;
+    const backend = {
+      async retrieveRun(runId: string) {
+        runRetrievals += 1;
+        return { id: runId, status: "completed", stop_reason: "end_turn" };
+      },
+      async listConversationMessages() {
+        if (clock.now() >= 15 * 60_000) {
+          return [
+            ...baseMessages,
+            assistantMessage(
+              "msg-final",
+              "done after a long tool call",
+              "run-1",
+              12,
+            ),
+          ];
+        }
+        return baseMessages;
+      },
+    };
+
+    const result = await waitForEnvironmentAssistantMessage({
+      backend: backend as never,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      otid: "otid-1",
+      pollIntervalMs: 1_000,
+      deps: {
+        ...clock,
+        getAgentRuntimeStatus: async () => {
+          statusCalls += 1;
+          if (clock.now() >= 15 * 60_000) {
+            return runtimeSnapshot("conv-1", "IDLE");
+          }
+          return runtimeSnapshot(
+            "conv-1",
+            "ACTIVE",
+            "EXECUTING_CLIENT_SIDE_TOOL",
+          );
+        },
+      },
+    });
+
+    expect(result.text).toBe("done after a long tool call");
+    expect(result.stopReason).toBe("end_turn");
+    expect(clock.now()).toBeGreaterThan(10 * 60_000);
+    expect(statusCalls).toBeGreaterThan(50);
+    // Per-run polling stops in runtime-status mode; one final best-effort
+    // lookup fills the stop reason.
+    expect(runRetrievals).toBe(1);
+  });
+
+  test("returns when the owner reports WAITING_ON_INPUT even while unrelated work holds the record ACTIVE", async () => {
+    const clock = makeClock();
+    const backend = {
+      async retrieveRun(runId: string) {
+        return { id: runId, status: "completed", stop_reason: "end_turn" };
+      },
+      async listConversationMessages() {
+        return [
+          ...baseMessages,
+          assistantMessage("msg-final", "reply landed", "run-1", 12),
+        ];
+      },
+    };
+
+    const result = await waitForEnvironmentAssistantMessage({
+      backend: backend as never,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      otid: "otid-1",
+      pollIntervalMs: 1_000,
+      deps: {
+        ...clock,
+        // An armed Monitor keeps the outer state ACTIVE after the turn.
+        getAgentRuntimeStatus: async () =>
+          runtimeSnapshot("conv-1", "ACTIVE", "WAITING_ON_INPUT"),
+      },
+    });
+
+    expect(result.text).toBe("reply landed");
+    expect(clock.now()).toBeLessThan(10_000);
+  });
+
+  test("fails after the grace period when the record goes IDLE without a reply", async () => {
+    const clock = makeClock();
+    const backend = {
+      async retrieveRun() {
+        throw new Error("should not be called in runtime-status mode");
+      },
+      async listConversationMessages() {
+        return baseMessages;
+      },
+    };
+
+    await expect(
+      waitForEnvironmentAssistantMessage({
+        backend: backend as never,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        otid: "otid-1",
+        pollIntervalMs: 1_000,
+        runStatusIntervalMs: 1_000,
+        deps: {
+          ...clock,
+          getAgentRuntimeStatus: async () => runtimeSnapshot("conv-1", "IDLE"),
+        },
+      }),
+    ).rejects.toThrow(
+      /ended without an assistant reply \(runtime state IDLE\)/,
+    );
+    expect(clock.now()).toBeLessThan(60_000);
+  });
+
+  test("transient runtime-status failures leave the run-based signals in charge", async () => {
+    const clock = makeClock();
+    let statusCalls = 0;
+    const backend = {
+      async retrieveRun(runId: string) {
+        return { id: runId, status: "completed", stop_reason: "end_turn" };
+      },
+      async listConversationMessages() {
+        return [
+          ...baseMessages,
+          assistantMessage("msg-final", "made it anyway", "run-1", 12),
+        ];
+      },
+    };
+
+    const result = await waitForEnvironmentAssistantMessage({
+      backend: backend as never,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      otid: "otid-1",
+      pollIntervalMs: 1_000,
+      deps: {
+        ...clock,
+        getAgentRuntimeStatus: async () => {
+          statusCalls += 1;
+          throw new ApiRequestError("Internal Server Error", 500, "");
+        },
+      },
+    });
+
+    expect(result.text).toBe("made it anyway");
+    expect(statusCalls).toBeGreaterThan(0);
   });
 });
 
