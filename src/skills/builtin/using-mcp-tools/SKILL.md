@@ -42,7 +42,7 @@ Two kinds of servers share one namespace:
 - **Cloud-connected servers** are attached to the agent on the Letta server (MCP servers page in ADE/chat, or the agent MCP API). They follow the agent to every environment and their tools execute server-side. `stdio`-type cloud servers cannot run on hosted Letta Cloud.
 - **Local client servers** are per-agent, per-machine settings the user configures in the Letta Code app. Their tools execute on this machine. Header values may reference environment variables as `${VAR_NAME}`, resolved at connect time; a missing variable is a hard error.
 
-`get` output is safe to show: header values are `[REDACTED]` and sensitive URL query parameters (token/key/secret/password) are masked.
+`get` redacts known credential positions — header values, stdio env values, URL basic-auth, and query parameters or stdio flags with sensitive names (token/key/secret/password/auth/…). The redaction is name-based: a secret embedded in a URL path or behind an unrecognized flag name is printed as-is, so scan `get` output before pasting it somewhere visible.
 
 OAuth: a local http/sse server with no `Authorization` header uses the OAuth flow. The interactive browser handshake only happens in the Letta Code app; this CLI is non-interactive and reuses persisted credentials. On an auth error, ask the user to connect the server once in the app.
 
