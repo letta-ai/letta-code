@@ -4,11 +4,17 @@ import type { Message as LettaMessage } from "@letta-ai/letta-client/resources/a
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { Backend } from "@/backend";
 import {
+  type AgentRuntimeStatusEntry,
+  type AgentRuntimeStatusSnapshot,
+  getAgentRuntimeStatus,
+} from "@/backend/api/agents";
+import {
   type EnvironmentConnection,
   getEnvironmentConnection,
   isEnvironmentOnline,
   type SendEnvironmentMessageBody,
 } from "@/backend/api/environments";
+import { ApiRequestError } from "@/backend/api/request";
 import { toolFilter } from "@/tools/filter";
 
 /**
@@ -143,16 +149,47 @@ function isTerminalRunStatus(status: string | undefined): boolean {
 }
 
 /**
+ * Which liveness signal drives the wait.
+ *
+ * - "unknown": the runtime-status route has not answered yet; run-based
+ *   checks still apply so an old server is covered from the first poll.
+ * - "runtime-status": the server exposes the per-conversation runtime-status
+ *   record (the super-run architecture's read surface); it is the liveness
+ *   and turn-over signal, and per-run polling stops.
+ * - "runs": the route returned 404 (older server or the feed kill switch is
+ *   off); the run-based inference is the only signal.
+ */
+type EnvironmentWaitMode = "unknown" | "runtime-status" | "runs";
+
+/**
+ * The turn is over when the conversation has no runtime work left (IDLE), or
+ * when the owning listener reports WAITING_ON_INPUT. The second clause
+ * matters because the outer state stays ACTIVE while the listener holds
+ * unrelated work for the conversation (an armed Monitor, a background
+ * subagent): the loop status is the turn's own signal.
+ */
+function isRuntimeTurnOver(status: AgentRuntimeStatusEntry): boolean {
+  return (
+    status.state === "IDLE" || status.loop_state?.status === "WAITING_ON_INPUT"
+  );
+}
+
+/**
  * Wait for the assistant reply of an environment-routed turn.
  *
  * The remote turn runs on another machine; this poller only observes the
- * conversation through the API. Instead of a single wall-clock timeout, it
- * keeps waiting while there is evidence the turn is alive (new messages, a
- * run that is still running, the device still online) and fails when:
+ * conversation through the API. The primary liveness signal is the server's
+ * per-conversation runtime-status record (GET
+ * /v1/agents/:agentId/runtime-status): a non-IDLE state is progress, and the
+ * turn is over when the record goes IDLE or the owning listener reports
+ * WAITING_ON_INPUT. When the route 404s (older server or the feed kill
+ * switch), the wait falls back to inferring liveness from the turn's runs.
+ * Either way it keeps waiting while there is evidence the turn is alive and
+ * fails when:
  *
  * - the device goes offline (checked every `onlineCheckIntervalMs` when
  *   `deviceId` is provided);
- * - the run reaches a terminal state without an assistant reply;
+ * - the turn ends (record IDLE / run terminal) without an assistant reply;
  * - nothing observable happens for `inactivityTimeoutMs`; or
  * - the absolute ceiling `maxWaitMs` is hit (default one hour, overridable
  *   with LETTA_ENVIRONMENT_TIMEOUT_MS).
@@ -176,6 +213,10 @@ export async function waitForEnvironmentAssistantMessage(params: {
     getEnvironmentConnection?: (
       deviceId: string,
     ) => Promise<EnvironmentConnection>;
+    getAgentRuntimeStatus?: (
+      agentId: string,
+      conversationIds: string[],
+    ) => Promise<AgentRuntimeStatusSnapshot>;
   };
 }): Promise<{ text: string; stopReason: StopReasonType | null }> {
   const now = params.deps?.now ?? Date.now;
@@ -184,6 +225,8 @@ export async function waitForEnvironmentAssistantMessage(params: {
     ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const fetchEnvironment =
     params.deps?.getEnvironmentConnection ?? getEnvironmentConnection;
+  const fetchRuntimeStatus =
+    params.deps?.getAgentRuntimeStatus ?? getAgentRuntimeStatus;
   const maxWaitMs = params.maxWaitMs ?? resolveEnvironmentMaxWaitMs();
   const inactivityTimeoutMs =
     params.inactivityTimeoutMs ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
@@ -197,6 +240,9 @@ export async function waitForEnvironmentAssistantMessage(params: {
   let lastProgressAt = startedAt;
   let lastOnlineCheckAt = startedAt;
   let lastRunStatusCheckAt = 0;
+  let lastRuntimeStatusCheckAt = 0;
+  let mode: EnvironmentWaitMode = "unknown";
+  let runtimeTurnOverAt: number | null = null;
   let highestSequenceId: number | null = null;
   let completedWithoutTextAt: number | null = null;
   let inputSequenceId: number | null = null;
@@ -237,6 +283,11 @@ export async function waitForEnvironmentAssistantMessage(params: {
       inputSequenceId = inputMessage ? messageSequenceId(inputMessage) : null;
     }
 
+    // Reply selection needs the OTID anchor and the next-user-turn bound in
+    // both modes: the runtime-status record says when the turn is over, but
+    // not which assistant message answers this input.
+    let assistant: LettaMessage | undefined;
+    let newestRunId: string | null = null;
     if (inputSequenceId !== null) {
       const anchorSequenceId = inputSequenceId;
       // Approval continuations get new run IDs, so use the input's OTID as the
@@ -265,14 +316,14 @@ export async function waitForEnvironmentAssistantMessage(params: {
           (nextUserSequenceId === null || sequenceId < nextUserSequenceId)
         );
       });
-      const assistant = turnMessages
+      assistant = turnMessages
         .filter((message) => isAssistantMessage(message))
         .sort(
           (a, b) => (messageSequenceId(b) ?? 0) - (messageSequenceId(a) ?? 0),
         )[0];
       // Tool calls and reasoning also carry the turn's run_id, so a run can be
       // observed (and liveness-checked) before any assistant message exists.
-      const newestRunId =
+      newestRunId =
         messageRunId(assistant) ??
         turnMessages
           .sort(
@@ -281,6 +332,75 @@ export async function waitForEnvironmentAssistantMessage(params: {
           .map((message) => messageRunId(message))
           .find((id) => id !== null) ??
         null;
+    }
+
+    // Primary signal: the conversation's runtime-status record. A non-IDLE
+    // state is progress (covers long tool calls, approval pauses, and delivery
+    // gaps that produce no new messages); IDLE or the owner reporting
+    // WAITING_ON_INPUT means the turn is over. 404 pins the wait to the
+    // run-based fallback; other errors are transient and leave the remaining
+    // signals in charge.
+    if (mode !== "runs") {
+      const shouldCheckRuntimeStatus =
+        assistant !== undefined ||
+        lastRuntimeStatusCheckAt === 0 ||
+        now() - lastRuntimeStatusCheckAt >= runStatusIntervalMs;
+      if (shouldCheckRuntimeStatus) {
+        lastRuntimeStatusCheckAt = now();
+        let snapshot: AgentRuntimeStatusSnapshot | null = null;
+        try {
+          snapshot = await fetchRuntimeStatus(params.agentId, [
+            params.conversationId,
+          ]);
+        } catch (error) {
+          if (error instanceof ApiRequestError && error.status === 404) {
+            mode = "runs";
+          }
+          // Any other failure is transient: the message, run, and device
+          // signals still apply this iteration.
+        }
+        if (snapshot) {
+          mode = "runtime-status";
+          const status =
+            snapshot.statuses.find(
+              (entry) => entry.conversation_id === params.conversationId,
+            ) ??
+            (snapshot.statuses.length === 1 ? snapshot.statuses[0] : null) ??
+            null;
+          if (status && !isRuntimeTurnOver(status)) {
+            lastProgressAt = now();
+            runtimeTurnOverAt = null;
+          } else if (status && inputSequenceId !== null) {
+            const text = assistant ? extractMessageText(assistant).trim() : "";
+            if (text.length > 0) {
+              // Best-effort stop reason: the turn is already over, so one
+              // lookup suffices and a failure only drops the field.
+              let stopReason: StopReasonType | null = null;
+              if (newestRunId) {
+                try {
+                  const run = await params.backend.retrieveRun(newestRunId);
+                  stopReason = run.stop_reason ?? null;
+                } catch {
+                  // Field is informational; the reply is already in hand.
+                }
+              }
+              return { text, stopReason };
+            }
+            // Turn over without a reply: allow a short lag for the assistant
+            // message to land, then give up.
+            runtimeTurnOverAt ??= now();
+            if (now() - runtimeTurnOverAt >= COMPLETED_WITHOUT_TEXT_GRACE_MS) {
+              throw new Error(
+                "Environment turn ended without an assistant reply " +
+                  `(runtime state ${status.state})`,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    if (mode !== "runtime-status" && inputSequenceId !== null) {
       const shouldCheckRun =
         newestRunId !== null &&
         (assistant !== undefined ||
