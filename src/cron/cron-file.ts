@@ -50,6 +50,8 @@ export interface SchedulerOwner {
   boot_id?: string | null;
 }
 
+export type CronSchedulerScope = "all" | "cloud" | "local";
+
 export interface CronTask {
   // Identity
   id: string;
@@ -101,6 +103,9 @@ export interface CronTask {
 interface CronFileData {
   version: 1;
   scheduler_owner: SchedulerOwner | null;
+  scheduler_owners: Partial<
+    Record<Exclude<CronSchedulerScope, "all">, SchedulerOwner>
+  >;
   tasks: CronTask[];
 }
 
@@ -140,6 +145,7 @@ function emptyFile(): CronFileData {
   return {
     version: 1,
     scheduler_owner: null,
+    scheduler_owners: {},
     tasks: [],
   };
 }
@@ -161,6 +167,10 @@ function normalizeCronFileData(data: CronFileData): CronFileData {
   return {
     version: 1,
     scheduler_owner: data.scheduler_owner ?? null,
+    scheduler_owners:
+      data.scheduler_owners && typeof data.scheduler_owners === "object"
+        ? data.scheduler_owners
+        : {},
     tasks: Array.isArray(data.tasks) ? data.tasks.map(normalizeTask) : [],
   };
 }
@@ -567,10 +577,15 @@ export function addTask(input: AddTaskInput): AddTaskResult {
 
     // Check if a scheduler is running
     let warning: string | undefined;
-    if (
-      !data.scheduler_owner ||
-      !isProcessAlive(data.scheduler_owner.pid, data.scheduler_owner)
-    ) {
+    const scopedOwner = input.agent_id.startsWith("agent-local-")
+      ? data.scheduler_owners.local
+      : data.scheduler_owners.cloud;
+    const hasLiveOwner =
+      Boolean(
+        data.scheduler_owner &&
+          isProcessAlive(data.scheduler_owner.pid, data.scheduler_owner),
+      ) || Boolean(scopedOwner && isProcessAlive(scopedOwner.pid, scopedOwner));
+    if (!hasLiveOwner) {
       warning =
         "No letta server is currently running. This task will only execute when a WS listener is active.";
     }
@@ -643,7 +658,7 @@ export function deleteAllTasks(agentId: string): number {
  * Claim the scheduler lease. Returns the token on success.
  * Throws if another live process holds the lease.
  */
-export function claimSchedulerLease(): string {
+export function claimSchedulerLease(scope: CronSchedulerScope = "all"): string {
   return withLock(() => {
     const data = readCronFile();
     const token = randomBytes(4).toString("hex");
@@ -651,20 +666,47 @@ export function claimSchedulerLease(): string {
     if (data.scheduler_owner) {
       const existingOwner = data.scheduler_owner;
       const { pid, token: existingToken } = existingOwner;
-      if (pid !== process.pid && isProcessAlive(pid, existingOwner)) {
+      if (
+        (scope !== "all" || pid !== process.pid) &&
+        isProcessAlive(pid, existingOwner)
+      ) {
         throw new Error(
           `Scheduler lease held by PID ${pid} (token ${existingToken}). Cannot claim.`,
         );
       }
       // Stale lease from dead process or self-reclaim — take over
+      data.scheduler_owner = null;
     }
 
-    data.scheduler_owner = {
+    const owner = {
       pid: process.pid,
       token,
       started_at: new Date().toISOString(),
       ...captureProcessIdentity(process.pid),
     };
+    if (scope === "all") {
+      for (const existingOwner of Object.values(data.scheduler_owners)) {
+        if (isProcessAlive(existingOwner.pid, existingOwner)) {
+          throw new Error(
+            `Scoped scheduler lease held by PID ${existingOwner.pid}. Cannot claim all schedules.`,
+          );
+        }
+      }
+      data.scheduler_owners = {};
+      data.scheduler_owner = owner;
+    } else {
+      const existingOwner = data.scheduler_owners[scope];
+      if (
+        existingOwner &&
+        existingOwner.pid !== process.pid &&
+        isProcessAlive(existingOwner.pid, existingOwner)
+      ) {
+        throw new Error(
+          `${scope} scheduler lease held by PID ${existingOwner.pid} (token ${existingOwner.token}). Cannot claim.`,
+        );
+      }
+      data.scheduler_owners[scope] = owner;
+    }
     writeCronFile(data);
     return token;
   });
@@ -673,29 +715,38 @@ export function claimSchedulerLease(): string {
 /**
  * Verify we still hold the scheduler lease.
  */
-export function verifySchedulerLease(token: string): boolean {
+export function verifySchedulerLease(
+  token: string,
+  scope: CronSchedulerScope = "all",
+): boolean {
   const data = readCronFile();
+  const owner =
+    scope === "all" ? data.scheduler_owner : data.scheduler_owners[scope];
   return (
-    data.scheduler_owner !== null &&
-    data.scheduler_owner.pid === process.pid &&
-    data.scheduler_owner.token === token
+    owner !== null &&
+    owner !== undefined &&
+    owner.pid === process.pid &&
+    owner.token === token
   );
 }
 
 /**
  * Release the scheduler lease.
  */
-export function releaseSchedulerLease(token: string): void {
+export function releaseSchedulerLease(
+  token: string,
+  scope: CronSchedulerScope = "all",
+): void {
   withLock(() => {
     const data = readCronFile();
-    if (
-      data.scheduler_owner &&
-      data.scheduler_owner.pid === process.pid &&
-      data.scheduler_owner.token === token
-    ) {
-      data.scheduler_owner = null;
-      writeCronFile(data);
+    const owner =
+      scope === "all" ? data.scheduler_owner : data.scheduler_owners[scope];
+    if (!owner || owner.pid !== process.pid || owner.token !== token) {
+      return;
     }
+    if (scope === "all") data.scheduler_owner = null;
+    else delete data.scheduler_owners[scope];
+    writeCronFile(data);
   });
 }
 

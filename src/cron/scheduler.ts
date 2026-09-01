@@ -12,6 +12,7 @@
  * On stop: clears interval, releases lease.
  */
 
+import { isLocalAgentId } from "@/agent/agent-id";
 import { getBackend } from "@/backend";
 import type { ConversationCreateBody } from "@/backend/backend";
 import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queue-runtime";
@@ -31,6 +32,7 @@ import type {
 import {
   type CronRunOutcome,
   type CronRunReason,
+  type CronSchedulerScope,
   type CronTask,
   claimSchedulerLease,
   garbageCollect,
@@ -67,6 +69,7 @@ type ProcessQueuedTurn = (
 
 interface SchedulerState {
   token: string;
+  scope: CronSchedulerScope;
   tickInterval: NodeJS.Timeout;
   gcInterval: NodeJS.Timeout;
   socket: ListenerTransport;
@@ -85,6 +88,24 @@ interface SchedulerState {
 }
 
 let schedulerState: SchedulerState | null = null;
+
+export const CRON_SCHEDULER_SCOPE_ENV = "LETTA_CRON_SCHEDULER_SCOPE";
+
+export function resolveCronSchedulerScope(
+  value = process.env[CRON_SCHEDULER_SCOPE_ENV],
+): CronSchedulerScope {
+  return value === "cloud" || value === "local" ? value : "all";
+}
+
+export function taskMatchesCronSchedulerScope(
+  task: CronTask,
+  scope: CronSchedulerScope,
+): boolean {
+  if (scope === "all") return true;
+  return scope === "local"
+    ? isLocalAgentId(task.agent_id)
+    : !isLocalAgentId(task.agent_id);
+}
 
 /**
  * Listener context stored independently of the scheduler lease.
@@ -493,7 +514,7 @@ function tick(
   processQueuedTurn: ProcessQueuedTurn,
 ): void {
   // Verify we still hold the lease
-  if (!verifySchedulerLease(state.token)) {
+  if (!verifySchedulerLease(state.token, state.scope)) {
     console.error("[Cron] Scheduler lease lost. Stopping.");
     stopScheduler();
     return;
@@ -512,6 +533,7 @@ function tick(
 
   for (const task of state.cachedTasks) {
     if (task.status !== "active") continue;
+    if (!taskMatchesCronSchedulerScope(task, state.scope)) continue;
 
     // Older clients could persist expressions that the current cron dialect
     // rejects. Surface that state once rather than silently never firing.
@@ -607,8 +629,9 @@ export function startScheduler(
   if (schedulerState) return;
 
   let token: string;
+  const scope = resolveCronSchedulerScope();
   try {
-    token = claimSchedulerLease();
+    token = claimSchedulerLease(scope);
   } catch (err) {
     if (_retryCount < MAX_LEASE_RETRIES) {
       console.warn(
@@ -635,6 +658,7 @@ export function startScheduler(
   const now = new Date();
   const state: SchedulerState = {
     token,
+    scope,
     tickInterval: null as unknown as NodeJS.Timeout,
     gcInterval: null as unknown as NodeJS.Timeout,
     socket,
@@ -685,7 +709,7 @@ export function stopScheduler(): void {
   schedulerState.pendingTimers.clear();
 
   try {
-    releaseSchedulerLease(schedulerState.token);
+    releaseSchedulerLease(schedulerState.token, schedulerState.scope);
   } catch {
     // Best effort
   }
