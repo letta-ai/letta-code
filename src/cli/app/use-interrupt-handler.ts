@@ -53,6 +53,7 @@ type InterruptHandlerContext = {
   setApprovalResults: Dispatch<SetStateAction<ApprovalDecision[]>>;
   setAutoDeniedApprovals: Dispatch<SetStateAction<AutoDeniedApproval[]>>;
   setAutoHandledResults: Dispatch<SetStateAction<AutoHandledToolResult[]>>;
+  setDequeueEpoch: Dispatch<SetStateAction<number>>;
   setInterruptRequested: Dispatch<SetStateAction<boolean>>;
   setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
   setPendingApprovals: Dispatch<SetStateAction<ApprovalRequest[]>>;
@@ -107,6 +108,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     setApprovalResults,
     setAutoDeniedApprovals,
     setAutoHandledResults,
+    setDequeueEpoch,
     setInterruptRequested,
     setIsExecutingTool,
     setPendingApprovals,
@@ -219,6 +221,9 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // batched state updates have been fully processed before we allow the dequeue effect.
       setTimeout(() => {
         userCancelledRef.current = false;
+        // Clearing the ref does not re-render the coordinator. Bump the epoch
+        // so queued notifications are reconsidered after cancellation settles.
+        setDequeueEpoch((epoch) => epoch + 1);
       }, 50);
 
       return;
@@ -348,6 +353,10 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       setTimeout(() => {
         userCancelledRef.current = false;
         setInterruptRequested(false);
+        // userCancelledRef is intentionally a ref, so resetting it alone does
+        // not wake the dequeue effect. Re-run it once the cancellation guard is
+        // cleared to deliver notifications queued before Esc.
+        setDequeueEpoch((epoch) => epoch + 1);
       }, 50);
 
       return;
