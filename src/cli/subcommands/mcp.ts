@@ -117,6 +117,7 @@ function parseMcpArgs(argv: string[]) {
       "agent-id": { type: "string" },
       mode: { type: "string" },
       limit: { type: "string" },
+      full: { type: "boolean" },
       args: { type: "string" },
       "args-file": { type: "string" },
     },
@@ -554,18 +555,59 @@ async function runTools(
   deps: McpSubcommandDependencies,
   agentId: string,
   serverSelector: string | undefined,
+  full: boolean,
   stdout: (message: string) => void,
 ): Promise<number> {
   const catalog = await buildToolCatalog(deps, agentId, { serverSelector });
   try {
     printJson(
       stdout,
-      catalog.tools.map((tool) => tool.schema),
+      catalog.tools.map((tool) =>
+        full
+          ? tool.schema
+          : {
+              name: tool.schema.name,
+              ...(tool.schema.title ? { title: tool.schema.title } : {}),
+              ...(tool.schema.description
+                ? { description: tool.schema.description }
+                : {}),
+            },
+      ),
     );
   } finally {
     await catalog.close();
   }
   return 0;
+}
+
+async function runSchema(
+  deps: McpSubcommandDependencies,
+  agentId: string,
+  toolName: string | undefined,
+  stdout: (message: string) => void,
+): Promise<number> {
+  if (!toolName) {
+    throw new McpCliError(
+      "invalid_arguments",
+      "Usage: letta mcp schema <tool-name>",
+    );
+  }
+  const catalog = await buildToolCatalog(deps, agentId, { toolName });
+  try {
+    const tool = catalog.tools.find(
+      (candidate) => candidate.schema.name === toolName,
+    );
+    if (!tool) {
+      throw new McpCliError(
+        "tool_not_found",
+        `MCP tool '${toolName}' is not available`,
+      );
+    }
+    printJson(stdout, tool.schema);
+    return 0;
+  } finally {
+    await catalog.close();
+  }
 }
 
 async function runSearch(
@@ -748,7 +790,15 @@ export async function runMcpSubcommand(
       case "tools":
       case "list-tools":
       case "list_tools":
-        return await runTools(deps, agentId, parsed.target, stdout);
+        return await runTools(
+          deps,
+          agentId,
+          parsed.target,
+          parsed.values.full === true,
+          stdout,
+        );
+      case "schema":
+        return await runSchema(deps, agentId, parsed.target, stdout);
       case "search":
         return await runSearch(parsed, deps, agentId, stdout);
       case "call":

@@ -216,33 +216,6 @@ describe("mcp subcommand", () => {
     }
   });
 
-  test("tools returns bare generated schemas and always closes", async () => {
-    const closes = { count: 0 };
-    const harness = localHarness({
-      servers: [localServer],
-      connection: fakeConnection({ closes }),
-    });
-    expect(await runMcpSubcommand(["tools"], harness.deps)).toBe(0);
-    expect(JSON.parse(harness.stdout[0] ?? "[]")).toEqual([
-      {
-        name: "mcp__Mixed_Server__search_exact-name",
-        title: "Search",
-        description: "Search documents",
-        inputSchema: {
-          type: "object",
-          properties: { query: { type: "string" } },
-          required: ["query"],
-        },
-        outputSchema: {
-          type: "object",
-          properties: { results: { type: "array" } },
-        },
-        annotations: { readOnlyHint: true },
-      },
-    ]);
-    expect(closes.count).toBe(1);
-  });
-
   test("searches client-local tools without a Letta API backend", async () => {
     const closes = { count: 0 };
     const harness = localHarness({
@@ -510,7 +483,7 @@ describe("mcp subcommand", () => {
       },
     });
 
-    expect(await runMcpSubcommand(["tools"], harness.deps)).toBe(0);
+    expect(await runMcpSubcommand(["tools", "--full"], harness.deps)).toBe(0);
     expect(JSON.parse(harness.stdout[0] ?? "[]")).toEqual([
       {
         name: "mcp__github__create_issue",

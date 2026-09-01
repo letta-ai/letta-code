@@ -15,7 +15,7 @@ description: Find and invoke available MCP tools using `letta mcp search "<what 
 letta mcp search "<query>"
 ```
 
-Prints ranked results `[{tool, rank, score}]`. Each `tool` is a JSON schema whose `name` (shaped like `mcp__<server>__<tool>`) is the exact callable name. If a result has `tool: null`, fetch its schema with `letta mcp tools`.
+Prints ranked results `[{tool, rank, score}]`. Each `tool` is a JSON schema whose `name` (shaped like `mcp__<server>__<tool>`) is the exact callable name. If a result has `tool: null`, fetch its schema with `letta mcp schema <tool-name>`.
 
 2. Call the tool with the exact returned `name` and a JSON object of arguments:
 
@@ -25,12 +25,20 @@ letta mcp call <tool-name> --args '{"key":"value"}'
 
 Prints an MCP CallToolResult (`content`, optional `structuredContent`, `isError`). Exit code 2 means the tool ran and returned an error result. For large arguments, use `--args-file <path>` or `--args-file -` to read from stdin.
 
-## Inspecting servers
+Before calling a tool whose arguments you have not seen (e.g. taken from a `tools` listing), fetch its schema first instead of guessing:
 
 ```bash
-letta mcp list             # servers available to the agent: [{name, transport}]
-letta mcp get <server>     # one server's connection configuration
-letta mcp tools [server]   # complete tool schemas; names are accepted by call
+letta mcp schema <tool-name>
+```
+
+## Inspecting servers and tools
+
+```bash
+letta mcp list                    # servers available to the agent: [{name, transport}]
+letta mcp get <server>            # one server's connection configuration
+letta mcp tools [server]          # tool names and descriptions; names are accepted by call
+letta mcp tools [server] --full   # complete tool schemas (large for big servers)
+letta mcp schema <tool-name>      # one tool's complete schema
 ```
 
 `get` redacts credentials: header values are replaced with `[REDACTED]` and sensitive URL query parameters (token/key/secret/password) are masked, so its output is safe to show.
