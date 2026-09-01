@@ -122,6 +122,100 @@ async function buildSecretsInfoReminder(
   }
 }
 
+/** Re-check the MCP server list at most this often for mid-session changes. */
+const MCP_SERVERS_REFRESH_MS = 5 * 60 * 1000;
+
+export interface McpServersReminderDependencies {
+  getLocalServerNames?: (agentId: string) => string[];
+  /** Returns cloud-connected server names, or null when unavailable. */
+  listServerSideNames?: (agentId: string) => Promise<string[] | null>;
+}
+
+async function defaultListServerSideNames(
+  agentId: string,
+): Promise<string[] | null> {
+  // An unavailable backend means no server-side MCP; local names are still
+  // valid. A failed fetch on an available backend throws instead, so a
+  // transient API error never reports an incomplete server list.
+  let serverSideAvailable = false;
+  try {
+    const { getBackend } = await import("@/backend");
+    serverSideAvailable = getBackend().capabilities.serverSideToolManagement;
+  } catch {
+    return null;
+  }
+  if (!serverSideAvailable) {
+    return null;
+  }
+  const { getClient } = await import("@/backend/api/client");
+  const { listUnifiedMcpServers } = await import("@/backend/api/unified-mcp");
+  const client = (await getClient()) as Parameters<
+    typeof listUnifiedMcpServers
+  >[0];
+  const servers = await listUnifiedMcpServers(client, agentId, 3_000);
+  return servers.map((server) => server.serverName);
+}
+
+export async function buildMcpServersInfoReminderText(
+  context: Pick<SharedReminderContext, "agent" | "state">,
+  deps: McpServersReminderDependencies = {},
+): Promise<string | null> {
+  try {
+    const now = Date.now();
+    const lastFetched = context.state.lastMcpServersFetchedAtMs;
+    const due =
+      !context.state.hasSentMcpServersInfo ||
+      lastFetched === null ||
+      now - lastFetched > MCP_SERVERS_REFRESH_MS;
+    if (!due) {
+      return null;
+    }
+    // Record the attempt first so a failing backend is retried on the
+    // refresh interval instead of on every turn.
+    context.state.lastMcpServersFetchedAtMs = now;
+
+    const names = (
+      deps.getLocalServerNames ??
+      ((agentId: string) =>
+        settingsManager.getMcpServers(agentId).map((server) => server.name))
+    )(context.agent.id);
+    const serverSideNames = await (
+      deps.listServerSideNames ?? defaultListServerSideNames
+    )(context.agent.id);
+    if (serverSideNames) {
+      names.push(...serverSideNames);
+    }
+
+    const uniqueNames = Array.from(new Set(names));
+    const namesKey = uniqueNames.join("\0");
+    if (
+      context.state.hasSentMcpServersInfo &&
+      context.state.lastSentMcpServerNamesKey === namesKey
+    ) {
+      return null;
+    }
+    context.state.hasSentMcpServersInfo = true;
+    context.state.lastSentMcpServerNamesKey = namesKey;
+
+    if (uniqueNames.length === 0) {
+      return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: None\n${SYSTEM_REMINDER_CLOSE}`;
+    }
+    return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${uniqueNames.join(", ")}\nFind their tools with \`letta mcp search "<what you want to do>"\` and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`.\n${SYSTEM_REMINDER_CLOSE}`;
+  } catch (error) {
+    debugLog(
+      "mcp",
+      `Failed to build MCP servers reminder: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return null;
+  }
+}
+
+async function buildMcpServersInfoReminder(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  return buildMcpServersInfoReminderText(context);
+}
+
 async function buildSessionContextReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
@@ -345,6 +439,7 @@ export const sharedReminderProviders: Record<
   "agent-info": buildAgentInfoReminder,
   "conversation-bootstrap": buildConversationBootstrapReminderPart,
   "secrets-info": buildSecretsInfoReminder,
+  "mcp-servers-info": buildMcpServersInfoReminder,
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,
   "memory-git-sync": buildMemoryGitSyncReminder,
