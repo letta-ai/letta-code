@@ -1,66 +1,62 @@
 ---
 name: using-mcp-tools
-description: Find and invoke available MCP tools using `letta mcp search "<what you want to do>"` to get ranked tool schemas, then `letta mcp call <tool-name> --args '{"key":"value"}'` with the exact `name` from the results. Invoke this skill only if you need additional functionality such as listing available servers, configuring tool search, or troubleshooting MCP.
+description: Reference for the `letta mcp` CLI, which finds and invokes MCP tools available to this agent. A system reminder already lists your connected MCP servers and the basic search/call commands; invoke this skill when you need more — checking a tool's schema before calling it, passing large or file-based arguments, tuning search, inspecting server configuration and auth, or troubleshooting missing servers, tools, and errors.
 ---
 
 # Using MCP tools
 
-`letta mcp` gives the agent one unified view of every MCP server it can reach: servers configured locally on this machine and servers connected to the agent in Letta Cloud. It works from any surface where the agent runs: cloud sandboxes (chat.letta.com), Letta Desktop, and terminals. All output is JSON.
+`letta mcp` gives the agent one unified view of every MCP server it can reach: servers connected to the agent in Letta Cloud and servers configured locally on this machine. It works from any surface where the agent runs — cloud sandboxes (chat.letta.com), Letta Desktop, and terminals. All output is JSON.
 
-## Protocol: search, then call
-
-1. Search for a tool by describing what you want to do:
+## Commands
 
 ```bash
-letta mcp search "<query>"
+letta mcp list                                # servers: [{name, transport}]
+letta mcp get <server>                        # one server's connection configuration
+letta mcp tools [server] [--full]             # tool names + descriptions; --full adds complete schemas
+letta mcp schema <tool-name>                  # one tool's complete schema
+letta mcp search <query> [--mode] [--limit]   # ranked tool schemas: [{tool, rank, score}]
+letta mcp call <tool-name> [--args | --args-file]  # run a tool, print a CallToolResult
 ```
 
-Prints ranked results `[{tool, rank, score}]`. Each `tool` is a JSON schema whose `name` (shaped like `mcp__<server>__<tool>`) is the exact callable name. If a result has `tool: null`, fetch its schema with `letta mcp schema <tool-name>`.
+Every command accepts `--agent <id>`, defaulting to `LETTA_AGENT_ID`/`AGENT_ID` — do not pass it unless targeting another agent.
 
-2. Call the tool with the exact returned `name` and a JSON object of arguments:
+## Workflow
 
-```bash
-letta mcp call <tool-name> --args '{"key":"value"}'
-```
+1. **Search** by describing what you want to do: `letta mcp search "create a calendar event"`. Each result's `tool.name` (shaped like `mcp__<server>__<tool>`) is the exact callable name, and `tool` includes its full schema.
+2. **Check the schema first** for any tool whose arguments you have not seen — a name from a `tools` listing, a reminder, or memory: `letta mcp schema <tool-name>`. Do not guess arguments; required fields fail with avoidable round trips.
+3. **Call** with the exact name and a JSON object: `letta mcp call <tool-name> --args '{"key":"value"}'`.
 
-Prints an MCP CallToolResult (`content`, optional `structuredContent`, `isError`). Exit code 2 means the tool ran and returned an error result. For large arguments, use `--args-file <path>` or `--args-file -` to read from stdin.
+Never invent tool names — `call` and `schema` require a name printed by `search` or `tools`.
 
-Before calling a tool whose arguments you have not seen (e.g. taken from a `tools` listing), fetch its schema first instead of guessing:
+## Search options
 
-```bash
-letta mcp schema <tool-name>
-```
+- `--mode <hybrid|vector|fts>` — default `hybrid`. `vector` uses server-side embeddings and covers only cloud-connected servers; `fts` and `hybrid` also rank local tools lexically. Agents on a local backend cannot use `vector`.
+- `--limit <n>` — result count, 1-100 (default 5).
+- Rank order is meaningful; absolute scores are not comparable across queries. When even the top results look unrelated to the query, no relevant tool likely exists — do not force the best-ranked one.
 
-## Inspecting servers and tools
+## Call arguments and results
 
-```bash
-letta mcp list                    # servers available to the agent: [{name, transport}]
-letta mcp get <server>            # one server's connection configuration
-letta mcp tools [server]          # tool names and descriptions; names are accepted by call
-letta mcp tools [server] --full   # complete tool schemas (large for big servers)
-letta mcp schema <tool-name>      # one tool's complete schema
-```
-
-`get` redacts credentials: header values are replaced with `[REDACTED]` and sensitive URL query parameters (token/key/secret/password) are masked, so its output is safe to show.
-
-## Where servers come from
-
-Two kinds of servers appear in the same `list`/`search`/`call` namespace:
-
-- **Cloud-connected servers** are attached to the agent on the Letta server (MCP servers page in ADE/chat, or the agent MCP API). They follow the agent to every environment, their tools execute server-side, and they power `vector`/`hybrid` search. `stdio`-type cloud servers cannot run on hosted Letta Cloud.
-- **Local client servers** are per-agent, per-machine settings the user configures in the Letta Code app on that machine. Their tools execute on this machine (stdio processes run locally). Header values may reference environment variables as `${VAR_NAME}`, resolved at connect time; a missing variable is a hard error.
-
-OAuth: a local http/sse server with no `Authorization` header uses the OAuth flow. The interactive browser handshake only happens in the Letta Code app; the `letta mcp` CLI is non-interactive and reuses the persisted OAuth credentials. If a call fails with an auth error, ask the user to connect the server once in the app first.
-
-## Options
-
-- `--agent <id>` — defaults to `LETTA_AGENT_ID`/`AGENT_ID`; do not pass it unless targeting another agent.
-- `--mode <hybrid|vector|fts>` — search mode, default `hybrid`. `vector` requires cloud-connected servers (server-side embeddings) and excludes local servers; `fts`/`hybrid` cover both, ranking local tools lexically.
-- `--limit <n>` — search result count, 1-100 (default 5).
-
-## Rules
-
-- Never invent tool names. `call` requires the exact `name` printed by `search` or `tools`.
+- `--args '<json>'` — inline JSON object.
+- `--args-file <path>` — read the JSON object from a file; `--args-file -` reads stdin. Use these for large or shell-quoting-hostile payloads.
+- Output is an MCP CallToolResult: `content` (array of typed blocks), optional `structuredContent`, and `isError`.
+- Exit codes: `0` success, `1` CLI/usage error (JSON on stderr: `{error: {code, message, hint?}}`), `2` the tool ran and returned an error result — read `content` for the server's message, fix the arguments, and retry.
 - Summarize relevant results instead of pasting large raw payloads.
-- If `list` is empty, no MCP servers are available: ask the user to connect one to the agent on the Letta Cloud MCP servers page or configure a local one in the Letta Code app.
-- If a cloud-connected server shows no tools, its tools were never synced. Ask the user to resync it from the MCP servers page; the CLI has no refresh action.
+
+## Servers
+
+Two kinds of servers share one namespace:
+
+- **Cloud-connected servers** are attached to the agent on the Letta server (MCP servers page in ADE/chat, or the agent MCP API). They follow the agent to every environment and their tools execute server-side. `stdio`-type cloud servers cannot run on hosted Letta Cloud.
+- **Local client servers** are per-agent, per-machine settings the user configures in the Letta Code app. Their tools execute on this machine. Header values may reference environment variables as `${VAR_NAME}`, resolved at connect time; a missing variable is a hard error.
+
+`get` output is safe to show: header values are `[REDACTED]` and sensitive URL query parameters (token/key/secret/password) are masked.
+
+OAuth: a local http/sse server with no `Authorization` header uses the OAuth flow. The interactive browser handshake only happens in the Letta Code app; this CLI is non-interactive and reuses persisted credentials. On an auth error, ask the user to connect the server once in the app.
+
+## Troubleshooting
+
+- `list` empty → no MCP servers are available. Ask the user to connect one on the Letta Cloud MCP servers page or configure a local one in the Letta Code app.
+- Cloud server with no tools (or `0 tools` in the reminder) → tools were never synced. Ask the user to resync it from the MCP servers page; the CLI has no refresh action.
+- `unauthorized` from a cloud server on `call` while `tools` still lists them → the stored connection lost or lacks credentials; the tool list is served from previously synced rows. Ask the user to re-authenticate the server on the MCP servers page.
+- `ambiguous_server_name` → two servers share a name; the error hint explains how to disambiguate.
+- Duplicate tool names across servers get a numeric suffix (`_2`); the printed name is always the callable one.
