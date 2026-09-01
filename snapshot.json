@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.252:docs:1ea55bd3b54ff787fded7dd1e53cfc658f063df1a37bae9cc4c97a2d7a04fa5b:runtime:965cc36886538b3d4508f07b446e2e60a9f04ac62598b3be720d4efde856f95b",
+  "candidate_id": "claude@2.1.252:docs:d52b12f0740c85d341536dd35acab068a473437a6e3ea6beb7b14b75f464f47e:runtime:965cc36886538b3d4508f07b446e2e60a9f04ac62598b3be720d4efde856f95b",
   "package_version": "2.1.252",
   "npm_integrity": "sha512-ftoO0eLOZyEDrA3KDd7QZH5qdvToiTcoip3YdGGx8wzH4R9YUwHO+5VG01JDRn8u7MrRcXkf7FvbMYezEt0VyQ==",
   "npm_published_at": "2026-08-31T17:07:28.168Z",
@@ -578,7 +578,7 @@
       },
       "https://code.claude.com/docs/en/env-vars.md": {
         "url": "https://code.claude.com/docs/en/env-vars.md",
-        "hash": "46cbaf3c5602902a24b32d90b29374a10278effeb00f6e3c97061c768fba7400",
+        "hash": "b6e9d7473ca908dc5a0391c13724e3291cf3e83b2ecf9645d96dead99a000303",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/env-vars.md"
       },
@@ -1237,7 +1237,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "1ea55bd3b54ff787fded7dd1e53cfc658f063df1a37bae9cc4c97a2d7a04fa5b"
+    "digest": "d52b12f0740c85d341536dd35acab068a473437a6e3ea6beb7b14b75f464f47e"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1515,8 +1515,8 @@
     ],
     "digest": "965cc36886538b3d4508f07b446e2e60a9f04ac62598b3be720d4efde856f95b"
   },
-  "fetched_at": "2026-09-01T06:42:06.724Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/33478617301",
-  "state_commit_parent": "f476169fea2a3f7b8356dbd5c5e80b2e598a68a1",
-  "analysis_parent_sha": "f476169fea2a3f7b8356dbd5c5e80b2e598a68a1"
+  "fetched_at": "2026-09-01T16:45:35.247Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/33533528951",
+  "state_commit_parent": "43c7e6c8d7c2a4aec979e50e3491705478ad6a44",
+  "analysis_parent_sha": "43c7e6c8d7c2a4aec979e50e3491705478ad6a44"
 }
