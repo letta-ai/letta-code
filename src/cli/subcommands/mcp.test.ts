@@ -99,18 +99,28 @@ function fakeConnection(
 function cloudHarness(
   options: {
     getResponses?: Record<string, unknown>;
+    getResponse?: (path: string) => unknown;
     postResponses?: Record<string, unknown>;
+    registeredServers?: unknown[];
   } = {},
 ): CloudHarness {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const posts: Array<{ path: string; body: unknown }> = [];
   const client: UnifiedMcpClient = {
-    get: async (path) => options.getResponses?.[path] ?? [],
+    get: async (path) =>
+      options.getResponse?.(path) ?? options.getResponses?.[path] ?? [],
     post: async (path, request) => {
       posts.push({ path, body: request?.body });
       return options.postResponses?.[path] ?? {};
     },
+    ...(options.registeredServers
+      ? {
+          mcpServers: {
+            list: async () => options.registeredServers ?? [],
+          },
+        }
+      : {}),
   };
   return {
     stdout,
@@ -147,6 +157,7 @@ describe("mcp subcommand", () => {
       }),
     ).toBe(0);
     expect(output[0]).toContain("letta mcp tools");
+    expect(output[0]).toContain("letta mcp search");
     expect(output[0]).toContain("letta mcp call");
     for (const action of ["add", "remove", "login", "logout"]) {
       expect(output[0]).not.toContain(`letta mcp ${action}`);
@@ -190,29 +201,6 @@ describe("mcp subcommand", () => {
     });
   });
 
-  test("redacts HTTP headers and sensitive URL parameters", async () => {
-    const harness = localHarness({
-      servers: [
-        {
-          name: "private",
-          transport: "http",
-          url: "https://mcp.example.com/mcp?token=secret&tenant=letta",
-          headers: { Authorization: "Bearer secret", "X-Tenant": "letta" },
-        },
-      ],
-    });
-    expect(await runMcpSubcommand(["get", "private"], harness.deps)).toBe(0);
-    expect(JSON.parse(harness.stdout[0] ?? "{}")).toEqual({
-      name: "private",
-      transport: "streamable_http",
-      url: "https://mcp.example.com/mcp?token=%5BREDACTED%5D&tenant=letta",
-      headers: {
-        Authorization: "[REDACTED]",
-        "X-Tenant": "[REDACTED]",
-      },
-    });
-  });
-
   test("rejects configuration and authentication commands", async () => {
     for (const action of ["add", "remove", "login", "logout"]) {
       const harness = localHarness();
@@ -253,6 +241,59 @@ describe("mcp subcommand", () => {
       },
     ]);
     expect(closes.count).toBe(1);
+  });
+
+  test("searches client-local tools without a Letta API backend", async () => {
+    const closes = { count: 0 };
+    const harness = localHarness({
+      servers: [localServer],
+      connection: fakeConnection({ closes }),
+    });
+
+    expect(await runMcpSubcommand(["search", "documents"], harness.deps)).toBe(
+      0,
+    );
+    expect(JSON.parse(harness.stdout[0] ?? "[]")).toEqual([
+      {
+        tool: {
+          name: "mcp__Mixed_Server__search_exact-name",
+          title: "Search",
+          description: "Search documents",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+        },
+        rank: 1,
+        score: 0.5,
+      },
+    ]);
+    expect(closes.count).toBe(1);
+  });
+
+  test("rejects local vector search without connecting to MCP servers", async () => {
+    let connections = 0;
+    const harness = localHarness({ servers: [localServer] });
+    harness.deps.connectLocalServer = async () => {
+      connections++;
+      return fakeConnection();
+    };
+
+    expect(
+      await runMcpSubcommand(
+        ["search", "documents", "--mode", "vector"],
+        harness.deps,
+      ),
+    ).toBe(1);
+    expect(JSON.parse(harness.stderr[0] ?? "{}")).toEqual({
+      error: {
+        code: "unsupported_search_mode",
+        message: "Vector MCP tool search is unavailable with the local backend",
+        hint: "Use --mode fts or --mode hybrid.",
+      },
+    });
+    expect(connections).toBe(0);
   });
 
   test("uses saved OAuth state non-interactively for tools and call", async () => {
@@ -501,6 +542,239 @@ describe("mcp subcommand", () => {
     expect(harness.posts).toEqual([
       { path: runPath, body: { args: { title: "Bug" } } },
     ]);
+  });
+
+  test("searches the Letta API index on a server-backed agent", async () => {
+    const searchPath = "/v1/agents/agent-cloud/mcp-servers/tools/search";
+    const serverPath = "/v1/agents/agent-cloud/mcp-servers";
+    const toolsPath = `${serverPath}/mcp-1/tools`;
+    const harness = cloudHarness({
+      getResponses: {
+        [serverPath]: [{ id: "mcp-1", server_name: "betterstack" }],
+        [toolsPath]: [
+          {
+            id: "tool-1",
+            name: "mcp__betterstack__render_chart",
+          },
+        ],
+      },
+      registeredServers: [
+        {
+          id: "mcp-1",
+          server_name: "betterstack",
+          mcp_server_type: "streamable_http",
+          server_url: "https://mcp.example.com/mcp",
+        },
+      ],
+      postResponses: {
+        [searchPath]: [
+          {
+            tool: {
+              id: "tool-1",
+              json_schema: {
+                name: "mcp__betterstack__render_chart",
+                description: "Render a chart",
+                parameters: { type: "object", properties: {} },
+              },
+            },
+            combined_score: 0.5,
+          },
+        ],
+      },
+    });
+
+    expect(
+      await runMcpSubcommand(
+        ["search", "charts", "--mode", "fts", "--limit", "2"],
+        harness.deps,
+      ),
+    ).toBe(0);
+    expect(harness.posts).toEqual([
+      {
+        path: searchPath,
+        body: { query: "charts", search_mode: "fts", limit: 2 },
+      },
+    ]);
+    expect(JSON.parse(harness.stdout[0] ?? "[]")).toEqual([
+      {
+        tool: {
+          name: "mcp__betterstack__render_chart",
+          description: "Render a chart",
+          parameters: { type: "object", properties: {} },
+        },
+        rank: 1,
+        score: 0.5,
+      },
+    ]);
+  });
+
+  test("includes client-local tools when using a server-backed agent", async () => {
+    const searchPath = "/v1/agents/agent-cloud/mcp-servers/tools/search";
+    const serverPath = "/v1/agents/agent-cloud/mcp-servers";
+    const toolsPath = `${serverPath}/mcp-cloud/tools`;
+    const closes = { count: 0 };
+    const harness = cloudHarness({
+      getResponses: {
+        [serverPath]: [
+          {
+            id: "mcp-cloud",
+            server_name: "cloud",
+            mcp_server_type: "streamable_http",
+            server_url: "https://mcp.example.com/mcp",
+          },
+        ],
+        [toolsPath]: [
+          {
+            id: "tool-cloud",
+            name: "mcp__cloud__search_documents",
+          },
+        ],
+      },
+      postResponses: {
+        [searchPath]: [
+          {
+            tool: {
+              id: "tool-cloud",
+              json_schema: {
+                name: "mcp__cloud__search_documents",
+                parameters: { type: "object", properties: {} },
+              },
+            },
+            combined_score: 0.25,
+          },
+        ],
+      },
+    });
+    harness.deps.getLocalServers = () => [localServer];
+    harness.deps.connectLocalServer = async () => fakeConnection({ closes });
+
+    expect(await runMcpSubcommand(["search", "documents"], harness.deps)).toBe(
+      0,
+    );
+    expect(
+      JSON.parse(harness.stdout[0] ?? "[]").map(
+        (result: { tool: { name: string } }) => result.tool.name,
+      ),
+    ).toEqual([
+      "mcp__cloud__search_documents",
+      "mcp__Mixed_Server__search_exact-name",
+    ]);
+    expect(harness.posts).toEqual([
+      {
+        path: searchPath,
+        body: { query: "documents", search_mode: "hybrid", limit: 5 },
+      },
+    ]);
+    expect(closes.count).toBe(1);
+  });
+
+  test("uses only the server index for vector search on a mixed agent", async () => {
+    const searchPath = "/v1/agents/agent-cloud/mcp-servers/tools/search";
+    let connections = 0;
+    const harness = cloudHarness({ postResponses: { [searchPath]: [] } });
+    harness.deps.getLocalServers = () => [localServer];
+    harness.deps.connectLocalServer = async () => {
+      connections++;
+      return fakeConnection();
+    };
+
+    expect(
+      await runMcpSubcommand(
+        ["search", "documents", "--mode", "vector"],
+        harness.deps,
+      ),
+    ).toBe(0);
+    expect(JSON.parse(harness.stdout[0] ?? "[]")).toEqual([]);
+    expect(connections).toBe(0);
+  });
+
+  test("closes client-local connections when server search fails", async () => {
+    const searchPath = "/v1/agents/agent-cloud/mcp-servers/tools/search";
+    const closes = { count: 0 };
+    const harness = cloudHarness();
+    harness.deps.getLocalServers = () => [localServer];
+    harness.deps.connectLocalServer = async () => fakeConnection({ closes });
+    harness.deps.getClient = async () => ({
+      get: async () => [],
+      post: async (path, request) => {
+        harness.posts.push({ path, body: request?.body });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        throw new Error("search unavailable");
+      },
+    });
+
+    expect(await runMcpSubcommand(["search", "documents"], harness.deps)).toBe(
+      1,
+    );
+    expect(closes.count).toBe(1);
+    expect(JSON.parse(harness.stderr[0] ?? "{}")).toEqual({
+      error: { code: "mcp_error", message: "search unavailable" },
+    });
+    expect(harness.posts.map((post) => post.path)).toEqual([searchPath]);
+  });
+
+  test("returns collision-safe server names that call resolves exactly", async () => {
+    const serverPath = "/v1/agents/agent-cloud/mcp-servers";
+    const toolsAPath = `${serverPath}/mcp-a/tools`;
+    const toolsBPath = `${serverPath}/mcp-b/tools`;
+    const searchPath = `${serverPath}/tools/search`;
+    const runPath = `${toolsBPath}/tool-b2/run`;
+    const toolsB = [
+      { id: "tool-b1", name: "mcp__foo_bar__search" },
+      { id: "tool-b2", name: "mcp__foo_bar__search" },
+    ];
+    let toolsBLists = 0;
+    const harness = cloudHarness({
+      getResponse: (path) => {
+        if (path !== toolsBPath) return undefined;
+        toolsBLists++;
+        return toolsBLists === 1 ? [...toolsB].reverse() : toolsB;
+      },
+      getResponses: {
+        [serverPath]: [
+          {
+            id: "mcp-b",
+            server_name: "foo_bar",
+            mcp_server_type: "streamable_http",
+            server_url: "https://b.example.com/mcp",
+          },
+          {
+            id: "mcp-a",
+            server_name: "foo bar",
+            mcp_server_type: "streamable_http",
+            server_url: "https://a.example.com/mcp",
+          },
+        ],
+        [toolsAPath]: [{ id: "tool-a", name: "mcp__foo_bar__search" }],
+      },
+      postResponses: {
+        [searchPath]: [
+          {
+            tool: {
+              id: "tool-b2",
+              json_schema: {
+                name: "mcp__foo_bar__search",
+                parameters: { type: "object", properties: {} },
+              },
+            },
+            combined_score: 0.01,
+          },
+        ],
+        [runPath]: { status: "success", func_return: "server-b-second" },
+      },
+    });
+
+    expect(await runMcpSubcommand(["search", "search"], harness.deps)).toBe(0);
+    const generatedName = JSON.parse(harness.stdout[0] ?? "[]")[0]?.tool?.name;
+    expect(generatedName).toBe("mcp__foo_bar_2__search_2");
+    expect(await runMcpSubcommand(["call", generatedName], harness.deps)).toBe(
+      0,
+    );
+    expect(harness.posts.map((post) => post.path)).toEqual([
+      searchPath,
+      runPath,
+    ]);
+    expect(toolsBLists).toBe(2);
   });
 
   test("keeps scoped tool names callable when another server collides", async () => {

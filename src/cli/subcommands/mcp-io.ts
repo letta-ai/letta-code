@@ -1,6 +1,44 @@
 import { readFile } from "node:fs/promises";
 import { isRecord } from "@/utils/type-guards";
 
+export class McpCliError extends Error {
+  readonly code: string;
+  readonly hint?: string;
+
+  constructor(code: string, message: string, hint?: string) {
+    super(message);
+    this.name = "McpCliError";
+    this.code = code;
+    this.hint = hint;
+  }
+}
+
+export function printMcpError(
+  stderr: (message: string) => void,
+  error: unknown,
+): void {
+  const normalized =
+    error instanceof McpCliError
+      ? error
+      : new McpCliError(
+          "mcp_error",
+          error instanceof Error ? error.message : String(error),
+        );
+  stderr(
+    JSON.stringify(
+      {
+        error: {
+          code: normalized.code,
+          message: normalized.message,
+          ...(normalized.hint ? { hint: normalized.hint } : {}),
+        },
+      },
+      null,
+      2,
+    ),
+  );
+}
+
 export function printMcpUsage(stdout: (message: string) => void): void {
   stdout(
     `
@@ -8,17 +46,21 @@ Usage:
   letta mcp list [--agent <id>]
   letta mcp get <server> [--agent <id>]
   letta mcp tools [server] [--agent <id>]
+  letta mcp search <query> [--mode <hybrid|vector|fts>] [--limit <n>] [--agent <id>]
   letta mcp call <tool-name> [--args '<json>' | --args-file <path|->] [--agent <id>]
 
 Commands:
   list      List MCP servers available to the agent
   get       Print one server's redacted connection configuration
   tools     Print complete MCP tool schemas; names are accepted by call
+  search    Search tools available to the agent
   call      Call one exact tool name and print an MCP CallToolResult
 
 Options:
   --agent <id>       Agent ID. Defaults to LETTA_AGENT_ID or AGENT_ID
   --agent-id <id>    Alias for --agent
+  --mode <mode>      Search mode: hybrid (default), vector, or fts
+  --limit <n>        Search result limit from 1 to 100 (default: 5)
   --args <json>      JSON object passed to a tool
   --args-file <path> Read tool arguments from a file; use - for stdin
   -h, --help         Show this help

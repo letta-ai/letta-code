@@ -5,6 +5,7 @@ import {
   listUnifiedMcpServers,
   listUnifiedMcpTools,
   runUnifiedMcpTool,
+  searchUnifiedMcpTools,
   type UnifiedMcpClient,
   type UnifiedMcpRunResult,
   type UnifiedMcpServer,
@@ -21,14 +22,25 @@ import { createMcpOAuthSession } from "@/mcp-oauth";
 import { formatClientMcpToolName } from "@/mcp-runtime";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
-import { loadMcpToolArgs, printMcpUsage, resolveMcpAgentId } from "./mcp-io";
+import {
+  loadMcpToolArgs,
+  McpCliError,
+  printMcpError,
+  printMcpUsage,
+  resolveMcpAgentId,
+} from "./mcp-io";
+import {
+  mergeMcpSearchResults,
+  runMcpSearch,
+  searchLocalMcpTools,
+} from "./mcp-search";
 import {
   assignMcpServerAliases,
   formatServerMcpToolName,
   uniqueMcpName,
 } from "./mcp-tool-names";
 
-type McpTransport = "stdio" | "streamable_http" | "sse";
+type McpTransport = "stdio" | "streamable_http" | "sse" | "unknown";
 
 interface McpServerSummary {
   name: string;
@@ -47,7 +59,8 @@ type McpServerDetails =
       transport: "streamable_http" | "sse";
       url: string;
       headers: Record<string, string>;
-    });
+    })
+  | (McpServerSummary & { transport: "unknown" });
 
 type ServerTarget =
   | { kind: "client"; config: McpServerConfig }
@@ -95,18 +108,6 @@ interface ParsedMcpArgs {
   values: ReturnType<typeof parseMcpArgs>["values"];
 }
 
-class McpCliError extends Error {
-  readonly code: string;
-  readonly hint?: string;
-
-  constructor(code: string, message: string, hint?: string) {
-    super(message);
-    this.name = "McpCliError";
-    this.code = code;
-    this.hint = hint;
-  }
-}
-
 function parseMcpArgs(argv: string[]) {
   return parseArgs({
     args: argv,
@@ -114,6 +115,8 @@ function parseMcpArgs(argv: string[]) {
       help: { type: "boolean", short: "h" },
       agent: { type: "string" },
       "agent-id": { type: "string" },
+      mode: { type: "string" },
+      limit: { type: "string" },
       args: { type: "string" },
       "args-file": { type: "string" },
     },
@@ -169,7 +172,8 @@ function localTransport(config: McpServerConfig): McpTransport {
 function serverTransport(server: UnifiedMcpServer): McpTransport {
   if (server.serverType === "streamable_http") return "streamable_http";
   if (server.serverType === "sse") return "sse";
-  return "stdio";
+  if (server.serverType === "stdio") return "stdio";
+  return "unknown";
 }
 
 function serverSummary(target: ServerTarget): McpServerSummary {
@@ -218,6 +222,9 @@ function serverDetails(target: ServerTarget): McpServerDetails {
   }
 
   const server = target.server;
+  if (server.serverType === "unknown") {
+    return { name: server.serverName, transport: "unknown" };
+  }
   if (server.serverType === "stdio") {
     return {
       name: server.serverName,
@@ -342,7 +349,11 @@ function serverName(target: ServerTarget): string {
 async function buildToolCatalog(
   deps: McpSubcommandDependencies,
   agentId: string,
-  options: { serverSelector?: string; toolName?: string } = {},
+  options: {
+    serverSelector?: string;
+    toolName?: string;
+    targetKind?: ServerTarget["kind"];
+  } = {},
 ): Promise<ToolCatalog> {
   const servers = await listUnifiedServers(deps, agentId);
   const aliases = assignMcpServerAliases(
@@ -352,7 +363,9 @@ async function buildToolCatalog(
       kind: target.kind,
     })),
   );
-  let activeServers = servers;
+  let activeServers = options.targetKind
+    ? servers.filter((target) => target.kind === options.targetKind)
+    : servers;
   if (options.serverSelector) {
     const selectedKey = serverKey(
       resolveServer(servers, options.serverSelector),
@@ -389,7 +402,9 @@ async function buildToolCatalog(
       for (const { server, tools } of toolLists) {
         const alias = aliases.get(`server:${server.id}`);
         if (!alias) throw new Error("MCP server alias was not assigned");
-        for (const tool of tools) {
+        for (const tool of [...tools].sort((left, right) =>
+          left.id.localeCompare(right.id),
+        )) {
           const name = uniqueMcpName(
             formatServerMcpToolName(server.serverName, alias, tool.name),
             usedNames,
@@ -508,29 +523,6 @@ function printJson(stdout: (message: string) => void, value: unknown): void {
   stdout(JSON.stringify(value, null, 2));
 }
 
-function printError(stderr: (message: string) => void, error: unknown): void {
-  const normalized =
-    error instanceof McpCliError
-      ? error
-      : new McpCliError(
-          "mcp_error",
-          error instanceof Error ? error.message : String(error),
-        );
-  stderr(
-    JSON.stringify(
-      {
-        error: {
-          code: normalized.code,
-          message: normalized.message,
-          ...(normalized.hint ? { hint: normalized.hint } : {}),
-        },
-      },
-      null,
-      2,
-    ),
-  );
-}
-
 async function runList(
   deps: McpSubcommandDependencies,
   agentId: string,
@@ -574,6 +566,92 @@ async function runTools(
     await catalog.close();
   }
   return 0;
+}
+
+async function runSearch(
+  parsed: ParsedMcpArgs,
+  deps: McpSubcommandDependencies,
+  agentId: string,
+  stdout: (message: string) => void,
+): Promise<number> {
+  const serverSearchAvailable = serverMcpAvailable(deps);
+  const hasClientLocalServers = getLocalServers(deps, agentId).length > 0;
+  return runMcpSearch({
+    query: parsed.target,
+    mode: stringValue(parsed.values.mode),
+    limit: stringValue(parsed.values.limit),
+    stdout,
+    searchTools: async (request) => {
+      if (!serverSearchAvailable) {
+        if (request.searchMode === "vector") {
+          return searchLocalMcpTools({ tools: [], ...request });
+        }
+        const catalog = await buildToolCatalog(deps, agentId);
+        try {
+          return searchLocalMcpTools({
+            tools: catalog.tools.map((tool) => tool.schema),
+            ...request,
+          });
+        } finally {
+          await catalog.close();
+        }
+      }
+
+      const includeLocal =
+        hasClientLocalServers && request.searchMode !== "vector";
+      const searchPromise = searchUnifiedMcpTools({
+        client: await getServerClient(deps),
+        agentId,
+        ...request,
+      });
+      const catalogPromise = buildToolCatalog(deps, agentId, {
+        ...(includeLocal ? {} : { targetKind: "server" }),
+      });
+      let catalog: ToolCatalog | undefined;
+      try {
+        const [searchResults, resolvedCatalog] = await Promise.all([
+          searchPromise,
+          catalogPromise,
+        ]);
+        catalog = resolvedCatalog;
+        const serverResults = searchResults.map((result) => {
+          const callable = resolvedCatalog.tools.find(
+            (tool) =>
+              tool.target.kind === "server" &&
+              tool.target.toolId === result.toolId,
+          );
+          if (!callable) {
+            throw new Error(
+              `MCP search returned unavailable tool '${result.toolId}'`,
+            );
+          }
+          return {
+            tool:
+              result.jsonSchema === null
+                ? null
+                : { ...result.jsonSchema, name: callable.schema.name },
+            score: result.score,
+          };
+        });
+        if (!includeLocal) return serverResults;
+        const localResults = searchLocalMcpTools({
+          tools: resolvedCatalog.tools
+            .filter((tool) => tool.target.kind === "client")
+            .map((tool) => tool.schema),
+          ...request,
+        });
+        return mergeMcpSearchResults(
+          serverResults,
+          localResults,
+          request.limit,
+        );
+      } finally {
+        const catalogToClose =
+          catalog ?? (await catalogPromise.catch(() => undefined));
+        await catalogToClose?.close();
+      }
+    },
+  });
 }
 
 async function runCall(
@@ -634,7 +712,7 @@ export async function runMcpSubcommand(
   try {
     parsed = parseCommandLine(argv);
   } catch (error) {
-    printError(stderr, error);
+    printMcpError(stderr, error);
     return 1;
   }
 
@@ -649,7 +727,7 @@ export async function runMcpSubcommand(
     deps.env ?? process.env,
   );
   if (!agentId) {
-    printError(
+    printMcpError(
       stderr,
       new McpCliError(
         "agent_id_required",
@@ -671,6 +749,8 @@ export async function runMcpSubcommand(
       case "list-tools":
       case "list_tools":
         return await runTools(deps, agentId, parsed.target, stdout);
+      case "search":
+        return await runSearch(parsed, deps, agentId, stdout);
       case "call":
       case "run":
       case "run-tool":
@@ -683,7 +763,7 @@ export async function runMcpSubcommand(
         );
     }
   } catch (error) {
-    printError(stderr, error);
+    printMcpError(stderr, error);
     return 1;
   }
 }
