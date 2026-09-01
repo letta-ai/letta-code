@@ -1,5 +1,9 @@
-import { describe, expect, test } from "bun:test";
-import { waitForEnvironmentAssistantMessage } from "@/headless-environment-response";
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+  buildEnvironmentCreateMessageBody,
+  waitForEnvironmentAssistantMessage,
+} from "@/headless-environment-response";
+import { toolFilter } from "@/tools/filter";
 
 function assistantMessage(
   id: string,
@@ -185,5 +189,52 @@ describe("headless environment-routed responses", () => {
       stopReason: "end_turn",
     });
     expect(retrievedRunIds).toEqual(["run-final"]);
+  });
+});
+
+describe("buildEnvironmentCreateMessageBody", () => {
+  afterEach(() => {
+    toolFilter.reset();
+  });
+
+  test("includes client_tool_allowlist when a tool filter is set", () => {
+    toolFilter.setEnabledTools("Read,Grep");
+
+    const body = buildEnvironmentCreateMessageBody({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      content: [{ type: "text", text: "hello" }],
+      otid: "otid-1",
+    });
+
+    expect(body.client_tool_allowlist).toEqual(["Read", "Grep"]);
+    expect(body.agentId).toBe("agent-1");
+    expect(body.conversationId).toBe("conv-1");
+    expect(body.messages).toHaveLength(1);
+    expect(body.messages[0]?.otid).toBe("otid-1");
+  });
+
+  test("sends an empty allowlist when the filter allows no tools", () => {
+    toolFilter.setEnabledTools("");
+
+    const body = buildEnvironmentCreateMessageBody({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      content: [{ type: "text", text: "hello" }],
+      otid: "otid-1",
+    });
+
+    expect(body.client_tool_allowlist).toEqual([]);
+  });
+
+  test("omits client_tool_allowlist when no tool filter is set", () => {
+    const body = buildEnvironmentCreateMessageBody({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      content: [{ type: "text", text: "hello" }],
+      otid: "otid-1",
+    });
+
+    expect("client_tool_allowlist" in body).toBe(false);
   });
 });

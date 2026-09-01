@@ -116,7 +116,10 @@ import {
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
-import { waitForEnvironmentAssistantMessage } from "./headless-environment-response";
+import {
+  buildEnvironmentCreateMessageBody,
+  waitForEnvironmentAssistantMessage,
+} from "./headless-environment-response";
 import {
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
@@ -2200,18 +2203,15 @@ ${SYSTEM_REMINDER_CLOSE}
       await exitHeadless(1, "headless_environment_unsupported");
     }
     const otid = randomUUID();
-    await sendEnvironmentMessage(connectionId, {
-      agentId: agent.id,
-      conversationId,
-      messages: [
-        {
-          role: "user",
-          content: contentParts,
-          client_message_id: randomUUID(),
-          otid,
-        },
-      ],
-    });
+    await sendEnvironmentMessage(
+      connectionId,
+      buildEnvironmentCreateMessageBody({
+        agentId: agent.id,
+        conversationId,
+        content: contentParts,
+        otid,
+      }),
+    );
 
     const environmentResult = await waitForEnvironmentAssistantMessage({
       backend,

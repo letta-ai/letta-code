@@ -1,6 +1,45 @@
+import { randomUUID } from "node:crypto";
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message as LettaMessage } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { Backend } from "@/backend";
+import type { SendEnvironmentMessageBody } from "@/backend/api/environments";
+import { toolFilter } from "@/tools/filter";
+
+/**
+ * Build the POST body for an environment-routed turn.
+ *
+ * Includes the local client-tool restriction (the `--tools` flag, stored in
+ * toolFilter) as `client_tool_allowlist` so the remote listener enforces the
+ * same toolset the local turn would have used. `null` (no filter) omits the
+ * field and preserves the listener's normal toolset; an empty list travels as
+ * an empty array, which the listener treats as "no client tools". Older cloud
+ * servers strip the field, which degrades to the previous behavior (the
+ * listener's own toolset) rather than failing.
+ */
+export function buildEnvironmentCreateMessageBody(params: {
+  agentId: string;
+  conversationId: string | null;
+  content: MessageCreate["content"];
+  otid: string;
+}): SendEnvironmentMessageBody {
+  const clientToolAllowlist = toolFilter.getEnabledTools();
+  return {
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+    ...(clientToolAllowlist !== null
+      ? { client_tool_allowlist: clientToolAllowlist }
+      : {}),
+    messages: [
+      {
+        role: "user",
+        content: params.content,
+        client_message_id: randomUUID(),
+        otid: params.otid,
+      },
+    ],
+  };
+}
 
 function pageItems<T>(page: unknown): T[] {
   if (Array.isArray(page)) return page as T[];
