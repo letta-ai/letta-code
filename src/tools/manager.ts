@@ -118,6 +118,7 @@ const STREAMING_SHELL_TOOLS = new Set([
   "run_shell_command",
   "RunShellCommand",
   "Monitor",
+  "Workflow",
 ]);
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
@@ -348,8 +349,6 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "SetWorkingDirectory",
   "Edit",
   "TaskStop",
-  // "MultiEdit",
-  // "LS",
   "memory",
   "Read",
   "Skill",
@@ -358,6 +357,7 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "TaskGet",
   "TaskList",
   "TaskUpdate",
+  "Workflow",
   "Write",
 ];
 

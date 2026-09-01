@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "properties": {
+    "script": {
+      "type": "string",
+      "description": "Self-contained workflow script (plain JavaScript, not TypeScript) starting with `export const meta = {...}`."
+    },
+    "scriptPath": {
+      "type": "string",
+      "description": "Path to a workflow script file on disk. To iterate on a workflow, edit the file and re-invoke with the same scriptPath instead of re-sending the full script. Takes precedence over `script`."
+    },
+    "args": {
+      "description": "Optional input value exposed to the script as the global `args`, verbatim. Pass arrays/objects as actual JSON values, NOT as a JSON-encoded string."
+    },
+    "budgetUsd": {
+      "type": "number",
+      "description": "Hard USD spending ceiling for the run; agent() throws once exceeded. Omit for no ceiling."
+    },
+    "resumeFromRunId": {
+      "type": "string",
+      "description": "Run ID of a prior Workflow invocation to resume from. Completed agent() calls with unchanged (prompt, opts) return their cached results instantly; only edited or new calls re-run."
+    },
+    "allowedTools": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Default tool allowlist for subagents (per-call opts.allowedTools overrides). Defaults to read-only: Read, Grep, Glob. Widen deliberately for workflows that must write."
+    }
+  },
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

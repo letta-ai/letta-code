@@ -130,6 +130,7 @@
   "dependencies": {
     "@earendil-works/pi-ai": "^0.84.4",
     "@janhapke/sharp-electron": "0.35.3-electron.1",
+    "@letta-ai/letta-agent-sdk": "^0.8.2",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
     "@modelcontextprotocol/sdk": "1.30.0",
