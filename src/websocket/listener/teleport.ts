@@ -1,6 +1,7 @@
 import type WebSocket from "ws";
 import type {
   TeleportContinuation,
+  TeleportFailedCommand,
   TeleportProbeCommand,
   TeleportReadyMessage,
   TeleportRequestCommand,
@@ -11,8 +12,9 @@ import {
   emitProtocolV2Message,
   emitRuntimeStateUpdates,
 } from "./protocol-outbound";
+import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getConversationRuntime } from "./runtime";
-import { isListenerTransportOpen } from "./transport";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
 import type {
   ConversationRuntime,
@@ -20,6 +22,7 @@ import type {
   ListenerConnectionId,
   ListenerRuntime,
   PendingTeleport,
+  StartListenerOptions,
 } from "./types";
 
 type SafeSocketSend = (
@@ -48,6 +51,34 @@ export function buildTeleportContinuationMessages(params: {
       otid: `${params.teleportId}:continue`,
     },
   ];
+}
+
+function escapeSystemReminderText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function buildTeleportFailureMessages(params: {
+  teleportId: string;
+  error: string;
+  approvals?: NonNullable<TeleportContinuation["approvals"]>;
+}): IncomingMessage["messages"] {
+  const messages: IncomingMessage["messages"] = [];
+  if (params.approvals && params.approvals.length > 0) {
+    messages.push({
+      type: "approval",
+      approvals: params.approvals,
+      otid: params.teleportId,
+    });
+  }
+  messages.push({
+    role: "system",
+    content: `<system-reminder>Teleportation failed.\n\nError: ${escapeSystemReminderText(params.error)}\n\nContinue the existing task from this environment now.</system-reminder>`,
+    otid: `${params.teleportId}:failed`,
+  });
+  return messages;
 }
 
 function getPendingTeleports(
@@ -333,7 +364,7 @@ export function finishPendingTeleport(runtime: ConversationRuntime): void {
   if (claimed) emitClaimedTeleportReady(runtime.listener, claimed);
 }
 
-export function takeFailedTeleport(params: {
+function takeFailedTeleport(params: {
   listener: ListenerRuntime;
   teleportId: string;
   agentId: string;
@@ -349,4 +380,67 @@ export function takeFailedTeleport(params: {
   }
   params.listener.pendingTeleports?.delete(params.teleportId);
   return pending;
+}
+
+export function handleTeleportFailure(params: {
+  listener: ListenerRuntime;
+  command: TeleportFailedCommand;
+  socket: ListenerTransport;
+  onStatusChange?: StartListenerOptions["onStatusChange"];
+  getOrCreateScopedRuntime: (
+    listener: ListenerRuntime,
+    agentId?: string | null,
+    conversationId?: string | null,
+  ) => ConversationRuntime;
+  runDetachedListenerTask: (
+    commandName: string,
+    task: () => Promise<void>,
+  ) => void;
+  processIncomingMessage: (
+    msg: IncomingMessage,
+    socket: ListenerTransport,
+    runtime: ConversationRuntime,
+    onStatusChange?: StartListenerOptions["onStatusChange"],
+    connectionId?: string,
+  ) => Promise<void>;
+}): void {
+  const pending = takeFailedTeleport({
+    listener: params.listener,
+    teleportId: params.command.teleport_id,
+    agentId: params.command.runtime.agent_id,
+    conversationId: params.command.runtime.conversation_id,
+  });
+  if (!pending) return;
+
+  const runtime = params.getOrCreateScopedRuntime(
+    params.listener,
+    pending.agentId,
+    pending.conversationId,
+  );
+  emitLoopErrorNotice(params.socket, runtime, {
+    message: `Teleport failed: ${params.command.error}`,
+    stopReason: "error",
+    isTerminal: false,
+    agentId: pending.agentId,
+    conversationId: pending.conversationId,
+  });
+  params.runDetachedListenerTask("teleport_failed", async () => {
+    await params.processIncomingMessage(
+      {
+        type: "message",
+        connectionId: pending.connectionId,
+        agentId: pending.agentId,
+        conversationId: pending.conversationId,
+        messages: buildTeleportFailureMessages({
+          teleportId: params.command.teleport_id,
+          error: params.command.error,
+          approvals: pending.continuation?.approvals,
+        }),
+      },
+      params.socket,
+      runtime,
+      params.onStatusChange,
+      pending.connectionId,
+    );
+  });
 }
