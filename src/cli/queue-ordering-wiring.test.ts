@@ -1,6 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { readInteractiveAppSource } from "@/test-utils/read-interactive-app-source";
 
 function readAppSource(): string {
@@ -36,24 +34,6 @@ describe("queue ordering wiring", () => {
     expect(segment).toContain("onSubmitRef.current(concatenatedMessage)");
     expect(segment).toContain("!dequeueInFlightRef.current");
     expect(segment).toContain("queuedOverlayAction,");
-  });
-
-  test("ESC cancellation wakes queued notifications after resetting its ref guard", () => {
-    const interruptHandlerPath = fileURLToPath(
-      new URL("./app/use-interrupt-handler.ts", import.meta.url),
-    );
-    const source = readFileSync(interruptHandlerPath, "utf-8");
-
-    expect(source).toContain(
-      "setDequeueEpoch: Dispatch<SetStateAction<number>>",
-    );
-    expect(source).toContain(
-      "userCancelledRef.current = false;\n        // Clearing the ref",
-    );
-    expect(source).toContain(
-      "userCancelledRef.current = false;\n        setInterruptRequested(false);",
-    );
-    expect(source).toContain("setDequeueEpoch((epoch) => epoch + 1);");
   });
 
   test("queue display trim uses displayable-item count, not mergedCount", () => {

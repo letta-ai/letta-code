@@ -53,7 +53,6 @@ type InterruptHandlerContext = {
   setApprovalResults: Dispatch<SetStateAction<ApprovalDecision[]>>;
   setAutoDeniedApprovals: Dispatch<SetStateAction<AutoDeniedApproval[]>>;
   setAutoHandledResults: Dispatch<SetStateAction<AutoHandledToolResult[]>>;
-  setDequeueEpoch: Dispatch<SetStateAction<number>>;
   setInterruptRequested: Dispatch<SetStateAction<boolean>>;
   setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
   setPendingApprovals: Dispatch<SetStateAction<ApprovalRequest[]>>;
@@ -108,7 +107,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     setApprovalResults,
     setAutoDeniedApprovals,
     setAutoHandledResults,
-    setDequeueEpoch,
     setInterruptRequested,
     setIsExecutingTool,
     setPendingApprovals,
@@ -186,7 +184,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
 
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
-        abortControllerRef.current = null;
       }
 
       pendingInterruptRecoveryConversationIdRef.current =
@@ -215,16 +212,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
         });
-
-      // Delay flag reset to ensure React has flushed state updates before dequeue can fire.
-      // Use setTimeout(50) instead of setTimeout(0) - the longer delay ensures React's
-      // batched state updates have been fully processed before we allow the dequeue effect.
-      setTimeout(() => {
-        userCancelledRef.current = false;
-        // Clearing the ref does not re-render the coordinator. Bump the epoch
-        // so queued notifications are reconsidered after cancellation settles.
-        setDequeueEpoch((epoch) => epoch + 1);
-      }, 50);
 
       return;
     }
@@ -263,7 +250,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // NOW abort the stream - interrupted flag is already set
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
-        abortControllerRef.current = null; // Clear ref so isAgentBusy() returns false
       }
 
       // Set cancellation flag to prevent processConversation from starting
@@ -272,12 +258,9 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       userCancelledRef.current = true;
 
       // Increment generation to mark any in-flight processConversation as stale.
-      // The stale processConversation will check this and exit quietly without
-      // decrementing the ref (since we reset it here).
+      // Keep its lifecycle count and controller until its finally block runs;
+      // dequeue must not start a replacement turn while cancellation unwinds.
       conversationGenerationRef.current += 1;
-
-      // Reset the processing guard so the next message can start a new conversation.
-      processingConversationRef.current = 0;
 
       // Stop streaming and show error message (unless tool calls were cancelled,
       // since the tool result will show "Interrupted by user")
@@ -345,19 +328,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
         });
-
-      // Reset cancellation flags after cleanup is complete.
-      // Use setTimeout(50) instead of setTimeout(0) to ensure React has fully processed
-      // the streaming=false state before we allow the dequeue effect to start a new conversation.
-      // This prevents the "Maximum update depth exceeded" infinite render loop.
-      setTimeout(() => {
-        userCancelledRef.current = false;
-        setInterruptRequested(false);
-        // userCancelledRef is intentionally a ref, so resetting it alone does
-        // not wake the dequeue effect. Re-run it once the cancellation guard is
-        // cleared to deliver notifications queued before Esc.
-        setDequeueEpoch((epoch) => epoch + 1);
-      }, 50);
 
       return;
     } else {
