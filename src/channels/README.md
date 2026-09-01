@@ -239,7 +239,8 @@ activity stream does not emit a known sender's request, set
 `XCHAT_PEER_USER_IDS` to that sender's X user ID, rerun
 `letta channels configure xchat`, and restart the listener. The adapter resolves
 and polls that direct conversation explicitly whether or not the activity
-stream is configured.
+stream is configured. If X returns HTTP 402 for the activity stream, the
+listener stops reconnecting and uses polling until the listener is restarted.
 
 Send the bot a DM after the listener starts. The pairing code is stored on the
 listener machine before Letta Code tries to send it through X Chat and remains

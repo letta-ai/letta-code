@@ -25,6 +25,19 @@ export function safeErrorMessage(error: unknown): string {
   return error.message.replace(/xcbot_[A-Za-z0-9._-]+/g, "[redacted]");
 }
 
+export function isPaymentRequiredError(error: unknown): boolean {
+  if (isRecord(error)) {
+    const response = isRecord(error.response) ? error.response : null;
+    const status = Number(error.status ?? error.statusCode ?? response?.status);
+    if (status === 402) return true;
+  }
+  return (
+    error instanceof Error &&
+    (/\bHTTP 402\b/i.test(error.message) ||
+      /payment required/i.test(error.message))
+  );
+}
+
 export function activityBackfillIsUnauthorized(error: unknown): boolean {
   if (!isRecord(error) || !isRecord(error.data)) return false;
   const errors = error.data.errors;

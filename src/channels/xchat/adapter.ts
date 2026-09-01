@@ -26,6 +26,7 @@ import {
   activityBackfillIsUnauthorized,
   fromThreadId,
   isGroupConversation,
+  isPaymentRequiredError,
   isRateLimitError,
   messageSequenceId,
   messageTimestamp,
@@ -267,9 +268,11 @@ export class XChatChannelAdapter implements ChannelAdapter {
     if (!this.running) return;
     this.scheduleNextPoll();
     const identity = sdkAdapter.userName ? `@${sdkAdapter.userName}` : "bot";
-    const discovery = activityClient
+    const discovery = this.activityClient
       ? "activity stream enabled"
-      : "primary inbox only; configure the app Bearer token for Message requests";
+      : this.settings.activityToken
+        ? "polling only; activity stream unavailable"
+        : "polling only; app Bearer token not configured";
     this.startupLogger?.(`X Chat connected as ${identity} (${discovery})`);
   }
 
@@ -553,6 +556,27 @@ export class XChatChannelAdapter implements ChannelAdapter {
       : Math.max(SWEEP_WITHOUT_ACTIVITY_MS, this.settings.pollIntervalMs);
   }
 
+  private disableActivityStream(error: unknown): void {
+    const errorMessage = safeErrorMessage(error);
+    const reason =
+      errorMessage === "unknown error" && isPaymentRequiredError(error)
+        ? "HTTP 402: Payment Required"
+        : errorMessage;
+    this.activityAbortController?.abort();
+    this.activityAbortController = null;
+    this.activityStream = null;
+    this.activityClient = null;
+    this.pollDelayMs = this.fallbackSweepIntervalMs();
+    const message = `activity stream unavailable (${reason}); using polling only until restart.`;
+    debugWarn("X Chat", message);
+    this.startupLogger?.(`X Chat ${message}`);
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.scheduleNextPoll();
+  }
+
   private async startTyping(source: ChannelTurnSource): Promise<void> {
     if (
       source.channel !== XCHAT_CHANNEL_ID ||
@@ -591,7 +615,12 @@ export class XChatChannelAdapter implements ChannelAdapter {
   private async startActivityDiscovery(): Promise<void> {
     const apiClient = this.requireApiClient();
     const activityClient = this.activityClient;
-    if (!activityClient?.stream?.activity) return;
+    if (!activityClient?.stream?.activity) {
+      this.disableActivityStream(
+        new Error("X Chat activity stream is unavailable"),
+      );
+      return;
+    }
     for (const eventType of ["chat.received", "chat.conversation.join"]) {
       try {
         await apiClient.activity?.createSubscription({
@@ -610,6 +639,10 @@ export class XChatChannelAdapter implements ChannelAdapter {
     try {
       initialStream = await this.openActivityStream();
     } catch (error) {
+      if (isPaymentRequiredError(error)) {
+        this.disableActivityStream(error);
+        return;
+      }
       debugWarn(
         "X Chat",
         `activity stream unavailable; retrying: ${safeErrorMessage(error)}`,
@@ -635,6 +668,10 @@ export class XChatChannelAdapter implements ChannelAdapter {
           }
         } catch (error) {
           if (this.running) {
+            if (isPaymentRequiredError(error)) {
+              this.disableActivityStream(error);
+              return;
+            }
             debugWarn(
               "X Chat",
               `activity stream failed: ${safeErrorMessage(error)}`,
@@ -654,6 +691,10 @@ export class XChatChannelAdapter implements ChannelAdapter {
         stream = await this.openActivityStream();
         this.activityStream = stream;
       } catch (error) {
+        if (isPaymentRequiredError(error)) {
+          this.disableActivityStream(error);
+          return;
+        }
         debugWarn(
           "X Chat",
           `activity reconnect failed: ${safeErrorMessage(error)}`,
