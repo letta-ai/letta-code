@@ -1,7 +1,6 @@
 import { runAgentsSubcommand } from "./agents";
 import { runBackendSubcommand } from "./backend";
 import { runChannelsSubcommand } from "./channels";
-import { runCloudMcpSubcommand } from "./cloud-mcp";
 import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
 import { runEnvironmentsSubcommand } from "./environments";
@@ -55,7 +54,6 @@ export function subcommandNeedsEarlyBackendMode(
     case "sandbox":
     case "secret":
     case "server":
-    case "cloud-mcp":
     case "shared-memory":
     case "skills":
     case "teleport":
@@ -105,8 +103,6 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runTeleportSubcommand(rest);
     case "server":
       return runServerSubcommand(rest);
-    case "cloud-mcp":
-      return runCloudMcpSubcommand(rest);
     case "feedback":
       return runFeedbackSubcommand(rest);
     case "remote": // alias
