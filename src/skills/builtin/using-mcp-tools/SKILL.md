@@ -1,6 +1,6 @@
 ---
 name: using-mcp-tools
-description: Reference for the `letta mcp` CLI, which finds and invokes MCP tools available to this agent. A system reminder already lists your connected MCP servers and the basic search/schema/call commands; invoke this skill when you need more — browsing a server's tools, passing large or file-based arguments, tuning search, inspecting server configuration and auth, or troubleshooting missing servers, tools, and errors.
+description: Reference for the `letta mcp` CLI, which finds and invokes MCP tools available to this agent. A system reminder already lists your connected MCP servers and the basic search/schema/call commands; invoke this skill when you need more — browsing a server's tools, passing large or file-based arguments, tuning search, or troubleshooting missing servers, tools, and errors.
 ---
 
 # Using MCP tools
@@ -11,7 +11,7 @@ description: Reference for the `letta mcp` CLI, which finds and invokes MCP tool
 
 ```bash
 letta mcp list                                # servers: [{name, transport}]
-letta mcp get <server>                        # one server's connection configuration
+letta mcp get <server>                        # one server's connection configuration (credentials redacted)
 letta mcp tools [server]                      # tool names + descriptions only
 letta mcp tools [server] --full               # ...including every tool's complete schema
 letta mcp schema <tool-name>                  # one tool's complete schema
@@ -35,21 +35,11 @@ Every command accepts `--agent <id>`, defaulting to `LETTA_AGENT_ID`/`AGENT_ID` 
 - Exit codes: `0` success, `1` CLI/usage error (JSON on stderr: `{error: {code, message, hint?}}`), `2` the tool ran and returned an error result — read `content` for the server's message, fix the arguments, and retry.
 - Summarize relevant results instead of pasting large raw payloads.
 
-## Servers
-
-Two kinds of servers share one namespace:
-
-- **Cloud-connected servers** are attached to the agent on the Letta server (MCP servers page in ADE/chat, or the agent MCP API). They follow the agent to every environment and their tools execute server-side. `stdio`-type cloud servers cannot run on hosted Letta Cloud.
-- **Local client servers** are per-agent, per-machine settings the user configures in the Letta Code app. Their tools execute on this machine. Header values may reference environment variables as `${VAR_NAME}`, resolved at connect time; a missing variable is a hard error.
-
-`get` redacts known credential positions — header values, stdio env values, URL basic-auth, and query parameters or stdio flags with sensitive names (token/key/secret/password/auth/…). The redaction is name-based: a secret embedded in a URL path or behind an unrecognized flag name is printed as-is, so scan `get` output before pasting it somewhere visible.
-
-OAuth: a local http/sse server with no `Authorization` header uses the OAuth flow. The interactive browser handshake only happens in the Letta Code app; this CLI is non-interactive and reuses persisted credentials. On an auth error, ask the user to connect the server once in the app.
-
 ## Troubleshooting
 
 - `list` empty → no MCP servers are available. Ask the user to connect one on the Letta Cloud MCP servers page or configure a local one in the Letta Code app.
 - Cloud server with no tools (or `0 tools` in the reminder) → tools were never synced. Ask the user to resync it from the MCP servers page; the CLI has no refresh action.
-- `unauthorized` from a cloud server on `call` while `tools` still lists them → the stored connection lost or lacks credentials; the tool list is served from previously synced rows. Ask the user to re-authenticate the server on the MCP servers page.
+- `unauthorized` or another auth error on `call` → the server's stored credentials are missing or stale (`tools` can still list from previously synced rows). Ask the user to re-authenticate the server: cloud servers on the MCP servers page, local OAuth servers by connecting once in the Letta Code app — this CLI is non-interactive and only reuses persisted credentials.
+- `stdio`-type cloud servers cannot run on hosted Letta Cloud; tell the user instead of retrying.
 - `ambiguous_server_name` → two servers share a name; the error hint explains how to disambiguate.
 - Duplicate tool names across servers get a numeric suffix (`_2`); the printed name is always the callable one.
