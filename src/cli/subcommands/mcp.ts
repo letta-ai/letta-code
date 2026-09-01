@@ -1,6 +1,10 @@
 import { parseArgs } from "node:util";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { getBackend } from "@/backend";
-import { getClient as getDefaultClient } from "@/backend/api/client";
+import {
+  getClient as getDefaultClient,
+  getServerUrl,
+} from "@/backend/api/client";
 import {
   listUnifiedMcpServers,
   listUnifiedMcpTools,
@@ -85,7 +89,21 @@ interface CatalogTool {
 
 interface ToolCatalog {
   tools: CatalogTool[];
+  /** True when hosted Letta Cloud excluded stdio-type cloud servers. */
+  excludedHostedStdioServers: boolean;
   close(): Promise<void>;
+}
+
+/**
+ * Hosted Letta Cloud cannot execute stdio-type cloud-connected servers, so
+ * their synced tools must not surface through tools/schema/search/call.
+ */
+function defaultIsHostedLettaCloud(): boolean {
+  try {
+    return getServerUrl() === LETTA_CLOUD_API_URL;
+  } catch {
+    return !process.env.LETTA_BASE_URL;
+  }
 }
 
 export interface McpSubcommandDependencies {
@@ -95,6 +113,7 @@ export interface McpSubcommandDependencies {
   createOAuthSession?: typeof createMcpOAuthSession;
   getClient?: () => Promise<UnifiedMcpClient>;
   isServerMcpAvailable?: () => boolean;
+  isHostedLettaCloud?: () => boolean;
   readFile?: (path: string) => Promise<string>;
   readStdin?: () => Promise<string>;
   env?: NodeJS.ProcessEnv;
@@ -417,10 +436,18 @@ async function buildToolCatalog(
   const usedNames = new Set<string>();
 
   try {
-    const serverTargets = activeServers.filter(
+    const hostedLettaCloud = (
+      deps.isHostedLettaCloud ?? defaultIsHostedLettaCloud
+    )();
+    const allServerTargets = activeServers.filter(
       (target): target is Extract<ServerTarget, { kind: "server" }> =>
         target.kind === "server",
     );
+    const serverTargets = hostedLettaCloud
+      ? allServerTargets.filter(({ server }) => server.serverType !== "stdio")
+      : allServerTargets;
+    const excludedHostedStdioServers =
+      serverTargets.length !== allServerTargets.length;
     if (serverTargets.length > 0) {
       const client = await getServerClient(deps);
       const toolLists = await Promise.all(
@@ -499,6 +526,7 @@ async function buildToolCatalog(
 
     return {
       tools: catalog,
+      excludedHostedStdioServers,
       close: async () => {
         await Promise.allSettled(
           connections.map((connection) => connection.close()),
@@ -685,24 +713,32 @@ async function runSearch(
           catalogPromise,
         ]);
         catalog = resolvedCatalog;
-        const serverResults = searchResults.map((result) => {
+        const serverResults = searchResults.flatMap((result) => {
           const callable = resolvedCatalog.tools.find(
             (tool) =>
               tool.target.kind === "server" &&
               tool.target.toolId === result.toolId,
           );
           if (!callable) {
+            // The server-side index still contains tools from servers the
+            // catalog excluded (stdio-type cloud servers on hosted Letta
+            // Cloud); drop those instead of surfacing uncallable results.
+            if (resolvedCatalog.excludedHostedStdioServers) {
+              return [];
+            }
             throw new Error(
               `MCP search returned unavailable tool '${result.toolId}'`,
             );
           }
-          return {
-            tool:
-              result.jsonSchema === null
-                ? null
-                : { ...result.jsonSchema, name: callable.schema.name },
-            score: result.score,
-          };
+          return [
+            {
+              tool:
+                result.jsonSchema === null
+                  ? null
+                  : { ...result.jsonSchema, name: callable.schema.name },
+              score: result.score,
+            },
+          ];
         });
         if (!includeLocal) return serverResults;
         const localResults = searchLocalMcpTools({

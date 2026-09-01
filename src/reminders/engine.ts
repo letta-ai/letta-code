@@ -155,14 +155,21 @@ async function defaultListServerSideServers(
   if (!serverSideAvailable) {
     return null;
   }
-  const { getClient } = await import("@/backend/api/client");
+  const { getClient, getServerUrl } = await import("@/backend/api/client");
+  const { LETTA_CLOUD_API_URL } = await import("@/auth/oauth");
   const { listUnifiedMcpServers, listUnifiedMcpTools } = await import(
     "@/backend/api/unified-mcp"
   );
   const client = (await getClient()) as Parameters<
     typeof listUnifiedMcpServers
   >[0];
-  const servers = await listUnifiedMcpServers(client, agentId, 3_000);
+  const allServers = await listUnifiedMcpServers(client, agentId, 3_000);
+  // Hosted Letta Cloud cannot execute stdio-type cloud servers; do not
+  // advertise tools the agent cannot call.
+  const servers =
+    getServerUrl() === LETTA_CLOUD_API_URL
+      ? allServers.filter((server) => server.serverType !== "stdio")
+      : allServers;
   return Promise.all(
     servers.map(async (server) => ({
       name: server.serverName,
