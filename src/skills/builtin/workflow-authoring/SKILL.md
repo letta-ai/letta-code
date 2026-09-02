@@ -48,6 +48,9 @@ The `meta` object must be a PURE LITERAL — no variables, function calls,
 spreads, or template interpolation. Use the SAME phase titles in meta.phases
 as in phase() calls — titles are matched exactly.
 
+Workflow subagents currently require the API backend; the local store does not
+support agent-free conversations.
+
 ## Script body hooks
 
 - `agent(prompt, opts?)` → Promise. Spawn one subagent. Without `schema`,
@@ -57,7 +60,7 @@ as in phase() calls — titles are matched exactly.
   `.filter(Boolean)`. Options: `label` (display override), `phase` (progress
   group — use this inside pipeline()/parallel() stages to avoid races on the
   global phase() state), `schema`, `model` (default to omitting it — the
-  subagent inherits the default model, which is almost always correct),
+  subagent inherits the invoking conversation's model),
   `effort` (reasoning tier; use 'low' for cheap mechanical stages, higher for
   the hardest verify/judge stages — a call that sets `model` or `effort`
   runs on a fresh regular conversation of the ephemeral worker instead of a

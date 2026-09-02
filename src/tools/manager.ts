@@ -725,7 +725,7 @@ export interface ExternalToolDefinition {
   scopeId?: string;
   /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
   runtime?: {
-    agentId?: string;
+    agentId?: string | null;
     conversationId?: string;
   };
   /** Client-local executor owned by this tool (for example an MCP process). */

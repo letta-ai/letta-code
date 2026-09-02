@@ -20,6 +20,10 @@
       "type": "string",
       "description": "Execution ID of a prior Workflow invocation to resume from. Completed agent() calls with unchanged (prompt, opts) return their cached results instantly; only edited or new calls re-run."
     },
+    "model": {
+      "type": "string",
+      "description": "Default model for subagents. Omit to inherit the invoking conversation's model; per-call opts.model overrides this."
+    },
     "allowedTools": {
       "type": "array",
       "items": { "type": "string" },

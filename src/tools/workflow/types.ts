@@ -162,10 +162,8 @@ export interface SdkStreamMessage {
   event?: Record<string, unknown>;
 }
 
-export interface SdkSession {
-  send(message: string): Promise<void>;
-  stream(): AsyncGenerator<SdkStreamMessage>;
-  abort(): Promise<void>;
+export interface SdkQuery extends AsyncIterable<SdkStreamMessage> {
+  interrupt(): Promise<void>;
   close(): void;
 }
 
@@ -185,7 +183,6 @@ export interface SdkCustomTool {
 }
 
 export interface SdkClient {
-  createAgent(options?: Record<string, unknown>): Promise<string>;
-  createSession(agentId: string, options?: Record<string, unknown>): SdkSession;
-  agents: { delete(agentId: string): Promise<void> };
+  query(params: { prompt: string; options: Record<string, unknown> }): SdkQuery;
+  [Symbol.asyncDispose]?(): Promise<void>;
 }

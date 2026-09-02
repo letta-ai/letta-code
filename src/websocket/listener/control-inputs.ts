@@ -421,7 +421,7 @@ export async function handleAbortMessageInput(
     emitInterruptedStatusDelta: typeof emitInterruptedStatusDelta;
     scheduleQueuePump: typeof scheduleQueuePump;
     cancelConversation: (
-      agentId: string,
+      agentId: string | null,
       conversationId: string,
     ) => Promise<void>;
     cancelRun: (agentId: string, runId: string) => Promise<void>;
@@ -438,11 +438,19 @@ export async function handleAbortMessageInput(
     emitRuntimeStateUpdates,
     emitInterruptedStatusDelta,
     scheduleQueuePump,
-    cancelConversation: async (agentId: string, conversationId: string) => {
+    cancelConversation: async (
+      agentId: string | null,
+      conversationId: string,
+    ) => {
       const cancelId =
         conversationId === "default" || !conversationId
           ? agentId
           : conversationId;
+      if (!cancelId) {
+        throw new Error(
+          "Cannot cancel a runtime without an agent or conversation",
+        );
+      }
       await getBackend().cancelConversation(cancelId);
     },
     cancelRun: async (agentId: string, runId: string) => {
@@ -479,7 +487,13 @@ export async function handleAbortMessageInput(
   }
 
   const cancellation = scopedRuntime.turnLifecycle.requestCancellation({
-    waitForExternalSettlement: hasActiveTurn && Boolean(scopedRuntime.agentId),
+    waitForExternalSettlement:
+      hasActiveTurn &&
+      Boolean(
+        scopedRuntime.agentId ||
+          (scopedRuntime.conversationId &&
+            scopedRuntime.conversationId !== "default"),
+      ),
   });
   const interruptedRunId = cancellation.runId;
   const pendingRequestsSnapshot = hasPendingApprovals
@@ -579,21 +593,25 @@ export async function handleAbortMessageInput(
 
   const cancelConversationId = scopedRuntime.conversationId;
   const cancelAgentId = scopedRuntime.agentId;
-  if (cancelAgentId) {
+  if (
+    cancelAgentId ||
+    (cancelConversationId && cancelConversationId !== "default")
+  ) {
     const cancelRunId = interruptedRunId ?? params.command.run_id ?? null;
     // Target the interrupted run when possible so this abort can never select
     // a replacement turn. Older backends may reject run-scoped cancellation;
     // the lifecycle fence also makes the conversation-wide fallback safe.
-    const backendCancellation = cancelRunId
-      ? resolvedDeps
-          .cancelRun(cancelAgentId, cancelRunId)
-          .catch(() =>
-            resolvedDeps.cancelConversation(
-              cancelAgentId,
-              cancelConversationId,
-            ),
-          )
-      : resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId);
+    const backendCancellation =
+      cancelRunId && cancelAgentId
+        ? resolvedDeps
+            .cancelRun(cancelAgentId, cancelRunId)
+            .catch(() =>
+              resolvedDeps.cancelConversation(
+                cancelAgentId,
+                cancelConversationId,
+              ),
+            )
+        : resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId);
     void backendCancellation
       .catch(() => {
         // Fire-and-forget

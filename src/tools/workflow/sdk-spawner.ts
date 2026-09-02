@@ -1,23 +1,23 @@
 /**
  * SDK-backed subagent execution.
  *
- * All subagents in a run share one ephemeral worker agent; each agent() call
- * opens a fresh stateless session (its own conversation, no MemFS load), so
- * subagents are context-isolated without polluting anyone's long-term memory.
- * The worker agent is deleted when the run finishes.
+ * Every agent() call runs in its own agent-free ephemeral conversation. The
+ * model and provider settings are installed atomically when that conversation
+ * is created, so concurrent calls cannot mutate a shared worker agent.
  *
  * Structured output: when a call passes a schema, the session gets a custom
  * StructuredOutput SDK tool whose parameters ARE that schema. The subagent is
  * instructed to deliver its result by calling it; arguments are validated in
  * the tool's execute() and invalid calls return a model-visible error so the
- * model corrects itself. One nudge turn is sent if the tool was never called.
+ * model corrects itself. One fresh query is retried if the tool was never
+ * called.
  */
 
 import { validateAgainstSchema } from "./schema-validate.ts";
 import type {
   SdkClient,
   SdkCustomTool,
-  SdkSession,
+  SdkQuery,
   SubagentOutcome,
   SubagentRequest,
   SubagentSpawner,
@@ -26,7 +26,7 @@ import type {
 export interface SdkSpawnerConfig {
   /** Default tool allowlist for subagents. Keep it read-only by default. */
   allowedTools?: string[];
-  /** Default model for subagents (omit to inherit the agent default). */
+  /** Default model resolved from the invoking conversation. */
   model?: string;
   /** Default working directory for subagent sessions. */
   cwd?: string;
@@ -122,7 +122,7 @@ function usageTokensFromEvent(
     : undefined;
 }
 
-async function drainTurn(session: SdkSession): Promise<DrainedTurn> {
+async function drainTurn(query: SdkQuery): Promise<DrainedTurn> {
   let assistantText = "";
   let resultText: string | undefined;
   let success = false;
@@ -130,7 +130,7 @@ async function drainTurn(session: SdkSession): Promise<DrainedTurn> {
   let costUsd: number | undefined;
   let durationMs: number | undefined;
   let totalTokens: number | undefined;
-  for await (const message of session.stream()) {
+  for await (const message of query) {
     if (message.type === "assistant") assistantText += message.content ?? "";
     if (message.type === "stream_event") {
       const tokens = usageTokensFromEvent(message.event);
@@ -159,9 +159,6 @@ function sumOptional(a?: number, b?: number): number | undefined {
 }
 
 export class SdkSubagentPool {
-  private workerAgentId: string | null = null;
-  private workerAgentPromise: Promise<string> | null = null;
-
   constructor(
     private readonly client: SdkClient,
     private readonly config: SdkSpawnerConfig = {},
@@ -172,29 +169,27 @@ export class SdkSubagentPool {
     return (request, signal) => this.run(request, signal);
   }
 
-  private ensureWorkerAgent(): Promise<string> {
-    if (!this.workerAgentPromise) {
-      this.workerAgentPromise = this.client
-        .createAgent({
-          name: "workflow-worker",
-          description:
-            "Ephemeral worker agent for Workflow-tool subagent sessions.",
-          tags: ["letta-workflow:worker"],
-        })
-        .then((agentId) => {
-          this.workerAgentId = agentId;
-          return agentId;
-        });
-    }
-    return this.workerAgentPromise;
-  }
-
   private async run(
     request: SubagentRequest,
     signal: AbortSignal,
   ): Promise<SubagentOutcome> {
     const { prompt, options } = request;
-    const agentId = await this.ensureWorkerAgent();
+    const model = options.model ?? this.config.model;
+    if (!model) {
+      return {
+        value: null,
+        failed: true,
+        error:
+          "Workflow subagent requires a model because the invoking conversation model could not be resolved.",
+      };
+    }
+    if (signal.aborted) {
+      return {
+        value: null,
+        failed: true,
+        error: "Workflow subagent interrupted",
+      };
+    }
     const captured: unknown[] = [];
     const preamble = options.schema ? STRUCTURED_PREAMBLE : SUBAGENT_PREAMBLE;
     const appendParts = [
@@ -210,43 +205,64 @@ export class SdkSubagentPool {
       ...(options.schema ? ["StructuredOutput"] : []),
     ];
 
-    // Every createSession() opens a fresh conversation on the worker, so each
-    // call is context-isolated either way. Stateless additionally skips the
-    // worker's MemFS/transcript, but the SDK refuses model/reasoningEffort on
-    // stateless sessions (they would persist); calls that set them run on a
-    // regular session where the override scopes to that new conversation.
-    const model = options.model ?? this.config.model;
-    const stateless = model === undefined && options.effort === undefined;
-    let session: SdkSession;
-    try {
-      session = this.client.createSession(agentId, {
-        stateless,
-        permissionMode: "unrestricted",
-        allowedTools,
-        ...(model ? { model } : {}),
-        ...(options.effort ? { reasoningEffort: options.effort } : {}),
-        ...((options.cwd ?? this.config.cwd)
-          ? { cwd: options.cwd ?? this.config.cwd }
-          : {}),
-        ...(options.schema
-          ? { tools: [buildStructuredOutputTool(options.schema, captured)] }
-          : {}),
-      });
-    } catch (error) {
-      // Option validation errors are per-call failures, not workflow crashes.
-      return { value: null, failed: true, error: String(error) };
-    }
+    const queryOptions: Record<string, unknown> = {
+      model,
+      system: appendParts.join("\n\n"),
+      permissionMode: "unrestricted",
+      allowedTools,
+      skillSources: [],
+      ...(options.effort
+        ? { modelSettings: { reasoning_effort: options.effort } }
+        : {}),
+      ...((options.cwd ?? this.config.cwd)
+        ? { cwd: options.cwd ?? this.config.cwd }
+        : {}),
+      ...(options.schema
+        ? { tools: [buildStructuredOutputTool(options.schema, captured)] }
+        : {}),
+    };
 
-    const abort = () => void session.abort().catch(() => {});
+    let currentQuery: SdkQuery | null = null;
+    let cancellationReject: ((error: Error) => void) | null = null;
+    const cancellation = new Promise<never>((_resolve, reject) => {
+      cancellationReject = reject;
+    });
+    const cancel = (reason: string) => {
+      const query = currentQuery;
+      if (query) {
+        void query.interrupt().catch(() => undefined);
+        query.close();
+      }
+      cancellationReject?.(new Error(reason));
+      cancellationReject = null;
+    };
+    const abort = () => cancel("Workflow subagent interrupted");
     signal.addEventListener("abort", abort, { once: true });
     const timeout = options.timeoutMs
-      ? setTimeout(abort, options.timeoutMs)
+      ? setTimeout(
+          () =>
+            cancel(`Workflow subagent timed out after ${options.timeoutMs}ms`),
+          options.timeoutMs,
+        )
       : null;
+    timeout?.unref();
+
+    const runQuery = async (queryPrompt: string) => {
+      const query = this.client.query({
+        prompt: queryPrompt,
+        options: queryOptions,
+      });
+      currentQuery = query;
+      try {
+        return await Promise.race([drainTurn(query), cancellation]);
+      } finally {
+        query.close();
+        if (currentQuery === query) currentQuery = null;
+      }
+    };
 
     try {
-      const fullPrompt = `${appendParts.join("\n\n")}\n\n---\n\n${prompt}`;
-      await session.send(fullPrompt);
-      let turn = await drainTurn(session);
+      let turn = await runQuery(prompt);
 
       if (
         options.schema &&
@@ -254,11 +270,11 @@ export class SdkSubagentPool {
         turn.success &&
         !signal.aborted
       ) {
-        // Nudge once: the model answered in prose instead of calling the tool.
-        await session.send(
-          "You did not call the StructuredOutput tool. Call it now with your final result; its arguments must match the schema.",
+        // Retry once in a fresh agent-free conversation. query() is one-shot,
+        // so there is no persistent session to nudge.
+        const nudged = await runQuery(
+          `${prompt}\n\nYour previous attempt did not call StructuredOutput. Call it exactly once now with the final result matching the schema.`,
         );
-        const nudged = await drainTurn(session);
         turn = {
           ...nudged,
           costUsd: sumOptional(turn.costUsd, nudged.costUsd),
@@ -303,21 +319,11 @@ export class SdkSubagentPool {
     } finally {
       if (timeout) clearTimeout(timeout);
       signal.removeEventListener("abort", abort);
-      session.close();
     }
   }
 
-  /** Delete the ephemeral worker agent. Safe to call when none was created. */
+  /** Release SDK-owned App Server and transport resources. */
   async cleanup(): Promise<void> {
-    if (this.workerAgentId) {
-      const agentId = this.workerAgentId;
-      this.workerAgentId = null;
-      this.workerAgentPromise = null;
-      try {
-        await this.client.agents.delete(agentId);
-      } catch {
-        // Leaked workers carry the letta-workflow:worker tag for manual cleanup.
-      }
-    }
+    await this.client[Symbol.asyncDispose]?.().catch(() => undefined);
   }
 }

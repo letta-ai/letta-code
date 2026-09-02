@@ -2,126 +2,102 @@ import { describe, expect, test } from "bun:test";
 import { SdkSubagentPool } from "./sdk-spawner.ts";
 import type {
   SdkClient,
-  SdkSession,
+  SdkQuery,
   SdkStreamMessage,
   SubagentRequest,
 } from "./types.ts";
 
-function request(
-  options: SubagentRequest["options"] = {},
-  prompt = "hello",
-): SubagentRequest {
-  return { prompt, options, cacheKey: "k", occurrence: 0, callIndex: 0 };
-}
-
-function fakeSession(messages: SdkStreamMessage[]): SdkSession {
+function request(options: SubagentRequest["options"] = {}): SubagentRequest {
   return {
-    send: async () => {},
-    async *stream() {
-      for (const message of messages) yield message;
-    },
-    abort: async () => {},
-    close: () => {},
+    prompt: "inspect the repository",
+    options,
+    cacheKey: "cache-key",
+    occurrence: 0,
+    callIndex: 0,
   };
 }
 
-function fakeClient(params: {
-  onCreateSession: (options: Record<string, unknown>) => SdkSession;
-}): SdkClient & { deleted: string[] } {
-  const deleted: string[] = [];
+function completedQuery(messages: SdkStreamMessage[]): SdkQuery {
   return {
-    deleted,
-    createAgent: async () => "agent-worker",
-    createSession: (_agentId, options) => params.onCreateSession(options ?? {}),
-    agents: {
-      delete: async (agentId) => {
-        deleted.push(agentId);
-      },
+    async *[Symbol.asyncIterator]() {
+      yield* messages;
     },
+    async interrupt() {},
+    close() {},
   };
 }
-
-const RESULT_OK: SdkStreamMessage = {
-  type: "result",
-  success: true,
-  result: "done",
-  totalCostUsd: 0.02,
-  durationMs: 1200,
-};
 
 describe("SdkSubagentPool", () => {
-  test("plain calls run as stateless sessions without persisted options", async () => {
-    const seen: Record<string, unknown>[] = [];
-    const client = fakeClient({
-      onCreateSession: (options) => {
-        seen.push(options);
-        return fakeSession([RESULT_OK]);
+  test("runs each call as an agent-free query with isolated model settings", async () => {
+    const calls: Array<{
+      prompt: string;
+      options: Record<string, unknown>;
+    }> = [];
+    const client: SdkClient = {
+      query(params) {
+        calls.push(params);
+        return completedQuery([
+          { type: "assistant", content: "done" },
+          { type: "result", success: true, result: "done" },
+        ]);
       },
+    };
+    const pool = new SdkSubagentPool(client, {
+      cwd: "/repo",
+      model: "openai/gpt-5.6-luna",
     });
-    const pool = new SdkSubagentPool(client);
-    const outcome = await pool.spawner(request(), new AbortController().signal);
+
+    const outcome = await pool.spawner(
+      request({ effort: "high", systemPrompt: "Focus on runtime behavior." }),
+      new AbortController().signal,
+    );
+
     expect(outcome).toMatchObject({ value: "done", failed: false });
-    expect(seen[0]).toMatchObject({ stateless: true });
-    expect(seen[0]).not.toHaveProperty("model");
-    expect(seen[0]).not.toHaveProperty("reasoningEffort");
-  });
-
-  test("model or effort overrides run on a fresh regular session", async () => {
-    const seen: Record<string, unknown>[] = [];
-    const client = fakeClient({
-      onCreateSession: (options) => {
-        seen.push(options);
-        return fakeSession([RESULT_OK]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      prompt: "inspect the repository",
+      options: {
+        model: "openai/gpt-5.6-luna",
+        modelSettings: { reasoning_effort: "high" },
+        cwd: "/repo",
+        permissionMode: "unrestricted",
+        allowedTools: ["Read", "Grep", "Glob"],
+        skillSources: [],
       },
     });
-    const pool = new SdkSubagentPool(client);
-    await pool.spawner(
-      request({ effort: "low" }),
-      new AbortController().signal,
+    expect(String(calls[0]?.options.system)).toContain(
+      "Focus on runtime behavior.",
     );
-    await pool.spawner(
-      request({ model: "openai/gpt-5.5" }),
-      new AbortController().signal,
-    );
-    expect(seen[0]).toMatchObject({ stateless: false, reasoningEffort: "low" });
-    expect(seen[1]).toMatchObject({
-      stateless: false,
-      model: "openai/gpt-5.5",
-    });
   });
 
-  test("session option validation errors become failed outcomes", async () => {
-    const client = fakeClient({
-      onCreateSession: () => {
-        throw new Error("stateless sessions cannot set reasoningEffort");
-      },
-    });
-    const pool = new SdkSubagentPool(client);
-    const outcome = await pool.spawner(request(), new AbortController().signal);
-    expect(outcome.failed).toBe(true);
-    expect(outcome.value).toBeNull();
-    expect(outcome.error).toContain("reasoningEffort");
-  });
-
-  test("sums usage_statistics stream events into totalTokens", async () => {
-    const client = fakeClient({
-      onCreateSession: () =>
-        fakeSession([
+  test("sums usage statistics from an agent-free query", async () => {
+    const client: SdkClient = {
+      query() {
+        return completedQuery([
           {
             type: "stream_event",
             event: { message_type: "usage_statistics", total_tokens: 1500 },
           },
-          { type: "assistant", content: "partial" },
           {
             type: "stream_event",
             event: { message_type: "usage_statistics", total_tokens: 2500 },
           },
-          { type: "stream_event", event: { message_type: "stop_reason" } },
-          RESULT_OK,
-        ]),
+          {
+            type: "result",
+            success: true,
+            result: "done",
+            totalCostUsd: 0.02,
+            durationMs: 1200,
+          },
+        ]);
+      },
+    };
+    const pool = new SdkSubagentPool(client, {
+      model: "openai/gpt-5.6-luna",
     });
-    const pool = new SdkSubagentPool(client);
+
     const outcome = await pool.spawner(request(), new AbortController().signal);
+
     expect(outcome).toMatchObject({
       value: "done",
       totalTokens: 4000,
@@ -130,14 +106,93 @@ describe("SdkSubagentPool", () => {
     });
   });
 
-  test("cleanup deletes the shared worker agent once", async () => {
-    const client = fakeClient({
-      onCreateSession: () => fakeSession([RESULT_OK]),
+  test("captures StructuredOutput from a query-scoped custom tool", async () => {
+    const client: SdkClient = {
+      query(params) {
+        const tools = params.options.tools as Array<{
+          execute(toolCallId: string, args: unknown): Promise<unknown>;
+        }>;
+        return {
+          async *[Symbol.asyncIterator]() {
+            await tools[0]?.execute("call-1", { answer: 42 });
+            yield { type: "result", success: true };
+          },
+          async interrupt() {},
+          close() {},
+        };
+      },
+    };
+    const pool = new SdkSubagentPool(client, {
+      model: "openai/gpt-5.6-luna",
     });
+
+    const outcome = await pool.spawner(
+      request({
+        schema: {
+          type: "object",
+          properties: { answer: { type: "number" } },
+          required: ["answer"],
+        },
+      }),
+      new AbortController().signal,
+    );
+
+    expect(outcome).toMatchObject({
+      value: { answer: 42 },
+      failed: false,
+    });
+  });
+
+  test("settles locally when a query exceeds its timeout", async () => {
+    let interrupted = 0;
+    let closed = 0;
+    const client: SdkClient = {
+      query() {
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              next: () =>
+                new Promise<IteratorResult<SdkStreamMessage>>(() => {}),
+            };
+          },
+          async interrupt() {
+            interrupted += 1;
+          },
+          close() {
+            closed += 1;
+          },
+        };
+      },
+    };
+    const pool = new SdkSubagentPool(client, {
+      model: "openai/gpt-5.6-luna",
+    });
+
+    const outcome = await pool.spawner(
+      request({ timeoutMs: 10 }),
+      new AbortController().signal,
+    );
+
+    expect(outcome.failed).toBe(true);
+    expect(outcome.error).toContain("timed out after 10ms");
+    expect(interrupted).toBe(1);
+    expect(closed).toBeGreaterThanOrEqual(1);
+  });
+
+  test("disposes SDK-owned resources without creating a worker agent", async () => {
+    let disposed = false;
+    const client: SdkClient = {
+      query() {
+        return completedQuery([]);
+      },
+      async [Symbol.asyncDispose]() {
+        disposed = true;
+      },
+    };
     const pool = new SdkSubagentPool(client);
-    await pool.spawner(request(), new AbortController().signal);
+
     await pool.cleanup();
-    await pool.cleanup();
-    expect(client.deleted).toEqual(["agent-worker"]);
+
+    expect(disposed).toBe(true);
   });
 });

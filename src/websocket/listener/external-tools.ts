@@ -91,7 +91,7 @@ function toExternalToolDefinition(
     ),
     ...(scopeId !== undefined ? { scopeId } : {}),
     runtime: {
-      agentId: runtime.agent_id ?? undefined,
+      agentId: runtime.agent_id,
       conversationId: runtime.conversation_id,
     },
   };

@@ -1,7 +1,7 @@
 /**
  * Workflow tool: launches a workflow script that orchestrates multiple
  * subagents deterministically. The engine lives in @/tools/workflow; each
- * agent() call in the script runs as a stateless Letta session spawned via
+ * agent() call in the script runs in an agent-free ephemeral conversation via
  * @letta-ai/letta-agent-sdk (loaded lazily — see @/tools/workflow/sdk-loader).
  *
  * The run happens in the background: the tool validates the script, registers
@@ -18,6 +18,9 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { getConversationId } from "@/agent/context";
+import { getPrimaryAgentModelHandle } from "@/agent/subagents/subagent-model";
+import { resolveBackendMode } from "@/backend/backend-mode";
 import {
   finishWorkflowExecution,
   recordWorkflowProgress,
@@ -61,7 +64,7 @@ interface WorkflowArgs {
   args?: unknown;
   budgetUsd?: number;
   resumeFromExecutionId?: string;
-  backend?: string;
+  model?: string;
   allowedTools?: string[];
   // Injected by the tool manager; not in the JSON schema.
   signal?: AbortSignal;
@@ -88,9 +91,17 @@ async function createSdkSpawner(
   args: WorkflowArgs,
 ): Promise<WorkflowSpawnerHandle> {
   const sdk = await loadAgentSdk();
-  const client = sdk.createClient(args.backend ?? "local");
+  const parentModel = args.model
+    ? args.model
+    : (
+        await getPrimaryAgentModelHandle({
+          conversationId: getConversationId(),
+        })
+      ).handle;
+  const client = sdk.createClient("local");
   const pool = new SdkSubagentPool(client, {
     cwd: process.cwd(),
+    ...(parentModel ? { model: parentModel } : {}),
     ...(Array.isArray(args.allowedTools) && args.allowedTools.length > 0
       ? { allowedTools: args.allowedTools }
       : {}),
@@ -258,6 +269,13 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   if (!script) {
     return {
       toolReturn: "Provide `script` (inline source) or `scriptPath`.",
+      status: "error",
+    };
+  }
+  if (resolveBackendMode() !== "api") {
+    return {
+      toolReturn:
+        "Workflow agent() calls require the API backend because agent-free conversations are not supported by the local store.",
       status: "error",
     };
   }

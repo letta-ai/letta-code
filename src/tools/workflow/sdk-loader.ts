@@ -54,14 +54,23 @@ export async function loadAgentSdk(): Promise<LoadedSdk> {
   for (const specifier of specifiers) {
     try {
       const sdk = (await import(specifier)) as {
-        LettaAgentClient: new (options: { backend: string }) => SdkClient;
+        LettaAgentClient: new (options: {
+          backend: string;
+          appServer?: { harnessBackend: "api" | "local" };
+        }) => SdkClient;
       };
       if (typeof sdk.LettaAgentClient !== "function") {
         attempts.push(`${specifier}: module has no LettaAgentClient export`);
         continue;
       }
       return {
-        createClient: (backend) => new sdk.LettaAgentClient({ backend }),
+        createClient: (backend) =>
+          new sdk.LettaAgentClient({
+            backend,
+            ...(backend === "local"
+              ? { appServer: { harnessBackend: "api" as const } }
+              : {}),
+          }),
       };
     } catch (error) {
       attempts.push(`${specifier}: ${String(error)}`);
