@@ -167,7 +167,7 @@ describe("Workflow tool (background launch)", () => {
     );
 
     await waitFor(
-      () => getWorkflowExecution(taskId as string)?.agentsRunning === 2,
+      () => (getWorkflowExecution(taskId as string)?.agentsRunning ?? 0) >= 1,
     );
     const live = getWorkflowExecution(taskId as string);
     expect(live?.status).toBe("running");
@@ -220,7 +220,7 @@ describe("Workflow tool (background launch)", () => {
     const result = await workflow({ script: SCRIPT });
     const taskId = /Task ID: (workflow_\d+)/.exec(result.toolReturn)?.[1];
     await waitFor(
-      () => getWorkflowExecution(taskId as string)?.agentsRunning === 2,
+      () => (getWorkflowExecution(taskId as string)?.agentsRunning ?? 0) >= 1,
     );
 
     const stopped = await task_stop({ task_id: taskId as string });

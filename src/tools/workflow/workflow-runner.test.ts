@@ -75,6 +75,7 @@ return r.filter(Boolean).length;`),
   (prev, item) => agent('s2:' + item),
 )`),
       executionsDir: tempRunsDir(),
+      maxConcurrent: 2,
     });
     // If stages were barriers, s2:fast would wait on s1:slow -> deadlock.
     expect(run.result).toEqual(["s2:fast", "s2:slow"]);
