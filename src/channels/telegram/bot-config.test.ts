@@ -21,10 +21,10 @@ function withProxyEnvironment(
     PROXY_ENVIRONMENT_KEYS.map((key) => [key, process.env[key]]),
   );
   for (const key of PROXY_ENVIRONMENT_KEYS) {
-    const value = values[key];
-    if (value === undefined) {
-      delete process.env[key];
-    } else {
+    delete process.env[key];
+  }
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined) {
       process.env[key] = value;
     }
   }
@@ -33,10 +33,11 @@ function withProxyEnvironment(
     run();
   } finally {
     for (const key of PROXY_ENVIRONMENT_KEYS) {
+      delete process.env[key];
+    }
+    for (const key of PROXY_ENVIRONMENT_KEYS) {
       const value = previous[key];
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
+      if (value !== undefined) {
         process.env[key] = value;
       }
     }
