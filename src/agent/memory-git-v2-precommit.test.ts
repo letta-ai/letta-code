@@ -62,7 +62,7 @@ describe("MemFS v2 pre-commit hook", () => {
     if (repo) rmSync(repo, { recursive: true, force: true });
   });
 
-  test("validates the projected tree while ignoring skills and silent directories", () => {
+  test("requires indexes for Markdown directories while ignoring skills", () => {
     repo = initRepo("memfs-v2-hook-");
     installPreCommitHook(repo, true);
 
@@ -82,7 +82,11 @@ describe("MemFS v2 pre-commit hook", () => {
         cwd: repo,
       },
     );
-    execFileSync("git", ["commit", "-qm", "valid v2 memory"], { cwd: repo });
+    const missingIndex = tryCommit(repo, "reject unindexed memory");
+    expect(missingIndex.status).not.toBe(0);
+    expect(missingIndex.stdout + missingIndex.stderr).toContain(
+      "silent/notes.md: missing required index silent/MEMORY.md",
+    );
 
     writeFileSync(
       join(repo, "silent", "MEMORY.md"),
@@ -99,7 +103,11 @@ describe("MemFS v2 pre-commit hook", () => {
       "silent/notes.md: missing frontmatter",
     );
 
-    execFileSync("git", ["reset", "--hard", "HEAD"], { cwd: repo });
+    writeFileSync(join(repo, "silent", "notes.md"), v2Memory("Indexed.\n"));
+    execFileSync("git", ["add", "silent/notes.md"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "seed valid v2 memory"], {
+      cwd: repo,
+    });
     writeFileSync(
       join(repo, "persona.md"),
       '---\nname: "Persona"\ndescription: "Identity"\nextra: "no"\n---\nPersistent.\n',
@@ -113,6 +121,72 @@ describe("MemFS v2 pre-commit hook", () => {
     expect(extraKey.stdout + extraKey.stderr).toContain(
       "unknown frontmatter key 'extra' (allowed: name description)",
     );
+  });
+
+  test("applies canonical v2 defaults when the tracked config is absent", () => {
+    repo = initRepo("memfs-v2-default-constraints-");
+    installPreCommitHook(repo, true);
+
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    writeFileSync(join(repo, "persona.md"), v2Memory("p".repeat(20_000)));
+    execFileSync("git", ["add", "MEMORY.md", "persona.md"], { cwd: repo });
+
+    const result = tryCommit(repo, "reject default file overflow");
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "exceeds 20000 from maxFileCharacters",
+    );
+  });
+
+  test("fills fields missing from an older v2 config with canonical defaults", () => {
+    repo = initRepo("memfs-v2-upgraded-defaults-");
+    seedConstraints(repo, {
+      maxDepth: 2,
+      maxFileCharacters: 20_000,
+    });
+    installPreCommitHook(repo, true);
+
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    for (let index = 0; index < 5; index += 1) {
+      writeFileSync(
+        join(repo, `core-${index}.md`),
+        v2Memory("c".repeat(16_000), `Core ${index}`),
+      );
+    }
+    execFileSync("git", ["add", "."], { cwd: repo });
+
+    const result = tryCommit(repo, "reject upgraded core overflow");
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "core memory exceeds maxCoreMemoryCharacters 80000",
+    );
+  });
+
+  test("limits the combined root memory while excluding deferred child files", () => {
+    repo = initRepo("memfs-v2-core-limit-");
+    seedConstraints(repo, {
+      maxDepth: 2,
+      maxFileCharacters: 1_000,
+      maxCoreMemoryCharacters: 220,
+    });
+    installPreCommitHook(repo, true);
+
+    mkdirSync(join(repo, "reference"));
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    writeFileSync(join(repo, "reference", "MEMORY.md"), "# Reference\n");
+    writeFileSync(
+      join(repo, "reference", "large.md"),
+      v2Memory("d".repeat(700)),
+    );
+    writeFileSync(join(repo, "persona.md"), v2Memory("p".repeat(70)));
+    writeFileSync(join(repo, "soul.md"), v2Memory("s".repeat(70)));
+    execFileSync("git", ["add", "."], { cwd: repo });
+
+    const result = tryCommit(repo, "reject oversized core memory");
+    const output = result.stdout + result.stderr;
+    expect(result.status).not.toBe(0);
+    expect(output).toContain("core memory exceeds maxCoreMemoryCharacters 220");
+    expect(output).not.toContain("reference/large.md: core memory");
   });
 
   test("applies the default file limit unless the first glob override matches", () => {
@@ -221,7 +295,11 @@ describe("MemFS v2 pre-commit hook", () => {
 
     const result = tryCommit(repo, "delete marker and grow memory");
     expect(result.status).not.toBe(0);
-    expect(result.stdout + result.stderr).toContain(
+    const output = result.stdout + result.stderr;
+    expect(output).toContain(
+      "MEMORY.md: root memory index is required for MemFS v2",
+    );
+    expect(output).toContain(
       "persona.md: 145 characters exceeds 80 from maxFileCharacters",
     );
   });
@@ -251,7 +329,10 @@ describe("MemFS v2 pre-commit hook", () => {
 
   test("streams staged files larger than the default child-process buffer", () => {
     repo = initRepo("memfs-v2-large-file-");
-    seedConstraints(repo, { maxFileCharacters: 2_000_000 });
+    seedConstraints(repo, {
+      maxFileCharacters: 2_000_000,
+      maxCoreMemoryCharacters: 2_000_000,
+    });
     installPreCommitHook(repo, true);
 
     writeFileSync(join(repo, "MEMORY.md"), "m".repeat(1_100_000));

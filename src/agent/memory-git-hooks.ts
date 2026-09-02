@@ -46,7 +46,10 @@ memory_layout_policy_file="$(git rev-parse --git-common-dir 2>/dev/null)/${MEMOR
 memory_layout_policy=$(cat "$memory_layout_policy_file" 2>/dev/null || true)
 
 validate_memory_constraints() {
-  if git cat-file -e ":${MEMORY_CONSTRAINTS_CONFIG_PATH}" 2>/dev/null || \
+  if { [ "$memory_layout_policy" = "root-marker" ] && \
+       { git cat-file -e ":MEMORY.md" 2>/dev/null || \
+         git cat-file -e "HEAD:MEMORY.md" 2>/dev/null; }; } || \
+     git cat-file -e ":${MEMORY_CONSTRAINTS_CONFIG_PATH}" 2>/dev/null || \
      git cat-file -e "HEAD:${MEMORY_CONSTRAINTS_CONFIG_PATH}" 2>/dev/null; then
     node "$(git rev-parse --git-common-dir)/hooks/${MEMORY_CONSTRAINTS_VALIDATOR_NAME}" || exit $?
   fi
@@ -116,7 +119,8 @@ use_v2_validation=false
 case "$memory_layout_policy" in
   shared-memory) use_v2_validation=true ;;
   root-marker)
-    if git cat-file -e ":MEMORY.md" 2>/dev/null; then
+    if git cat-file -e ":MEMORY.md" 2>/dev/null || \
+       git cat-file -e "HEAD:MEMORY.md" 2>/dev/null; then
       use_v2_validation=true
     fi
     ;;
@@ -382,4 +386,10 @@ export function installPostCommitHook(dir: string): void {
   writeFileSync(hookPath, POST_COMMIT_HOOK_SCRIPT, "utf-8");
   chmodSync(hookPath, 0o755);
   debugLog("memfs-git", "Installed post-commit memory-repository hook");
+}
+
+/** Refresh every harness-owned Git hook for an API-backed memory checkout. */
+export function installMemoryGitHooks(dir: string): void {
+  installPreCommitHook(dir, true);
+  installPostCommitHook(dir);
 }
