@@ -13,6 +13,7 @@ type FatalScenario =
 interface ScenarioResult {
   exitCode: number;
   output: string;
+  stderr: string;
 }
 
 const handlerModuleUrl = pathToFileURL(
@@ -83,6 +84,7 @@ async function runFatalScenario(
   return {
     exitCode,
     output: `${stdout}${stderr}`,
+    stderr,
   };
 }
 
@@ -119,6 +121,7 @@ describe("fatal telemetry error handlers", () => {
     expect(result.output).toContain(
       "tracked:uncaught_exception:exception-fixture",
     );
+    expect(result.stderr).toContain("Error: exception-fixture");
     expect(result.output).toContain("drain-attempted");
     expect(result.output).not.toContain("process-continued");
   });
@@ -130,6 +133,7 @@ describe("fatal telemetry error handlers", () => {
     expect(result.output).toContain(
       "tracked:unhandled_rejection:rejection-fixture",
     );
+    expect(result.stderr).toContain("Error: rejection-fixture");
     expect(result.output).toContain("drain-attempted");
     expect(result.output).not.toContain("process-continued");
   });
@@ -158,6 +162,7 @@ describe("fatal telemetry error handlers", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.output).not.toContain("tracked:");
+    expect(result.stderr).toContain("Error: 429 rate limit fixture");
     expect(result.output).toContain("drain-attempted");
     expect(result.output).not.toContain("process-continued");
   });

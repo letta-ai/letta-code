@@ -169,7 +169,7 @@ export async function resolveEnvironmentConnectionId(
 
   if (matches.length === 0) {
     throw new Error(
-      `Environment "${trimmed}" not found. Run \`letta environments list\` to discover available environments.`,
+      `Environment "${trimmed}" not found (selectors match connectionName, deviceId, or connectionId exactly). Run \`letta environments list --online-only\` to discover available environments.`,
     );
   }
 
