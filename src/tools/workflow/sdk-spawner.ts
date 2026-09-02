@@ -245,7 +245,6 @@ export class SdkSubagentPool {
           options.timeoutMs,
         )
       : null;
-    timeout?.unref();
 
     const runQuery = async (queryPrompt: string) => {
       const query = this.client.query({
