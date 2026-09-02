@@ -12,6 +12,7 @@ import reflectionV2Prompt from "@/agent/subagents/builtin/reflection-v2.md";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
 import contextDoctorRootPrompt from "@/skills/builtin/context-doctor/ROOT_MEMORY.md";
 import initializingMemoryRootPrompt from "@/skills/builtin/initializing-memory/ROOT_MEMORY.md";
+import submittingFeedbackSkill from "@/skills/builtin/submitting-feedback/SKILL.md";
 import memoryApplyPatchV2Prompt from "@/tools/descriptions/MemoryApplyPatchV2.md";
 import memoryV2ToolPrompt from "@/tools/descriptions/MemoryV2.md";
 
@@ -204,6 +205,34 @@ describe("buildSystemPrompt", () => {
       );
       expect(result).toContain("live in the scheduling-tasks skill");
     }
+  });
+
+  test("default prompt variants route behavioral corrections to memory", () => {
+    for (const mode of [
+      "standard",
+      "memfs",
+      "root-memfs",
+      "local-memfs",
+    ] as const) {
+      const result = buildSystemPrompt("letta", mode);
+
+      expect(result).toContain("Behavioral corrections are memory edits");
+      expect(result).toContain(
+        "Do not treat a correction to your behavior as product feedback",
+      );
+    }
+  });
+
+  test("feedback skill excludes behavioral corrections", () => {
+    expect(submittingFeedbackSkill).toContain(
+      "Do not load for corrections to the current agent's behavior or preferences",
+    );
+    expect(submittingFeedbackSkill).toContain(
+      "Treat that as learning: make the appropriate memory edit",
+    );
+    expect(submittingFeedbackSkill).not.toContain(
+      "reports poor agent behavior",
+    );
   });
 
   test("throws on unknown preset", () => {

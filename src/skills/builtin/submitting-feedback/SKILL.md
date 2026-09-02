@@ -1,11 +1,13 @@
 ---
 name: submitting-feedback
-description: Submits user-approved feedback about Letta Code or the current agent to the Letta team. Load when the user is upset, frustrated, dissatisfied, reports poor agent behavior, or asks to send feedback. Works with cloud-hosted and local agents. Ask before submitting unless the user already explicitly requested submission.
+description: Submits user-approved product feedback and bug reports about Letta Code to the Letta team. Load when the user reports a Letta Code bug, requests a product or developer change, or explicitly asks to send feedback. Do not load for corrections to the current agent's behavior or preferences; those are memory edits. Works with cloud-hosted and local agents. Ask before submitting unless the user already explicitly requested submission.
 ---
 
 # Submitting Feedback
 
-When the user appears upset with the agent, acknowledge the problem and ask whether they want you to submit feedback to the Letta team. Do not submit merely because the user expressed frustration.
+Use this skill for product and developer feedback about Letta Code: reproducible bugs, broken features, confusing product behavior, and requested changes to the software or its developer-facing behavior.
+
+Do **not** use this skill when the user corrects how the current agent should behave, communicate, remember, or work with them. Treat that as learning: make the appropriate memory edit so the correction changes the agent's future behavior. A user's frustration with the agent is not by itself product feedback and is not a reason to offer feedback submission.
 
 If the user says yes, or directly asks you to submit feedback:
 
