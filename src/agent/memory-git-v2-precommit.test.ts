@@ -158,7 +158,7 @@ describe("MemFS v2 pre-commit hook", () => {
     const result = tryCommit(repo, "reject upgraded core overflow");
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain(
-      "core memory exceeds maxCoreMemoryCharacters 80000",
+      "core memory exceeds maxCoreMemoryCharacters 65536",
     );
   });
 

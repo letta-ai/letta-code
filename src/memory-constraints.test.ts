@@ -18,10 +18,10 @@ describe("public memory constraints contract", () => {
       version: MEMORY_CONSTRAINTS_CONFIG_VERSION,
       maxDepth: 2,
       maxFileCharacters: 20_000,
-      maxCoreMemoryCharacters: 80_000,
+      maxCoreMemoryCharacters: 65_536,
     });
     expect(DEFAULT_MEMORY_CONSTRAINTS_CONFIG_CONTENT).toBe(
-      '{\n  "version": 1,\n  "maxDepth": 2,\n  "maxFileCharacters": 20000,\n  "maxCoreMemoryCharacters": 80000\n}\n',
+      '{\n  "version": 1,\n  "maxDepth": 2,\n  "maxFileCharacters": 20000,\n  "maxCoreMemoryCharacters": 65536\n}\n',
     );
   });
 });

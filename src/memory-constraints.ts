@@ -19,7 +19,7 @@ export const DEFAULT_MEMORY_CONSTRAINTS_CONFIG: Readonly<MemoryConstraintsConfig
     version: MEMORY_CONSTRAINTS_CONFIG_VERSION,
     maxDepth: 2,
     maxFileCharacters: 20_000,
-    maxCoreMemoryCharacters: 80_000,
+    maxCoreMemoryCharacters: 65_536,
   });
 
 export const DEFAULT_MEMORY_CONSTRAINTS_CONFIG_CONTENT = `${JSON.stringify(
