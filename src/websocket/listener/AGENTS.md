@@ -107,6 +107,58 @@ When logs show contradictory state:
 5. Verify the test fails on the buggy base and passes because the producer was
    fixed, without relying on queue self-healing.
 
+## Reflection Memory Integration
+
+Standing diagnosis and design direction (not a landed change) for how
+reflection-sourced memory edits reach the parent memory repo and its remote. The
+logic lives outside this directory; `src/agent/memory-worktree.ts` is canonical.
+`src/cli/helpers/reflection-launcher.ts` drives reflection completion;
+`src/reminders/memory-git-sync.ts` (invoked from `turn-cleanup.ts`) performs
+post-turn sync; the push lives in `src/agent/memory-git.ts`.
+
+### Root cause: consumed at local merge, published later
+
+`reflectionIntegrationConsumesTranscript()` (memory-worktree.ts) returns true for
+`merged`/`no_changes`, so a transcript is marked reflected as soon as its commit is
+merged into the local parent memory repo. Remote publication is a separate, later
+step — `runPostTurnMemorySync()` after a subsequent finalized turn, pushing via
+`syncPendingMemoryCommitsAfterTurn()` (memory-git.ts). A merged-but-unpublished
+reflection commit can therefore leave the parent memory repo diverged from
+`origin/main`, with no retry path that repairs it.
+
+### "the parent memory repo could not be refreshed"
+
+This exact source string means the parent was clean — a dirty parent has its own
+message ("parent memory repo had uncommitted changes") — and that a step in
+`refreshParentFromOrigin()` (memory-worktree.ts) failed: `git fetch origin main`,
+`git merge --ff-only origin/main`, or `git rebase origin/main`. The underlying git
+error is logged but omitted from the user-facing message.
+
+### Retry loop
+
+`refreshParentFromOrigin()` rebases only when local and remote have diverged. On a
+rebase conflict it runs `rebase --abort`, then rethrows; finalization deletes the
+reflection worktree and returns `failed`; `reflectionIntegrationConsumesTranscript`
+returns false, so the transcript stays pending and the same transcript is retried —
+an unbounded model-call loop. Not OS-specific, though observed disproportionately
+on Windows.
+
+### Fix direction: publication is the transaction boundary
+
+Keep the reflection commit isolated in its worktree: fetch `origin/main`, rebase
+onto it, push non-force, and only after that succeeds fast-forward the parent,
+delete the worktree, and advance the checkpoint. On rebase conflict or rejected
+push, discard only that isolated reflection commit and retry the same transcript —
+never reset unrelated local/user memory commits. Serialize memory git operations
+per repository so reflection completion and post-turn sync cannot race on the same
+repo.
+
+### Telemetry gap
+
+`reflection_worktree_cleanup` records `integration_status=failed` but omits the git
+command and error, so fetch-timeout vs rebase-conflict cannot be distinguished in
+telemetry.
+
 ## Test Ownership
 
 - `turn-lifecycle.test.ts`: pure transition table, exact-once, stale leases.
