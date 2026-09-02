@@ -359,7 +359,7 @@ The snapshot differs from what a live `query()` session applies:
 
 * **`policyHelper`**: `resolveSettings()` reads MDM sources, including macOS plist and Windows HKLM/HKCU, but doesn't execute the admin-configured `policyHelper` subprocess.
 * **Server-managed settings**: `resolveSettings()` doesn't fetch [server-managed settings](/docs/en/server-managed-settings#fetch-and-caching-behavior). Pass them as `options.serverManagedSettings` to include them.
-* **`defaultMode`**: the snapshot returns `permissions.defaultMode` as-is from every tier. A live session [ignores `defaultMode: 'auto'` from project and local settings](/docs/en/permission-modes#eliminate-prompts-with-auto-mode), so an `auto` from those tiers appears in the snapshot even though a session would ignore it.
+* **`defaultMode`**: the snapshot returns `permissions.defaultMode` as-is from every tier, so it can include the `'auto'` and `'bypassPermissions'` values from project and local settings, which [a live session ignores](/docs/en/permission-modes#which-mode-a-session-starts-in).
 
 ```typescript theme={null}
 function resolveSettings(
@@ -498,8 +498,12 @@ const result = query({
 
 * `API_TIMEOUT_MS`: per-request timeout on the Anthropic client, in milliseconds. Default `600000`. Applies to the main loop and all subagents.
 * `CLAUDE_CODE_MAX_RETRIES`: maximum API retries. Default `10`, capped at `15`. Each retry gets its own `API_TIMEOUT_MS` window, so worst-case wall time is roughly `API_TIMEOUT_MS × (CLAUDE_CODE_MAX_RETRIES + 1)` plus backoff. For unattended runs that need to wait through longer outages, set [`CLAUDE_CODE_RETRY_WATCHDOG=1`](/docs/en/errors#tune-retry-behavior): it retries transient capacity errors indefinitely and, on Claude Code v2.1.199 or later, raises the default for other transient errors to `300` and removes the cap on this variable.
-* `CLAUDE_ASYNC_AGENT_STALL_TIMEOUT_MS`: stall watchdog for subagents launched with `run_in_background`. Default `600000`. Resets on each stream event; on stall it aborts the subagent, marks the task failed, and surfaces the error to the parent with any partial result. Does not apply to synchronous subagents.
-* `CLAUDE_ENABLE_STREAM_WATCHDOG` with `CLAUDE_STREAM_IDLE_TIMEOUT_MS`: aborts the request when headers have arrived but the response body stops streaming. The watchdog is on by default for all providers; set `CLAUDE_ENABLE_STREAM_WATCHDOG=0` to disable it. `CLAUDE_STREAM_IDLE_TIMEOUT_MS` defaults to `300000` and is clamped to that minimum. After the abort, [Automatic retries](/docs/en/errors#automatic-retries) covers what Claude Code does, based on how far the response had progressed.
+* `CLAUDE_ASYNC_AGENT_STALL_TIMEOUT_MS`: stall watchdog for subagents. While the stream watchdog is on, the default is `CLAUDE_STREAM_IDLE_TIMEOUT_MS` plus 5 minutes, which comes to `600000` unless you raise that variable. With the stream watchdog off, the default is `600000`. Before v2.1.257, the default was always `600000`.
+
+  The timer resets on each stream event. On a stall, Claude Code aborts the subagent and reports the stall to the parent. For a background subagent, it also marks the task failed and attaches any partial result.
+* `CLAUDE_ENABLE_STREAM_WATCHDOG` with `CLAUDE_STREAM_IDLE_TIMEOUT_MS`: stream watchdog that aborts the request when headers have arrived but the response body stops streaming. The watchdog is on by default for all providers; set `CLAUDE_ENABLE_STREAM_WATCHDOG=0` to disable it. `CLAUDE_STREAM_IDLE_TIMEOUT_MS` defaults to `300000` and is clamped to that minimum. After the abort, [Automatic retries](/docs/en/errors#automatic-retries) covers what Claude Code does, based on how far the response had progressed.
+
+  While the watchdog waits out a response that a gateway behind `ANTHROPIC_BASE_URL` holds open with keep-alive pings, a host that sets `includePartialMessages` keeps receiving `ping` [stream events](#sdkpartialassistantmessage), so read those frames as liveness rather than timing the session out on silence. Before v2.1.257, the frames stopped 5 minutes after the last real stream event.
 
 ### `Query` object
 
@@ -520,13 +524,19 @@ interface Query extends AsyncGenerator<SDKMessage, void> {
       ? 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null
       : Settings[K] | null;
   }): Promise<void>;
+  updateSettings(
+    source: 'localSettings',
+    settings: Record<string, unknown>,
+  ): Promise<void>;
   initializationResult(): Promise<SDKControlInitializeResponse>;
   reinitialize(): Promise<SDKControlInitializeResponse>;
   supportedCommands(): Promise<SlashCommand[]>;
   supportedModels(): Promise<ModelInfo[]>;
   supportedAgents(): Promise<AgentInfo[]>;
   mcpServerStatus(): Promise<McpServerStatus[]>;
-  getContextUsage(): Promise<SDKControlGetContextUsageResponse>;
+  getContextUsage(opts?: {
+    detail?: 'summary' | 'full';
+  }): Promise<SDKControlGetContextUsageResponse>;
   readFile(
     path: string,
     options?: { maxBytes?: number; encoding?: 'utf-8' | 'base64' }
@@ -552,18 +562,19 @@ interface Query extends AsyncGenerator<SDKMessage, void> {
 | `setModel()`                           | Changes the model (only available in streaming input mode). Passing `undefined` or the string `"default"` resets to the session default model                                                                                                                                                                                                                                                                                                                                             |
 | `setMaxThinkingTokens()`               | *Deprecated:* Use the `thinking` option instead. Changes the maximum thinking tokens. Passing `null` resets thinking to the session default: a mid-session override is cleared, and thinking stays off for sessions that have it disabled                                                                                                                                                                                                                                                 |
 | `applyFlagSettings(settings)`          | Merges settings into the session's flag settings layer at runtime (only available in streaming input mode). See [`applyFlagSettings()`](#applyflagsettings)                                                                                                                                                                                                                                                                                                                               |
+| `updateSettings(source, settings)`     | Merges settings into the project's local settings file, `.claude/settings.local.json`; they take effect on the next request. Accepts only `source: 'localSettings'` and an allowlisted key set, currently `outputStyle`, with string values; deleting a key isn't supported. Rejects on remote transports and in sessions whose [`settingSources`](#options) exclude `local`. Requires TypeScript SDK v0.3.257 or later, which bundles Claude Code v2.1.257                               |
 | `initializationResult()`               | Returns the full initialization result including supported commands, models, account info, and output style configuration                                                                                                                                                                                                                                                                                                                                                                 |
 | `reinitialize()`                       | Re-sends the `initialize` control request to the running CLI and returns a fresh result instead of the cached first-connect result. Use it after a transport gap, such as reattaching to a session after a disconnect, so pending permission requests reach your `canUseTool` callback again. Make the callback idempotent per request ID, because a request whose response was lost is dispatched again. Requires Claude Code v2.1.195 or later                                          |
 | `supportedCommands()`                  | Returns available slash commands. From Agent SDK v0.3.216 the list reflects mid-session command changes; see [`SDKCommandsChangedMessage`](#sdkcommandschangedmessage)                                                                                                                                                                                                                                                                                                                    |
 | `supportedModels()`                    | Returns available models with display info                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `supportedAgents()`                    | Returns available subagents as [`AgentInfo`](#agentinfo)`[]`                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `mcpServerStatus()`                    | Returns status of connected MCP servers                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `getContextUsage()`                    | Returns an [`SDKControlGetContextUsageResponse`](#sdkcontrolgetcontextusageresponse) breaking down the session's context window usage by category, skill, and tool. The same data `/context` shows in an interactive session                                                                                                                                                                                                                                                              |
+| `getContextUsage(opts?)`               | Returns an [`SDKControlGetContextUsageResponse`](#sdkcontrolgetcontextusageresponse) breaking down the session's context window usage by category, skill, and tool. With the default `detail`, it is the same data `/context` shows in an interactive session. The [`detail` option](#sdkcontrolgetcontextusageresponse) requires Agent SDK v0.3.257 or later                                                                                                                             |
 | `readFile(path, options?)`             | Reads a file from the session's filesystem. Claude Code resolves the path against `cwd` and applies the same read-permission rules as the Read tool. Pass `{ maxBytes }` to change the read cap (default 1 MB, ceiling 10 MB) and `{ encoding: 'base64' }` for binary files such as images. Resolves with an [`SDKControlReadFileResponse`](#sdkcontrolreadfileresponse), or `null` on permission denial, a missing file, or a transport error. Requires TypeScript SDK v0.2.121 or later |
 | `reloadSkills()`                       | Reloads skills from disk, so skills you add or edit mid-session become available to the running session. Resolves with an [`SDKControlReloadSkillsResponse`](#sdkcontrolreloadskillsresponse) listing the skills available after the reload. Requires Agent SDK v0.3.163 or later                                                                                                                                                                                                         |
 | `accountInfo()`                        | Returns account information                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `reconnectMcpServer(serverName)`       | Reconnect an MCP server by name                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `toggleMcpServer(serverName, enabled)` | Enable or disable an MCP server by name                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `reconnectMcpServer(serverName)`       | Reconnect an MCP server by name. If the name also matches an entry in a settings file such as `.mcp.json` or `~/.claude.json`, Claude Code reconnects the server you configured through [`mcpServers`](#options) or `setMcpServers()`, not the settings-file entry. That resolution order requires Claude Code v2.1.257 or later                                                                                                                                                          |
+| `toggleMcpServer(serverName, enabled)` | Enable or disable an MCP server by name, with the same name resolution as `reconnectMcpServer()`. Disabling disconnects the server                                                                                                                                                                                                                                                                                                                                                        |
 | `setMcpServers(servers)`               | Dynamically replace the set of MCP servers for this session. Resolves with an [`McpSetServersResult`](#mcpsetserversresult) naming which servers were added and removed, and any errors                                                                                                                                                                                                                                                                                                   |
 | `streamInput(stream)`                  | Stream input messages to the query for multi-turn conversations                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `stopTask(taskId)`                     | Stop a running background task by ID                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -685,7 +696,9 @@ The receipt is a snapshot taken at the moment the interrupt is processed, and on
 
 ### `SDKControlGetContextUsageResponse`
 
-Return type of [`getContextUsage()`](#query-object). This is the same payload Claude Code renders for the `/context` command in an interactive session, so alongside the token counts it carries display fields such as `color` and `gridRows` that Claude Code uses to draw the `/context` usage grid.
+Return type of [`getContextUsage()`](#query-object). With the default `detail`, this is the same payload Claude Code renders for the `/context` command in an interactive session, so alongside the token counts it carries display fields such as `color` and `gridRows` that Claude Code uses to draw the `/context` usage grid.
+
+The method's optional `detail` argument chooses how Claude Code counts each category. With the default, `'full'`, Claude Code counts each category with token-counting API requests. Pass `{ detail: 'summary' }` to get an answer from the last response's usage and local estimates instead. No token-count requests go out, and the per-category numbers are approximate. The `detail` argument requires Agent SDK v0.3.257 or later.
 
 When you send `/context` as a prompt instead of calling the method, Claude Code attaches an [`SDKContextUsage`](#sdkcontextusage) payload to the `context_usage` field of the assistant message that delivers the result. That field requires Agent SDK v0.3.232 or later.
 
@@ -1208,6 +1221,8 @@ Set `shouldQuery` to `false` to append the message to the transcript without tri
 On a message that carries a `tool_result` block, `tool_use_result` is the tool's structured output object rather than the text sent to the model. Its shape depends on the tool named by the matching `tool_use` block, so the field is typed `unknown`; the built-in shapes are listed under [Tool Output Types](#tool-output-types).
 
 For the `Agent` tool, `tool_use_result` is [`AgentOutput`](#agent-2). On a `completed` result, `content` holds the subagent's report without the agent ID and usage trailer that Claude Code appends to the `tool_result` text, so render from `tool_use_result` instead of parsing that text.
+
+For an MCP tool whose result contains `resource_link` blocks, `tool_use_result` is an object with a `resourceLinks` array of [`SDKMcpResourceLink`](#sdkmcpresourcelink) entries. Claude receives each link as a line of text in the `tool_result` block, so read `resourceLinks` to render the files the server returned instead of parsing that text. Claude Code omits `resourceLinks` when the result has no links and on results from subagents, keeps at most 50 links per result, and stops adding links once the array reaches 64 KiB of serialized JSON. `resourceLinks` requires Agent SDK v0.3.257 or later.
 
 ### `SDKUserMessageReplay`
 
@@ -3278,6 +3293,8 @@ If Claude Code [kept the subagent's isolated worktree](/docs/en/worktrees#isolat
 
 Claude Code fills `usage` and `totalTokens` from the subagent's final API request, not from the whole run, so `usage.service_tier` is the service tier string the API reported on that request. When present, `usage.output_tokens_details.thinking_tokens` is the number of that request's output tokens that were thinking tokens. The `output_tokens_details` field requires TypeScript SDK v0.3.228 or later, which bundles Claude Code v2.1.228.
 
+`usage.output_tokens_details` matches [`Usage.output_tokens_details`](#usage) in meaning, scoped to that final request, but every level of it is optional here. Guard both the object and the field, for example `usage.output_tokens_details?.thinking_tokens ?? 0`, rather than reading it directly.
+
 Before v2.1.207, the published type was narrower. It omitted `worktreePath`, `worktreeBranch`, `citations`, `toolStats.frameCount`, and the `inference_geo`, `speed`, and `iterations` usage fields, and it typed `service_tier` as `"standard" | "priority" | "batch"`. Fields the type marks optional can be absent on results recorded by earlier versions.
 
 ### AskUserQuestion
@@ -4416,6 +4433,7 @@ Per-model usage statistics returned in result messages. The `costUSD` value is a
 type ModelUsage = {
   inputTokens: number;
   outputTokens: number;
+  thinkingTokens?: number;
   cacheReadInputTokens: number;
   cacheCreationInputTokens: number;
   webSearchRequests: number;
@@ -4427,6 +4445,8 @@ type ModelUsage = {
   costBasis?: 'list' | 'managed' | 'unknown';
 };
 ```
+
+`thinkingTokens` counts the thinking tokens this model generated. `outputTokens` already includes them, so don't add the two together. The field is absent until a turn runs on a Claude Code version that records it, so a resumed session that began on an earlier version reports a partial count. `thinkingTokens` requires Agent SDK v0.3.257 or later.
 
 The `canonicalModel` and `provider` fields require Claude Code v2.1.218 or later. `canonicalModel` is the canonical model ID that the pricing lookup uses; it can differ from the raw model string that keys the entry, for example when that string is a provider-specific ID or an alias.
 
@@ -4469,10 +4489,18 @@ type Usage = {
   speed: "standard" | "fast" | null;
   inference_geo: string | null;
   iterations: BetaIterationsUsage | null;
+  output_tokens_details: BetaOutputTokensDetails | null;
 };
 ```
 
-`BetaServerToolUsage` and `BetaIterationsUsage` are defined in `@anthropic-ai/sdk`.
+`BetaServerToolUsage`, `BetaIterationsUsage`, and `BetaOutputTokensDetails` are defined in `@anthropic-ai/sdk`.
+
+`output_tokens_details` breaks the billed output down by category. It currently carries one field, `thinking_tokens: number`, counting the output tokens the model generated as internal reasoning, including the thinking-block delimiters. The `output_tokens_details` field requires TypeScript SDK v0.3.228 or later, which bundles Claude Code v2.1.228.
+
+* **Billing**: read the breakdown for observability, not for billing. `output_tokens` stays the authoritative total, and `output_tokens - thinking_tokens` approximates the non-reasoning output.
+* **What the count covers**: the raw reasoning the model produced, which can be longer than the thinking text returned in the response body. The API computes it by re-tokenizing that raw text, so it can differ from the model's exact generation count by a few tokens.
+* **Streaming**: on streamed assistant messages this breakdown, like `output_tokens`, is a `message_start` placeholder and carries no real count, so read it from the result message's `usage` as [Read output tokens from the result message](/docs/en/agent-sdk/cost-tracking#read-output-tokens-from-the-result-message) describes. On the result message, `thinking_tokens` reads `0` when the model or provider reports no breakdown.
+* **`null` cases**: `output_tokens_details` itself is `null` on assistant messages Claude Code synthesizes, such as API-error messages.
 
 ### `CallToolResult`
 
@@ -4488,6 +4516,34 @@ type CallToolResult = {
   isError?: boolean;
 };
 ```
+
+### `SDKMcpResourceLink`
+
+One file an MCP tool returned by reference. Claude Code builds each entry from a `resource_link` block in the tool's result and delivers the list as `resourceLinks` on [`SDKUserMessage.tool_use_result`](#sdkusermessage), or as `resource_links` on [`SDKTaskNotificationMessage`](#sdktasknotificationmessage) when the call finished in the background. Requires Agent SDK v0.3.257 or later.
+
+```typescript theme={null}
+type SDKMcpResourceLink = {
+  uri: string;
+  name: string;
+  title?: string;
+  description?: string;
+  mimeType?: string;
+  size?: number;
+  annotations?: Record<string, unknown>;
+};
+```
+
+Claude Code drops a block whose `uri` or `name` isn't a string, and leaves out an optional field whose value isn't of the listed type.
+
+| Field         | Type                                   | Description                                                 |
+| :------------ | :------------------------------------- | :---------------------------------------------------------- |
+| `uri`         | `string`                               | URI of the resource, as the server returned it              |
+| `name`        | `string`                               | Name the server gave the resource                           |
+| `title`       | `string \| undefined`                  | Display title, when the server set one                      |
+| `description` | `string \| undefined`                  | Description, when the server set one                        |
+| `mimeType`    | `string \| undefined`                  | MIME type, when the server set one                          |
+| `size`        | `number \| undefined`                  | Size in bytes, when the server set one                      |
+| `annotations` | `Record<string, unknown> \| undefined` | The block's MCP annotations object, when the server set one |
 
 ### `ThinkingConfig`
 
@@ -4573,6 +4629,8 @@ When you call `setMcpServers()`, Claude Code applies these rules:
 
 The promise resolves after newly added stdio, HTTP, and SSE servers connect or fail, so tools from servers that connected are available on the next turn.
 
+`added` lists the servers Claude Code added or replaced, whether or not they connected. A server that failed to connect appears in both `added` and `errors`, with the failure text under `errors` and a `failed` row in [`mcpServerStatus()`](#methods). Before Claude Code v2.1.257, a server whose connection attempt threw was reported only under `errors`.
+
 ### `RewindFilesResult`
 
 Result of a `rewindFiles()` operation.
@@ -4624,10 +4682,13 @@ type SDKTaskNotificationMessage = {
     tool_uses: number;
     duration_ms: number;
   };
+  resource_links?: SDKMcpResourceLink[];
   uuid: UUID;
   session_id: string;
 };
 ```
+
+When Claude Code [moves a long MCP tool call to the background](/docs/en/mcp#automatic-backgrounding-of-long-tool-calls), the `tool_result` block for that call holds only a placeholder and the call's real result arrives in this notification. Match the notification to the call with `tool_use_id`. On a `completed` notification, `resource_links` lists the files the tool returned by reference as [`SDKMcpResourceLink`](#sdkmcpresourcelink) entries, with the same 50-link and 64 KiB limits as [`tool_use_result.resourceLinks`](#sdkusermessage). Claude Code omits `resource_links` when the result had no links and on notifications for tasks that aren't MCP tool calls. `resource_links` requires Agent SDK v0.3.257 or later.
 
 Claude Code prepends a notice to every task notification it sends to the model, except deliveries stamped with the [`scheduled-trigger` subkind](#task-notification-subkinds), which carry an assigned-task framing instead. The notice states that no human input has occurred, so the model doesn't treat the notification as a user instruction or approval.
 
@@ -4732,14 +4793,14 @@ type SDKToolProgressMessage = {
 };
 ```
 
-While a tool call runs in the main conversation, Claude Code emits a `tool_progress` message every 30 seconds with `heartbeat: true`. Each heartbeat carries the tool name and elapsed seconds, so you can distinguish a long-running call from a stalled session. Claude Code doesn't emit heartbeats for the Agent tool, whose subagents stream their own progress, or for tool calls inside a subagent. The `heartbeat` field requires Agent SDK v0.3.214 or later.
+While a tool call runs in the main conversation, Claude Code emits a `tool_progress` message every 30 seconds with `heartbeat: true`. Each heartbeat carries the tool name and elapsed seconds, so you can distinguish a long-running call from a stalled session. Claude Code doesn't emit heartbeats for tool calls inside a subagent. The `heartbeat` field requires Agent SDK v0.3.214 or later. Before v2.1.257, Claude Code didn't emit heartbeats for a foreground Agent tool call either.
 
-On `tool_progress` messages for the Agent tool, `subagent_type` names the running subagent type, such as `general-purpose`. `subagent_retry` is present while that subagent waits out an API error backoff, such as a rate limit or overload, with one message per retry attempt. Both fields require Agent SDK v0.3.214 or later.
+On `tool_progress` messages for the Agent tool other than heartbeats, `subagent_type` names the running subagent type, such as `general-purpose`. `subagent_retry` is present while that subagent waits out an API error backoff, such as a rate limit or overload, with one message per retry attempt. Both fields require Agent SDK v0.3.214 or later.
 
 To render a retry indicator from `subagent_retry`:
 
 * Track the indicator by `parent_tool_use_id`, which is unique per subagent. `tool_use_id` is shared by parallel subagents from one assistant turn, so tracking by it would let one subagent's update clear another's indicator.
-* Clear the indicator when a later `tool_progress` for the same `parent_tool_use_id` arrives without the field, or when the tool's result message arrives. `attempt` can exceed `max_retries` under persistent retry, so don't derive clearing from the counters.
+* Clear the indicator when a later `tool_progress` for the same `parent_tool_use_id` arrives with neither `subagent_retry` nor `heartbeat: true`, or when the tool's result message arrives. Frames with `heartbeat: true` report liveness only, so keep the indicator when one arrives. `attempt` can exceed `max_retries` under persistent retry, so don't derive clearing from the counters.
 * Treat `error_category` as a closed set of tokens for choosing your own message text, not as display text: `rate_limit`, `overloaded`, `authentication_failed`, `server_error`, or `unknown`.
 
 ### `SDKAuthStatusMessage`
@@ -4863,7 +4924,9 @@ type SDKBackgroundTasksChangedMessage = {
 
 ### `SDKThinkingTokensMessage`
 
-Emitted while Claude is producing a thinking block, including a redacted one, carrying a running estimate of the thinking tokens generated so far. `estimated_tokens` is the running total for the current thinking block and `estimated_tokens_delta` is the increment carried by this frame. Use it for progress display. The final count for the top-level agent loop is the result message's `usage.output_tokens`, which [doesn't include subagent tokens](/docs/en/agent-sdk/cost-tracking#get-the-total-cost-of-a-query); use [`modelUsage`](#modelusage) for whole-tree accounting.
+Emitted while Claude is producing a thinking block, including a redacted one. `estimated_tokens` is a running estimate of the thinking tokens generated so far in the current block, and `estimated_tokens_delta` is the increment carried by this frame. Use these estimates for progress display.
+
+When the model or provider reports a breakdown, the final count for the top-level agent loop is the result message's [`usage.output_tokens_details.thinking_tokens`](#usage), which [doesn't include subagent tokens](/docs/en/agent-sdk/cost-tracking#get-the-total-cost-of-a-query).
 
 Requires Claude Code v2.1.153 or later.
 

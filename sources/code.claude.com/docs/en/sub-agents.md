@@ -36,7 +36,7 @@ Explore and Plan skip your CLAUDE.md files and the parent session's git status t
   <Tab title="Explore">
     A fast, read-only agent optimized for searching and analyzing codebases.
 
-    * **Model**: inherits from the main conversation, capped at Opus on the Claude API, so Explore never runs on a more expensive model than the one you already chose for the session
+    * **Model**: inherits from the main conversation, capped at Opus on the Claude API, so Explore never runs on a more expensive model than the one you already chose for the session, unless you [force `CLAUDE_CODE_SUBAGENT_MODEL` onto it](#choose-a-model)
     * **Tools**: read-only tools; Write and Edit are denied
     * **Purpose**: file discovery, code search, codebase exploration
 
@@ -52,7 +52,7 @@ Explore and Plan skip your CLAUDE.md files and the parent session's git status t
   <Tab title="Plan">
     A research agent used during [plan mode](/docs/en/permission-modes#analyze-before-you-edit-with-plan-mode) to gather context before presenting a plan.
 
-    * **Model**: inherits from the main conversation
+    * **Model**: inherits from the main conversation, unless you [force `CLAUDE_CODE_SUBAGENT_MODEL` onto it](#choose-a-model)
     * **Tools**: read-only tools; Write and Edit are denied
     * **Purpose**: codebase research for planning
 
@@ -62,7 +62,7 @@ Explore and Plan skip your CLAUDE.md files and the parent session's git status t
   <Tab title="General-purpose">
     A capable agent for complex, multi-step tasks that require both exploration and action.
 
-    * **Model**: the [`CLAUDE_CODE_SUBAGENT_MODEL`](#choose-a-model) model if you set one and nothing assigns a model another way, otherwise the main conversation's model; [Choose a model](#choose-a-model) states the full order
+    * **Model**: the [`CLAUDE_CODE_SUBAGENT_MODEL`](#choose-a-model) model if you set one and nothing assigns a model another way, otherwise the main conversation's model; [Choose a model](#choose-a-model) states the full order and how to force the variable onto subagents
     * **Tools**: every tool [available to subagents](#available-tools)
     * **Purpose**: complex research, multi-step operations, code modifications
 
@@ -356,6 +356,8 @@ Setting `CLAUDE_CODE_SUBAGENT_MODEL` by itself doesn't change the model the buil
 Before v2.1.251, `CLAUDE_CODE_SUBAGENT_MODEL` came first in this order and overrode both the per-invocation parameter and the frontmatter, including `model: inherit`.
 
 Setting the variable to `inherit` is the same as leaving it unset. Before v2.1.196, that value forced subagents onto the main conversation's model and ignored the other sources.
+
+Set [`CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`](/docs/en/env-vars) to run subagents, [teammates](/docs/en/agent-teams#specify-teammates-and-models), and [workflow agents](/docs/en/workflows) on `CLAUDE_CODE_SUBAGENT_MODEL` whatever model their definition or invocation names, the built-in Explore and Plan definitions included. A [fork](#fork-the-current-conversation), and a [skill that runs in a subagent](/docs/en/skills#run-skills-in-a-subagent) with `model: inherit`, still run on the main conversation's model. When you haven't set `CLAUDE_CODE_SUBAGENT_MODEL`, subagents, teammates, and workflow agents run on the main conversation's model, and the built-in Explore subagent keeps its [model cap](#built-in-subagents). Requires Claude Code v2.1.257 or later.
 
 Claude Code checks the per-invocation parameter, frontmatter, and environment variable values against your organization's [`availableModels`](/docs/en/model-config#restrict-model-selection) allowlist. For a blocked value, it substitutes another model:
 

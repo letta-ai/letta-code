@@ -196,13 +196,13 @@ With [streaming input](/docs/en/agent-sdk/streaming-vs-single-mode), a message t
 
 The `effort` option controls how much reasoning Claude applies. Lower effort levels use fewer tokens per turn and reduce cost. Not all models support the effort parameter. See [Effort](https://platform.claude.com/docs/en/build-with-claude/effort) for which models support it.
 
-| Level      | Behavior                          | Good for                                                                  |
-| :--------- | :-------------------------------- | :------------------------------------------------------------------------ |
-| `"low"`    | Minimal reasoning, fast responses | File lookups, listing directories                                         |
-| `"medium"` | Balanced reasoning                | Routine edits, standard tasks                                             |
-| `"high"`   | Thorough analysis                 | Refactors, debugging                                                      |
-| `"xhigh"`  | Extended reasoning depth          | Coding and agentic tasks; recommended on Fable 5, Opus 4.7+, and Sonnet 5 |
-| `"max"`    | Maximum reasoning depth           | Multi-step problems requiring deep analysis                               |
+| Level      | Behavior                          | Good for                                                                                       |
+| :--------- | :-------------------------------- | :--------------------------------------------------------------------------------------------- |
+| `"low"`    | Minimal reasoning, fast responses | File lookups, listing directories                                                              |
+| `"medium"` | Balanced reasoning                | Routine edits, standard tasks                                                                  |
+| `"high"`   | Thorough analysis                 | Refactors, debugging                                                                           |
+| `"xhigh"`  | Extended reasoning depth          | Coding and agentic tasks on the [models that support it](/docs/en/model-config#adjust-effort-level) |
+| `"max"`    | Maximum reasoning depth           | Multi-step problems requiring deep analysis                                                    |
 
 If you don't set `effort`, both SDKs leave the parameter unset and defer to the model's default behavior.
 

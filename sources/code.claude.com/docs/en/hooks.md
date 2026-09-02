@@ -1900,7 +1900,9 @@ The `updatedPermissions` output field and the [`permission_suggestions` input fi
 | `removeDirectories` | `directories`, `destination`       | Removes working directories                                                                                                                                                                                              |
 
 <Note>
-  `setMode` with `bypassPermissions` only takes effect if the session was launched with bypass mode already available: `--dangerously-skip-permissions`, `--permission-mode bypassPermissions`, `--allow-dangerously-skip-permissions`, or `permissions.defaultMode: "bypassPermissions"` in settings, and the mode is not disabled by [`permissions.disableBypassPermissionsMode`](/docs/en/permissions#managed-settings) or by starting the session in [restricted mode](/docs/en/cli-reference#cli-flags). Otherwise the update is a no-op. `bypassPermissions` is never persisted as `defaultMode` regardless of `destination`.
+  `setMode` with `bypassPermissions` only takes effect if you launched the session with bypass mode already available: `--dangerously-skip-permissions`, `--permission-mode bypassPermissions`, `--allow-dangerously-skip-permissions`, or `permissions.defaultMode: "bypassPermissions"` in [user, `--settings`, or managed settings](/docs/en/settings-reference#permissions-defaultmode). Otherwise the update is a no-op. The update is also a no-op when [`permissions.disableBypassPermissionsMode`](/docs/en/permissions#managed-settings) disables the mode, or when the session starts in [restricted mode](/docs/en/cli-reference#cli-flags).
+
+  `bypassPermissions` is never persisted as `defaultMode` regardless of `destination`.
 </Note>
 
 The `destination` field on every entry determines whether the change stays in memory or persists to a settings file.
