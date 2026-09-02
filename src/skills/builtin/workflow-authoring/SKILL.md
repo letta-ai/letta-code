@@ -30,7 +30,7 @@ fan-out.
 
 To iterate on a workflow, write the script to a file and invoke the tool with
 `scriptPath`; edit the file and re-invoke with the same `scriptPath` plus
-`resumeFromRunId` instead of re-sending the full script.
+`resumeFromExecutionId` instead of re-sending the full script.
 
 Every script must begin with `export const meta = {...}`:
 
@@ -217,10 +217,10 @@ whatever fits).
 
 ## Resume
 
-The tool result includes a runId, and every run persists its script, args,
+The tool result includes an executionId, and every run persists its script, args,
 and a journal of each subagent's outcome under
-`~/.letta/workflows/runs/<runId>/`. To resume after a failure, abort, or
-script edit, re-invoke the tool with `scriptPath` + `resumeFromRunId` — calls
+`~/.letta/workflows/executions/<executionId>/`. To resume after a failure, abort, or
+script edit, re-invoke the tool with `scriptPath` + `resumeFromExecutionId` — calls
 whose (prompt, options) are unchanged replay their journaled results
 instantly; the first edited/new call and everything after it runs live. Same
 script + same args → 100% cache hit. Cosmetic edits to `label`/`phase` keep

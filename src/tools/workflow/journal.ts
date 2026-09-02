@@ -24,11 +24,11 @@ export interface JournalEntry {
   outcome: SubagentOutcome;
 }
 
-export function defaultRunsDir(): string {
-  return join(homedir(), ".letta", "workflows", "runs");
+export function defaultExecutionsDir(): string {
+  return join(homedir(), ".letta", "workflows", "executions");
 }
 
-export function newRunId(): string {
+export function newExecutionId(): string {
   const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
   let suffix = "";
   for (let i = 0; i < 12; i++) {
@@ -37,22 +37,22 @@ export function newRunId(): string {
   return `wf-${suffix}`;
 }
 
-export class RunJournal {
-  readonly runDir: string;
+export class ExecutionJournal {
+  readonly executionDir: string;
   private readonly journalPath: string;
   private readonly cache = new Map<string, SubagentOutcome[]>();
 
-  constructor(runsDir: string, runId: string) {
-    this.runDir = join(runsDir, runId);
-    mkdirSync(this.runDir, { recursive: true });
-    this.journalPath = join(this.runDir, "journal.jsonl");
+  constructor(executionsDir: string, executionId: string) {
+    this.executionDir = join(executionsDir, executionId);
+    mkdirSync(this.executionDir, { recursive: true });
+    this.journalPath = join(this.executionDir, "journal.jsonl");
   }
 
   persistScript(script: string, args: unknown): void {
-    writeFileSync(join(this.runDir, "script.js"), script);
+    writeFileSync(join(this.executionDir, "script.js"), script);
     if (args !== undefined) {
       writeFileSync(
-        join(this.runDir, "args.json"),
+        join(this.executionDir, "args.json"),
         JSON.stringify(args, null, 2),
       );
     }
@@ -63,14 +63,14 @@ export class RunJournal {
   }
 
   /** Load a prior run's journal into this journal's replay cache. */
-  loadReplayCache(runsDir: string, priorRunId: string): number {
-    const priorPath = join(runsDir, priorRunId, "journal.jsonl");
+  loadReplayCache(executionsDir: string, priorExecutionId: string): number {
+    const priorPath = join(executionsDir, priorExecutionId, "journal.jsonl");
     let raw: string;
     try {
       raw = readFileSync(priorPath, "utf8");
     } catch {
       throw new Error(
-        `No journal found for run "${priorRunId}" at ${priorPath}.`,
+        `No journal found for run "${priorExecutionId}" at ${priorPath}.`,
       );
     }
     let loaded = 0;

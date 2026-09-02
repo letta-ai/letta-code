@@ -97,21 +97,45 @@ function buildStructuredOutputTool(
   };
 }
 
-async function drainTurn(session: SdkSession): Promise<{
+interface DrainedTurn {
   finalText: string;
   success: boolean;
   error?: string;
   costUsd?: number;
   durationMs?: number;
-}> {
+  totalTokens?: number;
+}
+
+/**
+ * The SDK forwards Letta `usage_statistics` stream payloads verbatim as
+ * `stream_event` messages (its result message carries cost but not tokens).
+ * One usage record is emitted per agent step; summing `total_tokens` across
+ * them is the session's token usage.
+ */
+function usageTokensFromEvent(
+  event: Record<string, unknown> | undefined,
+): number | undefined {
+  if (!event || event.message_type !== "usage_statistics") return undefined;
+  const total = event.total_tokens;
+  return typeof total === "number" && Number.isFinite(total)
+    ? total
+    : undefined;
+}
+
+async function drainTurn(session: SdkSession): Promise<DrainedTurn> {
   let assistantText = "";
   let resultText: string | undefined;
   let success = false;
   let error: string | undefined;
   let costUsd: number | undefined;
   let durationMs: number | undefined;
+  let totalTokens: number | undefined;
   for await (const message of session.stream()) {
     if (message.type === "assistant") assistantText += message.content ?? "";
+    if (message.type === "stream_event") {
+      const tokens = usageTokensFromEvent(message.event);
+      if (tokens !== undefined) totalTokens = (totalTokens ?? 0) + tokens;
+    }
     if (message.type === "result") {
       success = message.success === true;
       resultText = message.result;
@@ -126,7 +150,12 @@ async function drainTurn(session: SdkSession): Promise<{
     error,
     costUsd,
     durationMs,
+    totalTokens,
   };
+}
+
+function sumOptional(a?: number, b?: number): number | undefined {
+  return a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0);
 }
 
 export class SdkSubagentPool {
@@ -221,11 +250,17 @@ export class SdkSubagentPool {
         const nudged = await drainTurn(session);
         turn = {
           ...nudged,
-          costUsd: (turn.costUsd ?? 0) + (nudged.costUsd ?? 0) || undefined,
-          durationMs:
-            (turn.durationMs ?? 0) + (nudged.durationMs ?? 0) || undefined,
+          costUsd: sumOptional(turn.costUsd, nudged.costUsd),
+          durationMs: sumOptional(turn.durationMs, nudged.durationMs),
+          totalTokens: sumOptional(turn.totalTokens, nudged.totalTokens),
         };
       }
+
+      const usage = {
+        costUsd: turn.costUsd,
+        durationMs: turn.durationMs,
+        totalTokens: turn.totalTokens,
+      };
 
       if (options.schema) {
         if (captured.length === 0) {
@@ -233,15 +268,13 @@ export class SdkSubagentPool {
             value: null,
             failed: true,
             error: turn.error ?? "subagent never produced structured output",
-            costUsd: turn.costUsd,
-            durationMs: turn.durationMs,
+            ...usage,
           };
         }
         return {
           value: captured[captured.length - 1],
           failed: false,
-          costUsd: turn.costUsd,
-          durationMs: turn.durationMs,
+          ...usage,
         };
       }
 
@@ -250,16 +283,10 @@ export class SdkSubagentPool {
           value: null,
           failed: true,
           error: turn.error ?? "subagent turn failed",
-          costUsd: turn.costUsd,
-          durationMs: turn.durationMs,
+          ...usage,
         };
       }
-      return {
-        value: turn.finalText,
-        failed: false,
-        costUsd: turn.costUsd,
-        durationMs: turn.durationMs,
-      };
+      return { value: turn.finalText, failed: false, ...usage };
     } catch (error) {
       return { value: null, failed: true, error: String(error) };
     } finally {

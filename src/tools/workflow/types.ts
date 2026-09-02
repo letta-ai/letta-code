@@ -72,6 +72,8 @@ export interface SubagentOutcome {
   error?: string;
   costUsd?: number;
   durationMs?: number;
+  /** Total tokens consumed by the subagent session (prompt + completion). */
+  totalTokens?: number;
 }
 
 /**
@@ -94,6 +96,10 @@ export type WorkflowProgressEvent =
       phase: string | null;
       status: "queued" | "running" | "done" | "error" | "cached";
       detail?: string;
+      /** Set on terminal statuses when the spawner reported them. */
+      durationMs?: number;
+      totalTokens?: number;
+      costUsd?: number;
     };
 
 /** Budget accounting exposed to scripts as `budget` (USD, not tokens). */
@@ -115,25 +121,29 @@ export interface RunWorkflowOptions {
   /** Lifetime subagent cap (runaway-loop backstop). Default 1000. */
   maxTotalAgents?: number;
   /** Resume: replay journaled results from this prior run. */
-  resumeFromRunId?: string;
-  /** Directory that holds run state. Default ~/.letta/workflows/runs. */
-  runsDir?: string;
+  resumeFromExecutionId?: string;
+  /** Run id to use instead of generating one (lets callers announce it early). */
+  executionId?: string;
+  /** Directory that holds run state. Default ~/.letta/workflows/executions. */
+  executionsDir?: string;
   /** Abort signal for the whole run. */
   signal?: AbortSignal;
   /** Progress callback. */
   onProgress?: (event: WorkflowProgressEvent) => void;
 }
 
-export interface WorkflowRunResult {
-  runId: string;
+export interface WorkflowExecutionResult {
+  executionId: string;
   meta: WorkflowMeta;
   /** The script's return value. */
   result: unknown;
   /** Where the script and journal were persisted. */
-  runDir: string;
+  executionDir: string;
   agentsSpawned: number;
   cacheHits: number;
   totalCostUsd: number;
+  /** Sum of subagent token usage (live runs only; cached replays add 0). */
+  totalTokens: number;
 }
 
 // ── Structural view of the Letta Agent SDK surface the engine touches ──────
@@ -148,6 +158,8 @@ export interface SdkStreamMessage {
   errorCode?: string;
   totalCostUsd?: number;
   durationMs?: number;
+  /** Raw Letta stream payload for `type: "stream_event"` messages. */
+  event?: Record<string, unknown>;
 }
 
 export interface SdkSession {

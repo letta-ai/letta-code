@@ -12,7 +12,11 @@
 import { readFileSync } from "node:fs";
 import { cpus } from "node:os";
 import vm from "node:vm";
-import { defaultRunsDir, newRunId, RunJournal } from "./journal.ts";
+import {
+  defaultExecutionsDir,
+  ExecutionJournal,
+  newExecutionId,
+} from "./journal.ts";
 import { parseWorkflowMeta, stripMetaExport } from "./meta.ts";
 import { agentCallCacheKey, Semaphore } from "./scheduling.ts";
 import type {
@@ -20,8 +24,8 @@ import type {
   RunWorkflowOptions,
   SubagentSpawner,
   WorkflowBudget,
+  WorkflowExecutionResult,
   WorkflowProgressEvent,
-  WorkflowRunResult,
 } from "./types.ts";
 
 const DETERMINISM_PRELUDE = `(() => {
@@ -56,14 +60,14 @@ function normalizeOptionsForCache(options: AgentCallOptions): unknown {
 export async function runWorkflow(
   spawner: SubagentSpawner,
   options: RunWorkflowOptions,
-): Promise<WorkflowRunResult> {
+): Promise<WorkflowExecutionResult> {
   const meta = parseWorkflowMeta(options.script);
-  const runId = newRunId();
-  const runsDir = options.runsDir ?? defaultRunsDir();
-  const journal = new RunJournal(runsDir, runId);
+  const executionId = options.executionId ?? newExecutionId();
+  const executionsDir = options.executionsDir ?? defaultExecutionsDir();
+  const journal = new ExecutionJournal(executionsDir, executionId);
   journal.persistScript(options.script, options.args);
-  if (options.resumeFromRunId) {
-    journal.loadReplayCache(runsDir, options.resumeFromRunId);
+  if (options.resumeFromExecutionId) {
+    journal.loadReplayCache(executionsDir, options.resumeFromExecutionId);
   }
 
   const emit = (event: WorkflowProgressEvent) => options.onProgress?.(event);
@@ -90,6 +94,7 @@ export async function runWorkflow(
   let agentsSpawned = 0;
   let cacheHits = 0;
   let spentUsd = 0;
+  let totalTokens = 0;
   const occurrences = new Map<string, number>();
 
   const budget: WorkflowBudget = {
@@ -154,6 +159,7 @@ export async function runWorkflow(
         signal,
       );
       spentUsd += outcome.costUsd ?? 0;
+      totalTokens += outcome.totalTokens ?? 0;
       journal.record({
         kind: "agent",
         cacheKey,
@@ -169,6 +175,9 @@ export async function runWorkflow(
         phase,
         status: outcome.failed ? "error" : "done",
         detail: outcome.error,
+        durationMs: outcome.durationMs,
+        totalTokens: outcome.totalTokens,
+        costUsd: outcome.costUsd,
       });
       return outcome.failed ? null : outcome.value;
     } finally {
@@ -334,12 +343,13 @@ export async function runWorkflow(
   );
 
   return {
-    runId,
+    executionId,
     meta,
     result,
-    runDir: journal.runDir,
+    executionDir: journal.executionDir,
     agentsSpawned,
     cacheHits,
     totalCostUsd: spentUsd,
+    totalTokens,
   };
 }

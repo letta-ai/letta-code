@@ -25,7 +25,7 @@ describe("runWorkflow", () => {
   test("agent() returns the subagent's text", async () => {
     const run = await runWorkflow(echoSpawner, {
       script: withMeta(`return await agent('hello')`),
-      runsDir: tempRunsDir(),
+      executionsDir: tempRunsDir(),
     });
     expect(run.result).toBe("echo:hello");
     expect(run.agentsSpawned).toBe(1);
@@ -37,7 +37,7 @@ describe("runWorkflow", () => {
       script: withMeta(
         `return await agent('hi', {schema: {type: 'object', properties: {echoed: {type: 'string'}}}})`,
       ),
-      runsDir: tempRunsDir(),
+      executionsDir: tempRunsDir(),
     });
     expect(run.result).toEqual({ echoed: "hi" });
   });
@@ -52,7 +52,7 @@ describe("runWorkflow", () => {
       script:
         withMeta(`const r = await parallel([() => agent('a'), () => agent('b')]);
 return r.filter(Boolean).length;`),
-      runsDir: tempRunsDir(),
+      executionsDir: tempRunsDir(),
     });
     expect(run.result).toBe(0);
   });
@@ -74,7 +74,7 @@ return r.filter(Boolean).length;`),
   (item) => agent('s1:' + item),
   (prev, item) => agent('s2:' + item),
 )`),
-      runsDir: tempRunsDir(),
+      executionsDir: tempRunsDir(),
     });
     // If stages were barriers, s2:fast would wait on s1:slow -> deadlock.
     expect(run.result).toEqual(["s2:fast", "s2:slow"]);
@@ -87,7 +87,7 @@ return r.filter(Boolean).length;`),
   (item) => { if (item === 1) throw new Error('nope'); return item * 10; },
   (prev) => prev + 1,
 )`),
-      runsDir: tempRunsDir(),
+      executionsDir: tempRunsDir(),
     });
     expect(run.result).toEqual([null, 21]);
   });
@@ -103,7 +103,7 @@ return r.filter(Boolean).length;`),
         `await agent('one');\nawait agent('two');\nreturn 'finished'`,
       ),
       budgetUsd: 0.5,
-      runsDir: tempRunsDir(),
+      executionsDir: tempRunsDir(),
     });
     await expect(run).rejects.toThrow(/Budget/);
   });
@@ -111,12 +111,12 @@ return r.filter(Boolean).length;`),
   test("Date.now and Math.random are blocked inside scripts", async () => {
     const dateRun = runWorkflow(echoSpawner, {
       script: withMeta(`return Date.now()`),
-      runsDir: tempRunsDir(),
+      executionsDir: tempRunsDir(),
     });
     await expect(dateRun).rejects.toThrow(/Date.now/);
     const randomRun = runWorkflow(echoSpawner, {
       script: withMeta(`return Math.random()`),
-      runsDir: tempRunsDir(),
+      executionsDir: tempRunsDir(),
     });
     await expect(randomRun).rejects.toThrow(/Math.random/);
   });
@@ -124,7 +124,7 @@ return r.filter(Boolean).length;`),
   test("new Date(explicit) still works inside scripts", async () => {
     const run = await runWorkflow(echoSpawner, {
       script: withMeta(`return new Date(0).toISOString()`),
-      runsDir: tempRunsDir(),
+      executionsDir: tempRunsDir(),
     });
     expect(run.result).toBe("1970-01-01T00:00:00.000Z");
   });
@@ -135,7 +135,7 @@ return r.filter(Boolean).length;`),
       script: withMeta(
         `phase('Scan');\nlog('starting');\nreturn await agent('a')`,
       ),
-      runsDir: tempRunsDir(),
+      executionsDir: tempRunsDir(),
       onProgress: (event) => events.push(event),
     });
     expect(events.some((e) => e.kind === "phase" && e.title === "Scan")).toBe(
@@ -149,7 +149,7 @@ return r.filter(Boolean).length;`),
   });
 
   test("resume replays journaled outcomes without respawning", async () => {
-    const runsDir = tempRunsDir();
+    const executionsDir = tempRunsDir();
     let spawns = 0;
     const counting: SubagentSpawner = async (request) => {
       spawns++;
@@ -158,13 +158,13 @@ return r.filter(Boolean).length;`),
     const script = withMeta(
       `return await parallel([() => agent('a'), () => agent('b')])`,
     );
-    const first = await runWorkflow(counting, { script, runsDir });
+    const first = await runWorkflow(counting, { script, executionsDir });
     expect(spawns).toBe(2);
 
     const second = await runWorkflow(counting, {
       script,
-      runsDir,
-      resumeFromRunId: first.runId,
+      executionsDir,
+      resumeFromExecutionId: first.executionId,
     });
     expect(spawns).toBe(2);
     expect(second.cacheHits).toBe(2);
@@ -172,7 +172,7 @@ return r.filter(Boolean).length;`),
   });
 
   test("resume re-runs only edited calls", async () => {
-    const runsDir = tempRunsDir();
+    const executionsDir = tempRunsDir();
     const spawnedPrompts: string[] = [];
     const tracking: SubagentSpawner = async (request) => {
       spawnedPrompts.push(request.prompt);
@@ -182,15 +182,15 @@ return r.filter(Boolean).length;`),
       script: withMeta(
         `return await parallel([() => agent('a'), () => agent('b')])`,
       ),
-      runsDir,
+      executionsDir,
     });
     spawnedPrompts.length = 0;
     const second = await runWorkflow(tracking, {
       script: withMeta(
         `return await parallel([() => agent('a'), () => agent('CHANGED')])`,
       ),
-      runsDir,
-      resumeFromRunId: first.runId,
+      executionsDir,
+      resumeFromExecutionId: first.executionId,
     });
     expect(spawnedPrompts).toEqual(["CHANGED"]);
     expect(second.result).toEqual(["a", "CHANGED"]);
@@ -202,14 +202,14 @@ return r.filter(Boolean).length;`),
         `for (let i = 0; i < 10; i++) await agent('call ' + i);`,
       ),
       maxTotalAgents: 3,
-      runsDir: tempRunsDir(),
+      executionsDir: tempRunsDir(),
     });
     await expect(run).rejects.toThrow(/cap/);
   });
 
   test("workflow() runs a child script sharing budget and journal", async () => {
-    const runsDir = tempRunsDir();
-    const childPath = join(runsDir, "child.workflow.js");
+    const executionsDir = tempRunsDir();
+    const childPath = join(executionsDir, "child.workflow.js");
     writeFileSync(
       childPath,
       `export const meta = { name: 'child-flow', description: 'child' }\nreturn await agent('from-child:' + args.tag)`,
@@ -218,7 +218,7 @@ return r.filter(Boolean).length;`),
       script: withMeta(
         `const child = await workflow(${JSON.stringify(childPath)}, {tag: 'x'});\nreturn child;`,
       ),
-      runsDir,
+      executionsDir,
     });
     expect(run.result).toBe("echo:from-child:x");
     expect(run.agentsSpawned).toBe(1);
@@ -226,20 +226,20 @@ return r.filter(Boolean).length;`),
   });
 
   test("workflow() nesting is one level only", async () => {
-    const runsDir = tempRunsDir();
-    const grandchildPath = join(runsDir, "grandchild.workflow.js");
+    const executionsDir = tempRunsDir();
+    const grandchildPath = join(executionsDir, "grandchild.workflow.js");
     writeFileSync(
       grandchildPath,
       `export const meta = { name: 'grandchild-flow', description: 'g' }\nreturn 1;`,
     );
-    const childPath = join(runsDir, "nested-child.workflow.js");
+    const childPath = join(executionsDir, "nested-child.workflow.js");
     writeFileSync(
       childPath,
       `export const meta = { name: 'nested-child-flow', description: 'c' }\nreturn await workflow(${JSON.stringify(grandchildPath)});`,
     );
     const run = runWorkflow(echoSpawner, {
       script: withMeta(`return await workflow(${JSON.stringify(childPath)});`),
-      runsDir,
+      executionsDir,
     });
     await expect(run).rejects.toThrow(/one level only/);
   });
@@ -247,7 +247,7 @@ return r.filter(Boolean).length;`),
   test("scripts with TypeScript annotations fail to parse with a clear error", async () => {
     const run = runWorkflow(echoSpawner, {
       script: withMeta(`const items: string[] = [];\nreturn items;`),
-      runsDir: tempRunsDir(),
+      executionsDir: tempRunsDir(),
     });
     await expect(run).rejects.toThrow(/failed to parse/);
   });

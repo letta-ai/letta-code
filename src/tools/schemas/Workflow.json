@@ -16,9 +16,9 @@
       "type": "number",
       "description": "Hard USD spending ceiling for the run; agent() throws once exceeded. Omit for no ceiling."
     },
-    "resumeFromRunId": {
+    "resumeFromExecutionId": {
       "type": "string",
-      "description": "Run ID of a prior Workflow invocation to resume from. Completed agent() calls with unchanged (prompt, opts) return their cached results instantly; only edited or new calls re-run."
+      "description": "Execution ID of a prior Workflow invocation to resume from. Completed agent() calls with unchanged (prompt, opts) return their cached results instantly; only edited or new calls re-run."
     },
     "allowedTools": {
       "type": "array",
