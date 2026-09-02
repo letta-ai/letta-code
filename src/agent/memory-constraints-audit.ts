@@ -36,6 +36,7 @@ export function validateMemoryConstraintsHead(
         validatorPath,
         "--layout",
         hasRootMarker ? "root-marker" : "legacy-only",
+        "--audit",
       ],
       {
         cwd: memoryDir,

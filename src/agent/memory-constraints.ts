@@ -39,6 +39,8 @@ const CONFIG_VERSION = ${JSON.stringify(MEMORY_CONSTRAINTS_CONFIG_VERSION)};
 const DEFAULT_CONFIG = ${JSON.stringify(DEFAULT_MEMORY_CONSTRAINTS_CONFIG)};
 const CONFIG_UPDATE_ENV = ${JSON.stringify(MEMORY_CONSTRAINTS_UPDATE_ENV)};
 const LAYOUT_POLICY_FILE = "letta-memory-layout-policy";
+const AUDIT_MODE = process.argv.includes("--audit");
+let activeLayoutPolicy = "legacy-only";
 const ALLOWED_CONFIG_KEYS = new Set([
   "version",
   "maxDepth",
@@ -326,14 +328,40 @@ function characterLimitFor(path, config) {
 
 function report(errors) {
   if (errors.length === 0) return;
-  console.error("Memory constraints failed:");
+  if (AUDIT_MODE) {
+    console.error("Memory constraints failed:");
+  } else {
+    console.error("Memory validation blocked this commit.");
+    console.error("No files were committed. Your staged changes are still present.");
+    console.error(
+      "Validation checks the complete repository, so these problems may predate your staged changes.",
+    );
+    console.error("");
+    console.error("Fix these problems:");
+  }
   for (const error of errors) console.error("  " + error);
+  if (!AUDIT_MODE) {
+    console.error("");
+    if (activeLayoutPolicy === "root-marker") {
+      console.error(
+        "Move non-core detail out of root Markdown and behind MEMORY.md indexes.",
+      );
+    }
+    console.error("Split files above their per-file limit, then retry the commit.");
+    console.error(
+      "Limits come from .memfs.config.json, or the Letta Code defaults when it is absent.",
+    );
+    console.error(
+      "Do not raise or disable these limits unless the user explicitly approves it.",
+    );
+  }
   process.exit(1);
 }
 
 async function main() {
   const errors = [];
   const layoutPolicy = readLayoutPolicy();
+  activeLayoutPolicy = layoutPolicy;
   const configChanged = !gitSucceeds([
     "diff",
     "--cached",
@@ -420,11 +448,11 @@ async function main() {
     }
     if (coreCharacters > config.maxCoreMemoryCharacters) {
       errors.push(
-        "core memory exceeds maxCoreMemoryCharacters " +
-          config.maxCoreMemoryCharacters +
-          " (" +
+        "core memory: " +
           coreCharacters +
-          " characters)",
+          " characters exceeds " +
+          config.maxCoreMemoryCharacters +
+          " from maxCoreMemoryCharacters",
       );
     }
   }

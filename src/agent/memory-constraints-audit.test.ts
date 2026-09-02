@@ -57,6 +57,8 @@ describe("committed MemFS constraints audit", () => {
 
     const result = validateMemoryConstraintsHead(repo);
     expect(result.valid).toBe(false);
+    expect(result.output).toStartWith("Memory constraints failed:");
+    expect(result.output).not.toContain("staged changes are still present");
     expect(result.output).toContain(
       "unindexed/notes.md: missing required index unindexed/MEMORY.md",
     );

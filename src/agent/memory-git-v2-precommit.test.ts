@@ -133,8 +133,20 @@ describe("MemFS v2 pre-commit hook", () => {
 
     const result = tryCommit(repo, "reject default file overflow");
     expect(result.status).not.toBe(0);
-    expect(result.stdout + result.stderr).toContain(
-      "exceeds 20000 from maxFileCharacters",
+    const output = result.stdout + result.stderr;
+    expect(output).toContain("exceeds 20000 from maxFileCharacters");
+    expect(output).toContain("Memory validation blocked this commit.");
+    expect(output).toContain(
+      "No files were committed. Your staged changes are still present.",
+    );
+    expect(output).toContain(
+      "Validation checks the complete repository, so these problems may predate your staged changes.",
+    );
+    expect(output).toContain(
+      "Move non-core detail out of root Markdown and behind MEMORY.md indexes.",
+    );
+    expect(output).toContain(
+      "Do not raise or disable these limits unless the user explicitly approves it.",
     );
   });
 
@@ -157,8 +169,9 @@ describe("MemFS v2 pre-commit hook", () => {
 
     const result = tryCommit(repo, "reject upgraded core overflow");
     expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("core memory:");
     expect(result.stdout + result.stderr).toContain(
-      "core memory exceeds maxCoreMemoryCharacters 65536",
+      "characters exceeds 65536 from maxCoreMemoryCharacters",
     );
   });
 
@@ -185,7 +198,9 @@ describe("MemFS v2 pre-commit hook", () => {
     const result = tryCommit(repo, "reject oversized core memory");
     const output = result.stdout + result.stderr;
     expect(result.status).not.toBe(0);
-    expect(output).toContain("core memory exceeds maxCoreMemoryCharacters 220");
+    expect(output).toContain(
+      "characters exceeds 220 from maxCoreMemoryCharacters",
+    );
     expect(output).not.toContain("reference/large.md: core memory");
   });
 
@@ -437,7 +452,7 @@ describe("legacy MemFS pre-commit hook", () => {
     mkdirSync(join(repo, "system"));
     writeFileSync(
       join(repo, "system", "notes.md"),
-      "---\ndescription: Test memory\n---\n" + "n".repeat(100),
+      `---\ndescription: Test memory\n---\n${"n".repeat(100)}`,
     );
     execFileSync("git", ["add", "system/notes.md"], { cwd: repo });
 
