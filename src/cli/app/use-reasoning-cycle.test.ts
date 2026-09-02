@@ -100,6 +100,12 @@ describe("resolveReasoningCycleTierLookupHandle", () => {
     ).toBe("anthropic/claude-opus-4-8");
   });
 
+  test("uses canonical MiniMax registry handles without model settings", () => {
+    expect(
+      resolveReasoningCycleTierLookupHandle("lc-minimax/MiniMax-M3", undefined),
+    ).toBe("minimax/MiniMax-M3");
+  });
+
   test("keeps canonical handles unchanged", () => {
     expect(
       resolveReasoningCycleTierLookupHandle("anthropic/claude-opus-4-8", {
