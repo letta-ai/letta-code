@@ -3,6 +3,12 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  ANTHROPIC_DEFAULT_TOOLS,
+  GEMINI_DEFAULT_TOOLS,
+  OPENAI_DEFAULT_TOOLS,
+  OPENAI_PASCAL_TOOLS,
+} from "@/tools/manager";
+import {
   __resetWorkflowExecutionsForTests,
   getWorkflowExecution,
 } from "@/tools/workflow/execution-registry";
@@ -39,6 +45,15 @@ phase('Find')
 log('starting')
 const results = await parallel([() => agent('a'), () => agent('b')])
 return { count: results.filter(Boolean).length }`;
+
+describe("Workflow tool toolsets", () => {
+  test("is exposed wherever Monitor is (Anthropic and Codex PascalCase)", () => {
+    expect(ANTHROPIC_DEFAULT_TOOLS).toContain("Workflow");
+    expect(OPENAI_PASCAL_TOOLS).toContain("Workflow");
+    expect(OPENAI_DEFAULT_TOOLS).not.toContain("Workflow");
+    expect(GEMINI_DEFAULT_TOOLS).not.toContain("Workflow");
+  });
+});
 
 describe("Workflow tool (background launch)", () => {
   let scratchpad: string;

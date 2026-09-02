@@ -364,8 +364,7 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
 export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "exec_command",
   "write_stdin",
-  // TODO(codex-parity): add once request_user_input tool exists in raw codex path.
-  // "request_user_input",
+  // TODO(codex-parity): "request_user_input" once it exists in the raw codex path.
   "apply_patch",
   "memory_apply_patch",
   "update_plan",
@@ -401,6 +400,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "TaskOutput",
   "TaskStop",
   "Skill",
+  "Workflow",
   // Standard Codex tools
   "exec_command",
   "write_stdin",
