@@ -24,7 +24,7 @@ test("scopes the memory filesystem skill to repository operations", async () => 
   );
 });
 
-test("bundles CDP-first browser-use guidance for local and managed environments", async () => {
+test("keeps the bundled browser-use skill environment-neutral", async () => {
   const skills = await getBundledSkills();
   const skill = skills.find((candidate) => candidate.id === "browser-use");
   if (!skill) {
@@ -32,25 +32,26 @@ test("bundles CDP-first browser-use guidance for local and managed environments"
   }
 
   const content = readFileSync(skill.path, "utf8");
-  const normalized = content.replace(/\s+/g, " ");
 
   expect(skill.description).toContain("Control a real browser");
-  // Managed cloud sandbox: the environment provides a launcher on PATH; the
-  // skill must not hard-code a sandbox skill path or route through Cua Driver.
-  expect(content).toContain(
-    "## Managed cloud sandbox: visible browser, driven over CDP",
-  );
-  expect(content).toContain("command -v open-visible-browser");
-  expect(content).toContain("open-visible-browser 'https://example.com'");
-  expect(normalized).toContain(
-    "CDP is the primary way to read and operate a page; Cua Driver (`computer-use`) is the fallback",
-  );
-  expect(normalized).toContain(
-    "Escalate to `computer-use` (Cua Driver) only for what CDP cannot reach",
-  );
-  expect(normalized).toContain("Do not run `browser_prepare` in the sandbox");
-  expect(content).not.toContain("/root/.letta/cloud-skills");
-  expect(content).not.toContain("launch_path");
+  expect(content).toContain("## Visible by default when a display exists");
+  expect(content).toContain("Do not kill or close it before replying");
+  // Managed cloud sandboxes ship their own browser-use skill, which takes
+  // precedence over this one; the builtin must not carry sandbox-only
+  // launchers, paths, or GUI-driver fallbacks.
+  for (const cloudOnly of [
+    "/root/.letta/cloud-skills",
+    "open-visible-browser",
+    "start-letta-desktop",
+    "cua-driver",
+    "Cua Driver",
+    "browser_prepare",
+    "computer-use",
+    "managed desktop",
+    "managed cloud sandbox",
+  ]) {
+    expect(content).not.toContain(cloudOnly);
+  }
   // Local machines: recommend installing Chrome or teleporting, never download.
   expect(content).toContain("Install Chrome on the current computer");
   expect(content).toContain(
