@@ -59,7 +59,9 @@ as in phase() calls — titles are matched exactly.
   global phase() state), `schema`, `model` (default to omitting it — the
   subagent inherits the default model, which is almost always correct),
   `effort` (reasoning tier; use 'low' for cheap mechanical stages, higher for
-  the hardest verify/judge stages), `allowedTools` (defaults to read-only:
+  the hardest verify/judge stages — a call that sets `model` or `effort`
+  runs on a fresh regular conversation of the ephemeral worker instead of a
+  stateless session, still isolated per call), `allowedTools` (defaults to read-only:
   Read, Grep, Glob — widen per call for stages that must write), `systemPrompt`
   (extra system prompt for this subagent), `cwd`, `timeoutMs`.
 - `pipeline(items, stage1, stage2, ...)` → run each item through all stages

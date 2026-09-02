@@ -210,21 +210,32 @@ export class SdkSubagentPool {
       ...(options.schema ? ["StructuredOutput"] : []),
     ];
 
-    const session = this.client.createSession(agentId, {
-      stateless: true,
-      permissionMode: "unrestricted",
-      allowedTools,
-      ...((options.model ?? this.config.model)
-        ? { model: options.model ?? this.config.model }
-        : {}),
-      ...(options.effort ? { reasoningEffort: options.effort } : {}),
-      ...((options.cwd ?? this.config.cwd)
-        ? { cwd: options.cwd ?? this.config.cwd }
-        : {}),
-      ...(options.schema
-        ? { tools: [buildStructuredOutputTool(options.schema, captured)] }
-        : {}),
-    });
+    // Every createSession() opens a fresh conversation on the worker, so each
+    // call is context-isolated either way. Stateless additionally skips the
+    // worker's MemFS/transcript, but the SDK refuses model/reasoningEffort on
+    // stateless sessions (they would persist); calls that set them run on a
+    // regular session where the override scopes to that new conversation.
+    const model = options.model ?? this.config.model;
+    const stateless = model === undefined && options.effort === undefined;
+    let session: SdkSession;
+    try {
+      session = this.client.createSession(agentId, {
+        stateless,
+        permissionMode: "unrestricted",
+        allowedTools,
+        ...(model ? { model } : {}),
+        ...(options.effort ? { reasoningEffort: options.effort } : {}),
+        ...((options.cwd ?? this.config.cwd)
+          ? { cwd: options.cwd ?? this.config.cwd }
+          : {}),
+        ...(options.schema
+          ? { tools: [buildStructuredOutputTool(options.schema, captured)] }
+          : {}),
+      });
+    } catch (error) {
+      // Option validation errors are per-call failures, not workflow crashes.
+      return { value: null, failed: true, error: String(error) };
+    }
 
     const abort = () => void session.abort().catch(() => {});
     signal.addEventListener("abort", abort, { once: true });
