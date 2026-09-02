@@ -144,7 +144,7 @@ describe("Desktop environment resolution", () => {
     })) as typeof listEnvironments;
 
     await expect(resolveDesktopEnvironmentConnectionId(list)).rejects.toThrow(
-      "Multiple Desktop environments are online",
+      "Multiple Desktop computers are online",
     );
   });
 });

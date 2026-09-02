@@ -10,10 +10,10 @@ function printServerHelp(): void {
   letta server [remote options]
   letta server --listen [url] [App Server options]
 
-Run the local agent server as a remote environment, with messaging channels, or as an App Server.
+Run the local agent server as a remote computer, with messaging channels, or as an App Server.
 
-Remote environment options:
-  --env-name <name>  Friendly name for this environment (uses hostname if not provided)
+Remote computer options:
+  --computer-name <name>  Friendly name for this computer (uses hostname if not provided)
   --channels <list>  Comma-separated channel names to enable (e.g. telegram)
   --install-channel-runtimes  Install missing runtime dependencies for selected channels
   --debug  Log WebSocket events instead of showing the interactive status UI
@@ -34,7 +34,7 @@ Common options:
 
 Examples:
   letta server
-  letta server --env-name "work-laptop"
+  letta server --computer-name "work-laptop"
   letta server --channels telegram
   letta server --listen
   letta server --listen ws://127.0.0.1:4500
@@ -84,6 +84,8 @@ export function resolveServerCommand(argv: string[]): ServerCommand {
   if (foundListen) {
     const conflictingOption = argv.find(
       (arg) =>
+        arg === "--computer-name" ||
+        arg.startsWith("--computer-name=") ||
         arg === "--env-name" ||
         arg.startsWith("--env-name=") ||
         arg === "--channels" ||

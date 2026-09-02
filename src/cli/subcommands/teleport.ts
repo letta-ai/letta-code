@@ -33,19 +33,19 @@ Usage:
   letta teleport list
   letta teleport cloud
   letta teleport local
-  letta teleport <environment>
+  letta teleport <computer>
 
 Notes:
   - Operates on the current agent/conversation from LETTA_AGENT_ID /
     LETTA_CONVERSATION_ID (or AGENT_ID / CONVERSATION_ID), falling back to the
     last active session.
   - Requires a Letta Cloud agent and an active conversation.
-  - list: prints accessible online remote environments as JSON.
+  - list: prints accessible online remote computers as JSON.
   - cloud: teleports to the agent's Cloud sandbox.
-  - local: teleports to the one online Desktop environment. Desktop Remote
+  - local: teleports to the one online Desktop computer. Desktop Remote
     Access must be enabled; if several are online, choose one explicitly.
-  - <environment>: teleports to a specific remote environment by name,
-    device-id, connection-id, or environment id.
+  - <computer>: teleports to a specific remote computer by name,
+    device-id, connection-id, or computer id.
   - Output is JSON only.
 `.trim(),
   );
@@ -146,7 +146,7 @@ function assertTeleportableRemoteEnvironment(
 ): void {
   if (!isTeleportableRemoteEnvironment(environment)) {
     throw new Error(
-      "The Desktop-local connection is not Cloud-routable. Use `letta teleport local` to resolve its Remote Access environment.",
+      "The Desktop-local connection is not Cloud-routable. Use `letta teleport local` to resolve its Remote Access computer.",
     );
   }
 }
@@ -192,7 +192,7 @@ export async function runTeleportSubcommand(
       return 0;
     }
 
-    // cloud and <environment> both need a valid session
+    // cloud and <computer> both need a valid session
     const session = resolveTeleportSession(
       process.env,
       (
@@ -217,7 +217,7 @@ export async function runTeleportSubcommand(
       targetConnectionId = result.connectionId;
     } else if (action === "back") {
       throw new Error(
-        "Teleport back is not supported. Use `letta teleport local` or choose an explicit environment.",
+        "Teleport back is not supported. Use `letta teleport local` or choose an explicit computer.",
       );
     } else {
       const resolve =

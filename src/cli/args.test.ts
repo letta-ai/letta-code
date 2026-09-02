@@ -65,6 +65,8 @@ describe("shared CLI arg schema", () => {
     expect(help).toContain("LETTA_DISABLE_MODS=1 letta");
     expect(help).toContain("--memfs-startup <m>");
     expect(help).toContain("--stateless");
+    expect(help).toContain("--computer <selector>");
+    expect(help).not.toContain("--environment");
     expect(help).toContain("Default: text");
     expect(help).not.toContain("--run");
     expect(help).not.toContain("--dev-backend");
@@ -91,6 +93,26 @@ describe("shared CLI arg schema", () => {
     );
     expect(parsed.values.conversation).toBe("conv-123");
     expect(parsed.positionals.slice(2).join(" ")).toBe("hello");
+  });
+
+  test("accepts computer routing and its legacy environment aliases", () => {
+    const primary = parseCliArgs(
+      ["node", "script", "-p", "hello", "--computer", "office-mac"],
+      true,
+    );
+    expect(primary.values.computer).toBe("office-mac");
+
+    const legacy = parseCliArgs(
+      ["node", "script", "-p", "hello", "--environment", "office-mac"],
+      true,
+    );
+    expect(legacy.values.environment).toBe("office-mac");
+
+    const shortLegacy = parseCliArgs(
+      ["node", "script", "-p", "hello", "--env", "office-mac"],
+      true,
+    );
+    expect(shortLegacy.values.env).toBe("office-mac");
   });
 
   test("recognizes headless-specific startup flags in strict mode", () => {

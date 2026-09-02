@@ -21,7 +21,7 @@ This skill lets you create, list, and manage scheduled tasks using the `letta cr
 Pass a flag only when you have a requirement the default can't infer:
 
 - **`--runner cloud`** — the schedule must fire no matter which computers are online; execute in the agent's cloud sandbox.
-- **`--computer <deviceId>`** — the work needs a specific connected computer (its filesystem, services, or credentials). Get the deviceId from `letta environments list`. If that computer is offline at fire time, execution falls back to the cloud sandbox.
+- **`--computer <deviceId>`** — the work needs a specific connected computer (its filesystem, services, or credentials). Get the deviceId from `letta computers list`. If that computer is offline at fire time, execution falls back to the cloud sandbox.
 - **`--runner local`** — the work must only ever run on the current computer, even if that means missing fires while no session is running here.
 
 The CLI reports its placement in the command output. If it warns that the schedule is local (this happens when the cloud scheduler cannot reach the current computer), the schedule only fires while a Letta session is running here — read the warning and decide whether that's acceptable.

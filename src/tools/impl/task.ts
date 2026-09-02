@@ -109,8 +109,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
   /** Optional exact memory scope for harness-created memory worktrees. */
   memoryScope?: SubagentMemoryScope;
   /**
-   * Optional environment selector passed to the child as `--environment`.
-   * The child routes its turn to that connected environment and fails fast
+   * Optional computer selector passed to the child as `--computer`.
+   * The child routes its turn to that connected computer and fails fast
    * if the device is offline, ambiguous, or too old to support routing.
    */
   environment?: string;

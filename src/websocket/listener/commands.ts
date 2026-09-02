@@ -402,15 +402,15 @@ function scheduleRemoteRestart(
     return;
   }
 
-  log(`scheduling remote listener restart for env ${connectionName}`);
+  log(`scheduling remote listener restart for computer ${connectionName}`);
   setTimeout(async () => {
     await flushRemoteSettingsWrites();
     log(
-      `spawning replacement listener: ${process.execPath} ${entrypoint} remote --env-name ${connectionName}`,
+      `spawning replacement listener: ${process.execPath} ${entrypoint} remote --computer-name ${connectionName}`,
     );
     const child = spawn(
       process.execPath,
-      [entrypoint, "remote", "--env-name", connectionName],
+      [entrypoint, "remote", "--computer-name", connectionName],
       {
         cwd: process.cwd(),
         detached: true,
