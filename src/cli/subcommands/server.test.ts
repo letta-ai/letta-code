@@ -5,7 +5,7 @@ import {
 } from "@/cli/subcommands/server";
 
 describe("server subcommand routing", () => {
-  test("keeps the default remote environment mode", () => {
+  test("keeps the default remote computer mode", () => {
     expect(resolveServerCommand([])).toEqual({ kind: "remote", argv: [] });
     expect(resolveServerCommand(["--channels", "slack"])).toEqual({
       kind: "remote",
@@ -49,7 +49,10 @@ describe("server subcommand routing", () => {
     );
   });
 
-  test("rejects remote environment options in App Server mode", () => {
+  test("rejects remote computer options in App Server mode", () => {
+    expect(() =>
+      resolveServerCommand(["--listen", "--computer-name", "work-laptop"]),
+    ).toThrow("--computer-name cannot be used with --listen");
     expect(() =>
       resolveServerCommand(["--listen", "--env-name", "work-laptop"]),
     ).toThrow("--env-name cannot be used with --listen");

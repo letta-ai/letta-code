@@ -211,7 +211,7 @@ interface BuildSubagentArgsOptions {
    */
   systemPromptOverride?: string;
   /**
-   * Route the child's turn to a connected environment (`--environment`).
+   * Route the child's turn to a connected computer (`--computer`).
    * The child resolves the selector and fails fast if the device is offline,
    * ambiguous, or does not support environment-routed messaging.
    */
@@ -242,7 +242,7 @@ export function buildSubagentArgs(
   }
 
   if (options.environment) {
-    args.push("--environment", options.environment);
+    args.push("--computer", options.environment);
   }
 
   if (isDeployingExisting) {

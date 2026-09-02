@@ -704,9 +704,9 @@ function getEnvironmentRoutedMessagingUnsupportedReason(
   if (environment.metadata?.environmentMessageProtocol === "v2-input") {
     return null;
   }
-  return `Environment ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
+  return `Computer ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
     environment.metadata?.lettaCodeVersion ?? "unknown"
-  } and does not advertise environment-routed headless messaging support. Update that runtime or omit --environment to use same-environment messaging.`;
+  } and does not advertise computer-routed headless messaging support. Update that runtime or omit --computer to use same-computer messaging.`;
 }
 
 export async function handleHeadlessCommand(
@@ -827,7 +827,8 @@ export async function handleHeadlessCommand(
   // --new: Create a new conversation (for concurrent sessions)
   let forceNewConversation = values.new ?? false;
   const fromAgentId = values["from-agent"];
-  const explicitEnvironmentSelector = values.environment || values.env;
+  const explicitEnvironmentSelector =
+    values.computer ?? values.environment ?? values.env;
   const usesRemoteEnvironment =
     typeof explicitEnvironmentSelector === "string" &&
     explicitEnvironmentSelector.trim().length > 0;
@@ -1741,7 +1742,7 @@ export async function handleHeadlessCommand(
   }
   if (usesRemoteEnvironment && isBidirectionalMode) {
     console.error(
-      "Error: remote environment routing cannot be used with --input-format stream-json",
+      "Error: remote computer routing cannot be used with --input-format stream-json",
     );
     process.exit(1);
   }
@@ -2079,8 +2080,7 @@ ${SYSTEM_REMINDER_CLOSE}
   }
 
   // Pre-load specific skills' full content (used by subagents with skills: field).
-  // Environment-routed turns run in the selected remote runtime, which injects
-  // its own local context and skills, so avoid prepending this process' context.
+  // Remote computer turns inject their own local context and skills.
   if (preLoadSkillsRaw && !usesRemoteEnvironment) {
     const { readFile: readFileAsync } = await import("node:fs/promises");
     const { skillPathById } = await buildClientSkillsPayload({

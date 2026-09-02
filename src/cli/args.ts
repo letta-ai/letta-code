@@ -183,15 +183,16 @@ export const CLI_FLAG_CATALOG = {
       description: "Inject agent-to-agent system reminder (headless mode)",
     },
   },
-  environment: {
+  computer: {
     parser: { type: "string" },
     mode: "headless",
     help: {
       argLabel: "<selector>",
       description:
-        "Route headless message through 'cloud' sandbox or an environment by name, device ID, or connection ID",
+        "Route headless message through 'cloud' or a computer by name, device ID, or connection ID",
     },
   },
+  environment: { parser: { type: "string" }, mode: "headless" },
   env: { parser: { type: "string" }, mode: "headless" },
   skills: {
     parser: { type: "string" },

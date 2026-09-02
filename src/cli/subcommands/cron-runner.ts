@@ -105,7 +105,7 @@ export function resolveCronRunner(
 
 /**
  * Synthetic ids the Desktop environment proxy injects into
- * `letta environments list` responses. Neither is a targetable device:
+ * `letta computers list` responses. Neither is a targetable device:
  * - "__letta_cloud__": the synthetic "Cloud" row (the sandbox target)
  * - "local": the synthetic offline placeholder when no local device is registered
  * Values mirror CLOUD_DEVICE_ID / LOCAL_CONNECTION_ID in the desktop app.
@@ -117,7 +117,7 @@ export type TargetDeviceValidity = { ok: true } | { ok: false; error: string };
 
 /**
  * Pre-validate a `--computer` value against its resolved environment
- * entry, catching entries that appear in `letta environments list` but are
+ * entry, catching entries that appear in `letta computers list` but are
  * not valid Cloud-schedule targets. In Desktop/local-proxy contexts the list
  * merges desktop-local listener connections (organizationId "local" — they
  * exist only in the local proxy, not the Letta API's environments registry)

@@ -109,8 +109,8 @@ Add options:
                                    the fallback when Cloud scheduling cannot
                                    reach this computer)
   --computer <id>        (cloud runner only) Override execution with a
-                         connected external environment (deviceId from
-                         \`letta environments list\`). Falls back to the Cloud
+                         connected external computer (deviceId from
+                         \`letta computers list\`). Falls back to the Cloud
                          sandbox if the computer is offline at fire time.
                          Managed sandboxes and Desktop-local connections are
                          not currently valid Cloud schedule targets.
@@ -404,7 +404,7 @@ async function handleAdd(values: CronArgValues): Promise<number> {
       targetDeviceId = inferredDeviceId;
     } else if (resolution.kind === "local-fallback") {
       runner = "local";
-      localFallbackNote = `This schedule is local to this computer (${resolution.reason}): it only fires while a Letta session is running here. For a schedule that fires regardless, pass --runner cloud (runs in the agent's cloud sandbox) or --computer <deviceId> (runs on a connected computer, from \`letta environments list\`).`;
+      localFallbackNote = `This schedule is local to this computer (${resolution.reason}): it only fires while a Letta session is running here. For a schedule that fires regardless, pass --runner cloud (runs in the agent's cloud sandbox) or --computer <deviceId> (runs on a connected computer, from \`letta computers list\`).`;
     }
   }
 

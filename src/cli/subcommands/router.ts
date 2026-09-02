@@ -41,6 +41,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "channel-gateway":
     case "agents":
     case "connect":
+    case "computers":
     case "environments":
     case "envs":
     case "feedback":
@@ -90,8 +91,9 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runMessagesSubcommand(rest);
     case "mcp":
       return runMcpSubcommand(rest);
-    case "environments":
-    case "envs":
+    case "computers":
+    case "environments": // legacy alias
+    case "envs": // legacy alias
       return runEnvironmentsSubcommand(rest);
     case "mods":
       return runModsSubcommand(rest);
