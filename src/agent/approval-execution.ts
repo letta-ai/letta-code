@@ -7,6 +7,11 @@ import type {
   ToolReturn,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
+import {
+  fingerprintToolCall,
+  type ToolLoopCall,
+  type ToolLoopGuard,
+} from "@/agent/tool-loop-guard";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -383,6 +388,8 @@ export async function executeApprovalBatch(
     workingDirectory?: string;
     parentScope?: { agentId: string; conversationId: string };
     onFileWrite?: (filePath: string, content: string) => void;
+    toolLoopGuard?: ToolLoopGuard;
+    runId?: string;
   },
 ): Promise<ApprovalResult[]> {
   const toolContextId =
@@ -399,6 +406,106 @@ export async function executeApprovalBatch(
   const results: (ApprovalResult | null)[] = new Array(decisions.length).fill(
     null,
   );
+  const loopWorkingDirectory =
+    options?.workingDirectory ?? getCurrentWorkingDirectory();
+  const loopCalls = new Map<number, ToolLoopCall>();
+  const loopCallCounts = new Map<string, number>();
+  if (options?.toolLoopGuard) {
+    for (let index = 0; index < decisions.length; index += 1) {
+      const decision = decisions[index];
+      if (decision?.type !== "approve") continue;
+      const call = {
+        toolName: decision.approval.toolName,
+        toolArgs: decision.approval.toolArgs,
+        workingDirectory: loopWorkingDirectory,
+      };
+      loopCalls.set(index, call);
+      const fingerprint = fingerprintToolCall(call);
+      loopCallCounts.set(
+        fingerprint,
+        (loopCallCounts.get(fingerprint) ?? 0) + 1,
+      );
+    }
+  }
+
+  const observeLoopResult = (index: number): void => {
+    const decision = decisions[index];
+    const result = results[index];
+    const call = loopCalls.get(index);
+    if (
+      !options?.toolLoopGuard ||
+      !call ||
+      decision?.type !== "approve" ||
+      result?.type !== "tool"
+    ) {
+      return;
+    }
+    const observation = options.toolLoopGuard.observeResult(call, {
+      status: result.status,
+      toolReturn: result.tool_return,
+    });
+    result.tool_return = observation.annotatedToolReturn;
+  };
+
+  // Repeated calls in one model response must be observed between executions;
+  // otherwise a five-call batch can bypass the preflight threshold entirely.
+  const toolLoopGuard = options?.toolLoopGuard;
+  if (
+    toolLoopGuard &&
+    [...loopCallCounts.values()].some((count) => count > 1)
+  ) {
+    const explicitlyApproved = new Set(
+      [...loopCalls.values()]
+        .filter((call) => toolLoopGuard.isBlocked(call))
+        .map(fingerprintToolCall),
+    );
+    for (let index = 0; index < decisions.length; index += 1) {
+      const decision = decisions[index];
+      if (!decision) continue;
+      const call = loopCalls.get(index);
+      const preflight = call ? toolLoopGuard.preflight(call) : null;
+      if (
+        decision.type === "approve" &&
+        call &&
+        preflight?.blocked &&
+        !explicitlyApproved.has(fingerprintToolCall(call)) &&
+        !options?.abortSignal?.aborted
+      ) {
+        const reason = preflight.reason ?? "Repeated tool call stopped";
+        results[index] = {
+          type: "tool",
+          tool_call_id: decision.approval.toolCallId,
+          tool_return: reason,
+          status: "error",
+          reason,
+        };
+        onChunk?.({
+          message_type: "tool_return_message",
+          id: "dummy",
+          date: new Date().toISOString(),
+          tool_call_id: decision.approval.toolCallId,
+          tool_return: reason,
+          status: "error",
+        });
+        toolLoopGuard.recordPrevention({
+          action: "execution_blocked",
+          toolName: decision.approval.toolName,
+          toolCallId: decision.approval.toolCallId,
+          repeatCount: preflight.consecutiveIdenticalPairs,
+          runId: options?.runId,
+        });
+        continue;
+      }
+      results[index] = await executeSingleDecision(decision, onChunk, {
+        ...options,
+        toolContextId,
+      });
+      observeLoopResult(index);
+    }
+    return results.filter(
+      (result): result is ApprovalResult => result !== null,
+    );
+  }
 
   // Categorize decisions by execution strategy
   const parallelIndices: number[] = [];
@@ -471,8 +578,18 @@ export async function executeApprovalBatch(
     }),
   ]);
 
-  // Filter out nulls (shouldn't happen, but TypeScript needs this)
-  return results.filter((r): r is ApprovalResult => r !== null);
+  const orderedResults = results.filter(
+    (result): result is ApprovalResult => result !== null,
+  );
+  if (!options?.toolLoopGuard) {
+    return orderedResults;
+  }
+
+  for (let index = 0; index < decisions.length; index += 1) {
+    observeLoopResult(index);
+  }
+
+  return orderedResults;
 }
 
 /**
@@ -498,6 +615,8 @@ export async function executeAutoAllowedTools(
     toolContextId?: string;
     workingDirectory?: string;
     onFileWrite?: (filePath: string, content: string) => void;
+    toolLoopGuard?: ToolLoopGuard;
+    runId?: string;
   },
 ): Promise<AutoAllowedResult[]> {
   const decisions: ApprovalDecision[] = autoAllowed.map((ac) => ({

@@ -933,3 +933,16 @@ class TelemetryManager {
 
 // Export singleton instance
 export const telemetry = new TelemetryManager();
+
+export function trackToolLoopPrevention(
+  event: import("@/agent/tool-loop-guard").ToolLoopPrevention,
+): void {
+  const verb =
+    event.action === "approval_required" ? "Required approval for" : "Blocked";
+  telemetry.trackError(
+    "tool_loop_prevented",
+    `${verb} repeated ${event.toolName} call ${event.toolCallId} after ${event.repeatCount} identical call/result pairs`,
+    `tool_loop_guard:${event.action}`,
+    { runId: event.runId },
+  );
+}

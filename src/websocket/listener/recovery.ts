@@ -6,6 +6,10 @@ import {
 } from "@/agent/approval-execution";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import {
+  createToolLoopGuard,
+  type ToolLoopGuard,
+} from "@/agent/tool-loop-guard";
+import {
   isApprovalPendingError,
   isInvalidToolCallIdsError,
   normalizeStreamErrorTypeToStopReason,
@@ -16,6 +20,7 @@ import { getBackend } from "@/backend";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { formatPermissionDenial } from "@/permissions/format-denial";
+import { trackToolLoopPrevention } from "@/telemetry";
 import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type {
@@ -410,6 +415,7 @@ export async function resolveRecoveredApprovalResponse(
     dequeuedBatchId?: string,
     existingTurnLease?: TurnLease,
     existingTurnCorrelation?: TurnCorrelation,
+    existingToolLoopGuard?: ToolLoopGuard,
   ) => Promise<void>,
   opts?: {
     onStatusChange?: (
@@ -555,6 +561,9 @@ export async function resolveRecoveredApprovalResponse(
           initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
         })
       : null;
+  const toolLoopGuard = recoveryLease
+    ? createToolLoopGuard({ onPrevention: trackToolLoopPrevention })
+    : null;
   let continuationFinalized = false;
 
   try {
@@ -702,6 +711,8 @@ export async function resolveRecoveredApprovalResponse(
                 conversationId: recovered.conversationId,
               }
             : undefined,
+        toolLoopGuard: toolLoopGuard ?? undefined,
+        runId: executionRunId,
       });
     } catch (error) {
       // Execution threw before results exist, so the finished-events
@@ -807,6 +818,7 @@ export async function resolveRecoveredApprovalResponse(
       continuationBatchId,
       recoveryLease,
       continuationCorrelation,
+      toolLoopGuard ?? undefined,
     );
 
     if (runtime.turnLifecycle.isCurrent(recoveryLease)) {

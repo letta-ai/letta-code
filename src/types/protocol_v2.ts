@@ -168,6 +168,7 @@ export interface CanUseToolControlRequestBody {
   tool_call_id: string;
   permission_suggestions: PermissionSuggestion[];
   blocked_path: string | null;
+  reason?: string;
   diffs?: DiffPreview[];
 }
 
@@ -210,7 +211,6 @@ export interface ChannelConfigFieldBase {
   restartRequired?: boolean;
   scope?: "app" | "account";
 }
-
 export interface ChannelConfigTextField extends ChannelConfigFieldBase {
   type: "text";
   default?: string;

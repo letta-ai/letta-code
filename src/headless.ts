@@ -9,7 +9,11 @@ import type {
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
+import {
+  getTerminalTelemetrySurface,
+  telemetry,
+  trackToolLoopPrevention,
+} from "@/telemetry";
 import {
   trackBoundaryError,
   trackEndTurnNoAssistant,
@@ -65,6 +69,7 @@ import type { MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
+import { createToolLoopGuard } from "./agent/tool-loop-guard";
 import {
   type BackendMode,
   type ConversationCreateBody,
@@ -231,7 +236,6 @@ function trackHeadlessBoundaryError(
     context,
   });
 }
-
 function reportAndExitHeadless(
   errorType: string,
   error: unknown,
@@ -243,7 +247,6 @@ function reportAndExitHeadless(
   );
   process.exit(1);
 }
-
 async function reportStartupErrorAndExit(
   errorType: string,
   error: unknown,
@@ -265,10 +268,8 @@ async function reportStartupErrorAndExit(
   } else {
     console.error(`Error: ${message}`);
   }
-
   return await flushAndExit(1);
 }
-
 export type BidirectionalQueuedInput = QueuedTurnInput<
   MessageCreate["content"]
 >;
@@ -280,7 +281,6 @@ export function mergeBidirectionalQueuedInput(
     normalizeUserContent: (content) => content,
   });
 }
-
 function trackTelemetryUserInputFromContent(
   content: MessageCreate["content"],
   modelId: string,
@@ -291,27 +291,23 @@ function trackTelemetryUserInputFromContent(
   }
   telemetry.trackUserInput(inputText, "user", modelId);
 }
-
 function shouldTrackTelemetryForQueuedMessage(
   queuedKind?: QueuedMessage["kind"],
 ): boolean {
   return queuedKind !== "task_notification";
 }
-
 function contentToTaskNotificationText(
   content: MessageCreate["content"],
 ): string {
   if (typeof content === "string") {
     return content;
   }
-
   return content
     .flatMap((part) =>
       part.type === "text" && typeof part.text === "string" ? [part.text] : [],
     )
     .join("");
 }
-
 function toBidirectionalQueuedInput(
   content: MessageCreate["content"],
   queuedKind?: QueuedMessage["kind"],
@@ -322,13 +318,11 @@ function toBidirectionalQueuedInput(
       text: contentToTaskNotificationText(content),
     };
   }
-
   return {
     kind: "user",
     content,
   };
 }
-
 /**
  * Decide what an incoming `control_request: interrupt` should do, given the
  * current turn state. Extracted as a pure function so the policy is unit-
@@ -353,7 +347,6 @@ export function decideInterruptAction(state: {
   if (state.turnStarting) return "latch";
   return "noop";
 }
-
 export const __headlessTestUtils = {
   trackTelemetryUserInputFromContent,
   shouldTrackTelemetryForQueuedMessage,
@@ -371,7 +364,6 @@ function parseReflectionOverrides(
   if (!triggerRaw && !stepCountRaw) {
     return {};
   }
-
   const overrides: ReflectionOverrides = {};
 
   if (triggerRaw !== undefined) {
@@ -386,7 +378,6 @@ function parseReflectionOverrides(
     }
     overrides.trigger = triggerRaw;
   }
-
   if (stepCountRaw !== undefined) {
     try {
       overrides.stepCount = parsePositiveIntFlag({
@@ -399,10 +390,8 @@ function parseReflectionOverrides(
       );
     }
   }
-
   return overrides;
 }
-
 async function prepareHeadlessToolExecutionContext(params: {
   agentId: string;
   conversationId: string;
@@ -434,7 +423,6 @@ async function prepareHeadlessToolExecutionContext(params: {
     ),
   };
 }
-
 function isTurnInputArray(
   value: unknown,
 ): value is Array<MessageCreate | ApprovalCreate> {
@@ -443,7 +431,6 @@ function isTurnInputArray(
     value.every((item) => typeof item === "object" && item !== null)
   );
 }
-
 type HeadlessTurnStartEmission =
   | { cancelled: false; input: Array<MessageCreate | ApprovalCreate> }
   | { cancelled: true; reason: string };
@@ -504,7 +491,6 @@ async function emitHeadlessTurnStartCancellationOutput(options: {
     console.error(`Error: ${options.reason}`);
   }
 }
-
 function writeBidirectionalTurnStartCancellation(options: {
   agent: AgentState;
   conversationId: string;
@@ -537,7 +523,6 @@ function writeBidirectionalTurnStartCancellation(options: {
   };
   writeWireMessage(resultMsg);
 }
-
 async function emitHeadlessTurnStart(options: {
   agent: AgentState;
   conversationId: string;
@@ -563,7 +548,6 @@ async function emitHeadlessTurnStart(options: {
     return { cancelled: false, input: options.input };
   }
 }
-
 async function emitHeadlessTurnEnd(options: {
   agent: AgentState;
   conversationId: string;
@@ -592,7 +576,6 @@ async function emitHeadlessTurnEnd(options: {
     return undefined;
   }
 }
-
 async function sendScopedApprovalMessages(params: {
   agentId: string;
   conversationId: string;
@@ -617,7 +600,6 @@ async function sendScopedApprovalMessages(params: {
     },
   );
 }
-
 async function flushAndExit(code: number): Promise<never> {
   const flushWritable = (stream: NodeJS.WriteStream): Promise<void> =>
     new Promise((resolve) => {
@@ -633,7 +615,6 @@ async function flushAndExit(code: number): Promise<never> {
 
   process.exit(code);
 }
-
 // For one-shot headless outputs (json/text), await the final stdout write before
 // exiting so CI pipes don't occasionally observe an empty stdout buffer.
 async function writeFinalHeadlessStdout(text: string): Promise<void> {
@@ -645,7 +626,6 @@ async function writeFinalHeadlessStdout(text: string): Promise<void> {
     process.stdout.write(text, () => resolve());
   });
 }
-
 type ReplyEnvironmentMetadata =
   | {
       source: "same-environment";
@@ -677,7 +657,6 @@ function buildEnvironmentResponseMetadata(params: {
     name: params.environment.connectionName,
   };
 }
-
 function formatAgentReplyMetadata(params: {
   agentId: string;
   conversationId: string;
@@ -689,7 +668,6 @@ function formatAgentReplyMetadata(params: {
     ...(params.environment ? { environment: params.environment } : {}),
   });
 }
-
 function isCloudEnvironmentSelector(
   selector: string | boolean | undefined,
 ): boolean {
@@ -2321,6 +2299,9 @@ ${SYSTEM_REMINDER_CLOSE}
   let emptyResponseRetries = 0;
   let conversationBusyRetries = 0;
   let chatgptPlanSwaps = 0;
+  const toolLoopGuard = createToolLoopGuard({
+    onPrevention: trackToolLoopPrevention,
+  });
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
 
@@ -2757,6 +2738,7 @@ ${SYSTEM_REMINDER_CLOSE}
           } else {
             currentInput = continueTurnStartEmission.input;
           }
+          toolLoopGuard.reset();
           continue;
         }
 
@@ -2796,6 +2778,9 @@ ${SYSTEM_REMINDER_CLOSE}
             requireArgsForAutoApprove: true,
             missingNameReason: "Tool call incomplete - missing name",
             toolContextId: turnToolContextId ?? undefined,
+            toolLoopGuard,
+            workingDirectory: getCurrentWorkingDirectory(),
+            runId: lastRunId ?? undefined,
           });
 
         const decisions: Decision[] = [
@@ -2809,7 +2794,8 @@ ${SYSTEM_REMINDER_CLOSE}
             return {
               type: "deny" as const,
               approval: ac.approval,
-              reason: "Tool requires approval (headless mode)",
+              reason:
+                ac.toolLoopReason ?? "Tool requires approval (headless mode)",
             };
           }),
           ...autoDenied.map((ac) => ({
@@ -2837,6 +2823,9 @@ ${SYSTEM_REMINDER_CLOSE}
           {
             abortSignal: sigintSignal,
             toolContextId: turnToolContextId ?? undefined,
+            toolLoopGuard,
+            workingDirectory: getCurrentWorkingDirectory(),
+            runId: lastRunId ?? undefined,
           },
         );
 
@@ -4401,6 +4390,9 @@ async function runBidirectionalMode(
           buffers.order.push(userLineId);
         }
         let numTurns = 0;
+        const toolLoopGuard = createToolLoopGuard({
+          onPrevention: trackToolLoopPrevention,
+        });
         let lastStopReason: StopReasonType | null = null; // Track for result subtype
         let sawStreamError = false; // Track if we emitted an error during streaming
         let preStreamTransientRetries = 0;
@@ -4721,6 +4713,9 @@ async function runBidirectionalMode(
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
                 toolContextId: turnToolContextId ?? undefined,
+                toolLoopGuard,
+                workingDirectory: getCurrentWorkingDirectory(),
+                runId: result.lastRunId ?? undefined,
               });
 
             const decisions: Decision[] = [
@@ -4787,7 +4782,12 @@ async function runBidirectionalMode(
             const executedResults = await executeApprovalBatch(
               decisions,
               undefined,
-              { toolContextId: turnToolContextId ?? undefined },
+              {
+                toolContextId: turnToolContextId ?? undefined,
+                toolLoopGuard,
+                workingDirectory: getCurrentWorkingDirectory(),
+                runId: result.lastRunId ?? undefined,
+              },
             );
 
             emitLocalToolReturns(executedResults, sessionId);

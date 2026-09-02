@@ -5,6 +5,8 @@ import {
   setConversationId,
   setCurrentAgentId,
 } from "@/agent/context";
+import { createToolLoopGuard } from "@/agent/tool-loop-guard";
+import { classifyApprovalsWithSuggestions } from "./approval-suggestions";
 import { openListenerConnection } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
@@ -156,6 +158,71 @@ describe("listener turn lifecycle integration", () => {
     ]);
 
     clearConversationRuntimeState(runtime);
+    expect((await approvalResultPromise).kind).toBe("interrupted");
+  });
+
+  test("includes the loop-stop reason in an escalated approval", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const workingDirectory = process.cwd();
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory,
+      initialStatus: "PROCESSING_API_RESPONSE",
+    });
+    const permissionModeState = getOrCreateConversationPermissionModeStateRef(
+      runtime.listener,
+      "agent-1",
+      "conv-1",
+    );
+    permissionModeState.mode = "unrestricted";
+    const toolLoopGuard = createToolLoopGuard();
+    const toolArgs = JSON.stringify({ command: "git status" });
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      toolLoopGuard.observeResult(
+        { toolName: "Bash", toolArgs, workingDirectory },
+        { status: "success", toolReturn: "unchanged" },
+      );
+    }
+    const sentPayloads: string[] = [];
+
+    const approvalResultPromise = handleApprovalStop({
+      approvals: [{ toolCallId: "loop-call", toolName: "Bash", toolArgs }],
+      runtime,
+      socket: createOpenTransport(sentPayloads),
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      turnWorkingDirectory: workingDirectory,
+      turnPermissionModeState: permissionModeState,
+      dequeuedBatchId: "batch-loop",
+      msgRunIds: [],
+      turnInput: { messages: [] },
+      pendingNormalizationInterruptedToolCallIds: [],
+      turnToolContextId: null,
+      turnLease,
+      toolLoopGuard,
+      buildSendOptions: () => ({}) as never,
+      dependencies: {
+        classifyApprovals: (approvals, options) =>
+          classifyApprovalsWithSuggestions(approvals, {
+            ...options,
+            // This test covers listener transport of the loop reason. The
+            // classifier unit test separately covers real schema validation.
+            requireArgsForAutoApprove: false,
+          }),
+      },
+    });
+    try {
+      await waitForPendingApproval(runtime);
+      const request = sentPayloads
+        .map((payload) => JSON.parse(payload) as Record<string, unknown>)
+        .find((message) => message.type === "control_request");
+      expect(
+        (request?.request as Record<string, unknown> | undefined)?.reason,
+      ).toContain("stopped after 4 consecutive identical");
+    } finally {
+      clearConversationRuntimeState(runtime);
+    }
     expect((await approvalResultPromise).kind).toBe("interrupted");
   });
 

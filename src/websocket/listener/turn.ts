@@ -13,6 +13,10 @@ import {
   type sendMessageStream,
 } from "@/agent/message";
 import {
+  createToolLoopGuard,
+  type ToolLoopGuard,
+} from "@/agent/tool-loop-guard";
+import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
   normalizeStreamErrorTypeToStopReason,
@@ -27,7 +31,7 @@ import {
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import type { ErrorInfo } from "@/cli/helpers/stream-processor";
-import { telemetry } from "@/telemetry";
+import { telemetry, trackToolLoopPrevention } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { debugLog, isDebugEnabled } from "@/utils/debug";
@@ -108,6 +112,7 @@ export async function handleIncomingMessage(
   dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
+  existingToolLoopGuard?: ToolLoopGuard,
 ): Promise<void> {
   // Notify OTID-keyed observers around the complete turn.
   notifyTurnStarted(msg);
@@ -121,6 +126,7 @@ export async function handleIncomingMessage(
       dequeuedBatchId,
       existingTurnLease,
       existingTurnCorrelation,
+      existingToolLoopGuard,
     );
   } finally {
     notifyTurnFinished(msg);
@@ -140,6 +146,7 @@ async function handleIncomingMessageInner(
   dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
+  existingToolLoopGuard?: ToolLoopGuard,
 ): Promise<void> {
   const agentId = normalizeCwdAgentId(msg.agentId);
   const requestedConversationId = msg.conversationId || undefined;
@@ -149,13 +156,11 @@ async function handleIncomingMessageInner(
     agentId,
     conversationId,
   );
-
   const turnPermissionModeState = getOrCreateConversationPermissionModeStateRef(
     runtime.listener,
     agentId,
     conversationId,
   );
-
   let postStopApprovalRecoveryRetries = 0,
     llmApiErrorRetries = 0,
     emptyResponseRetries = 0,
@@ -169,6 +174,9 @@ async function handleIncomingMessageInner(
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
+  const toolLoopGuard =
+    existingToolLoopGuard ??
+    createToolLoopGuard({ onPrevention: trackToolLoopPrevention });
   const turnLease =
     existingTurnLease ??
     runtime.turnLifecycle.begin({
@@ -425,12 +433,10 @@ async function handleIncomingMessageInner(
               );
             }
           }
-
           return undefined;
         },
         runtime.contextTracker,
       );
-
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
       const fallbackError = result.fallbackError ?? null;
@@ -487,7 +493,6 @@ async function handleIncomingMessageInner(
         });
         break;
       }
-
       if (stopReason !== "requires_approval") {
         const lastRunId = runId || msgRunIds[msgRunIds.length - 1] || null;
         const runErrorInfo = lastRunId
@@ -577,7 +582,6 @@ async function handleIncomingMessageInner(
           );
           continue;
         }
-
         if (
           isEmptyResponseRetryable(
             stopReason === "llm_api_error" ? "llm_error" : undefined,
@@ -604,7 +608,6 @@ async function handleIncomingMessageInner(
               },
             ]);
           }
-
           emitRetryDelta(socket, runtime, {
             message: `Empty LLM response, retrying (attempt ${attempt}/${EMPTY_RESPONSE_MAX_RETRIES})...`,
             reason: "llm_api_error",
@@ -656,7 +659,6 @@ async function handleIncomingMessageInner(
           );
           continue;
         }
-
         if (
           agentId &&
           chatgptPlanSwaps < CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN
@@ -720,7 +722,6 @@ async function handleIncomingMessageInner(
             continue;
           }
         }
-
         const retriable = await isRetriablePostStopError(
           (stopReason as StopReasonType) || "error",
           lastRunId,
@@ -792,7 +793,6 @@ async function handleIncomingMessageInner(
           );
           continue;
         }
-
         const effectiveStopReason: StopReasonType = turnAbortSignal.aborted
           ? "cancelled"
           : (stopReason as StopReasonType) || "error";
@@ -839,7 +839,6 @@ async function handleIncomingMessageInner(
         runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
         break;
       }
-
       const approvalResult = await handleApprovalStop({
         approvals,
         runtime,
@@ -856,6 +855,7 @@ async function handleIncomingMessageInner(
         turnToolContextId,
         turnLease,
         turnCorrelation,
+        toolLoopGuard,
         processOwnedTurn: msg.processOwnedTurn === true,
         buildSendOptions,
       });

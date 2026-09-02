@@ -4,6 +4,10 @@ import {
   type ApprovalResult,
   executeApprovalBatch,
 } from "@/agent/approval-execution";
+import {
+  createToolLoopGuard,
+  type ToolLoopGuard,
+} from "@/agent/tool-loop-guard";
 import { computeDiffPreviews } from "@/helpers/diff-preview";
 import { formatPermissionDenial } from "@/permissions/format-denial";
 import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
@@ -166,6 +170,7 @@ export async function handleApprovalStop(params: {
   turnToolContextId: string | null;
   turnLease: TurnLease;
   turnCorrelation?: TurnCorrelation;
+  toolLoopGuard?: ToolLoopGuard;
   /** This turn's output is owned by an in-process caller, not a relay client. */
   processOwnedTurn?: boolean;
   buildSendOptions: () => Parameters<
@@ -194,6 +199,7 @@ export async function handleApprovalStop(params: {
     turnToolContextId,
     turnLease,
     turnCorrelation,
+    toolLoopGuard = createToolLoopGuard(),
     processOwnedTurn = false,
     buildSendOptions,
     dependencies,
@@ -236,6 +242,8 @@ export async function handleApprovalStop(params: {
       permissionModeState: turnPermissionModeState,
       agentId,
       toolContextId: turnToolContextId ?? undefined,
+      toolLoopGuard,
+      runId: classificationRunId,
     },
   );
   const classificationEnd: ApprovalClassificationEndMessage = {
@@ -338,6 +346,7 @@ export async function handleApprovalStop(params: {
           tool_call_id: ac.approval.toolCallId,
           ...buildApprovalSuggestionPayload(ac.context),
           blocked_path: null,
+          ...(ac.toolLoopReason ? { reason: ac.toolLoopReason } : {}),
           ...(diffs.length > 0 ? { diffs } : {}),
         },
         agent_id: agentId,
@@ -396,6 +405,7 @@ export async function handleApprovalStop(params: {
                 permissionModeState: turnPermissionModeState,
                 agentId,
                 toolContextId: turnToolContextId ?? undefined,
+                toolLoopGuard,
               },
             );
 
@@ -545,6 +555,8 @@ export async function handleApprovalStop(params: {
       parentScope:
         agentId && conversationId ? { agentId, conversationId } : undefined,
       onFileWrite,
+      toolLoopGuard,
+      runId: executionRunId,
     });
   } catch (error) {
     // Execution threw before results exist, so the normal finished-events
