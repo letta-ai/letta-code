@@ -19,56 +19,89 @@ Protocol reference: https://chromedevtools.github.io/devtools-protocol/.
 The running browser's exact schema is at `http://127.0.0.1:<port>/json/protocol`;
 tip-of-tree docs can differ from the installed version.
 
-## Managed cloud sandbox default: visible browser
+## Managed cloud sandbox: visible browser, driven over CDP
 
-When running in a cloud sandbox, default every browser task to the visible
-managed desktop, even when the user did not explicitly ask to watch. Most
-browser tasks exist because plain HTTP is not enough; a headless browser is
-more likely to trigger bot protection and gives the user no way to observe or
-take over. This matters especially for clicking or typing, forms, sign-in,
-checkout/payment, CAPTCHAs or bot protection, and user handoff.
-
-For the first managed-sandbox browser window, use the skill's launcher instead
-of assembling Chrome, DISPLAY, or Xvfb commands yourself:
+A Letta Cloud managed sandbox provides a visible desktop (the Computer viewer)
+and a browser launcher, `open-visible-browser`, on `PATH`. Check for it once:
 
 ```bash
-/root/.letta/cloud-skills/browser-use/scripts/open-visible-browser.sh 'https://example.com'
+command -v open-visible-browser
 ```
 
-It starts the managed desktop and launches Chrome through the persistent Cua
-Driver with its required root flag. Then load `computer-use` for visible
-interaction. If protocol-level control is necessary, use Cua Driver's explicit
-`browser_prepare` flow after binding the exact visible window; do not pass
-remote-debugging flags through `launch_app`. The launcher exits zero only
-after Cua Driver reports an on-screen browser window. If it exits nonzero, stop
-and report the launch failure instead of claiming the browser opened.
+When it exists, default every browser task to the visible managed desktop,
+even when the user did not explicitly ask to watch. Most browser tasks exist
+because plain HTTP is not enough; a headless browser is more likely to trigger
+bot protection and gives the user no way to observe or take over. This matters
+especially for clicking or typing, forms, sign-in, checkout/payment, CAPTCHAs
+or bot protection, and user handoff.
+
+Visible does not mean pixel-driven. CDP is the primary way to read and operate
+a page; Cua Driver (`computer-use`) is the fallback for what CDP cannot reach.
+The same Chrome window serves both: the user sees every CDP-driven action in
+the Computer viewer and can take over at any time.
+
+Open every managed-sandbox browser window with the launcher instead of
+assembling Chrome, DISPLAY, or Xvfb commands yourself:
+
+```bash
+open-visible-browser 'https://example.com'
+```
+
+The launcher starts the managed desktop, launches Chrome on the managed
+display with the root flags the sandbox requires, exposes the Chrome DevTools
+Protocol on `http://127.0.0.1:9222` (`LETTA_BROWSER_CDP_PORT` to change),
+and detaches the process so it outlives the tool call. When a managed browser
+is already running, it opens the URL as a new tab instead of starting a second
+Chrome. It prints a JSON summary (`pid`, `window_id`, `cdp_http`,
+`cdp_browser_ws`; also written to `/tmp/letta-visible-browser-launch.json`)
+and exits zero only after the on-screen browser window exists. If it exits
+nonzero, stop and report the launch failure instead of claiming the browser
+opened.
+
+Then drive the page with the CDP workflow below: discover the page target via
+`/json/list`, inspect the DOM, act with `Input.*`, wait on observable state,
+and verify with `Page.captureScreenshot` or DOM state. CDP is faster, returns
+compact structured page state instead of a 100+ node accessibility dump, and
+dispatches trusted input events.
+
+Escalate to `computer-use` (Cua Driver) only for what CDP cannot reach:
+
+- browser chrome outside the page: native permission prompts, download and
+  file-picker dialogs that `DOM.setFileInputFiles` cannot satisfy, HTTP auth
+  sheets, tab strip and address bar;
+- a non-Chromium window or another native application on the desktop;
+- a page that rejects protocol-dispatched input, or a user request for
+  human-like pointer movement on screen.
+
+Cua Driver can attach to the launcher's browser without relaunching: bind the
+exact window with `get_browser_state {pid, window_id}` (it detects the existing
+DevTools endpoint and reports `binding_quality: "exact"`), or use
+`get_window_state` and native `click`/`type` on the same `pid`. Do not run
+`browser_prepare` in the sandbox: its isolated launch cannot pass
+`--no-sandbox`, so the browser exits as root, and the existing-profile route
+needs a daemon grant that is not enabled. Cua's typed `browser_click` also
+refuses trusted pointer input on Linux Chrome (`browser_input_trust_unavailable`),
+so for page interaction prefer raw CDP or `input_route: "dom_event"`.
 
 When the user asks to review, watch, or take over, leave that browser window
 open after the task. Do not kill or close it before replying.
 
-1. Run `start-letta-desktop` and use its exit status as the result. Warnings
-   from optional services do not mean startup failed when the command exits 0.
-   If it exits nonzero, stop and report that the managed desktop is
-   unavailable. Never create another Xvfb, VNC server, or private display: the
-   Computer viewer only shows the managed desktop.
-2. Load `computer-use`, inspect the managed desktop, and use Cua Driver to
-   operate an existing Chrome window or launch Chrome there. When launching,
-   round-trip Chrome's `launch_path` from `cua-driver call list_apps '{}'
-   instead of rebuilding it; the managed launch path carries required flags.
-   For forms, sign-in, checkout, CAPTCHA, and bot-protected pages, keep using
-   Cua Driver so the interaction remains visible and available for user
-   takeover.
-3. Use CDP only when protocol-level inspection or deterministic automation is
-   needed. Bind the exact visible browser window with Cua Driver, then use its
-   explicit `browser_prepare` flow. Do not pass remote-debugging flags
-   through `launch_app`. Include `--no-sandbox` when running Chrome as
-   root. Do not add `--headless` or override `DISPLAY`.
-4. Use headless mode only for work the user explicitly wants in the background
+Rules that keep the browser on the managed desktop:
+
+1. Only the launcher (or `start-letta-desktop`) starts the desktop, and use
+   its exit status as the result. Warnings from optional services do not mean
+   startup failed when the command exits 0. If it exits nonzero, stop and
+   report that the managed desktop is unavailable. Never create another Xvfb,
+   VNC server, or private display: the Computer viewer only shows the managed
+   desktop.
+2. Do not add `--headless` or override `DISPLAY`. Include `--no-sandbox` when
+   running Chrome as root (the launcher already does).
+3. Use headless mode only for work the user explicitly wants in the background
    and that cannot require interaction or handoff, such as read-only scraping,
    CI, or screenshot/PDF generation.
-5. Verify the result through the managed desktop window (Cua Driver window
-   state or screenshot), not only through DOM output or a screenshot from a
-   separate process.
+4. Verify the result in the browser the user sees: `Page.captureScreenshot`
+   on the launcher's CDP endpoint or a Cua Driver `get_window_state`
+   screenshot of that window, not a screenshot from a separate process.
 
 A headless page does not satisfy a request to open or reopen a site in the
 user-visible browser.
@@ -76,9 +109,10 @@ user-visible browser.
 ## Workflow
 
 1. Find a Chromium-based browser (below). If none exists, see "No Chrome installed".
-2. In a managed cloud sandbox, follow the visible-browser default above.
-   Otherwise, launch with a dedicated profile and remote debugging. Never
-   attach to the user's normal profile unless explicitly asked.
+2. In a managed cloud sandbox, open it with `open-visible-browser`; it already
+   exposes CDP on port 9222. Otherwise, launch with a dedicated profile and
+   remote debugging. Never attach to the user's normal profile unless
+   explicitly asked.
 3. Discover targets via `/json/list`; pick the `"page"` target by URL or title.
 4. Connect to its `webSocketDebuggerUrl` and enable only the domains you need
    (usually `Page`, `Runtime`, `DOM`, `Input`; add `Network`, `Log` when debugging).
@@ -132,9 +166,9 @@ plain HTTP or claim browser automation succeeded.
 
 ## Launching
 
-Outside a managed cloud sandbox, use a disposable profile and a fixed port.
-Chrome refuses to run as root without `--no-sandbox`, so add that flag when
-`id -u` is 0:
+Outside a managed cloud sandbox (inside one, the launcher does this), use a
+disposable profile and a fixed port. Chrome refuses to run as root without
+`--no-sandbox`, so add that flag when `id -u` is 0:
 
 ```bash
 chrome_args=( \

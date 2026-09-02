@@ -24,7 +24,7 @@ test("scopes the memory filesystem skill to repository operations", async () => 
   );
 });
 
-test("bundles the cloud browser-use guidance with a local fallback", async () => {
+test("bundles CDP-first browser-use guidance for local and managed environments", async () => {
   const skills = await getBundledSkills();
   const skill = skills.find((candidate) => candidate.id === "browser-use");
   if (!skill) {
@@ -32,14 +32,26 @@ test("bundles the cloud browser-use guidance with a local fallback", async () =>
   }
 
   const content = readFileSync(skill.path, "utf8");
+  const normalized = content.replace(/\s+/g, " ");
 
   expect(skill.description).toContain("Control a real browser");
+  // Managed cloud sandbox: the environment provides a launcher on PATH; the
+  // skill must not hard-code a sandbox skill path or route through Cua Driver.
   expect(content).toContain(
-    "## Managed cloud sandbox default: visible browser",
+    "## Managed cloud sandbox: visible browser, driven over CDP",
   );
-  expect(content).toContain(
-    "/root/.letta/cloud-skills/browser-use/scripts/open-visible-browser.sh",
+  expect(content).toContain("command -v open-visible-browser");
+  expect(content).toContain("open-visible-browser 'https://example.com'");
+  expect(normalized).toContain(
+    "CDP is the primary way to read and operate a page; Cua Driver (`computer-use`) is the fallback",
   );
+  expect(normalized).toContain(
+    "Escalate to `computer-use` (Cua Driver) only for what CDP cannot reach",
+  );
+  expect(normalized).toContain("Do not run `browser_prepare` in the sandbox");
+  expect(content).not.toContain("/root/.letta/cloud-skills");
+  expect(content).not.toContain("launch_path");
+  // Local machines: recommend installing Chrome or teleporting, never download.
   expect(content).toContain("Install Chrome on the current computer");
   expect(content).toContain(
     "Teleport the conversation back to its Cloud sandbox",
