@@ -67,6 +67,7 @@ export class FakeBot {
     });
 
   readonly token: string;
+  readonly config?: unknown;
   botInfo = { username: "test_bot", id: 12345 };
   readonly handlers = new Map<string, FakeHandler[]>();
   readonly api = {
@@ -92,8 +93,9 @@ export class FakeBot {
       }) => unknown)
     | null = null;
 
-  constructor(token: string) {
+  constructor(token: string, config?: unknown) {
     this.token = token;
+    this.config = config;
     FakeBot.instances.push(this);
   }
 

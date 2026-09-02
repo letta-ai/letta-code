@@ -27,6 +27,7 @@ import type {
   OutboundChannelRichMessageDraft,
   TelegramChannelAccount,
 } from "@/channels/types";
+import { resolveTelegramBotConfig } from "./bot-config";
 import { normalizeTelegramChatId } from "./chat-id";
 import {
   buildTelegramDebounceKey,
@@ -287,7 +288,7 @@ export function createTelegramAdapter(
       options,
       `constructing bot for account ${config.accountId}`,
     );
-    const instance = new Bot(config.token);
+    const instance = new Bot(config.token, resolveTelegramBotConfig());
 
     instance.catch((error) => {
       const updateId = error.ctx?.update?.update_id;
