@@ -14,13 +14,17 @@ interface FatalErrorHandlerOptions {
 
 const DEFAULT_FATAL_DRAIN_TIMEOUT_MS = 3_000;
 
+// Broken pipe/TTY failures are generally caused by a closed output stream
+// rather than an actionable application failure.
+function isClosedStreamError(message: string): boolean {
+  return /\b(EPIPE|EIO|EBADF)\b/.test(message);
+}
+
 function shouldTrackFatalError(
   errorType: FatalErrorType,
   message: string,
 ): boolean {
-  // Broken pipe/TTY failures are generally caused by a closed output stream
-  // rather than an actionable application failure.
-  if (/\b(EPIPE|EIO|EBADF)\b/.test(message)) {
+  if (isClosedStreamError(message)) {
     return false;
   }
 
@@ -78,6 +82,18 @@ export function installFatalErrorHandlers(
     handlingFatalError = true;
 
     const message = getErrorMessage(error);
+
+    // Surface the failure on stderr before exiting. Without this the process
+    // dies silently with exit code 1 and callers such as the subagent manager
+    // (which relays child stderr as the task error) have nothing to report.
+    if (!isClosedStreamError(message)) {
+      try {
+        process.stderr.write(`Error: ${message}\n`);
+      } catch {
+        // stderr may itself be unavailable; never block the fatal path.
+      }
+    }
+
     if (shouldTrackFatalError(errorType, message)) {
       try {
         options.trackError(errorType, message, `process_${errorType}`);

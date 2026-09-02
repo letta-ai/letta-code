@@ -406,6 +406,35 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--no-memfs");
   });
 
+  test("resumes an agent's default conversation with both --agent and --conv", () => {
+    const args = buildSubagentArgs(
+      "general-purpose",
+      baseConfig,
+      null,
+      "hello",
+      "agent-existing",
+      "default",
+    );
+
+    expect(args[args.indexOf("--agent") + 1]).toBe("agent-existing");
+    expect(args[args.indexOf("--conv") + 1]).toBe("default");
+    expect(args).not.toContain("--new");
+  });
+
+  test("resumes a conv-* conversation without requiring --agent", () => {
+    const args = buildSubagentArgs(
+      "general-purpose",
+      baseConfig,
+      null,
+      "hello",
+      undefined,
+      "conv-existing",
+    );
+
+    expect(args[args.indexOf("--conv") + 1]).toBe("conv-existing");
+    expect(args).not.toContain("--agent");
+  });
+
   test("subagents always use unrestricted permission mode", () => {
     const args = buildSubagentArgs(
       "test-subagent",

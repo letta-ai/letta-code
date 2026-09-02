@@ -132,7 +132,7 @@ Note: `fork` cannot be combined with `agent_id` or `conversation_id`.
 
 ## Running on Another Computer
 
-Pass `computer` to run the subagent's turn on another connected computer instead of this machine. Works with any subagent type. The call fails fast if the named device is offline, ambiguous, or too old to support routing.
+Pass `computer` to run the subagent's turn on another connected computer instead of this machine. Works with any subagent type. The value must match a registered environment exactly by `connectionName`, `deviceId`, or `connectionId`; there is no fuzzy matching. Do not guess a name: run `letta environments list --online-only` first and copy the exact identifier. The call fails fast if the named device is not found, offline, ambiguous, or too old to support routing. If it fails before the subagent runs a turn, fix the selector and spawn fresh — do not resume the failed child.
 
 `computer: "cloud"` provisions a Cloud sandbox for the subagent's conversation and runs the turn there. Sandboxes are per-conversation: this is a separate machine from wherever you are running now, even if you are already in a Cloud sandbox.
 
