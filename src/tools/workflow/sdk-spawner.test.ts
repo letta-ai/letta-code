@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SdkSubagentPool } from "./sdk-spawner.ts";
+import { MAX_SUBAGENT_TOOL_CALLS, SdkSubagentPool } from "./sdk-spawner.ts";
 import type {
   SdkClient,
   SdkQuery,
@@ -252,5 +252,95 @@ describe("SdkSubagentPool structured output loop guard", () => {
     });
     expect(interrupted).toBe(1);
     expect(closed).toBeGreaterThan(0);
+  });
+});
+
+describe("SdkSubagentPool runaway guards", () => {
+  function loopingClient(makeCalls: () => SdkStreamMessage[]): {
+    client: SdkClient;
+    stats: { interrupted: number };
+  } {
+    const stats = { interrupted: 0 };
+    const client: SdkClient = {
+      query() {
+        let release: (() => void) | null = null;
+        const stalled = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return {
+          async *[Symbol.asyncIterator]() {
+            for (const message of makeCalls()) yield message;
+            await stalled;
+          },
+          async interrupt() {
+            stats.interrupted += 1;
+            release?.();
+          },
+          close() {
+            release?.();
+          },
+        };
+      },
+    };
+    return { client, stats };
+  }
+
+  test("stops a subagent that repeats the identical tool call", async () => {
+    const call: SdkStreamMessage = {
+      type: "tool_call",
+      toolName: "Grep",
+      toolInput: { pattern: "import" },
+    };
+    const { client, stats } = loopingClient(() => [call, call, call, call]);
+    const pool = new SdkSubagentPool(client, { model: "openai/gpt-5.6-luna" });
+    const outcome = await pool.spawner(request(), new AbortController().signal);
+    expect(outcome.failed).toBe(true);
+    expect(outcome.error).toContain("identical Grep call 3 times");
+    expect(stats.interrupted).toBe(1);
+  });
+
+  test("stops a subagent that exceeds the tool-call cap", async () => {
+    const { client, stats } = loopingClient(() =>
+      Array.from({ length: MAX_SUBAGENT_TOOL_CALLS + 1 }, (_, i) => ({
+        type: "tool_call",
+        toolName: "Read",
+        toolInput: { file_path: `f${i}` },
+      })),
+    );
+    const pool = new SdkSubagentPool(client, { model: "openai/gpt-5.6-luna" });
+    const outcome = await pool.spawner(request(), new AbortController().signal);
+    expect(outcome.failed).toBe(true);
+    expect(outcome.error).toContain(
+      `exceeded ${MAX_SUBAGENT_TOOL_CALLS} tool calls`,
+    );
+    expect(stats.interrupted).toBe(1);
+  });
+
+  test("distinct tool calls under the cap are not flagged", async () => {
+    const client: SdkClient = {
+      query() {
+        return completedQuery([
+          {
+            type: "tool_call",
+            toolName: "Read",
+            toolInput: { file_path: "a" },
+          },
+          {
+            type: "tool_call",
+            toolName: "Read",
+            toolInput: { file_path: "b" },
+          },
+          {
+            type: "tool_call",
+            toolName: "Read",
+            toolInput: { file_path: "a" },
+          },
+          { type: "result", success: true, result: "done" },
+        ]);
+      },
+    };
+    const pool = new SdkSubagentPool(client, { model: "openai/gpt-5.6-luna" });
+    const outcome = await pool.spawner(request(), new AbortController().signal);
+    expect(outcome).toMatchObject({ value: "done", failed: false });
   });
 });

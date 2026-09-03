@@ -160,6 +160,9 @@ export interface SdkStreamMessage {
   durationMs?: number;
   /** Raw Letta stream payload for `type: "stream_event"` messages. */
   event?: Record<string, unknown>;
+  /** Tool call details for `type: "tool_call"` messages. */
+  toolName?: string;
+  toolInput?: Record<string, unknown>;
 }
 
 export interface SdkQuery extends AsyncIterable<SdkStreamMessage> {

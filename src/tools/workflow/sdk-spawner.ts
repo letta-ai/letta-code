@@ -36,6 +36,16 @@ export interface SdkSpawnerConfig {
 
 const DEFAULT_ALLOWED_TOOLS = ["Read", "Grep", "Glob"];
 
+/**
+ * Runaway guards. Live runs showed models re-issuing the identical tool call
+ * dozens of times (one cloud run each) and never ending the turn; every
+ * repeat re-sends the whole context. A stopped call resolves to a failed
+ * outcome whose error names the guard, so the journal explains the null.
+ */
+export const DEFAULT_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
+export const MAX_SUBAGENT_TOOL_CALLS = 60;
+export const MAX_IDENTICAL_TOOL_CALLS = 3;
+
 const SUBAGENT_PREAMBLE = `You are a subagent inside a deterministic workflow. \
 You are not talking to a human: your final output is consumed by a script. \
 Return raw data with no preamble, no markdown framing, and no questions.`;
@@ -136,9 +146,38 @@ interface RunningUsage {
   totalTokens?: number;
 }
 
+/** Watches tool calls for the runaway patterns above; returns a stop reason. */
+function createToolCallGuard(): (
+  name: string,
+  input: unknown,
+) => string | null {
+  let count = 0;
+  let lastKey = "";
+  let repeats = 0;
+  return (name, input) => {
+    count += 1;
+    if (count > MAX_SUBAGENT_TOOL_CALLS) {
+      return `subagent exceeded ${MAX_SUBAGENT_TOOL_CALLS} tool calls`;
+    }
+    let key: string;
+    try {
+      key = `${name}:${JSON.stringify(input)}`;
+    } catch {
+      key = `${name}:${String(input)}`;
+    }
+    repeats = key === lastKey ? repeats + 1 : 1;
+    lastKey = key;
+    if (repeats >= MAX_IDENTICAL_TOOL_CALLS) {
+      return `subagent repeated the identical ${name} call ${repeats} times`;
+    }
+    return null;
+  };
+}
+
 async function drainTurn(
   query: SdkQuery,
   usage: RunningUsage,
+  onRunaway: (reason: string) => void,
 ): Promise<DrainedTurn> {
   let assistantText = "";
   let resultText: string | undefined;
@@ -146,8 +185,13 @@ async function drainTurn(
   let error: string | undefined;
   let costUsd: number | undefined;
   let durationMs: number | undefined;
+  const guard = createToolCallGuard();
   for await (const message of query) {
     if (message.type === "assistant") assistantText += message.content ?? "";
+    if (message.type === "tool_call") {
+      const reason = guard(message.toolName ?? "?", message.toolInput);
+      if (reason) onRunaway(reason);
+    }
     if (message.type === "stream_event") {
       const tokens = usageTokensFromEvent(message.event);
       if (tokens !== undefined) {
@@ -250,6 +294,7 @@ export class SdkSubagentPool {
     // is another cloud run), so the first valid capture ends the query: the
     // value is what the script wanted, and the rest of the turn is waste.
     let onCaptured: (() => void) | null = null;
+    let onRunaway: ((reason: string) => void) | null = null;
     let currentQuery: SdkQuery | null = null;
     let cancellationReject: ((error: Error) => void) | null = null;
     const cancellation = new Promise<never>((_resolve, reject) => {
@@ -266,13 +311,11 @@ export class SdkSubagentPool {
     };
     const abort = () => cancel("Workflow subagent interrupted");
     signal.addEventListener("abort", abort, { once: true });
-    const timeout = options.timeoutMs
-      ? setTimeout(
-          () =>
-            cancel(`Workflow subagent timed out after ${options.timeoutMs}ms`),
-          options.timeoutMs,
-        )
-      : null;
+    const timeoutMs = options.timeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS;
+    const timeout = setTimeout(
+      () => cancel(`Workflow subagent timed out after ${timeoutMs}ms`),
+      timeoutMs,
+    );
 
     const runQuery = async (queryPrompt: string): Promise<DrainedTurn> => {
       const query = this.client.query({
@@ -282,25 +325,32 @@ export class SdkSubagentPool {
       currentQuery = query;
       const usage: RunningUsage = {};
       const startedAt = Date.now();
-      const capturedEarly = new Promise<DrainedTurn>((resolve) => {
-        onCaptured = () => {
+      const settledEarly = new Promise<DrainedTurn>((resolve) => {
+        const settle = (
+          turn: Omit<DrainedTurn, "durationMs" | "totalTokens">,
+        ) => {
           void query.interrupt().catch(() => undefined);
           resolve({
-            finalText: "",
-            success: true,
+            ...turn,
             durationMs: Date.now() - startedAt,
             totalTokens: usage.totalTokens,
           });
         };
+        onCaptured = () => settle({ finalText: "", success: true });
+        onRunaway = (reason) =>
+          settle({ finalText: "", success: false, error: reason });
       });
       try {
-        const drained = drainTurn(query, usage);
+        const drained = drainTurn(query, usage, (reason) =>
+          onRunaway?.(reason),
+        );
         // A drained stream that ends after a capture must not lose to the
         // early resolver's stale usage: prefer the full turn when it settles
         // first, otherwise the early stop.
-        return await Promise.race([drained, capturedEarly, cancellation]);
+        return await Promise.race([drained, settledEarly, cancellation]);
       } finally {
         onCaptured = null;
+        onRunaway = null;
         query.close();
         if (currentQuery === query) currentQuery = null;
       }
@@ -362,7 +412,7 @@ export class SdkSubagentPool {
     } catch (error) {
       return { value: null, failed: true, error: String(error) };
     } finally {
-      if (timeout) clearTimeout(timeout);
+      clearTimeout(timeout);
       signal.removeEventListener("abort", abort);
     }
   }
