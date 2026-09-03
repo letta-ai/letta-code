@@ -291,3 +291,17 @@ return self`,
     }
   });
 });
+
+describe("normalizeWorkflowArgs", () => {
+  test("decodes JSON-encoded objects and arrays, leaves other values alone", async () => {
+    const { normalizeWorkflowArgs } = await import("./workflow");
+    expect(normalizeWorkflowArgs('{"files":["a","b"]}')).toEqual({
+      files: ["a", "b"],
+    });
+    expect(normalizeWorkflowArgs(" [1, 2] ")).toEqual([1, 2]);
+    expect(normalizeWorkflowArgs("plain text")).toBe("plain text");
+    expect(normalizeWorkflowArgs("{not json")).toBe("{not json");
+    expect(normalizeWorkflowArgs({ files: [] })).toEqual({ files: [] });
+    expect(normalizeWorkflowArgs(undefined)).toBeUndefined();
+  });
+});

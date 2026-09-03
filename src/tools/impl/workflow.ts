@@ -172,6 +172,23 @@ function formatLaunchMessage(params: {
 }
 
 /**
+ * Models routinely pass `args` as a JSON-encoded string despite the schema
+ * asking for a real value, and the script then dies on `args.files.length`.
+ * A string that is itself a JSON object or array is unambiguous: decode it.
+ * Any other string stays a string.
+ */
+export function normalizeWorkflowArgs(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!/^[[{]/.test(trimmed)) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+/**
  * Scripts can return anything (BigInt, circular graphs, functions); the
  * notification must never throw over it.
  */
@@ -384,7 +401,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   // model was told would continue in the background. TaskStop aborts it.
   void runWorkflow(handle.spawner, {
     script,
-    args: args.args,
+    args: normalizeWorkflowArgs(args.args),
     executionId,
     executionsDir,
     budgetUsd: typeof args.budgetUsd === "number" ? args.budgetUsd : undefined,
