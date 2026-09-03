@@ -673,9 +673,9 @@ export interface StartLocalChannelListenerOptions {
   onConnected: (connectionId: string) => void;
   onError: (error: Error) => void;
   onStatusChange?: StartListenerOptions["onStatusChange"];
+  onLog?: StartListenerOptions["onLog"];
   onWsEvent?: StartListenerOptions["onWsEvent"];
 }
-
 /**
  * Start a listener runtime for local channel adapters without environment
  * registration or a remote WebSocket server.

@@ -286,6 +286,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   }
 
   const debugMode = !!values.debug;
+  if (debugMode) process.env.LETTA_DEBUG = "1";
   const skillsDirectory = values.skills ?? process.env.LETTA_SKILLS_DIRECTORY;
 
   // Show help
@@ -434,6 +435,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   const sessionLog = new RemoteSessionLog();
   sessionLog.init();
   console.log(`Log file: ${sessionLog.path}`);
+  const logListenerMessage = (message: string): void => {
+    sessionLog.log(message);
+    if (debugMode) console.log(`[${formatTimestamp()}] ${message}`);
+  };
 
   try {
     // Get device ID
@@ -617,6 +622,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         connectionId,
         deviceId,
         connectionName,
+        onLog: logListenerMessage,
         onWsEvent:
           process.env.LETTA_LOG_WS_EVENTS === "1"
             ? (direction, label, event) => {
@@ -765,10 +771,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log(`status: ${status}`);
             console.log(`[${formatTimestamp()}] status: ${status}`);
           },
-          onLog: (message) => {
-            sessionLog.log(message);
-            console.log(`[${formatTimestamp()}] ${message}`);
-          },
+          onLog: logListenerMessage,
           onConnected: async () => {
             sessionLog.log("Connected. Awaiting instructions.");
             await startChannelGateway();
@@ -870,10 +873,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             clearRetryStatusCallback?.();
             updateStatusCallback?.(status);
           },
-          onLog: (message) => {
-            sessionLog.log(message);
-            console.log(`[${formatTimestamp()}] ${message}`);
-          },
+          onLog: logListenerMessage,
           onConnected: async () => {
             sessionLog.log("Connected. Awaiting instructions.");
             await startChannelGateway();

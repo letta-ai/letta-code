@@ -30,7 +30,7 @@ import type {
   WsProtocolMessage,
 } from "@/types/protocol_v2";
 import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
-import { isDebugEnabled } from "@/utils/debug";
+import { debugLog, debugWarn } from "@/utils/debug";
 import { buildBackgroundProcessSnapshot } from "./background-process-snapshot";
 import {
   nextListenerConnectionEventSeq,
@@ -437,8 +437,9 @@ export function emitProtocolV2Message(
         try {
           payload = JSON.stringify(outbound);
         } catch (error) {
-          console.error(
-            `[Listen V2] Failed to emit ${message.type} (seq=${eventSeq})`,
+          debugWarn(
+            "Listen V2",
+            `Failed to emit ${message.type} (seq=${eventSeq})`,
             error,
           );
           safeEmitWsEvent("send", "lifecycle", {
@@ -453,17 +454,13 @@ export function emitProtocolV2Message(
           payload,
           perfKey: getProtocolPerfKey(message),
           onSent: () => {
-            if (isDebugEnabled()) {
-              console.log(
-                `[Listen V2] Emitting ${message.type} (seq=${eventSeq})`,
-              );
-            }
+            debugLog("Listen V2", `Emitting ${message.type} (seq=${eventSeq})`);
             safeEmitWsEvent("send", "protocol", outbound);
           },
         };
       },
       onSendError: (error) => {
-        console.error(`[Listen V2] Failed to emit ${message.type}`, error);
+        debugWarn("Listen V2", `Failed to emit ${message.type}`, error);
         safeEmitWsEvent("send", "lifecycle", {
           type: "_ws_send_error",
           message_type: message.type,
