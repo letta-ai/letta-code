@@ -1398,9 +1398,8 @@ export function App({
   const llmApiErrorRetriesRef = useRef(0);
   const quotaAutoSwapAttemptedRef = useRef(false);
   const emptyResponseRetriesRef = useRef(0);
-  // Per-turn ChatGPT plan rotation counter (max swaps per turn)
   const chatgptPlanSwapsRef = useRef(0);
-
+  const chatgptExhaustedProvidersRef = useRef(new Set<string>());
   // Retry counter for 409 "conversation busy" errors
   const conversationBusyRetriesRef = useRef(0);
 
@@ -3767,6 +3766,7 @@ export function App({
     buffersRef,
     clearApprovalToolContext,
     chatgptPlanSwapsRef,
+    chatgptExhaustedProvidersRef,
     closeTrajectorySegment,
     consumeQueuedMessages,
     queueModeRef,

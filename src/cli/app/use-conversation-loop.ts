@@ -196,6 +196,7 @@ type ConversationLoopContext = {
   queueModeRef: MutableRefObject<"immediate" | "defer">;
   contextTrackerRef: MutableRefObject<ContextTracker>;
   chatgptPlanSwapsRef: MutableRefObject<number>;
+  chatgptExhaustedProvidersRef: MutableRefObject<Set<string>>;
   conversationBusyRetriesRef: MutableRefObject<number>;
   conversationGenerationRef: MutableRefObject<number>;
   conversationIdRef: MutableRefObject<string>;
@@ -293,6 +294,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     clearApprovalToolContext,
     closeTrajectorySegment,
     chatgptPlanSwapsRef,
+    chatgptExhaustedProvidersRef,
     consumeQueuedMessages,
     queueModeRef,
     contextTrackerRef,
@@ -605,6 +607,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         conversationBusyRetriesRef.current = 0;
         quotaAutoSwapAttemptedRef.current = false;
         chatgptPlanSwapsRef.current = 0;
+        chatgptExhaustedProvidersRef.current.clear();
       }
 
       // Track last run ID for error reporting (accessible in catch block)
@@ -2368,18 +2371,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             continue;
           }
 
-          // ChatGPT plan rotation: when a chatgpt_oauth BYOK plan hits its
-          // usage limit, swap the agent to the same model on a sibling
-          // connected ChatGPT plan and resend. Takes precedence over the
-          // letta/auto quota fallback below.
           if (
             chatgptPlanSwapsRef.current <
             CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN
           ) {
             const rotation = await rotateChatGPTPlanOnQuotaLimit({
               agentId: agentIdRef.current,
+              conversationId: conversationIdRef.current,
               currentHandle: currentModelId,
               error: runErrorInfo ?? detailFromRun ?? fallbackError,
+              exhaustedProviders: chatgptExhaustedProvidersRef.current,
             });
             if (rotation) {
               chatgptPlanSwapsRef.current += 1;
@@ -2397,8 +2398,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               buffersRef.current.interrupted = false;
               continue;
             }
-            // No sibling plan available — fall through to the letta/auto
-            // quota fallback below.
+            // No sibling plan available; try the hosted Auto fallback below.
           }
 
           // Quota-limit fallback: hosted Letta API can recover by switching to

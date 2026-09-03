@@ -1,11 +1,11 @@
 /**
- * Session-local rotation between connected ChatGPT (chatgpt_oauth BYOK)
+ * Turn-local rotation between connected ChatGPT (chatgpt_oauth BYOK)
  * plans when one hits its usage limit. Orgs register multiple ChatGPT plans
  * as separate BYOK providers (e.g. `chatgpt-caren`, `chatgpt-jin`) exposing
  * the same models; when a plan reports `usage_limit_reached` the consumers
  * (TUI / listener / headless) call `rotateChatGPTPlanOnQuotaLimit` from
- * their post-stop retry handling to swap the agent onto a sibling plan and
- * resend. No swap-back; quota errors only (no auth failover).
+ * their post-stop retry handling to swap the active conversation onto a
+ * sibling plan and resend. No swap-back; quota errors only (no auth failover).
  */
 
 import {
@@ -13,7 +13,10 @@ import {
   getCachedAvailableModels,
 } from "@/agent/available-models";
 import { resolveModelHandleFromLlmConfig } from "@/agent/model-handles";
-import { updateAgentLLMConfig } from "@/agent/modify";
+import {
+  updateAgentLLMConfig,
+  updateConversationLLMConfig,
+} from "@/agent/modify";
 import {
   parseChatGPTUsageLimitDetail,
   selectChatGPTQuotaFailoverHandle,
@@ -22,14 +25,6 @@ import { getBackend } from "@/backend";
 
 /** Maximum plan swaps per turn, enforced by each consumer. */
 export const CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN = 3;
-
-// Providers whose plans hit a usage limit during this process lifetime.
-// Session-local by design: limits reset over time between sessions.
-const exhaustedProviders = new Set<string>();
-
-export function resetChatGPTPlanRotationStateForTests(): void {
-  exhaustedProviders.clear();
-}
 
 export interface ChatGPTPlanRotationResult {
   fromProvider: string;
@@ -58,10 +53,25 @@ function isChatGPTByokHandleInModels(
   );
 }
 
-async function resolveAgentModelHandle(
+async function resolveScopedModelHandle(
   agentId: string,
+  conversationId: string,
 ): Promise<string | null> {
   try {
+    if (conversationId !== "default") {
+      const conversation =
+        await getBackend().retrieveConversation(conversationId);
+      const conversationRecord = conversation as unknown as {
+        model?: unknown;
+      };
+      if (
+        typeof conversationRecord.model === "string" &&
+        conversationRecord.model.length > 0
+      ) {
+        return conversationRecord.model;
+      }
+    }
+
     const agent = await getBackend().retrieveAgent(agentId);
     const record = agent as unknown as {
       model?: unknown;
@@ -81,17 +91,21 @@ async function resolveAgentModelHandle(
 }
 
 /**
- * Attempt to rotate the agent to the same model on a sibling ChatGPT plan.
+ * Attempt to rotate the active conversation to the same model on a sibling
+ * ChatGPT plan. The default conversation still uses the agent's base model,
+ * matching the scope rules used by `/model`.
  * Returns null when the detail is not a usage-limit error, the current
  * handle is not a ChatGPT BYOK handle, no eligible sibling exists, or the
  * model update fails; callers fall through to existing error handling.
  */
 export async function rotateChatGPTPlanOnQuotaLimit(params: {
   agentId: string;
+  conversationId: string;
   currentHandle: string | null;
   error: unknown;
+  exhaustedProviders: Set<string>;
 }): Promise<ChatGPTPlanRotationResult | null> {
-  const { agentId, error } = params;
+  const { agentId, conversationId, error, exhaustedProviders } = params;
 
   const parsedDetail = parseChatGPTUsageLimitDetail(error);
   if (!parsedDetail) return null;
@@ -107,12 +121,12 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
   }
   if (!models) return null;
 
-  // The caller-supplied handle may be a registry model id rather than the
-  // agent's BYOK handle; fall back to the agent's own model when it does not
-  // resolve to a ChatGPT BYOK entry in the models list.
-  let currentHandle = params.currentHandle;
+  // Prefer persisted scoped state because a caller's render-time model handle
+  // can be stale after an automatic swap. Fall back to the caller only when
+  // the scoped model cannot be resolved to a ChatGPT BYOK catalog entry.
+  let currentHandle = await resolveScopedModelHandle(agentId, conversationId);
   if (!currentHandle || !isChatGPTByokHandleInModels(currentHandle, models)) {
-    currentHandle = await resolveAgentModelHandle(agentId);
+    currentHandle = params.currentHandle;
   }
   if (!currentHandle || !isChatGPTByokHandleInModels(currentHandle, models)) {
     return null;
@@ -135,9 +149,15 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
   if (!toProvider) return null;
 
   try {
-    await updateAgentLLMConfig(agentId, toHandle, {
-      provider_type: "chatgpt_oauth",
-    });
+    if (conversationId === "default") {
+      await updateAgentLLMConfig(agentId, toHandle, {
+        provider_type: "chatgpt_oauth",
+      });
+    } else {
+      await updateConversationLLMConfig(conversationId, toHandle, {
+        provider_type: "chatgpt_oauth",
+      });
+    }
   } catch {
     return null;
   }

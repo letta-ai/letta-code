@@ -2316,14 +2316,13 @@ ${SYSTEM_REMINDER_CLOSE}
     currentInput = initialTurnStartEmission.input;
   }
 
-  // Track lastRunId outside the while loop so it's available in catch block
   let llmApiErrorRetries = 0;
   let emptyResponseRetries = 0;
   let conversationBusyRetries = 0;
   let chatgptPlanSwaps = 0;
+  const chatgptExhaustedProviders = new Set<string>();
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
-
   // Helper to check max turns limit using server-side step count from buffers
   const checkMaxTurns = async (): Promise<void> => {
     if (maxTurns !== undefined && buffers.usage.stepCount >= maxTurns) {
@@ -2717,6 +2716,7 @@ ${SYSTEM_REMINDER_CLOSE}
         emptyResponseRetries = 0;
         conversationBusyRetries = 0;
         chatgptPlanSwaps = 0;
+        chatgptExhaustedProviders.clear();
 
         // Emit turn_end. A mod may return { continue: "..." } to append a
         // follow-up user message and run another turn. Auto-continues re-enter
@@ -2877,13 +2877,13 @@ ${SYSTEM_REMINDER_CLOSE}
       const runErrorInfo = await fetchRunErrorInfo(lastRunId),
         detailFromRun = runErrorInfo?.detail ?? runErrorInfo?.message;
 
-      // ChatGPT plan rotation: when a chatgpt_oauth BYOK plan hits its usage
-      // limit, swap to the same model on a sibling ChatGPT plan and resend.
       if (chatgptPlanSwaps < CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN) {
         const rotation = await rotateChatGPTPlanOnQuotaLimit({
           agentId: agent.id,
+          conversationId,
           currentHandle: null,
           error: runErrorInfo ?? detailFromRun ?? latestErrorText,
+          exhaustedProviders: chatgptExhaustedProviders,
         });
         if (rotation) {
           chatgptPlanSwaps += 1;

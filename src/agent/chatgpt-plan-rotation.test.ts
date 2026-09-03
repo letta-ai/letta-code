@@ -1,12 +1,133 @@
 import { describe, expect, test } from "bun:test";
-import { formatPlanRotationNotice } from "@/agent/chatgpt-plan-rotation";
+import { clearAvailableModelsCache } from "@/agent/available-models";
+import {
+  formatPlanRotationNotice,
+  rotateChatGPTPlanOnQuotaLimit,
+} from "@/agent/chatgpt-plan-rotation";
 import {
   parseChatGPTUsageLimitDetail,
   selectChatGPTQuotaFailoverHandle,
 } from "@/agent/turn-recovery-policy";
+import { __testSetBackend } from "@/backend";
 
 const FULL_DETAIL =
   'ChatGPT rate limit exceeded: {"error":{"type":"usage_limit_reached","message":"You have hit your usage limit.","plan_type":"plus","resets_at":1700000000,"resets_in_seconds":3600}}';
+
+const PRIMARY_HANDLE = "chatgpt-caren/gpt-5.2";
+const SIBLING_HANDLE = "chatgpt-jin/gpt-5.2";
+
+describe("rotateChatGPTPlanOnQuotaLimit", () => {
+  test("updates only the active conversation and keeps exhausted plans turn-local", async () => {
+    const agent = { id: "agent-rotation", model: PRIMARY_HANDLE };
+    const conversations = new Map([
+      ["conv-first", { id: "conv-first", model: PRIMARY_HANDLE }],
+      ["conv-second", { id: "conv-second", model: PRIMARY_HANDLE }],
+    ]);
+    let agentUpdateCount = 0;
+    const backend = {
+      capabilities: { localModelCatalog: false },
+      async listModels() {
+        return [
+          {
+            handle: PRIMARY_HANDLE,
+            provider_type: "chatgpt_oauth",
+            provider_category: "byok",
+            max_context_window: 128_000,
+          },
+          {
+            handle: SIBLING_HANDLE,
+            provider_type: "chatgpt_oauth",
+            provider_category: "byok",
+            max_context_window: 128_000,
+          },
+        ];
+      },
+      async retrieveAgent() {
+        return agent;
+      },
+      async updateAgent(_agentId: string, update: { model?: string }) {
+        agentUpdateCount += 1;
+        Object.assign(agent, update);
+        return agent;
+      },
+      async retrieveConversation(conversationId: string) {
+        return conversations.get(conversationId);
+      },
+      async updateConversation(
+        conversationId: string,
+        update: { model?: string },
+      ) {
+        const conversation = conversations.get(conversationId);
+        if (!conversation) throw new Error("conversation not found");
+        Object.assign(conversation, update);
+        return conversation;
+      },
+    };
+    __testSetBackend(backend as never);
+    clearAvailableModelsCache();
+
+    try {
+      const firstTurnExhausted = new Set<string>();
+      const secondTurnExhausted = new Set<string>();
+
+      const firstRotation = await rotateChatGPTPlanOnQuotaLimit({
+        agentId: "agent-rotation",
+        conversationId: "conv-first",
+        currentHandle: null,
+        error: { error_code: "usage_limit_reached" },
+        exhaustedProviders: firstTurnExhausted,
+      });
+
+      expect(firstRotation?.toHandle).toBe(SIBLING_HANDLE);
+      expect(conversations.get("conv-first")?.model).toBe(SIBLING_HANDLE);
+      expect(conversations.get("conv-second")?.model).toBe(PRIMARY_HANDLE);
+      expect(agent.model).toBe(PRIMARY_HANDLE);
+      expect(agentUpdateCount).toBe(0);
+      expect(firstTurnExhausted).toEqual(new Set(["chatgpt-caren"]));
+      expect(secondTurnExhausted.size).toBe(0);
+
+      const repeatedRotation = await rotateChatGPTPlanOnQuotaLimit({
+        agentId: "agent-rotation",
+        conversationId: "conv-first",
+        // Simulate the TUI's render-time handle still naming the first plan.
+        currentHandle: PRIMARY_HANDLE,
+        error: { error_code: "usage_limit_reached" },
+        exhaustedProviders: firstTurnExhausted,
+      });
+
+      expect(repeatedRotation).toBeNull();
+      expect(firstTurnExhausted).toEqual(
+        new Set(["chatgpt-caren", "chatgpt-jin"]),
+      );
+
+      const secondRotation = await rotateChatGPTPlanOnQuotaLimit({
+        agentId: "agent-rotation",
+        conversationId: "conv-second",
+        currentHandle: null,
+        error: { error_code: "usage_limit_reached" },
+        exhaustedProviders: secondTurnExhausted,
+      });
+
+      expect(secondRotation?.toHandle).toBe(SIBLING_HANDLE);
+      expect(secondTurnExhausted).toEqual(new Set(["chatgpt-caren"]));
+
+      const defaultRotation = await rotateChatGPTPlanOnQuotaLimit({
+        agentId: "agent-rotation",
+        conversationId: "default",
+        currentHandle: null,
+        error: { error_code: "usage_limit_reached" },
+        exhaustedProviders: new Set(),
+      });
+
+      expect(defaultRotation?.toHandle).toBe(SIBLING_HANDLE);
+      expect(agent.model).toBe(SIBLING_HANDLE);
+      expect(agentUpdateCount).toBe(1);
+    } finally {
+      clearAvailableModelsCache();
+      __testSetBackend(null);
+    }
+  });
+});
 
 describe("parseChatGPTUsageLimitDetail", () => {
   test("returns null for non-strings and non-matching details", () => {
