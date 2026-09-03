@@ -198,7 +198,7 @@ describe("APIBackend", () => {
     await expect(second).resolves.toMatchObject({ id: "agent-1" });
   });
 
-  test("does not coalesce semantically different agent retrievals", async () => {
+  test("does not coalesce options-bearing agent retrievals", async () => {
     const backend = new APIBackend({
       getClient: getClientMock as unknown as () => Promise<APIClient>,
       forkConversation: forkConversationMock,
@@ -207,15 +207,19 @@ describe("APIBackend", () => {
     await Promise.all([
       backend.retrieveAgent("agent-1"),
       backend.retrieveAgent("agent-1", { include: ["agent.tags"] }),
+      backend.retrieveAgent("agent-1", { include: ["agent.tags"] }),
       backend.retrieveAgent("agent-2"),
     ]);
 
-    expect(retrieveAgentMock).toHaveBeenCalledTimes(3);
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(4);
     expect(retrieveAgentMock).toHaveBeenNthCalledWith(1, "agent-1", undefined);
     expect(retrieveAgentMock).toHaveBeenNthCalledWith(2, "agent-1", {
       include: ["agent.tags"],
     });
-    expect(retrieveAgentMock).toHaveBeenNthCalledWith(3, "agent-2", undefined);
+    expect(retrieveAgentMock).toHaveBeenNthCalledWith(3, "agent-1", {
+      include: ["agent.tags"],
+    });
+    expect(retrieveAgentMock).toHaveBeenNthCalledWith(4, "agent-2", undefined);
   });
 
   test("removes failed agent retrievals from the in-flight set", async () => {
