@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { unlink } from "node:fs/promises";
 import { createDiscordAdapter } from "@/channels/discord/adapter";
 import { __testOverrideLoadDiscordModule } from "@/channels/discord/runtime";
 import type {
@@ -6,6 +7,14 @@ import type {
   DiscordChannelAccount,
   InboundChannelMessage,
 } from "@/channels/types";
+
+interface DiscordTestAttachment {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  url: string;
+}
 
 interface DiscordTestMessage {
   id: string;
@@ -26,7 +35,16 @@ interface DiscordTestMessage {
     send?: (options: unknown) => Promise<{ id: string }>;
   };
   mentions: { has: (user: unknown) => boolean };
-  attachments: Map<string, never>;
+  attachments: Map<string, DiscordTestAttachment>;
+  reference?: { type: number };
+  messageSnapshots?: Map<
+    string,
+    {
+      id: string;
+      content: string;
+      attachments: Map<string, DiscordTestAttachment>;
+    }
+  >;
   createdTimestamp: number;
 }
 
@@ -124,13 +142,15 @@ function createDiscordMessage(
     authorUsername?: string;
     authorGlobalName?: string;
     authorBot?: boolean;
+    forwardedContent?: string;
+    forwardedAttachments?: DiscordTestAttachment[];
   } = {},
 ): DiscordTestMessage {
   const channelId = overrides.channelId ?? "channel-open";
   const authorGlobalName = overrides.authorGlobalName ?? "Cameron";
   const guildId =
     "guildId" in overrides ? (overrides.guildId ?? null) : "guild-1";
-  return {
+  const message: DiscordTestMessage = {
     id: overrides.id ?? `${channelId}-message`,
     content: overrides.content ?? "ambient hello",
     channelId,
@@ -151,6 +171,28 @@ function createDiscordMessage(
     attachments: new Map<string, never>(),
     createdTimestamp: 1712800000000,
   };
+  if (
+    overrides.forwardedContent !== undefined ||
+    overrides.forwardedAttachments !== undefined
+  ) {
+    message.reference = { type: 1 };
+    message.messageSnapshots = new Map([
+      [
+        "forwarded-message",
+        {
+          id: "forwarded-message",
+          content: overrides.forwardedContent ?? "",
+          attachments: new Map(
+            (overrides.forwardedAttachments ?? []).map((attachment) => [
+              attachment.id,
+              attachment,
+            ]),
+          ),
+        },
+      ],
+    ]);
+  }
+  return message;
 }
 
 async function startAdapterWithDeliveries(
@@ -194,6 +236,124 @@ afterEach(async () => {
 });
 
 describe("Discord adapter bot ingress", () => {
+  test("delivers forwarded Discord message snapshot content", async () => {
+    const { client, deliveries } = await startAdapterWithDeliveries([]);
+
+    await client.emitMessageCreate(
+      createDiscordMessage({
+        id: "msg-forwarded",
+        channelId: "dm-1",
+        guildId: null,
+        content: "",
+        forwardedContent: "context from the forwarded message",
+      }),
+    );
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]?.text).toContain("context from the forwarded message");
+  });
+
+  test("preserves a Discord forwarding note and snapshot content", async () => {
+    const { client, deliveries } = await startAdapterWithDeliveries({
+      "channel-open": "open",
+    });
+
+    await client.emitMessageCreate(
+      createDiscordMessage({
+        id: "msg-forwarded-with-note",
+        channelId: "channel-open",
+        content: "Please investigate this",
+        forwardedContent: "The original report",
+      }),
+    );
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]?.text).toBe(
+      "Please investigate this\n\nForwarded message:\nThe original report",
+    );
+  });
+
+  test("delivers attachments from a forwarded Discord snapshot", async () => {
+    const { client, deliveries } = await startAdapterWithDeliveries([]);
+    let downloadedPath: string | undefined;
+
+    try {
+      await client.emitMessageCreate(
+        createDiscordMessage({
+          id: "msg-forwarded-attachment",
+          channelId: "dm-1",
+          guildId: null,
+          content: "",
+          forwardedAttachments: [
+            {
+              id: "forwarded-attachment",
+              name: "report.txt",
+              contentType: "text/plain",
+              size: 16,
+              url: "data:text/plain,forwarded-report",
+            },
+          ],
+        }),
+      );
+
+      downloadedPath = deliveries[0]?.attachments?.[0]?.localPath;
+      expect(deliveries).toHaveLength(1);
+      expect(deliveries[0]).toMatchObject({
+        text: "Forwarded message",
+        attachments: [
+          {
+            id: "forwarded-attachment",
+            name: "report.txt",
+            kind: "file",
+          },
+        ],
+      });
+    } finally {
+      if (downloadedPath) {
+        await unlink(downloadedPath).catch(() => {});
+      }
+    }
+  });
+
+  test("does not activate mention-only channels from a forwarded mention", async () => {
+    const { client, deliveries } = await startAdapterWithDeliveries([
+      "channel-mention",
+    ]);
+
+    await client.emitMessageCreate(
+      createDiscordMessage({
+        id: "msg-forwarded-mention",
+        channelId: "channel-mention",
+        content: "",
+        forwardedContent: "<@bot-user> historical mention",
+      }),
+    );
+
+    expect(deliveries).toHaveLength(0);
+  });
+
+  test("uses the forwarding envelope mention to activate a channel", async () => {
+    const { client, deliveries } = await startAdapterWithDeliveries([
+      "channel-mention",
+    ]);
+
+    await client.emitMessageCreate(
+      createDiscordMessage({
+        id: "msg-forwarded-envelope-mention",
+        channelId: "channel-mention",
+        content: "<@bot-user> investigate this",
+        mentioned: true,
+        forwardedContent: "<@bot-user> original message",
+      }),
+    );
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({
+      isMention: true,
+      text: "investigate this\n\nForwarded message:\n<@bot-user> original message",
+    });
+  });
+
   test("drops foreign bot guild messages by default even when mentioned", async () => {
     const { client, deliveries } = await startAdapterWithDeliveries({
       "channel-open": "open",
