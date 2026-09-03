@@ -600,9 +600,10 @@ export function createListenerMessageHandler(
             return;
           }
 
+          const acceptedAtMs = performance.now();
           const queuedStampedIncoming = {
             ...stampedIncoming,
-            telemetryInputAcceptedAtMs: performance.now(),
+            telemetryInputAcceptedAtMs: acceptedAtMs,
           };
           const enqueued = enqueueInboundUserMessage(
             scopedRuntime,

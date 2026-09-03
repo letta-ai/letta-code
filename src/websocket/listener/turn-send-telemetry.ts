@@ -1,4 +1,4 @@
-import { telemetry } from "@/telemetry";
+import { hashTelemetryCorrelationId, telemetry } from "@/telemetry";
 import { getInboundClientMessageIds } from "./inbound-queue";
 import type { IncomingMessage } from "./types";
 
@@ -41,10 +41,22 @@ export function createListenerInputSendTelemetry(params: {
       if (tracked) return;
       tracked = true;
       telemetry.trackListenerInputSendComplete({
-        connection_id: params.connectionId,
+        ...(params.connectionId
+          ? {
+              connection_id_hash: hashTelemetryCorrelationId(
+                params.connectionId,
+              ),
+            }
+          : {}),
         agent_id: params.agentId,
         conversation_id: params.conversationId,
-        client_message_id: clientMessageIds[0],
+        ...(clientMessageIds[0]
+          ? {
+              client_message_id_hash: hashTelemetryCorrelationId(
+                clientMessageIds[0],
+              ),
+            }
+          : {}),
         client_message_count: clientMessageIds.length,
         message_count: params.msg.messages.length,
         includes_approval: params.msg.messages.some(

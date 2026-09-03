@@ -18,7 +18,7 @@ import { migratePermissionMode } from "@/permissions/mode";
 import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
 import { settingsManager } from "@/settings-manager";
-import { telemetry } from "@/telemetry";
+import { hashTelemetryCorrelationId, telemetry } from "@/telemetry";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
 import { subscribeListenerConnection } from "@/websocket/listener/connection";
 import { getBootWorkingDirectory } from "@/websocket/listener/cwd";
@@ -506,8 +506,10 @@ export async function handleRuntimeStartCommand(
     });
     timings.ackMs = elapsedMsSince(stepStartedAt);
     telemetry.trackListenerRuntimeStartComplete({
-      request_id: parsed.request_id,
-      connection_id: context.connectionId,
+      ...(parsed.request_id
+        ? { request_id_hash: hashTelemetryCorrelationId(parsed.request_id) }
+        : {}),
+      connection_id_hash: hashTelemetryCorrelationId(context.connectionId),
       agent_id: runtimeScope.agent_id,
       conversation_id: runtimeScope.conversation_id,
       success: true,
@@ -539,8 +541,10 @@ export async function handleRuntimeStartCommand(
     });
     timings.ackMs = elapsedMsSince(stepStartedAt);
     telemetry.trackListenerRuntimeStartComplete({
-      request_id: parsed.request_id,
-      connection_id: context.connectionId,
+      ...(parsed.request_id
+        ? { request_id_hash: hashTelemetryCorrelationId(parsed.request_id) }
+        : {}),
+      connection_id_hash: hashTelemetryCorrelationId(context.connectionId),
       agent_id: runtimeScope?.agent_id ?? agent?.id ?? parsed.agent_id ?? null,
       conversation_id:
         runtimeScope?.conversation_id ??

@@ -13,6 +13,12 @@ import {
   type TelemetryAgentOrigin,
 } from "./agent-origin";
 import { installFatalErrorHandlers } from "./fatal-error-handler";
+import type {
+  ListenerInputSendCompleteData,
+  ListenerRuntimeStartCompleteData,
+} from "./listener-events";
+
+export { hashTelemetryCorrelationId } from "./listener-events";
 
 export type TelemetrySurface =
   | "letta_code_tui"
@@ -107,47 +113,6 @@ export interface UserInputData {
   model_id: string;
 }
 
-export interface ListenerRuntimeStartCompleteData {
-  request_id?: string;
-  connection_id: string;
-  agent_id?: string | null;
-  conversation_id?: string | null;
-  success: boolean;
-  created_agent: boolean;
-  created_conversation: boolean;
-  wait_for_replay: boolean;
-  duration_ms: number;
-  validate_ms: number;
-  resolve_agent_ms: number;
-  resolve_conversation_ms: number;
-  source_tags_ms: number;
-  runtime_state_ms: number;
-  subscribe_tools_ms: number;
-  ack_ms: number;
-  replay_before_ack_ms?: number;
-  error_type?: string;
-  version?: string;
-  platform?: string;
-}
-
-export interface ListenerInputSendCompleteData {
-  connection_id?: string;
-  agent_id?: string | null;
-  conversation_id: string;
-  client_message_id?: string;
-  client_message_count: number;
-  message_count: number;
-  includes_approval: boolean;
-  success: boolean;
-  accepted_to_core_stream_ms: number;
-  prepare_listener_turn_ms: number;
-  skill_content_injection_ms: number;
-  core_stream_request_ms: number;
-  error_type?: string;
-  version?: string;
-  platform?: string;
-}
-
 export type ReflectionTriggerSource =
   | "manual"
   | "step-count"
@@ -219,6 +184,19 @@ export interface ReflectionArenaVoteData {
   transcript_payload_truncated: boolean;
   version?: string;
   platform?: string;
+}
+
+function hasOwnAgentId(data: Record<string, unknown>): boolean {
+  return Object.hasOwn(data, "agent_id");
+}
+
+function isListenerTargetedTelemetryEvent(
+  type: TelemetryEvent["type"],
+): boolean {
+  return (
+    type === "listener_runtime_start_complete" ||
+    type === "listener_input_send_complete"
+  );
 }
 
 export function isLettaCodeDesktopRuntime(
@@ -516,13 +494,18 @@ class TelemetryManager {
       return;
     }
 
+    const eventData = data as Record<string, unknown>;
+    const shouldPreserveAgentId =
+      isListenerTargetedTelemetryEvent(type) && hasOwnAgentId(eventData);
     const event: TelemetryEvent = {
       type,
       timestamp: new Date().toISOString(),
       data: {
         ...data,
         session_id: this.sessionId,
-        agent_id: this.currentAgentId || undefined,
+        agent_id: shouldPreserveAgentId
+          ? eventData.agent_id
+          : this.currentAgentId || undefined,
         agent_origin: this.currentAgentOrigin || undefined,
         surface: this.surface,
         backend: resolveTelemetryBackend(),
@@ -568,6 +551,12 @@ class TelemetryManager {
     }
 
     for (const event of this.events) {
+      if (
+        isListenerTargetedTelemetryEvent(event.type) &&
+        hasOwnAgentId(event.data)
+      ) {
+        continue;
+      }
       if (event.data.agent_id && event.data.agent_id !== agentId) {
         continue;
       }

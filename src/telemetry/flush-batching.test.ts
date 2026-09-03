@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { settingsManager } from "@/settings-manager";
-import { type TelemetrySurface, telemetry } from "@/telemetry";
+import {
+  hashTelemetryCorrelationId,
+  type TelemetrySurface,
+  telemetry,
+} from "@/telemetry";
 
 type TelemetryTestState = {
   events: unknown[];
@@ -58,10 +62,11 @@ describe("telemetry flush batching", () => {
   });
 
   test("tracks listener latency completion events without payloads", () => {
+    telemetry.setCurrentAgentId("current-agent");
     telemetry.trackListenerRuntimeStartComplete({
-      request_id: "runtime-1",
-      connection_id: "conn-1",
-      agent_id: "agent-1",
+      request_id_hash: hashTelemetryCorrelationId("runtime-1"),
+      connection_id_hash: hashTelemetryCorrelationId("conn-1"),
+      agent_id: "target-agent",
       conversation_id: "conv-1",
       success: true,
       created_agent: false,
@@ -77,10 +82,10 @@ describe("telemetry flush batching", () => {
       ack_ms: 7,
     });
     telemetry.trackListenerInputSendComplete({
-      connection_id: "conn-1",
-      agent_id: "agent-1",
+      connection_id_hash: hashTelemetryCorrelationId("conn-1"),
+      agent_id: "target-agent",
       conversation_id: "conv-1",
-      client_message_id: "cm-1",
+      client_message_id_hash: hashTelemetryCorrelationId("cm-1"),
       client_message_count: 1,
       message_count: 1,
       includes_approval: false,
@@ -92,19 +97,23 @@ describe("telemetry flush batching", () => {
     });
 
     expect(telemetryState.events).toHaveLength(2);
+    telemetry.setCurrentAgent("later-current-agent", []);
+    expect(telemetryState.events).toHaveLength(2);
     expect(telemetryState.events).toEqual([
       expect.objectContaining({
         type: "listener_runtime_start_complete",
         data: expect.objectContaining({
-          request_id: "runtime-1",
-          connection_id: "conn-1",
+          request_id_hash: hashTelemetryCorrelationId("runtime-1"),
+          connection_id_hash: hashTelemetryCorrelationId("conn-1"),
+          agent_id: "target-agent",
           duration_ms: 12,
         }),
       }),
       expect.objectContaining({
         type: "listener_input_send_complete",
         data: expect.objectContaining({
-          client_message_id: "cm-1",
+          client_message_id_hash: hashTelemetryCorrelationId("cm-1"),
+          agent_id: "target-agent",
           accepted_to_core_stream_ms: 10,
         }),
       }),

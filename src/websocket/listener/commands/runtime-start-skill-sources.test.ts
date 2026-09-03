@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type WebSocket from "ws";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
-import { telemetry } from "@/telemetry";
+import { hashTelemetryCorrelationId, telemetry } from "@/telemetry";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { createRuntime } from "@/websocket/listener/lifecycle";
 import { evictConversationRuntimeIfIdle } from "@/websocket/listener/runtime";
@@ -57,8 +57,8 @@ describe("runtime_start skill sources", () => {
       expect(trackRuntimeStart).toHaveBeenCalledTimes(1);
       expect(trackRuntimeStart).toHaveBeenCalledWith(
         expect.objectContaining({
-          request_id: "runtime-telemetry",
-          connection_id: "test-connection",
+          request_id_hash: hashTelemetryCorrelationId("runtime-telemetry"),
+          connection_id_hash: hashTelemetryCorrelationId("test-connection"),
           agent_id: agent.id,
           conversation_id: "default",
           success: true,
