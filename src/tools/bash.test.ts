@@ -140,7 +140,7 @@ describe("Bash tool", () => {
 
   test("times out long-running command", async () => {
     const result = await bash({
-      command: "tail -f /dev/null",
+      command: 'node -e "setInterval(() => {}, 1000)"',
       description: "Test timeout",
       timeout: 100,
     });
