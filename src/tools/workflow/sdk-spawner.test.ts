@@ -295,6 +295,8 @@ describe("SdkSubagentPool runaway guards", () => {
       { type: "tool_call", toolCallId: id, toolName: name, toolInput: {} },
       { type: "tool_call", toolCallId: id, toolName: name, toolInput: input },
       { type: "tool_result", toolCallId: id, content: "ok" },
+      // The server's tool return echoes the same call; it must not count.
+      { type: "tool_result", toolCallId: id, content: "ok" },
     ];
   }
 
@@ -324,6 +326,21 @@ describe("SdkSubagentPool runaway guards", () => {
       `exceeded ${MAX_SUBAGENT_TOOL_CALLS} tool calls`,
     );
     expect(stats.interrupted).toBe(1);
+  });
+
+  test("two identical calls are tolerated; the third is not", async () => {
+    const client: SdkClient = {
+      query() {
+        return completedQuery([
+          ...toolCall("1", "Read", { file_path: "a" }),
+          ...toolCall("2", "Read", { file_path: "a" }),
+          { type: "result", success: true, result: "done" },
+        ]);
+      },
+    };
+    const pool = new SdkSubagentPool(client, { model: "openai/gpt-5.6-luna" });
+    const outcome = await pool.spawner(request(), new AbortController().signal);
+    expect(outcome).toMatchObject({ value: "done", failed: false });
   });
 
   test("distinct calls and argument-delta chunks are not flagged", async () => {

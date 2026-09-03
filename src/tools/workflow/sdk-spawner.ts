@@ -158,6 +158,7 @@ function createToolCallGuard(): {
   onResult(id: string): string | null;
 } {
   const calls = new Map<string, { name: string; input: unknown }>();
+  const judged = new Set<string>();
   let lastKey = "";
   let repeats = 0;
   return {
@@ -171,7 +172,10 @@ function createToolCallGuard(): {
     },
     onResult(id) {
       const call = calls.get(id);
-      if (!call) return null;
+      // A call can surface more than one result message (local execution
+      // plus the server's tool return); judge each call once.
+      if (!call || judged.has(id)) return null;
+      judged.add(id);
       let key: string;
       try {
         key = `${call.name}:${JSON.stringify(call.input)}`;
