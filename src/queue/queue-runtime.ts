@@ -35,6 +35,13 @@ type QueueItemBase = {
   actingUserId?: string;
   source: QueueItemSource;
   enqueuedAt: number;
+  /**
+   * Parked by a user interrupt. Paused items stay visible in the queue but
+   * are skipped by every dequeue path until `resume()` clears the flag.
+   * Only user-authored messages are ever paused; system-originated items
+   * (task notifications, cron prompts, mod continuations) keep flowing.
+   */
+  paused?: boolean;
 };
 
 export type MessageQueueItem = QueueItemBase & {
@@ -149,6 +156,11 @@ export interface QueueCallbacks {
    * queueLen is the post-removal queue depth.
    */
   onRemoved?: (item: QueueItem, queueLen: number) => void;
+  /**
+   * Fired when pause()/resume() changes which items are parked.
+   * pausedCount is the number of items still paused afterwards.
+   */
+  onPauseChanged?: (pausedCount: number, queueLen: number) => void;
 }
 
 // ── Options ──────────────────────────────────────────────────────
@@ -276,6 +288,12 @@ export class QueueRuntime {
       return null;
     }
 
+    if (this.store.length > 0 && this.readyLength === 0) {
+      // Only parked user messages remain: report that as the blocked reason
+      // (transition-deduplicated like every other reason) and dequeue nothing.
+      return this.tryDequeue("paused_by_user");
+    }
+
     // Unblocked — reset tracking
     this.lastEmittedBlockedReason = null;
     this.blockedEmittedForNonEmpty = false;
@@ -284,28 +302,25 @@ export class QueueRuntime {
       return null;
     }
 
-    // Drain contiguous coalescable items from head
+    // Drain coalescable ready items from the first ready item onward. Paused
+    // items are skipped, never consumed; a ready barrier ends the batch.
     const batch: QueueItem[] = [];
-    const first = this.store[0];
-    while (
-      first !== undefined &&
-      this.store.length > 0 &&
-      isCoalescable(this.store[0]?.kind ?? "approval_result") &&
-      hasSameScope(first, this.store[0] as QueueItem)
-    ) {
-      const item = this.store.shift();
-      if (item) batch.push(item);
-    }
-
-    // If head was a barrier (no coalescables found), dequeue it alone
-    if (batch.length === 0 && this.store.length > 0) {
-      const item = this.store.shift();
-      if (item) batch.push(item);
+    const first = this.store.find((item) => !item.paused);
+    if (first && isCoalescable(first.kind)) {
+      for (const item of this.store) {
+        if (item.paused) continue;
+        if (!isCoalescable(item.kind) || !hasSameScope(first, item)) break;
+        batch.push(item);
+      }
+    } else if (first) {
+      // First ready item is a barrier: dequeue it alone
+      batch.push(first);
     }
 
     if (batch.length === 0) {
       return null;
     }
+    this.removeAll(batch);
 
     // When queue becomes empty after dequeue, reset blocked epoch tracking
     if (this.store.length === 0) {
@@ -332,8 +347,11 @@ export class QueueRuntime {
    */
   consumeItems(n: number): DequeuedBatch | null {
     if (this.store.length === 0 || n <= 0) return null;
-    const count = Math.min(n, this.store.length);
-    const batch = this.store.splice(0, count);
+    // Paused items are skipped: the first `n` ready items are consumed.
+    const batch = this.store.filter((item) => !item.paused).slice(0, n);
+    const count = batch.length;
+    if (count === 0) return null;
+    this.removeAll(batch);
     if (this.store.length === 0) {
       this.blockedEmittedForNonEmpty = false;
     }
@@ -376,6 +394,47 @@ export class QueueRuntime {
     return removed;
   }
 
+  // ── Pause / resume ─────────────────────────────────────────────
+
+  /**
+   * Park every queued user message. Called when the user interrupts: the
+   * interrupted turn stops, and the messages the user queued behind it wait
+   * for an explicit resume or for the user's next message instead of
+   * starting the next turn on their own. System-originated items are not
+   * affected. Returns the number of items newly paused.
+   */
+  pause(): number {
+    let changed = 0;
+    for (const item of this.store) {
+      if (item.kind === "message" && item.source === "user" && !item.paused) {
+        item.paused = true;
+        changed += 1;
+      }
+    }
+    if (changed > 0) {
+      this.blockedEmittedForNonEmpty = false;
+      this.safeCallback("onPauseChanged", this.pausedCount, this.store.length);
+    }
+    return changed;
+  }
+
+  /** Release every paused item. Returns the number of items resumed. */
+  resume(): number {
+    let changed = 0;
+    for (const item of this.store) {
+      if (item.paused) {
+        delete item.paused;
+        changed += 1;
+      }
+    }
+    if (changed > 0) {
+      this.lastEmittedBlockedReason = null;
+      this.blockedEmittedForNonEmpty = false;
+      this.safeCallback("onPauseChanged", 0, this.store.length);
+    }
+    return changed;
+  }
+
   // ── Clear ──────────────────────────────────────────────────────
 
   /** Remove all items and fire onCleared. */
@@ -398,6 +457,15 @@ export class QueueRuntime {
     return this.store.length === 0;
   }
 
+  /** Items a dequeue may take right now (everything that is not paused). */
+  get readyLength(): number {
+    return this.store.reduce((n, item) => (item.paused ? n : n + 1), 0);
+  }
+
+  get pausedCount(): number {
+    return this.store.length - this.readyLength;
+  }
+
   get items(): readonly QueueItem[] {
     return this.store.slice();
   }
@@ -406,7 +474,22 @@ export class QueueRuntime {
     return this.store.slice();
   }
 
+  /** Like peek(), without paused items. Dequeue planners must use this. */
+  peekReady(): readonly QueueItem[] {
+    return this.store.filter((item) => !item.paused);
+  }
+
   // ── Internals ──────────────────────────────────────────────────
+
+  /** Remove the given items (by identity) from the store, preserving order. */
+  private removeAll(items: readonly QueueItem[]): void {
+    const removing = new Set(items);
+    let write = 0;
+    for (const item of this.store) {
+      if (!removing.has(item)) this.store[write++] = item;
+    }
+    this.store.length = write;
+  }
 
   private makeItem(input: Omit<QueueItem, "id" | "enqueuedAt">): QueueItem {
     return {

@@ -60,7 +60,7 @@ export function toQueuedMsg(
   item: MessageQueueItem | TaskNotificationQueueItem,
 ): QueuedMessage {
   if (item.kind === "task_notification") {
-    return { kind: "task_notification", text: item.text };
+    return { kind: "task_notification", text: item.text, queueItemId: item.id };
   }
   const text =
     typeof item.content === "string"

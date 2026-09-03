@@ -13,6 +13,8 @@ import type {
   ExternalToolCallResult,
   InputAcceptedResponseMessage,
   InputCommand,
+  ResumeQueueCommand,
+  ResumeQueueResponseMessage,
   RuntimeExternalToolsUpdateCommand,
   RuntimeExternalToolsUpdateResponseMessage,
   RuntimeStartCommand,
@@ -553,6 +555,30 @@ export class AppServerClient {
         ...options,
         predicate: (message): message is AbortMessageResponseMessage =>
           message.type === "abort_message_response",
+      },
+    );
+  }
+
+  /** Release queue items parked by `abort()` without sending a new message. */
+  resumeQueue(
+    command: Omit<ResumeQueueCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<ResumeQueueResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<ResumeQueueResponseMessage> {
+    return this.request(
+      {
+        type: "resume_queue",
+        request_id: command.request_id ?? this.nextRequestId("resume-queue"),
+        ...command,
+      },
+      {
+        ...options,
+        predicate: (message): message is ResumeQueueResponseMessage =>
+          message.type === "resume_queue_response",
       },
     );
   }
