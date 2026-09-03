@@ -481,6 +481,10 @@ export async function handleAbortMessageInput(
   const cancellation = scopedRuntime.turnLifecycle.requestCancellation({
     waitForExternalSettlement: hasActiveTurn && Boolean(scopedRuntime.agentId),
   });
+  // Interrupt semantics: the current turn stops and the user's queued messages
+  // park until resume_queue or the user's next message. System items (task
+  // notifications, cron, mod continuations) still drain once idle.
+  scopedRuntime.queueRuntime.pause();
   const interruptedRunId = cancellation.runId;
   const pendingRequestsSnapshot = hasPendingApprovals
     ? resolvedDeps.getPendingControlRequests(listener, scope)

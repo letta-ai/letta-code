@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { readInteractiveAppSource } from "@/test-utils/read-interactive-app-source";
 
 function readAppSource(): string {
@@ -36,19 +37,23 @@ describe("queue ordering wiring", () => {
     expect(segment).toContain("queuedOverlayAction,");
   });
 
-  test("queue display trim uses displayable-item count, not mergedCount", () => {
-    const source = readAppSource();
+  test("queue display trim drops consumed items by id, not by head count", () => {
+    const source = readFileSync(
+      new URL("./helpers/tui-queue-runtime.ts", import.meta.url),
+      "utf-8",
+    );
     const start = source.indexOf("onDequeued: (batch) => {");
     const end = source.indexOf("onBlocked: (reason, queueLen) =>");
 
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
 
+    // A dequeue may skip Esc-parked user messages ahead of the consumed items,
+    // so trimming the display by count would drop the wrong entries.
     const segment = source.slice(start, end);
-    expect(segment).toContain("const displayConsumedCount =");
-    expect(segment).toContain('item.kind === "message"');
-    expect(segment).toContain('item.kind === "task_notification"');
-    expect(segment).toContain("prev.slice(displayConsumedCount)");
+    expect(segment).toContain("batch.items.map((item) => item.id)");
+    expect(segment).toContain("consumed.has(msg.queueItemId)");
+    expect(segment).not.toContain("prev.slice(");
   });
 
   test("onSubmit allows override-only queued submissions", () => {
@@ -62,9 +67,9 @@ describe("queue ordering wiring", () => {
     expect(end).toBeGreaterThan(start);
 
     const segment = source.slice(start, end);
-    expect(segment).toContain(
-      "if (!msg && !hasOverrideContent) return { submitted: false };",
-    );
+    // Empty input is rejected unless it resumes an Esc-parked queue.
+    expect(segment).toContain("if (!msg && !hasOverrideContent) {");
+    expect(segment).toContain("if (paused === 0) return { submitted: false };");
     expect(segment).toContain(
       "if (profileConfirmPending && !msg && !hasOverrideContent)",
     );

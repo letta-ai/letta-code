@@ -209,6 +209,7 @@ describe("toQueuedMsg", () => {
     expect(toQueuedMsg(item)).toEqual({
       kind: "task_notification",
       text: "<task-notification>done</task-notification>",
+      queueItemId: "item-2",
     });
   });
 

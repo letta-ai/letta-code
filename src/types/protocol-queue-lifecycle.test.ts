@@ -125,8 +125,9 @@ describe("QueueBlockedEvent wire shape", () => {
       command_running: true,
       interrupt_in_progress: true,
       runtime_busy: true,
+      paused_by_user: true,
     } satisfies Record<QueueBlockedReason, true>;
-    expect(Object.keys(reasons)).toHaveLength(6);
+    expect(Object.keys(reasons)).toHaveLength(7);
   });
 });
 

@@ -448,6 +448,7 @@ export interface QueueMessage {
   source: QueueMessageSource;
   content: MessageCreate["content"] | string;
   enqueued_at: string;
+  paused?: boolean; // parked by abort_message/Esc until resume_queue/next input
 }
 
 export interface DeviceStatusUpdateMessage extends RuntimeEnvelope {
@@ -460,10 +461,7 @@ export interface LoopStatusUpdateMessage extends RuntimeEnvelope {
   loop_status: LoopState;
 }
 
-/**
- * Full queue snapshot plus exact dequeue/cancellation transitions. Emitted on
- * mutation; transitions are ordered and cannot be inferred from absence.
- */
+/** Full queue snapshot plus ordered dequeue/cancel transitions; emitted on mutation. */
 export interface QueueUpdateMessage extends RuntimeEnvelope {
   type: "update_queue";
   queue: QueueMessage[];
@@ -2455,6 +2453,7 @@ export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
   | AbortMessageCommand
+  | import("./queue-update-protocol").ResumeQueueCommand
   | SyncCommand
   | RuntimeStartCommand
   | TeleportProtocol.TeleportProtocolCommand
@@ -2556,6 +2555,7 @@ export type WsProtocolMessage =
   | SubagentStateUpdateMessage
   | ExternalToolCallRequestMessage
   | AbortMessageResponseMessage
+  | import("./queue-update-protocol").ResumeQueueResponseMessage
   | SyncResponseMessage
   | RuntimeExternalToolsUpdateResponseMessage
   | TerminalOutputMessage

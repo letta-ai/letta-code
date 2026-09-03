@@ -282,4 +282,43 @@ describe("TUI interrupt queue lifecycle", () => {
       "arrived after Esc",
     );
   }, 15_000);
+
+  test("Esc parks a typed queued message; a notification still drains; Enter resumes", async () => {
+    const executor = new DelayedInterruptExecutor();
+    const { stdin } = await renderTestApp(executor);
+
+    await typePrompt(stdin, "start turn");
+    await waitFor(() => executor.inputs.length === 1, "the typed initial turn");
+    // A user message queued behind the active turn (source: user).
+    addToMessageQueue({ kind: "user", text: "queued while busy" });
+
+    addToMessageQueue({
+      kind: "task_notification",
+      text: monitorNotification("arrived during turn"),
+    });
+    stdin.push("\u001b");
+    await executor.abortObserved;
+    executor.settleInterruptedTurn();
+
+    // The notification starts a turn on its own; the parked user message does not.
+    await waitFor(
+      () => executor.inputs.length === 2,
+      "the notification turn after Esc",
+    );
+    const notificationTurn = JSON.stringify(executor.inputs[1]?.body);
+    expect(notificationTurn).toContain("arrived during turn");
+    expect(notificationTurn).not.toContain("queued while busy");
+    await sleep(300);
+    expect(executor.inputs).toHaveLength(2);
+
+    // Enter on the empty input is the TUI's Resume.
+    stdin.push("\r");
+    await waitFor(
+      () => executor.inputs.length === 3,
+      "the parked message to run after Enter",
+    );
+    expect(JSON.stringify(executor.inputs[2]?.body)).toContain(
+      "queued while busy",
+    );
+  }, 20_000);
 });

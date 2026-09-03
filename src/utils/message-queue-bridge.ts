@@ -19,6 +19,8 @@ export type QueuedMessage = {
   actingUserId?: string;
   /** QueueRuntime-assigned ID for targeted remove/edit operations. */
   queueItemId?: string;
+  /** Parked by Esc; waits for Enter on an empty input or the next message. */
+  paused?: boolean;
 };
 
 type QueueAdder = (message: QueuedMessage) => void;
