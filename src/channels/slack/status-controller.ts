@@ -39,6 +39,11 @@ export type SlackStatusController = {
     footerText: string,
     loadingText: string,
   ) => Promise<void>;
+  activateIfIdle: (
+    source: ChannelTurnSource,
+    footerText: string,
+    loadingText: string,
+  ) => Promise<void>;
   deactivate: (source: ChannelTurnSource) => Promise<void>;
   clearStale: (source: ChannelTurnSource) => Promise<void>;
   markAutoCleared: (source: ChannelTurnSource) => void;
@@ -225,6 +230,17 @@ export function createSlackStatusController(params: {
     else if (!sent) state.isThinkingActive = false;
   }
 
+  async function activateIfIdle(
+    source: ChannelTurnSource,
+    footerText: string,
+    loadingText: string,
+  ): Promise<void> {
+    const key = getConversationKey(source);
+    if (!key || !getLifecycleReplyKey(source)) return;
+    if (stateByConversation.get(key)?.isThinkingActive) return;
+    await activate(source, footerText, loadingText);
+  }
+
   function markAutoClearedByKey(key: string): void {
     clearKeepalive(key);
     const state = stateByConversation.get(key);
@@ -265,6 +281,7 @@ export function createSlackStatusController(params: {
     getUniqueSources,
     getLifecycleErrorReplyKey,
     activate,
+    activateIfIdle,
     deactivate,
     clearStale,
     markAutoCleared(source): void {

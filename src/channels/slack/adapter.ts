@@ -198,17 +198,24 @@ export function createSlackAdapter(
   ): Promise<void> {
     if (!running) return;
     if (event.type === "queued") {
-      if (
-        isSlackFlatChannelThreadOpener(event.source) &&
-        isNonEmptyString(event.source.messageId) &&
-        !agentThreadTracker.has(event.source.chatId, event.source.messageId)
-      ) {
-        await status.activate(
-          event.source,
-          SLACK_ASSISTANT_STARTUP_STATUS,
-          SLACK_ASSISTANT_STARTUP_STATUS,
-        );
+      if (isSlackFlatChannelThreadOpener(event.source)) {
+        if (
+          isNonEmptyString(event.source.messageId) &&
+          !agentThreadTracker.has(event.source.chatId, event.source.messageId)
+        ) {
+          await status.activateIfIdle(
+            event.source,
+            SLACK_ASSISTANT_STARTUP_STATUS,
+            SLACK_ASSISTANT_STARTUP_STATUS,
+          );
+        }
+        return;
       }
+      await status.activateIfIdle(
+        event.source,
+        SLACK_ASSISTANT_STARTUP_STATUS,
+        SLACK_ASSISTANT_STARTUP_STATUS,
+      );
       return;
     }
 
