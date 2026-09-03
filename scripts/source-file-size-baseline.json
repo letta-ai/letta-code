@@ -30,6 +30,8 @@
   "src/mods/package-installer.test.ts": 1248,
   "src/mods/package-installer.ts": 1201,
   "src/mods/package-registry.ts": 1033,
+  "src/permissions/checker.ts": 1048,
+  "src/permissions/permissions-checker.test.ts": 1027,
   "src/permissions/read-only-shell.test.ts": 1303,
   "src/permissions/read-only-shell.ts": 2009,
   "src/providers/chatgpt-usage-service.ts": 1112,
