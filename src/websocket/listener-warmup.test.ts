@@ -42,7 +42,7 @@ describe("listener warmup scheduling", () => {
     fetchAgentMetadataMock.mockReset();
   });
 
-  test("sync warmup joins the first turn without duplicating agent metadata fetches", async () => {
+  test("sync warmup joins the first turn without duplicating session warmup work", async () => {
     let resolveMemfs: (() => void) | undefined;
     let resolveSecrets: (() => void) | undefined;
     let resolveMetadata: ((value: ListenerAgentMetadata) => void) | undefined;
@@ -83,8 +83,8 @@ describe("listener warmup scheduling", () => {
       conversationId: "default",
     });
 
-    expect(memfsWarmupMock).toHaveBeenCalledTimes(2);
-    expect(secretsWarmupMock).toHaveBeenCalledTimes(2);
+    expect(memfsWarmupMock).toHaveBeenCalledTimes(1);
+    expect(secretsWarmupMock).toHaveBeenCalledTimes(1);
     expect(fetchAgentMetadataMock).toHaveBeenCalledTimes(1);
 
     resolveMemfs?.();
@@ -101,9 +101,54 @@ describe("listener warmup scheduling", () => {
       lastRunAt: "2026-05-02T06:00:00.000Z",
     });
 
-    expect(memfsWarmupMock).toHaveBeenCalledTimes(2);
-    expect(secretsWarmupMock).toHaveBeenCalledTimes(2);
+    expect(memfsWarmupMock).toHaveBeenCalledTimes(1);
+    expect(secretsWarmupMock).toHaveBeenCalledTimes(1);
     expect(fetchAgentMetadataMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("sync replay starts session warmup before approval recovery settles", async () => {
+    const memfsWarmup = mock(async () => true);
+    __listenerWarmupTestUtils.setWarmupDepsForTests({
+      ensureMemfsSyncedForAgent: memfsWarmup,
+      ensureSecretsHydratedForAgent: async () => {},
+      fetchListenerAgentMetadata: async () => ({
+        name: "Warmup Agent",
+        description: null,
+        lastRunAt: null,
+      }),
+    });
+    let resolveRecovery!: () => void;
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const transport: ListenerTransport = {
+      kind: "local",
+      bufferedAmount: 0,
+      isOpen: () => true,
+      send: () => {},
+    };
+
+    const replay = replaySyncStateForRuntime(
+      listener,
+      transport as unknown as WebSocket,
+      { agent_id: "agent-warmup", conversation_id: "default" },
+      {
+        recoverApprovalStateForSync: () =>
+          new Promise<void>((resolve) => {
+            resolveRecovery = resolve;
+          }),
+        scheduleWarmupsAfterSync: () => {},
+      },
+    );
+
+    for (
+      let attempt = 0;
+      attempt < 10 && memfsWarmup.mock.calls.length === 0;
+      attempt += 1
+    ) {
+      await Bun.sleep(0);
+    }
+    expect(memfsWarmup).toHaveBeenCalledTimes(1);
+    resolveRecovery();
+    await replay;
   });
 
   test("advertises scoped mod commands after background warmup", async () => {

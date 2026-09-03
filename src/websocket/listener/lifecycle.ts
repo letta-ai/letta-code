@@ -101,6 +101,7 @@ import type {
 } from "./types";
 import {
   clearListenerWarmState,
+  preloadListenerWarmStateForTurn,
   scheduleListenerWarmupsAfterSync,
 } from "./warmup";
 import { stopAllWorktreeWatchers } from "./worktree-watcher";
@@ -126,7 +127,6 @@ export function safeSocketSend(
   if (socket.readyState !== WebSocket.OPEN) {
     return false;
   }
-
   try {
     const serialized =
       typeof payload === "string" ? payload : JSON.stringify(payload);
@@ -140,7 +140,6 @@ export function safeSocketSend(
     return false;
   }
 }
-
 function safeTransportSend(
   transport: ListenerTransport,
   payload: unknown,
@@ -150,7 +149,6 @@ function safeTransportSend(
   if (!isListenerTransportOpen(transport)) {
     return false;
   }
-
   try {
     const serialized =
       typeof payload === "string" ? payload : JSON.stringify(payload);
@@ -164,7 +162,6 @@ function safeTransportSend(
     return false;
   }
 }
-
 export function runDetachedListenerTask(
   commandName: string,
   task: () => Promise<void>,
@@ -179,6 +176,7 @@ export function runDetachedListenerTask(
       console.error(`[Listen] ${commandName} failed:`, error);
   });
 }
+
 export async function replaySyncStateForRuntime(
   listenerRuntime: ListenerRuntime,
   socket: WebSocket,
@@ -201,6 +199,10 @@ export async function replaySyncStateForRuntime(
     scope.agent_id,
     scope.conversation_id,
   );
+  preloadListenerWarmStateForTurn(listenerRuntime, {
+    agentId: scope.agent_id,
+    conversationId: scope.conversation_id,
+  });
   const recoverFn =
     opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
   if (opts?.recoverApprovals ?? true) {
@@ -217,7 +219,6 @@ export async function replaySyncStateForRuntime(
       }
     }
   }
-
   replaySubscribedConnectionState(
     listenerRuntime,
     socket,
@@ -536,7 +537,6 @@ export async function attachOpenListenerSocket(
     safeSocketSend,
     runDetachedListenerTask,
   });
-
   installExternalToolBridge(runtime);
   const transport: ListenerTransport = socket;
   const processQueuedTurn = createConnectionTurnProcessor(runtime);

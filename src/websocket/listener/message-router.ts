@@ -83,6 +83,7 @@ import type {
   ProcessQueuedTurn,
   StartListenerOptions,
 } from "./types";
+import { preloadListenerWarmStateForTurn } from "./warmup";
 
 type SafeSocketSend = (
   socket: WebSocket,
@@ -549,6 +550,10 @@ export function createListenerMessageHandler(
           incoming.agentId,
           incoming.conversationId,
         );
+        preloadListenerWarmStateForTurn(runtime, {
+          agentId: incoming.agentId ?? null,
+          conversationId: incoming.conversationId ?? "default",
+        });
 
         const processIncomingMessageDirectly = (
           directIncoming: IncomingMessage,
