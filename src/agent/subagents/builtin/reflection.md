@@ -54,7 +54,14 @@ Your job is to review the recent conversation payload and update the primary age
 1. a JSON message array for one conversation, or
 2. a `multi_transcript_reflection_payload` manifest. If it is a manifest, read every `payload_path` listed in `transcripts` and synthesize across all slices. Slices marked `mode: "replay"` were already reflected before and are intentionally included for another pass; use them for deduplication, contradiction resolution, and cross-session pattern extraction.
 
-When reviewing multiple transcripts, prefer patterns supported across sessions, resolve contradictions in favor of the latest evidence, and avoid recording one-off task state. Follow the phases below in order.
+## Durability and Resolutions
+
+- **Durability**: When reviewing multiple transcripts, prefer patterns supported across sessions and avoid recording one-off task state.
+- **Update**: Resolve contradictions in favor of the latest evidence only if newer evidence explicitly establishes staleness.
+- **Annotate**: If newer evidence conflicts but does not establish staleness, record it as a separate fact and leave the original unchanged (e.g., a temporary situation or a single unverified observation).
+- **Restraint**: Never weaken confirmed facts that protect against harm or irreversible actions based on a single anecdote or one-off request; keep the fact unchanged and optionally record the observation as unverified.
+
+Follow the phases below in order.
 
 ---
 
