@@ -65,6 +65,7 @@ export function createAccountFromPatch(
       enabled: normalizedPatch.enabled ?? false,
       token: normalizedPatch.token ?? "",
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
+      replyMode: normalizedPatch.replyMode ?? "tool",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       groupMode:
         normalizeTelegramGroupMode(normalizedPatch.groupMode) ?? "open",
@@ -92,6 +93,7 @@ export function createAccountFromPatch(
       defaultPermissionMode:
         normalizedPatch.defaultPermissionMode ?? "standard",
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
+      replyMode: normalizedPatch.replyMode ?? "tool",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       allowedChannels: normalizedPatch.allowedChannels ?? [],
       autoThreadOnMention: normalizedPatch.autoThreadOnMention ?? false,
@@ -113,6 +115,7 @@ export function createAccountFromPatch(
       enabled: normalizedPatch.enabled ?? false,
       agentId: normalizedPatch.agentId ?? null,
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
+      replyMode: normalizedPatch.replyMode ?? "tool",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       selfChatMode: normalizedPatch.selfChatMode ?? true,
       groupMode:
@@ -148,6 +151,7 @@ export function createAccountFromPatch(
       agentId: normalizedPatch.agentId ?? null,
       selfChatMode: normalizedPatch.selfChatMode === true,
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
+      replyMode: normalizedPatch.replyMode ?? "tool",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       groupMode:
         normalizeSignalGroupMode(normalizedPatch.groupMode) ?? "disabled",
@@ -169,6 +173,7 @@ export function createAccountFromPatch(
       displayName: normalizeDisplayName(normalizedPatch.displayName),
       enabled: normalizedPatch.enabled ?? false,
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
+      replyMode: normalizedPatch.replyMode ?? "tool",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       config: { ...(normalizedPatch.config ?? {}) },
       createdAt: now,
@@ -192,6 +197,7 @@ export function createAccountFromPatch(
     mentionOnlyChannels: [...(normalizedPatch.mentionOnlyChannels ?? [])],
     allowBots: normalizedPatch.allowBots ?? false,
     dmPolicy: normalizedPatch.dmPolicy ?? "open",
+    replyMode: normalizedPatch.replyMode ?? "tool",
     allowedUsers: normalizedPatch.allowedUsers ?? [],
     createdAt: now,
     updatedAt: now,
@@ -214,6 +220,7 @@ export function mergeAccountPatch(
       enabled: normalizedPatch.enabled ?? existing.enabled,
       token: normalizedPatch.token ?? existing.token,
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
+      replyMode: normalizedPatch.replyMode ?? existing.replyMode ?? "tool",
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       groupMode:
         normalizeTelegramGroupMode(normalizedPatch.groupMode) ??
@@ -250,6 +257,7 @@ export function mergeAccountPatch(
         existing.defaultPermissionMode ??
         "standard",
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
+      replyMode: normalizedPatch.replyMode ?? existing.replyMode ?? "tool",
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       allowedChannels:
         normalizedPatch.allowedChannels ?? existing.allowedChannels,
@@ -279,6 +287,7 @@ export function mergeAccountPatch(
       enabled: normalizedPatch.enabled ?? existing.enabled,
       agentId: normalizedPatch.agentId ?? existing.agentId,
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
+      replyMode: normalizedPatch.replyMode ?? existing.replyMode ?? "tool",
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       selfChatMode: normalizedPatch.selfChatMode ?? existing.selfChatMode,
       groupMode:
@@ -342,6 +351,7 @@ export function mergeAccountPatch(
       agentId: normalizedPatch.agentId ?? existing.agentId,
       selfChatMode: normalizedPatch.selfChatMode ?? existing.selfChatMode,
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
+      replyMode: normalizedPatch.replyMode ?? existing.replyMode ?? "tool",
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       groupMode:
         normalizeSignalGroupMode(normalizedPatch.groupMode) ??
@@ -375,6 +385,7 @@ export function mergeAccountPatch(
           : existing.displayName,
       enabled: normalizedPatch.enabled ?? existing.enabled,
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
+      replyMode: normalizedPatch.replyMode ?? existing.replyMode ?? "tool",
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       config:
         normalizedPatch.config !== undefined
@@ -409,6 +420,7 @@ export function mergeAccountPatch(
     ],
     allowBots: normalizedPatch.allowBots ?? existing.allowBots ?? false,
     dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
+    replyMode: normalizedPatch.replyMode ?? existing.replyMode ?? "tool",
     allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
     updatedAt: nextUpdatedAt,
   };

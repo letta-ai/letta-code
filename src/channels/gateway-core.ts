@@ -1,4 +1,3 @@
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { getInteractiveApprovalKind } from "@/tools/interactive-policy";
 import type {
   ApprovalResponseBody,
@@ -19,7 +18,30 @@ import type {
   WsProtocolMessage,
 } from "@/types/app-server-protocol";
 import {
+  channelTurnOutcome,
+  type FinalizedGatewayAssistantMessage,
+  GatewayAssistantTextAccumulator,
+  relayFinalizedAssistantMessage,
+  runIdFromDelta,
+  stopReasonFromDelta,
+} from "./gateway-assistant-relay";
+import {
+  channelTagsForSources,
+  sourceLifecycleKey,
+  sourceRouteKey,
+  uniqueLifecycleSources,
+  uniqueRoutedSources,
+} from "./gateway-source-routing";
+import type {
+  ChannelGatewayActiveTurnState,
+  ChannelGatewayDelivery,
+  ChannelGatewayHandoffDelivery,
+  ChannelGatewayModelStatus,
+  ChannelGatewayRichDraft,
+} from "./gateway-types";
+import {
   createMessageChannelIdempotencyScope,
+  MessageChannelDuplicateActionError,
   type MessageChannelIdempotencyScope,
 } from "./message-channel-idempotency";
 import { createChannelTurnProgressBuilder } from "./progress-builder";
@@ -54,18 +76,13 @@ export interface ChannelGatewayClient {
   }): Promise<RuntimeExternalToolsUpdateResponseMessage>;
 }
 
-export interface ChannelGatewayDelivery {
-  runtime: RuntimeScope;
-  content: MessageCreate["content"];
-  sources: ChannelTurnSource[];
-  clientMessageId: string;
-  defaultPermissionMode?: ChannelDefaultPermissionMode;
-}
-
-export type ChannelGatewayHandoffDelivery = Omit<
+export type {
+  ChannelGatewayActiveTurnState,
   ChannelGatewayDelivery,
-  "content"
->;
+  ChannelGatewayHandoffDelivery,
+  ChannelGatewayModelStatus,
+  ChannelGatewayRichDraft,
+} from "./gateway-types";
 
 export interface ChannelGatewayHooks {
   buildExternalTool(
@@ -77,6 +94,11 @@ export interface ChannelGatewayHooks {
     sources: ChannelTurnSource[],
     idempotencyScope?: MessageChannelIdempotencyScope | null,
   ): Promise<ExternalToolCallResult> | ExternalToolCallResult;
+  relayAssistantText?(options: {
+    text: string;
+    sources: ChannelTurnSource[];
+    idempotencyScope: MessageChannelIdempotencyScope;
+  }): void | Promise<void>;
   onLifecycle(event: ChannelTurnLifecycleEvent): void | Promise<void>;
   onProgress(event: ChannelTurnProgressEvent): void | Promise<void>;
   onControlRequest(event: ChannelControlRequestEvent): void | Promise<void>;
@@ -86,17 +108,6 @@ export interface ChannelGatewayHooks {
   }): ChannelGatewayRichDraft | null;
 }
 
-export interface ChannelGatewayRichDraft {
-  handleDelta(delta: StreamDeltaMessage["delta"]): void;
-  flushPending(): Promise<void>;
-  dispose(): void;
-}
-
-export interface ChannelGatewayModelStatus {
-  modelHandle: string | null;
-  scope: "agent" | "conversation";
-}
-
 type ActiveGatewayTurn = {
   batchId: string;
   routingSources: ChannelTurnSource[];
@@ -104,7 +115,9 @@ type ActiveGatewayTurn = {
   progress: ReturnType<typeof createChannelTurnProgressBuilder>;
   richDraft: ChannelGatewayRichDraft | null;
   runId?: string;
+  assistantText: GatewayAssistantTextAccumulator;
   idempotencyScope: MessageChannelIdempotencyScope;
+  relayEligible: boolean;
 };
 
 type GatewayRuntimeState = {
@@ -138,75 +151,6 @@ function hasAgentRuntime<
   return !!value.runtime?.agent_id;
 }
 
-function sourceRouteKey(source: ChannelTurnSource): string {
-  return [
-    source.channel,
-    source.accountId ?? "",
-    source.chatId,
-    source.threadId ?? "",
-  ].join(":");
-}
-
-function sourceLifecycleKey(source: ChannelTurnSource): string {
-  return [
-    sourceRouteKey(source),
-    source.messageId ?? "",
-    source.agentId,
-    source.conversationId,
-  ].join(":");
-}
-
-function uniqueSourcesBy(
-  sources: ChannelTurnSource[],
-  getKey: (source: ChannelTurnSource) => string,
-): ChannelTurnSource[] {
-  const byKey = new Map<string, ChannelTurnSource>();
-  for (const source of sources) byKey.set(getKey(source), source);
-  return [...byKey.values()];
-}
-
-function uniqueRoutedSources(
-  sources: ChannelTurnSource[],
-): ChannelTurnSource[] {
-  return uniqueSourcesBy(sources, sourceRouteKey);
-}
-
-function uniqueLifecycleSources(
-  sources: ChannelTurnSource[],
-): ChannelTurnSource[] {
-  return uniqueSourcesBy(sources, sourceLifecycleKey);
-}
-
-function channelTagsForSources(sources: ChannelTurnSource[]): string[] {
-  return [...new Set(sources.map((source) => `channel:${source.channel}`))];
-}
-
-function stopReasonFromDelta(
-  message: StreamDeltaMessage,
-): StopReasonType | null {
-  const delta = message.delta;
-  return delta.message_type === "stop_reason" &&
-    "stop_reason" in delta &&
-    typeof delta.stop_reason === "string"
-    ? delta.stop_reason
-    : null;
-}
-
-function runIdFromDelta(message: StreamDeltaMessage): string | undefined {
-  const runId = "run_id" in message.delta ? message.delta.run_id : undefined;
-  return typeof runId === "string" && runId.length > 0 ? runId : undefined;
-}
-
-function lifecycleOutcome(
-  stopReason: StopReasonType,
-): "completed" | "error" | "cancelled" {
-  if (stopReason === "cancelled") return "cancelled";
-  if (stopReason === "end_turn" || stopReason === "tool_rule") {
-    return "completed";
-  }
-  return "error";
-}
-
 /**
  * Process-neutral Channels bridge. It only speaks the public App Server
  * protocol; channel adapters and credentials stay behind the injected hooks.
@@ -214,9 +158,7 @@ function lifecycleOutcome(
 export class ChannelGateway {
   private readonly states = new Map<string, GatewayRuntimeState>();
   private readonly disposers: Array<() => void> = [];
-  // Tool publication and runtime_start both replace the same connection-owned
-  // registration. Keep them ordered so a late runtime_start cannot resurrect a
-  // route that an overlapping route-removal update just revoked.
+  // Serialize registration replacement so late starts cannot restore removed routes.
   private registrationQueue = Promise.resolve();
 
   constructor(
@@ -225,7 +167,7 @@ export class ChannelGateway {
   ) {
     this.disposers.push(
       client.onMessage((message) => this.handleMessage(message)),
-      client.onExternalToolCall((request) => {
+      client.onExternalToolCall(async (request) => {
         const state = hasAgentRuntime(request)
           ? this.states.get(runtimeKey(request.runtime))
           : undefined;
@@ -233,11 +175,20 @@ export class ChannelGateway {
         const sources = active?.routingSources ?? state?.routedSources ?? [];
         // Pass the per-turn idempotency scope only when a turn is active;
         // process-owned calls (no active batch) are not deduped.
-        return hooks.executeExternalTool(
-          request,
-          sources,
-          active?.idempotencyScope ?? null,
-        );
+        try {
+          return await hooks.executeExternalTool(
+            request,
+            sources,
+            active?.idempotencyScope ?? null,
+          );
+        } catch (error) {
+          if (!(error instanceof MessageChannelDuplicateActionError))
+            throw error;
+          return {
+            content: [{ type: "text", text: error.message }],
+            is_error: true,
+          };
+        }
       }),
     );
   }
@@ -372,7 +323,9 @@ export class ChannelGateway {
         lifecycleSources: uniqueLifecycleSources(sources),
         progress: createChannelTurnProgressBuilder(),
         richDraft: null,
+        assistantText: new GatewayAssistantTextAccumulator(),
         idempotencyScope: createMessageChannelIdempotencyScope(),
+        relayEligible: false,
       };
       state.active = recoveredTurn;
     }
@@ -389,7 +342,6 @@ export class ChannelGateway {
     return replayedRequestIds;
   }
 
-  /** Adopt an in-flight turn without submitting its user input again. */
   async adoptActiveDelivery(
     delivery: ChannelGatewayHandoffDelivery,
   ): Promise<void> {
@@ -420,7 +372,13 @@ export class ChannelGateway {
         lifecycleSources: uniqueLifecycleSources(delivery.sources),
         progress: createChannelTurnProgressBuilder(),
         richDraft: null,
-        idempotencyScope: createMessageChannelIdempotencyScope(),
+        assistantText: new GatewayAssistantTextAccumulator(
+          delivery.activeTurnState?.assistantText,
+        ),
+        idempotencyScope: createMessageChannelIdempotencyScope(
+          delivery.activeTurnState?.idempotency,
+        ),
+        relayEligible: Boolean(delivery.activeTurnState),
       };
       state.active = active;
       state.routedSources = uniqueRoutedSources([
@@ -459,20 +417,28 @@ export class ChannelGateway {
     });
   }
 
-  /** Forget a handed-off turn silently; the caller then releases its tools. */
   releaseActiveDelivery(
     runtime: RuntimeScope,
     clientMessageId: string,
-  ): boolean {
+  ): ChannelGatewayActiveTurnState | null {
     const key = runtimeKey(runtime);
     const state = this.states.get(key);
     const active = state?.active;
     if (!state || active?.batchId !== `channel-${clientMessageId}`) {
-      return false;
+      return null;
     }
+    // Hook ownership stays with this gateway until every queued side effect has
+    // settled. A finalized relay may not have entered the idempotency scope yet.
+    if (state.hookQueue) return null;
+    const idempotency = active.idempotencyScope.snapshot();
+    if (!idempotency) return null;
+    const handoffState = {
+      assistantText: active.assistantText.snapshot(),
+      idempotency,
+    };
     active.richDraft?.dispose();
     this.states.delete(key);
-    return true;
+    return handoffState;
   }
 
   async registerRuntime(
@@ -493,7 +459,6 @@ export class ChannelGateway {
     });
   }
 
-  /** Publish tools for a listener-owned turn without subscribing to its stream. */
   async publishRuntimeTools(
     runtime: RuntimeScope,
     sources: ChannelTurnSource[] = [],
@@ -883,7 +848,9 @@ export class ChannelGateway {
           batchId: `channel-${clientMessageId}`,
           sources: routingSources,
         }) ?? null,
+      assistantText: new GatewayAssistantTextAccumulator(),
       idempotencyScope: createMessageChannelIdempotencyScope(),
+      relayEligible: true,
     };
     const processingEvent: ChannelTurnLifecycleEvent = {
       type: "processing",
@@ -903,6 +870,11 @@ export class ChannelGateway {
 
     const runId = runIdFromDelta(message);
     if (runId) active.runId = runId;
+    this.enqueueFinalizedAssistantMessages(
+      state,
+      active,
+      active.assistantText.handleDelta(message),
+    );
     for (const update of active.progress.buildUpdates(message.delta)) {
       void this.enqueueHook(state, () =>
         this.hooks.onProgress({
@@ -916,12 +888,39 @@ export class ChannelGateway {
     active.richDraft?.handleDelta(message.delta);
 
     const stopReason = stopReasonFromDelta(message);
-    if (stopReason === "requires_approval" || stopReason === "end_turn") {
+    if (
+      stopReason === "requires_approval" ||
+      stopReason === "end_turn" ||
+      stopReason === "tool_rule"
+    ) {
       void active.richDraft?.flushPending();
+      const finalized = active.assistantText.finalizeCurrent();
+      if (finalized) {
+        this.enqueueFinalizedAssistantMessages(state, active, [finalized]);
+      }
     }
     // The listener sends a canonical turn_finished event after it classifies
     // terminal failures. Finalizing from this earlier delta would discard that
     // user-safe error detail.
+  }
+
+  private enqueueFinalizedAssistantMessages(
+    state: GatewayRuntimeState,
+    active: ActiveGatewayTurn,
+    messages: FinalizedGatewayAssistantMessage[],
+  ): void {
+    const relay = active.relayEligible
+      ? this.hooks.relayAssistantText
+      : undefined;
+    for (const message of messages)
+      void this.enqueueHook(state, () =>
+        relayFinalizedAssistantMessage({
+          message,
+          sources: active.routingSources,
+          idempotencyScope: active.idempotencyScope,
+          relay,
+        }),
+      );
   }
 
   private handleTurnFinished(
@@ -935,21 +934,29 @@ export class ChannelGateway {
     const state = this.getState(runtime);
     const active = state.active;
     if (!active) return;
+    if (
+      terminal.stopReason === "end_turn" ||
+      terminal.stopReason === "tool_rule"
+    ) {
+      const finalized = active.assistantText.finalizeCurrent();
+      if (finalized) {
+        this.enqueueFinalizedAssistantMessages(state, active, [finalized]);
+      }
+    }
     state.active = null;
     active.richDraft?.dispose();
-    void this.enqueueHook(state, () =>
-      this.hooks.onLifecycle({
-        type: "finished",
-        batchId: active.batchId,
-        sources: active.lifecycleSources,
-        outcome: lifecycleOutcome(terminal.stopReason),
-        stopReason: terminal.stopReason,
-        ...((terminal.runId ?? active.runId)
-          ? { runId: terminal.runId ?? active.runId }
-          : {}),
-        ...(terminal.error ? { error: terminal.error } : {}),
-      }),
-    );
+    const finishedEvent: ChannelTurnLifecycleEvent = {
+      type: "finished",
+      batchId: active.batchId,
+      sources: active.lifecycleSources,
+      outcome: channelTurnOutcome(terminal.stopReason),
+      stopReason: terminal.stopReason,
+      ...((terminal.runId ?? active.runId)
+        ? { runId: terminal.runId ?? active.runId }
+        : {}),
+      ...(terminal.error ? { error: terminal.error } : {}),
+    };
+    void this.enqueueHook(state, () => this.hooks.onLifecycle(finishedEvent));
   }
 
   private handleControlRequest(message: ControlRequest): void {

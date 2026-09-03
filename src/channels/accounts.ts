@@ -70,6 +70,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   remove_stale_routes: "removeStaleRoutes",
   rich_draft_streaming: "richDraftStreaming",
   rich_private_chat_default: "richPrivateChatDefault",
+  reply_mode: "replyMode",
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
   download_media: "downloadMedia",
@@ -318,6 +319,8 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     // hasCamel && !hasSnake → already on the object, nothing to do
   }
 
+  next.replyMode = next.replyMode === "relay" ? "relay" : "tool";
+
   // Both the "custom" first-party channel and all user-installed channels use
   // the generic `config: Record<string, unknown>` shape, so make sure that
   // field is present and well-formed before downstream code reads it.
@@ -439,6 +442,7 @@ function makeDefaultLegacyAccount(
       enabled: config.enabled,
       token: config.token,
       dmPolicy: config.dmPolicy,
+      replyMode: "tool",
       allowedUsers: [...config.allowedUsers],
       transcribeVoice: config.transcribeVoice === true,
       richPrivateChatDefault: config.richPrivateChatDefault !== false,
@@ -459,6 +463,7 @@ function makeDefaultLegacyAccount(
       enabled: config.enabled,
       token: config.token,
       dmPolicy: config.dmPolicy,
+      replyMode: "tool",
       allowedUsers: [...config.allowedUsers],
       allowedChannels: config.allowedChannels
         ? Array.isArray(config.allowedChannels)
@@ -481,6 +486,7 @@ function makeDefaultLegacyAccount(
       accountId: LEGACY_CHANNEL_ACCOUNT_ID,
       enabled: config.enabled,
       dmPolicy: config.dmPolicy,
+      replyMode: "tool",
       allowedUsers: [...config.allowedUsers],
       agentId: config.agentId,
       selfChatMode: config.selfChatMode !== false,
@@ -516,6 +522,7 @@ function makeDefaultLegacyAccount(
       account: config.account,
       accountUuid: config.accountUuid,
       dmPolicy: config.dmPolicy,
+      replyMode: "tool",
       allowedUsers: [...config.allowedUsers],
       agentId: config.agentId,
       selfChatMode: config.selfChatMode === true,

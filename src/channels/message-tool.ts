@@ -1,3 +1,4 @@
+import { getChannelAccount } from "./accounts";
 import {
   buildMessageChannelSchemaFromDiscovery,
   buildMessageChannelToolFromDiscovery,
@@ -13,6 +14,7 @@ import type { SupportedChannelId } from "./types";
 export type MessageChannelToolScopeEntry = {
   channelId: SupportedChannelId;
   accountId?: string | null;
+  routedDestinationKey?: string;
 };
 
 export type MessageChannelToolDiscoveryScope = {
@@ -41,16 +43,22 @@ export async function resolveLocalMessageChannelToolChannels(
   const targets =
     scopedChannels.length > 0
       ? scopedChannels
-      : (getActiveChannelIds() as SupportedChannelId[]).map((channelId) => ({
-          channelId,
-          accountId: null,
-        }));
+      : (getActiveChannelIds() as SupportedChannelId[]).map(
+          (channelId): MessageChannelToolScopeEntry => ({
+            channelId,
+            accountId: null,
+          }),
+        );
   const channels: MessageChannelToolChannel[] = [];
-  for (const { channelId, accountId } of targets) {
+  for (const { channelId, accountId, routedDestinationKey } of targets) {
     const channel = {
       channelId,
       displayName: getChannelDisplayName(channelId),
       accountId,
+      routedDestinationKey,
+      replyMode: accountId
+        ? (getChannelAccount(channelId, accountId)?.replyMode ?? "tool")
+        : "tool",
     };
     try {
       const plugin = await loadChannelPlugin(channelId);
