@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { setCurrentAgentId } from "@/agent/context";
-import { executeCommand } from "@/cli/commands/registry";
+import { commands, executeCommand } from "@/cli/commands/registry";
+import {
+  getSystemRemindersExpanded,
+  getSystemRemindersVisible,
+  setSystemRemindersVisible,
+  toggleSystemReminderDisplay,
+} from "@/cli/components/transcript-display-state";
 import {
   __testOverrideSecretsBackend,
   clearSecretsCache,
@@ -37,6 +43,7 @@ describe("command registry", () => {
     retrieveAgentMock.mockResolvedValue({ secrets: [] });
     updateAgentMock.mockResolvedValue({ id: AGENT_ID });
     setCurrentAgentId(AGENT_ID);
+    setSystemRemindersVisible(false);
     clearSecretsCache(AGENT_ID);
     __testOverrideSecretsBackend({
       capabilities,
@@ -49,6 +56,7 @@ describe("command registry", () => {
     __testOverrideSecretsBackend(null);
     clearSecretsCache(AGENT_ID);
     setCurrentAgentId(null);
+    setSystemRemindersVisible(false);
   });
 
   test("propagates secrets reminder refresh metadata for secret mutations", async () => {
@@ -81,5 +89,50 @@ describe("command registry", () => {
     expect(result.success).toBe(true);
     expect(result.output).toContain("Secret management commands");
     expect(result.refreshSecretsInfo).toBeUndefined();
+  });
+
+  test("system reminders are discoverable and hidden by default", async () => {
+    expect(commands["/system-reminders"]).toMatchObject({
+      args: "[on|off|status]",
+      desc: "Show or hide system reminders",
+    });
+    expect(getSystemRemindersVisible()).toBe(false);
+    expect(await executeCommand("/system-reminders")).toMatchObject({
+      success: true,
+      output:
+        "System reminders are hidden. Use /system-reminders on to show them.",
+    });
+  });
+
+  test("turns system reminder rows on and off", async () => {
+    expect(await executeCommand("/system-reminders on")).toMatchObject({
+      success: true,
+      output:
+        "System reminders shown. Ctrl+R expands or collapses their contents.",
+    });
+    expect(getSystemRemindersVisible()).toBe(true);
+
+    toggleSystemReminderDisplay();
+    expect(getSystemRemindersExpanded()).toBe(true);
+
+    expect(await executeCommand("/system-reminders off")).toMatchObject({
+      success: true,
+      output: "System reminders hidden.",
+    });
+    expect(getSystemRemindersVisible()).toBe(false);
+    expect(getSystemRemindersExpanded()).toBe(false);
+  });
+
+  test("rejects unsupported system reminder modes", async () => {
+    expect(await executeCommand("/system-reminders maybe")).toMatchObject({
+      success: true,
+      output: "Usage: /system-reminders [on|off|status] (default is off)",
+    });
+    expect(
+      await executeCommand("/system-reminders status extra"),
+    ).toMatchObject({
+      success: true,
+      output: "Usage: /system-reminders [on|off|status] (default is off)",
+    });
   });
 });
