@@ -593,7 +593,10 @@ async function executeSubagent(
           agentId: parentAgentIdOverride,
         });
         if (primaryModel) {
-          // Retry with the primary agent's model
+          // New agent is required: deploying an existing agent omits --model,
+          // so the retry would keep the unsupported provider. Keep memoryScope
+          // and systemPromptOverride so the replacement child uses the same
+          // writable tree and prompt the first attempt was given.
           return executeSubagent(
             type,
             config,
@@ -602,13 +605,13 @@ async function executeSubagent(
             subagentId,
             true, // Mark as retry to prevent infinite loops
             signal,
-            undefined, // existingAgentId
+            undefined, // existingAgentId: new agent so --model applies
             undefined, // existingConversationId
             maxTurns,
             parentAgentIdOverride,
             transcriptPath,
-            undefined, // memoryScope
-            undefined, // systemPromptOverride
+            memoryScope,
+            systemPromptOverride,
             environment,
           );
         }
