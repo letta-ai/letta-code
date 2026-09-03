@@ -712,6 +712,24 @@ catalog must use this fixture.
 
 ---
 
+## Backend Mode Ownership
+
+Backend mode at startup is launcher-owned: an explicit `--backend` flag extracted
+in `src/index.ts` overrides both the saved preferred backend and the
+`LETTA_LOCAL_BACKEND_EXPERIMENTAL` env flag — `resolveSubcommandBackendMode`
+defers whenever an explicit flag is present. A launched process must not
+re-resolve or fall back to the user's saved local preference.
+
+Desktop depends on this boundary deliberately: its direct-to-cloud listener
+(`desktop-direct-cloud:<installation-id>`, used solely for Cloud "Desktop
+Local" routing in `src/backend/api/environments.ts`) exists only to execute
+Cloud agents and is pinned to API by its spawner, while the dedicated local
+listener keeps the separate `desktop-primary:<installation-id>` slot
+(`src/websocket/listener/identity.ts`). Fix a misconfigured destination; do not
+add backend fallback or weaken flag precedence for one listener kind.
+
+---
+
 ## Subagent Lifecycle & Reflection
 
 ### Subagent Lifecycle API
