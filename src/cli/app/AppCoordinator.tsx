@@ -1674,8 +1674,7 @@ export function App({
   // Used to gate recovery alert injection to true user-interrupt retries.
   const pendingInterruptRecoveryConversationIdRef = useRef<string | null>(null);
 
-  // Epoch counter to force dequeue effect re-run when refs change but state doesn't
-  // Incremented when userCancelledRef is reset while messages are queued
+  // Epoch counter to force dequeue effect re-run when refs change but state doesn't.
   const [dequeueEpoch, setDequeueEpoch] = useState(0);
   // Strict lock to ensure dequeue submit path is at-most-once while onSubmit is in flight.
   const dequeueInFlightRef = useRef(false);
@@ -3814,6 +3813,7 @@ export function App({
     setCurrentModelHandle,
     setCurrentModelId,
     setDequeueEpoch,
+    setInterruptRequested,
     lastStopReasonRef,
     setIsExecutingTool,
     setLlmConfig,
@@ -4030,6 +4030,7 @@ export function App({
     setApprovalResults,
     setAutoDeniedApprovals,
     setAutoHandledResults,
+    setDequeueEpoch,
     setInterruptRequested,
     setIsExecutingTool,
     setPendingApprovals,
@@ -4038,6 +4039,7 @@ export function App({
     streaming,
     toolAbortControllerRef,
     toolResultsInFlightRef,
+    tuiQueueRef,
     userCancelledRef,
     waitingForQueueCancelRef,
   });
@@ -4321,11 +4323,9 @@ export function App({
     onSubmitRef.current = onSubmit;
   }, [onSubmit]);
 
-  // Process queued messages when streaming ends.
-  // QueueRuntime is authoritative: consumeItems drives the dequeue and fires
-  // onDequeued → setQueueDisplay(prev => prev.slice(n)) to update the UI.
-  // dequeueEpoch is the sole re-trigger: bumped on every enqueue, turn
-  // completion (abortControllerRef clears), and cancel-reset.
+  // Process queued messages when streaming ends. QueueRuntime is authoritative
+  // (consumeItems fires onDequeued → setQueueDisplay). dequeueEpoch is the sole
+  // re-trigger: enqueue, turn completion, and interrupt settle (cancelling->idle).
   useEffect(() => {
     void dequeueEpoch; // explicit dep to satisfy exhaustive-deps lint
 
