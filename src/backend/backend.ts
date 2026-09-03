@@ -321,6 +321,40 @@ interface APIBackendDeps {
   forkConversation?: ForkConversation;
 }
 
+function stableRetrieveAgentOptionsKey(value: unknown): string | null {
+  if (value === undefined) return "";
+  if (value === null) return "null";
+  if (typeof value !== "object") return JSON.stringify(value);
+  if (value instanceof AbortSignal) return null;
+  if (Array.isArray(value)) {
+    const entries = value.map(stableRetrieveAgentOptionsKey);
+    if (entries.some((entry) => entry === null)) return null;
+    return `[${entries.join(",")}]`;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (record.signal instanceof AbortSignal) return null;
+  const entries: string[] = [];
+  for (const key of Object.keys(record).sort()) {
+    const entryValue = record[key];
+    if (typeof entryValue === "function" || typeof entryValue === "symbol") {
+      return null;
+    }
+    const serializedValue = stableRetrieveAgentOptionsKey(entryValue);
+    if (serializedValue === null) return null;
+    entries.push(`${JSON.stringify(key)}:${serializedValue}`);
+  }
+  return `{${entries.join(",")}}`;
+}
+
+function retrieveAgentInflightKey(
+  agentId: string,
+  options?: AgentRetrieveOptions,
+): string | null {
+  const optionsKey = stableRetrieveAgentOptionsKey(options);
+  return optionsKey === null ? null : `${agentId}\0${optionsKey}`;
+}
+
 export class APIBackend implements Backend {
   get capabilities(): BackendCapabilities {
     return {
@@ -340,6 +374,10 @@ export class APIBackend implements Backend {
 
   private readonly getApiClientOverride?: GetAPIClient;
   private readonly forkConversationOverride?: ForkConversation;
+  private readonly retrieveAgentInflightByKey = new Map<
+    string,
+    Promise<Awaited<ReturnType<APIClient["agents"]["retrieve"]>>>
+  >();
 
   constructor(deps: APIBackendDeps = {}) {
     this.getApiClientOverride = deps.getClient;
@@ -355,8 +393,32 @@ export class APIBackend implements Backend {
   }
 
   async retrieveAgent(agentId: string, options?: AgentRetrieveOptions) {
-    const client = await this.getClient();
-    return client.agents.retrieve(agentId, options);
+    const key = retrieveAgentInflightKey(agentId, options);
+    if (key) {
+      const inflight = this.retrieveAgentInflightByKey.get(key);
+      if (inflight) return inflight;
+    }
+
+    const request = (async () => {
+      const client = await this.getClient();
+      return client.agents.retrieve(agentId, options);
+    })();
+    if (!key) return request;
+
+    this.retrieveAgentInflightByKey.set(key, request);
+    request.then(
+      () => {
+        if (this.retrieveAgentInflightByKey.get(key) === request) {
+          this.retrieveAgentInflightByKey.delete(key);
+        }
+      },
+      () => {
+        if (this.retrieveAgentInflightByKey.get(key) === request) {
+          this.retrieveAgentInflightByKey.delete(key);
+        }
+      },
+    );
+    return request;
   }
 
   async listAgentSecrets(agentId: string): Promise<AgentSecret[]> {
