@@ -65,6 +65,7 @@ function wrapSchema(schema: Record<string, unknown>): {
 function buildStructuredOutputTool(
   schema: Record<string, unknown>,
   captured: unknown[],
+  onCaptured: () => void,
 ): SdkCustomTool {
   const { parameters, unwrap } = wrapSchema(schema);
   return {
@@ -92,7 +93,15 @@ function buildStructuredOutputTool(
         };
       }
       captured.push(value);
-      return { content: [{ type: "text", text: '{"ok":true}' }] };
+      onCaptured();
+      return {
+        content: [
+          {
+            type: "text",
+            text: '{"ok":true} Result delivered. Do not call StructuredOutput again; stop now.',
+          },
+        ],
+      };
     },
   };
 }
@@ -122,19 +131,28 @@ function usageTokensFromEvent(
     : undefined;
 }
 
-async function drainTurn(query: SdkQuery): Promise<DrainedTurn> {
+/** Usage observed so far on a query; shared so an early stop keeps it. */
+interface RunningUsage {
+  totalTokens?: number;
+}
+
+async function drainTurn(
+  query: SdkQuery,
+  usage: RunningUsage,
+): Promise<DrainedTurn> {
   let assistantText = "";
   let resultText: string | undefined;
   let success = false;
   let error: string | undefined;
   let costUsd: number | undefined;
   let durationMs: number | undefined;
-  let totalTokens: number | undefined;
   for await (const message of query) {
     if (message.type === "assistant") assistantText += message.content ?? "";
     if (message.type === "stream_event") {
       const tokens = usageTokensFromEvent(message.event);
-      if (tokens !== undefined) totalTokens = (totalTokens ?? 0) + tokens;
+      if (tokens !== undefined) {
+        usage.totalTokens = (usage.totalTokens ?? 0) + tokens;
+      }
     }
     if (message.type === "result") {
       success = message.success === true;
@@ -150,7 +168,7 @@ async function drainTurn(query: SdkQuery): Promise<DrainedTurn> {
     error,
     costUsd,
     durationMs,
-    totalTokens,
+    totalTokens: usage.totalTokens,
   };
 }
 
@@ -218,10 +236,20 @@ export class SdkSubagentPool {
         ? { cwd: options.cwd ?? this.config.cwd }
         : {}),
       ...(options.schema
-        ? { tools: [buildStructuredOutputTool(options.schema, captured)] }
+        ? {
+            tools: [
+              buildStructuredOutputTool(options.schema, captured, () =>
+                onCaptured?.(),
+              ),
+            ],
+          }
         : {}),
     };
 
+    // Some models keep re-calling StructuredOutput after a success (each call
+    // is another cloud run), so the first valid capture ends the query: the
+    // value is what the script wanted, and the rest of the turn is waste.
+    let onCaptured: (() => void) | null = null;
     let currentQuery: SdkQuery | null = null;
     let cancellationReject: ((error: Error) => void) | null = null;
     const cancellation = new Promise<never>((_resolve, reject) => {
@@ -246,15 +274,33 @@ export class SdkSubagentPool {
         )
       : null;
 
-    const runQuery = async (queryPrompt: string) => {
+    const runQuery = async (queryPrompt: string): Promise<DrainedTurn> => {
       const query = this.client.query({
         prompt: queryPrompt,
         options: queryOptions,
       });
       currentQuery = query;
+      const usage: RunningUsage = {};
+      const startedAt = Date.now();
+      const capturedEarly = new Promise<DrainedTurn>((resolve) => {
+        onCaptured = () => {
+          void query.interrupt().catch(() => undefined);
+          resolve({
+            finalText: "",
+            success: true,
+            durationMs: Date.now() - startedAt,
+            totalTokens: usage.totalTokens,
+          });
+        };
+      });
       try {
-        return await Promise.race([drainTurn(query), cancellation]);
+        const drained = drainTurn(query, usage);
+        // A drained stream that ends after a capture must not lose to the
+        // early resolver's stale usage: prefer the full turn when it settles
+        // first, otherwise the early stop.
+        return await Promise.race([drained, capturedEarly, cancellation]);
       } finally {
+        onCaptured = null;
         query.close();
         if (currentQuery === query) currentQuery = null;
       }

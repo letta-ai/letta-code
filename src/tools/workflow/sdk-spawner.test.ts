@@ -196,3 +196,61 @@ describe("SdkSubagentPool", () => {
     expect(disposed).toBe(true);
   });
 });
+
+describe("SdkSubagentPool structured output loop guard", () => {
+  test("ends the query once StructuredOutput captures a valid value", async () => {
+    let interrupted = 0;
+    let closed = 0;
+    const client: SdkClient = {
+      query(params) {
+        const tools = params.options.tools as Array<{
+          execute: (id: string, args: unknown) => Promise<unknown>;
+        }>;
+        const tool = tools[0];
+        if (!tool) throw new Error("StructuredOutput tool missing");
+        let release: (() => void) | null = null;
+        const stalled = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: "stream_event",
+              event: { message_type: "usage_statistics", total_tokens: 900 },
+            } as SdkStreamMessage;
+            // The model calls the tool; a looping model would now call it
+            // again forever. The stream never ends on its own.
+            await tool.execute("call-1", { answer: 42 });
+            await stalled;
+          },
+          async interrupt() {
+            interrupted += 1;
+            release?.();
+          },
+          close() {
+            closed += 1;
+            release?.();
+          },
+        };
+      },
+    };
+    const pool = new SdkSubagentPool(client, { model: "openai/gpt-5.6-luna" });
+    const outcome = await pool.spawner(
+      request({
+        schema: {
+          type: "object",
+          properties: { answer: { type: "number" } },
+          required: ["answer"],
+        },
+      }),
+      new AbortController().signal,
+    );
+    expect(outcome).toMatchObject({
+      value: { answer: 42 },
+      failed: false,
+      totalTokens: 900,
+    });
+    expect(interrupted).toBe(1);
+    expect(closed).toBeGreaterThan(0);
+  });
+});
