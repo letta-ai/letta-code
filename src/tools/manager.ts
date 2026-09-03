@@ -118,6 +118,7 @@ const STREAMING_SHELL_TOOLS = new Set([
   "run_shell_command",
   "RunShellCommand",
   "Monitor",
+  "Workflow",
 ]);
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
@@ -348,8 +349,6 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "SetWorkingDirectory",
   "Edit",
   "TaskStop",
-  // "MultiEdit",
-  // "LS",
   "memory",
   "Read",
   "Skill",
@@ -358,14 +357,14 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "TaskGet",
   "TaskList",
   "TaskUpdate",
+  "Workflow",
   "Write",
 ];
 
 export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "exec_command",
   "write_stdin",
-  // TODO(codex-parity): add once request_user_input tool exists in raw codex path.
-  // "request_user_input",
+  // TODO(codex-parity): "request_user_input" once it exists in the raw codex path.
   "apply_patch",
   "memory_apply_patch",
   "update_plan",
@@ -401,6 +400,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "TaskOutput",
   "TaskStop",
   "Skill",
+  "Workflow",
   // Standard Codex tools
   "exec_command",
   "write_stdin",
@@ -725,7 +725,7 @@ export interface ExternalToolDefinition {
   scopeId?: string;
   /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
   runtime?: {
-    agentId?: string;
+    agentId?: string | null;
     conversationId?: string;
   };
   /** Client-local executor owned by this tool (for example an MCP process). */

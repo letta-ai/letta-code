@@ -1,6 +1,8 @@
 // src/cli/commands/registry.ts
 // Registry of available CLI commands
 
+import { renderWorkflowTree } from "@/cli/helpers/workflow-display";
+import { listWorkflowExecutions } from "@/tools/workflow/execution-registry";
 import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
 
@@ -540,6 +542,18 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to show background processes
       return "Showing background processes...";
+    },
+  },
+  "/workflows": {
+    desc: "Show workflow executions and their live progress",
+    order: 42.5,
+    noArgs: true,
+    handler: () => {
+      const executions = listWorkflowExecutions();
+      if (executions.length === 0) {
+        return "No workflow executions in this session";
+      }
+      return executions.flatMap(renderWorkflowTree).join("\n");
     },
   },
   "/exit": {

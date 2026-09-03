@@ -1,0 +1,56 @@
+/**
+ * Concurrency primitives: a counting semaphore for the per-run subagent slot
+ * cap, and a stable hash used as the journal/resume cache key.
+ */
+
+import { createHash } from "node:crypto";
+
+export class Semaphore {
+  private available: number;
+  private waiters: Array<() => void> = [];
+
+  constructor(slots: number) {
+    this.available = Math.max(1, slots);
+  }
+
+  async acquire(): Promise<void> {
+    if (this.available > 0) {
+      this.available--;
+      return;
+    }
+    await new Promise<void>((resolve) => this.waiters.push(resolve));
+  }
+
+  release(): void {
+    const next = this.waiters.shift();
+    if (next) next();
+    else this.available++;
+  }
+}
+
+/** JSON.stringify with sorted object keys, for stable cache keys. */
+export function stableStringify(value: unknown): string {
+  return JSON.stringify(sortKeys(value));
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value !== null && typeof value === "object") {
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      sorted[key] = sortKeys((value as Record<string, unknown>)[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
+/** Cache key for one agent() call: hash of prompt + normalized options. */
+export function agentCallCacheKey(prompt: string, options: unknown): string {
+  return createHash("sha256")
+    .update(prompt)
+    .update("\0")
+    .update(stableStringify(options ?? {}))
+    .digest("hex")
+    .slice(0, 24);
+}
