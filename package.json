@@ -183,6 +183,7 @@
     "check:filename-casing": "node scripts/check-filename-casing.js",
     "check:file-size": "node scripts/check-source-file-size.js",
     "check:module-ownership": "node scripts/check-module-ownership.js",
+    "check:codeowners": "node --test scripts/check-codeowners-paths.test.js && node scripts/check-codeowners-paths.js",
     "check:test-mock-isolation": "bun run scripts/check-test-mock-isolation.js",
     "check:test-coverage": "node scripts/check-test-coverage.cjs",
     "check:skill-frontmatter": "node scripts/check-skill-frontmatter.js",
