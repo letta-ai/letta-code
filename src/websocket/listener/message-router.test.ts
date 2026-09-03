@@ -526,6 +526,90 @@ describe("listener message router ownership handoff", () => {
     expect(runtime.queueRuntime.length).toBe(0);
   });
 
+  test("resume_queue releases interrupt-parked items and broadcasts paused flags", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socket = new MockSocket();
+    listener.socket = socket as unknown as WebSocket;
+    const sent: unknown[] = [];
+    const processedTurns: IncomingMessage[] = [];
+    setActiveRuntime(listener);
+
+    const handleMessage = createListenerMessageHandler({
+      runtime: listener,
+      socket: socket as unknown as WebSocket,
+      opts: makeListenerOptions(),
+      processQueuedTurn: async (incoming) => {
+        processedTurns.push(incoming);
+      },
+      fileCommandSession: { handle: () => false },
+      getParsedRuntimeScope: () => null,
+      replaySyncStateForRuntime: async () => {},
+      getOrCreateScopedRuntime: () => runtime,
+      handleApprovalResponseInput: async () => false,
+      handleChangeDeviceStateInput: async () => false,
+      handleAbortMessageInput: async () => false,
+      stampInboundUserMessageOtids: (incoming) => incoming,
+      safeSocketSend: (_target, payload) => {
+        sent.push(payload);
+        return true;
+      },
+      runDetachedListenerTask: () => {},
+      trackListenerError: () => {},
+      processIncomingMessage: async () => {},
+    });
+
+    expect(
+      enqueueInboundUserMessage(runtime, {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        messages: [
+          { role: "user", content: "parked", client_message_id: "cm-parked" },
+        ],
+      }),
+    ).toBe(true);
+    expect(runtime.queueRuntime.pause()).toBe(1);
+    await Promise.resolve();
+    const snapshots = () =>
+      socket.sentPayloads
+        .map(
+          (payload) =>
+            JSON.parse(payload) as {
+              type: string;
+              queue?: Array<{ paused?: boolean }>;
+            },
+        )
+        .filter((payload) => payload.type === "update_queue");
+    expect(snapshots().at(-1)?.queue).toEqual([
+      expect.objectContaining({ paused: true }),
+    ]);
+
+    await handleMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "resume_queue",
+          request_id: "resume-1",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+        }),
+      ),
+    );
+    await waitFor(() => processedTurns.length === 1);
+
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        type: "resume_queue_response",
+        request_id: "resume-1",
+        resumed: 1,
+        success: true,
+      }),
+    );
+    expect(runtime.queueRuntime.length).toBe(0);
+    expect(JSON.stringify(processedTurns[0]?.messages)).toContain("parked");
+    const lastQueue = snapshots().at(-1)?.queue ?? [];
+    expect(lastQueue.some((item) => item.paused)).toBe(false);
+  });
+
   test("delegates registered service commands and returns their protocol messages", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");

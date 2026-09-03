@@ -28,6 +28,7 @@ import { handleCronProtocolCommand } from "./commands/cron";
 import { handleGitBranchCommand } from "./commands/git-branches";
 import { handleMemfsSyncedMemoryProtocolCommand } from "./commands/memory-command-sync";
 import { handleModelToolsetCommand } from "./commands/model-toolset";
+import { handleResumeQueueCommand } from "./commands/resume-queue";
 import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
@@ -702,6 +703,18 @@ export function createListenerMessageHandler(
           }
           throw error;
         }
+        return;
+      }
+
+      if (parsed.type === "resume_queue") {
+        handleResumeQueueCommand(parsed, {
+          listener: runtime,
+          socket,
+          opts,
+          processQueuedTurn,
+          getOrCreateScopedRuntime,
+          safeSocketSend,
+        });
         return;
       }
 

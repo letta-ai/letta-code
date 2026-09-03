@@ -209,6 +209,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       pendingInterruptRecoveryConversationIdRef.current =
         conversationIdRef.current;
       userCancelledRef.current = true; // Prevent dequeue
+      tuiQueueRef.current?.pause(); // Park queued user messages until resume
       setStreaming(false);
       resetTrajectoryBases();
       setIsExecutingTool(false);
@@ -277,6 +278,10 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       pendingInterruptRecoveryConversationIdRef.current =
         conversationIdRef.current;
       userCancelledRef.current = true;
+      // Park the user's queued messages: Esc stops the turn and holds them
+      // until Enter on an empty input or the next message. System items
+      // (task notifications, cron, mod continuations) still drain on settle.
+      tuiQueueRef.current?.pause();
 
       // Increment generation to mark any in-flight processConversation as stale.
       // The stale turn keeps its processing count until its finally block runs;

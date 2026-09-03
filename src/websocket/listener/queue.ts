@@ -285,7 +285,7 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;
 } | null {
-  const queuedItems = runtime.queueRuntime.peek();
+  const queuedItems = runtime.queueRuntime.peekReady();
   const firstQueuedItem = queuedItems[0];
   if (!firstQueuedItem || !isCoalescable(firstQueuedItem.kind)) {
     return null;
@@ -450,6 +450,15 @@ async function drainQueuedMessages(
       const blockedReason = computeListenerQueueBlockedReason(runtime);
       if (blockedReason) {
         runtime.queueRuntime.tryDequeue(blockedReason);
+        return;
+      }
+
+      if (runtime.queueRuntime.readyLength === 0) {
+        // Only interrupt-parked user messages remain: report it once and wait
+        // for resume_queue or the next inbound message.
+        if (runtime.queueRuntime.length > 0) {
+          runtime.queueRuntime.tryDequeue("paused_by_user");
+        }
         return;
       }
 

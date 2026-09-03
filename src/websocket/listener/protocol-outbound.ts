@@ -344,9 +344,8 @@ export function buildLoopStatus(
       scopedAgentId,
       scopedConversationId,
     ),
-    // Gate on the *reported* status so downgrades (interrupted cache) also
-    // clear the executing set, and stale runtime state never leaks into
-    // frames emitted while the loop is not executing tools.
+    // Gate on the *reported* status so downgrades (interrupted cache) also clear
+    // the executing set and stale state never leaks into non-executing frames.
     executing_tool_call_ids:
       status === "EXECUTING_CLIENT_SIDE_TOOL" && conversationRuntime
         ? [...conversationRuntime.turnLifecycle.executingToolCallIds]
@@ -377,6 +376,7 @@ export function buildQueueSnapshot(
     source: item.source,
     content: item.kind === "message" ? item.content : item.text,
     enqueued_at: new Date(item.enqueuedAt).toISOString(),
+    ...(item.paused ? { paused: true } : {}),
   }));
 }
 

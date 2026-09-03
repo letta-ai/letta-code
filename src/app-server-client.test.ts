@@ -360,6 +360,27 @@ describe("app-server client", () => {
     ]);
   });
 
+  test("wraps resume_queue requests", async () => {
+    const { client, control } = createFakeClient();
+    control.open();
+    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+
+    const resumePromise = client.resumeQueue({ runtime });
+    expect(JSON.parse(control.sent[0] ?? "{}")).toMatchObject({
+      type: "resume_queue",
+      request_id: "resume-queue-1",
+      runtime,
+    });
+    control.receive({
+      type: "resume_queue_response",
+      request_id: "resume-queue-1",
+      runtime,
+      resumed: 2,
+      success: true,
+    });
+    expect((await resumePromise).resumed).toBe(2);
+  });
+
   test("wraps conversation list requests", async () => {
     const { client, control } = createFakeClient();
     control.open();

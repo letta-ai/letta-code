@@ -128,6 +128,7 @@ import {
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
 import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
+import { createTuiQueueRuntime } from "@/cli/helpers/tui-queue-runtime";
 import type { WindowTitleData } from "@/cli/helpers/window-title-config";
 import { useSyncedState } from "@/cli/hooks/use-synced-state";
 import {
@@ -161,10 +162,10 @@ import {
   isByokHandleForSelector,
   listProviders,
 } from "@/providers/byok-providers";
-import {
-  type MessageQueueItem,
+import type {
+  MessageQueueItem,
   QueueRuntime,
-  type TaskNotificationQueueItem,
+  TaskNotificationQueueItem,
 } from "@/queue/queue-runtime";
 import {
   createSharedReminderState,
@@ -1407,63 +1408,11 @@ export function App({
   // Message queue state for queueing messages during streaming
   const [queueDisplay, setQueueDisplay] = useState<QueuedMessage[]>([]);
 
-  // QueueRuntime — authoritative queue. maxItems: Infinity disables drop limits
-  // to match the previous unbounded array semantics. queueDisplay is a derived
-  // UI state maintained by the onEnqueued/onDequeued/onCleared callbacks.
-  // Lazy init pattern; typed QueueRuntime | null with ?. at all call sites.
+  // QueueRuntime — authoritative queue; queueDisplay is derived from its
+  // callbacks (see createTuiQueueRuntime). Lazy init; typed QueueRuntime | null.
   const tuiQueueRef = useRef<QueueRuntime | null>(null);
   if (!tuiQueueRef.current) {
-    tuiQueueRef.current = new QueueRuntime({
-      maxItems: Infinity,
-      callbacks: {
-        onEnqueued: (item, queueLen) => {
-          debugLog(
-            "queue-lifecycle",
-            `enqueued item_id=${item.id} kind=${item.kind} queue_len=${queueLen}`,
-          );
-          // queueDisplay is the single source for UI — updated only here.
-          if (item.kind === "message" || item.kind === "task_notification") {
-            setQueueDisplay((prev) => [...prev, toQueuedMsg(item)]);
-          }
-        },
-        onDequeued: (batch) => {
-          debugLog(
-            "queue-lifecycle",
-            `dequeued batch_id=${batch.batchId} merged_count=${batch.mergedCount} queue_len_after=${batch.queueLenAfter}`,
-          );
-          // queueDisplay only tracks displayable items. If non-display barrier
-          // kinds are ever consumed, avoid over-trimming by counting only
-          // message/task_notification entries in the batch.
-          const displayConsumedCount = batch.items.filter(
-            (item) =>
-              item.kind === "message" || item.kind === "task_notification",
-          ).length;
-          setQueueDisplay((prev) => prev.slice(displayConsumedCount));
-        },
-        onBlocked: (reason, queueLen) =>
-          debugLog(
-            "queue-lifecycle",
-            `blocked reason=${reason} queue_len=${queueLen}`,
-          ),
-        onCleared: (_reason, _clearedCount) => {
-          debugLog(
-            "queue-lifecycle",
-            `cleared reason=${_reason} cleared_count=${_clearedCount}`,
-          );
-          setQueueDisplay([]);
-        },
-        onRemoved: (item, queueLen) => {
-          debugLog(
-            "queue-lifecycle",
-            `removed item_id=${item.id} kind=${item.kind} queue_len=${queueLen}`,
-          );
-          // Remove the matching display item by queueItemId
-          setQueueDisplay((prev) =>
-            prev.filter((msg) => msg.queueItemId !== item.id),
-          );
-        },
-      },
-    });
+    tuiQueueRef.current = createTuiQueueRuntime(setQueueDisplay);
   }
 
   // Override content parts for queued submissions (to preserve part boundaries)
@@ -4329,8 +4278,12 @@ export function App({
   useEffect(() => {
     void dequeueEpoch; // explicit dep to satisfy exhaustive-deps lint
 
-    const queueLen = tuiQueueRef.current?.length ?? 0;
+    // Esc-parked user messages are skipped: only ready items count here.
+    const queueLen = tuiQueueRef.current?.readyLength ?? 0;
     const hasAnythingQueued = queueLen > 0;
+    if (!hasAnythingQueued && (tuiQueueRef.current?.length ?? 0) > 0) {
+      tuiQueueRef.current?.tryDequeue("paused_by_user");
+    }
 
     if (
       !streaming &&
