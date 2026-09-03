@@ -198,6 +198,63 @@ describe("APIBackend", () => {
     await expect(second).resolves.toMatchObject({ id: "agent-1" });
   });
 
+  test("does not store API client construction in the in-flight set", async () => {
+    const client = {
+      agents: { retrieve: retrieveAgentMock },
+    } as unknown as APIClient;
+    const resolveClients: Array<(client: APIClient) => void> = [];
+    const getClient = mock(
+      async () =>
+        new Promise<APIClient>((resolve) => {
+          resolveClients.push(resolve);
+        }),
+    );
+    const backend = new APIBackend({
+      getClient,
+      forkConversation: forkConversationMock,
+    });
+
+    const first = backend.retrieveAgent("agent-1");
+    const second = backend.retrieveAgent("agent-1");
+    await Promise.resolve();
+    expect(getClient).toHaveBeenCalledTimes(2);
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(0);
+
+    for (const resolveClient of resolveClients) resolveClient(client);
+    await Promise.all([first, second]);
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("removes successful agent retrievals from the in-flight set", async () => {
+    let resolveAgent: (agent: { id: string }) => void = () => {
+      throw new Error("retrieveAgent promise was not started");
+    };
+    retrieveAgentMock
+      .mockImplementationOnce(
+        async () =>
+          new Promise((resolve) => {
+            resolveAgent = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({ id: "agent-1" });
+    const backend = new APIBackend({
+      getClient: getClientMock as unknown as () => Promise<APIClient>,
+      forkConversation: forkConversationMock,
+    });
+
+    const first = backend.retrieveAgent("agent-1");
+    const second = backend.retrieveAgent("agent-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(1);
+
+    resolveAgent({ id: "agent-1" });
+    await Promise.all([first, second]);
+    await expect(backend.retrieveAgent("agent-1")).resolves.toMatchObject({
+      id: "agent-1",
+    });
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(2);
+  });
+
   test("does not coalesce options-bearing agent retrievals", async () => {
     const backend = new APIBackend({
       getClient: getClientMock as unknown as () => Promise<APIClient>,

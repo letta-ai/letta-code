@@ -359,18 +359,15 @@ export class APIBackend implements Backend {
   }
 
   async retrieveAgent(agentId: string, options?: AgentRetrieveOptions) {
+    const client = await this.getClient();
     if (options !== undefined) {
-      const client = await this.getClient();
       return client.agents.retrieve(agentId, options);
     }
 
     const inflight = this.retrieveAgentInflightByKey.get(agentId);
     if (inflight) return inflight;
 
-    const request = (async () => {
-      const client = await this.getClient();
-      return client.agents.retrieve(agentId, undefined);
-    })();
+    const request = client.agents.retrieve(agentId, undefined);
     this.retrieveAgentInflightByKey.set(agentId, request);
     request.then(
       () => {
