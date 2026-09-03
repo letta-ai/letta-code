@@ -50,6 +50,7 @@ import {
   getTelegramSenderName,
   resolveTelegramInboundAttachments,
   TELEGRAM_MEDIA_GROUP_FLUSH_MS,
+  type TelegramFileFetch,
   type TelegramLikeMessage,
 } from "./media";
 import { loadGrammyModule } from "./runtime";
@@ -88,8 +89,13 @@ import {
   TELEGRAM_REPORT_CALLBACK_PREFIX,
 } from "./utils";
 
+export type TelegramAdapterOptions = {
+  fileFetch?: TelegramFileFetch;
+};
+
 export function createTelegramAdapter(
   config: TelegramChannelAccount,
+  options: TelegramAdapterOptions = {},
 ): ChannelAdapter {
   let bot: TelegramBot | null = null;
   let botModule: GrammYModule | null = null;
@@ -220,6 +226,7 @@ export function createTelegramAdapter(
       bot: telegramBot,
       messages,
       transcribeVoice: config.transcribeVoice,
+      fileFetch: options.fileFetch,
     });
 
     if (text.length === 0 && attachments.length === 0) {

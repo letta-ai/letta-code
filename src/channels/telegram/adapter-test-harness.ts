@@ -20,10 +20,17 @@ import {
   startChannelAccountLive,
 } from "@/channels/service";
 import { clearTargetStores } from "@/channels/targets";
-import { createTelegramAdapter } from "@/channels/telegram/adapter";
-import { MAX_TELEGRAM_DOWNLOAD_BYTES } from "@/channels/telegram/media";
+import {
+  createTelegramAdapter as createTelegramAdapterImpl,
+  type TelegramAdapterOptions,
+} from "@/channels/telegram/adapter";
+import {
+  MAX_TELEGRAM_DOWNLOAD_BYTES,
+  type TelegramFileFetch,
+} from "@/channels/telegram/media";
 import { __testOverrideLoadGrammyModule } from "@/channels/telegram/runtime";
 import { detectTelegramBotMention } from "@/channels/telegram/utils";
+import type { ChannelAdapter, TelegramChannelAccount } from "@/channels/types";
 
 export type FakeBotStartOptions = {
   onStart?: (botInfo: {
@@ -156,6 +163,21 @@ export const consoleErrorSpy = mock(() => {});
 
 export const consoleWarnSpy = mock(() => {});
 
+const testFileFetch: TelegramFileFetch = async (url, init) =>
+  await globalThis.fetch(url, {
+    signal: init?.signal as AbortSignal | undefined,
+  });
+
+export function createTelegramAdapter(
+  config: TelegramChannelAccount,
+  options: TelegramAdapterOptions = {},
+): ChannelAdapter {
+  return createTelegramAdapterImpl(config, {
+    ...options,
+    fileFetch: options.fileFetch ?? testFileFetch,
+  });
+}
+
 const originalConsoleError = console.error;
 
 const originalConsoleWarn = console.warn;
@@ -276,7 +298,6 @@ export {
   __testOverrideSubmitChannelLifecycleErrorReport,
   bindChannelAccountLive,
   createChannelAccountLive,
-  createTelegramAdapter,
   detectTelegramBotMention,
   getChannelAccountSnapshot,
   getChannelRegistry,
