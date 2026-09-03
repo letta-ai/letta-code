@@ -98,7 +98,10 @@ support agent-free conversations.
 - `sleep(ms)` — await a delay.
 
 Subagents are told their final text IS the return value (not a human-facing
-message), so they return raw data. They run as isolated stateless sessions
+message), so they return raw data. For stages whose input is entirely in
+the prompt (synthesis, judging, scoring) pass `allowedTools: []` — a model
+that can still read files tends to wander, and a subagent that re-issues an
+identical tool call three times is stopped and resolves to `null`. They run as isolated stateless sessions
 with no access to your memory or conversation — put ALL context they need in
 the prompt.
 
