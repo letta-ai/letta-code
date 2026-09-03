@@ -12,6 +12,7 @@
  *   3. Normal module resolution from the working directory
  */
 
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -24,7 +25,24 @@ export interface LoadedSdk {
   createClient(backend: string): SdkClient;
 }
 
+/**
+ * The SDK spawns a letta-code app-server for subagents and, by default,
+ * resolves the published @letta-ai/letta-code copy it depends on — which can
+ * lag behind the CLI that is running (agent-free conversations, for one, need
+ * this branch's app-server). When this process *is* a built letta.js bundle,
+ * point the SDK at it so subagents run the same version. `bun run dev` runs
+ * from source, so there the caller sets LETTA_CLI_PATH explicitly.
+ */
+function preferRunningCliForSubagents(): void {
+  if (process.env.LETTA_CLI_PATH) return;
+  const entry = process.argv[1];
+  if (entry && /(^|[\\/])letta\.js$/.test(entry) && existsSync(entry)) {
+    process.env.LETTA_CLI_PATH = entry;
+  }
+}
+
 export async function loadAgentSdk(): Promise<LoadedSdk> {
+  preferRunningCliForSubagents();
   const attempts: string[] = [];
   const envPath = process.env.LETTA_AGENT_SDK_PATH;
   const specifiers: string[] = [];
