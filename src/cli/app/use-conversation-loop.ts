@@ -98,6 +98,7 @@ import {
   isPatchTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { alwaysRequiresUserInput } from "@/cli/helpers/tool-name-mapping.js";
+import { finishTuiTurn } from "@/cli/helpers/tui-turn-lifecycle";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { runStopHooks } from "@/hooks";
@@ -245,6 +246,7 @@ type ConversationLoopContext = {
   setCurrentModelHandle: Dispatch<SetStateAction<string | null>>;
   setCurrentModelId: Dispatch<SetStateAction<string | null>>;
   setDequeueEpoch: Dispatch<SetStateAction<number>>;
+  setInterruptRequested: Dispatch<SetStateAction<boolean>>;
   lastStopReasonRef: MutableRefObject<string | null>;
   setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
   setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
@@ -339,6 +341,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     setCurrentModelHandle,
     setCurrentModelId,
     setDequeueEpoch,
+    setInterruptRequested,
     lastStopReasonRef,
     setIsExecutingTool,
     setLlmConfig,
@@ -607,10 +610,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         chatgptPlanSwapsRef.current = 0;
       }
 
-      // Track last run ID for error reporting (accessible in catch block)
       let currentRunId: string | undefined;
       let preserveTranscriptStartForApproval = false;
-
+      let turnAbortController: AbortController | null = null;
       try {
         if (turnStartCancelReason) {
           const statusId = uid("status");
@@ -640,7 +642,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         openTrajectorySegment();
         setNetworkPhase("upload");
         setExecutionPhase("requesting");
-        abortControllerRef.current = new AbortController();
+        turnAbortController = new AbortController();
+        abortControllerRef.current = turnAbortController;
 
         if (
           await maybeStreamSyntheticNoModelResponse(
@@ -2857,30 +2860,18 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           pendingTranscriptStartLineIndexRef.current = null;
         }
 
-        // Check if this conversation was superseded by an ESC interrupt
-        const isStale = myGeneration !== conversationGenerationRef.current;
-
-        abortControllerRef.current = null;
-
-        // Decrement BEFORE bumping the epoch so that when the dequeue effect
-        // fires synchronously (Ink legacy mode), processingConversationRef.current
-        // already reflects the true count. The defer gate checks === 0 to confirm
-        // no more nested processConversation calls are outstanding.
-        if (!isStale) {
-          processingConversationRef.current = Math.max(
-            0,
-            processingConversationRef.current - 1,
-          );
-        }
-
-        // Trigger dequeue effect now that processConversation is no longer active.
-        // The dequeue effect checks abortControllerRef (a ref, not state), so it
-        // won't re-run on its own — bump dequeueEpoch to force re-evaluation.
-        // Only bump for normal completions — if stale (ESC was pressed), the user
-        // cancelled and queued messages should NOT be auto-submitted.
-        if (!isStale && (tuiQueueRef.current?.length ?? 0) > 0) {
-          setDequeueEpoch((e: number) => e + 1);
-        }
+        // Wakes dequeue on a normal completion; when superseded by an ESC
+        // interrupt, settles the interrupt (cancelling -> idle) instead.
+        finishTuiTurn({
+          isStale: myGeneration !== conversationGenerationRef.current,
+          turnAbortController,
+          abortControllerRef,
+          processingConversationRef,
+          userCancelledRef,
+          setInterruptRequested,
+          queueLength: () => tuiQueueRef.current?.length ?? 0,
+          bumpDequeueEpoch: () => setDequeueEpoch((e: number) => e + 1),
+        });
       }
     },
     [
