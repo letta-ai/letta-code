@@ -146,31 +146,45 @@ interface RunningUsage {
   totalTokens?: number;
 }
 
-/** Watches tool calls for the runaway patterns above; returns a stop reason. */
-function createToolCallGuard(): (
-  name: string,
-  input: unknown,
-) => string | null {
-  let count = 0;
+/**
+ * Watches tool calls for the runaway patterns above; returns a stop reason.
+ *
+ * The SDK streams one `tool_call` message per argument delta, so a call is
+ * counted once per toolCallId, and the identical-call check runs when the
+ * call's result arrives (its input is complete by then).
+ */
+function createToolCallGuard(): {
+  onCall(id: string, name: string, input: unknown): string | null;
+  onResult(id: string): string | null;
+} {
+  const calls = new Map<string, { name: string; input: unknown }>();
   let lastKey = "";
   let repeats = 0;
-  return (name, input) => {
-    count += 1;
-    if (count > MAX_SUBAGENT_TOOL_CALLS) {
-      return `subagent exceeded ${MAX_SUBAGENT_TOOL_CALLS} tool calls`;
-    }
-    let key: string;
-    try {
-      key = `${name}:${JSON.stringify(input)}`;
-    } catch {
-      key = `${name}:${String(input)}`;
-    }
-    repeats = key === lastKey ? repeats + 1 : 1;
-    lastKey = key;
-    if (repeats >= MAX_IDENTICAL_TOOL_CALLS) {
-      return `subagent repeated the identical ${name} call ${repeats} times`;
-    }
-    return null;
+  return {
+    onCall(id, name, input) {
+      const first = !calls.has(id);
+      calls.set(id, { name, input });
+      if (first && calls.size > MAX_SUBAGENT_TOOL_CALLS) {
+        return `subagent exceeded ${MAX_SUBAGENT_TOOL_CALLS} tool calls`;
+      }
+      return null;
+    },
+    onResult(id) {
+      const call = calls.get(id);
+      if (!call) return null;
+      let key: string;
+      try {
+        key = `${call.name}:${JSON.stringify(call.input)}`;
+      } catch {
+        key = `${call.name}:${String(call.input)}`;
+      }
+      repeats = key === lastKey ? repeats + 1 : 1;
+      lastKey = key;
+      if (repeats >= MAX_IDENTICAL_TOOL_CALLS) {
+        return `subagent repeated the identical ${call.name} call ${repeats} times`;
+      }
+      return null;
+    },
   };
 }
 
@@ -189,7 +203,15 @@ async function drainTurn(
   for await (const message of query) {
     if (message.type === "assistant") assistantText += message.content ?? "";
     if (message.type === "tool_call") {
-      const reason = guard(message.toolName ?? "?", message.toolInput);
+      const reason = guard.onCall(
+        message.toolCallId ?? "",
+        message.toolName ?? "?",
+        message.toolInput,
+      );
+      if (reason) onRunaway(reason);
+    }
+    if (message.type === "tool_result") {
+      const reason = guard.onResult(message.toolCallId ?? "");
       if (reason) onRunaway(reason);
     }
     if (message.type === "stream_event") {

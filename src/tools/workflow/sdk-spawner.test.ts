@@ -256,7 +256,7 @@ describe("SdkSubagentPool structured output loop guard", () => {
 });
 
 describe("SdkSubagentPool runaway guards", () => {
-  function loopingClient(makeCalls: () => SdkStreamMessage[]): {
+  function loopingClient(makeMessages: () => SdkStreamMessage[]): {
     client: SdkClient;
     stats: { interrupted: number };
   } {
@@ -269,7 +269,7 @@ describe("SdkSubagentPool runaway guards", () => {
         });
         return {
           async *[Symbol.asyncIterator]() {
-            for (const message of makeCalls()) yield message;
+            for (const message of makeMessages()) yield message;
             await stalled;
           },
           async interrupt() {
@@ -285,13 +285,25 @@ describe("SdkSubagentPool runaway guards", () => {
     return { client, stats };
   }
 
+  /** One tool call as the SDK streams it: argument deltas, then the result. */
+  function toolCall(
+    id: string,
+    name: string,
+    input: Record<string, unknown>,
+  ): SdkStreamMessage[] {
+    return [
+      { type: "tool_call", toolCallId: id, toolName: name, toolInput: {} },
+      { type: "tool_call", toolCallId: id, toolName: name, toolInput: input },
+      { type: "tool_result", toolCallId: id, content: "ok" },
+    ];
+  }
+
   test("stops a subagent that repeats the identical tool call", async () => {
-    const call: SdkStreamMessage = {
-      type: "tool_call",
-      toolName: "Grep",
-      toolInput: { pattern: "import" },
-    };
-    const { client, stats } = loopingClient(() => [call, call, call, call]);
+    const { client, stats } = loopingClient(() =>
+      ["c1", "c2", "c3", "c4"].flatMap((id) =>
+        toolCall(id, "Grep", { pattern: "import" }),
+      ),
+    );
     const pool = new SdkSubagentPool(client, { model: "openai/gpt-5.6-luna" });
     const outcome = await pool.spawner(request(), new AbortController().signal);
     expect(outcome.failed).toBe(true);
@@ -301,11 +313,9 @@ describe("SdkSubagentPool runaway guards", () => {
 
   test("stops a subagent that exceeds the tool-call cap", async () => {
     const { client, stats } = loopingClient(() =>
-      Array.from({ length: MAX_SUBAGENT_TOOL_CALLS + 1 }, (_, i) => ({
-        type: "tool_call",
-        toolName: "Read",
-        toolInput: { file_path: `f${i}` },
-      })),
+      Array.from({ length: MAX_SUBAGENT_TOOL_CALLS + 1 }, (_, i) =>
+        toolCall(`call-${i}`, "Read", { file_path: `f${i}` }),
+      ).flat(),
     );
     const pool = new SdkSubagentPool(client, { model: "openai/gpt-5.6-luna" });
     const outcome = await pool.spawner(request(), new AbortController().signal);
@@ -316,25 +326,21 @@ describe("SdkSubagentPool runaway guards", () => {
     expect(stats.interrupted).toBe(1);
   });
 
-  test("distinct tool calls under the cap are not flagged", async () => {
+  test("distinct calls and argument-delta chunks are not flagged", async () => {
     const client: SdkClient = {
       query() {
         return completedQuery([
-          {
+          ...toolCall("1", "Read", { file_path: "a" }),
+          ...toolCall("2", "Read", { file_path: "b" }),
+          ...toolCall("3", "Read", { file_path: "a" }),
+          // Many delta chunks of one call count as one call.
+          ...Array.from({ length: MAX_SUBAGENT_TOOL_CALLS * 2 }, () => ({
             type: "tool_call",
+            toolCallId: "4",
             toolName: "Read",
-            toolInput: { file_path: "a" },
-          },
-          {
-            type: "tool_call",
-            toolName: "Read",
-            toolInput: { file_path: "b" },
-          },
-          {
-            type: "tool_call",
-            toolName: "Read",
-            toolInput: { file_path: "a" },
-          },
+            toolInput: { file_path: "c" },
+          })),
+          { type: "tool_result", toolCallId: "4", content: "ok" },
           { type: "result", success: true, result: "done" },
         ]);
       },
