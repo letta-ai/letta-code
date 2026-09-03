@@ -109,7 +109,6 @@ export async function handleIncomingMessage(
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
 ): Promise<void> {
-  // Notify OTID-keyed observers around the complete turn.
   notifyTurnStarted(msg);
   try {
     await handleIncomingMessageInner(
@@ -149,19 +148,18 @@ async function handleIncomingMessageInner(
     agentId,
     conversationId,
   );
-
   const turnPermissionModeState = getOrCreateConversationPermissionModeStateRef(
     runtime.listener,
     agentId,
     conversationId,
   );
-
   let postStopApprovalRecoveryRetries = 0,
     llmApiErrorRetries = 0,
     emptyResponseRetries = 0,
     chatgptPlanSwaps = 0,
     lastApprovalContinuationAccepted = false,
     activeDequeuedBatchId = dequeuedBatchId;
+  const chatgptExhaustedProviders = new Set<string>();
   const turnCorrelation =
     existingTurnCorrelation ??
     createTurnCorrelation(runtime, msg, activeDequeuedBatchId);
@@ -663,8 +661,10 @@ async function handleIncomingMessageInner(
         ) {
           const rotation = await rotateChatGPTPlanOnQuotaLimit({
             agentId,
+            conversationId,
             currentHandle: null,
             error: quotaError,
+            exhaustedProviders: chatgptExhaustedProviders,
           });
           if (rotation) {
             chatgptPlanSwaps += 1;
