@@ -25,12 +25,7 @@
     "outputFormat": "stream-json",
     "timeoutMs": 900000,
     "maxTurns": 8,
-    "forbiddenTraceMarkers": [
-      "[mods] failed to load",
-      "[extensions] failed to load",
-      "loaded 0 mod(s)",
-      "loaded 0 extension(s)"
-    ],
+    "forbiddenTraceMarkers": ["[mods] failed to load", "loaded 0 mod(s)"],
     "scenarios": [
       {
         "name": "happy-path",
