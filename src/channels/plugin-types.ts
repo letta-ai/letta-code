@@ -268,7 +268,7 @@ export interface ChannelResolvedMessageTarget {
 /** Minimal outbound surface consumed by channel-owned MessageChannel actions. */
 export type ChannelMessageActionTransport = Pick<
   ChannelAdapter,
-  "sendMessage" | "downloadAttachment"
+  "sendMessage" | "downloadAttachment" | "listCustomEmojis"
 >;
 
 /** Route identity required by MessageChannel action implementations. */

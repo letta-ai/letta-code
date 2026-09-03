@@ -6,6 +6,8 @@ import type {
 export interface CreateSlackMessageActionAdapterOptions {
   /** Expose reaction actions when the injected transport supports them. */
   react?: boolean;
+  /** Expose workspace custom emoji discovery when the transport supports it. */
+  listCustomEmojis?: boolean;
   /** Expose local-path uploads when the injected transport can read them. */
   uploadFile?: boolean;
   /** Host-owned proactive target resolver, when proactive sends are supported. */
@@ -73,6 +75,25 @@ async function reactInSlack(
     : `Reaction added on slack (message_id: ${result.messageId})`;
 }
 
+async function listSlackCustomEmojis(
+  context: ChannelMessageActionContext,
+): Promise<string> {
+  const listCustomEmojis = context.adapter.listCustomEmojis;
+  if (typeof listCustomEmojis !== "function") {
+    return "Error: Running Slack adapter does not support custom emoji discovery.";
+  }
+  try {
+    const names = await listCustomEmojis.call(context.adapter);
+    if (names.length === 0) {
+      return "This Slack workspace has no custom emoji available to the app.";
+    }
+    return `Available custom Slack emoji (${names.length}): ${names.map((name) => `:${name}:`).join(", ")}`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `Error: Could not list custom Slack emoji. ${message}`;
+  }
+}
+
 /**
  * Build canonical Slack MessageChannel actions around a host-owned transport.
  * Capabilities are explicit so remote gateways never advertise local-path or
@@ -84,6 +105,7 @@ export function createSlackMessageActionAdapter(
   const actions = [
     "send",
     ...(options.react ? ["react"] : []),
+    ...(options.listCustomEmojis ? ["list-custom-emojis"] : []),
     ...(options.uploadFile ? ["upload-file"] : []),
     ...(options.downloadFile ? ["download-file"] : []),
   ];
@@ -131,6 +153,10 @@ export function createSlackMessageActionAdapter(
           return options.react
             ? await reactInSlack(context)
             : 'Error: Action "react" is not supported on slack.';
+        case "list-custom-emojis":
+          return options.listCustomEmojis
+            ? await listSlackCustomEmojis(context)
+            : 'Error: Action "list-custom-emojis" is not supported on slack.';
         case "download-file":
           return options.downloadFile
             ? await options.downloadFile(context)

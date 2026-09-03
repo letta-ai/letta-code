@@ -250,6 +250,9 @@ export function buildMessageChannelDescriptionFromDiscovery(
   const slackCapabilities = discovery.activeChannels.includes("slack")
     ? [
         hasAction("react") ? 'action="react" with emoji + messageId' : "",
+        hasAction("list-custom-emojis")
+          ? 'action="list-custom-emojis" to discover the workspace custom emoji names available for reactions'
+          : "",
         hasAction("upload-file") ? 'action="upload-file" with media' : "",
         hasAction("download-file")
           ? 'action="download-file" with attachmentId + messageId'
