@@ -362,7 +362,7 @@ async function handleUpgradeLettaCodeCommand(opts: {
     if (opts.onLog) {
       opts.onLog(line);
     } else {
-      console.log(line);
+      debugLog("upgrade-letta-code", message);
     }
   };
 

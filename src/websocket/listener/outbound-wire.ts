@@ -108,7 +108,7 @@ function terminateStalledTransport(
     state.pollTimer = null;
   }
   recordOutboundQueuePerf("queue:killed", 1);
-  console.error(`[Listen Wire] Terminating stalled transport (${reason})`);
+  debugWarn("Listen Wire", `Terminating stalled transport (${reason})`);
   if (getListenerTransportKind(transport) === "websocket") {
     const ws = transport as { terminate?: () => void; close?: () => void };
     try {

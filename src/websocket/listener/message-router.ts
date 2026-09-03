@@ -10,7 +10,7 @@ import type {
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
 } from "@/types/protocol_v2";
-import { isDebugEnabled } from "@/utils/debug";
+import { debugLog, isDebugEnabled } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import {
   handleTerminalInput,
@@ -181,6 +181,14 @@ type MessageRouterParams = {
   processIncomingMessage?: typeof handleIncomingMessage;
 };
 
+function logV2Command(opts: StartListenerOptions, message: string): void {
+  if (opts.onLog) {
+    opts.onLog(`[Listen V2] ${message}`);
+    return;
+  }
+  debugLog("Listen V2", message);
+}
+
 export function createListenerMessageHandler(
   params: MessageRouterParams,
 ): (data: WebSocket.RawData) => Promise<void> {
@@ -243,7 +251,7 @@ export function createListenerMessageHandler(
         return;
       }
 
-      console.log(`[Listen V2] Received ${summarizeV2Command(parsed)}`);
+      logV2Command(opts, `Received ${summarizeV2Command(parsed)}`);
 
       if (parsedScope) {
         subscribeListenerConnection(runtime, connectionId, parsedScope);
@@ -336,7 +344,7 @@ export function createListenerMessageHandler(
 
       if (parsed.type === "sync") {
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-          console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
+          logV2Command(opts, "Dropping sync: runtime mismatch or closed");
           if (parsed.request_id) {
             safeSocketSend(
               socket,
@@ -414,7 +422,7 @@ export function createListenerMessageHandler(
           );
         };
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-          console.log(`[Listen V2] Dropping input: runtime mismatch or closed`);
+          logV2Command(opts, "Dropping input: runtime mismatch or closed");
           acknowledgeInput(false, "Runtime is no longer active");
           return;
         }

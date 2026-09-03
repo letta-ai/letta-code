@@ -7,6 +7,7 @@ import type {
 import { isCoalescable } from "@/queue/queue-runtime";
 import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { debugWarn } from "@/utils/debug";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
 import { getInboundImageFailureMode } from "./image-policy";
 import { getInboundClientMessageIds } from "./inbound-queue";
@@ -523,7 +524,7 @@ export function scheduleQueuePump(
         error,
         context: "listener_queue_pump",
       });
-      console.error("[Listen] Error in queue pump:", error);
+      debugWarn("Listen", "Error in queue pump:", error);
       emitListenerStatus(
         runtime.listener,
         opts.onStatusChange,

@@ -26,6 +26,7 @@ describe("standalone listener single-instance wiring", () => {
   const originalBaseUrl = process.env.LETTA_BASE_URL;
   const originalSpawnerIdentity = process.env.LETTA_LISTENER_INSTANCE_ID;
   const originalDesktopMode = process.env.LETTA_DESKTOP_MODE;
+  const originalDebug = process.env.LETTA_DEBUG;
 
   let tempHome: string;
   let errors: string[];
@@ -88,6 +89,8 @@ describe("standalone listener single-instance wiring", () => {
     } else {
       process.env.LETTA_DESKTOP_MODE = originalDesktopMode;
     }
+    if (originalDebug === undefined) delete process.env.LETTA_DEBUG;
+    else process.env.LETTA_DEBUG = originalDebug;
 
     await rm(tempHome, { recursive: true, force: true });
   });
@@ -144,5 +147,12 @@ describe("standalone listener single-instance wiring", () => {
     expect(
       __listenSubcommandTestUtils.shouldAcquireStandaloneListenerLock(),
     ).toBe(false);
+  });
+
+  test("enables shared debug logging in --debug mode", async () => {
+    process.env.LETTA_DEBUG = "0";
+
+    expect(await runListenSubcommand(["--debug", "--help"])).toBe(0);
+    expect(process.env.LETTA_DEBUG).toBe("1");
   });
 });
