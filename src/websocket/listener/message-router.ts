@@ -600,9 +600,13 @@ export function createListenerMessageHandler(
             return;
           }
 
+          const queuedStampedIncoming = {
+            ...stampedIncoming,
+            telemetryInputAcceptedAtMs: performance.now(),
+          };
           const enqueued = enqueueInboundUserMessage(
             scopedRuntime,
-            stampedIncoming,
+            queuedStampedIncoming,
             parsed.runtime.acting_user_id,
           );
           if (enqueued) {

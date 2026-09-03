@@ -18,6 +18,7 @@ import { migratePermissionMode } from "@/permissions/mode";
 import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
 import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
 import { subscribeListenerConnection } from "@/websocket/listener/connection";
 import { getBootWorkingDirectory } from "@/websocket/listener/cwd";
@@ -87,6 +88,14 @@ function getErrorMessage(error: unknown, fallback: string): string {
 
 function hasString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+function elapsedMsSince(start: number): number {
+  return Math.round((performance.now() - start) * 100) / 100;
+}
+
+function errorType(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }
 
 function buildRuntimeScope(
@@ -401,15 +410,32 @@ export async function handleRuntimeStartCommand(
   parsed: RuntimeStartCommand,
   context: RuntimeStartCommandContext,
 ): Promise<boolean> {
+  const telemetryStartedAt = performance.now();
   const created = { agent: false, conversation: false };
+  const timings = {
+    validateMs: 0,
+    resolveAgentMs: 0,
+    resolveConversationMs: 0,
+    sourceTagsMs: 0,
+    runtimeStateMs: 0,
+    subscribeToolsMs: 0,
+    ackMs: 0,
+    replayBeforeAckMs: undefined as number | undefined,
+  };
   let agent: AgentState | null = null;
   let conversation: Conversation | null = null;
   let runtimeScope: RuntimeStartScope | null = null;
   let shouldReplayState = false;
+  let stepStartedAt = performance.now();
 
   try {
+    stepStartedAt = performance.now();
     validateRuntimeStartShape(parsed);
+    timings.validateMs = elapsedMsSince(stepStartedAt);
+    stepStartedAt = performance.now();
     agent = await resolveRuntimeStartAgent(parsed, created);
+    timings.resolveAgentMs = elapsedMsSince(stepStartedAt);
+    stepStartedAt = performance.now();
     conversation = await resolveRuntimeStartConversation(
       parsed,
       agent,
@@ -418,10 +444,13 @@ export async function handleRuntimeStartCommand(
       context.retrieveConversation ??
         ((id) => getBackend().retrieveConversation(id)),
     );
+    timings.resolveConversationMs = elapsedMsSince(stepStartedAt);
+    stepStartedAt = performance.now();
     conversation = await applyRuntimeStartConversationSourceTags(
       parsed,
       conversation,
     );
+    timings.sourceTagsMs = elapsedMsSince(stepStartedAt);
     runtimeScope = buildRuntimeScope(agent, conversation);
     const { connectionId } = context;
     const assertConnectionOpen = () => {
@@ -440,8 +469,11 @@ export async function handleRuntimeStartCommand(
       runtimeScope.agent_id,
       runtimeScope.conversation_id,
     );
+    stepStartedAt = performance.now();
     await applyRuntimeStartState(parsed, context, runtimeScope, scopedRuntime);
+    timings.runtimeStateMs = elapsedMsSince(stepStartedAt);
     assertConnectionOpen();
+    stepStartedAt = performance.now();
     subscribeListenerConnection(context.runtime, connectionId, runtimeScope);
     registerRuntimeExternalTools(
       context.runtime,
@@ -449,8 +481,10 @@ export async function handleRuntimeStartCommand(
       runtimeScope,
       parsed.external_tools ?? [],
     );
+    timings.subscribeToolsMs = elapsedMsSince(stepStartedAt);
 
     if (parsed.wait_for_replay) {
+      stepStartedAt = performance.now();
       await context.replaySyncStateForRuntime(
         context.runtime,
         context.socket,
@@ -460,7 +494,9 @@ export async function handleRuntimeStartCommand(
           forceDeviceStatus: parsed.force_device_status !== false,
         },
       );
+      timings.replayBeforeAckMs = elapsedMsSince(stepStartedAt);
     }
+    stepStartedAt = performance.now();
     const sent = sendRuntimeStartResponse(context, parsed, {
       success: true,
       runtime: runtimeScope,
@@ -468,8 +504,31 @@ export async function handleRuntimeStartCommand(
       conversation,
       created,
     });
+    timings.ackMs = elapsedMsSince(stepStartedAt);
+    telemetry.trackListenerRuntimeStartComplete({
+      request_id: parsed.request_id,
+      connection_id: context.connectionId,
+      agent_id: runtimeScope.agent_id,
+      conversation_id: runtimeScope.conversation_id,
+      success: true,
+      created_agent: created.agent,
+      created_conversation: created.conversation,
+      wait_for_replay: parsed.wait_for_replay === true,
+      duration_ms: elapsedMsSince(telemetryStartedAt),
+      validate_ms: timings.validateMs,
+      resolve_agent_ms: timings.resolveAgentMs,
+      resolve_conversation_ms: timings.resolveConversationMs,
+      source_tags_ms: timings.sourceTagsMs,
+      runtime_state_ms: timings.runtimeStateMs,
+      subscribe_tools_ms: timings.subscribeToolsMs,
+      ack_ms: timings.ackMs,
+      ...(timings.replayBeforeAckMs !== undefined
+        ? { replay_before_ack_ms: timings.replayBeforeAckMs }
+        : {}),
+    });
     shouldReplayState = sent && !parsed.wait_for_replay;
   } catch (error) {
+    stepStartedAt = performance.now();
     sendRuntimeStartResponse(context, parsed, {
       success: false,
       runtime: null,
@@ -477,6 +536,33 @@ export async function handleRuntimeStartCommand(
       conversation,
       created,
       error: getErrorMessage(error, "Failed to start runtime"),
+    });
+    timings.ackMs = elapsedMsSince(stepStartedAt);
+    telemetry.trackListenerRuntimeStartComplete({
+      request_id: parsed.request_id,
+      connection_id: context.connectionId,
+      agent_id: runtimeScope?.agent_id ?? agent?.id ?? parsed.agent_id ?? null,
+      conversation_id:
+        runtimeScope?.conversation_id ??
+        conversation?.id ??
+        parsed.conversation_id ??
+        null,
+      success: false,
+      created_agent: created.agent,
+      created_conversation: created.conversation,
+      wait_for_replay: parsed.wait_for_replay === true,
+      duration_ms: elapsedMsSince(telemetryStartedAt),
+      validate_ms: timings.validateMs,
+      resolve_agent_ms: timings.resolveAgentMs,
+      resolve_conversation_ms: timings.resolveConversationMs,
+      source_tags_ms: timings.sourceTagsMs,
+      runtime_state_ms: timings.runtimeStateMs,
+      subscribe_tools_ms: timings.subscribeToolsMs,
+      ack_ms: timings.ackMs,
+      error_type: errorType(error),
+      ...(timings.replayBeforeAckMs !== undefined
+        ? { replay_before_ack_ms: timings.replayBeforeAckMs }
+        : {}),
     });
   }
 

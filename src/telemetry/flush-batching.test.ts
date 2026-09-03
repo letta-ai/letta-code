@@ -38,6 +38,8 @@ describe("telemetry flush batching", () => {
     telemetryState.sessionEndTracked = false;
     telemetryState.inflightFlush = null;
     deleteEnvVarCaseInsensitive("LETTA_API_KEY");
+    deleteEnvVarCaseInsensitive("LETTA_CODE_TELEM");
+    deleteEnvVarCaseInsensitive("DO_NOT_TRACK");
     deleteEnvVarCaseInsensitive("LETTA_TELEMETRY_DISABLED");
     deleteEnvVarCaseInsensitive("LETTA_BASE_URL");
     settingsManager.getSettings = mock(() => ({
@@ -53,6 +55,61 @@ describe("telemetry flush batching", () => {
     settingsManager.getSettingsWithSecureTokens =
       originalGetSettingsWithSecureTokens;
     settingsManager.getSettings = originalGetSettings;
+  });
+
+  test("tracks listener latency completion events without payloads", () => {
+    telemetry.trackListenerRuntimeStartComplete({
+      request_id: "runtime-1",
+      connection_id: "conn-1",
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+      success: true,
+      created_agent: false,
+      created_conversation: false,
+      wait_for_replay: false,
+      duration_ms: 12,
+      validate_ms: 1,
+      resolve_agent_ms: 2,
+      resolve_conversation_ms: 3,
+      source_tags_ms: 4,
+      runtime_state_ms: 5,
+      subscribe_tools_ms: 6,
+      ack_ms: 7,
+    });
+    telemetry.trackListenerInputSendComplete({
+      connection_id: "conn-1",
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+      client_message_id: "cm-1",
+      client_message_count: 1,
+      message_count: 1,
+      includes_approval: false,
+      success: true,
+      accepted_to_core_stream_ms: 10,
+      prepare_listener_turn_ms: 4,
+      skill_content_injection_ms: 1,
+      core_stream_request_ms: 5,
+    });
+
+    expect(telemetryState.events).toHaveLength(2);
+    expect(telemetryState.events).toEqual([
+      expect.objectContaining({
+        type: "listener_runtime_start_complete",
+        data: expect.objectContaining({
+          request_id: "runtime-1",
+          connection_id: "conn-1",
+          duration_ms: 12,
+        }),
+      }),
+      expect.objectContaining({
+        type: "listener_input_send_complete",
+        data: expect.objectContaining({
+          client_message_id: "cm-1",
+          accepted_to_core_stream_ms: 10,
+        }),
+      }),
+    ]);
+    expect(JSON.stringify(telemetryState.events)).not.toContain("hello");
   });
 
   test("concurrent flush() callers share one in-flight POST", async () => {

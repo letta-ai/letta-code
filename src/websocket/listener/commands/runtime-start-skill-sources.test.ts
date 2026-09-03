@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type WebSocket from "ws";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
+import { telemetry } from "@/telemetry";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { createRuntime } from "@/websocket/listener/lifecycle";
 import { evictConversationRuntimeIfIdle } from "@/websocket/listener/runtime";
@@ -13,6 +14,65 @@ import { handleRuntimeStartCommand } from "./runtime-start";
 describe("runtime_start skill sources", () => {
   afterEach(() => {
     __testSetBackend(null);
+  });
+
+  test("emits one aggregate runtime_start completion telemetry event", async () => {
+    const originalTrackRuntimeStart =
+      telemetry.trackListenerRuntimeStartComplete;
+    const trackRuntimeStart = mock(() => {});
+    telemetry.trackListenerRuntimeStartComplete =
+      trackRuntimeStart as typeof telemetry.trackListenerRuntimeStartComplete;
+    const storageDir = await mkdtemp(join(tmpdir(), "runtime-telemetry-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Telemetry worker",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const listener = createRuntime();
+
+      await handleRuntimeStartCommand(
+        {
+          type: "runtime_start",
+          request_id: "runtime-telemetry",
+          agent_id: agent.id,
+          conversation_id: "default",
+          recover_approvals: false,
+        },
+        {
+          socket: {} as WebSocket,
+          connectionId: "test-connection",
+          runtime: listener,
+          safeSocketSend: () => true,
+          runDetachedListenerTask: () => {},
+          getOrCreateScopedRuntime,
+          replaySyncStateForRuntime: async () => {},
+        },
+      );
+
+      expect(trackRuntimeStart).toHaveBeenCalledTimes(1);
+      expect(trackRuntimeStart).toHaveBeenCalledWith(
+        expect.objectContaining({
+          request_id: "runtime-telemetry",
+          connection_id: "test-connection",
+          agent_id: agent.id,
+          conversation_id: "default",
+          success: true,
+          wait_for_replay: false,
+          duration_ms: expect.any(Number),
+          resolve_agent_ms: expect.any(Number),
+          resolve_conversation_ms: expect.any(Number),
+          ack_ms: expect.any(Number),
+        }),
+      );
+    } finally {
+      telemetry.trackListenerRuntimeStartComplete = originalTrackRuntimeStart;
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("keeps an empty override across idle runtime eviction", async () => {

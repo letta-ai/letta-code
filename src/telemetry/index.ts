@@ -38,6 +38,8 @@ export interface TelemetryEvent {
     | "tool_usage"
     | "error"
     | "user_input"
+    | "listener_runtime_start_complete"
+    | "listener_input_send_complete"
     | "reflection_start"
     | "reflection_end"
     | "reflection_worktree_cleanup"
@@ -103,6 +105,47 @@ export interface UserInputData {
   command_name?: string;
   message_type: string;
   model_id: string;
+}
+
+export interface ListenerRuntimeStartCompleteData {
+  request_id?: string;
+  connection_id: string;
+  agent_id?: string | null;
+  conversation_id?: string | null;
+  success: boolean;
+  created_agent: boolean;
+  created_conversation: boolean;
+  wait_for_replay: boolean;
+  duration_ms: number;
+  validate_ms: number;
+  resolve_agent_ms: number;
+  resolve_conversation_ms: number;
+  source_tags_ms: number;
+  runtime_state_ms: number;
+  subscribe_tools_ms: number;
+  ack_ms: number;
+  replay_before_ack_ms?: number;
+  error_type?: string;
+  version?: string;
+  platform?: string;
+}
+
+export interface ListenerInputSendCompleteData {
+  connection_id?: string;
+  agent_id?: string | null;
+  conversation_id: string;
+  client_message_id?: string;
+  client_message_count: number;
+  message_count: number;
+  includes_approval: boolean;
+  success: boolean;
+  accepted_to_core_stream_ms: number;
+  prepare_listener_turn_ms: number;
+  skill_content_injection_ms: number;
+  core_stream_request_ms: number;
+  error_type?: string;
+  version?: string;
+  platform?: string;
 }
 
 export type ReflectionTriggerSource =
@@ -462,6 +505,8 @@ class TelemetryManager {
       | ToolUsageData
       | ErrorData
       | UserInputData
+      | ListenerRuntimeStartCompleteData
+      | ListenerInputSendCompleteData
       | ReflectionStartData
       | ReflectionEndData
       | ReflectionWorktreeCleanupData
@@ -776,6 +821,26 @@ class TelemetryManager {
       model_id: modelId,
     };
     this.track("user_input", data);
+  }
+
+  trackListenerRuntimeStartComplete(
+    options: Omit<ListenerRuntimeStartCompleteData, "version" | "platform">,
+  ) {
+    this.track("listener_runtime_start_complete", {
+      ...options,
+      version: getVersion(),
+      platform: process.platform,
+    });
+  }
+
+  trackListenerInputSendComplete(
+    options: Omit<ListenerInputSendCompleteData, "version" | "platform">,
+  ) {
+    this.track("listener_input_send_complete", {
+      ...options,
+      version: getVersion(),
+      platform: process.platform,
+    });
   }
 
   /**

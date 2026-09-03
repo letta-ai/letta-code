@@ -82,6 +82,7 @@ import {
   createTurnCorrelation,
   type TurnCorrelation,
 } from "./turn-correlation";
+import { createTurnFinalizer } from "./turn-finalizer";
 import {
   rebuildTurnInputWithFreshDenials,
   refreshTurnInputOtidsForNewRequest,
@@ -90,9 +91,12 @@ import {
 import type { TurnLease } from "./turn-lifecycle";
 import { notifyTurnFinished, notifyTurnStarted } from "./turn-observers";
 import { createTurnInputSender } from "./turn-send";
+import {
+  createListenerInputSendTelemetry,
+  elapsedTelemetryMsSince,
+} from "./turn-send-telemetry";
 import { prepareListenerTurn } from "./turn-setup";
 import { setTurnLoopStatus } from "./turn-status";
-import { finishListenerTurn } from "./turn-terminal";
 import { seedInboundUserTranscriptLines } from "./turn-transcript";
 import type { ConversationRuntime, IncomingMessage } from "./types";
 
@@ -179,37 +183,22 @@ async function handleIncomingMessageInner(
   if (!runtime.turnLifecycle.isCurrent(turnLease))
     throw new Error("Cannot continue a turn with a stale lifecycle lease");
   const turnAbortSignal = turnLease.signal;
-  let finalizedByThisInvocation = false;
-  const noteFinalization = (
-    transition: ReturnType<typeof finishListenerTurn>,
-  ) => {
-    finalizedByThisInvocation ||= transition.finished;
-    return transition;
-  };
-  const finishTurn = (options: Parameters<typeof finishListenerTurn>[2]) =>
-    noteFinalization(
-      finishListenerTurn(runtime, turnLease, {
-        ...options,
-        socket: options.socket ?? socket,
-        turnId: activeDequeuedBatchId,
-      }),
-    );
-  const finishIfInterrupted = (runId?: string | null): boolean => {
-    if (
-      !turnAbortSignal.aborted &&
-      runtime.turnLifecycle.isCurrent(turnLease)
-    ) {
-      return false;
-    }
-    finishTurn({
-      stopReason: "cancelled",
-      socket,
-      runId,
-      agentId: agentId ?? null,
-      conversationId,
-    });
-    return true;
-  };
+  const turnFinalizer = createTurnFinalizer({
+    runtime,
+    turnLease,
+    socket,
+    getTurnId: () => activeDequeuedBatchId,
+    getAgentId: () => agentId ?? null,
+    conversationId,
+  });
+  const { noteFinalization, finishTurn, finishIfInterrupted } = turnFinalizer;
+  const inputSendTelemetry = createListenerInputSendTelemetry({
+    msg,
+    connectionId,
+    agentId: agentId ?? null,
+    conversationId,
+  });
+  const sendTimings = inputSendTelemetry.timings;
   try {
     runtime.lastTerminalLoopErrorMessage = null;
     runtime.lastTerminalLoopErrorRunId = null;
@@ -227,6 +216,7 @@ async function handleIncomingMessageInner(
     });
     telemetry.setCurrentAgentId(agentId ?? null);
     let turnToolContextId: string | null = null;
+    let stepStartedAt = performance.now();
     const setup = await prepareListenerTurn({
       msg,
       runtime,
@@ -239,7 +229,9 @@ async function handleIncomingMessageInner(
       onStatusChange,
       connectionId,
     });
+    sendTimings.prepareListenerTurnMs = elapsedTelemetryMsSince(stepStartedAt);
     if (setup.kind === "interrupted") {
+      inputSendTelemetry.track(false, new Error("interrupted"));
       finishTurn({
         stopReason: "cancelled",
         socket,
@@ -249,6 +241,7 @@ async function handleIncomingMessageInner(
       return;
     }
     if (setup.kind === "cancelled") {
+      inputSendTelemetry.track(false, new Error("cancelled"));
       const transition = finishTurn({
         stopReason: "cancelled",
         agentId: agentId || null,
@@ -313,13 +306,19 @@ async function handleIncomingMessageInner(
       onTerminal: noteFinalization,
       getTurnId: () => activeDequeuedBatchId,
     });
+    stepStartedAt = performance.now();
     const currentInputWithSkillContent = injectQueuedSkillContent(
       turnInput.messages,
       { socket, runtime, agentId, conversationId },
     );
+    sendTimings.skillContentInjectionMs =
+      elapsedTelemetryMsSince(stepStartedAt);
+    stepStartedAt = performance.now();
     const initialSendResult = await turnInputSender.send(
       currentInputWithSkillContent,
     );
+    sendTimings.coreStreamRequestMs = elapsedTelemetryMsSince(stepStartedAt);
+    inputSendTelemetry.track(true);
     turnInput = updateTurnInputMessagesPreservingOtids(
       turnInput,
       currentInputWithSkillContent,
@@ -939,6 +938,7 @@ async function handleIncomingMessageInner(
       );
     }
   } catch (error) {
+    inputSendTelemetry.track(false, error);
     trackBoundaryError({
       errorType: "listener_turn_processing_failed",
       error,
@@ -1047,7 +1047,7 @@ async function handleIncomingMessageInner(
         agentId,
         normalizedAgentId: agentId,
         conversationId,
-        finalized: finalizedByThisInvocation,
+        finalized: turnFinalizer.wasFinalized(),
       });
     } finally {
       releaseListenerTurnContext({ runtime, agentId, conversationId });

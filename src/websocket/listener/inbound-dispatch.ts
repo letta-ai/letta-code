@@ -120,9 +120,13 @@ export function dispatchInboundMessageWhenReady(params: {
         shouldQueueInboundMessage(incoming) &&
         !shouldProcessInboundMessageDirectly(runtime, incoming)
       ) {
+        const queuedIncoming = {
+          ...incoming,
+          telemetryInputAcceptedAtMs: performance.now(),
+        };
         const accepted = enqueueInboundUserMessage(
           runtime,
-          incoming,
+          queuedIncoming,
           actingUserId,
         );
         if (accepted) {
@@ -147,10 +151,13 @@ export function dispatchInboundMessageWhenReady(params: {
       acknowledgeInput({ accepted: true, disposition: "started" });
       // Queued turns store the actor on the queue item. Direct turns skip that
       // item, so carry the actor on the message consumed by turn.ts instead.
-      const attributedIncoming =
-        actingUserId && incoming.actingUserId !== actingUserId
-          ? { ...incoming, actingUserId }
-          : incoming;
+      const attributedIncoming = {
+        ...incoming,
+        ...(actingUserId && incoming.actingUserId !== actingUserId
+          ? { actingUserId }
+          : {}),
+        telemetryInputAcceptedAtMs: performance.now(),
+      };
       await processIncomingMessage(
         attributedIncoming,
         getOrCreateProcessTransport(listener),

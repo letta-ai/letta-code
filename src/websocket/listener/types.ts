@@ -92,6 +92,7 @@ export interface IncomingMessage {
    */
   processOwnedTurn?: boolean;
   imageFailureMode?: "strict" | "drop";
+  telemetryInputAcceptedAtMs?: number;
   clientToolAllowlist?: string[];
   clientToolset?: ClientToolsetConfig;
   externalToolScopeIds?: string[];
