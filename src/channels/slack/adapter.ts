@@ -53,6 +53,7 @@ import {
 import { createSlackWebApiClient } from "./web-api-client";
 
 export interface SlackChannelAdapter extends ChannelAdapter {
+  listCustomEmojis(): Promise<string[]>;
   downloadAttachment(params: {
     attachmentId: string;
     chatId: string;
@@ -150,6 +151,14 @@ export function createSlackAdapter(
       writeClientPromise = null;
       throw error;
     }
+  }
+
+  async function listCustomEmojis(): Promise<string[]> {
+    const client = await ensureWriteClient();
+    const response = await client.emoji.list();
+    return Object.keys(response.emoji ?? {}).sort((left, right) =>
+      left.localeCompare(right),
+    );
   }
 
   async function downloadAttachment(params: {
@@ -450,6 +459,7 @@ export function createSlackAdapter(
       );
     },
     sendMessage,
+    listCustomEmojis,
     downloadAttachment,
     sendDirectReply,
     handleControlRequestEvent,

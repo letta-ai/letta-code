@@ -244,6 +244,7 @@ oauth_config:
       - channels:history
       - chat:write
       - commands
+      - emoji:read
       - files:read
       - files:write
       - groups:history

@@ -279,7 +279,7 @@ export interface ChannelAdapter {
 
   /** Send a message through this channel. */
   sendMessage(msg: OutboundChannelMessage): Promise<{ messageId: string }>;
-
+  listCustomEmojis?(): Promise<string[]>;
   /**
    * Optionally materialize a platform attachment into the channel's local
    * inbound directory. MessageChannel plugins expose this only when the

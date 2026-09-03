@@ -55,6 +55,7 @@ async function downloadSlackFile(
 
 export const slackMessageActions = createSlackMessageActionAdapter({
   react: true,
+  listCustomEmojis: true,
   uploadFile: true,
   downloadFile: downloadSlackFile,
   resolveMessageTarget: async (params) =>
