@@ -12,8 +12,13 @@ save either form to a local image file before replying.
 ## Credit disclosure
 
 Every successful image generation uses Letta credits. Before making the API
-request, check whether the user has already acknowledged that in the current
-conversation. If not, tell them that image generation uses credits and ask
+request, check the current conversation and the user's memory for any policy they
+have defined about spending credits on image generation. Follow that policy. If
+the user explicitly defines a durable policy, store it in memory so later image
+requests can follow it. Do not treat a one-time approval as a durable policy.
+
+If there is no policy and the user has not already acknowledged the charge in
+the current conversation, tell them that image generation uses credits and ask
 whether to proceed. Do not generate the image until they confirm. Once they have
 acknowledged the charge, do not ask again for each image in the same conversation.
 
