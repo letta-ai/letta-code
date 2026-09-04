@@ -4,6 +4,7 @@ export type ToolsetName =
   | "default"
   | "gemini"
   | "gemini_snake"
+  | "letta"
   | "none";
 
 export type ToolsetPreference = ToolsetName | "auto";
