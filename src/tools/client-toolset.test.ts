@@ -81,7 +81,7 @@ describe("request-scoped client toolsets", () => {
         LETTA_TOOLS.map((name) => (name === "Task" ? "Agent" : name)),
       );
       expect(prepared.preparedToolContext.loadedToolNames).toContain("Edit");
-      expect(prepared.preparedToolContext.loadedToolNames).toContain(
+      expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
         "ApplyPatch",
       );
       expect(prepared.preparedToolContext.loadedToolNames).toContain(
