@@ -9,6 +9,14 @@ Generate images via Letta's hosted endpoint `POST /v1/images/generations`. The A
 usually returns base64 image bytes, but some providers return signed image URLs;
 save either form to a local image file before replying.
 
+## Credit disclosure
+
+Every successful image generation uses Letta credits. Before making the API
+request, check whether the user has already acknowledged that in the current
+conversation. If not, tell them that image generation uses credits and ask
+whether to proceed. Do not generate the image until they confirm. Once they have
+acknowledged the charge, do not ask again for each image in the same conversation.
+
 ## Example
 
 Generate the image, save it locally, then show it inline:
