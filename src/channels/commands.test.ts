@@ -797,6 +797,47 @@ describe("channel slash commands", () => {
     expect(JSON.stringify(blocks)).toContain("Claude Sonnet 4.6");
   });
 
+  test("keeps ChatGPT plan models past Slack's flat option limit", () => {
+    const entries = Array.from({ length: 100 }, (_, index) => ({
+      id: `hosted-${index}`,
+      handle: `letta/hosted-${index}`,
+      label: `Hosted ${index}`,
+      description: "",
+    }));
+    entries.push({
+      id: "chatgpt-plan",
+      handle: "chatgpt-plus-pro/gpt-5.6-sol",
+      label: "GPT-5.6 Sol (ChatGPT)",
+      description: "ChatGPT plan",
+    });
+    const blocks = buildSlackModelPickerBlocks({
+      current: {
+        modelLabel: "Auto",
+        modelHandle: "letta/auto",
+        scope: "conversation",
+      },
+      entries,
+      availableHandles: entries.map((entry) => entry.handle),
+      recentHandles: [],
+    });
+
+    const actionsBlock = blocks?.[2] as Record<string, unknown> | undefined;
+    const elements = actionsBlock?.elements as
+      | Array<{
+          options?: unknown;
+          option_groups?: Array<{ options?: Array<{ value?: string }> }>;
+        }>
+      | undefined;
+    const selectElement = elements?.[0];
+    const optionValues = selectElement?.option_groups?.flatMap(
+      (group) => group.options?.map((option) => option.value) ?? [],
+    );
+
+    expect(selectElement?.options).toBeUndefined();
+    expect(optionValues).toHaveLength(101);
+    expect(optionValues).toContain("chatgpt-plan");
+  });
+
   test("builds model update and unavailable messages", () => {
     const fallback = buildChannelModelListMessage("telegram", {
       entries: [

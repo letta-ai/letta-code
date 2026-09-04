@@ -8,6 +8,7 @@ import type { ChannelModelPickerData } from "@/channels/types";
 import { asRecord, firstNonEmptyString, getSlackActionRecord } from "./utils";
 
 const SLACK_MODEL_PICKER_OPTION_LIMIT = 100;
+const SLACK_MODEL_PICKER_OPTION_GROUP_LIMIT = 100;
 const SLACK_MODEL_OPTION_TEXT_LIMIT = 75;
 const SLACK_MODEL_OPTION_VALUE_LIMIT = 75;
 
@@ -28,6 +29,11 @@ type SlackModelOption = {
   text: { type: "plain_text"; text: string; emoji?: boolean };
   value: string;
   description?: { type: "plain_text"; text: string; emoji?: boolean };
+};
+
+type SlackModelOptionGroup = {
+  label: { type: "plain_text"; text: string; emoji?: boolean };
+  options: SlackModelOption[];
 };
 
 function escapeSlackMrkdwn(text: string): string {
@@ -88,6 +94,44 @@ function buildSlackModelOption(
   return option;
 }
 
+function modelProviderLabel(entry: ChannelModelListEntry): string {
+  const slashIndex = entry.handle.indexOf("/");
+  return slashIndex > 0 ? entry.handle.slice(0, slashIndex) : "Other";
+}
+
+function buildSlackModelOptionGroups(
+  entries: ChannelModelListEntry[],
+  optionsByEntry: Map<ChannelModelListEntry, SlackModelOption>,
+): SlackModelOptionGroup[] {
+  const groups: SlackModelOptionGroup[] = [];
+  let currentProvider = "";
+  let currentGroup: SlackModelOptionGroup | undefined;
+  for (const entry of entries) {
+    const option = optionsByEntry.get(entry);
+    if (!option) continue;
+    const provider = modelProviderLabel(entry);
+    if (
+      !currentGroup ||
+      currentProvider !== provider ||
+      currentGroup.options.length >= SLACK_MODEL_PICKER_OPTION_LIMIT
+    ) {
+      if (groups.length >= SLACK_MODEL_PICKER_OPTION_GROUP_LIMIT) break;
+      currentProvider = provider;
+      currentGroup = {
+        label: {
+          type: "plain_text",
+          text: truncateSlackPlainText(provider, SLACK_MODEL_OPTION_TEXT_LIMIT),
+          emoji: true,
+        },
+        options: [],
+      };
+      groups.push(currentGroup);
+    }
+    currentGroup.options.push(option);
+  }
+  return groups;
+}
+
 /**
  * Renders generic channel model-picker data as Slack Block Kit blocks.
  * Slack-specific rendering lives here so the shared channel/listener layers
@@ -114,6 +158,8 @@ export function buildSlackModelPickerBlocks(
     : getFallbackModelEntries(byHandle);
   const optionEntries = [...recentEntries, ...availableEntries];
   const options: SlackModelOption[] = [];
+  const uniqueOptionEntries: ChannelModelListEntry[] = [];
+  const optionsByEntry = new Map<ChannelModelListEntry, SlackModelOption>();
   const seenValues = new Set<string>();
   for (const entry of optionEntries) {
     const option = buildSlackModelOption(entry);
@@ -122,9 +168,8 @@ export function buildSlackModelPickerBlocks(
     }
     seenValues.add(option.value);
     options.push(option);
-    if (options.length >= SLACK_MODEL_PICKER_OPTION_LIMIT) {
-      break;
-    }
+    uniqueOptionEntries.push(entry);
+    optionsByEntry.set(entry, option);
   }
 
   if (options.length === 0) {
@@ -146,6 +191,10 @@ export function buildSlackModelPickerBlocks(
       ? entry?.handle === currentHandle || option.value === currentHandle
       : false;
   });
+  const optionGroups =
+    options.length > SLACK_MODEL_PICKER_OPTION_LIMIT
+      ? buildSlackModelOptionGroups(uniqueOptionEntries, optionsByEntry)
+      : undefined;
 
   return [
     {
@@ -173,7 +222,7 @@ export function buildSlackModelPickerBlocks(
             text: "Select a model",
             emoji: true,
           },
-          options,
+          ...(optionGroups ? { option_groups: optionGroups } : { options }),
           ...(initialOption ? { initial_option: initialOption } : {}),
         },
       ],
