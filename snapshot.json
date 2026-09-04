@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.260:docs:38fc83eb10ff3d58a6a269609274a612cbdbfd34939c056ed520a20c7163f49d:runtime:629fe841395e6614cfdff13137cfc3c89a6b7c97f0a5d34984445e5ba8c0180f",
+  "candidate_id": "claude@2.1.260:docs:1b2f0697b792d2370eaf203e7fd1c9a95b39e7530e61605e488ff16e4cb90707:runtime:629fe841395e6614cfdff13137cfc3c89a6b7c97f0a5d34984445e5ba8c0180f",
   "package_version": "2.1.260",
   "npm_integrity": "sha512-Arqg8BvlOehmC3QdACN2WKshqqWQVMo+5NwG22aiJbw7M6S1LM7E2pA2MjD8BS5P5EwZVkh2eKUmC6k7pVUqSQ==",
   "npm_published_at": "2026-09-03T22:32:02.087Z",
@@ -10,7 +10,7 @@
   "dist_tags": {
     "latest": "2.1.260",
     "stable": "2.1.236",
-    "next": "2.1.260"
+    "next": "2.1.261"
   },
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
@@ -464,7 +464,7 @@
       },
       "https://code.claude.com/docs/en/commands.md": {
         "url": "https://code.claude.com/docs/en/commands.md",
-        "hash": "a40b7f4ece9accde15144d8585bcba3638726de0ebffa18b13568a2037ffcf7d",
+        "hash": "76db0c765dfb242aa55259f6d8c149e9f9e4fdc3ca277126f503745c3167fd48",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/commands.md"
       },
@@ -686,7 +686,7 @@
       },
       "https://code.claude.com/docs/en/interactive-mode.md": {
         "url": "https://code.claude.com/docs/en/interactive-mode.md",
-        "hash": "81265075e6133acb8b7599c818ca73c133adcce16663da6ca5b5b7fe95a9fb8d",
+        "hash": "00468b887bd49dc5553750ef3a927cdbd785d65420711b9c170ff0aca0983fd2",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/interactive-mode.md"
       },
@@ -1237,7 +1237,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "38fc83eb10ff3d58a6a269609274a612cbdbfd34939c056ed520a20c7163f49d"
+    "digest": "1b2f0697b792d2370eaf203e7fd1c9a95b39e7530e61605e488ff16e4cb90707"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1455,8 +1455,7 @@
           {
             "name": "TaskCreate",
             "input": {
-              "activeForm": "Probing task tools",
-              "description": "Probe task for exercising task tool metadata and deletion behavior.",
+              "description": "Probe task for exercising task tool metadata handling.",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1507,7 +1506,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tool metadata and deletion behavior.",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tool metadata handling.",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1518,8 +1517,8 @@
     ],
     "digest": "629fe841395e6614cfdff13137cfc3c89a6b7c97f0a5d34984445e5ba8c0180f"
   },
-  "fetched_at": "2026-09-04T16:27:51.122Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/33895150495",
-  "state_commit_parent": "739ddc3a09fdc56f3ac238dfa9bc882135b4c6df",
-  "analysis_parent_sha": "739ddc3a09fdc56f3ac238dfa9bc882135b4c6df"
+  "fetched_at": "2026-09-04T18:29:11.877Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/33905978740",
+  "state_commit_parent": "24277ee0a60a8928814b2369666620e7c1e9a9f7",
+  "analysis_parent_sha": "24277ee0a60a8928814b2369666620e7c1e9a9f7"
 }
