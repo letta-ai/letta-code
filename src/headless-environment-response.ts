@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message as LettaMessage } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import {
+  createEnvironmentTerminalFailure,
+  TerminalFailureError,
+} from "@/agent/terminal-failure";
 import type { Backend } from "@/backend";
 import {
   type AgentRuntimeStatusEntry,
@@ -12,10 +16,32 @@ import {
   type EnvironmentConnection,
   getEnvironmentConnection,
   isEnvironmentOnline,
+  resolveAgentSandboxConnectionId,
+  resolveEnvironmentConnectionId,
   type SendEnvironmentMessageBody,
+  sendEnvironmentMessage,
 } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
 import { toolFilter } from "@/tools/filter";
+
+export function isCloudEnvironmentSelector(
+  selector: string | boolean | undefined,
+): boolean {
+  if (typeof selector !== "string") return false;
+  const normalized = selector.trim().toLowerCase();
+  return normalized === "cloud" || normalized === "cloud-sandbox";
+}
+
+export function getEnvironmentRoutedMessagingUnsupportedReason(
+  environment: EnvironmentConnection,
+): string | null {
+  if (environment.metadata?.environmentMessageProtocol === "v2-input") {
+    return null;
+  }
+  return `Computer ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
+    environment.metadata?.lettaCodeVersion ?? "unknown"
+  } and does not advertise computer-routed headless messaging support. Update that runtime or omit --computer to use same-computer messaging.`;
+}
 
 /**
  * Build the POST body for an environment-routed turn.
@@ -33,6 +59,7 @@ export function buildEnvironmentCreateMessageBody(params: {
   conversationId: string | null;
   content: MessageCreate["content"];
   otid: string;
+  clientMessageId?: string;
 }): SendEnvironmentMessageBody {
   const clientToolAllowlist = toolFilter.getEnabledTools();
   return {
@@ -45,11 +72,76 @@ export function buildEnvironmentCreateMessageBody(params: {
       {
         role: "user",
         content: params.content,
-        client_message_id: randomUUID(),
+        client_message_id: params.clientMessageId ?? randomUUID(),
         otid: params.otid,
       },
     ],
   };
+}
+
+export async function resolveHeadlessEnvironmentRouting(params: {
+  selector: string;
+  useCloudSandbox: boolean;
+  agentId: string;
+  conversationId: string;
+}): Promise<Awaited<ReturnType<typeof resolveAgentSandboxConnectionId>>> {
+  try {
+    return params.useCloudSandbox
+      ? await resolveAgentSandboxConnectionId(params.agentId, {
+          conversationId: params.conversationId,
+        })
+      : await resolveEnvironmentConnectionId(params.selector);
+  } catch (error) {
+    const stage = params.useCloudSandbox
+      ? "sandbox_start"
+      : "environment_connect";
+    throw new TerminalFailureError(
+      createEnvironmentTerminalFailure(error, stage),
+    );
+  }
+}
+
+export async function sendAndWaitForEnvironmentAssistantMessage(params: {
+  backend: Backend;
+  connectionId: string;
+  deviceId: string;
+  agentId: string;
+  conversationId: string;
+  content: MessageCreate["content"];
+}): Promise<{ text: string; stopReason: StopReasonType | null }> {
+  const otid = randomUUID();
+  const clientMessageId = randomUUID();
+  try {
+    await sendEnvironmentMessage(
+      params.connectionId,
+      buildEnvironmentCreateMessageBody({
+        agentId: params.agentId,
+        conversationId: params.conversationId,
+        content: params.content,
+        otid,
+        clientMessageId,
+      }),
+    );
+  } catch (error) {
+    throw new TerminalFailureError(
+      createEnvironmentTerminalFailure(error, "environment_dispatch"),
+    );
+  }
+
+  try {
+    return await waitForEnvironmentAssistantMessage({
+      backend: params.backend,
+      agentId: params.agentId,
+      conversationId: params.conversationId,
+      otid,
+      clientMessageId,
+      deviceId: params.deviceId,
+    });
+  } catch (error) {
+    throw new TerminalFailureError(
+      createEnvironmentTerminalFailure(error, "environment_turn"),
+    );
+  }
 }
 
 function pageItems<T>(page: unknown): T[] {
@@ -199,6 +291,8 @@ export async function waitForEnvironmentAssistantMessage(params: {
   agentId: string;
   conversationId: string;
   otid: string;
+  /** Client message identity used to correlate a terminal listener failure. */
+  clientMessageId?: string;
   /** Device to liveness-check while waiting. Omitting skips online checks. */
   deviceId?: string;
   maxWaitMs?: number;
@@ -367,6 +461,12 @@ export async function waitForEnvironmentAssistantMessage(params: {
             ) ??
             (snapshot.statuses.length === 1 ? snapshot.statuses[0] : null) ??
             null;
+          if (
+            params.clientMessageId &&
+            status?.failure?.client_message_ids.includes(params.clientMessageId)
+          ) {
+            throw new TerminalFailureError(status.failure);
+          }
           if (status && !isRuntimeTurnOver(status)) {
             lastProgressAt = now();
             runtimeTurnOverAt = null;

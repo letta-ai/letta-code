@@ -1,3 +1,4 @@
+import type { TerminalFailure } from "@/types/terminal-failure";
 import { apiRequest } from "./request";
 
 export async function getAgentContextOverview<T>(
@@ -42,6 +43,8 @@ export interface AgentRuntimeStatusEntry {
   loop_state: { status: string } | null;
   active_run_ids: string[];
   last_activity_at: number;
+  /** Last terminal listener failure, correlated to its consumed inputs. */
+  failure?: TerminalFailure | null;
 }
 
 export interface AgentRuntimeStatusSnapshot {

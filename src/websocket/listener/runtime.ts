@@ -265,8 +265,7 @@ export function createConversationRuntime(
     get lastStopReason() {
       return turnLifecycle.lastStopReason;
     },
-    lastTerminalLoopErrorMessage: null,
-    lastTerminalLoopErrorRunId: null,
+    lastTerminalFailure: null,
     get isProcessing() {
       return turnLifecycle.isProcessing;
     },

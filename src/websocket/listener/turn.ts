@@ -192,6 +192,7 @@ async function handleIncomingMessageInner(
         ...options,
         socket: options.socket ?? socket,
         turnId: activeDequeuedBatchId,
+        clientMessageIds: turnCorrelation.getClientMessageIds(),
       }),
     );
   const finishIfInterrupted = (runId?: string | null): boolean => {
@@ -211,8 +212,7 @@ async function handleIncomingMessageInner(
     return true;
   };
   try {
-    runtime.lastTerminalLoopErrorMessage = null;
-    runtime.lastTerminalLoopErrorRunId = null;
+    runtime.lastTerminalFailure = null;
     setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
       agent_id: agentId ?? null,
       conversation_id: conversationId,
@@ -257,7 +257,7 @@ async function handleIncomingMessageInner(
       if (!transition.finished) {
         return;
       }
-      const formattedError = emitLoopErrorNotice(socket, runtime, {
+      emitLoopErrorNotice(socket, runtime, {
         message: setup.reason,
         stopReason: "cancelled",
         isTerminal: true,
@@ -266,7 +266,6 @@ async function handleIncomingMessageInner(
         cancelRequested: turnAbortSignal.aborted,
         abortSignal: turnAbortSignal,
       });
-      runtime.lastTerminalLoopErrorMessage = formattedError ?? setup.reason;
       return;
     }
     let turnInput = setup.turnInput;
@@ -825,18 +824,17 @@ async function handleIncomingMessageInner(
           agentId,
           conversationId,
           error: terminalError,
+          failureSource: runErrorInfo,
         });
         if (!transition.finished) {
           break;
         }
-        const formattedError = emitLoopErrorNotice(socket, runtime, {
+        emitLoopErrorNotice(socket, runtime, {
           ...noticeParams,
           stopReason: effectiveStopReason,
           isTerminal: true,
           runId: terminalRunId,
         });
-        runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
-        runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
         break;
       }
 
@@ -861,16 +859,19 @@ async function handleIncomingMessageInner(
       });
       if (approvalResult.kind === "error") {
         const terminalRunId = runId || runtime.activeRunId;
+        const terminalError = getSafeTerminalError({
+          message: approvalResult.message,
+        });
         const transition = finishTurn({
           stopReason: "error",
           agentId,
           conversationId,
-          error: getSafeTerminalError({ message: approvalResult.message }),
+          error: terminalError,
         });
         if (!transition.finished) {
           return;
         }
-        const formattedError = emitLoopErrorNotice(socket, runtime, {
+        emitLoopErrorNotice(socket, runtime, {
           message: approvalResult.message,
           stopReason: "error",
           isTerminal: true,
@@ -878,9 +879,6 @@ async function handleIncomingMessageInner(
           agentId,
           conversationId,
         });
-        runtime.lastTerminalLoopErrorMessage =
-          formattedError ?? approvalResult.message;
-        runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
         return;
       }
 
@@ -1003,18 +1001,17 @@ async function handleIncomingMessageInner(
       agentId: agentId || null,
       conversationId,
       error: terminalError,
+      failureSource: error,
     });
     if (!transition.finished) {
       return;
     }
-    const formattedError = emitLoopErrorNotice(socket, runtime, {
+    emitLoopErrorNotice(socket, runtime, {
       ...noticeParams,
       stopReason: "error",
       isTerminal: true,
       runId: terminalRunId,
     });
-    runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
-    runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
     if (isDebugEnabled()) {
       console.error("[Listen] Error handling message:", error);
     }

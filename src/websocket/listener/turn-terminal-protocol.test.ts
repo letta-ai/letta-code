@@ -60,6 +60,37 @@ test("finishListenerTurn emits exactly one correlated terminal event", () => {
   ]);
 });
 
+test("finishListenerTurn retains a safe correlated API failure", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const lease = runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: process.cwd(),
+  });
+
+  finishListenerTurn(runtime, lease, {
+    stopReason: "error",
+    conversationId: "conv-1",
+    error: "Your account does not have credits for this model.",
+    failureSource: new APIError(
+      402,
+      { error: "raw detail", reasons: ["not-enough-credits"] },
+      undefined,
+      new Headers(),
+    ),
+    clientMessageIds: ["client-message-1"],
+  });
+
+  expect(runtime.lastTerminalFailure).toEqual({
+    stage: "agent_turn",
+    code: "not-enough-credits",
+    message: "Your account does not have credits for this model.",
+    http_status: 402,
+    retryable: false,
+    client_message_ids: ["client-message-1"],
+  });
+});
+
 test("terminal error formatting preserves classifications and rejects raw fallbacks", () => {
   const unknownApiError = new APIError(
     500,
