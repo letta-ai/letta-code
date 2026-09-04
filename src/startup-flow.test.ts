@@ -151,6 +151,13 @@ describe("Startup Flow - Flag Conflicts", () => {
 });
 
 describe("Startup Flow - Smoke", () => {
+  test("--help only advertises implemented memory actions", async () => {
+    const result = await runCli(["--help"], { expectExit: 0 });
+
+    expect(result.stdout).toContain("letta memory status --agent <id>");
+    expect(result.stdout).not.toContain("letta memory resolve");
+  });
+
   test("update aliases route to manual update instead of flag parsing errors", async () => {
     for (const alias of ["update", "upgrade", "--update", "--upgrade"]) {
       const result = await runCli([alias], { expectExit: 1 });

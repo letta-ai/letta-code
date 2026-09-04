@@ -195,7 +195,6 @@ ${renderCliOptionsHelp()}
 SUBCOMMANDS
   letta memory status --agent <id>
   letta memory diff --agent <id>
-  letta memory resolve --agent <id> --resolutions '<JSON>'
   letta memory backup --agent <id>
   letta memory backups --agent <id>
   letta memory restore --agent <id> --from <backup> --force
