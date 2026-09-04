@@ -120,6 +120,14 @@ export async function handleExecuteCommand(
         });
         break;
 
+      case "clear-messages":
+        output = await handleClearCommand(socket, conversationRuntime, {
+          ...opts,
+          actingUserId: command.runtime.acting_user_id,
+          resetAllAgentMessages: true,
+        });
+        break;
+
       case "doctor":
         output = await handleDoctorCommand(socket, conversationRuntime, opts);
         break;
@@ -622,6 +630,8 @@ async function handleClearCommand(
     connectionId?: string;
     /** Cloud user id stamped on the relayed frame; echoed on the create call. */
     actingUserId?: string;
+    /** Whether to reset the API agent's complete message history. */
+    resetAllAgentMessages?: boolean;
   },
 ): Promise<string> {
   const backend = getBackend();
@@ -631,11 +641,17 @@ async function handleClearCommand(
     throw new Error("No agent ID available for /clear command");
   }
 
-  // Reset all messages on the agent only when in the default API conversation.
+  if (opts.resetAllAgentMessages && backend.capabilities.localModelCatalog) {
+    throw new Error("/clear-messages is not supported by the local backend.");
+  }
+
+  // /clear-messages always resets the API agent's message history.
+  // /clear only resets when leaving the default API conversation.
   // Local/headless backends model /clear by switching to a fresh conversation.
   if (
-    conversationRuntime.conversationId === "default" &&
-    !backend.capabilities.localModelCatalog
+    !backend.capabilities.localModelCatalog &&
+    (opts.resetAllAgentMessages ||
+      conversationRuntime.conversationId === "default")
   ) {
     const { getClient } = await import("@/backend/api/client");
     const client = await getClient();
@@ -666,7 +682,9 @@ async function handleClearCommand(
     opts.connectionId,
   );
 
-  return "Agent's in-context messages cleared & moved to conversation history";
+  return opts.resetAllAgentMessages
+    ? "All agent messages reset"
+    : "Agent's in-context messages cleared & moved to conversation history";
 }
 
 /**
