@@ -2062,32 +2062,38 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /clear command - reset all agent messages (destructive)
-        if (msg.trim() === "/clear") {
+        const resetAllAgentMessages = trimmed === "/clear-messages";
+
+        if (trimmed === "/clear" || resetAllAgentMessages) {
           const cmd = commandRunner.start(
-            msg.trim(),
-            "Clearing in-context messages...",
+            trimmed,
+            resetAllAgentMessages
+              ? "Resetting agent messages..."
+              : "Clearing in-context messages...",
           );
 
-          // Clearing conversation state should also clear pending reasoning-tier debounce.
           resetPendingReasoningCycle();
           setCommandRunning(true);
 
           const clearPrevConversationId = conversationIdRef.current;
 
-          // Run SessionEnd hooks for current session before clearing
-          await runEndHooks("new");
-
           try {
             const backend = getBackend();
-
-            // Reset all messages on the agent only when in the default API conversation.
-            // Local/headless backends model /clear by switching to a fresh conversation.
-            // For named conversations, clearing just means starting a new conversation —
-            // there is no reason to wipe the agent's entire message history.
             if (
-              conversationIdRef.current === "default" &&
-              !backend.capabilities.localModelCatalog
+              resetAllAgentMessages &&
+              backend.capabilities.localModelCatalog
+            ) {
+              throw new Error(
+                "/clear-messages is unsupported by local backend.",
+              );
+            }
+            await runEndHooks("new");
+
+            // /clear-messages always resets the API agent's message history.
+            // /clear only resets when leaving the default API conversation.
+            if (
+              !backend.capabilities.localModelCatalog &&
+              (resetAllAgentMessages || conversationIdRef.current === "default")
             ) {
               const client = await getClient();
               await client.agents.messages.reset(agentId, {
@@ -2095,7 +2101,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               });
             }
 
-            // Create a new conversation
             const conversation = await backend.createConversation({
               agent_id: agentId,
             });
@@ -2103,7 +2108,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setConversationAutoTitleEligibility(true);
             await maybeCarryOverActiveConversationModel(conversation.id);
             setConversationIdAndRef(conversation.id);
-
             pendingConversationSwitchRef.current = {
               origin: "clear",
               conversationId: conversation.id,
@@ -2111,14 +2115,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             };
 
             settingsManager.persistSession(agentId, conversation.id);
-
-            // Reset context tokens for new conversation
             resetContextHistory(contextTrackerRef.current);
-
-            // Ensure bootstrap reminders are re-injected for the new conversation.
             resetBootstrapReminderState(true);
-
-            // Re-run SessionStart hooks for new conversation
             sessionHooksRanRef.current = false;
             runSessionStartHooks(
               true, // isNewSession
@@ -2145,9 +2143,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               modAdapter.context,
             );
 
-            // Update command with success
             cmd.finish(
-              "Agent's in-context messages cleared & moved to conversation history",
+              resetAllAgentMessages
+                ? "All agent messages reset"
+                : "Agent's in-context messages cleared & moved to conversation history",
               true,
             );
           } catch (error) {

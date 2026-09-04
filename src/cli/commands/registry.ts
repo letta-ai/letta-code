@@ -193,6 +193,15 @@ export const commands: Record<string, Command> = {
       return "Clearing in-context messages...";
     },
   },
+  "/clear-messages": {
+    desc: "Reset all agent messages (destructive)",
+    hidden: true,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to reset agent messages
+      return "Resetting agent messages...";
+    },
+  },
   "/chdir": {
     desc: "Change working directory for this TUI session (/chdir <path>)",
     args: "<path>",
