@@ -667,12 +667,12 @@ If you mistype JSON or set a key to a value Claude Code doesn't accept, Claude C
 
 * **Settings Error**: a user, project, or local file has invalid JSON or a value the schema rejects. At the start of an interactive session Claude Code shows a dialog that lets you fix the file with Claude's help, exit, or continue without the broken settings.
 * **Settings Warning**: only individual entries fail, such as a malformed permission rule or an unknown hook event name. Claude Code skips those values and keeps the rest of the file in effect.
-* **Managed settings**: Claude Code keeps enforcing the rest of the file. [Invalid entries in managed settings](/docs/en/managed-settings#invalid-entries-in-managed-settings) says what it drops and which keys fall back to a stricter value until you fix them.
+* **Managed settings**: Claude Code keeps enforcing the rest of the file. [Invalid entries in managed settings](/docs/en/managed-settings#invalid-entries-in-managed-settings) says what it drops and which keys fall back to a stricter value until you fix them. For a managed settings document that isn't valid JSON, see [Managed settings document could not be parsed](/docs/en/errors#managed-settings-document-could-not-be-parsed).
 * **Configuration error**: `~/.claude.json` can't be parsed. Claude Code copies the broken file to `~/.claude/backups/.claude.json.corrupted.<timestamp>` and asks whether to exit and fix it by hand or reset to the default configuration; a `-p` run prints the error and exits. To recover your previous state, copy back one of the five most recent `.claude.json.backup.<timestamp>` files in `~/.claude/backups/`, which Claude Code saves before it writes the file.
 
 After you continue, run `/status` to see the affected files and `claude doctor` for the details of each error.
 
-A `-p` run shows no dialog: Claude Code skips the broken file or values and continues with the rest, so after a `-p` run that ignores a setting, run `claude doctor` to see what it dropped.
+A `-p` run shows no dialog. Unless [a managed settings document can't be parsed](/docs/en/errors#managed-settings-document-could-not-be-parsed), Claude Code skips the broken file or values and continues with the rest, so after a `-p` run that ignores a setting, run `claude doctor` to see what it dropped.
 
 <span id="how-scopes-interact" />
 

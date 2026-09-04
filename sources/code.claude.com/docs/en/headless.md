@@ -267,6 +267,26 @@ This example applies lint fixes with `acceptEdits` as the baseline:
 claude -p "Apply the lint fixes" --permission-mode acceptEdits
 ```
 
+### Turn off permission prompts in unattended runs
+
+Pass `--permission-prompts none` when nobody is available to answer permission prompts, for example in a scheduled job. The flag matters most when your run has a permission host: an Agent SDK app with a [`canUseTool` callback](/docs/en/agent-sdk/user-input), or an MCP tool you pass with [`--permission-prompt-tool`](/docs/en/cli-reference#cli-flags). Without the flag, your run waits for that host to answer each permission request.
+
+With the flag, your run doesn't consult the host or wait on it. Anything that would prompt is denied unless a `PermissionRequest` hook allows it, Claude is told that nobody can approve the request and not to retry it, and the run continues. In a `-p` run with no host, these requests are denied either way, and the flag also tells Claude not to retry them. Permission rules, [`PermissionRequest` hooks](/docs/en/hooks#permissionrequest), and the permission mode you set still decide every call first; Claude Code denies only the requests that nothing else resolves.
+
+This example runs an unattended task in [auto mode](/docs/en/permission-modes#eliminate-prompts-with-auto-mode). The classifier reviews each action as usual, and Claude Code denies anything that would have fallen back to a prompt:
+
+```bash theme={null}
+claude -p "Update the dependency pins and run the tests" --permission-mode auto --permission-prompts none
+```
+
+With `--permission-prompts none`, Claude Code removes the tools that need an answer from a person, such as [`AskUserQuestion`](/docs/en/tools-reference#askuserquestion-tool-behavior), so Claude can't call them. Any [MCP elicitation request](/docs/en/mcp#respond-to-mcp-elicitation-requests) that no [`Elicitation` hook](/docs/en/hooks#elicitation) answers is cancelled.
+
+With `--output-format stream-json`, denials appear as `permission_denied` system messages, and the final result message lists them in `permission_denials`.
+
+<Note>
+  The `--permission-prompts` flag requires Claude Code v2.1.259 or later. Earlier versions reject it with an unknown-option error.
+</Note>
+
 ### Create a commit
 
 This example reviews staged changes and creates a commit with an appropriate message:

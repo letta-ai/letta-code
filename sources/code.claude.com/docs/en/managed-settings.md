@@ -272,7 +272,9 @@ When Claude Code found a managed source on the machine and didn't select it, a s
 
 When the policy isn't applying, the `Setting sources` line tells you which of two problems you have:
 
-* **The line is missing**: Claude Code found no managed source that delivers a policy key. If you deployed a managed settings file, check that it sits at the path for the OS, that it's valid JSON, and that it contains a [policy key](#how-claude-code-combines-managed-sources) rather than only the control keys.
+* **The line is missing**: Claude Code found no managed source that delivers a policy key.
+
+  If you deployed a managed settings file, check that it sits at the path for the OS and that it contains a [policy key](#how-claude-code-combines-managed-sources) rather than only the control keys. A file that isn't valid JSON doesn't produce this state; Claude Code [refuses to start](#find-entries-claude-code-dropped) instead.
 
   When you deployed through server-managed settings instead, run `claude doctor`, which reports the [fetch outcome](/docs/en/server-managed-settings#verify-settings-delivery).
 * **The line names a source other than the one you deployed**: a higher-priority source is present and Claude Code ignored yours, and `Skipped sources` lists it. [How Claude Code combines managed sources](#how-claude-code-combines-managed-sources) gives the order.
@@ -281,9 +283,23 @@ When the policy isn't applying, the `Setting sources` line tells you which of tw
 
 ### Find entries Claude Code dropped
 
-When a managed settings file, MDM profile, registry value, or server-managed payload fails schema validation, Claude Code first skips the individual entries it can repair, such as one invalid permission rule, with a warning for each, then drops any top-level key whose value still fails and keeps enforcing every remaining valid key. Claude Code is stricter with the `managedSettings` a [`policyHelper`](/docs/en/settings-reference#policyhelper) emits: it makes the same entry repairs, but any schema violation that survives fails the whole helper run, and at startup Claude Code refuses to start, the same as for a helper that exits non-zero. A managed settings file or drop-in file that isn't valid JSON contributes no settings at all; Claude Code reports it with the other validation errors and reads the remaining sources as usual.
+When a managed settings file, MDM profile, registry value, or server-managed payload fails schema validation, Claude Code first skips the individual entries it can repair, such as one invalid permission rule, with a warning for each, then drops any top-level key whose value still fails and keeps enforcing every remaining valid key.
 
-If a managed settings file or drop-in file can't be read or parsed and no other admin source supplies a policy, sessions signed in with claude.ai or Claude Console credentials exit at startup with a message to contact an administrator.
+Claude Code is stricter with the `managedSettings` a [`policyHelper`](/docs/en/settings-reference#policyhelper) emits: it makes the same entry repairs, but any schema violation that survives fails the whole helper run, and at startup Claude Code refuses to start, the same as for a helper that exits non-zero.
+
+When a managed settings file, drop-in file, MDM plist, or HKLM registry value is present but can't be parsed as a JSON object, Claude Code refuses to start and prints [an error naming the source](/docs/en/errors#managed-settings-document-could-not-be-parsed), even when another admin source delivers a valid policy. Each source fails this way when:
+
+* **Managed settings file or drop-in file**: the file isn't valid JSON, or its top level isn't an object
+* **MDM plist**: macOS's `plutil` reports the plist malformed, or its converted content isn't a JSON object
+* **HKLM registry value**: the `Settings` value isn't a string, is empty, or doesn't hold a JSON object
+
+Three source states don't cause this refusal:
+
+* An absent file, profile, or registry value isn't a failure; Claude Code runs without that source.
+* An empty managed settings file counts as `{}`.
+* A malformed value in the user-writable HKCU registry key never blocks launch. Claude Code reports it as a notice in `/status` and `claude doctor` instead.
+
+If a managed settings file, drop-in file, or `managed-settings.d/` directory can't be read and no admin source supplies a policy, sessions signed in with claude.ai or Claude Console credentials exit at startup with a message to contact an administrator.
 
 To find a dropped entry, look in one of three places:
 

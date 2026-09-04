@@ -238,7 +238,7 @@ Exec wrappers such as `watch`, `setsid`, `ionice`, and `flock` can't be auto-app
 
 #### Read-only commands
 
-Claude Code recognizes a built-in set of Bash commands as read-only and runs them without a permission prompt in every mode. These include `ls`, `cat`, `echo`, `pwd`, `head`, `tail`, `grep`, `find`, `wc`, `which`, `diff`, `stat`, `du`, `cd`, and read-only forms of `git`. The set is not configurable; to require a prompt for one of these commands, add an `ask` or `deny` rule for it.
+Claude Code recognizes a built-in set of Bash commands as read-only and runs them without a permission prompt in every mode, except for a path that [`permissions.blockReadsOutsideWorkingDirectories`](/docs/en/settings-reference#permissions-blockreadsoutsideworkingdirectories) fences. The set includes `ls`, `cat`, `echo`, `pwd`, `head`, `tail`, `grep`, `find`, `wc`, `which`, `diff`, `stat`, `du`, `cd`, and read-only forms of `git`. The set is not configurable; to require a prompt for one of these commands, add an `ask` or `deny` rule for it.
 
 A redirect such as `ls > out.txt` adds a check on the target. See [Redirections](#redirections).
 
@@ -504,6 +504,8 @@ By default, Claude has access to files in the directory where you launched it. T
 
 Files in additional directories follow the same permission rules as the original working directory: they become readable without prompts, and file editing permissions follow the current permission mode.
 
+Set [`permissions.blockReadsOutsideWorkingDirectories`](/docs/en/settings-reference#permissions-blockreadsoutsideworkingdirectories) to make the file tools refuse the paths it fences in every permission mode. In auto mode, Claude Code offers to turn it on the first time Claude [reads outside the working directories](/docs/en/permission-modes#first-read-outside-the-working-directories).
+
 In background sessions on macOS, the session host requests access to protected folders such as `~/Desktop`, `~/Documents`, and `~/Downloads` separately from your terminal when Claude needs to read or write files there; if reads there fail with `Operation not permitted`, see [how to grant folder access to background sessions](/docs/en/agent-view#background-sessions-can’t-read-desktop-documents-or-downloads-on-macos).
 
 ### Move the session to another directory
@@ -565,7 +567,7 @@ Use both for defense-in-depth:
 
 When you enable sandboxing and leave `autoAllowBashIfSandboxed` at its default of `true`, sandboxed Bash commands run without prompting even if your permissions include a bare `Bash` ask rule, or the [equivalent `Bash(*)` form](#match-all-uses-of-a-tool): the sandbox boundary substitutes for that whole-tool prompt.
 
-In [plan mode](/docs/en/permission-modes#analyze-before-you-edit-with-plan-mode), Claude Code skips this substitution. Without an ask rule, the built-in read-only commands still run without prompting, and any other shell command goes through the regular permission flow while you are still planning; see [plan mode](/docs/en/permission-modes#analyze-before-you-edit-with-plan-mode) for how Claude Code gates commands there. With a bare `Bash` ask rule, every Bash command prompts, including sandboxed read-only commands, the same as outside sandboxing. Before v2.1.212, the substitution applied in plan mode as well.
+In [plan mode](/docs/en/permission-modes#analyze-before-you-edit-with-plan-mode), Claude Code skips this substitution. Without an ask rule, the [built-in read-only commands](#read-only-commands) still run without prompting, and any other shell command goes through the regular permission flow while you are still planning; see [plan mode](/docs/en/permission-modes#analyze-before-you-edit-with-plan-mode) for how Claude Code gates commands there. With a bare `Bash` ask rule, every Bash command prompts, including sandboxed read-only commands, the same as outside sandboxing. Before v2.1.212, the substitution applied in plan mode as well.
 
 These checks still apply:
 
