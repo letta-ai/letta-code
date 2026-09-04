@@ -140,7 +140,7 @@ jobs:
           letta_args: --new
           track_progress: ""
           tracking_comment: "false"
-          model: auto
+          model: letta/auto
           prompt: ${{ steps.prompt.outputs.prompt }}
 
       - name: Name watcher conversation
