@@ -10,6 +10,8 @@
 
 The Claude Code SDK has been renamed to the **Claude Agent SDK** and its documentation has been reorganized. This change reflects the SDK's broader capabilities for building AI agents beyond just coding tasks.
 
+Migrating from the OpenAI Agents SDK instead? The [OpenAI Agents SDK migration recipe](https://platform.claude.com/cookbook/claude-agent-sdk-04-migrating-from-openai-agents-sdk) maps each primitive onto the Claude Agent SDK through a single worked example.
+
 ## What's Changed
 
 | Aspect                     | Old                         | New                                                                      |

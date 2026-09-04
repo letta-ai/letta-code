@@ -760,6 +760,12 @@ Something else is setting the same key, the file can't set that value, or the fi
 * **The file can't set that value.** [`permissions.defaultMode`](/docs/en/settings-reference#permissions-defaultmode) values `auto` and `bypassPermissions` don't take effect from project or local settings; set them in user or managed settings instead, or pass `--permission-mode` for one session. Before v2.1.257, `bypassPermissions` took effect from any file.
 * **The file is broken.** Invalid JSON or a rejected value makes Claude Code skip the file or the entry; see [Fix a broken settings file](#fix-a-broken-settings-file).
 
+#### A change you made in Claude Code is lost in new sessions
+
+When you save a choice for new sessions from inside Claude Code, such as a default model with `/model`, Claude Code writes it to your user settings file, `~/.claude/settings.json`. If you can't write to that file, for example because another tool generates it or links it to a read-only copy, the change applies to the current session and is gone in the next one. Set the key in the tool that generates the file, or replace the file with one you can write to.
+
+If you can write to the file and the change still doesn't last, check whether the change was [for one session only](#change-a-setting-for-one-session) or [a higher level sets the same key](#a-value-you-set-is-ignored). For the `model` key, [A new session starts on a different model than you picked](/docs/en/model-config#a-new-session-starts-on-a-different-model-than-you-picked) lists more causes.
+
 #### A managed change hasn't reached you
 
 Managed sources reach a running session on the schedule in the [delivery table](/docs/en/managed-settings#choose-a-delivery-mechanism), so restart the session first. If `/status` then names a different source than the one your administrator changed, a higher-priority source applies; [How Claude Code combines managed sources](/docs/en/managed-settings#how-claude-code-combines-managed-sources) gives the order.

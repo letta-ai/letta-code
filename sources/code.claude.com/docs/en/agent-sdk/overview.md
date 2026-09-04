@@ -84,6 +84,7 @@ Use of the Claude Agent SDK is governed by [Anthropic's Commercial Terms of Serv
 These resources cover deeper technical detail and example projects for building with the Agent SDK.
 
 * [Quickstart](/docs/en/agent-sdk/quickstart): build your first agent that finds and fixes bugs
+* [Migration guide](/docs/en/agent-sdk/migration-guide): migrate from the Claude Code SDK packages to the Agent SDK
 * [Agent loop](/docs/en/agent-sdk/agent-loop): how Claude plans, calls tools, and decides when a task is done
 * [Example agents](https://github.com/anthropics/claude-agent-sdk-demos): demo apps for local development
 * [TypeScript SDK](/docs/en/agent-sdk/typescript): full TypeScript API reference and examples
