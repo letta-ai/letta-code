@@ -36,6 +36,23 @@ describe.skipIf(isWindows)("Background bash completion notifications", () => {
     return bashId as string;
   };
 
+  const startAutomaticBackground = async (args: {
+    command: string;
+    description?: string;
+    timeout?: number;
+    parentScope?: { agentId: string; conversationId: string };
+    secretEnv?: Record<string, string>;
+  }): Promise<string> => {
+    const result = await bash({ ...args, foregroundYieldMs: 30 });
+    expect(result.content[0]?.text).toContain("still running with task ID:");
+    expect(result.content[0]?.text).toContain(
+      "You will be notified when it completes",
+    );
+    const bashId = result.content[0]?.text.match(/bash_\d+/)?.[0];
+    expect(bashId).toBeDefined();
+    return bashId as string;
+  };
+
   const notificationsFor = (bashId: string): QueuedMessage[] =>
     queued.filter((message) => message.text.includes(`<task-id>${bashId}<`));
 
@@ -94,6 +111,49 @@ describe.skipIf(isWindows)("Background bash completion notifications", () => {
     expect(notification.text).toContain("Full transcript available at:");
   });
 
+  test("routes one completion notification after an ordinary command yields", async () => {
+    const bashId = await startAutomaticBackground({
+      command: "sleep 0.1; echo 'automatic finish'",
+      description: "Run automatic background command",
+      parentScope: { agentId: "agent-auto", conversationId: "conv-auto" },
+    });
+
+    const notification = await waitForNotification(bashId);
+    expect(notification.agentId).toBe("agent-auto");
+    expect(notification.conversationId).toBe("conv-auto");
+    expect(notification.text).toContain("<status>completed</status>");
+    expect(notification.text).toContain("automatic finish");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(notificationsFor(bashId)).toHaveLength(1);
+  });
+
+  test("reports failure after an ordinary command yields", async () => {
+    const bashId = await startAutomaticBackground({
+      command: "sleep 0.1; echo 'automatic failure' >&2; exit 9",
+      description: "Run failing automatic command",
+    });
+
+    const notification = await waitForNotification(bashId);
+    expect(notification.text).toContain("<status>failed</status>");
+    expect(notification.text).toContain("Exit code: 9");
+    expect(notification.text).toContain("automatic failure");
+  });
+
+  test("scrubs and bounds automatic completion output", async () => {
+    const secret = "automatic-notification-secret";
+    const bashId = await startAutomaticBackground({
+      command:
+        "sleep 0.1; node -e \"process.stdout.write('x'.repeat(50000) + (process.env.PASSWORD ?? ''))\"",
+      description: "Print automatic output",
+      secretEnv: { PASSWORD: secret },
+    });
+
+    const notification = await waitForNotification(bashId);
+    expect(notification.text).not.toContain(secret);
+    expect(notification.text).toContain("PASSWORD=&lt;REDACTED&gt;");
+    expect(notification.text.length).toBeLessThan(35_000);
+  });
+
   test("reports a failing background command as failed with its exit code", async () => {
     const bashId = await startBackground({
       command: "echo 'boom' >&2; exit 3",
@@ -143,6 +203,17 @@ describe.skipIf(isWindows)("Background bash completion notifications", () => {
     expect((await kill_bash({ shell_id: bashId })).killed).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 400));
 
+    expect(notificationsFor(bashId)).toHaveLength(0);
+  });
+
+  test("stays silent when an automatically yielded shell is stopped", async () => {
+    const bashId = await startAutomaticBackground({
+      command: "sleep 5",
+      description: "Cancel automatic command",
+    });
+
+    expect((await kill_bash({ shell_id: bashId })).killed).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 400));
     expect(notificationsFor(bashId)).toHaveLength(0);
   });
 });

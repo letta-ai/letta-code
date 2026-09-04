@@ -1,3 +1,4 @@
+import { rmSync } from "node:fs";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import {
   consumeWorkingDirectoryRecovery,
@@ -10,10 +11,6 @@ import {
   resolveNotificationScope,
 } from "@/utils/task-notifications.js";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
-import {
-  commandRunsForegroundSleep,
-  FOREGROUND_SLEEP_BLOCKED_MESSAGE,
-} from "./foreground-sleep.js";
 import {
   appendBackgroundProcessOutput,
   appendToOutputFile,
@@ -42,6 +39,9 @@ import { validateRequiredParams } from "./validation.js";
 
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
+
+/** Time to wait for an ordinary Bash command before returning it as a task. */
+const DEFAULT_FOREGROUND_YIELD_MS = 10_000;
 
 function rebuildCachedLauncher(
   command: string,
@@ -295,6 +295,8 @@ interface BashArgs {
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
+  /** Test-only override; not exposed in the Bash tool schema. */
+  foregroundYieldMs?: number;
 }
 
 interface BashResult {
@@ -316,6 +318,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     onOutput,
     secretEnv,
     parentScope,
+    foregroundYieldMs = DEFAULT_FOREGROUND_YIELD_MS,
   } = args;
   const userCwd = getCurrentWorkingDirectory();
   const sanitizeOutput = (text: string) =>
@@ -350,243 +353,228 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     ? `Note: working directory ${recoveredFrom} no longer exists; running in ${userCwd} instead.\n`
     : "";
 
-  if (run_in_background) {
-    try {
-      assertBackgroundProcessCapacity();
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: error instanceof Error ? error.message : String(error),
-          },
-        ],
-        status: "error",
-      };
-    }
-
-    const bgEnv = secretEnv
-      ? { ...getShellEnv(), ...secretEnv }
-      : getShellEnv();
-    const bgCommand = withStrictShellPrelude(command, bgEnv);
-    const bashId = getNextBashId();
-    const outputFile = createBackgroundOutputFile(bashId);
-    const launcher = getBackgroundLauncher(bgCommand, bgEnv, secretEnv);
-    const [executable] = launcher;
-    if (!executable) {
-      return {
-        content: [{ type: "text", text: "No shell available" }],
-        status: "error",
-      };
-    }
-    // Note the unwrapped launcher first; the sandbox wrapper (below) hides the
-    // inner shell from launcher inspection.
-    noteExpectedWorktreeForLauncher(launcher, userCwd);
-    const sandboxed = applyShellSandbox(launcher, userCwd, bgEnv);
-    let bgProcess: BackgroundProcess;
-    let outputWriteFailed = false;
-    const runningProcess = startShellProcess(sandboxed.launcher, {
-      cwd: userCwd,
-      env: sandboxed.env,
-      timeoutMs: timeout > 0 ? timeout : 0,
-      sourceCommand: command,
-      captureOutput: false,
-      onOutput(text, stream) {
-        const sanitizedText = sanitizeOutput(text);
-        appendBackgroundProcessOutput(bgProcess, stream, sanitizedText);
-        const wrote = appendToOutputFile(
-          outputFile,
-          stream === "stderr" ? `[stderr] ${sanitizedText}` : sanitizedText,
-        );
-        if (!wrote && bgProcess.status === "running") {
-          outputWriteFailed = true;
-          appendBackgroundProcessOutput(
-            bgProcess,
-            "stderr",
-            "[output file write failed; output may be incomplete]",
-          );
-          bgProcess.status = "failed";
-          try {
-            runningProcess.process.kill("SIGTERM");
-          } catch {
-            // Process may have already exited.
-          }
-        }
-      },
-    });
-    bgProcess = {
-      process: runningProcess.process,
-      command,
-      stdout: [],
-      stderr: [],
-      status: "running",
-      exitCode: null,
-      lastReadIndex: { stdout: 0, stderr: 0 },
-      startTime: new Date(),
-      outputFile,
-      totalStdoutLines: 0,
-      totalStderrLines: 0,
-      runtimeScope: parentScope,
-      secrets: secretEnv,
+  try {
+    assertBackgroundProcessCapacity();
+  } catch (error) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: error instanceof Error ? error.message : String(error),
+        },
+      ],
+      status: "error",
     };
-    backgroundProcesses.set(bashId, bgProcess);
+  }
 
-    // Resolve the routing scope now rather than on completion: by the time the
-    // shell exits the turn that launched it is gone, so the process-global
-    // agent context may already point at a different conversation.
-    const notificationScope = resolveNotificationScope(parentScope);
-
-    void runningProcess.completion.then(
-      ({ exitCode }) => {
-        bgProcess.status =
-          exitCode === 0 && !outputWriteFailed ? "completed" : "failed";
-        bgProcess.exitCode = exitCode;
-        appendToOutputFile(outputFile, `\n[exit code: ${exitCode}]\n`);
-        scrubCompletedBackgroundOutput(bgProcess);
-        notifyBackgroundCompletion({
-          bashId,
-          description,
-          outputFile,
+  const bgEnv = secretEnv ? { ...getShellEnv(), ...secretEnv } : getShellEnv();
+  const bgCommand = withStrictShellPrelude(command, bgEnv);
+  const bashId = getNextBashId();
+  const outputFile = createBackgroundOutputFile(bashId);
+  const launcher = getBackgroundLauncher(bgCommand, bgEnv, secretEnv);
+  const [executable] = launcher;
+  if (!executable) {
+    return {
+      content: [{ type: "text", text: "No shell available" }],
+      status: "error",
+    };
+  }
+  // Note the unwrapped launcher first; the sandbox wrapper (below) hides the
+  // inner shell from launcher inspection.
+  noteExpectedWorktreeForLauncher(launcher, userCwd);
+  const sandboxed = applyShellSandbox(launcher, userCwd, bgEnv);
+  let bgProcess: BackgroundProcess;
+  let outputWriteFailed = false;
+  const foregroundOutput = { stdout: "", stderr: "" };
+  const effectiveTimeout = run_in_background
+    ? timeout > 0
+      ? timeout
+      : 0
+    : Math.min(Math.max(timeout, 1), 600000);
+  const runningProcess = startShellProcess(sandboxed.launcher, {
+    cwd: userCwd,
+    env: sandboxed.env,
+    timeoutMs: effectiveTimeout,
+    sourceCommand: command,
+    signal: run_in_background ? undefined : signal,
+    captureOutput: false,
+    onOutput(text, stream) {
+      const sanitizedText = sanitizeOutput(text);
+      if (!run_in_background) {
+        foregroundOutput[stream] += text;
+        onOutput?.(text, stream);
+      }
+      appendBackgroundProcessOutput(bgProcess, stream, sanitizedText);
+      const wrote = appendToOutputFile(
+        outputFile,
+        stream === "stderr" ? `[stderr] ${sanitizedText}` : sanitizedText,
+      );
+      if (!wrote && bgProcess.status === "running") {
+        outputWriteFailed = true;
+        appendBackgroundProcessOutput(
           bgProcess,
-          scope: notificationScope,
-          status: exitCode === 0 && !outputWriteFailed ? "completed" : "failed",
-          detail: outputWriteFailed
-            ? "Output file write failed; output may be incomplete"
-            : exitCode === null
-              ? "Terminated by signal before exiting"
-              : `Exit code: ${exitCode}`,
-        });
-        scheduleBackgroundProcessCleanup(bashId);
-      },
-      (error: unknown) => {
-        const err = error as Error & { killed?: boolean };
-        const message = sanitizeOutput(
-          err.killed ? `Command timed out after ${timeout}ms` : err.message,
+          "stderr",
+          "[output file write failed; output may be incomplete]",
         );
         bgProcess.status = "failed";
-        appendBackgroundProcessOutput(bgProcess, "stderr", message);
-        appendToOutputFile(
-          outputFile,
-          err.killed
-            ? `\n[timeout after ${timeout}ms]\n`
-            : `\n[error] ${message}\n`,
-        );
-        scrubCompletedBackgroundOutput(bgProcess);
-        notifyBackgroundCompletion({
-          bashId,
-          description,
-          outputFile,
-          bgProcess,
-          scope: notificationScope,
-          status: "failed",
-          detail: err.killed ? message : `Error: ${message}`,
-        });
-        scheduleBackgroundProcessCleanup(bashId);
-      },
-    );
-    return {
-      content: [
-        {
-          type: "text",
-          text: `${recoveryNote}Command running in background with ID: ${bashId}\nOutput file: ${outputFile}`,
-        },
-      ],
-      status: "success",
-    };
-  }
+        try {
+          runningProcess.process.kill("SIGTERM");
+        } catch {
+          // Process may have already exited.
+        }
+      }
+    },
+  });
+  bgProcess = {
+    process: runningProcess.process,
+    command,
+    stdout: [],
+    stderr: [],
+    status: "running",
+    exitCode: null,
+    lastReadIndex: { stdout: 0, stderr: 0 },
+    startTime: new Date(),
+    outputFile,
+    totalStdoutLines: 0,
+    totalStderrLines: 0,
+    runtimeScope: parentScope,
+    secrets: secretEnv,
+  };
+  backgroundProcesses.set(bashId, bgProcess);
 
-  if (commandRunsForegroundSleep(command)) {
-    return {
-      content: [{ type: "text", text: FOREGROUND_SLEEP_BLOCKED_MESSAGE }],
-      status: "error",
-    };
-  }
-
-  const effectiveTimeout = Math.min(Math.max(timeout, 1), 600000);
-  try {
-    const { stdout, stderr, exitCode } = await spawnCommand(command, {
-      cwd: userCwd,
-      env: getShellEnv(),
-      timeout: effectiveTimeout,
-      signal,
-      onOutput,
-      secretEnv,
-    });
-
-    let output = stdout;
-    if (stderr) output = output ? `${output}\n${stderr}` : stderr;
-
-    // Apply character limit to prevent excessive token usage
-    const { content: truncatedOutput } = truncateByChars(
-      output || "(Command completed with no output)",
-      LIMITS.BASH_OUTPUT_CHARS,
-      "Bash",
-      { workingDirectory: userCwd, toolName: "Bash", secrets: secretEnv },
-    );
-
-    // Non-zero exit code is an error
-    if (exitCode !== 0 && exitCode !== null) {
+  // Resolve the routing scope now rather than on completion: by the time the
+  // shell exits the turn that launched it is gone, so the process-global
+  // agent context may already point at a different conversation.
+  const notificationScope = resolveNotificationScope(parentScope);
+  const settled = runningProcess.completion.then(
+    ({ exitCode }) => {
+      bgProcess.status =
+        exitCode === 0 && !outputWriteFailed ? "completed" : "failed";
+      bgProcess.exitCode = exitCode;
+      appendToOutputFile(outputFile, `\n[exit code: ${exitCode}]\n`);
+      scrubCompletedBackgroundOutput(bgProcess);
       return {
-        content: [
-          {
-            type: "text",
-            text: `${recoveryNote}Exit code: ${exitCode}\n${truncatedOutput}`,
-          },
-        ],
-        status: "error",
+        status:
+          exitCode === 0 && !outputWriteFailed
+            ? ("completed" as const)
+            : ("failed" as const),
+        detail: outputWriteFailed
+          ? "Output file write failed; output may be incomplete"
+          : exitCode === null
+            ? "Terminated by signal before exiting"
+            : `Exit code: ${exitCode}`,
+        exitCode,
+      };
+    },
+    (error: unknown) => {
+      const err = error as Error & { killed?: boolean };
+      const message = sanitizeOutput(
+        err.killed ? `Command timed out after ${timeout}ms` : err.message,
+      );
+      bgProcess.status = "failed";
+      appendBackgroundProcessOutput(bgProcess, "stderr", message);
+      appendToOutputFile(
+        outputFile,
+        err.killed
+          ? `\n[timeout after ${timeout}ms]\n`
+          : `\n[error] ${message}\n`,
+      );
+      scrubCompletedBackgroundOutput(bgProcess);
+      return {
+        status: "failed" as const,
+        detail: err.killed ? message : `Error: ${message}`,
+        error: err,
+      };
+    },
+  );
+
+  const notifyWhenSettled = () => {
+    void settled.then(({ status, detail }) => {
+      notifyBackgroundCompletion({
+        bashId,
+        description,
+        outputFile,
+        bgProcess,
+        scope: notificationScope,
+        status,
+        detail,
+      });
+      scheduleBackgroundProcessCleanup(bashId);
+    });
+  };
+
+  if (!run_in_background) {
+    const outcome = await Promise.race([
+      settled.then((result) => ({ type: "settled" as const, result })),
+      new Promise<{ type: "yield" }>((resolve) => {
+        const timer = setTimeout(
+          () => resolve({ type: "yield" }),
+          Math.max(0, foregroundYieldMs),
+        );
+        if (typeof timer === "object" && timer !== null && "unref" in timer) {
+          timer.unref();
+        }
+      }),
+    ]);
+
+    if (outcome.type === "settled") {
+      backgroundProcesses.delete(bashId);
+      rmSync(outputFile, { force: true });
+      const { result } = outcome;
+      const output = [foregroundOutput.stdout, foregroundOutput.stderr]
+        .filter(Boolean)
+        .join("\n");
+      const { content: truncatedOutput } = truncateByChars(
+        output || "(Command completed with no output)",
+        LIMITS.BASH_OUTPUT_CHARS,
+        "Bash",
+        { workingDirectory: userCwd, toolName: "Bash", secrets: secretEnv },
+      );
+      if (result.status === "failed") {
+        const isAbort =
+          signal?.aborted ||
+          ("error" in result &&
+            (result.error.name === "AbortError" ||
+              (result.error as NodeJS.ErrnoException).code === "ABORT_ERR"));
+        return {
+          content: [
+            {
+              type: "text",
+              text: isAbort
+                ? INTERRUPTED_BY_USER
+                : `${recoveryNote}${result.detail}\n${truncatedOutput}`,
+            },
+          ],
+          status: "error",
+        };
+      }
+      return {
+        content: [{ type: "text", text: `${recoveryNote}${truncatedOutput}` }],
+        status: "success",
       };
     }
 
-    return {
-      content: [{ type: "text", text: `${recoveryNote}${truncatedOutput}` }],
-      status: "success",
-    };
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException & {
-      stdout?: string;
-      stderr?: string;
-      killed?: boolean;
-      signal?: string;
-      code?: string | number;
-      name?: string;
-    };
-    const isAbort =
-      signal?.aborted ||
-      err.code === "ABORT_ERR" ||
-      err.name === "AbortError" ||
-      err.message === "The operation was aborted";
-
-    let errorMessage = "";
-    if (isAbort) {
-      errorMessage = INTERRUPTED_BY_USER;
-    } else {
-      if (err.killed && err.signal === "SIGTERM")
-        errorMessage = `Command timed out after ${effectiveTimeout}ms\n`;
-      if (err.code && typeof err.code === "number")
-        errorMessage += `Exit code: ${err.code}\n`;
-      if (err.stderr) errorMessage += err.stderr;
-      else if (err.message) errorMessage += err.message;
-      if (err.stdout) errorMessage = `${err.stdout}\n${errorMessage}`;
-    }
-
-    // Apply character limit even to error messages
-    const { content: truncatedError } = truncateByChars(
-      errorMessage.trim() || "Command failed with unknown error",
-      LIMITS.BASH_OUTPUT_CHARS,
-      "Bash",
-      { workingDirectory: userCwd, toolName: "Bash", secrets: secretEnv },
-    );
-
+    backgroundProcesses.set(bashId, bgProcess);
+    notifyWhenSettled();
     return {
       content: [
         {
           type: "text",
-          // Interrupt results must stay byte-exact (downstream code compares
-          // against INTERRUPTED_BY_USER), so skip the recovery note on abort.
-          text: isAbort ? truncatedError : `${recoveryNote}${truncatedError}`,
+          text: `${recoveryNote}Command is still running with task ID: ${bashId}\nOutput file: ${outputFile}\nYou will be notified when it completes. Do not poll unless you need intermediate output.`,
         },
       ],
-      status: "error",
+      status: "success",
     };
   }
+
+  notifyWhenSettled();
+  return {
+    content: [
+      {
+        type: "text",
+        text: `${recoveryNote}Command running in background with ID: ${bashId}\nOutput file: ${outputFile}`,
+      },
+    ],
+    status: "success",
+  };
 }
