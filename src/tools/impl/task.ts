@@ -59,6 +59,7 @@ interface TaskArgs {
   model?: string;
   agent_id?: string; // Deploy an existing agent instead of creating new
   conversation_id?: string; // Resume from an existing conversation
+  computer?: string; // Route the subagent's turn to a connected computer
   max_turns?: number; // Maximum number of agentic turns
   toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
   signal?: AbortSignal; // Injected by executeTool for interruption handling
@@ -107,6 +108,12 @@ export interface SpawnBackgroundSubagentTaskArgs {
   transcriptPath?: string;
   /** Optional exact memory scope for harness-created memory worktrees. */
   memoryScope?: SubagentMemoryScope;
+  /**
+   * Optional computer selector passed to the child as `--computer`.
+   * The child routes its turn to that connected computer and fails fast
+   * if the device is offline, ambiguous, or too old to support routing.
+   */
+  environment?: string;
   /**
    * When true, skip injecting the completion notification into the primary
    * agent's message queue and hide from SubagentGroupDisplay.
@@ -366,6 +373,7 @@ export function spawnBackgroundSubagentTask(
     onComplete,
     transcriptPath,
     memoryScope,
+    environment,
     deps,
   } = args;
   const shouldEmitCompletionNotification =
@@ -444,6 +452,7 @@ export function spawnBackgroundSubagentTask(
     resolvedParentScope?.conversationId,
     memoryScope,
     systemPromptOverride,
+    environment,
   )
     .then(async (result) => {
       await copyGitHubPullRequestTagsFn(
@@ -809,6 +818,18 @@ export async function task(args: TaskArgs): Promise<string> {
   if (!config) {
     return `Error: Invalid subagent type "${subagent_type}"`;
   }
+  if (typeof args.computer === "string" && args.computer.trim()) {
+    let environmentRouting = false;
+    try {
+      environmentRouting = getBackend().capabilities.environmentRouting;
+    } catch {
+      environmentRouting = false;
+    }
+    if (!environmentRouting) {
+      return "Error: The computer option requires a Letta Cloud backend. This backend has no connected computers; omit the computer field to run the subagent on the current machine.";
+    }
+  }
+
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;
 
@@ -851,6 +872,10 @@ export async function task(args: TaskArgs): Promise<string> {
     maxTurns: args.max_turns,
     forkedContext: config.fork,
     parentScope: resolvedParentScope,
+    environment:
+      typeof args.computer === "string" && args.computer.trim()
+        ? args.computer.trim()
+        : undefined,
   });
 
   await waitForBackgroundSubagentLink(subagentId, null, signal);

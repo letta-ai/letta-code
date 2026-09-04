@@ -45,20 +45,23 @@ export function printMcpUsage(stdout: (message: string) => void): void {
 Usage:
   letta mcp list [--agent <id>]
   letta mcp get <server> [--agent <id>]
-  letta mcp tools [server] [--agent <id>]
+  letta mcp tools [server] [--full] [--agent <id>]
+  letta mcp schema <tool-name> [--agent <id>]
   letta mcp search <query> [--mode <hybrid|vector|fts>] [--limit <n>] [--agent <id>]
   letta mcp call <tool-name> [--args '<json>' | --args-file <path|->] [--agent <id>]
 
 Commands:
   list      List MCP servers available to the agent
   get       Print one server's redacted connection configuration
-  tools     Print complete MCP tool schemas; names are accepted by call
+  tools     List tool names and descriptions; names are accepted by call
+  schema    Print one tool's complete schema
   search    Search tools available to the agent
   call      Call one exact tool name and print an MCP CallToolResult
 
 Options:
   --agent <id>       Agent ID. Defaults to LETTA_AGENT_ID or AGENT_ID
   --agent-id <id>    Alias for --agent
+  --full             Include complete schemas in tools output
   --mode <mode>      Search mode: hybrid (default), vector, or fts
   --limit <n>        Search result limit from 1 to 100 (default: 5)
   --args <json>      JSON object passed to a tool

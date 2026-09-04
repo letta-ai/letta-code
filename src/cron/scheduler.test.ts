@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   type AddTaskInput,
   addTask,
+  type CronTask,
   deleteTask,
   getTask,
   pauseTask,
@@ -17,8 +18,12 @@ import {
   getIntendedCronOccurrence,
   handleMissedOneShot,
   handleTaskPreflight,
+  startScheduler,
+  stopScheduler,
   wrapCronPrompt,
 } from "@/cron/scheduler";
+import type { ListenerTransport } from "@/websocket/listener/transport";
+import type { StartListenerOptions } from "@/websocket/listener/types";
 
 // ── Test setup ──────────────────────────────────────────────────────
 
@@ -34,11 +39,51 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stopScheduler();
   if (existsSync(TEST_DIR)) {
     rmSync(TEST_DIR, { recursive: true });
   }
   if (origHome) process.env.LETTA_HOME = origHome;
   else delete process.env.LETTA_HOME;
+});
+
+test("routes scheduler lease failures through the listener logger", () => {
+  writeFileSync(
+    path.join(TEST_DIR, "crons.json"),
+    JSON.stringify({
+      version: 1,
+      scheduler_owner: {
+        pid: process.ppid,
+        token: "held-by-another-process",
+        started_at: new Date().toISOString(),
+      },
+      tasks: [] satisfies CronTask[],
+    }),
+  );
+  const logged: string[] = [];
+  const onLog = mock((message: string) => {
+    logged.push(message);
+  });
+  const opts: StartListenerOptions = {
+    connectionId: "conn-test",
+    wsUrl: "wss://example.test/ws",
+    deviceId: "device-test",
+    connectionName: "listener-test",
+    onConnected: () => {},
+    onDisconnected: () => {},
+    onError: () => {},
+    onLog,
+  };
+
+  startScheduler({} as ListenerTransport, opts, async () => {}, 3);
+
+  expect(onLog).toHaveBeenCalledTimes(2);
+  expect(logged[0]).toContain(
+    "[Cron] Failed to claim scheduler lease after 4 attempts",
+  );
+  expect(logged[1]).toBe(
+    "[Cron] Another process may hold the lease. Restart Letta Code to retry.",
+  );
 });
 
 // ── Helper ──────────────────────────────────────────────────────────

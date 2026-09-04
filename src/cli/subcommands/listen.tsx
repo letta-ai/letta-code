@@ -58,7 +58,7 @@ type CreateListenerProcessAnchor = () => ListenerProcessAnchor;
 const activeListenerProcessAnchors = new Set<ListenerProcessAnchor>();
 
 /**
- * Interactive prompt for environment name
+ * Interactive prompt for computer name
  */
 function PromptEnvName(props: {
   onSubmit: (envName: string) => void;
@@ -67,7 +67,7 @@ function PromptEnvName(props: {
 
   return (
     <Box flexDirection="column">
-      <Text>Enter environment name (or press Enter for hostname): </Text>
+      <Text>Enter computer name (or press Enter for hostname): </Text>
       <TextInput
         value={value}
         onChange={setValue}
@@ -208,6 +208,7 @@ export const __listenSubcommandTestUtils = {
 };
 
 const LISTEN_OPTIONS = {
+  "computer-name": { type: "string" },
   "env-name": { type: "string" },
   channels: { type: "string" },
   skills: { type: "string" },
@@ -218,20 +219,18 @@ const LISTEN_OPTIONS = {
 
 function printListenUsage(): void {
   console.log(
-    "Usage: letta server [--env-name <name>] [--channels <list>] [--skills <path>] [--debug]\n",
+    "Usage: letta server [--computer-name <name>] [--channels <list>] [--skills <path>] [--debug]\n",
   );
-  console.log(
-    "Register this letta-code instance to receive messages from Letta Cloud.\n",
-  );
+  console.log("Register this computer to receive messages from Letta Cloud.\n");
   console.log("Options:");
   console.log(
-    "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)",
+    "  --computer-name <name>  Friendly name for this computer (uses hostname if not provided)",
   );
   console.log(
     "  --channels <list>  Comma-separated channel names to enable (e.g. telegram)",
   );
   console.log(
-    "  --skills <path>     Use this directory for environment-provided skills",
+    "  --skills <path>     Use this directory for computer-provided skills",
   );
   console.log(
     "  --install-channel-runtimes  Install missing runtime deps for the selected channels before startup",
@@ -247,7 +246,7 @@ function printListenUsage(): void {
   console.log(
     "  letta server                              # Uses hostname as default",
   );
-  console.log('  letta server --env-name "work-laptop"');
+  console.log('  letta server --computer-name "work-laptop"');
   console.log(
     "  letta server --channels telegram           # Enable Telegram channel",
   );
@@ -258,9 +257,7 @@ function printListenUsage(): void {
   console.log(
     "Once connected, this instance will listen for incoming messages from cloud agents.",
   );
-  console.log(
-    "Messages will be executed locally using your letta-code environment.",
-  );
+  console.log("Messages will be executed locally on this computer.");
   console.log(
     "Telegram flow: configure the bot, start the listener with --channels telegram,",
   );
@@ -289,6 +286,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   }
 
   const debugMode = !!values.debug;
+  if (debugMode) process.env.LETTA_DEBUG = "1";
   const skillsDirectory = values.skills ?? process.env.LETTA_SKILLS_DIRECTORY;
 
   // Show help
@@ -399,9 +397,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   // Determine connection name
   let connectionName: string;
 
-  if (values["env-name"]) {
+  const explicitComputerName = values["computer-name"] ?? values["env-name"];
+  if (explicitComputerName) {
     // Explicitly provided - use it and save to local project settings
-    connectionName = values["env-name"];
+    connectionName = explicitComputerName;
     settingsManager.setListenerEnvName(connectionName);
   } else {
     // Not provided - check saved local project settings
@@ -436,6 +435,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   const sessionLog = new RemoteSessionLog();
   sessionLog.init();
   console.log(`Log file: ${sessionLog.path}`);
+  const logListenerMessage = (message: string): void => {
+    sessionLog.log(message);
+    if (debugMode) console.log(`[${formatTimestamp()}] ${message}`);
+  };
 
   try {
     // Get device ID
@@ -450,7 +453,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         `Self-hosted listener registration is not available for ${startupMode.serverUrl}.`,
       );
       console.error(
-        "Start with --channels to run local channel adapters, or unset LETTA_BASE_URL to use Letta API remote environments.",
+        "Start with --channels to run local channel adapters, or unset LETTA_BASE_URL to use Letta API remote computers.",
       );
       await flushListenerTelemetryEnd("listener_self_hosted_no_channels");
       return 1;
@@ -498,10 +501,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         } catch (lockError) {
           if (lockError instanceof ManualListenerAlreadyRunningError) {
             console.error(
-              `A letta server for environment "${connectionName}" is already running on this machine (pid ${lockError.holderPid}).`,
+              `A letta server for computer "${connectionName}" is already running on this machine (pid ${lockError.holderPid}).`,
             );
             console.error(
-              "Stop that process, or choose a different logical listener with --env-name.",
+              "Stop that process, or choose a different logical listener with --computer-name.",
             );
             console.error(`Lock: ${lockError.lockPath}`);
             await flushListenerTelemetryEnd("listener_already_running");
@@ -607,9 +610,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           ? "local backend"
           : `self-hosted server ${startupMode.serverUrl}`;
       sessionLog.log(`Starting local channel listener for ${startupLabel}`);
-      sessionLog.log("Skipping environment registration");
+      sessionLog.log("Skipping computer registration");
       console.log(`Starting local channel listener for ${startupLabel}`);
-      console.log("Skipping environment registration. Press Ctrl+C to stop.\n");
+      console.log("Skipping computer registration. Press Ctrl+C to stop.\n");
 
       const { startLocalChannelListener } = await import(
         "@/websocket/listen-client"
@@ -619,6 +622,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         connectionId,
         deviceId,
         connectionName,
+        onLog: logListenerMessage,
         onWsEvent:
           process.env.LETTA_LOG_WS_EVENTS === "1"
             ? (direction, label, event) => {
@@ -767,10 +771,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log(`status: ${status}`);
             console.log(`[${formatTimestamp()}] status: ${status}`);
           },
-          onLog: (message) => {
-            sessionLog.log(message);
-            console.log(`[${formatTimestamp()}] ${message}`);
-          },
+          onLog: logListenerMessage,
           onConnected: async () => {
             sessionLog.log("Connected. Awaiting instructions.");
             await startChannelGateway();
@@ -789,7 +790,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
           onNeedsReregister: async () => {
             console.log(
-              `[${formatTimestamp()}] Environment expired, re-registering...`,
+              `[${formatTimestamp()}] Computer connection expired, re-registering...`,
             );
             try {
               const result = await reregister();
@@ -872,10 +873,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             clearRetryStatusCallback?.();
             updateStatusCallback?.(status);
           },
-          onLog: (message) => {
-            sessionLog.log(message);
-            console.log(`[${formatTimestamp()}] ${message}`);
-          },
+          onLog: logListenerMessage,
           onConnected: async () => {
             sessionLog.log("Connected. Awaiting instructions.");
             await startChannelGateway();
@@ -889,7 +887,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             updateRetryStatusCallback?.(attempt, nextRetryIn);
           },
           onNeedsReregister: async () => {
-            sessionLog.log("Environment expired, re-registering...");
+            sessionLog.log("Computer connection expired, re-registering...");
             try {
               const result = await reregister();
               await startNormalClient(

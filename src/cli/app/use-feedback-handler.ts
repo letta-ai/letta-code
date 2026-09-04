@@ -2,7 +2,10 @@
 
 import { type MutableRefObject, useCallback } from "react";
 import type { SessionStats } from "@/agent/stats";
-import { submitFeedbackMetadata } from "@/backend/api/metadata";
+import {
+  getFeedbackClientType,
+  submitFeedbackMetadata,
+} from "@/backend/api/metadata";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { chunkLog } from "@/cli/helpers/chunk-log";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
@@ -78,6 +81,8 @@ export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
             {
               message: resolvedMessage,
               feature: "letta-code",
+              submission_source: "slash_command",
+              client_type: getFeedbackClientType(),
               agent_id: agentId,
               session_id: telemetry.getSessionId(),
               run_id: lastRunIdRef.current ?? undefined,

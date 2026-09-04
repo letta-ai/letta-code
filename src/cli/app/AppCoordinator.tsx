@@ -239,7 +239,7 @@ import type {
   QueuedOverlayAction,
   StaticItem,
 } from "./types";
-import { closeMcp, useAgentMcpServers } from "./use-agent-mcp-servers";
+import { closeMcp, useMcpCleanup } from "./use-agent-mcp-servers";
 import { useApprovalFlow } from "./use-approval-flow";
 import { useBashHandlers } from "./use-bash-handlers";
 import { useConfigurationHandlers } from "./use-configuration-handlers";
@@ -1398,9 +1398,8 @@ export function App({
   const llmApiErrorRetriesRef = useRef(0);
   const quotaAutoSwapAttemptedRef = useRef(false);
   const emptyResponseRetriesRef = useRef(0);
-  // Per-turn ChatGPT plan rotation counter (max swaps per turn)
   const chatgptPlanSwapsRef = useRef(0);
-
+  const chatgptExhaustedProvidersRef = useRef(new Set<string>());
   // Retry counter for 409 "conversation busy" errors
   const conversationBusyRetriesRef = useRef(0);
 
@@ -2385,7 +2384,7 @@ export function App({
   useEffect(() => {
     buffersRef.current.agentId = agentState?.id;
   }, [agentState?.id]);
-  useAgentMcpServers(agentState?.id);
+  useMcpCleanup(agentState?.id);
   // Cache precomputed diffs from approval dialogs for tool return rendering
   // Key: toolCallId or "toolCallId:filePath" for Patch operations
   const precomputedDiffsRef = useRef<Map<string, AdvancedDiffSuccess>>(
@@ -3766,6 +3765,7 @@ export function App({
     buffersRef,
     clearApprovalToolContext,
     chatgptPlanSwapsRef,
+    chatgptExhaustedProvidersRef,
     closeTrajectorySegment,
     consumeQueuedMessages,
     queueModeRef,

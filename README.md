@@ -23,12 +23,12 @@ Letta Code can be used interactively, or to power always-on agents that work pro
 | [Message search](https://docs.letta.com/letta-code/slash-commands) | Search across all messages and agents with `/search`. Agent can also search their own conversations or the conversations of other agents |
 | [MemFS](https://docs.letta.com/letta-code/memfs) | All context (including memory blocks) is tracked via git. Sync context to a custom GitHub repository by setting `/memory-repository set git@github.com:...` |
 | [Skills](https://docs.letta.com/letta-code/skills) | Loads global skills (`~/.letta`), project-scoped skills (`.agents/skills`), and agent-scoped skills (stored in MemFS). View skills with `/skills` and create with `/skill-creator` |
-| [Subagents & Multi-agent](https://docs.letta.com/letta-code/subagents) | Call built-in subagents (general-purpose, forked, recall, history-analyzer) async or sync. Agents can call any other agent (including themselves) as subagents |
+| [Subagents & Multi-agent](https://docs.letta.com/letta-code/subagents) | Call built-in subagents (general-purpose, forked, recall, history-analyzer) in the background. Agents can call any other agent (including themselves) as subagents |
 | [Messaging Integrations](https://docs.letta.com/letta-code/channels) | Chat with the same agent from Slack, Telegram, your browser (chat.letta.com) including mobile, and through [custom channels](https://github.com/letta-ai/skills/blob/main/letta/creating-letta-code-channels/SKILL.md) |
 | [Hooks](https://docs.letta.com/letta-code/hooks) | Run custom scripts at key points of agent execution to automate workflows |
 | [Permissions](https://docs.letta.com/letta-code/permissions) | Set permission modes and customize what actions are auto-approved or auto-denied |
 | [Crons & Schedules](https://docs.letta.com/letta-code/scheduling) | Configure heartbeats and crons, and let agents work across time with self-managed schedules |
-| [Remote & Multi-Env](https://docs.letta.com/letta-code/client-server-architecture) (requires signing in with Letta) | Agents work across multiple environments. Make any machine available as a remote environment by running `letta server --env-name "..."` |
+| [Remote computers](https://docs.letta.com/platform/computers/byom) (requires signing in with Letta) | Agents work across multiple computers. Connect any machine by running `letta server --computer-name "..."` |
 | [Secrets](https://docs.letta.com/letta-code/secrets) (requires signing in with Letta) | Make secrets available as environment variables (across machines) while obfuscating their values from context |
 
 See the full list of slash commands in our [documentation](https://docs.letta.com/letta-code/slash-commands).
@@ -65,28 +65,30 @@ graph TD
 
 Run `/login` from the CLI or sign in through the desktop app to access agents in your Letta account.
 
-### Remote environments
-Agents stored in Letta Cloud can run across multiple machines. Any machine can be made into an available environment by running:
+### Remote computers
+Agents stored in Letta Cloud can run across multiple machines. Connect any machine by running:
 ```bash
 letta server
-letta server --env-name "work-laptop"
+letta server --computer-name "work-laptop"
 ```
-List discoverable environments from the CLI:
+List discoverable computers from the CLI:
 ```bash
-letta environments list --online-only
+letta computers list --online-only
 ```
-Get the current environment for routing another agent onto this same machine:
+Get the current computer connection for routing another agent onto this same machine:
 ```bash
-letta environments current
+letta computers current
 ```
-Route a headless message through a specific environment:
+Route a headless message through a specific computer:
 ```bash
-letta -p --agent <agent-id> --environment "work-laptop" "hello from that machine"
+letta -p --agent <agent-id> --computer "work-laptop" "hello from that machine"
 ```
-Use `--environment cloud` to start or reuse the target agent's cloud sandbox.
-Agent-to-agent headless messages without `--environment` keep the original
-same-environment behavior.
-See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments.
+Use `--computer cloud` to start or reuse the target agent's cloud sandbox.
+Agent-to-agent headless messages without `--computer` run on the same computer.
+See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote computers.
+
+The previous `environments`/`envs`, `--environment`/`--env`, and `--env-name`
+spellings remain available for backwards compatibility.
 
 ## Installing external skills
 

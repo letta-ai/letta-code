@@ -11,6 +11,7 @@
 import { existsSync } from "node:fs";
 import * as os from "node:os";
 import WebSocket from "ws";
+import { debugLog, debugWarn } from "@/utils/debug";
 
 const IS_BUN = typeof Bun !== "undefined";
 
@@ -290,8 +291,9 @@ export function handleTerminalSpawn(
     }
 
     if (alive) {
-      console.log(
-        `[Terminal] Reusing session (age=${Date.now() - existing.spawnedAt}ms), pid=${existing.pid}`,
+      debugLog(
+        "Terminal",
+        `Reusing session (age=${Date.now() - existing.spawnedAt}ms), pid=${existing.pid}`,
       );
       sendTerminalMessage(socket, {
         type: "terminal_spawned",
@@ -308,8 +310,9 @@ export function handleTerminalSpawn(
   killTerminal(terminal_id, connectionId);
 
   const shell = getDefaultShell();
-  console.log(
-    `[Terminal] Spawning PTY (${IS_BUN ? "bun" : "node-pty"}): shell=${shell}, cwd=${cwd}, cols=${cols}, rows=${rows}`,
+  debugLog(
+    "Terminal",
+    `Spawning PTY (${IS_BUN ? "bun" : "node-pty"}): shell=${shell}, cwd=${cwd}, cols=${cols}, rows=${rows}`,
   );
 
   try {
@@ -318,8 +321,9 @@ export function handleTerminalSpawn(
       : spawnNodePty(shell, cwd, cols, rows, terminal_id, connectionId, socket);
 
     terminals.set(terminalKey, session);
-    console.log(
-      `[Terminal] Session stored for terminal_id=${terminal_id}, pid=${session.pid}`,
+    debugLog(
+      "Terminal",
+      `Session stored for terminal_id=${terminal_id}, pid=${session.pid}`,
     );
 
     sendTerminalMessage(socket, {
@@ -328,7 +332,7 @@ export function handleTerminalSpawn(
       pid: session.pid,
     });
   } catch (error) {
-    console.error("[Terminal] Failed to spawn PTY:", error);
+    debugWarn("Terminal", "Failed to spawn PTY:", error);
     sendTerminalMessage(socket, {
       type: "terminal_exited",
       terminal_id,
@@ -367,8 +371,9 @@ export function handleTerminalKill(
 ): void {
   const session = terminals.get(getTerminalKey(connectionId, msg.terminal_id));
   if (session && Date.now() - session.spawnedAt < 2000) {
-    console.log(
-      `[Terminal] Ignoring kill for recently spawned session (age=${Date.now() - session.spawnedAt}ms)`,
+    debugLog(
+      "Terminal",
+      `Ignoring kill for recently spawned session (age=${Date.now() - session.spawnedAt}ms)`,
     );
     return;
   }
@@ -379,8 +384,9 @@ function killTerminal(terminalId: string, connectionId: string): void {
   const terminalKey = getTerminalKey(connectionId, terminalId);
   const session = terminals.get(terminalKey);
   if (session) {
-    console.log(
-      `[Terminal] killTerminal: terminalId=${terminalId}, pid=${session.pid}`,
+    debugLog(
+      "Terminal",
+      `killTerminal: terminalId=${terminalId}, pid=${session.pid}`,
     );
     session.kill();
     terminals.delete(terminalKey);

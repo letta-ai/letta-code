@@ -55,11 +55,12 @@ describe("listener message router ownership handoff", () => {
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
     const sent: unknown[] = [];
+    const onLog = mock(() => {});
     setActiveRuntime(listener);
     const handleMessage = createListenerMessageHandler({
       runtime: listener,
       socket: socket as unknown as WebSocket,
-      opts: makeListenerOptions(),
+      opts: { ...makeListenerOptions(), onLog },
       processQueuedTurn: async () => {},
       fileCommandSession: { handle: () => false },
       getParsedRuntimeScope: () => null,
@@ -110,6 +111,9 @@ describe("listener message router ownership handoff", () => {
         success: true,
       },
     ]);
+    expect(onLog).toHaveBeenCalledWith(
+      "[Listen V2] Received runtime_external_tools_update command (request_id=tools-1, updates=1, runtimes=1)",
+    );
     const prepared = await prepareToolExecutionContextForModel(
       "anthropic/claude-sonnet-4",
       {

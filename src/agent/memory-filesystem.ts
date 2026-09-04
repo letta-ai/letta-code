@@ -599,7 +599,7 @@ export async function applyMemfsFlags(
  * Whether the current server is the Letta API (or local memfs testing is enabled).
  */
 export async function isLettaCloud(): Promise<boolean> {
-  const { getServerUrl } = await import("@/backend/api/client");
+  const { getServerUrl } = await import("@/backend/api/server-url");
   const serverUrl = getServerUrl();
 
   return (

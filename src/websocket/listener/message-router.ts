@@ -10,7 +10,7 @@ import type {
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
 } from "@/types/protocol_v2";
-import { isDebugEnabled } from "@/utils/debug";
+import { debugLog, isDebugEnabled } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import {
   handleTerminalInput,
@@ -68,10 +68,10 @@ import { parseListenerReadyMessage } from "./split-stream-lifecycle";
 import {
   buildTeleportContinuationMessages,
   clearPriorReadyTeleports,
+  handleTeleportFailure,
   handleTeleportProbe,
   handleTeleportRequest,
   isRuntimeTeleportPending,
-  takeFailedTeleport,
 } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
@@ -181,6 +181,14 @@ type MessageRouterParams = {
   processIncomingMessage?: typeof handleIncomingMessage;
 };
 
+function logV2Command(opts: StartListenerOptions, message: string): void {
+  if (opts.onLog) {
+    opts.onLog(`[Listen V2] ${message}`);
+    return;
+  }
+  debugLog("Listen V2", message);
+}
+
 export function createListenerMessageHandler(
   params: MessageRouterParams,
 ): (data: WebSocket.RawData) => Promise<void> {
@@ -243,7 +251,7 @@ export function createListenerMessageHandler(
         return;
       }
 
-      console.log(`[Listen V2] Received ${summarizeV2Command(parsed)}`);
+      logV2Command(opts, `Received ${summarizeV2Command(parsed)}`);
 
       if (parsedScope) {
         subscribeListenerConnection(runtime, connectionId, parsedScope);
@@ -294,41 +302,15 @@ export function createListenerMessageHandler(
       }
 
       if (parsed.type === "teleport_failed") {
-        const pending = takeFailedTeleport({
+        handleTeleportFailure({
           listener: runtime,
-          teleportId: parsed.teleport_id,
-          agentId: parsed.runtime.agent_id,
-          conversationId: parsed.runtime.conversation_id,
+          command: parsed,
+          socket,
+          onStatusChange: opts.onStatusChange,
+          getOrCreateScopedRuntime,
+          runDetachedListenerTask,
+          processIncomingMessage,
         });
-        const approvals = pending?.continuation?.approvals;
-        if (pending && approvals && approvals.length > 0) {
-          const scopedRuntime = getOrCreateScopedRuntime(
-            runtime,
-            pending.agentId,
-            pending.conversationId,
-          );
-          runDetachedListenerTask("teleport_failed", async () => {
-            await processIncomingMessage(
-              {
-                type: "message",
-                connectionId: pending.connectionId,
-                agentId: pending.agentId,
-                conversationId: pending.conversationId,
-                messages: [
-                  {
-                    type: "approval",
-                    approvals,
-                    otid: parsed.teleport_id,
-                  },
-                ],
-              },
-              socket,
-              scopedRuntime,
-              opts.onStatusChange,
-              pending.connectionId,
-            );
-          });
-        }
         return;
       }
 
@@ -362,7 +344,7 @@ export function createListenerMessageHandler(
 
       if (parsed.type === "sync") {
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-          console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
+          logV2Command(opts, "Dropping sync: runtime mismatch or closed");
           if (parsed.request_id) {
             safeSocketSend(
               socket,
@@ -440,7 +422,7 @@ export function createListenerMessageHandler(
           );
         };
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-          console.log(`[Listen V2] Dropping input: runtime mismatch or closed`);
+          logV2Command(opts, "Dropping input: runtime mismatch or closed");
           acknowledgeInput(false, "Runtime is no longer active");
           return;
         }

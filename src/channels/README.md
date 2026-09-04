@@ -145,7 +145,7 @@ remain first-party/bundled work for now. Custom plugins can still expose custom
 ## Local backend channels
 
 Channels can run against the experimental local backend without registering a
-remote environment. In this mode the backend is in-process, so no
+remote computer. In this mode the backend is in-process, so no
 `LETTA_BASE_URL` is required.
 
 ```bash
@@ -244,6 +244,7 @@ oauth_config:
       - channels:history
       - chat:write
       - commands
+      - emoji:read
       - files:read
       - files:write
       - groups:history

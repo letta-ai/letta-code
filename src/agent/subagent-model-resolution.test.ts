@@ -339,6 +339,27 @@ describe("buildSubagentArgs", () => {
     expect(tagsValue).toBe("type:explore");
   });
 
+  test("threads the computer selector through as --computer", () => {
+    const args = buildSubagentArgs(
+      "explore",
+      baseConfig,
+      null,
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { environment: "office-mac" },
+    );
+
+    expect(args[args.indexOf("--computer") + 1]).toBe("office-mac");
+  });
+
+  test("omits --computer by default", () => {
+    const args = buildSubagentArgs("explore", baseConfig, null, "hello");
+
+    expect(args).not.toContain("--computer");
+  });
+
   test("does not tag when deploying an existing agent (fork/recall)", () => {
     const args = buildSubagentArgs(
       "fork",

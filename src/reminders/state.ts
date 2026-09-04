@@ -36,6 +36,10 @@ export interface SharedReminderState {
   hasSentSecretsInfo: boolean;
   pendingSecretsInfoRefresh: boolean;
   lastSentSecretNamesKey: string | null;
+  hasSentMcpServersInfo: boolean;
+  lastSentMcpServerNamesKey: string | null;
+  /** Last time the MCP server list was fetched for the reminder (ms epoch). */
+  lastMcpServersFetchedAtMs: number | null;
   lastNotifiedPermissionMode: PermissionMode | null;
   turnCount: number;
   pendingReflectionTrigger: boolean;
@@ -55,6 +59,9 @@ export function createSharedReminderState(): SharedReminderState {
     hasSentSecretsInfo: false,
     pendingSecretsInfoRefresh: false,
     lastSentSecretNamesKey: null,
+    hasSentMcpServersInfo: false,
+    lastSentMcpServerNamesKey: null,
+    lastMcpServersFetchedAtMs: null,
     lastNotifiedPermissionMode: null,
     turnCount: 0,
     pendingReflectionTrigger: false,
@@ -79,6 +86,8 @@ export function markPostCompactionContextRemindersPending(
   state.hasSentSessionContext = false;
   state.pendingSessionContextReason ??= "post_compaction";
   state.hasSentSecretsInfo = false;
+  state.hasSentMcpServersInfo = false;
+  state.lastMcpServersFetchedAtMs = null;
   state.lastNotifiedPermissionMode = null;
 }
 

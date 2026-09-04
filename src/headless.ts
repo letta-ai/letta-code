@@ -116,7 +116,10 @@ import {
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
-import { waitForEnvironmentAssistantMessage } from "./headless-environment-response";
+import {
+  buildEnvironmentCreateMessageBody,
+  waitForEnvironmentAssistantMessage,
+} from "./headless-environment-response";
 import {
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
@@ -142,7 +145,7 @@ import {
   emitLocalToolReturns,
 } from "./headless-tool-events";
 import { computeDiffPreviews } from "./helpers/diff-preview";
-import { closeClientMcpServers, replaceClientMcpServers } from "./mcp-runtime";
+import { closeClientMcpServers } from "./mcp-runtime";
 import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import type { ModAdapter } from "./mods/mod-adapter";
 import { getTurnStartCancel } from "./mods/turn-start-cancel";
@@ -701,9 +704,9 @@ function getEnvironmentRoutedMessagingUnsupportedReason(
   if (environment.metadata?.environmentMessageProtocol === "v2-input") {
     return null;
   }
-  return `Environment ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
+  return `Computer ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
     environment.metadata?.lettaCodeVersion ?? "unknown"
-  } and does not advertise environment-routed headless messaging support. Update that runtime or omit --environment to use same-environment messaging.`;
+  } and does not advertise computer-routed headless messaging support. Update that runtime or omit --computer to use same-computer messaging.`;
 }
 
 export async function handleHeadlessCommand(
@@ -824,7 +827,8 @@ export async function handleHeadlessCommand(
   // --new: Create a new conversation (for concurrent sessions)
   let forceNewConversation = values.new ?? false;
   const fromAgentId = values["from-agent"];
-  const explicitEnvironmentSelector = values.environment || values.env;
+  const explicitEnvironmentSelector =
+    values.computer ?? values.environment ?? values.env;
   const usesRemoteEnvironment =
     typeof explicitEnvironmentSelector === "string" &&
     explicitEnvironmentSelector.trim().length > 0;
@@ -1393,14 +1397,6 @@ export async function handleHeadlessCommand(
   markMilestone("HEADLESS_AGENT_RESOLVED");
   const publicAgentId = ephemeralFlag ? null : agent.id;
   telemetry.setCurrentAgent(publicAgentId, agent.tags);
-  if (!ephemeralFlag) {
-    await replaceClientMcpServers(
-      agent.id,
-      settingsManager.getMcpServers(agent.id),
-      { stderr: "pipe" },
-    );
-  }
-
   const isResumingAgent =
     !ephemeralFlag && !!(specifiedAgentId || (!forceNew && !fromAfFile));
   // Refresh presets before applying optional model/system-prompt overrides.
@@ -1746,7 +1742,7 @@ export async function handleHeadlessCommand(
   }
   if (usesRemoteEnvironment && isBidirectionalMode) {
     console.error(
-      "Error: remote environment routing cannot be used with --input-format stream-json",
+      "Error: remote computer routing cannot be used with --input-format stream-json",
     );
     process.exit(1);
   }
@@ -2084,8 +2080,7 @@ ${SYSTEM_REMINDER_CLOSE}
   }
 
   // Pre-load specific skills' full content (used by subagents with skills: field).
-  // Environment-routed turns run in the selected remote runtime, which injects
-  // its own local context and skills, so avoid prepending this process' context.
+  // Remote computer turns inject their own local context and skills.
   if (preLoadSkillsRaw && !usesRemoteEnvironment) {
     const { readFile: readFileAsync } = await import("node:fs/promises");
     const { skillPathById } = await buildClientSkillsPayload({
@@ -2200,26 +2195,23 @@ ${SYSTEM_REMINDER_CLOSE}
       await exitHeadless(1, "headless_environment_unsupported");
     }
     const otid = randomUUID();
-    await sendEnvironmentMessage(connectionId, {
-      agentId: agent.id,
-      conversationId,
-      messages: [
-        {
-          role: "user",
-          content: contentParts,
-          client_message_id: randomUUID(),
-          otid,
-        },
-      ],
-    });
+    await sendEnvironmentMessage(
+      connectionId,
+      buildEnvironmentCreateMessageBody({
+        agentId: agent.id,
+        conversationId,
+        content: contentParts,
+        otid,
+      }),
+    );
 
     const environmentResult = await waitForEnvironmentAssistantMessage({
       backend,
       agentId: agent.id,
       conversationId,
       otid,
+      deviceId: environment.deviceId,
     });
-    const resultText = environmentResult.text;
     const stats = sessionStats.getSnapshot();
 
     if (outputFormat === "json") {
@@ -2232,7 +2224,7 @@ ${SYSTEM_REMINDER_CLOSE}
             duration_ms: Math.round(stats.totalWallMs),
             duration_api_ms: Math.round(stats.totalApiMs),
             num_turns: 1,
-            result: resultText,
+            result: environmentResult.text,
             agent_id: publicAgentId,
             conversation_id: conversationId,
             environment: responseEnvironment,
@@ -2256,7 +2248,7 @@ ${SYSTEM_REMINDER_CLOSE}
         duration_ms: Math.round(stats.totalWallMs),
         duration_api_ms: Math.round(stats.totalApiMs),
         num_turns: 1,
-        result: resultText,
+        result: environmentResult.text,
         agent_id: publicAgentId,
         conversation_id: conversationId,
         environment: responseEnvironment,
@@ -2270,7 +2262,7 @@ ${SYSTEM_REMINDER_CLOSE}
       };
       writeWireMessage(resultEvent);
     } else {
-      await writeFinalHeadlessStdout(`${resultText}\n`);
+      await writeFinalHeadlessStdout(`${environmentResult.text}\n`);
     }
 
     await exitHeadless(0, "headless_environment_message_complete");
@@ -2324,14 +2316,13 @@ ${SYSTEM_REMINDER_CLOSE}
     currentInput = initialTurnStartEmission.input;
   }
 
-  // Track lastRunId outside the while loop so it's available in catch block
   let llmApiErrorRetries = 0;
   let emptyResponseRetries = 0;
   let conversationBusyRetries = 0;
   let chatgptPlanSwaps = 0;
+  const chatgptExhaustedProviders = new Set<string>();
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
-
   // Helper to check max turns limit using server-side step count from buffers
   const checkMaxTurns = async (): Promise<void> => {
     if (maxTurns !== undefined && buffers.usage.stepCount >= maxTurns) {
@@ -2725,6 +2716,7 @@ ${SYSTEM_REMINDER_CLOSE}
         emptyResponseRetries = 0;
         conversationBusyRetries = 0;
         chatgptPlanSwaps = 0;
+        chatgptExhaustedProviders.clear();
 
         // Emit turn_end. A mod may return { continue: "..." } to append a
         // follow-up user message and run another turn. Auto-continues re-enter
@@ -2885,13 +2877,13 @@ ${SYSTEM_REMINDER_CLOSE}
       const runErrorInfo = await fetchRunErrorInfo(lastRunId),
         detailFromRun = runErrorInfo?.detail ?? runErrorInfo?.message;
 
-      // ChatGPT plan rotation: when a chatgpt_oauth BYOK plan hits its usage
-      // limit, swap to the same model on a sibling ChatGPT plan and resend.
       if (chatgptPlanSwaps < CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN) {
         const rotation = await rotateChatGPTPlanOnQuotaLimit({
           agentId: agent.id,
+          conversationId,
           currentHandle: null,
           error: runErrorInfo ?? detailFromRun ?? latestErrorText,
+          exhaustedProviders: chatgptExhaustedProviders,
         });
         if (rotation) {
           chatgptPlanSwaps += 1;
