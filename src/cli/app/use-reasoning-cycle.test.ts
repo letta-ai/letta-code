@@ -100,9 +100,11 @@ describe("resolveReasoningCycleTierLookupHandle", () => {
     ).toBe("anthropic/claude-opus-4-8");
   });
 
-  test("uses canonical MiniMax registry handles without model settings", () => {
+  test("uses the provider type to find MiniMax BYOK tiers in the Cloud catalog", () => {
     expect(
-      resolveReasoningCycleTierLookupHandle("lc-minimax/MiniMax-M3", undefined),
+      resolveReasoningCycleTierLookupHandle("lc-minimax/MiniMax-M3", {
+        provider_type: "minimax",
+      } as unknown as AgentState["model_settings"]),
     ).toBe("minimax/MiniMax-M3");
   });
 

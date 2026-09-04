@@ -81,9 +81,6 @@ export function normalizeModelHandleForRegistry(
   if (provider === "lc-anthropic" && model.length > 0) {
     return `anthropic/${model}`;
   }
-  if (provider === "lc-minimax" && model.length > 0) {
-    return `minimax/${model}`;
-  }
   if (provider === "moonshotai" && model.length > 0) {
     return `moonshot/${model}`;
   }

@@ -79,32 +79,6 @@ describe("getModelInfo", () => {
     });
   });
 
-  test("resolves MiniMax BYOK aliases to runtime reasoning tiers", () => {
-    models.splice(
-      0,
-      models.length,
-      {
-        id: "minimax-m3-none",
-        handle: "minimax/MiniMax-M3",
-        label: "MiniMax M3",
-        description: "",
-        updateArgs: { reasoning_effort: "none", enable_reasoner: false },
-      },
-      {
-        id: "minimax-m3",
-        handle: "minimax/MiniMax-M3",
-        label: "MiniMax M3",
-        description: "",
-        updateArgs: { reasoning_effort: "high", enable_reasoner: true },
-      },
-    );
-
-    expect(getReasoningTierOptionsForHandle("lc-minimax/MiniMax-M3")).toEqual([
-      { effort: "none", modelId: "minimax-m3-none" },
-      { effort: "high", modelId: "minimax-m3" },
-    ]);
-  });
-
   test("features GPT-5.6 variants in capability order ahead of Anthropic", () => {
     const featuredIds = models
       .filter((model) => model.isFeatured)
