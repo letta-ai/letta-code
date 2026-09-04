@@ -3755,7 +3755,6 @@ export function App({
       );
     }
   }, [agentName, agentDescription, appendTaskNotificationEvents]);
-
   const processConversation = useConversationLoop({
     abortControllerRef,
     agentIdRef,
@@ -3774,6 +3773,7 @@ export function App({
     conversationBusyRetriesRef,
     conversationGenerationRef,
     conversationIdRef,
+    currentModelHandle,
     currentModelId,
     emptyResponseRetriesRef,
     executingToolCallIdsRef,

@@ -4,6 +4,7 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import { getModelInfo, type ModelReasoningEffort } from "@/agent/model";
 import {
   mapModelHandleToLlmConfigPatch,
+  normalizeModelHandleForRegistry,
   resolveModelHandleFromLlmConfig,
 } from "@/agent/model-handles";
 import { ERROR_FEEDBACK_HINT, PROVIDER_STATUS_PAGES } from "./constants";
@@ -174,6 +175,7 @@ export function getErrorHintForStopReason(
   stopReason: StopReasonType | null,
   currentModelId: string | null,
   modelEndpointType?: string | null,
+  currentModelHandle?: string | null,
 ): string {
   if (stopReason !== "llm_api_error") {
     return ERROR_FEEDBACK_HINT;
@@ -184,9 +186,24 @@ export function getErrorHintForStopReason(
   // not a provider the user explicitly selected. Don't blame a specific
   // provider in that case -- the issue may be on the proxy side.
   const isAutoModel = currentModelId?.startsWith("auto") ?? false;
+  // OpenAI-compatible endpoints can be used by other providers. Prefer the
+  // canonical model handle when available so a Kimi/Moonshot 403 does not get
+  // an unrelated OpenAI outage hint merely because its wire endpoint is OpenAI
+  // compatible. Keep the endpoint fallback for older callers that lack a handle.
+  const normalizedModelHandle =
+    normalizeModelHandleForRegistry(currentModelHandle);
+  const modelProvider = normalizedModelHandle?.split("/", 1)[0];
+  const endpointStatusInfo = modelEndpointType
+    ? PROVIDER_STATUS_PAGES[modelEndpointType]
+    : undefined;
+  const isOpenAiStatus = endpointStatusInfo?.name === "OpenAI";
+  const isOpenAiModel =
+    !modelProvider ||
+    modelProvider === "openai" ||
+    modelProvider === "openai-codex";
   const statusInfo =
-    modelEndpointType && !isAutoModel
-      ? PROVIDER_STATUS_PAGES[modelEndpointType]
+    endpointStatusInfo && !isAutoModel && (!isOpenAiStatus || isOpenAiModel)
+      ? endpointStatusInfo
       : undefined;
 
   if (statusInfo) {
