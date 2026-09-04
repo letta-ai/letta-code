@@ -119,10 +119,10 @@ export type ToolsetName =
   | "default"
   | "gemini"
   | "gemini_snake"
+  | "letta"
   | "none";
 
 export type ToolsetPreference = ToolsetName | "auto";
-
 export interface ClientToolsetConfig {
   /** Request-scoped base toolset. Omitted preserves the runtime preference. */
   base?: ToolsetPreference;

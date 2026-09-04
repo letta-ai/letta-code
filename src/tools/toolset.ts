@@ -16,6 +16,7 @@ import type { RuntimeContextSnapshot } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import { toolFilter } from "./filter";
+import { LETTA_TOOLS } from "./letta-toolset";
 import {
   ANTHROPIC_DEFAULT_TOOLS,
   clearToolsWithLock,
@@ -233,6 +234,9 @@ function getToolNamesForToolset(toolsetName: ToolsetName): ToolName[] {
       break;
     case "gemini_snake":
       tools = [...GEMINI_DEFAULT_TOOLS];
+      break;
+    case "letta":
+      tools = [...LETTA_TOOLS];
       break;
     case "none":
       tools = [];
@@ -720,6 +724,9 @@ export async function forceToolsetSwitch(
   } else if (toolsetName === "gemini_snake") {
     await loadTools("google_ai/gemini-3-pro-preview");
     modelForLoading = "google_ai/gemini-3-pro-preview";
+  } else if (toolsetName === "letta") {
+    await loadSpecificTools([...LETTA_TOOLS]);
+    modelForLoading = "anthropic/claude-sonnet-4";
   } else {
     await loadTools("anthropic/claude-sonnet-4");
     modelForLoading = "anthropic/claude-sonnet-4";
@@ -727,7 +734,9 @@ export async function forceToolsetSwitch(
 
   // Ensure base server memory tool is correct for the toolset
   const useMemoryPatch =
-    toolsetName === "codex" || toolsetName === "codex_snake";
+    toolsetName === "codex" ||
+    toolsetName === "codex_snake" ||
+    toolsetName === "letta";
   await ensureCorrectMemoryTool(agentId, modelForLoading, useMemoryPatch);
 }
 
