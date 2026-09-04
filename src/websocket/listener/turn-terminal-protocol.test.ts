@@ -103,3 +103,27 @@ test("consumer terminal errors match the plain loop error", () => {
     getConsumerLoopErrorMessage({ message: "terminated" }),
   ).toBeUndefined();
 });
+
+test("consumer terminal errors hide Cloud API shutdown metadata", () => {
+  const error = new APIError(
+    503,
+    {
+      error: "Service temporarily unavailable. Please retry your request.",
+      errorCode: "cloud_api_shutting_down",
+      admitted: false,
+      retryable: true,
+    },
+    undefined,
+    new Headers({ "Retry-After": "1" }),
+  );
+
+  const message = getConsumerLoopErrorMessage({
+    message: error.message,
+    error,
+  });
+
+  expect(message).toBe(
+    "Service temporarily unavailable. Please retry your request.",
+  );
+  expect(message).not.toContain("cloud_api_shutting_down");
+});
