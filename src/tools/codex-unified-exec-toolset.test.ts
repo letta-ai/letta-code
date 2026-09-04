@@ -61,7 +61,7 @@ describe("Codex unified exec toolset", () => {
         : execCommandDescription,
     );
     expect(TOOL_DEFINITIONS.write_stdin.description).toContain(
-      "Do not call it merely to check whether a process has finished",
+      "create a one-shot scheduled check instead of blocking or polling",
     );
   });
 });
