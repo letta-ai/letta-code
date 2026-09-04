@@ -8,11 +8,7 @@ export type StartupToolsetPreference =
   | "gemini"
   | "letta";
 
-/**
- * Letta's model-independent toolset. It keeps one preferred tool for each
- * job, except file edits where both exact replacement and patch application
- * are intentionally useful.
- */
+/** Letta's model-independent toolset with one preferred tool for each job. */
 export const LETTA_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "EnterWorktree",
@@ -29,7 +25,6 @@ export const LETTA_TOOLS: ToolName[] = [
   "Read",
   "Edit",
   "Write",
-  "ApplyPatch",
   "ViewImage",
   "UpdatePlan",
 ];
