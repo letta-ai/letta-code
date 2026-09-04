@@ -100,6 +100,14 @@ describe("resolveReasoningCycleTierLookupHandle", () => {
     ).toBe("anthropic/claude-opus-4-8");
   });
 
+  test("uses the provider type to find MiniMax BYOK tiers in the Cloud catalog", () => {
+    expect(
+      resolveReasoningCycleTierLookupHandle("lc-minimax/MiniMax-M3", {
+        provider_type: "minimax",
+      } as unknown as AgentState["model_settings"]),
+    ).toBe("minimax/MiniMax-M3");
+  });
+
   test("keeps canonical handles unchanged", () => {
     expect(
       resolveReasoningCycleTierLookupHandle("anthropic/claude-opus-4-8", {
