@@ -25,6 +25,12 @@ const toolsets: ToolsetOption[] = [
     isFeatured: true,
   },
   {
+    id: "letta",
+    label: "Letta toolset",
+    description: "Experimental unified toolset for every model",
+    isFeatured: true,
+  },
+  {
     id: "none",
     label: "None",
     description: "Remove all Letta Code tools from your agent",

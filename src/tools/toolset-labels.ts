@@ -8,6 +8,7 @@ export const TOOLSET_DISPLAY_NAMES: Record<string, string> = {
   codex_snake: "Codex (snake_case)",
   gemini: "Gemini",
   gemini_snake: "Gemini (snake_case)",
+  letta: "Letta",
   none: "None",
   auto: "Auto",
 };
