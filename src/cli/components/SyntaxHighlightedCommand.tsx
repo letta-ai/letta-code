@@ -3,6 +3,7 @@ import cLang from "@shikijs/langs/c";
 import cppLang from "@shikijs/langs/cpp";
 import csharpLang from "@shikijs/langs/csharp";
 import cssLang from "@shikijs/langs/css";
+import dartLang from "@shikijs/langs/dart";
 import diffLang from "@shikijs/langs/diff";
 import dockerLang from "@shikijs/langs/docker";
 import goLang from "@shikijs/langs/go";
@@ -57,6 +58,7 @@ function getShikiHighlighter(): ReturnType<typeof createHighlighterCoreSync> {
         cppLang,
         csharpLang,
         cssLang,
+        dartLang,
         diffLang,
         dockerLang,
         goLang,
@@ -195,6 +197,7 @@ const EXT_TO_LANG: Record<string, string> = {
   graphql: "graphql",
   gql: "graphql",
   wasm: "wasm",
+  dart: "dart",
 };
 
 /** Resolve a Shiki language name from a file path, or undefined if unknown. */
