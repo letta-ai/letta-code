@@ -401,8 +401,8 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     onOutput(text, stream) {
       const sanitizedText = sanitizeOutput(text);
       if (!run_in_background) {
-        foregroundOutput[stream] += sanitizedText;
-        onOutput?.(sanitizedText, stream);
+        foregroundOutput[stream] += text;
+        onOutput?.(text, stream);
       }
       appendBackgroundProcessOutput(bgProcess, stream, sanitizedText);
       const wrote = appendToOutputFile(
