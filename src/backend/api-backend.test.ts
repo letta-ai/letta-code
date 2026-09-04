@@ -173,6 +173,134 @@ describe("APIBackend", () => {
     expect(getBackend().capabilities.remoteMemfs).toBe(true);
   });
 
+  test("coalesces concurrent identical agent retrievals", async () => {
+    let resolveAgent: (agent: { id: string; name: string }) => void = () => {
+      throw new Error("retrieveAgent promise was not started");
+    };
+    retrieveAgentMock.mockImplementationOnce(
+      async () =>
+        new Promise((resolve) => {
+          resolveAgent = resolve;
+        }),
+    );
+    const backend = new APIBackend({
+      getClient: getClientMock as unknown as () => Promise<APIClient>,
+      forkConversation: forkConversationMock,
+    });
+
+    const first = backend.retrieveAgent("agent-1");
+    const second = backend.retrieveAgent("agent-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(1);
+
+    resolveAgent({ id: "agent-1", name: "agent" });
+    await expect(first).resolves.toMatchObject({ id: "agent-1" });
+    await expect(second).resolves.toMatchObject({ id: "agent-1" });
+  });
+
+  test("does not store API client construction in the in-flight set", async () => {
+    const client = {
+      agents: { retrieve: retrieveAgentMock },
+    } as unknown as APIClient;
+    const resolveClients: Array<(client: APIClient) => void> = [];
+    const getClient = mock(
+      async () =>
+        new Promise<APIClient>((resolve) => {
+          resolveClients.push(resolve);
+        }),
+    );
+    const backend = new APIBackend({
+      getClient,
+      forkConversation: forkConversationMock,
+    });
+
+    const first = backend.retrieveAgent("agent-1");
+    const second = backend.retrieveAgent("agent-1");
+    await Promise.resolve();
+    expect(getClient).toHaveBeenCalledTimes(2);
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(0);
+
+    for (const resolveClient of resolveClients) resolveClient(client);
+    await Promise.all([first, second]);
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("removes successful agent retrievals from the in-flight set", async () => {
+    let resolveAgent: (agent: { id: string }) => void = () => {
+      throw new Error("retrieveAgent promise was not started");
+    };
+    retrieveAgentMock
+      .mockImplementationOnce(
+        async () =>
+          new Promise((resolve) => {
+            resolveAgent = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({ id: "agent-1" });
+    const backend = new APIBackend({
+      getClient: getClientMock as unknown as () => Promise<APIClient>,
+      forkConversation: forkConversationMock,
+    });
+
+    const first = backend.retrieveAgent("agent-1");
+    const second = backend.retrieveAgent("agent-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(1);
+
+    resolveAgent({ id: "agent-1" });
+    await Promise.all([first, second]);
+    await expect(backend.retrieveAgent("agent-1")).resolves.toMatchObject({
+      id: "agent-1",
+    });
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not coalesce options-bearing agent retrievals", async () => {
+    const backend = new APIBackend({
+      getClient: getClientMock as unknown as () => Promise<APIClient>,
+      forkConversation: forkConversationMock,
+    });
+
+    await Promise.all([
+      backend.retrieveAgent("agent-1"),
+      backend.retrieveAgent("agent-1", { include: ["agent.tags"] }),
+      backend.retrieveAgent("agent-1", { include: ["agent.tags"] }),
+      backend.retrieveAgent("agent-2"),
+    ]);
+
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(4);
+    expect(retrieveAgentMock).toHaveBeenNthCalledWith(1, "agent-1", undefined);
+    expect(retrieveAgentMock).toHaveBeenNthCalledWith(2, "agent-1", {
+      include: ["agent.tags"],
+    });
+    expect(retrieveAgentMock).toHaveBeenNthCalledWith(3, "agent-1", {
+      include: ["agent.tags"],
+    });
+    expect(retrieveAgentMock).toHaveBeenNthCalledWith(4, "agent-2", undefined);
+  });
+
+  test("removes failed agent retrievals from the in-flight set", async () => {
+    retrieveAgentMock
+      .mockRejectedValueOnce(new Error("network cooked"))
+      .mockResolvedValueOnce({ id: "agent-1" });
+    const backend = new APIBackend({
+      getClient: getClientMock as unknown as () => Promise<APIClient>,
+      forkConversation: forkConversationMock,
+    });
+
+    const first = backend.retrieveAgent("agent-1");
+    const second = backend.retrieveAgent("agent-1");
+    await expect(Promise.allSettled([first, second])).resolves.toEqual([
+      { status: "rejected", reason: expect.any(Error) },
+      { status: "rejected", reason: expect.any(Error) },
+    ]);
+
+    await expect(backend.retrieveAgent("agent-1")).resolves.toMatchObject({
+      id: "agent-1",
+    });
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(2);
+  });
+
   test("delegates core conversation and run operations to the Letta API", async () => {
     const backend = new APIBackend({
       getClient: getClientMock as unknown as () => Promise<APIClient>,

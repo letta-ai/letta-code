@@ -340,6 +340,10 @@ export class APIBackend implements Backend {
 
   private readonly getApiClientOverride?: GetAPIClient;
   private readonly forkConversationOverride?: ForkConversation;
+  private readonly retrieveAgentInflightByKey = new Map<
+    string,
+    Promise<Awaited<ReturnType<APIClient["agents"]["retrieve"]>>>
+  >();
 
   constructor(deps: APIBackendDeps = {}) {
     this.getApiClientOverride = deps.getClient;
@@ -356,7 +360,28 @@ export class APIBackend implements Backend {
 
   async retrieveAgent(agentId: string, options?: AgentRetrieveOptions) {
     const client = await this.getClient();
-    return client.agents.retrieve(agentId, options);
+    if (options !== undefined) {
+      return client.agents.retrieve(agentId, options);
+    }
+
+    const inflight = this.retrieveAgentInflightByKey.get(agentId);
+    if (inflight) return inflight;
+
+    const request = client.agents.retrieve(agentId, undefined);
+    this.retrieveAgentInflightByKey.set(agentId, request);
+    request.then(
+      () => {
+        if (this.retrieveAgentInflightByKey.get(agentId) === request) {
+          this.retrieveAgentInflightByKey.delete(agentId);
+        }
+      },
+      () => {
+        if (this.retrieveAgentInflightByKey.get(agentId) === request) {
+          this.retrieveAgentInflightByKey.delete(agentId);
+        }
+      },
+    );
+    return request;
   }
 
   async listAgentSecrets(agentId: string): Promise<AgentSecret[]> {
