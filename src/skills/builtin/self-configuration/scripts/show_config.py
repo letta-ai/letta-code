@@ -13,6 +13,8 @@ Usage:
     python3 show_config.py --section runtime --json
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
