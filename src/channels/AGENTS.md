@@ -29,14 +29,19 @@ payload builders, message-action adapters with injectable transport, and
 debounce. They must stay free of node builtins and adapter imports so a browser
 or webhook host can run them.
 
+Do not add a published `./channels/<id>` subpath until Cloud (or another
+webhook host) needs those pure modules. Local-only channels such as Feishu /
+Lark keep `ingress.ts` / `outbound.ts` in-tree without a package export.
+
 Transport stays deployment-specific: the local adapters own Socket Mode
-(Slack) and grammY long polling (Telegram); Cloud supplies its own webhook
-receivers and API clients. Do not bundle an adapter and its transport into a
-shared module, and do not let a host reimplement its own copy of message,
-mention, reaction, or bot-filtering policy — separate ingress algorithms have
-already caused Cloud to silently drop events that local channels handled. When
-you change ingress or outbound policy in a subpath module, the change is a
-published API change consumed by Cloud; check the subpath exports.
+(Slack), grammY long polling (Telegram), and Feishu / Lark persistent
+connection; Cloud supplies its own webhook receivers and API clients. Do not
+bundle an adapter and its transport into a shared module, and do not let a
+host reimplement its own copy of message, mention, reaction, or bot-filtering
+policy — separate ingress algorithms have already caused Cloud to silently
+drop events that local channels handled. When you change ingress or outbound
+policy in a subpath module, the change is a published API change consumed by
+Cloud; check the subpath exports.
 
 ## Adapters are orchestration entrypoints
 

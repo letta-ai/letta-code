@@ -275,8 +275,11 @@ export function buildMessageChannelDescriptionFromDiscovery(
   const signalCapabilities = discovery.activeChannels.includes("signal")
     ? '\n\nOn Signal, this tool also supports action="react" with emoji + messageId and action="upload-file" with media. Replies are sent as the linked Signal account through signal-cli-rest-api.'
     : "";
+  const feishuCapabilities = discovery.activeChannels.includes("feishu")
+    ? "\n\nOn Feishu / Lark, this tool sends plain text. Replies stay in the current chat or topic automatically. Pairing and allowlists use Feishu open_id values (ou_...)."
+    : "";
 
-  return `${description}${scopedReplyContract}${slackThreadGuidance}${telegramTopicGuidance}${slackCapabilityGuidance}${slackWorkAcknowledgement}${slackAttachmentDownload}${telegramCapabilities}${discordCapabilities}${whatsappCapabilities}${signalCapabilities}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
+  return `${description}${scopedReplyContract}${slackThreadGuidance}${telegramTopicGuidance}${slackCapabilityGuidance}${slackWorkAcknowledgement}${slackAttachmentDownload}${telegramCapabilities}${discordCapabilities}${whatsappCapabilities}${signalCapabilities}${feishuCapabilities}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
 }
 
 export function buildMessageChannelToolFromDiscovery(params: {
