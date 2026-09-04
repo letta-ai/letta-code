@@ -14,7 +14,7 @@ export const LETTA_TOOLS: ToolName[] = [
   "EnterWorktree",
   "ExitWorktree",
   "SetWorkingDirectory",
-  "memory_apply_patch",
+  "memory",
   "Task",
   "Monitor",
   "TaskOutput",
