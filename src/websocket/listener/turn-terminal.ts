@@ -1,3 +1,4 @@
+import { createTerminalFailure } from "@/agent/terminal-failure";
 import type { StopReasonType } from "@/types/protocol_v2";
 import { TO_SUBSCRIBERS } from "./connection";
 import {
@@ -20,12 +21,22 @@ export function finishListenerTurn(
     conversationId: string;
     turnId?: string;
     error?: string;
+    failureSource?: unknown;
+    clientMessageIds?: string[];
   },
 ): TurnFinishTransition {
   const transition = runtime.turnLifecycle.finish(lease, options.stopReason);
   if (!transition.finished) {
     return transition;
   }
+  runtime.lastTerminalFailure = options.error
+    ? createTerminalFailure({
+        stage: "agent_turn",
+        message: options.error,
+        details: options.failureSource,
+        clientMessageIds: options.clientMessageIds,
+      })
+    : null;
 
   // Explicit abort projects the interrupted state when it moves the lease to
   // cancelling. Only server-originated cancellation reaches finish from active.

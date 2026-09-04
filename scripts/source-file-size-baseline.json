@@ -21,7 +21,7 @@
   "src/cli/mods/local-mod-loader.test.ts": 1043,
   "src/cli/reflection-transcript.test.ts": 1084,
   "src/cli/subcommands/skills.ts": 1264,
-  "src/headless.ts": 4986,
+  "src/headless.ts": 4979,
   "src/hooks/integration.test.ts": 1147,
   "src/index.ts": 2773,
   "src/mods/learning-harness.ts": 2434,
@@ -45,5 +45,5 @@
   "src/websocket/listener/lifecycle.ts": 1048,
   "src/websocket/listener/protocol-inbound.ts": 2207,
   "src/websocket/listener/protocol-outbound.ts": 1044,
-  "src/websocket/listener/turn.ts": 1058
+  "src/websocket/listener/turn.ts": 1055
 }

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { TerminalFailureError } from "@/agent/terminal-failure";
 import type { AgentRuntimeStatusSnapshot } from "@/backend/api/agents";
 import type { EnvironmentConnection } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
@@ -542,6 +543,52 @@ describe("runtime-status wait mode", () => {
     userMessage("msg-user", "otid-1", "run-1", 10),
     toolMessage("msg-tool", "run-1", 11),
   ];
+
+  test("surfaces a correlated terminal listener failure before an input message persists", async () => {
+    const failure = {
+      stage: "agent_turn",
+      code: "not-enough-credits",
+      message: "Your account does not have credits for this model.",
+      http_status: 402,
+      retryable: false,
+      client_message_ids: ["client-message-1"],
+    };
+    const backend = {
+      async retrieveRun() {
+        throw new Error("should not retrieve a run");
+      },
+      async listConversationMessages() {
+        return [];
+      },
+    };
+
+    let caught: unknown;
+    try {
+      await waitForEnvironmentAssistantMessage({
+        backend: backend as never,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        otid: "otid-1",
+        clientMessageId: "client-message-1",
+        deps: {
+          getAgentRuntimeStatus: async () => {
+            const snapshot = runtimeSnapshot("conv-1", "IDLE");
+            const [status] = snapshot.statuses;
+            if (!status) throw new Error("missing test status");
+            return {
+              ...snapshot,
+              statuses: [{ ...status, failure }],
+            };
+          },
+        },
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(TerminalFailureError);
+    expect((caught as TerminalFailureError).failure).toEqual(failure);
+  });
 
   test("a non-IDLE record is progress: waits past inactivity with no new messages and no run polling", async () => {
     const clock = makeClock();

@@ -20,6 +20,7 @@ import type {
 import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ToolReturnMessage as LettaToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
+import type { TerminalFailure } from "./terminal-failure";
 
 // Re-export letta-client types that consumers may need
 export type {
@@ -335,6 +336,8 @@ export interface ResultMessage extends MessageEnvelope {
    * Uses StopReasonType from letta-client (e.g., 'error', 'max_steps', 'llm_api_error').
    */
   stop_reason?: StopReasonType;
+  /** Safe structured failure details for automation consumers. */
+  failure?: TerminalFailure;
 }
 
 // ═══════════════════════════════════════════════════════════════

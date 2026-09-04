@@ -112,6 +112,25 @@ describe("loop state executing tool call ids", () => {
     expect(loopStatus.status).toBe("WAITING_ON_INPUT");
     expect(loopStatus.executing_tool_call_ids).toEqual([]);
   });
+
+  test("carries the last terminal failure until the next turn starts", () => {
+    const runtime = createScopedRuntime();
+    runtime.lastTerminalFailure = {
+      stage: "agent_turn",
+      code: "not-enough-credits",
+      message: "No credits remain.",
+      http_status: 402,
+      retryable: false,
+      client_message_ids: ["client-message-1"],
+    };
+
+    expect(
+      buildLoopStatus(runtime.listener, {
+        agent_id: "agent-1",
+        conversation_id: "conv-a",
+      }).failure,
+    ).toEqual(runtime.lastTerminalFailure);
+  });
 });
 
 describe("emitToolExecutionAbortedEvents", () => {

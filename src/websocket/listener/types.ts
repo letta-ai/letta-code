@@ -35,6 +35,7 @@ import type {
   ServiceCommandRequest,
   ServiceCommandResponse,
 } from "@/types/service-protocol";
+import type { TerminalFailure } from "@/types/terminal-failure";
 import type { ListenerTransport } from "./transport";
 import type { TurnLifecycle } from "./turn-lifecycle";
 
@@ -218,8 +219,7 @@ export type ConversationRuntime = {
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
   readonly lastStopReason: StopReasonType | null;
-  lastTerminalLoopErrorMessage: string | null;
-  lastTerminalLoopErrorRunId: string | null;
+  lastTerminalFailure: TerminalFailure | null;
   readonly isProcessing: boolean;
   readonly activeWorkingDirectory: string | null;
   expectedWorktreePath: string | null;

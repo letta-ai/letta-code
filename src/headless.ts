@@ -71,12 +71,7 @@ import {
   type ConversationMessageStreamBody,
   getBackend,
 } from "./backend";
-import {
-  type EnvironmentConnection,
-  resolveAgentSandboxConnectionId,
-  resolveEnvironmentConnectionId,
-  sendEnvironmentMessage,
-} from "./backend/api/environments";
+import type { EnvironmentConnection } from "./backend/api/environments";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
@@ -117,8 +112,15 @@ import {
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import {
-  buildEnvironmentCreateMessageBody,
-  waitForEnvironmentAssistantMessage,
+  buildEnvironmentFailureOutput,
+  buildEnvironmentResponseMetadata,
+  type ReplyEnvironmentMetadata,
+} from "./headless-environment-output";
+import {
+  getEnvironmentRoutedMessagingUnsupportedReason,
+  isCloudEnvironmentSelector,
+  resolveHeadlessEnvironmentRouting,
+  sendAndWaitForEnvironmentAssistantMessage,
 } from "./headless-environment-response";
 import {
   clearHeadlessClientToolRules,
@@ -646,38 +648,6 @@ async function writeFinalHeadlessStdout(text: string): Promise<void> {
   });
 }
 
-type ReplyEnvironmentMetadata =
-  | {
-      source: "same-environment";
-    }
-  | {
-      source: "explicit" | "cloud-sandbox";
-      input: string;
-      id: string;
-      connection_id: string;
-      device_id: string;
-      name: string;
-    };
-
-function buildEnvironmentResponseMetadata(params: {
-  source: Extract<
-    ReplyEnvironmentMetadata,
-    { source: "explicit" | "cloud-sandbox" }
-  >["source"];
-  input: string;
-  connectionId: string;
-  environment: EnvironmentConnection;
-}): ReplyEnvironmentMetadata {
-  return {
-    source: params.source,
-    input: params.input,
-    id: params.environment.id,
-    connection_id: params.connectionId,
-    device_id: params.environment.deviceId,
-    name: params.environment.connectionName,
-  };
-}
-
 function formatAgentReplyMetadata(params: {
   agentId: string;
   conversationId: string;
@@ -688,25 +658,6 @@ function formatAgentReplyMetadata(params: {
     conversation_id: params.conversationId,
     ...(params.environment ? { environment: params.environment } : {}),
   });
-}
-
-function isCloudEnvironmentSelector(
-  selector: string | boolean | undefined,
-): boolean {
-  if (typeof selector !== "string") return false;
-  const normalized = selector.trim().toLowerCase();
-  return normalized === "cloud" || normalized === "cloud-sandbox";
-}
-
-function getEnvironmentRoutedMessagingUnsupportedReason(
-  environment: EnvironmentConnection,
-): string | null {
-  if (environment.metadata?.environmentMessageProtocol === "v2-input") {
-    return null;
-  }
-  return `Computer ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
-    environment.metadata?.lettaCodeVersion ?? "unknown"
-  } and does not advertise computer-routed headless messaging support. Update that runtime or omit --computer to use same-computer messaging.`;
 }
 
 export async function handleHeadlessCommand(
@@ -1873,6 +1824,35 @@ export async function handleHeadlessCommand(
     }
     return await flushAndExit(code);
   };
+  const exitWithEnvironmentFailure = async (params: {
+    error: unknown;
+    stage:
+      | "sandbox_start"
+      | "environment_connect"
+      | "environment_dispatch"
+      | "environment_turn";
+    environment?: ReplyEnvironmentMetadata;
+  }): Promise<never> => {
+    const stats = sessionStats.getSnapshot();
+    const output = buildEnvironmentFailureOutput({
+      ...params,
+      agentId: publicAgentId,
+      conversationId,
+      sessionId,
+      durationMs: stats.totalWallMs,
+      durationApiMs: stats.totalApiMs,
+    });
+    if (outputFormat === "json") {
+      await writeFinalHeadlessStdout(
+        `${JSON.stringify(output.json, null, 2)}\n`,
+      );
+    } else if (outputFormat === "stream-json") {
+      await writeWireMessageAsync(output.stream);
+    } else {
+      console.error(`Error: ${output.failure.message}`);
+    }
+    return await exitHeadless(1, `headless_${output.failure.stage}_failed`);
+  };
 
   // Output init event for stream-json format
   if (outputFormat === "stream-json") {
@@ -2126,9 +2106,24 @@ ${SYSTEM_REMINDER_CLOSE}
   if (usesRemoteEnvironment) {
     const environmentSelector = String(explicitEnvironmentSelector);
     const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
-    const environmentRouting = useCloudSandbox
-      ? await resolveAgentSandboxConnectionId(agent.id, { conversationId })
-      : await resolveEnvironmentConnectionId(environmentSelector);
+    let environmentRouting: {
+      connectionId: string;
+      environment: EnvironmentConnection;
+    };
+    let environmentResult: { text: string; stopReason: StopReasonType | null };
+    try {
+      environmentRouting = await resolveHeadlessEnvironmentRouting({
+        selector: environmentSelector,
+        useCloudSandbox,
+        agentId: agent.id,
+        conversationId,
+      });
+    } catch (error) {
+      return await exitWithEnvironmentFailure({
+        error,
+        stage: useCloudSandbox ? "sandbox_start" : "environment_connect",
+      });
+    }
     const { connectionId, environment } = environmentRouting;
     const responseEnvironment = buildEnvironmentResponseMetadata({
       source: useCloudSandbox ? "cloud-sandbox" : "explicit",
@@ -2194,24 +2189,22 @@ ${SYSTEM_REMINDER_CLOSE}
       }
       await exitHeadless(1, "headless_environment_unsupported");
     }
-    const otid = randomUUID();
-    await sendEnvironmentMessage(
-      connectionId,
-      buildEnvironmentCreateMessageBody({
+    try {
+      environmentResult = await sendAndWaitForEnvironmentAssistantMessage({
+        backend,
+        connectionId,
+        deviceId: environment.deviceId,
         agentId: agent.id,
         conversationId,
         content: contentParts,
-        otid,
-      }),
-    );
-
-    const environmentResult = await waitForEnvironmentAssistantMessage({
-      backend,
-      agentId: agent.id,
-      conversationId,
-      otid,
-      deviceId: environment.deviceId,
-    });
+      });
+    } catch (error) {
+      return await exitWithEnvironmentFailure({
+        error,
+        stage: "environment_turn",
+        environment: responseEnvironment,
+      });
+    }
     const stats = sessionStats.getSnapshot();
 
     if (outputFormat === "json") {

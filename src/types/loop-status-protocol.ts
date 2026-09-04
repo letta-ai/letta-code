@@ -1,3 +1,5 @@
+import type { TerminalFailure } from "./terminal-failure";
+
 export type LoopStatus =
   | "SENDING_API_REQUEST"
   | "WAITING_FOR_API_RESPONSE"
@@ -22,4 +24,6 @@ export interface LoopState {
    * events, which are unrecoverable if a frame is lost.
    */
   executing_tool_call_ids: string[];
+  /** Last terminal failure, cleared when the next turn starts. */
+  failure?: TerminalFailure;
 }
