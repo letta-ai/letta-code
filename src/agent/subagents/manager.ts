@@ -248,7 +248,10 @@ export function buildSubagentArgs(
   if (isDeployingExisting) {
     // Deploy existing agent/conversation
     if (existingConversationId) {
-      // conversation_id is sufficient (headless derives agent from it)
+      // "default" is agent-scoped; conv-* IDs identify their owner directly.
+      if (existingConversationId === "default" && existingAgentId) {
+        args.push("--agent", existingAgentId);
+      }
       args.push("--conv", existingConversationId);
     } else if (existingAgentId) {
       // agent_id only - use --new to create a new conversation for thread safety
