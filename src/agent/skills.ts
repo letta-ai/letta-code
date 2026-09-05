@@ -156,6 +156,7 @@ export function isUserInvocableSkill(skill: Skill): boolean {
 const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set([
   "image-generation",
   "managing-shared-memory",
+  "sharing-assets",
 ]);
 
 export function isSkillAvailableForAgent(
