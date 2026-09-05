@@ -1,6 +1,15 @@
-import { cpSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { readdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getMemoryGitStatus, isGitRepo, pullMemory } from "@/agent/memory-git";
@@ -119,6 +128,86 @@ function resolveBackupPath(agentId: string, from: string): string {
     return from;
   }
   return join(getAgentRoot(agentId), from);
+}
+
+function pathContains(parent: string, child: string): boolean {
+  const pathFromParent = relative(parent, child);
+  return (
+    pathFromParent === "" ||
+    (pathFromParent !== ".." &&
+      !pathFromParent.startsWith(`..${sep}`) &&
+      !isAbsolute(pathFromParent))
+  );
+}
+
+function restoreMemoryDirectory(
+  sourcePath: string,
+  memoryRoot: string,
+): { cleanupWarning?: string } {
+  const source = realpathSync(sourcePath);
+  const target = existsSync(memoryRoot)
+    ? realpathSync(memoryRoot)
+    : resolve(memoryRoot);
+  if (pathContains(source, target) || pathContains(target, source)) {
+    throw new Error(
+      "Restore source overlaps active memory. Choose a separate backup directory.",
+    );
+  }
+
+  const transactionRoot = mkdtempSync(
+    join(dirname(memoryRoot), ".memory-restore-"),
+  );
+  const candidate = join(transactionRoot, "candidate");
+  const rollback = join(transactionRoot, "rollback");
+  let currentMoved = false;
+
+  try {
+    cpSync(source, candidate, { recursive: true });
+    if (!statSync(candidate).isDirectory()) {
+      throw new Error("Restore candidate is not a directory.");
+    }
+
+    if (existsSync(memoryRoot)) {
+      renameSync(memoryRoot, rollback);
+      currentMoved = true;
+    }
+
+    try {
+      renameSync(candidate, memoryRoot);
+      if (!statSync(memoryRoot).isDirectory()) {
+        throw new Error("Restored memory is not a directory.");
+      }
+    } catch (activationError) {
+      if (currentMoved) {
+        if (existsSync(memoryRoot)) {
+          rmSync(memoryRoot, { recursive: true, force: true });
+        }
+        try {
+          renameSync(rollback, memoryRoot);
+          currentMoved = false;
+        } catch (rollbackError) {
+          throw new Error(
+            `Memory restore failed: ${String(activationError)}. Rollback also failed: ${String(rollbackError)}. Previous memory remains at ${rollback}.`,
+          );
+        }
+      }
+      throw activationError;
+    }
+  } catch (error) {
+    if (!currentMoved) {
+      rmSync(transactionRoot, { recursive: true, force: true });
+    }
+    throw error;
+  }
+
+  try {
+    rmSync(transactionRoot, { recursive: true, force: true });
+    return {};
+  } catch (error) {
+    return {
+      cleanupWarning: `Restored memory, but could not remove the temporary rollback at ${rollback}: ${String(error)}`,
+    };
+  }
 }
 
 export async function runMemorySubcommand(argv: string[]): Promise<number> {
@@ -261,9 +350,11 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
         return 1;
       }
       const root = getMemoryRoot(agentId);
-      rmSync(root, { recursive: true, force: true });
-      cpSync(backupPath, root, { recursive: true });
+      const result = restoreMemoryDirectory(backupPath, root);
       console.log(JSON.stringify({ restoredFrom: backupPath }, null, 2));
+      if (result.cleanupWarning) {
+        console.error(`Warning: ${result.cleanupWarning}`);
+      }
       return 0;
     }
 
