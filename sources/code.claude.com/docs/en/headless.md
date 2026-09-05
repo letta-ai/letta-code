@@ -64,9 +64,13 @@ In bare mode Claude has access to the Bash, file read, and file edit tools. Pass
 
 ### Background tasks at exit
 
-If Claude starts a [background Bash task](/docs/en/tools-reference#bash-tool-behavior) during a `claude -p` run, for example a dev server or a watch build, that shell is terminated about five seconds after Claude has returned its final result and stdin has closed. The grace period lets a task that finishes right after the result still deliver its output. Before v2.1.163, a never-exiting background process would hold the `claude -p` invocation open indefinitely.
+If Claude starts a [background Bash task](/docs/en/tools-reference#bash-tool-behavior) during a `claude -p` run, for example a dev server or a watch build, that shell is terminated about five seconds after Claude has returned its final result and stdin has closed. The grace period lets a task that finishes right after the result still deliver its output.
 
-Background [subagents](/docs/en/sub-agents) and workflows are exempt from the five-second grace because their result is part of the final output, so `claude -p` waits for them to complete. From v2.1.182, that wait is capped at ten minutes of continuous idle waiting by default, so a stuck background agent can't hold the process open indefinitely. Adjust the cap with [`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`](/docs/en/env-vars), or set it to `0` to wait without a limit.
+If Claude starts a background [subagent](/docs/en/sub-agents) or workflow, `claude -p` instead stays open until that work completes, because its result is part of the final output.
+
+By default the wait ends after 10 minutes of continuous idle waiting, so a stuck subagent or workflow can't hold the process open indefinitely. At that point Claude Code stops whatever is still running and drops its partial result. To change the limit, set [`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`](/docs/en/env-vars), or set it to `0` to wait without one.
+
+If Claude starts a [Monitor](/docs/en/tools-reference#monitor-tool) watch during a `claude -p` run, Claude Code waits for the watch until it times out or the ten-minute cap ends the wait, whichever comes first. While it waits, Claude keeps responding to what the watch reports. By default, a watch times out five minutes after Claude starts it.
 
 ### Stop a run with SIGTERM
 

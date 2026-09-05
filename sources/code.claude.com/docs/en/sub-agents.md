@@ -275,7 +275,7 @@ This working-directory check covers the whole repository containing the director
 For Bash commands, Claude Code also checks the command itself in two ways:
 
 * It blocks a command that redirects git into the main checkout.
-* It refuses a command whose shape it can't verify stays inside the worktree. This refusal applies even to a command that runs no git.
+* It refuses a command when it can't verify from the command text that any git the command runs stays inside the worktree, for example when the command name is computed at runtime.
 
 The redirect vectors and the shape rules are listed under [How Claude Code enforces isolation](/docs/en/worktrees#how-claude-code-enforces-isolation). PowerShell commands get only the working-directory check.
 

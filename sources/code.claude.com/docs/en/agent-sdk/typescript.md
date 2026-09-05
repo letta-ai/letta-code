@@ -451,6 +451,7 @@ Configuration object for the `query()` function.
 | `pathToClaudeCodeExecutable`      | `string`                                                                                                             | Auto-resolved from bundled native binary    | Path to Claude Code executable. Only needed if optional dependencies were skipped during install or your platform isn't in the supported set                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `permissionMode`                  | [`PermissionMode`](#permissionmode)                                                                                  | `'default'`                                 | Permission mode for the session                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `permissionPromptToolName`        | `string`                                                                                                             | `undefined`                                 | MCP tool name for permission prompts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `permissionPrompts`               | `'host' \| 'none'`                                                                                                   | `'host'`                                    | Who answers permission prompts: `'host'` routes them to your [`canUseTool`](#canusetool) callback or the `permissionPromptToolName` tool, and `'none'` [denies the calls that would have prompted](/docs/en/agent-sdk/permissions#how-permissions-are-evaluated). Requires Claude Code v2.1.259 or later                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `persistSession`                  | `boolean`                                                                                                            | `true`                                      | When `false`, disables session persistence to disk. Sessions cannot be resumed later                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `planModeInstructions`            | `string`                                                                                                             | `undefined`                                 | Custom workflow instructions for plan mode. When `permissionMode` is `'plan'`, this string replaces the default plan-mode workflow body. The CLI still wraps it with the read-only enforcement preamble and the ExitPlanMode protocol footer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `plugins`                         | [`SdkPluginConfig`](#sdkpluginconfig)`[]`                                                                            | `[]`                                        | Load custom plugins from local paths. See [Plugins](/docs/en/agent-sdk/plugins) for details                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -1183,6 +1184,7 @@ type SDKAssistantMessage = {
   timestamp?: string;
   context_usage?: SDKContextUsage;
   user_message_uuid?: string;
+  user_message_uuids?: string[];
 };
 ```
 
@@ -1192,7 +1194,7 @@ The `message` field is a [`BetaMessage`](https://platform.claude.com/docs/en/api
 
 `aborted` is `true` when an interrupt or abort truncated the assistant message before the stream completed: the message has no `stop_reason` and the content may end mid-word. The field is absent on normally completed messages. It requires Agent SDK v0.3.214 or later.
 
-Claude Code sets `user_message_uuid` on the turn's first assistant message, under the conditions in [`user_message_uuid`](#user_message_uuid).
+Claude Code sets `user_message_uuid` and `user_message_uuids` on the turn's first assistant message, under the conditions in [`user_message_uuid`](#user_message_uuid).
 
 `timestamp` is the ISO 8601 time when the message's content finished generating on the process that produced it. The value comes from that machine's clock, so use it for display only and don't order messages by it. One API turn can produce several assistant messages that share a `message.id`, each with its own `timestamp`. When the field is absent, fall back to the time you received the message.
 
@@ -1265,7 +1267,12 @@ type SDKResultMessage =
       ttft_ms?: number;
       ttft_stream_ms?: number;
       user_message_uuid?: string;
+      user_message_uuids?: string[];
       request_sent_wall_ms?: number;
+      first_content_frame_ms?: number;
+      first_stream_post_ms?: number;
+      first_stream_post_ack_ms?: number;
+      first_stream_post_wall_ms?: number;
       total_cost_usd: number;
       usage: NonNullableUsage;
       modelUsage: { [modelName: string]: ModelUsage };
@@ -1299,6 +1306,7 @@ type SDKResultMessage =
       queued_turn_count?: number;
       errors: string[];
       user_message_uuid?: string;
+      user_message_uuids?: string[];
       terminal_reason?: TerminalReason;
       fast_mode_state?: FastModeState;
       fast_mode_disabled_reason?: FastModeDisabledReason;
@@ -1312,7 +1320,10 @@ Several fields on the result carry diagnostic detail beyond `subtype`:
 * `ttft_ms`: time to first token in milliseconds, measured when the first complete assistant message arrives. Present on the success arm only.
 * `ttft_stream_ms`: time in milliseconds until the first `message_start` stream event, when the response stream opens. Lower than `ttft_ms`; the gap between the two is time spent streaming the first message. Present on the success arm only.
 * `user_message_uuid`: the `uuid` of the message you sent that started this turn. See [`user_message_uuid`](#user_message_uuid) for which results carry it.
+* `user_message_uuids`: the `uuid`s of every message you sent that Claude Code answered in this turn. See [`user_message_uuids`](#user_message_uuids).
 * `request_sent_wall_ms`: epoch milliseconds at which Claude Code dispatched the API request, for joins against server-side timestamps. Present on the success arm only, together with `user_message_uuid`, when `is_error` is false.
+* `first_content_frame_ms`: time in milliseconds until the first `content_block_start` or `content_block_delta` stream event, counting thinking blocks as content. Present on the success arm only, when `is_error` is false. Requires Agent SDK v0.3.260 or later.
+* `first_stream_post_ms`, `first_stream_post_ack_ms`, `first_stream_post_wall_ms`: timings for uploading the turn's first stream event. Claude Code records them only in sessions it streams to claude.ai, such as [cloud sessions](/docs/en/claude-code-on-the-web), and the results `query()` yields don't carry them. Requires Agent SDK v0.3.260 or later.
 * `usage`: main agent loop only. Excludes subagent and auxiliary model calls, and is per-turn in streaming-input sessions. Prefer `modelUsage` for token/cost accounting.
 * `modelUsage`: per-model totals for every model call made through the query pipeline during this `query()` call, including the main loop, subagents, and internal calls such as compaction and Workflow agents. Helper calls outside that pipeline, such as the permission classifier and token-counting requests, are excluded. In streaming-input sessions the totals are cumulative across turns, so read the latest result rather than summing across results. See [Track costs in streaming input mode](/docs/en/agent-sdk/cost-tracking#track-costs-in-streaming-input-mode) for resets and [Recover totals after a session crash](/docs/en/agent-sdk/cost-tracking#recover-totals-after-a-session-crash) for zeroed results.
 * `total_cost_usd`: cumulative estimated cost in USD for this `query()` call, covering the same calls as `modelUsage` and reset at the same points. It is an estimate, not a billing statement. See [Track cost and usage](/docs/en/agent-sdk/cost-tracking) for accuracy caveats.
@@ -1346,17 +1357,30 @@ When a `PreToolUse` hook returns `permissionDecision: "defer"`, the result has `
 
 #### `user_message_uuid`
 
-The `uuid` of the [`SDKUserMessage`](#sdkusermessage) that started the turn, echoed so you can match Claude Code's reply to the message you sent. Claude Code echoes it only if you set `uuid` on that message. The field is optional on `SDKUserMessage`, and a string prompt passed to `query()` carries none. When you set it, Claude Code echoes it on two kinds of frame:
+The `uuid` of the [`SDKUserMessage`](#sdkusermessage) that started the turn, echoed so you can match Claude Code's reply to the message you sent. Claude Code echoes it only if you set `uuid` on that message. The field is optional on `SDKUserMessage`, and a string prompt passed to `query()` carries none.
 
-* **The result**: on the success arm with `is_error` false, together with `request_sent_wall_ms`, which requires Agent SDK v0.3.216 or later. On an error result that answers a message you sent, Claude Code echoes the field alone, which requires Agent SDK v0.3.246 or later.
-* **The turn's first reply**: the first [assistant message](#sdkassistantmessage), or with `includePartialMessages` the first [stream event](#sdkpartialassistantmessage) whose `event.type` isn't `ping`, so you can bind the reply before the result arrives. When a turn streams nothing, Claude Code sets it on the first assistant message instead. One frame per turn carries it. Requires Agent SDK v0.3.246 or later.
+When you send several messages close together, Claude Code can merge them into one turn. The field then carries only the last message's `uuid`. To match the reply to any of the merged messages, use [`user_message_uuids`](#user_message_uuids).
+
+When you set `uuid`, Claude Code echoes it on three kinds of frame:
+
+* **The result**: on the success arm with `is_error` false, together with `request_sent_wall_ms`, which requires Agent SDK v0.3.216 or later. Claude Code also echoes it on an error result that answers a message you sent, which requires Agent SDK v0.3.246 or later.
+* **The turn's first reply**: the first [assistant message](#sdkassistantmessage), or with `includePartialMessages` the first [stream event](#sdkpartialassistantmessage) whose `event.type` isn't `ping`, so you can bind the reply before the result arrives. When a turn streams nothing, Claude Code sets it on the first assistant message instead. One reply frame per turn carries it. Requires Agent SDK v0.3.246 or later.
+* **Every [`thinking_tokens`](#sdkthinkingtokensmessage) frame of the turn**: so you can attribute thinking progress to the message you sent without waiting for the turn's first reply. Requires Agent SDK v0.3.260 or later.
 
 Claude Code omits the field in these cases:
 
 * Later assistant messages and stream events of the same turn
 * Subagent frames
 * Synthetic turns, such as scheduled ones
-* Results with no single triggering message, such as the zeroed result after a crashed worker process
+* Results that answer no message you sent, such as the zeroed result after a crashed worker process
+
+#### `user_message_uuids`
+
+The `uuid`s of every message you sent that Claude Code answered in this turn. When you send several messages close together, Claude Code can merge them into one turn, and `user_message_uuid` then names only the last of them. To match the reply to any of the merged messages, look for that message's `uuid` anywhere in this list. Requires Agent SDK v0.3.259 or later.
+
+Claude Code sets the list together with `user_message_uuid` on the turn's first reply and on the result. For the full set of frames that carry `user_message_uuid`, and the version each requires, see [`user_message_uuid`](#user_message_uuid). The list always contains `user_message_uuid` and holds at most 64 entries. A message you send while the turn is running that Claude Code picks up between tool calls appears only in the result's list.
+
+When a first reply or result carries `user_message_uuid` without the list, it came from an earlier Claude Code version, so fall back to the single field.
 
 #### `queued_turn_count`
 
@@ -1427,10 +1451,11 @@ type SDKPartialAssistantMessage = {
   session_id: string;
   ttft_ms?: number; // Time to first token in ms, present only on message_start events
   user_message_uuid?: string; // Present on at most one stream event per turn
+  user_message_uuids?: string[];
 };
 ```
 
-Claude Code sets `user_message_uuid` on one stream event per turn, under the conditions in [`user_message_uuid`](#user_message_uuid).
+Claude Code sets `user_message_uuid` and `user_message_uuids` on one stream event per turn, under the conditions in [`user_message_uuid`](#user_message_uuid).
 
 ### `SDKCompactBoundaryMessage`
 
@@ -1500,9 +1525,10 @@ type SDKPluginInstallMessage = {
 
 Stream event emitted when the permission system denies a tool call without an interactive prompt. Use it to render the denial in your UI as it happens, rather than only observing the `is_error` tool result that follows. Which denials it reports depends on how the run handles permission prompts:
 
-* **With a [`canUseTool`](#canusetool) callback**: permission prompts go to your callback, and this event reports the denials Claude Code decides on its own without calling it.
+* **With a [`canUseTool`](#canusetool) callback** and the default [`permissionPrompts: 'host'`](#options): permission prompts go to your callback, and this event reports the denials Claude Code decides on its own without calling it.
 * **With neither**: a bare `-p` run, or `query()` that sets neither `canUseTool` nor `permissionPromptToolName`, denies any tool call that would have prompted, and this event reports those denials as well as the ones Claude Code decides on its own. Before v2.1.223, Claude Code didn't emit this event in runs without a callback.
-* **With an MCP prompt tool**, set with `permissionPromptToolName` or the [`--permission-prompt-tool`](/docs/en/cli-reference#cli-flags) flag: Claude Code doesn't emit this event at all, not even for the rule denials it decides on its own.
+* **With an MCP prompt tool**, set with `permissionPromptToolName` or the [`--permission-prompt-tool`](/docs/en/cli-reference#cli-flags) flag, and the default `permissionPrompts: 'host'`: Claude Code doesn't emit this event at all, not even for the rule denials it decides on its own.
+* **With [`permissionPrompts: 'none'`](#options)**: Claude Code denies the calls that would have prompted, even when `canUseTool` or an MCP prompt tool is also set, and this event reports those denials as well as the ones Claude Code decides on its own. Requires Claude Code v2.1.259 or later.
 
 In every configuration, this event skips any denial decided on the `PreToolUse` hook path, whether the hook denied the call itself or a deny rule overrode the hook's allow or ask decision. The event is also best-effort: occasionally Claude Code records a denial without emitting this event, so `permission_denials` on the [result message](#sdkresultmessage) is the authoritative record.
 
@@ -4936,6 +4962,7 @@ type SDKThinkingTokensMessage = {
   subtype: "thinking_tokens";
   estimated_tokens: number;
   estimated_tokens_delta: number;
+  user_message_uuid?: string;
   uuid: UUID;
   session_id: string;
 };
