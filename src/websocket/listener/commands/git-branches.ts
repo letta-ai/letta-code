@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type WebSocket from "ws";
-import { getGitContext } from "@/cli/helpers/git-context";
 import { getBootWorkingDirectory } from "@/websocket/listener/cwd";
+import { deviceGitContextCache } from "@/websocket/listener/device-git-context";
 import {
   isCheckoutBranchCommand,
   isSearchBranchesCommand,
@@ -109,7 +109,9 @@ export function handleGitBranchCommand(
           timeout: 10000,
         });
 
-        const gitCtx = getGitContext(cwd);
+        const gitCtx = await deviceGitContextCache.refresh(cwd, {
+          force: true,
+        });
 
         safeSocketSend(
           socket,

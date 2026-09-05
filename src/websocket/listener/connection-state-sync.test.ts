@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { openListenerConnection } from "./connection";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+} from "./connection";
+import { replaySubscribedConnectionState } from "./connection-state-sync";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
   createRuntime,
@@ -63,6 +67,57 @@ test("an unsubscribed app-server connection receives no existing runtime state",
     stopRuntime(runtime, true);
     setActiveRuntime(null);
   }
+});
+
+test("waits for asynchronous Git status before emitting the state sync", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const transport = new MockTransport();
+  const connectionId = "cloud-relay";
+  const options: StartListenerOptions = {
+    connectionId,
+    wsUrl: "local://cloud-relay",
+    deviceId: "test-device",
+    connectionName: "cloud-relay",
+    onConnected: () => {},
+    onDisconnected: () => {},
+    onError: () => {},
+  };
+  openListenerConnection({
+    runtime: listener,
+    connectionId,
+    writer: transport,
+    options,
+  });
+  markListenerConnectionInitialized(listener, connectionId);
+
+  let releaseGit!: () => void;
+  const gitReady = new Promise<void>((resolve) => {
+    releaseGit = resolve;
+  });
+  const refreshGitContext = async (): Promise<void> => {
+    await gitReady;
+  };
+
+  const replay = replaySubscribedConnectionState(
+    listener,
+    transport,
+    runtime,
+    { agent_id: "agent-1", conversation_id: "conv-1" },
+    { forceDeviceStatus: true, refreshGitContext },
+  );
+  await Promise.resolve();
+  expect(transport.sent).toEqual([]);
+
+  releaseGit();
+  await replay;
+
+  expect(transport.sent.map((payload) => JSON.parse(payload).type)).toEqual([
+    "update_device_status",
+    "update_loop_status",
+    "update_queue",
+    "update_subagent_state",
+  ]);
 });
 
 test("keeps attached App Server connections from bypassing the startup barrier", async () => {
