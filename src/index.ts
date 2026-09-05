@@ -78,6 +78,7 @@ import {
 } from "./cli/subcommands/router";
 import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import { applyStartupPermissionMode } from "./permissions/startup";
+import { assertSupportedBunRuntime } from "./runtime-version";
 import {
   type Settings,
   settingsManager,
@@ -90,9 +91,7 @@ import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
 import { startOrphanDetection } from "./utils/orphan-detection";
 import { markMilestone } from "./utils/timing";
 
-// Stable empty array constants to prevent new references on every render
-// These are used as fallbacks when resumeData is null, avoiding the React
-// anti-pattern of creating new [] on every render which triggers useEffect re-runs
+// Stable fallbacks avoid creating new arrays that retrigger effects on every render.
 const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
 const EMPTY_MESSAGE_ARRAY: Message[] = [];
 
@@ -2770,4 +2769,5 @@ async function main(): Promise<void> {
   );
 }
 
+assertSupportedBunRuntime();
 main();
