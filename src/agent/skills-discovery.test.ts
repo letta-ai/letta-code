@@ -8,7 +8,31 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { discoverSkills, getBundledSkills } from "@/agent/skills";
+import {
+  discoverSkills,
+  getBundledSkills,
+  isSkillAvailableForAgent,
+} from "@/agent/skills";
+
+test("discovers sharing-assets with Cloud-only availability and delivery guidance", async () => {
+  const skills = await getBundledSkills();
+  const skill = skills.find((candidate) => candidate.id === "sharing-assets");
+  if (!skill) throw new Error("sharing-assets bundled skill was not found");
+
+  expect(skill.description).toContain("images and videos");
+  expect(skill.description).toContain("logged in to Letta Cloud");
+  expect(isSkillAvailableForAgent(skill, "agent-123")).toBe(true);
+  expect(isSkillAvailableForAgent(skill, "agent-local-123")).toBe(false);
+
+  const content = readFileSync(skill.path, "utf8");
+  expect(content).toContain(
+    "/root/.letta/cloud-skills/demonstrating-your-work/scripts/publish-artifact.sh",
+  );
+  expect(content).toContain("without viewer login");
+  expect(content).toContain("30 days");
+  expect(content).toContain("CONVERSATION_ID=");
+  expect(content).toContain("![Video description]");
+});
 
 test("scopes the memory filesystem skill to repository operations", async () => {
   const skills = await getBundledSkills();
