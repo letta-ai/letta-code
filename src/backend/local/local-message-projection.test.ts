@@ -30,7 +30,7 @@ describe("projectLocalMessageToStoredMessages", () => {
     const message = assistantMessage([
       {
         type: "thinking",
-        thinking: "First summary",
+        thinking: "First summary\n\n",
         thinkingSignature: "signature-1",
       },
       {
@@ -57,6 +57,25 @@ describe("projectLocalMessageToStoredMessages", () => {
     expect(message.content).toEqual([
       expect.objectContaining({ thinkingSignature: "signature-1" }),
       expect.objectContaining({ thinkingSignature: "signature-2" }),
+    ]);
+  });
+
+  test("preserves token boundaries across adjacent thinking chunks", () => {
+    const projected = projectLocalMessageToStoredMessages(
+      assistantMessage([
+        { type: "thinking", thinking: "ост" },
+        { type: "thinking", thinking: "орожно" },
+      ]),
+      "agent-1",
+      "conversation-1",
+      "2026-07-12T00:00:00.000Z",
+    );
+
+    expect(projected).toEqual([
+      expect.objectContaining({
+        message_type: "reasoning_message",
+        reasoning: "осторожно",
+      }),
     ]);
   });
 
