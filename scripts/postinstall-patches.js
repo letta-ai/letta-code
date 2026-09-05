@@ -16,6 +16,20 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = dirname(__dirname);
 const require = createRequire(import.meta.url);
+const packageJson = JSON.parse(
+  readFileSync(join(pkgRoot, "package.json"), "utf-8"),
+);
+const minimumBunVersion = packageJson.engines.bun.replace(/^>=/, "");
+
+function isBunVersionSupported(version) {
+  const current = version.split(".").map(Number);
+  const minimum = minimumBunVersion.split(".").map(Number);
+  for (let index = 0; index < minimum.length; index++) {
+    if ((current[index] ?? 0) > (minimum[index] ?? 0)) return true;
+    if ((current[index] ?? 0) < (minimum[index] ?? 0)) return false;
+  }
+  return true;
+}
 
 async function copyToResolved(srcRel, targetSpecifier) {
   const src = join(pkgRoot, srcRel);
@@ -100,7 +114,10 @@ await copyToResolved(
   "ink/build/hooks/use-input.js",
 );
 await copyToResolved("vendor/ink/build/devtools.js", "ink/build/devtools.js");
-await copyToResolved("vendor/ink/build/log-update.js", "ink/build/log-update.js");
+await copyToResolved(
+  "vendor/ink/build/log-update.js",
+  "ink/build/log-update.js",
+);
 await copyToResolved("vendor/ink/build/wrap-text.js", "ink/build/wrap-text.js");
 
 // ink-text-input (optional vendor with externalCursorOffset support)
@@ -111,24 +128,30 @@ await copyToResolved(
 
 console.log("[patch] Ink runtime patched");
 
-// On Unix with Bun available, use polyglot shebang to prefer Bun runtime.
+// On Unix with a supported Bun available, use a polyglot shebang to prefer it.
 // This enables Bun.secrets for secure keychain storage instead of fallback.
-// Windows always uses #!/usr/bin/env node (polyglot shebang breaks npm wrappers).
+// Windows and installs with an older Bun keep the Node shebang.
 if (process.platform !== "win32") {
   try {
-    execSync("bun --version", { stdio: "ignore" });
-    const lettaPath = join(pkgRoot, "letta.js");
-    if (existsSync(lettaPath)) {
-      let content = readFileSync(lettaPath, "utf-8");
-      if (content.startsWith("#!/usr/bin/env node")) {
-        content = content.replace(
-          "#!/usr/bin/env node",
-          `#!/bin/sh
+    const bunVersion = execSync("bun --version", { encoding: "utf-8" }).trim();
+    if (isBunVersionSupported(bunVersion)) {
+      const lettaPath = join(pkgRoot, "letta.js");
+      if (existsSync(lettaPath)) {
+        let content = readFileSync(lettaPath, "utf-8");
+        if (content.startsWith("#!/usr/bin/env node")) {
+          content = content.replace(
+            "#!/usr/bin/env node",
+            `#!/bin/sh
 ":" //#; exec /usr/bin/env sh -c 'command -v bun >/dev/null && exec bun "$0" "$@" || exec node "$0" "$@"' "$0" "$@"`,
-        );
-        writeFileSync(lettaPath, content);
-        console.log("[patch] Configured letta to prefer Bun runtime");
+          );
+          writeFileSync(lettaPath, content);
+          console.log("[patch] Configured letta to prefer Bun runtime");
+        }
       }
+    } else {
+      console.log(
+        `[patch] Bun ${bunVersion} is below ${minimumBunVersion}; keeping Node runtime`,
+      );
     }
   } catch {
     // Bun not available, keep node shebang
