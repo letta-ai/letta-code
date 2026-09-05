@@ -17,6 +17,7 @@ import {
   resolveConversationId,
   sendJson,
   sendOpenAiError,
+  startOpenAiSseHeartbeat,
 } from "@/websocket/app-server-openai-common";
 import type { ToolCallEvent } from "@/websocket/app-server-openai-tools";
 import {
@@ -684,8 +685,10 @@ export async function handleResponses(
   const createdAt = Math.floor(Date.now() / 1000);
   let sequenceNumber = 0;
   let clientClosed = false;
+  let stopHeartbeat = () => {};
   response.on("close", () => {
     clientClosed = true;
+    stopHeartbeat();
   });
   const emit = streaming
     ? (event: Record<string, unknown>) => {
@@ -701,6 +704,11 @@ export async function handleResponses(
       "cache-control": "no-cache",
       connection: "keep-alive",
     });
+    stopHeartbeat = startOpenAiSseHeartbeat(
+      response,
+      () => clientClosed,
+      options.sseHeartbeatIntervalMs,
+    );
     emit?.({
       type: "response.created",
       response: makeResponse(
@@ -744,6 +752,7 @@ export async function handleResponses(
       error: "failed to run agent turn",
     };
   }
+  stopHeartbeat();
 
   // Test seams may return a completed outcome without invoking callbacks.
   if (builder.output.length === 0) {
