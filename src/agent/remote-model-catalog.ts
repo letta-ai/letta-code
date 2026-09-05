@@ -34,6 +34,7 @@ let lastRefreshAt = 0;
 let activeCatalogSource: string | null = null;
 let sourceGeneration = 0;
 let persistedCacheSource: string | null = null;
+let activeRuntimeRefreshToken: symbol | null = null;
 let inflight: {
   source: string;
   promise: Promise<boolean>;
@@ -340,6 +341,8 @@ async function refreshRuntimeModelCatalog(
   source: string,
   options?: { force?: boolean },
 ): Promise<boolean> {
+  const requestToken = Symbol("runtime-model-catalog-refresh");
+  activeRuntimeRefreshToken = requestToken;
   const sourceChanged = activeCatalogSource !== source;
   activateCatalogSource(source);
   if (sourceChanged) clearAvailableModelsCache();
@@ -347,6 +350,12 @@ async function refreshRuntimeModelCatalog(
     const available = await getAvailableModelHandles(
       options?.force ? { forceRefresh: true } : undefined,
     );
+    if (
+      activeRuntimeRefreshToken !== requestToken ||
+      activeCatalogSource !== source
+    ) {
+      return false;
+    }
     return applyCatalogModels(toRuntimeCatalogModels(available.models), {
       requireManagedDefault: false,
     });
@@ -481,6 +490,7 @@ export function __testResetRemoteModelCatalog(): void {
   lastRefreshAt = 0;
   inflight = null;
   activeCatalogSource = null;
+  activeRuntimeRefreshToken = null;
   sourceGeneration += 1;
   persistedCacheSource = null;
   models.splice(0, models.length);
