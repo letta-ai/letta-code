@@ -14,8 +14,10 @@ import { markIncompleteToolsAsCancelled } from "@/cli/helpers/accumulator";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { releaseReflectionLaunch } from "@/cli/helpers/reflection-launcher";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
+import { settleTuiInterruptQueueGuard } from "@/cli/helpers/tui-queue-wake";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import type { ApprovalContext } from "@/permissions/analyzer";
+import type { QueueRuntime } from "@/queue/queue-runtime";
 
 import { EAGER_CANCEL, INTERRUPT_MESSAGE } from "./constants";
 import { extractErrorMeta } from "./errors";
@@ -57,10 +59,12 @@ type InterruptHandlerContext = {
   setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
   setPendingApprovals: Dispatch<SetStateAction<ApprovalRequest[]>>;
   setRestoreQueueOnCancel: Dispatch<SetStateAction<boolean>>;
+  setDequeueEpoch: Dispatch<SetStateAction<number>>;
   setStreaming: (value: boolean) => void;
   streaming: boolean;
   toolAbortControllerRef: MutableRefObject<AbortController | null>;
   toolResultsInFlightRef: MutableRefObject<boolean>;
+  tuiQueueRef: MutableRefObject<QueueRuntime | null>;
   userCancelledRef: MutableRefObject<boolean>;
   waitingForQueueCancelRef: MutableRefObject<boolean>;
 };
@@ -111,10 +115,12 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     setIsExecutingTool,
     setPendingApprovals,
     setRestoreQueueOnCancel,
+    setDequeueEpoch,
     setStreaming,
     streaming,
     toolAbortControllerRef,
     toolResultsInFlightRef,
+    tuiQueueRef,
     userCancelledRef,
     waitingForQueueCancelRef,
   } = ctx;
@@ -217,8 +223,14 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // Delay flag reset to ensure React has flushed state updates before dequeue can fire.
       // Use setTimeout(50) instead of setTimeout(0) - the longer delay ensures React's
       // batched state updates have been fully processed before we allow the dequeue effect.
+      // Clearing the ref alone does not re-run the dequeue effect; bump the epoch so a
+      // queued Monitor notification can start once cancellation has settled.
       setTimeout(() => {
-        userCancelledRef.current = false;
+        settleTuiInterruptQueueGuard({
+          userCancelledRef,
+          queueLength: tuiQueueRef.current?.length ?? 0,
+          bumpDequeueEpoch: () => setDequeueEpoch((e) => e + 1),
+        });
       }, 50);
 
       return;
@@ -345,8 +357,14 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // Use setTimeout(50) instead of setTimeout(0) to ensure React has fully processed
       // the streaming=false state before we allow the dequeue effect to start a new conversation.
       // This prevents the "Maximum update depth exceeded" infinite render loop.
+      // Clearing userCancelledRef is not a React state update, so also bump dequeueEpoch
+      // when work is queued (listener cancelling → idle then scheduleQueuePump).
       setTimeout(() => {
-        userCancelledRef.current = false;
+        settleTuiInterruptQueueGuard({
+          userCancelledRef,
+          queueLength: tuiQueueRef.current?.length ?? 0,
+          bumpDequeueEpoch: () => setDequeueEpoch((e) => e + 1),
+        });
         setInterruptRequested(false);
       }, 50);
 
@@ -410,7 +428,9 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     setIsExecutingTool,
     setPendingApprovals,
     setRestoreQueueOnCancel,
+    setDequeueEpoch,
     toolResultsInFlightRef,
+    tuiQueueRef,
     userCancelledRef,
   ]);
 

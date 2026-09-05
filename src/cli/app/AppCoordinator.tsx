@@ -1670,12 +1670,10 @@ export function App({
     },
     [currentModelHandle, currentToolsetPreference],
   );
-  // Non-null only when the previous turn was explicitly interrupted by the user.
-  // Used to gate recovery alert injection to true user-interrupt retries.
+  // Non-null only for true user-interrupt retries (recovery alert injection).
   const pendingInterruptRecoveryConversationIdRef = useRef<string | null>(null);
 
-  // Epoch counter to force dequeue effect re-run when refs change but state doesn't
-  // Incremented when userCancelledRef is reset while messages are queued
+  // Forces dequeue effect re-run when refs change (including post-Esc cancel reset).
   const [dequeueEpoch, setDequeueEpoch] = useState(0);
   // Strict lock to ensure dequeue submit path is at-most-once while onSubmit is in flight.
   const dequeueInFlightRef = useRef(false);
@@ -4034,10 +4032,12 @@ export function App({
     setIsExecutingTool,
     setPendingApprovals,
     setRestoreQueueOnCancel,
+    setDequeueEpoch,
     setStreaming,
     streaming,
     toolAbortControllerRef,
     toolResultsInFlightRef,
+    tuiQueueRef,
     userCancelledRef,
     waitingForQueueCancelRef,
   });
