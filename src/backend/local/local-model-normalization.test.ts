@@ -87,6 +87,29 @@ describe("local model normalization", () => {
     }
   });
 
+  test("preserves and repairs prefixed mod handles before the provider loads", () => {
+    const handle = "chatgpt-oss/gpt-5.6-sol";
+
+    expect(
+      normalizeLocalModelHandle(handle, {
+        provider_type: "chatgpt-oss",
+      }),
+    ).toBe(handle);
+    expect(
+      normalizeLocalModelHandle(`chatgpt-oss/${handle}`, {
+        provider_type: "chatgpt-oss",
+      }),
+    ).toBe(handle);
+  });
+
+  test("still canonicalizes prefixed built-in provider types", () => {
+    expect(
+      normalizeLocalModelHandle("chatgpt_oauth/gpt-5.5", {
+        provider_type: "chatgpt_oauth",
+      }),
+    ).toBe("chatgpt-plus-pro/gpt-5.5");
+  });
+
   test("preserves handles owned by registered provider mods", () => {
     registerPiProvider("custom-provider", {
       baseUrl: "http://localhost:8000/v1",
@@ -109,6 +132,12 @@ describe("local model normalization", () => {
       normalizeLocalModelHandle("custom-provider/custom-model", {
         provider_type: "openai",
       }),
+    ).toBe("custom-provider/custom-model");
+    expect(
+      normalizeLocalModelHandle(
+        "custom-provider/custom-provider/custom-model",
+        { provider_type: "custom-provider" },
+      ),
     ).toBe("custom-provider/custom-model");
   });
 
