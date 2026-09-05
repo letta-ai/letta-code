@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
+import type { Agent } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { basename, extname, join } from "node:path";
 import { getChannelDir } from "@/channels/config";
 import type { ChannelMessageAttachment } from "@/channels/types";
+import { resolveTelegramProxyAgent } from "./bot-config";
 import type { TelegramLikeMessage } from "./message-shapes";
 
 export {
@@ -46,6 +49,11 @@ type TelegramFileLookup = {
     getFile(fileId: string): Promise<{ file_path?: string }>;
   };
 };
+
+export type TelegramFileFetch = (
+  url: string,
+  init?: { agent?: Agent; signal?: AbortSignal },
+) => Promise<Response>;
 
 export function normalizeTelegramMimeType(
   mimeType?: string,
@@ -420,18 +428,64 @@ async function saveTelegramAttachment(params: {
   return filePath;
 }
 
-async function fetchTelegramFile(
+export async function fetchTelegramFile(
   url: string,
   timeoutMs: number,
+  fetchImpl: TelegramFileFetch = requestTelegramFile,
 ): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await fetch(url, { signal: controller.signal });
+    const agent = resolveTelegramProxyAgent(url);
+    return await fetchImpl(url, {
+      signal: controller.signal,
+      ...(agent ? { agent } : {}),
+    });
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function requestTelegramFile(
+  url: string,
+  init: { agent?: Agent; signal?: AbortSignal } = {},
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const request = httpsRequest(
+      url,
+      { agent: init.agent, signal: init.signal },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer | string) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        response.on("error", reject);
+        response.on("end", () => {
+          const headers = new Headers();
+          for (const [name, value] of Object.entries(response.headers)) {
+            if (Array.isArray(value)) {
+              for (const item of value) {
+                headers.append(name, item);
+              }
+            } else if (value !== undefined) {
+              headers.append(name, String(value));
+            }
+          }
+
+          resolve(
+            new Response(Buffer.concat(chunks), {
+              status: response.statusCode ?? 500,
+              statusText: response.statusMessage,
+              headers,
+            }),
+          );
+        });
+      },
+    );
+    request.on("error", reject);
+    request.end();
+  });
 }
 
 async function downloadTelegramAttachment(params: {
@@ -440,6 +494,7 @@ async function downloadTelegramAttachment(params: {
   bot: TelegramFileLookup;
   candidate: TelegramAttachmentCandidate;
   transcribeVoice?: boolean;
+  fileFetch?: TelegramFileFetch;
 }): Promise<ChannelMessageAttachment | null> {
   const { candidate } = params;
 
@@ -465,6 +520,7 @@ async function downloadTelegramAttachment(params: {
   const response = await fetchTelegramFile(
     buildTelegramFileUrl(params.token, remotePath),
     TELEGRAM_DOWNLOAD_TIMEOUT_MS,
+    params.fileFetch,
   );
   if (!response.ok) {
     console.warn(
@@ -564,6 +620,7 @@ export async function resolveTelegramInboundAttachments(params: {
   bot: TelegramFileLookup;
   messages: TelegramLikeMessage[];
   transcribeVoice?: boolean;
+  fileFetch?: TelegramFileFetch;
 }): Promise<ChannelMessageAttachment[]> {
   const deduped = new Map<string, TelegramAttachmentCandidate>();
 
@@ -585,6 +642,7 @@ export async function resolveTelegramInboundAttachments(params: {
         bot: params.bot,
         candidate,
         transcribeVoice: params.transcribeVoice,
+        fileFetch: params.fileFetch,
       }).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(
