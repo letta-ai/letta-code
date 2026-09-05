@@ -156,29 +156,30 @@ function parseFrontmatter(raw: string): {
       if (key) fm[key] = value;
     }
   }
-  const body = raw.slice(closingIdx + 4).replace(/^\n/, "");
+  const body = raw.slice(closingIdx + 4).replace(/^\r?\n/, "");
   return { frontmatter: fm, body };
 }
 
 /** Collect memory files from the working tree on disk. */
-function collectFiles(memoryRoot: string): MemoryFile[] {
+export function collectFiles(memoryRoot: string): MemoryFile[] {
   const treeNodes = scanMemoryFilesystem(memoryRoot);
   const fileNodes = getFileNodes(treeNodes);
 
-  return fileNodes
-    .filter((n) => n.name.endsWith(".md"))
-    .map((n) => {
-      const raw = readFileContent(n.fullPath);
-      const { frontmatter, body } = parseFrontmatter(raw);
-      return {
-        path: n.relativePath,
-        isSystem:
-          n.relativePath.startsWith("system/") ||
-          n.relativePath.startsWith("system\\"),
-        frontmatter,
-        content: body,
-      };
-    });
+  return fileNodes.map((n) => {
+    const raw = readFileContent(n.fullPath);
+    const isMarkdown = n.name.endsWith(".md") || n.name.endsWith(".markdown");
+    const { frontmatter, body } = isMarkdown
+      ? parseFrontmatter(raw)
+      : { frontmatter: {}, body: raw };
+    return {
+      path: n.relativePath,
+      isSystem:
+        n.relativePath.startsWith("system/") ||
+        n.relativePath.startsWith("system\\"),
+      frontmatter,
+      content: body,
+    };
+  });
 }
 
 /** Collect commit metadata via a single git log call. */
