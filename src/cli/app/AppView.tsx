@@ -95,6 +95,7 @@ import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { ExitStats } from "./ExitStats";
 import { uid } from "./ids";
+import { resolveResumedConversationSummary } from "./resumed-conversation-summary";
 import { StaticTranscript } from "./StaticTranscript";
 import type {
   ActiveOverlay,
@@ -1209,7 +1210,6 @@ export function AppView(props: AppViewProps) {
                     output: "Switching conversation...",
                     phase: "running",
                   });
-
                   try {
                     // Validate conversation exists BEFORE updating state
                     // (getResumeData throws 404/422 for non-existent conversations)
@@ -1218,12 +1218,14 @@ export function AppView(props: AppViewProps) {
                         agentState,
                         convId,
                       );
-
+                      const resumedSummary = resolveResumedConversationSummary(
+                        resumeData.conversation,
+                        selectorContext?.summary,
+                      );
                       // Only update state after validation succeeds
                       setConversationIdAndRef(convId);
                       setConversationAutoTitleEligibility(false);
-                      setConversationSummary(selectorContext?.summary ?? null);
-
+                      setConversationSummary(resumedSummary ?? null);
                       pendingConversationSwitchRef.current = {
                         origin: "resume-selector",
                         conversationId: convId,
@@ -1231,12 +1233,10 @@ export function AppView(props: AppViewProps) {
                         messageCount:
                           selectorContext?.messageCount ??
                           resumeData.messageHistory.length,
-                        summary: selectorContext?.summary,
+                        summary: resumedSummary,
                         messageHistory: resumeData.messageHistory,
                       };
-
                       settingsManager.persistSession(agentId, convId);
-
                       // Build success command with agent + conversation info
                       const currentAgentName =
                         agentState.name || "Unnamed Agent";
@@ -1483,29 +1483,29 @@ export function AppView(props: AppViewProps) {
                     output: "Switching conversation...",
                     phase: "running",
                   });
-
                   try {
                     if (agentState) {
                       const resumeData = await getResumeDataFromBackend(
                         agentState,
                         actualTargetConv,
                       );
-
+                      const resumedSummary = resolveResumedConversationSummary(
+                        resumeData.conversation,
+                      );
                       setConversationIdAndRef(actualTargetConv);
                       setConversationAutoTitleEligibility(false);
-
+                      setConversationSummary(resumedSummary ?? null);
                       pendingConversationSwitchRef.current = {
                         origin: "search",
                         conversationId: actualTargetConv,
                         isDefault: actualTargetConv === "default",
                         messageCount: resumeData.messageHistory.length,
+                        summary: resumedSummary,
                         messageHistory: resumeData.messageHistory,
                         searchQuery: searchContext?.query,
                         searchMessage: searchContext?.message,
                       };
-
                       settingsManager.persistSession(agentId, actualTargetConv);
-
                       const currentAgentName =
                         agentState.name || "Unnamed Agent";
                       const successOutput = [

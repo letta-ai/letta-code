@@ -11,6 +11,7 @@ import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { settingsManager } from "@/settings-manager";
 import { uid } from "./ids";
+import { resolveResumedConversationSummary } from "./resumed-conversation-summary";
 import type { ActiveOverlay, AppCommandRunner, StaticItem } from "./types";
 
 type SubmitCommandResult = { submitted: boolean };
@@ -35,6 +36,7 @@ type NavigationCommandContext = {
   setCommandRunning: (value: boolean) => void;
   setConversationAutoTitleEligibility: (enabled: boolean) => void;
   setConversationIdAndRef: (nextConversationId: string) => void;
+  setConversationSummary: (summary: string | null) => void;
   setLines: Dispatch<SetStateAction<Line[]>>;
   setSearchQuery: Dispatch<SetStateAction<string>>;
   setStaticItems: Dispatch<SetStateAction<StaticItem[]>>;
@@ -68,6 +70,7 @@ export async function handleNavigationCommand(
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setLines,
     setSearchQuery,
     setStaticItems,
@@ -127,14 +130,19 @@ export async function handleNavigationCommand(
             targetConvId,
           );
 
+          const resumedSummary = resolveResumedConversationSummary(
+            resumeData.conversation,
+          );
           setConversationIdAndRef(targetConvId);
           setConversationAutoTitleEligibility(false);
+          setConversationSummary(resumedSummary ?? null);
 
           pendingConversationSwitchRef.current = {
             origin: "resume-direct",
             conversationId: targetConvId,
             isDefault: targetConvId === "default",
             messageCount: resumeData.messageHistory.length,
+            summary: resumedSummary,
             messageHistory: resumeData.messageHistory,
           };
 
