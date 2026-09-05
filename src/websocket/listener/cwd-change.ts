@@ -7,7 +7,10 @@ import {
   getWorkingDirectoryScopeKey,
   setConversationWorkingDirectory,
 } from "./cwd";
-import { emitDeviceStatusUpdate } from "./protocol-outbound";
+import {
+  emitDeviceStatusUpdate,
+  refreshDeviceGitContext,
+} from "./protocol-outbound";
 import { getConversationRuntime } from "./runtime";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerTransport } from "./transport";
@@ -110,13 +113,13 @@ export async function switchConversationWorkingDirectory(params: {
   if (params.emitStatus !== false) {
     const statusTransport =
       params.statusSocket ?? getOrCreateProcessTransport(runtime);
-    emitDeviceStatusUpdate(
-      statusTransport,
-      params.statusRuntime ?? conversationRuntime ?? runtime,
-      {
-        agent_id: agentId,
-        conversation_id: conversationId,
-      },
-    );
+    const statusRuntime =
+      params.statusRuntime ?? conversationRuntime ?? runtime;
+    const statusScope = {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    };
+    await refreshDeviceGitContext(statusRuntime, statusScope);
+    emitDeviceStatusUpdate(statusTransport, statusRuntime, statusScope);
   }
 }

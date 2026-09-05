@@ -2,7 +2,6 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
-import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
@@ -39,6 +38,7 @@ import {
 } from "./connection";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory, getExportedCwdMap } from "./cwd";
+import { deviceGitContextCache } from "./device-git-context";
 import {
   recordDeviceStatus,
   shouldEmitDeviceStatus,
@@ -79,8 +79,6 @@ type PartialRuntimeScope = {
   conversation_id?: string | null;
 };
 
-const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
-const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
 /**
  * Frozen copy of the supported commands list. Avoids allocating it for every
  * device-status update. (LET-8948)
@@ -113,39 +111,6 @@ function getProtocolPerfKey(
   return message.type;
 }
 
-const gitContextCache = new Map<
-  string,
-  {
-    expiresAt: number;
-    value: ReturnType<typeof getGitContext>;
-  }
->();
-
-function getCachedDeviceGitContext(
-  cwd: string,
-): ReturnType<typeof getGitContext> {
-  const now = Date.now();
-  const cached = gitContextCache.get(cwd);
-  if (cached && cached.expiresAt > now) {
-    return cached.value;
-  }
-
-  const value = getGitContext(cwd);
-  gitContextCache.set(cwd, {
-    expiresAt: now + GIT_CONTEXT_CACHE_TTL_MS,
-    value,
-  });
-
-  if (gitContextCache.size > MAX_GIT_CONTEXT_CACHE_ENTRIES) {
-    const oldestKey = gitContextCache.keys().next().value;
-    if (oldestKey) {
-      gitContextCache.delete(oldestKey);
-    }
-  }
-
-  return value;
-}
-
 function getListenerRuntime(runtime: RuntimeCarrier): ListenerRuntime | null {
   if (!runtime) return null;
   return "listener" in runtime ? runtime.listener : runtime;
@@ -162,6 +127,39 @@ function getScopeForRuntime(
     };
   }
   return scope ?? {};
+}
+
+function getDeviceStatusWorkingDirectory(
+  runtime: RuntimeCarrier,
+  params?: PartialRuntimeScope,
+): string {
+  const listener = getListenerRuntime(runtime);
+  if (!listener) {
+    return process.cwd();
+  }
+  const scope = getScopeForRuntime(runtime, params);
+  const conversationRuntime = getConversationRuntime(
+    listener,
+    resolveScopedAgentId(listener, scope),
+    resolveScopedConversationId(listener, scope),
+  );
+  return (
+    conversationRuntime?.activeWorkingDirectory ??
+    getConversationWorkingDirectory(
+      listener,
+      resolveScopedAgentId(listener, scope),
+      resolveScopedConversationId(listener, scope),
+    )
+  );
+}
+
+export async function refreshDeviceGitContext(
+  runtime: RuntimeCarrier,
+  params?: PartialRuntimeScope,
+): Promise<void> {
+  await deviceGitContextCache.refresh(
+    getDeviceStatusWorkingDirectory(runtime, params),
+  );
 }
 
 export function emitRuntimeStateUpdates(
@@ -189,7 +187,7 @@ export function buildDeviceStatus(
       is_processing: false,
       current_permission_mode: permissionMode.getMode(),
       current_working_directory: fallbackCwd,
-      git_context: getCachedDeviceGitContext(fallbackCwd),
+      git_context: deviceGitContextCache.read(fallbackCwd),
       letta_code_version: process.env.npm_package_version || null,
       current_toolset: null,
       current_toolset_preference: "auto",
@@ -254,7 +252,7 @@ export function buildDeviceStatus(
     is_processing: !!conversationRuntime?.isProcessing,
     current_permission_mode: conversationPermissionModeState.mode,
     current_working_directory: resolvedCwd,
-    git_context: getCachedDeviceGitContext(resolvedCwd),
+    git_context: deviceGitContextCache.read(resolvedCwd),
     letta_code_version: process.env.npm_package_version || null,
     current_toolset:
       conversationRuntime?.currentToolset ??

@@ -31,7 +31,7 @@ import {
   createConnectionTurnProcessor,
 } from "./connection-lifecycle";
 import {
-  emitInitialConnectionState,
+  emitInitialConnectionState as emitInitialState,
   replaySubscribedConnectionState,
 } from "./connection-state-sync";
 import {
@@ -218,12 +218,12 @@ export async function replaySyncStateForRuntime(
     }
   }
 
-  replaySubscribedConnectionState(
+  await replaySubscribedConnectionState(
     listenerRuntime,
     socket,
     syncScopedRuntime,
     scope,
-    opts?.forceDeviceStatus,
+    opts,
   );
   (opts?.scheduleWarmupsAfterSync ?? scheduleListenerWarmupsAfterSync)(
     listenerRuntime,
@@ -409,7 +409,7 @@ export async function startConnectedListenerRuntime(
   runtime.everConnected = true;
   await opts.onConnected(opts.connectionId);
 
-  emitInitialConnectionState(runtime, transport, opts.connectionId, options);
+  await emitInitialState(runtime, transport, opts.connectionId, options);
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     replayPendingApprovalRequestsToConnection(
       conversationRuntime,
