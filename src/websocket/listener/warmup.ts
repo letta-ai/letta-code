@@ -53,21 +53,26 @@ const defaultWarmupDeps: ListenerWarmupDeps = {
 
 let warmupDeps: ListenerWarmupDeps = defaultWarmupDeps;
 
-/**
- * Hydrate listener-side state needed for the next turn.
- *
- * The warmup is intentionally best-effort: failures are logged and do not
- * block the user turn, mirroring the existing preflight behavior.
- */
-export async function ensureListenerWarmStateForTurn(
-  listener: ListenerRuntime,
-  scope: ListenerWarmupScope,
-): Promise<ListenerAgentMetadata | null> {
-  const { agentId } = scope;
-  if (!agentId) {
-    return null;
-  }
+const warmStateByRuntime = new WeakMap<
+  ListenerRuntime,
+  Map<string, Promise<ListenerAgentMetadata | null>>
+>();
 
+function getWarmStateMap(
+  listener: ListenerRuntime,
+): Map<string, Promise<ListenerAgentMetadata | null>> {
+  let warmStateByAgent = warmStateByRuntime.get(listener);
+  if (!warmStateByAgent) {
+    warmStateByAgent = new Map();
+    warmStateByRuntime.set(listener, warmStateByAgent);
+  }
+  return warmStateByAgent;
+}
+
+async function hydrateListenerSessionWarmState(
+  listener: ListenerRuntime,
+  agentId: string,
+): Promise<ListenerAgentMetadata | null> {
   const agentMetadataPromise =
     getAgentMetadataPromise(listener, agentId) ??
     (async () => {
@@ -95,17 +100,7 @@ export async function ensureListenerWarmStateForTurn(
       warmupDeps.ensureSecretsHydratedForAgent(listener, agentId),
       agentMetadataPromise,
     ]);
-    const agentModAdapter = await ensureListenerAgentModAdapter(
-      listener,
-      agentId,
-    );
-    const transport = listener.transport ?? listener.socket;
-    if (agentModAdapter && transport && isListenerTransportOpen(transport)) {
-      emitDeviceStatusUpdateIfChanged(transport, listener, {
-        agent_id: agentId,
-        conversation_id: scope.conversationId,
-      });
-    }
+    await ensureListenerAgentModAdapter(listener, agentId);
   } catch (error) {
     debugWarn(
       "listener-warmup",
@@ -116,6 +111,95 @@ export async function ensureListenerWarmStateForTurn(
   }
 
   return agentMetadataPromise;
+}
+
+function getOrStartListenerSessionWarmState(
+  listener: ListenerRuntime,
+  agentId: string,
+): Promise<ListenerAgentMetadata | null> {
+  const warmStateByAgent = getWarmStateMap(listener);
+  const existing = warmStateByAgent.get(agentId);
+  if (existing) {
+    return existing;
+  }
+
+  const promise = hydrateListenerSessionWarmState(listener, agentId).finally(
+    () => {
+      if (warmStateByAgent.get(agentId) === promise) {
+        warmStateByAgent.delete(agentId);
+      }
+    },
+  );
+  warmStateByAgent.set(agentId, promise);
+  return promise;
+}
+
+export function preloadListenerWarmStateForTurn(
+  listener: ListenerRuntime,
+  scope: ListenerWarmupScope,
+): void {
+  const { agentId } = scope;
+  if (!agentId) {
+    return;
+  }
+
+  void getOrStartListenerSessionWarmState(listener, agentId).catch((error) => {
+    debugWarn(
+      "listener-warmup",
+      `Background listener warmup failed for agent ${agentId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  });
+}
+
+async function emitWarmStateForScope(
+  listener: ListenerRuntime,
+  scope: ListenerWarmupScope,
+  agentId: string,
+): Promise<void> {
+  const agentModAdapter = await ensureListenerAgentModAdapter(
+    listener,
+    agentId,
+  );
+  const transport = listener.transport ?? listener.socket;
+  if (agentModAdapter && transport && isListenerTransportOpen(transport)) {
+    emitDeviceStatusUpdateIfChanged(transport, listener, {
+      agent_id: agentId,
+      conversation_id: scope.conversationId,
+    });
+  }
+}
+
+/**
+ * Hydrate listener-side state needed for the next turn.
+ *
+ * The warmup is intentionally best-effort: failures are logged and do not
+ * block the user turn, mirroring the existing preflight behavior.
+ */
+export async function ensureListenerWarmStateForTurn(
+  listener: ListenerRuntime,
+  scope: ListenerWarmupScope,
+): Promise<ListenerAgentMetadata | null> {
+  const { agentId } = scope;
+  if (!agentId) {
+    return null;
+  }
+
+  const promise = getOrStartListenerSessionWarmState(listener, agentId);
+  try {
+    const metadata = await promise;
+    await emitWarmStateForScope(listener, scope, agentId);
+    return metadata;
+  } catch (error) {
+    debugWarn(
+      "listener-warmup",
+      `Listener warm state emission failed for agent ${agentId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return promise;
+  }
 }
 
 /**
@@ -149,6 +233,7 @@ export function scheduleListenerWarmupsAfterSync(
 
 export function clearListenerWarmState(listener: ListenerRuntime): void {
   listener.agentMetadataByAgent.clear();
+  warmStateByRuntime.delete(listener);
 }
 
 export const __listenerWarmupTestUtils = {

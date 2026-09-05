@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
 import {
   clearExternalTools,
@@ -12,6 +12,7 @@ import { createListenerMessageHandler } from "./message-router";
 import { scheduleQueuePump } from "./queue";
 import { setActiveRuntime } from "./runtime";
 import type { IncomingMessage, StartListenerOptions } from "./types";
+import { __listenerWarmupTestUtils } from "./warmup";
 
 class MockSocket {
   readyState = WebSocket.OPEN;
@@ -45,9 +46,22 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe("listener message router ownership handoff", () => {
+  beforeEach(() => {
+    __listenerWarmupTestUtils.setWarmupDepsForTests({
+      ensureMemfsSyncedForAgent: async () => true,
+      ensureSecretsHydratedForAgent: async () => {},
+      fetchListenerAgentMetadata: async () => ({
+        name: null,
+        description: null,
+        lastRunAt: null,
+      }),
+    });
+  });
+
   afterEach(() => {
     clearExternalTools();
     setActiveRuntime(null);
+    __listenerWarmupTestUtils.resetWarmupDepsForTests();
   });
 
   test("acknowledges batched external-tool registration without runtime startup", async () => {
@@ -127,6 +141,90 @@ describe("listener message router ownership handoff", () => {
     expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
       "MessageChannel",
     ]);
+  });
+
+  test("starts first-turn warmup without delaying input acceptance", async () => {
+    let resolveMemfs!: () => void;
+    const memfsWarmup = mock(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveMemfs = () => resolve(true);
+        }),
+    );
+    __listenerWarmupTestUtils.setWarmupDepsForTests({
+      ensureMemfsSyncedForAgent: memfsWarmup,
+      ensureSecretsHydratedForAgent: async () => {},
+      fetchListenerAgentMetadata: async () => ({
+        name: null,
+        description: null,
+        lastRunAt: null,
+      }),
+    });
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socket = new MockSocket();
+    const sent: unknown[] = [];
+    setActiveRuntime(listener);
+
+    const handleMessage = createListenerMessageHandler({
+      runtime: listener,
+      socket: socket as unknown as WebSocket,
+      opts: makeListenerOptions(),
+      processQueuedTurn: async () => {},
+      fileCommandSession: { handle: () => false },
+      getParsedRuntimeScope: () => null,
+      replaySyncStateForRuntime: async () => {},
+      getOrCreateScopedRuntime: () => runtime,
+      handleApprovalResponseInput: async () => false,
+      handleChangeDeviceStateInput: async () => false,
+      handleAbortMessageInput: async () => false,
+      stampInboundUserMessageOtids: (incoming) => incoming,
+      safeSocketSend: (_target, payload) => {
+        sent.push(payload);
+        return true;
+      },
+      runDetachedListenerTask: () => {},
+      trackListenerError: () => {},
+      processIncomingMessage: async () => {},
+    });
+
+    await handleMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          request_id: "input-warmup",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "create_message",
+            messages: [
+              {
+                role: "user",
+                content: "warm me up",
+                client_message_id: "cm-input-warmup",
+              },
+            ],
+          },
+        }),
+      ),
+    );
+
+    await waitFor(() => memfsWarmup.mock.calls.length === 1);
+    await waitFor(() =>
+      sent.some((payload) => {
+        const message = payload as {
+          type?: string;
+          request_id?: string;
+          accepted?: boolean;
+        };
+        return (
+          message.type === "input_accepted" &&
+          message.request_id === "input-warmup" &&
+          message.accepted === true
+        );
+      }),
+    );
+    expect(memfsWarmup).toHaveBeenCalledTimes(1);
+    resolveMemfs();
   });
 
   test("a direct message that loses the idle race is queued and later drained", async () => {
