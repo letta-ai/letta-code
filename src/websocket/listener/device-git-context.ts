@@ -28,7 +28,6 @@ export class DeviceGitContextCache {
       return cached.value;
     }
 
-    void this.refresh(cwd).catch(() => {});
     return cached?.value ?? null;
   }
 

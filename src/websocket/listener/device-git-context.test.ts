@@ -25,21 +25,21 @@ function createPendingLoader(): {
 }
 
 describe("DeviceGitContextCache", () => {
-  test("starts a non-blocking refresh and shares it across status reads", async () => {
+  test("shares one asynchronous refresh across status requests", async () => {
     const loader = createPendingLoader();
     const cache = new DeviceGitContextCache(loader.load);
 
     expect(cache.read("/repo")).toBeNull();
-    expect(cache.read("/repo")).toBeNull();
-    expect(loader.calls).toEqual(["/repo"]);
+    expect(loader.calls).toEqual([]);
 
     const refresh = cache.refresh("/repo");
+    const concurrentRefresh = cache.refresh("/repo");
     expect(loader.calls).toEqual(["/repo"]);
     loader.pending[0]?.resolve({
       branch: "main",
       recent_branches: ["feature"],
     });
-    await refresh;
+    await Promise.all([refresh, concurrentRefresh]);
 
     expect(cache.read("/repo")).toEqual({
       branch: "main",
@@ -62,13 +62,15 @@ describe("DeviceGitContextCache", () => {
       branch: "main",
       recent_branches: [],
     });
-    expect(loader.calls).toEqual(["/repo", "/repo"]);
+    expect(loader.calls).toEqual(["/repo"]);
 
+    const refresh = cache.refresh("/repo");
+    expect(loader.calls).toEqual(["/repo", "/repo"]);
     loader.pending[1]?.resolve({
       branch: "feature",
       recent_branches: ["main"],
     });
-    await cache.refresh("/repo");
+    await refresh;
     expect(cache.read("/repo")).toEqual({
       branch: "feature",
       recent_branches: ["main"],
