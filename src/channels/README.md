@@ -1,10 +1,10 @@
 # Channel plugins
 
 Letta Code channels connect agents to external chat systems. Telegram, Slack,
-and Discord are first-party bundled plugins with custom Desktop UI. User-defined
-plugins are loaded from `~/.letta/channels/<channel-id>/` and run headlessly:
-they can receive inbound messages, participate in pairing/routing, and extend
-the shared `MessageChannel` tool, but they do not get custom Desktop screens.
+Discord, WhatsApp, Signal, and X Chat are first-party plugins. User-defined
+plugins load from `~/.letta/channels/<channel-id>/` and run headlessly. They can
+receive messages, use pairing and routes, and extend the shared
+`MessageChannel` tool. They do not get custom Desktop screens.
 
 ## Directory layout
 
@@ -169,6 +169,130 @@ Only set `LETTA_BASE_URL` for a separate self-hosted server. For example,
 `LETTA_BASE_URL=http://localhost:8283 letta server --channels telegram` talks to
 a server running at that URL. Do not set a dummy `LETTA_BASE_URL` for
 `--backend local`.
+
+## X Chat
+
+The X Chat channel supports encrypted direct messages. It receives live events
+over the X activity stream and polls the primary inbox and configured
+conversations for startup history and missed events. Letta Code verifies each
+message signature before it delivers the message to an agent.
+
+Before you configure Letta Code, complete the [official X Chat bot
+flow](https://docs.x.com/xchat/bots):
+
+1. Create or select an X developer project and app.
+2. Create a programmatic bot in that project with the default `dm.read`,
+   `dm.write`, `tweet.read`, `users.read`, and `media.write` scopes.
+3. Keep the one-time `xcbot_...` token returned when the bot is created.
+4. Choose and keep an encryption PIN. Do not click the X Developer Portal
+   **Register chat keys** button or use a separate registration helper. Letta
+   Code provisions the key safely during setup if no existing identity can be
+   recovered.
+5. Open **Apps > your app > Keys & Tokens > App-Only Authentication**. Create or
+   copy the app Bearer token. It must come from the same app as the bot token.
+   This token is optional and enables the live X activity stream.
+
+Set the credentials in your shell, or enter them when the setup command asks:
+
+```bash
+export XCHAT_BOT_TOKEN='xcbot_...'
+export XCHAT_PIN='...'
+export X_BEARER_TOKEN='...'
+# Optional exact version override:
+export XCHAT_SIGNING_KEY_VERSION='...'
+```
+
+Do not put these values in Git or shell startup files. Run the following
+commands:
+
+```bash
+letta channels install xchat
+letta channels configure xchat
+letta server --channels xchat
+```
+
+The install command adds the X Chat runtime packages. Setup first checks
+registered key versions read-only without writing to X. If the newest version
+returns `NotRegistered`, it tries older versions from newest to oldest. If none
+can be recovered, one explicit `REGISTER` confirmation gates new key publication.
+Setup checkpoints the private identity before the rate-limited X write,
+reconciles interrupted requests, stores the same identity in Juicebox, and
+verifies a fresh recovery before saving the account. A 429 keeps the checkpoint
+so rerunning setup after the reported reset resumes the same identity. An
+interruption also keeps the checkpoint so a rerun does not generate another
+identity. Invalid PINs and other errors stop immediately. Setting
+`XCHAT_SIGNING_KEY_VERSION` requires an exact version and disables fallback and
+registration. The listener must use the same credential store. If you use the
+operating-system keyring, run both commands with the keyring setting:
+
+```bash
+LETTA_CHANNEL_CREDENTIALS_STORE=keyring letta channels configure xchat
+LETTA_CHANNEL_CREDENTIALS_STORE=keyring letta server --channels xchat
+```
+
+`X_BEARER_TOKEN` is the app-only Bearer token for the app that issued the bot
+token. Letta Code creates the `chat.received` and `chat.conversation.join`
+subscriptions when the listener starts. X does not provide an endpoint that
+lists pending Message requests. `GET /2/chat/conversations` lists only the
+primary inbox and can return no rows with `has_message_requests: true`. If the
+activity stream does not emit a known sender's request, set
+`XCHAT_PEER_USER_IDS` to that sender's X user ID, rerun
+`letta channels configure xchat`, and restart the listener. The adapter resolves
+and polls that direct conversation explicitly whether or not the activity
+stream is configured. If X returns HTTP 402 for the activity stream, the
+listener stops reconnecting and uses polling until the listener is restarted.
+
+Send the bot a DM after the listener starts. The pairing code is stored on the
+listener machine before Letta Code tries to send it through X Chat and remains
+valid for 15 minutes. If the reply does not arrive, find the pending chat and
+code in the Channels UI or `~/.letta/channels/xchat/pairing.yaml`. Approve it in
+the Channels UI, or bind the code from the listener machine:
+
+```bash
+letta agents list
+letta channels pair \
+  --channel xchat \
+  --code XXXXXX \
+  --agent <agent-id> \
+  --conversation default
+```
+
+The listener loads a fresh CLI pairing on the sender's next inbound message
+without a restart. The message that created the pairing code is not delivered
+to the agent, so send another message after approval.
+
+The channel supports direct messages. Group chats are disabled because the
+upstream adapter cannot bind an asynchronous reply to its source message. The
+`MessageChannel` tool can send text, upload files, add reactions, and remove
+reactions. Inbound messages include reactions and reply previews. Outbound
+explicit reply targets are disabled.
+
+Letta Code downloads inbound attachments after it authorizes the sender. The
+default limit is 25 MiB per attachment. You can change the download setting and
+size limit in the channel account. Enable voice transcription during setup to
+transcribe downloaded voice messages with `OPENAI_API_KEY`.
+
+The channel stores message IDs in
+`~/.letta/channels/xchat/poll-state-<account-id>.json`. This file prevents
+duplicate delivery after a restart. On the first start, the channel delivers
+messages from the last 10 minutes and records older messages without delivery.
+
+### X Chat key troubleshooting
+
+`letta channels configure xchat` checks registered key versions without writing
+to X. If the newest version returns
+`Juicebox recovery failed: reason=NotRegistered`, setup tries older versions
+from newest to oldest and saves the first recoverable identity. It does not
+continue after an invalid PIN or any other error. Set
+`XCHAT_SIGNING_KEY_VERSION` only when you need to require an exact version.
+
+Do not click **Register chat keys** or run a separate registration helper after
+`NotRegistered`. These actions can create another public key without preserving
+its private half and can consume X's 24-hour key-registration quota. Rerun
+`letta channels configure xchat` instead. It resumes any saved identity and
+does not report success until the registered version unlocks from Juicebox.
+Rotating the bot token is unrelated to key recovery. Do it only if X rejects
+the token itself.
 
 ## Channel slash commands
 

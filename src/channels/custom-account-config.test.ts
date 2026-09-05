@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { getChannelAccountConfigAdapter } from "@/channels/account-config";
 import { customAccountConfigAdapter } from "@/channels/custom/account-config";
 import type { CustomChannelAccount } from "@/channels/types";
 
@@ -104,6 +105,39 @@ describe("customAccountConfigAdapter.toAccountConfig", () => {
     expect(customAccountConfigAdapter.toAccountConfig(account)).toMatchObject({
       has_bot_token: false,
       has_auth: false,
+    });
+  });
+});
+
+describe("first-party X Chat account config", () => {
+  test("redacts X Chat credentials without hiding same-named plugin fields", () => {
+    const xchat = makeAccount(
+      {
+        bot_token: "bot-secret",
+        pin: "pin-secret",
+        activity_token: "bearer-secret",
+        peer_user_ids: ["123"],
+      },
+      { channel: "xchat" },
+    );
+    expect(
+      getChannelAccountConfigAdapter("xchat").toAccountConfig(xchat),
+    ).toMatchObject({
+      has_bot_token: true,
+      has_pin: true,
+      has_activity_token: true,
+      peer_user_ids: ["123"],
+    });
+
+    const userPlugin = makeAccount(
+      { pin: "public-setting", activity_token: "public-setting" },
+      { channel: "my-plugin" },
+    );
+    expect(
+      getChannelAccountConfigAdapter("my-plugin").toAccountConfig(userPlugin),
+    ).toMatchObject({
+      pin: "public-setting",
+      activity_token: "public-setting",
     });
   });
 });
