@@ -119,6 +119,7 @@ DATA_URL="data:image/png;base64,$(base64 < input.png | tr -d '\n')"
 
 - **Billing**: every success charges credits; don't loop needlessly, and report
   `credits_charged`.
-- **Errors**: `402` = insufficient credits (`credits_required` in body); `400`/`500`
-  return `{ "message": "..." }` — surface it to the user.
+- **Errors**: `402` = insufficient credits (`credits_required` in body);
+  `400` validation errors return `{ "issues": [...], "name": "ZodError" }`;
+  `500` errors return `{ "message": "..." }`. Surface any error to the user.
 - Only `flux`, `gemini`, and `openai` are supported here.
