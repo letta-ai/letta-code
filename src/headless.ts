@@ -126,6 +126,7 @@ import {
   prepareHeadlessEphemeralBackend,
 } from "./headless-ephemeral-startup";
 import { resolveHeadlessMemfsPolicy } from "./headless-memfs-policy";
+import { createHeadlessMemfsResolver } from "./headless-memfs-state";
 import {
   createHeadlessModAdapter,
   createHeadlessModContext,
@@ -858,9 +859,7 @@ export async function handleHeadlessCommand(
   const memfsFlag = values.memfs;
   const statelessFlag = values.stateless;
   const isSubagentRole = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-  // Fresh subagents are stateless by role. --stateless extends only the
-  // MemFS-less session behavior to an existing --agent/--conversation launch;
-  // it does not change that agent's model, prompt, tools, or sampling config.
+  // Fresh subagents are stateless by role; --stateless only makes an existing launch MemFS-less.
   const memfsPolicy = resolveHeadlessMemfsPolicy({
     statelessRequested: Boolean(statelessFlag),
     isSubagentRole,
@@ -869,6 +868,9 @@ export async function handleHeadlessCommand(
   const { isFreshStatelessSubagent } = memfsPolicy;
   const isStatelessSession =
     Boolean(ephemeralFlag) || memfsPolicy.isStatelessSession;
+  const headlessMemfsEnabled = isStatelessSession ? false : undefined;
+  const resolveSessionMemfsEnabled =
+    createHeadlessMemfsResolver(headlessMemfsEnabled);
   if (isStatelessSession && backend.capabilities.localMemfs) {
     const { disableLocalBackendMemfsForProcess } = await import(
       "@/backend/local/paths"
@@ -1485,11 +1487,7 @@ export async function handleHeadlessCommand(
   //   "background"           – fire pull async; session init proceeds immediately.
   //   "skip"                 – skip the pull this session.
   if (isStatelessSession) {
-    // This is a session launch policy: do not hydrate tags, auto-enable,
-    // clone, or pull MemFS. Recording false also keeps downstream client tools,
-    // skills, reflection, and init metadata aligned without mutating the
-    // server-side agent configuration.
-    settingsManager.setMemfsEnabled(agent.id, false);
+    // No-op: session-scoped override already keeps MemFS off.
   } else if (!backend.capabilities.remoteMemfs) {
     if (backend.capabilities.localMemfs) {
       settingsManager.setMemfsEnabled(agent.id, true);
@@ -1749,34 +1747,37 @@ export async function handleHeadlessCommand(
 
   const sessionStats = new SessionStats();
   const headlessPermissionMode = startupPermissionMode.mode;
+  const buildSessionHeadlessModContext = (
+    targetConversationId: string,
+    lastRunId?: string | null,
+  ) =>
+    createHeadlessModContext({
+      agent,
+      conversationId: targetConversationId,
+      lastRunId,
+      memfsEnabled: headlessMemfsEnabled,
+      permissionMode: headlessPermissionMode,
+      reflectionSettings: effectiveReflectionSettings,
+      sessionStats,
+    });
   const headlessModAdapter = createHeadlessModAdapter({
     agent,
     backend,
     conversationId,
+    memfsEnabled: headlessMemfsEnabled,
     permissionMode: headlessPermissionMode,
     reflectionSettings: effectiveReflectionSettings,
     sessionStats,
     disabled: modsDisabled,
   });
-  const initialHeadlessModContext = createHeadlessModContext({
-    agent,
-    conversationId,
-    permissionMode: headlessPermissionMode,
-    reflectionSettings: effectiveReflectionSettings,
-    sessionStats,
-  });
+  const initialHeadlessModContext =
+    buildSessionHeadlessModContext(conversationId);
   await headlessModAdapter.reload();
   installLocalBackendModEventHooks({
     backend,
     adapter: headlessModAdapter,
     buildContext: (compactConversationId) =>
-      createHeadlessModContext({
-        agent,
-        conversationId: compactConversationId,
-        permissionMode: headlessPermissionMode,
-        reflectionSettings: effectiveReflectionSettings,
-        sessionStats,
-      }),
+      buildSessionHeadlessModContext(compactConversationId),
   });
   try {
     await emitHeadlessConversationOpen({
@@ -1825,6 +1826,7 @@ export async function handleHeadlessCommand(
       systemInfoReminderEnabled,
       effectiveReflectionSettings,
       headlessModAdapter,
+      resolveSessionMemfsEnabled,
     );
     return;
   }
@@ -1845,14 +1847,10 @@ export async function handleHeadlessCommand(
     try {
       if (!headlessConversationClosed) {
         headlessConversationClosed = true;
-        const closeModContext = createHeadlessModContext({
-          agent,
+        const closeModContext = buildSessionHeadlessModContext(
           conversationId,
-          lastRunId: lastKnownRunId,
-          permissionMode: headlessPermissionMode,
-          reflectionSettings: effectiveReflectionSettings,
-          sessionStats,
-        });
+          lastKnownRunId,
+        );
         try {
           await emitHeadlessConversationClose({
             agent,
@@ -1888,7 +1886,7 @@ export async function handleHeadlessCommand(
       mcp_servers: [],
       permission_mode: "",
       slash_commands: [],
-      memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
+      memfs_enabled: resolveSessionMemfsEnabled(agent.id),
       skill_sources: resolvedSkillSources,
       system_info_reminder_enabled: systemInfoReminderEnabled,
       reflection_trigger: effectiveReflectionSettings.trigger,
@@ -1978,13 +1976,7 @@ export async function handleHeadlessCommand(
         agentId: agent.id,
         conversationId,
         approvalMessages,
-        modContext: createHeadlessModContext({
-          agent,
-          conversationId,
-          permissionMode: headlessPermissionMode,
-          reflectionSettings: effectiveReflectionSettings,
-          sessionStats,
-        }),
+        modContext: buildSessionHeadlessModContext(conversationId),
         modEvents: headlessModAdapter.events,
       });
       const drainResult = await drainStreamWithResume(
@@ -2289,13 +2281,7 @@ ${SYSTEM_REMINDER_CLOSE}
     ];
     queuedRecoveredApprovalResults = null;
   }
-  const turnStartModContext = createHeadlessModContext({
-    agent,
-    conversationId,
-    permissionMode: headlessPermissionMode,
-    reflectionSettings: effectiveReflectionSettings,
-    sessionStats,
-  });
+  const turnStartModContext = buildSessionHeadlessModContext(conversationId);
   const initialTurnStartEmission = await emitHeadlessTurnStart({
     agent,
     conversationId,
@@ -2410,13 +2396,7 @@ ${SYSTEM_REMINDER_CLOSE}
           conversationId,
           overrideModel: preparedEffectiveModel,
           cachedAgent,
-          modContext: createHeadlessModContext({
-            agent,
-            conversationId,
-            permissionMode: headlessPermissionMode,
-            reflectionSettings: effectiveReflectionSettings,
-            sessionStats,
-          }),
+          modContext: buildSessionHeadlessModContext(conversationId),
           modEvents: headlessModAdapter.events,
         });
         availableTools = turnToolContext.availableTools;
@@ -3289,7 +3269,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
   await runPostTurnMemorySync({
     agentId: agent.id,
-    isEnabled: (id) => settingsManager.isMemfsEnabled(id),
+    isEnabled: (id) => resolveSessionMemfsEnabled(id),
     debugLabel: "Post-turn headless memory sync",
     emitWarning: (text) => {
       if (outputFormat !== "stream-json") {
@@ -3454,6 +3434,7 @@ async function runBidirectionalMode(
   systemInfoReminderEnabled: boolean,
   reflectionSettings: ReflectionSettings,
   headlessModAdapter: ModAdapter,
+  isMemfsEnabled: (agentId: string) => boolean,
 ): Promise<void> {
   const sessionId = agent.id;
   const backend = getBackend();
@@ -3462,6 +3443,13 @@ async function runBidirectionalMode(
   const systemPromptRecompileByConversation = new Map<string, Promise<void>>();
   const queuedSystemPromptRecompileByConversation = new Set<string>();
   let headlessConversationClosed = false;
+  const buildBidirectionalModContext = (targetConversationId: string) =>
+    createHeadlessModContext({
+      agent,
+      conversationId: targetConversationId,
+      memfsEnabled: isMemfsEnabled(agent.id),
+      reflectionSettings,
+    });
   const exitBidirectional = async (
     code: number,
     exitReason: string,
@@ -3475,11 +3463,7 @@ async function runBidirectionalMode(
             conversationId,
             durationMs: null,
             adapter: headlessModAdapter,
-            context: createHeadlessModContext({
-              agent,
-              conversationId,
-              reflectionSettings,
-            }),
+            context: buildBidirectionalModContext(conversationId),
           });
         } catch {
           // Mod lifecycle events should not block headless shutdown.
@@ -3506,7 +3490,7 @@ async function runBidirectionalMode(
     mcp_servers: [],
     permission_mode: "",
     slash_commands: [],
-    memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
+    memfs_enabled: isMemfsEnabled(agent.id),
     skill_sources: skillSources,
     system_info_reminder_enabled: systemInfoReminderEnabled,
     reflection_trigger: reflectionSettings.trigger,
@@ -3537,7 +3521,7 @@ async function runBidirectionalMode(
     const result = await launchReflectionSubagent({
       agentId: agent.id,
       conversationId,
-      memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
+      memfsEnabled: isMemfsEnabled(agent.id),
       triggerSource,
       reflectionSettings,
       description: AUTO_REFLECTION_DESCRIPTION,
@@ -3611,11 +3595,7 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId,
         approvalMessages,
-        modContext: createHeadlessModContext({
-          agent,
-          conversationId,
-          reflectionSettings,
-        }),
+        modContext: buildBidirectionalModContext(conversationId),
         modEvents: headlessModAdapter.events,
       });
       const drainResult = await drainStreamWithResume(
@@ -4004,11 +3984,7 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId: targetConversationId,
         approvalMessages: [approvalInput],
-        modContext: createHeadlessModContext({
-          agent,
-          conversationId: targetConversationId,
-          reflectionSettings,
-        }),
+        modContext: buildBidirectionalModContext(targetConversationId),
         modEvents: headlessModAdapter.events,
       });
 
@@ -4082,7 +4058,7 @@ async function runBidirectionalMode(
               agent_id: agent.id,
               model: agent.llm_config?.model,
               tools: availableTools,
-              memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
+              memfs_enabled: isMemfsEnabled(agent.id),
               skill_sources: skillSources,
               system_info_reminder_enabled: systemInfoReminderEnabled,
               reflection_trigger: reflectionSettings.trigger,
@@ -4219,7 +4195,7 @@ async function runBidirectionalMode(
             conversationId,
             model: agent.llm_config?.model,
             tools: availableTools,
-            memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
+            memfsEnabled: isMemfsEnabled(agent.id),
             sessionId,
           },
           requestId: requestId ?? "",
@@ -4421,11 +4397,8 @@ async function runBidirectionalMode(
           workingDirectory: getCurrentWorkingDirectory(),
           skillSources,
         });
-        const turnStartModContext = createHeadlessModContext({
-          agent,
-          conversationId,
-          reflectionSettings,
-        });
+        const turnStartModContext =
+          buildBidirectionalModContext(conversationId);
         const enrichedContent = prependReminderPartsToContent(userContent, [
           ...sharedReminderParts,
         ]);
@@ -4511,11 +4484,7 @@ async function runBidirectionalMode(
             const turnToolContext = await prepareHeadlessToolExecutionContext({
               agentId: agent.id,
               conversationId,
-              modContext: createHeadlessModContext({
-                agent,
-                conversationId,
-                reflectionSettings,
-              }),
+              modContext: buildBidirectionalModContext(conversationId),
               modEvents: headlessModAdapter.events,
             });
             availableTools = turnToolContext.availableTools;
@@ -4873,7 +4842,7 @@ async function runBidirectionalMode(
             await maybeLaunchPostTurnReflection({
               agentId: agent.id,
               conversationId,
-              memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
+              memfsEnabled: isMemfsEnabled(agent.id),
               reflectionSettings,
               reminderState: sharedReminderState,
               contextTracker: reminderContextTracker,
@@ -4950,7 +4919,7 @@ async function runBidirectionalMode(
       } finally {
         await runPostTurnMemorySync({
           agentId: agent.id,
-          isEnabled: (id) => settingsManager.isMemfsEnabled(id),
+          isEnabled: (id) => isMemfsEnabled(id),
           debugLabel: "Post-turn headless memory sync",
           enqueueReminder: (text) => {
             enqueueMemoryGitSyncReminder(sharedReminderState, { text });

@@ -24,6 +24,10 @@ import { getBootWorkingDirectory } from "@/websocket/listener/cwd";
 import { switchConversationWorkingDirectory } from "@/websocket/listener/cwd-change";
 import { registerRuntimeExternalTools } from "@/websocket/listener/external-tools";
 import {
+  disableListenerMemfsForAgent,
+  enableListenerMemfsForAgent,
+} from "@/websocket/listener/memfs-state";
+import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
@@ -179,6 +183,7 @@ export function applyCreatedAgentServerToolDefaults(
 }
 
 async function resolveRuntimeStartAgent(
+  context: RuntimeStartCommandContext,
   parsed: RuntimeStartCommand,
   created: CreatedResources,
 ): Promise<AgentState | null> {
@@ -208,13 +213,14 @@ async function resolveRuntimeStartAgent(
       // blocking runtime start. The tag is already stamped at creation, so
       // lazy sync paths can complete this even if the process dies here.
       void enableMemfsIfCloud(agent.id);
+      enableListenerMemfsForAgent(context.runtime, agent.id);
     } else {
       // Worker-style agent: no memfs of its own; a memory scope may be
       // provided per session (MEMORY_DIR + LETTA_MEMORY_DIR_EXPLICIT).
-      settingsManager.setMemfsEnabled(agent.id, false);
+      disableListenerMemfsForAgent(context.runtime, agent.id);
     }
     created.agent = true;
-    if (parsed.create_agent.pin_global !== false) {
+    if (withMemfs && parsed.create_agent.pin_global !== false) {
       settingsManager.pinAgent(agent.id);
     }
     return agent;
@@ -409,7 +415,7 @@ export async function handleRuntimeStartCommand(
 
   try {
     validateRuntimeStartShape(parsed);
-    agent = await resolveRuntimeStartAgent(parsed, created);
+    agent = await resolveRuntimeStartAgent(context, parsed, created);
     conversation = await resolveRuntimeStartConversation(
       parsed,
       agent,

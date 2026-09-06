@@ -53,6 +53,10 @@ import {
 } from "./external-tools";
 import { createFileCommandSession } from "./file-commands";
 import { startConnectionHeartbeat } from "./heartbeat";
+import {
+  clearListenerMemfsState,
+  createListenerMemfsState,
+} from "./memfs-state";
 import { createListenerMessageHandler } from "./message-router";
 import {
   disposeListenerModAdapter,
@@ -116,7 +120,6 @@ function trackListenerError(
     context,
   });
 }
-
 export function safeSocketSend(
   socket: WebSocket,
   payload: unknown,
@@ -140,7 +143,6 @@ export function safeSocketSend(
     return false;
   }
 }
-
 function safeTransportSend(
   transport: ListenerTransport,
   payload: unknown,
@@ -164,7 +166,6 @@ function safeTransportSend(
     return false;
   }
 }
-
 export function runDetachedListenerTask(
   commandName: string,
   task: () => Promise<void>,
@@ -329,7 +330,7 @@ export function createRuntime(): ListenerRuntime {
     connectionId: null,
     connectionName: null,
     conversationRuntimes: new Map(),
-    memfsSyncedAgents: new Map(),
+    ...createListenerMemfsState(),
     secretsHydrationByAgent: new Map(),
     secretsHydrationFreshnessByAgent: new Map(),
     secretsDirtyAgents: new Set(),
@@ -338,7 +339,6 @@ export function createRuntime(): ListenerRuntime {
     lastEmittedStatus: null,
   };
 }
-
 export function stopRuntime(
   runtime: ListenerRuntime,
   suppressCallbacks: boolean,
@@ -369,9 +369,9 @@ export function stopRuntime(
   runtime.contextTrackerByConversation.clear();
   runtime.systemPromptRecompileByConversation.clear();
   runtime.queuedSystemPromptRecompileByConversation.clear();
+  clearListenerMemfsState(runtime);
   stopAllWorktreeWatchers(runtime);
 }
-
 export async function startConnectedListenerRuntime(
   runtime: ListenerRuntime,
   transport: ListenerTransport,

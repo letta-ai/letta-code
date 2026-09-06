@@ -8,14 +8,21 @@
  */
 
 import { debugLog, debugWarn } from "@/utils/debug";
+import { isListenerMemfsDisabled } from "./memfs-state";
 import type { ListenerRuntime } from "./types";
 
 /**
  * Core sync logic — fetches agent, checks tag, clones/pulls repo.
  */
-async function syncMemfsForAgent(agentId: string): Promise<void> {
+async function syncMemfsForAgent(
+  listener: ListenerRuntime,
+  agentId: string,
+): Promise<void> {
   const { settingsManager } = await import("@/settings-manager");
-  if (settingsManager.isMemfsExplicitlyDisabled(agentId)) {
+  if (
+    settingsManager.isMemfsExplicitlyDisabled(agentId) ||
+    isListenerMemfsDisabled(listener, agentId)
+  ) {
     // Worker-style agent deliberately created without a memfs (e.g. dream
     // reflectors) — its memory scope arrives per session via MEMORY_DIR.
     // Not a broken agent; do not "repair" it.
@@ -91,12 +98,15 @@ export async function ensureMemfsSyncedForAgent(
   listener: ListenerRuntime,
   agentId: string,
 ): Promise<boolean> {
+  if (isListenerMemfsDisabled(listener, agentId)) {
+    return true;
+  }
   const existing = listener.memfsSyncedAgents.get(agentId);
   if (existing) {
     return existing;
   }
 
-  const promise = syncMemfsForAgent(agentId).then(
+  const promise = syncMemfsForAgent(listener, agentId).then(
     () => true,
     (err) => {
       // Non-fatal — agent can still process messages, just without local memory.

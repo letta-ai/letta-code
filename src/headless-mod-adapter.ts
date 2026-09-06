@@ -7,6 +7,7 @@ import { getSubagentLifecycleContext } from "@/agent/subagent-state";
 import type { Backend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
+import { resolveHeadlessMemfsEnabled } from "@/headless-memfs-state";
 import { createModAdapter, type ModAdapter } from "@/mods/mod-adapter";
 import type {
   ModCapabilities,
@@ -14,7 +15,6 @@ import type {
   ModConversationOpenReason,
 } from "@/mods/types";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
-import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { getVersion } from "@/version";
 
@@ -35,14 +35,6 @@ export const HEADLESS_MOD_CAPABILITIES: ModCapabilities = {
   },
 };
 
-function isHeadlessMemfsEnabled(agentId: string): boolean {
-  try {
-    return settingsManager.isMemfsEnabled(agentId);
-  } catch {
-    return false;
-  }
-}
-
 export function createHeadlessModContext(options: {
   agent: AgentState;
   conversationId: string;
@@ -50,6 +42,7 @@ export function createHeadlessModContext(options: {
   permissionMode?: string | null;
   reflectionSettings?: ReflectionSettings;
   sessionStats?: SessionStats | null;
+  memfsEnabled?: boolean;
 }): ModContext {
   const cwd = getCurrentWorkingDirectory();
   const modelId = options.agent.llm_config?.model ?? null;
@@ -67,7 +60,10 @@ export function createHeadlessModContext(options: {
           Math.min(100, Math.round((contextTokens / contextWindowSize) * 100)),
         )
       : null;
-  const memfsEnabled = isHeadlessMemfsEnabled(options.agent.id);
+  const memfsEnabled = resolveHeadlessMemfsEnabled(
+    options.agent.id,
+    options.memfsEnabled,
+  );
 
   return {
     app: { version: getVersion() },
@@ -136,11 +132,16 @@ export function createHeadlessModAdapter(options: {
   conversationId: string;
   disabled?: boolean;
   globalModsDirectory?: string;
+  memfsEnabled?: boolean;
   permissionMode?: string | null;
   reflectionSettings?: ReflectionSettings;
   sessionStats?: SessionStats | null;
 }): ModAdapter {
-  const agentModsDirectory = isHeadlessMemfsEnabled(options.agent.id)
+  const memfsEnabled = resolveHeadlessMemfsEnabled(
+    options.agent.id,
+    options.memfsEnabled,
+  );
+  const agentModsDirectory = memfsEnabled
     ? join(getScopedMemoryFilesystemRoot(options.agent.id), "mods")
     : undefined;
 
@@ -164,7 +165,7 @@ export async function emitHeadlessConversationOpen(options: {
   conversationId: string;
   reason: ModConversationOpenReason;
   adapter: ModAdapter;
-  context?: ModContext;
+  context: ModContext;
 }): Promise<void> {
   await options.adapter.events.emit(
     "conversation_open",
@@ -174,7 +175,7 @@ export async function emitHeadlessConversationOpen(options: {
       conversationId: options.conversationId,
       reason: options.reason,
     },
-    options.context ?? createHeadlessModContext(options),
+    options.context,
   );
 }
 
@@ -183,7 +184,7 @@ export async function emitHeadlessConversationClose(options: {
   conversationId: string;
   durationMs: number | null;
   adapter: ModAdapter;
-  context?: ModContext;
+  context: ModContext;
 }): Promise<void> {
   await options.adapter.events.emit(
     "conversation_close",
@@ -195,6 +196,6 @@ export async function emitHeadlessConversationClose(options: {
       reason: "quit",
       toolCallCount: telemetry.getToolCallCount(),
     },
-    options.context ?? createHeadlessModContext(options),
+    options.context,
   );
 }

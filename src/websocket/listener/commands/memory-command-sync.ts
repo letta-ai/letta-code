@@ -40,5 +40,16 @@ export function handleMemfsSyncedMemoryProtocolCommand(
       context.runtime,
       context.runDetachedListenerTask,
     ),
+    overrides: {
+      isMemfsEnabledOnServer: async (agentId: string) => {
+        if (context.runtime.memfsDisabledAgents?.has(agentId) === true) {
+          return false;
+        }
+        const { isMemfsEnabledOnServer } = await import(
+          "@/agent/memory-filesystem"
+        );
+        return isMemfsEnabledOnServer(agentId);
+      },
+    },
   });
 }

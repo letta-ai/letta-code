@@ -21,6 +21,10 @@ const handlerSource = readFileSync(
   fileURLToPath(new URL("./memory.ts", import.meta.url)),
   "utf-8",
 );
+const helperSource = readFileSync(
+  fileURLToPath(new URL("./memory-helpers.ts", import.meta.url)),
+  "utf-8",
+);
 
 function handlerBlock(startMarker: string, endMarker: string | null): string {
   const start = handlerSource.indexOf(startMarker);
@@ -63,10 +67,11 @@ describe("listener memory write push ordering (contract)", () => {
   }
 
   test("bounded helper races the push against the cap", () => {
-    const helperBlock = handlerBlock(
-      "async function awaitMemoryPushBounded(",
-      "export async function handleListMemoryCommand(",
+    const start = helperSource.indexOf(
+      "export async function awaitMemoryPushBounded(",
     );
+    expect(start).toBeGreaterThan(-1);
+    const helperBlock = helperSource.slice(start);
     expect(helperBlock).toContain("await Promise.race([syncPromise,");
   });
 
@@ -75,7 +80,7 @@ describe("listener memory write push ordering (contract)", () => {
     // (10s) — the skills install/uninstall UI sends write/delete_memory_file
     // through it with no override. A cap at or above 10s would turn slow
     // pushes into spurious client-side failures.
-    const match = handlerSource.match(
+    const match = helperSource.match(
       /const MEMORY_PUSH_AWAIT_CAP_MS = ([\d_]+);/,
     );
     expect(match).not.toBeNull();

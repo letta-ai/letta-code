@@ -1,5 +1,4 @@
 import type WebSocket from "ws";
-import type { EnsureLocalMemfsCheckoutOptions } from "@/agent/memory-filesystem";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { ListMemoryCommand } from "@/types/protocol_v2";
 import { debugWarn } from "@/utils/debug";
@@ -13,6 +12,11 @@ import {
   isReadMemoryFileCommand,
   isWriteMemoryFileCommand,
 } from "@/websocket/listener/protocol-inbound";
+import type { ListMemoryCommandTestOverrides } from "./memory-command-types";
+import {
+  awaitMemoryPushBounded,
+  resolveMemoryFilesystemHelpers,
+} from "./memory-helpers";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 const warnMemoryCommand = debugWarn.bind(null, "memory-commands");
@@ -41,19 +45,11 @@ function isMarkdownMemoryPath(path: string): boolean {
   return getLowercaseExtension(path) === ".md";
 }
 
-export type ListMemoryCommandTestOverrides = {
-  ensureLocalMemfsCheckout?: (
-    agentId: string,
-    options?: EnsureLocalMemfsCheckoutOptions,
-  ) => Promise<void>;
-  getMemoryFilesystemRoot?: (agentId: string) => string;
-  isMemfsEnabledOnServer?: (agentId: string) => Promise<boolean>;
-};
-
 type ListMemoryCommandContext = {
   socket: WebSocket;
   safeSocketSend: SafeSocketSend;
   runDetachedListenerTask: RunDetachedListenerTask;
+  overrides?: ListMemoryCommandTestOverrides;
 };
 
 function trackListenerError(
@@ -66,71 +62,6 @@ function trackListenerError(
     error,
     context,
   });
-}
-
-// Cap on how long a GUI-initiated memory write waits for the remote push
-// before responding. Common-case pushes land well under this, so the client
-// gets a response that is safely ordered after the server-of-record update
-// (LET-9481). Slower pushes fall back to responding immediately while the
-// push finishes in the background — the web UI reconciles that path with its
-// own retry loop. MUST stay below the desktop UI's 10s device-command
-// timeout (useSendDeviceCommand DEFAULT_TIMEOUT_MS), or skill install /
-// uninstall would report spurious timeout failures on slow networks.
-const MEMORY_PUSH_AWAIT_CAP_MS = 8_000;
-
-/**
- * Push pending memory commits, waiting up to `MEMORY_PUSH_AWAIT_CAP_MS` so
- * the caller can order its response/notifications after the remote update.
- * On cap expiry the push keeps running detached (failures are logged).
- */
-async function awaitMemoryPushBounded(
-  commandName: string,
-  agentId: string,
-  memoryRoot: string,
-): Promise<void> {
-  const { syncPendingMemoryCommitsAfterTurn } = await import(
-    "@/agent/memory-git"
-  );
-  const syncPromise = syncPendingMemoryCommitsAfterTurn(agentId, {
-    memoryDir: memoryRoot,
-  });
-
-  const warnOnFailure = (result: { status: string; summary: string }): void => {
-    if (result.status === "push_failed" || result.status === "conflict") {
-      warnMemoryCommand(
-        `[${commandName}] push failed for ${agentId}: ${result.summary}`,
-      );
-    }
-  };
-
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const capPromise = new Promise<"timed_out">((resolve) => {
-    timer = setTimeout(() => resolve("timed_out"), MEMORY_PUSH_AWAIT_CAP_MS);
-  });
-
-  try {
-    const result = await Promise.race([syncPromise, capPromise]);
-    if (result === "timed_out") {
-      warnMemoryCommand(
-        `[${commandName}] push still in flight after ${MEMORY_PUSH_AWAIT_CAP_MS}ms for ${agentId}; responding now, push continues in background`,
-      );
-      syncPromise.then(warnOnFailure).catch((err) => {
-        warnMemoryCommand(
-          `[${commandName}] background push failed for ${agentId}:`,
-          err instanceof Error ? err.message : err,
-        );
-      });
-      return;
-    }
-    warnOnFailure(result);
-  } catch (err) {
-    warnMemoryCommand(
-      `[${commandName}] push failed for ${agentId}:`,
-      err instanceof Error ? err.message : err,
-    );
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
 
 export async function handleListMemoryCommand(
@@ -428,7 +359,12 @@ export function handleMemoryProtocolCommand(
 
   if (isListMemoryCommand(parsed)) {
     runDetachedListenerTask("list_memory", async () => {
-      await handleListMemoryCommand(parsed, socket, safeSocketSend);
+      await handleListMemoryCommand(
+        parsed,
+        socket,
+        safeSocketSend,
+        context.overrides,
+      );
     });
     return true;
   }
@@ -666,10 +602,10 @@ export function handleMemoryProtocolCommand(
 
       try {
         const {
-          getScopedMemoryFilesystemRoot,
+          getMemoryFilesystemRoot,
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
-        } = await import("@/agent/memory-filesystem");
+        } = await resolveMemoryFilesystemHelpers(context.overrides);
         const { readFile } = await import("node:fs/promises");
         const { existsSync } = await import("node:fs");
         const { isAbsolute, join, normalize, relative, sep } = await import(
@@ -681,7 +617,7 @@ export function handleMemoryProtocolCommand(
           sendFailure("path must be a non-empty relative path");
           return;
         }
-        const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
+        const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
         const absolutePath = normalize(join(memoryRoot, parsed.path));
         const rel = relative(memoryRoot, absolutePath);
         if (
@@ -768,10 +704,10 @@ export function handleMemoryProtocolCommand(
 
       try {
         const {
-          getScopedMemoryFilesystemRoot,
+          getMemoryFilesystemRoot,
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
-        } = await import("@/agent/memory-filesystem");
+        } = await resolveMemoryFilesystemHelpers(context.overrides);
         const { commitMemoryWrite } = await import("@/agent/memory-git");
         const { writeFile, mkdir } = await import("node:fs/promises");
         const { existsSync } = await import("node:fs");
@@ -785,7 +721,7 @@ export function handleMemoryProtocolCommand(
           );
           return;
         }
-        const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
+        const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
         const absolutePath = normalize(join(memoryRoot, parsed.path));
         const rel = relative(memoryRoot, absolutePath);
         if (
@@ -945,10 +881,10 @@ export function handleMemoryProtocolCommand(
 
       try {
         const {
-          getScopedMemoryFilesystemRoot,
+          getMemoryFilesystemRoot,
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
-        } = await import("@/agent/memory-filesystem");
+        } = await resolveMemoryFilesystemHelpers(context.overrides);
         const { commitMemoryWrite } = await import("@/agent/memory-git");
         const { unlink } = await import("node:fs/promises");
         const { existsSync } = await import("node:fs");
@@ -963,7 +899,7 @@ export function handleMemoryProtocolCommand(
           );
           return;
         }
-        const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
+        const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
         const absolutePath = normalize(join(memoryRoot, parsed.path));
         const rel = relative(memoryRoot, absolutePath);
         if (
