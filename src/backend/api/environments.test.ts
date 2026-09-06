@@ -84,7 +84,11 @@ describe("Cloud sandbox environment resolution", () => {
 describe("Desktop environment resolution", () => {
   test("resolves the one online Desktop listener to its Cloud lease", async () => {
     const list = (async (options) => {
-      expect(options).toEqual({ limit: 100, onlineOnly: true });
+      expect(options).toEqual({
+        limit: 100,
+        onlineOnly: true,
+        source: "remote",
+      });
       return {
         connections: [
           environment({

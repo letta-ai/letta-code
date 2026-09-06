@@ -140,46 +140,39 @@ describe("teleport subcommand", () => {
       const exitCode = await runTeleportSubcommand(["list"], {
         initializeSettings: async () => {},
         listEnvironments: async (options) => {
-          expect(options).toEqual({ limit: 100, onlineOnly: true });
+          const now = Date.now();
+          const local = {
+            id: "local-env",
+            connectionId: "local-1",
+            deviceId: "device-1",
+            connectionName: "Desktop Local",
+            organizationId: "local",
+            podId: "local",
+            connectedAt: now,
+            lastHeartbeat: now,
+            lastSeenAt: now,
+            firstSeenAt: now,
+          };
+          const directCloud = {
+            id: "env-1",
+            connectionId: "conn-1",
+            deviceId: "device-1",
+            listenerInstanceId: "desktop-direct-cloud:install-1",
+            connectionName: "Laptop",
+            organizationId: "org-1",
+            podId: null,
+            connectedAt: now,
+            lastHeartbeat: now,
+            lastSeenAt: now,
+            firstSeenAt: now,
+          };
+          expect(options).toEqual({
+            limit: 100,
+            onlineOnly: true,
+            source: "remote",
+          });
           return {
-            connections: [
-              {
-                id: "local-env",
-                connectionId: "local-1",
-                deviceId: "local-device",
-                connectionName: "Desktop Local",
-                organizationId: "local",
-                podId: "local",
-                connectedAt: null,
-                lastHeartbeat: Date.now(),
-                lastSeenAt: Date.now(),
-                firstSeenAt: Date.now(),
-              },
-              {
-                id: "env-1",
-                connectionId: "conn-1",
-                deviceId: "device-1",
-                connectionName: "Laptop",
-                organizationId: "org-1",
-                podId: null,
-                connectedAt: null,
-                lastHeartbeat: Date.now(),
-                lastSeenAt: Date.now(),
-                firstSeenAt: Date.now(),
-              },
-              {
-                id: "env-offline",
-                connectionId: null,
-                deviceId: "device-offline",
-                connectionName: "Offline Laptop",
-                organizationId: "org-1",
-                podId: null,
-                connectedAt: null,
-                lastHeartbeat: null,
-                lastSeenAt: Date.now(),
-                firstSeenAt: Date.now(),
-              },
-            ],
+            connections: options?.source === "remote" ? [directCloud] : [local],
             hasNextPage: false,
           };
         },
@@ -363,8 +356,9 @@ describe("teleport subcommand", () => {
         runTeleportSubcommand(["my-laptop"], {
           initializeSettings: async () => {},
           getLastSession: () => null,
-          resolveEnvironmentConnectionId: async (selector) => {
+          resolveEnvironmentConnectionId: async (selector, options) => {
             expect(selector).toBe("my-laptop");
+            expect(options).toEqual({ source: "remote" });
             return {
               connectionId: "conn-laptop",
               environment: {} as never,

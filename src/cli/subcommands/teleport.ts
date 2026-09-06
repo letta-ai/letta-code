@@ -180,7 +180,11 @@ export async function runTeleportSubcommand(
 
     if (action === "list") {
       const list = deps.listEnvironments ?? listEnvironments;
-      const result = await list({ limit: 100, onlineOnly: true });
+      const result = await list({
+        limit: 100,
+        onlineOnly: true,
+        source: "remote",
+      });
       const connections = result.connections
         .filter(
           (environment) =>
@@ -222,7 +226,7 @@ export async function runTeleportSubcommand(
     } else {
       const resolve =
         deps.resolveEnvironmentConnectionId ?? resolveEnvironmentConnectionId;
-      const resolved = await resolve(action);
+      const resolved = await resolve(action, { source: "remote" });
       assertTeleportableRemoteEnvironment(resolved.environment);
       targetConnectionId = resolved.connectionId;
     }

@@ -35,6 +35,8 @@ export interface ListEnvironmentsResponse {
   hasNextPage: boolean;
 }
 
+export type EnvironmentSource = "local" | "remote";
+
 export type SendEnvironmentMessageBody = Record<string, unknown> & {
   messages: Array<Record<string, unknown>>;
   agentId?: string;
@@ -53,7 +55,12 @@ export interface CreateAgentSandboxResponse {
 }
 
 export async function listEnvironments(
-  options: { limit?: number; after?: string; onlineOnly?: boolean } = {},
+  options: {
+    limit?: number;
+    after?: string;
+    onlineOnly?: boolean;
+    source?: EnvironmentSource;
+  } = {},
 ): Promise<ListEnvironmentsResponse> {
   return apiRequest<ListEnvironmentsResponse>(
     "GET",
@@ -64,6 +71,7 @@ export async function listEnvironments(
         limit: options.limit,
         after: options.after,
         onlineOnly: options.onlineOnly,
+        source: options.source,
       },
     },
   );
@@ -82,10 +90,13 @@ export async function sendEnvironmentMessage(
 
 export async function getEnvironmentConnection(
   deviceId: string,
+  options: { source?: EnvironmentSource } = {},
 ): Promise<EnvironmentConnection> {
   return apiRequest<EnvironmentConnection>(
     "GET",
     `/v1/environments/${encodeURIComponent(deviceId)}`,
+    undefined,
+    { query: { source: options.source } },
   );
 }
 
@@ -124,7 +135,11 @@ export function describeEnvironment(
 export async function resolveDesktopEnvironmentConnectionId(
   list: typeof listEnvironments = listEnvironments,
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
-  const response = await list({ limit: 100, onlineOnly: true });
+  const response = await list({
+    limit: 100,
+    onlineOnly: true,
+    source: "remote",
+  });
   const matches = response.connections.filter(
     (environment) =>
       environment.listenerInstanceId?.startsWith("desktop-direct-cloud:") ===
@@ -151,13 +166,17 @@ export async function resolveDesktopEnvironmentConnectionId(
 
 export async function resolveEnvironmentConnectionId(
   selector: string,
+  options: { source?: EnvironmentSource } = {},
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
   const trimmed = selector.trim();
   if (!trimmed) {
     throw new Error("Computer selector must not be empty");
   }
 
-  const response = await listEnvironments({ limit: 100 });
+  const response = await listEnvironments({
+    limit: 100,
+    source: options.source,
+  });
   const matches = response.connections.filter((environment) => {
     return (
       environment.connectionId === trimmed ||

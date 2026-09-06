@@ -236,7 +236,7 @@ export interface BuildCloudScheduleParams {
   cron: string;
   recurring: boolean;
   scheduledFor?: Date;
-  /** Optional connected computer to execute on (offline → sandbox fallback). */
+  /** Optional connected computer to execute on (offline → failed run). */
   targetDeviceId?: string;
 }
 

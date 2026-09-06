@@ -66,10 +66,12 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function installScheduleApi(options: {
   environments?: Record<string, ReturnType<typeof environment>>;
+  localEnvironments?: Record<string, ReturnType<typeof environment>>;
 }) {
   const requests: Array<{
     method: string;
     pathname: string;
+    search: string;
     body: Record<string, unknown> | undefined;
   }> = [];
 
@@ -79,7 +81,7 @@ function installScheduleApi(options: {
     const body = init?.body
       ? (JSON.parse(String(init.body)) as Record<string, unknown>)
       : undefined;
-    requests.push({ method, pathname: url.pathname, body });
+    requests.push({ method, pathname: url.pathname, search: url.search, body });
 
     if (
       method === "GET" &&
@@ -90,7 +92,12 @@ function installScheduleApi(options: {
 
     if (method === "GET" && url.pathname.startsWith("/v1/environments/")) {
       const deviceId = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
-      const found = options.environments?.[deviceId];
+      const source = url.searchParams.get("source");
+      const found =
+        source === "remote"
+          ? options.environments?.[deviceId]
+          : (options.localEnvironments?.[deviceId] ??
+            options.environments?.[deviceId]);
       return found
         ? jsonResponse(found)
         : jsonResponse({ error: "environment not found" }, 404);
@@ -346,6 +353,43 @@ describe("cron add execution targeting", () => {
     expect(
       requests.find((request) => request.method === "POST")?.body,
     ).toMatchObject({ target_device_id: "device-explicit" });
+  });
+
+  test("explicit --computer resolves the direct-Cloud row when Desktop has the same device locally", async () => {
+    const deviceId = "device-desktop";
+    const local = {
+      ...environment(deviceId),
+      connectionId: "conn-desktop-local",
+      organizationId: "local",
+    };
+    const directCloud = {
+      ...environment(deviceId),
+      connectionId: "conn-desktop-cloud",
+      listenerInstanceId: "desktop-direct-cloud:install-1",
+    };
+    const requests = installScheduleApi({
+      environments: { [deviceId]: directCloud },
+      localEnvironments: { [deviceId]: local },
+    });
+
+    expect(
+      await runCronSubcommand([
+        ...addArgs,
+        "--runner",
+        "cloud",
+        "--computer",
+        deviceId,
+      ]),
+    ).toBe(0);
+
+    expect(
+      requests.find((request) =>
+        request.pathname.startsWith("/v1/environments/"),
+      )?.search,
+    ).toBe("?source=remote");
+    expect(
+      requests.find((request) => request.method === "POST")?.body,
+    ).toMatchObject({ target_device_id: deviceId });
   });
 
   test("--runner local rejects --computer without touching the schedule API", async () => {

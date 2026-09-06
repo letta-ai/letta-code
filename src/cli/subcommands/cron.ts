@@ -110,8 +110,8 @@ Add options:
                                    reach this computer)
   --computer <id>        (cloud runner only) Override execution with a
                          connected external computer (deviceId from
-                         \`letta computers list\`). Falls back to the Cloud
-                         sandbox if the computer is offline at fire time.
+                         \`letta computers list\`). The run fails if the
+                         computer is offline at fire time.
                          Managed sandboxes and Desktop-local connections are
                          not currently valid Cloud schedule targets.
 
@@ -213,11 +213,11 @@ function isRunnerFlagValid(value: string | undefined): boolean {
 }
 
 /**
- * Best-effort lookup of a --computer deviceId in the environments registry
- * (through the same base URL the schedule request will use, so Desktop's
- * merged local+cloud view is what gets validated). Returns null when the
- * lookup fails or the device is unknown — the server-side registry check on
- * schedule create remains the backstop for those cases.
+ * Best-effort lookup of a --computer deviceId in the Cloud environments
+ * registry. Desktop's localhost router also has a same-device local row, so
+ * Cloud schedule validation explicitly requests the remote view. Returns null
+ * when the lookup fails or the device is unknown — the server-side registry
+ * check on schedule create remains the backstop for those cases.
  */
 async function lookupEnvironmentForTarget(
   deviceId: string,
@@ -226,7 +226,7 @@ async function lookupEnvironmentForTarget(
     const { getEnvironmentConnection } = await import(
       "@/backend/api/environments"
     );
-    return await getEnvironmentConnection(deviceId);
+    return await getEnvironmentConnection(deviceId, { source: "remote" });
   } catch {
     return null;
   }
@@ -367,7 +367,7 @@ async function handleAdd(values: CronArgValues): Promise<number> {
   let localFallbackNote: string | undefined;
 
   // Device targets are a Cloud-schedule feature: the cloud worker delivers
-  // to the named device's listener (sandbox fallback when offline). A local
+  // to the named device's listener (the run fails when it is offline). A local
   // task already runs on the device that owns it, so the flag is meaningless
   // (and likely a mistake) for the local runner.
   if (targetDeviceId && runner !== "cloud") {
@@ -538,7 +538,7 @@ async function handleCloudAdd(params: CloudAddParams): Promise<number> {
     console.log(JSON.stringify(output, null, 2));
     console.error(
       targetDeviceId
-        ? `Created Cloud schedule: it fires from the cloud and runs on computer "${targetDeviceId}" (sandbox fallback if offline).`
+        ? `Created Cloud schedule: it fires from the cloud and runs on computer "${targetDeviceId}" (the run fails if the computer is offline).`
         : "Created Cloud schedule: it fires from the cloud and runs in this agent's managed cloud sandbox (survives local shutdown).",
     );
     return 0;

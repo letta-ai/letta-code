@@ -6,7 +6,7 @@
  * Letta API's database and fires from a cloud worker, which injects the
  * scheduled turn into the agent's managed cloud sandbox (`use_sandbox: true`)
  * or, when `target_device_id` is set, into that registered device's live
- * listener (sandbox fallback when the device is offline). Either way they
+ * listener (the run fails when the device is offline). Either way they
  * survive local process/device/sandbox termination, unlike runtime-local
  * crons in ~/.letta/crons.json.
  */
@@ -96,7 +96,7 @@ export async function createCloudSchedule(
       ...input,
       // Cloud schedules created by the CLI always use harness delivery:
       // execution runs in the agent's managed sandbox, or on the device named
-      // by `target_device_id` (LET-9821) with sandbox fallback when offline.
+      // by `target_device_id` (LET-9821), failing if the device is offline.
       // The server requires use_sandbox for device targets either way.
       use_sandbox: true,
     },
