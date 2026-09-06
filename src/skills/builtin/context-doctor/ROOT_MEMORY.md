@@ -64,21 +64,18 @@ The context in the memory filesystem should have a clear structure, with a well-
 - Rewrite unclear or low-quality content
 
 #### Invalid context format
-Files in the memory filesystem must follow certain structural requirements: 
-- Must have root `MEMORY.md` and root `persona.md`
-- Root and child `MEMORY.md` files have no frontmatter; every other memory Markdown file has exactly `name` and `description` frontmatter
-- Must NOT have overlapping file and folder names (e.g. `human.md` and `human/identity.md`)
-- Must follow specification for skills (e.g. `skills/{skill_name}/`) with the format:
-```
-skill-name/
-├── SKILL.md          # Required: metadata + instructions
-├── scripts/          # Optional: executable code
-├── references/       # Optional: documentation
-├── assets/           # Optional: templates, resources
-└── ...               # Any additional files or directories
-```
+Files in the memory filesystem should follow certain structural conventions. Some are enforced by the system, others are recommendations:
 
-**Solution**: Reorganize files to follow the required structure
+**Enforced requirements (pre-commit hooks will reject violations)**:
+- Root `MEMORY.md` must exist (required for root-layout format detection)
+- Root and child `MEMORY.md` files have no frontmatter; every other memory Markdown file has exactly `name` and `description` frontmatter
+- Skills must use the directory format: `skills/{skill_name}/SKILL.md` with optional `scripts/`, `references/`, `assets/` subdirectories. Flat skill files like `skills/foo.md` are rejected.
+
+**Strongly recommended (not enforced, but best practice)**:
+- Include a root `persona.md` to define your identity. The system handles missing persona gracefully, but identity drift is a real risk without it.
+- Avoid overlapping file and folder names (e.g. `human.md` AND `human/`). The system tolerates overlaps, but they make memory harder to navigate and can confuse agents about which path to use.
+
+**Solution**: Reorganize files to follow the recommended structure
 
 ### Poor use of progressive disclosure
 Only critical information should be in the system prompt, since it's passed on every turn. Use progressive disclosure so that context only *sometimes* needed can be dynamically retrieved.
