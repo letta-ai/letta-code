@@ -105,7 +105,7 @@ describe("Monitor", () => {
     expect(MonitorSchema.required).toEqual(["description"]);
     expect(MonitorSchema).not.toHaveProperty("oneOf");
     expect(MonitorSchema.properties.description.description).toBe(
-      "Short human-readable description of what you are monitoring (shown in notifications).",
+      "Clear, concise user-facing description of the update you are waiting for. This may be shown directly in chat, so make it grammatical by itself. Describe the expected event, not the polling command or monitor implementation. Prefer `CI results and review comments for the auth fix`, `Deployment completion or failure`, or `New errors in the API logs` over internal labels like `PR checks and state transitions`.",
     );
     expect(MonitorSchema.properties.timeout_ms).toMatchObject({
       minimum: 1000,
