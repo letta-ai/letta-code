@@ -266,10 +266,15 @@ describe("Shell Launchers", () => {
         }
       });
 
-      test("preserves the contract on Windows PowerShell 5.1", () => {
+      test("preserves native exit codes on Windows PowerShell 5.1", () => {
         const executable =
           "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
         expect(runPowerShellHook(nativeExitCommand(2), executable)).toBe(2);
+      });
+
+      test("preserves language failures on Windows PowerShell 5.1", () => {
+        const executable =
+          "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
         expect(
           runPowerShellHook(
             `${nativeExitCommand(2)}; $null.NoSuchMethod()`,

@@ -169,7 +169,9 @@ async function runStdoutLossScenario(
   );
   const toolResults = toolResultMessages.join("\n");
   const outputFile = toolResults.match(/Output file: ([^\r\n]+)/)?.[1];
-  const taskOutput = outputFile ? readFileSync(outputFile, "utf-8") : "";
+  const taskOutput = outputFile
+    ? await waitForTaskOutput(outputFile, "SUBAGENT-REPORT-OK")
+    : "";
 
   return {
     code,
@@ -389,6 +391,24 @@ function readSpawnArgvs(childStateDir: string): string[][] {
   } catch {
     return [];
   }
+}
+
+async function waitForTaskOutput(
+  outputFile: string,
+  expected: string,
+): Promise<string> {
+  const deadline = Date.now() + 10_000;
+  let content = "";
+  while (Date.now() < deadline) {
+    try {
+      content = readFileSync(outputFile, "utf-8");
+      if (content.includes(expected)) return content;
+    } catch {
+      // The background task may create its transcript after headless exits.
+    }
+    await Bun.sleep(25);
+  }
+  return content;
 }
 
 function tail(text: string): string {

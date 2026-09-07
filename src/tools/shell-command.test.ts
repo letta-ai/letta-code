@@ -59,31 +59,18 @@ test("shell_command strict mode fails fast on intermediate shell errors", async 
 
 test("shell_command falls back when preferred shell is missing", async () => {
   const marker = "shell-fallback";
-  if (process.platform === "win32") {
-    const originalUpper = process.env.COMSPEC;
-    const originalLower = process.env.ComSpec;
-    process.env.COMSPEC = "C:/missing-shell.exe";
-    process.env.ComSpec = "C:/missing-shell.exe";
-    try {
-      const result = await shell_command({ command: `echo ${marker}` });
-      expect(result.output).toContain(marker);
-    } finally {
-      if (originalUpper === undefined) delete process.env.COMSPEC;
-      else process.env.COMSPEC = originalUpper;
-      if (originalLower === undefined) delete process.env.ComSpec;
-      else process.env.ComSpec = originalLower;
-    }
-  } else {
-    const original = process.env.SHELL;
-    process.env.SHELL = "/nonexistent-shell";
-    try {
-      const result = await shell_command({ command: `echo ${marker}` });
-      expect(result.output).toContain(marker);
-    } finally {
-      if (original === undefined) delete process.env.SHELL;
-      else process.env.SHELL = original;
-    }
-  }
+  const missingShellEnv: Record<string, string> =
+    process.platform === "win32"
+      ? {
+          COMSPEC: "C:/missing-shell.exe",
+          ComSpec: "C:/missing-shell.exe",
+        }
+      : { SHELL: "/nonexistent-shell" };
+  const result = await shell_command({
+    command: `echo ${marker}`,
+    secretEnv: missingShellEnv,
+  });
+  expect(result.output).toContain(marker);
 });
 
 test("shell_command surfaces deleted runtime cwd recovery once", async () => {
