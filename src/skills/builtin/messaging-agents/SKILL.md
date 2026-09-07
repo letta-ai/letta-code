@@ -78,12 +78,21 @@ letta -p --from-agent $LETTA_AGENT_ID \
   "message text"
 ```
 
+Use `--computer cloud` to route through the target agent's cloud sandbox:
+
+```bash
+letta -p --from-agent $LETTA_AGENT_ID \
+  --agent <id> \
+  --computer cloud \
+  "message text"
+```
+
 **Arguments:**
 | Arg | Required | Description |
 |-----|----------|-------------|
 | `--agent <id>` | Yes | Target agent ID to message |
 | `--from-agent <id>` | Yes | Sender agent ID (injects agent-to-agent system reminder) |
-| `--computer <selector>` | No | Route through an online computer by connection name, device ID, or connection ID |
+| `--computer <selector>` | No | Route through `cloud` (target agent's cloud sandbox) or an online computer by connection name, device ID, or connection ID |
 | `"message text"` | Yes | Message body (positional after flags) |
 
 **Example:**
@@ -93,13 +102,17 @@ letta -p --from-agent $LETTA_AGENT_ID \
   "What do you know about the authentication system?"
 ```
 
-**Response:**
+**Response (JSON format with `--output json`):**
 ```json
 {
-  "conversation_id": "conversation-xyz789",
-  "response": "The authentication system uses JWT tokens...",
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "The authentication system uses JWT tokens...",
   "agent_id": "agent-abc123",
-  "agent_name": "BackendExpert"
+  "conversation_id": "conversation-xyz789",
+  "environment": { "source": "same-environment" },
+  "usage": { "prompt_tokens": 120, "completion_tokens": 80, "total_tokens": 200, "step_count": 1 }
 }
 ```
 
