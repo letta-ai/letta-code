@@ -41,4 +41,27 @@ describe("dispatching-coding-agents skill", () => {
     expect(skill).not.toContain("--full-auto");
     expect(skill).not.toMatch(/Bash tool.{0,40}`workdir`/i);
   });
+
+  test("lists current Claude Code effort levels", () => {
+    expect(skill).toContain("`xhigh`");
+    expect(skill).toContain("`max`");
+  });
+
+  test("uses correct JSON output field name", () => {
+    expect(skill).toContain("`total_cost_usd`");
+    expect(skill).not.toContain("`cost_usd`");
+  });
+
+  test("distinguishes --allowedTools from --tools", () => {
+    expect(skill).toContain("--tools");
+    expect(skill).toContain("without prompting for permission");
+  });
+
+  test("does not list --search as a codex exec flag", () => {
+    const codexSection = skill.slice(
+      skill.indexOf("### Codex"),
+      skill.indexOf("## Session Management"),
+    );
+    expect(codexSection).not.toContain("--search");
+  });
 });
