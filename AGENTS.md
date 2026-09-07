@@ -897,6 +897,15 @@ and create draft parity PRs when warranted.
   `needs:` gates with `if: always()` treat skipped as non-success, causing false
   failures. Fix: check `needs.draft-gate.result == 'success' || needs.draft-gate.result
   == 'skipped'`.
+- **Release secrets live in the `npm-publish` environment:** `release.yml` runs
+  with `environment: npm-publish`; add any new release-time secret there (repo
+  Settings → Environments → npm-publish), not at repo/org level.
+- **The GitHub App cannot create or list Actions/environment secrets:** `gh
+  secret set`/`gh secret list` against repo or environment secrets fails with
+  HTTP 403 "Resource not accessible by integration"; a human must add them via
+  the GitHub UI. Docker Hub publish credentials (`DOCKERHUB_USERNAME`/
+  `DOCKERHUB_TOKEN`) use an org access token — requires a Docker Team/Business
+  plan — scoped to `letta/letta` with Image-Push permission.
 - **Action ref caching:** GitHub Actions resolves branch refs to SHAs at trigger
   time and caches. Pushing new commits to the action branch doesn't update
   already-triggered runs. Pin to a specific SHA instead of `@main`.
