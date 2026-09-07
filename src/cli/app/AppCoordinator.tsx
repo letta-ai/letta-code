@@ -4030,6 +4030,7 @@ export function App({
     setApprovalResults,
     setAutoDeniedApprovals,
     setAutoHandledResults,
+    setDequeueEpoch,
     setInterruptRequested,
     setIsExecutingTool,
     setPendingApprovals,
@@ -4041,7 +4042,6 @@ export function App({
     userCancelledRef,
     waitingForQueueCancelRef,
   });
-
   // Keep ref to latest processConversation to avoid circular deps in useEffect
   const processConversationRef = useRef(processConversation);
   useEffect(() => {
