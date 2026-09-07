@@ -170,6 +170,7 @@ export function buildSubagentArgs(
     // Deploy existing agent/conversation
     if (existingConversationId) {
       // "default" is agent-scoped; conv-* IDs identify their owner directly.
+      // Preserve the supplied agent when resuming its default conversation.
       if (existingConversationId === "default" && existingAgentId) {
         args.push("--agent", existingAgentId);
       }
@@ -462,7 +463,7 @@ async function executeSubagent(
     // Consider execution "running" once the child process has successfully spawned.
     // This avoids waiting on subagent init events (e.g. agentURL) to reflect progress.
     proc.once("spawn", () => {
-      updateSubagent(subagentId, { status: "running" });
+      updateSubagent(subagentId, { status: "running", spawnedAt: Date.now() });
     });
 
     const stdoutChunks: Buffer[] = [];

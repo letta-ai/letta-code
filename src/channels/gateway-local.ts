@@ -30,6 +30,8 @@ import {
   buildChannelCurrentModelUnavailableMessage,
 } from "./commands";
 import { ChannelGateway, type ChannelGatewayDelivery } from "./gateway-core";
+import { createChannelSubagentNoticeDelivery } from "./gateway-subagent-delivery";
+import type { ChannelSubagentNoticeRoute } from "./gateway-subagent-notices";
 import { buildGatewayMessageChannelTool } from "./message-channel-gateway-tool";
 import { getChannelDisplayName } from "./plugin-registry";
 import {
@@ -42,6 +44,7 @@ import type { ChannelRestoreAgentScope } from "./restore-scope";
 import { createRoutedRuntimeRegistrationRefresher } from "./routed-runtime-registration";
 import { subscribeChannelRoutesChanged } from "./routing";
 import { handleChannelsSlashCommand } from "./slash-command";
+import { readSubagentNoticeRoutes } from "./subagent-notice-config";
 import type {
   ChannelModelPickerData,
   ChannelStartupLogger,
@@ -51,6 +54,8 @@ import type {
 export interface StartLocalChannelGatewayOptions {
   appServerUrl: string;
   channelNames: string[];
+  /** Disabled by default; exact authorized source routes only. No global opt-in. */
+  subagentNoticeRoutes?: readonly ChannelSubagentNoticeRoute[];
   failOnStartupError?: boolean;
   restoreAgentScope?: ChannelRestoreAgentScope | null;
   logger?: ChannelStartupLogger;
@@ -229,49 +234,57 @@ export async function startLocalChannelGateway(
   }
 
   let gateway: ChannelGateway;
-  gateway = new ChannelGateway(client, {
-    createRichDraft: ({ batchId, sources }) => {
-      const streamer = createChannelRichDraftStreamer({ batchId, sources });
-      return streamer
-        ? {
-            handleDelta: (delta) => {
-              streamer.handleChunk(
-                delta as unknown as import("@letta-ai/letta-client/resources/agents/messages").LettaStreamingResponse,
-              );
+  gateway = new ChannelGateway(
+    client,
+    {
+      createRichDraft: ({ batchId, sources }) => {
+        const streamer = createChannelRichDraftStreamer({ batchId, sources });
+        return streamer
+          ? {
+              handleDelta: (delta) => {
+                streamer.handleChunk(
+                  delta as unknown as import("@letta-ai/letta-client/resources/agents/messages").LettaStreamingResponse,
+                );
+              },
+              flushPending: () => streamer.flushPending(),
+              dispose: () => streamer.dispose(),
+            }
+          : null;
+      },
+      buildExternalTool: async (runtime, sources) => {
+        return buildGatewayMessageChannelTool(sources, runtime);
+      },
+      executeExternalTool: async (request, sources, idempotencyScope) => {
+        if (
+          request.tool_name !== "MessageChannel" ||
+          !request.runtime?.agent_id
+        ) {
+          throw new Error(`Unsupported gateway tool: ${request.tool_name}`);
+        }
+        return await executeLocalMessageChannelExternalTool(
+          {
+            ...request.input,
+            channel: String(request.input.channel ?? ""),
+            action: String(request.input.action ?? ""),
+            parentScope: {
+              agentId: request.runtime.agent_id,
+              conversationId: request.runtime.conversation_id,
             },
-            flushPending: () => streamer.flushPending(),
-            dispose: () => streamer.dispose(),
-          }
-        : null;
-    },
-    buildExternalTool: async (runtime, sources) => {
-      return buildGatewayMessageChannelTool(sources, runtime);
-    },
-    executeExternalTool: async (request, sources, idempotencyScope) => {
-      if (
-        request.tool_name !== "MessageChannel" ||
-        !request.runtime?.agent_id
-      ) {
-        throw new Error(`Unsupported gateway tool: ${request.tool_name}`);
-      }
-      return await executeLocalMessageChannelExternalTool(
-        {
-          ...request.input,
-          channel: String(request.input.channel ?? ""),
-          action: String(request.input.action ?? ""),
-          parentScope: {
-            agentId: request.runtime.agent_id,
-            conversationId: request.runtime.conversation_id,
+            channelTurnSources: sources,
           },
-          channelTurnSources: sources,
-        },
-        idempotencyScope,
-      );
+          idempotencyScope,
+        );
+      },
+      onLifecycle: (event) => registry.dispatchTurnLifecycleEvent(event),
+      onProgress: (event) => registry.dispatchTurnProgressEvent(event),
+      onControlRequest: (event) =>
+        registry.registerPendingControlRequest(event),
     },
-    onLifecycle: (event) => registry.dispatchTurnLifecycleEvent(event),
-    onProgress: (event) => registry.dispatchTurnProgressEvent(event),
-    onControlRequest: (event) => registry.registerPendingControlRequest(event),
-  });
+    createChannelSubagentNoticeDelivery(
+      registry,
+      options.subagentNoticeRoutes ?? readSubagentNoticeRoutes,
+    ),
+  );
 
   const routedRuntimeRegistrationRefresher =
     createRoutedRuntimeRegistrationRefresher({

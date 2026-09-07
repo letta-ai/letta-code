@@ -36,6 +36,7 @@ export interface SubagentState {
   error?: string;
   model?: string;
   startTime: number;
+  spawnedAt?: number; // Set only by the child process spawn event, not URL/init projection.
   toolCallId?: string; // Links this subagent to its parent Task tool call
   isBackground?: boolean; // True if running in background (fire-and-forget)
   silent?: boolean; // True if this subagent should be hidden from SubagentGroupDisplay
