@@ -2876,9 +2876,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         // Trigger dequeue effect now that processConversation is no longer active.
         // The dequeue effect checks abortControllerRef (a ref, not state), so it
         // won't re-run on its own — bump dequeueEpoch to force re-evaluation.
-        // Only bump for normal completions — if stale (ESC was pressed), the user
-        // cancelled and queued messages should NOT be auto-submitted.
-        if (!isStale && (tuiQueueRef.current?.length ?? 0) > 0) {
+        // Also bump for stale Esc completions so queued Monitor notifications
+        // drain once userCancelledRef settles (issue 4168).
+        if ((tuiQueueRef.current?.length ?? 0) > 0) {
           setDequeueEpoch((e: number) => e + 1);
         }
       }

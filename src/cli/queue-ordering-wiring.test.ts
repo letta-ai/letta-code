@@ -51,6 +51,38 @@ describe("queue ordering wiring", () => {
     expect(segment).toContain("prev.slice(displayConsumedCount)");
   });
 
+  test("Esc interrupt settle wakes dequeue when the queue still has work", () => {
+    const source = readAppSource();
+    const interruptStart = source.indexOf(
+      "export function useInterruptHandler(ctx: InterruptHandlerContext)",
+    );
+    const interruptEnd = source.indexOf(
+      "return {\n    handleInterrupt,\n  };",
+      interruptStart,
+    );
+    expect(interruptStart).toBeGreaterThan(-1);
+    expect(interruptEnd).toBeGreaterThan(interruptStart);
+    const interruptSegment = source.slice(interruptStart, interruptEnd);
+    expect(interruptSegment).toContain("settleTuiInterruptQueueGuard");
+    expect(interruptSegment).toContain("tuiQueueRef.current?.length ?? 0");
+    expect(interruptSegment).toContain("setDequeueEpoch((e) => e + 1)");
+
+    const finallyStart = source.indexOf(
+      "// Trigger dequeue effect now that processConversation is no longer active.",
+    );
+    const finallyEnd = source.indexOf(
+      "if ((tuiQueueRef.current?.length ?? 0) > 0)",
+      finallyStart,
+    );
+    expect(finallyStart).toBeGreaterThan(-1);
+    expect(finallyEnd).toBeGreaterThan(finallyStart);
+    const finallySegment = source.slice(finallyStart, finallyEnd + 200);
+    expect(finallySegment).toContain(
+      "if ((tuiQueueRef.current?.length ?? 0) > 0)",
+    );
+    expect(finallySegment).not.toContain("if (!isStale &&");
+  });
+
   test("onSubmit allows override-only queued submissions", () => {
     const source = readAppSource();
     const start = source.indexOf("const onSubmit = useCallback(");
