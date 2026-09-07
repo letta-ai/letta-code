@@ -70,6 +70,23 @@ describe("queue ordering wiring", () => {
     );
   });
 
+  test("interrupt settlement wakes the queue after clearing its ref guard", () => {
+    const source = readAppSource();
+    const start = source.indexOf(
+      "// Delay flag reset to ensure React has flushed state updates before dequeue can fire.",
+    );
+    const end = source.indexOf("if (!streaming || interruptRequested)", start);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    const guardReset = segment.indexOf("userCancelledRef.current = false");
+    const queueWake = segment.indexOf("setDequeueEpoch((epoch) => epoch + 1)");
+    expect(guardReset).toBeGreaterThan(-1);
+    expect(queueWake).toBeGreaterThan(guardReset);
+  });
+
   test("bare exit aliases before queue classification", () => {
     const source = readAppSource();
     const start = source.indexOf("const onSubmit = useCallback(");
