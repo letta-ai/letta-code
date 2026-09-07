@@ -76,7 +76,7 @@ export type * from "./schedule-protocol";
 export type * from "./teleport-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
-
+export type ChannelReplyMode = "tool" | "relay";
 export type ExperimentId =
   | "artifacts"
   | "conversation_titles"
@@ -298,11 +298,11 @@ export interface ChannelConfigSnapshot {
   display_name?: string;
   enabled: boolean;
   dm_policy: DmPolicy;
+  reply_mode: ChannelReplyMode;
   allowed_users: string[];
   /** Plugin-owned redacted config/settings payload. */
   config: ChannelPluginConfig;
 }
-
 export interface ChannelAccountSnapshot {
   channel_id: ChannelId;
   account_id: string;
@@ -311,13 +311,13 @@ export interface ChannelAccountSnapshot {
   configured: boolean;
   running: boolean;
   dm_policy: DmPolicy;
+  reply_mode: ChannelReplyMode;
   allowed_users: string[];
   /** Plugin-owned redacted config/settings payload. */
   config: ChannelPluginConfig;
   created_at: string;
   updated_at: string;
 }
-
 export interface ChannelPendingPairing {
   account_id: string;
   code: string;
@@ -1774,11 +1774,11 @@ export interface ChannelAccountCreatePayload {
   display_name?: string;
   enabled?: boolean;
   dm_policy?: DmPolicy;
+  reply_mode?: ChannelReplyMode;
   allowed_users?: string[];
   /** Plugin-owned account config. New fields should be added here, not centrally. */
   config?: ChannelPluginConfig;
 }
-
 export interface ChannelAccountCreateCommand {
   type: "channel_account_create";
   request_id: string;
@@ -1844,11 +1844,11 @@ export interface ChannelSetConfigCommand {
   account_id?: string;
   config: {
     dm_policy?: DmPolicy;
+    reply_mode?: ChannelReplyMode;
     allowed_users?: string[];
     plugin_config?: ChannelPluginConfig;
   };
 }
-
 export interface ChannelStartCommand {
   type: "channel_start";
   request_id: string;

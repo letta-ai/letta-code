@@ -6,12 +6,14 @@ import type {
   ChannelMessageToolDiscovery,
   ChannelMessageToolSchemaContribution,
 } from "./plugin-types";
-import type { SupportedChannelId } from "./types";
+import type { ChannelReplyMode, SupportedChannelId } from "./types";
 
 export interface MessageChannelToolChannel {
   channelId: SupportedChannelId;
   displayName: string;
   accountId?: string | null;
+  replyMode?: ChannelReplyMode;
+  routedDestinationKey?: string;
   messageActions?: Pick<
     ChannelMessageActionAdapter,
     "describeMessageTool"
@@ -24,6 +26,7 @@ export interface MessageChannelToolDiscoveryResult {
   accountIds: string[];
   actions: string[];
   schemaContributions: ChannelMessageToolSchemaContribution[];
+  automaticRelay?: boolean;
 }
 
 export interface BuildMessageChannelToolOptions {
@@ -84,6 +87,12 @@ export function resolveMessageChannelToolChannels(
     schemaContributions.push(...asSchemaContributionArray(discovery?.schema));
   }
 
+  const routedDestinationKeys = new Set(
+    channels.map((channel) => channel.routedDestinationKey).filter(Boolean),
+  );
+  const hasCompleteDestinationKeys = channels.every(
+    (channel) => channel.routedDestinationKey,
+  );
   return {
     activeChannels: [...uniqueChannels.keys()],
     displayNames: [...uniqueChannels.values()].map(
@@ -92,6 +101,12 @@ export function resolveMessageChannelToolChannels(
     accountIds: [...accountIds],
     actions: [...actions],
     schemaContributions,
+    automaticRelay:
+      channels.length > 0 &&
+      channels.every((channel) => channel.replyMode === "relay") &&
+      (hasCompleteDestinationKeys
+        ? routedDestinationKeys.size === 1
+        : channels.length === 1),
   };
 }
 
@@ -230,7 +245,9 @@ export function buildMessageChannelDescriptionFromDiscovery(
   const hasAction = (action: string): boolean =>
     discovery.actions.includes(action);
   const scopedReplyContract = scoped
-    ? '\n\nThis tool is currently scoped to a routed external channel turn. Plain assistant text is not delivered to that external user. If a user-visible reply is appropriate, your final action for the turn must be one MessageChannel call with action="send", channel from the notification, chat_id from the notification, and message containing the reply. After that final send succeeds, do not repeat or paraphrase the sent message in assistant text; finish with only `Sent.` as the internal confirmation. This does not apply to a short acknowledgement sent before continuing substantive work. If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement. For lightweight acknowledgement, prefer action="react" when supported. If the useful response belongs later, schedule the follow-up instead of sending a placeholder.'
+    ? discovery.automaticRelay
+      ? "\n\nThis routed external channel turn uses automatic relay. Plain assistant text is delivered to the external user when the turn completes, so write the user-visible reply normally and do not make a duplicate MessageChannel send. MessageChannel remains available for early acknowledgements, reactions, files, and other explicit actions; exact duplicate final text is suppressed."
+      : '\n\nThis tool is currently scoped to a routed external channel turn. Plain assistant text is not delivered to that external user. If a user-visible reply is appropriate, your final action for the turn must be one MessageChannel call with action="send", channel from the notification, chat_id from the notification, and message containing the reply. After that final send succeeds, do not repeat or paraphrase the sent message in assistant text; finish with only `Sent.` as the internal confirmation. This does not apply to a short acknowledgement sent before continuing substantive work. If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement. For lightweight acknowledgement, prefer action="react" when supported. If the useful response belongs later, schedule the follow-up instead of sending a placeholder.'
     : "";
   const slackWorkAcknowledgement = discovery.activeChannels.includes("slack")
     ? '\n\nFor Slack requests that require nontrivial work or several tool calls, send one short MessageChannel call with action="send" before starting other tools. This gives the Slack user verbal acknowledgement and a View in web link. Do not do this for no-ops, reaction-only responses, or simple no-tool answers.'

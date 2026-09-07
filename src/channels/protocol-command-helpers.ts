@@ -226,6 +226,7 @@ export function mapChannelConfig(
     display_name: snapshot.displayName,
     enabled: snapshot.enabled,
     dm_policy: snapshot.dmPolicy,
+    reply_mode: snapshot.replyMode ?? "tool",
     allowed_users: snapshot.allowedUsers,
     config: snapshot.config ?? {},
   };
@@ -244,6 +245,7 @@ export function mapChannelAccount(
     configured: snapshot.configured,
     running: snapshot.running,
     dm_policy: snapshot.dmPolicy,
+    reply_mode: snapshot.replyMode ?? "tool",
     allowed_users: snapshot.allowedUsers,
     config: snapshot.config ?? {},
     created_at: snapshot.createdAt,

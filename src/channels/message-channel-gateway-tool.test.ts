@@ -3,10 +3,12 @@ import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
+  getChannelAccount,
   upsertChannelAccount,
 } from "@/channels/accounts";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import type { ChannelAdapter } from "@/channels/types";
+import { makeSource } from "./gateway-test-support";
 import { buildGatewayMessageChannelTool } from "./message-channel-gateway-tool";
 
 afterEach(async () => {
@@ -18,6 +20,84 @@ afterEach(async () => {
 
 test("does not build MessageChannel without an eligible route or proactive account", async () => {
   expect(await buildGatewayMessageChannelTool([])).toBeNull();
+});
+
+test("does not attach MessageChannel to relay-only routed turns", async () => {
+  __testOverrideLoadChannelAccounts(() => []);
+  __testOverrideSaveChannelAccounts(() => {});
+  upsertChannelAccount("slack", {
+    channel: "slack",
+    accountId: "account-1",
+    displayName: "Slack",
+    enabled: true,
+    dmPolicy: "pairing",
+    replyMode: "relay",
+    allowedUsers: [],
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    mode: "socket",
+    botToken: "xoxb-test",
+    appToken: "xapp-test",
+    agentId: "agent-1",
+    defaultPermissionMode: "standard",
+  });
+
+  const source = makeSource({
+    channel: "slack",
+    accountId: "account-1",
+    chatId: "C123",
+  });
+  await expect(buildGatewayMessageChannelTool([source])).resolves.toBeNull();
+});
+
+test("exposes only tool-mode accounts for mixed routed sources", async () => {
+  __testOverrideLoadChannelAccounts(() => []);
+  __testOverrideSaveChannelAccounts(() => {});
+  upsertChannelAccount("slack", {
+    channel: "slack",
+    accountId: "relay-account",
+    displayName: "Slack Relay",
+    enabled: true,
+    dmPolicy: "pairing",
+    replyMode: "relay",
+    allowedUsers: [],
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    mode: "socket",
+    botToken: "xoxb-test",
+    appToken: "xapp-test",
+    agentId: "agent-1",
+    defaultPermissionMode: "standard",
+  });
+  upsertChannelAccount("telegram", {
+    channel: "telegram",
+    accountId: "tool-account",
+    displayName: "Telegram Tool",
+    enabled: true,
+    dmPolicy: "pairing",
+    replyMode: "tool",
+    allowedUsers: [],
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    token: "telegram-test",
+    binding: { agentId: "agent-1", conversationId: null },
+  });
+
+  const tool = await buildGatewayMessageChannelTool([
+    makeSource({
+      channel: "slack",
+      accountId: "relay-account",
+      chatId: "C123",
+    }),
+    makeSource({
+      channel: "telegram",
+      accountId: "tool-account",
+      chatId: "515978553",
+    }),
+  ]);
+
+  expect(tool?.description).toContain("Currently active channels: Telegram.");
+  expect(tool?.description).not.toContain("Slack");
 });
 
 test("builds proactive Slack for a fresh conversation owned by the account agent", async () => {
@@ -60,6 +140,19 @@ test("builds proactive Slack for a fresh conversation owned by the account agent
   expect(tool?.description).not.toContain(
     "currently scoped to a routed external channel turn",
   );
+
+  const account = getChannelAccount("slack", "account-1");
+  if (!account) throw new Error("Slack account missing");
+  upsertChannelAccount("slack", {
+    ...account,
+    replyMode: "relay",
+  });
+  await expect(
+    buildGatewayMessageChannelTool([], {
+      agent_id: "agent-1",
+      conversation_id: "conv-schedule-1",
+    }),
+  ).resolves.toBeNull();
 
   await expect(
     buildGatewayMessageChannelTool([], {

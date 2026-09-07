@@ -2,6 +2,7 @@ import type {
   ExternalToolDefinitionPayload,
   RuntimeScope,
 } from "@/types/app-server-protocol";
+import { getChannelAccount } from "./accounts";
 import { buildMessageChannelExternalToolDefinition } from "./message-channel-tool-definition";
 import { resolveLocalMessageChannelToolChannels } from "./message-tool";
 import { listEligibleProactiveSlackAccounts } from "./slack/proactive-accounts";
@@ -11,12 +12,17 @@ export async function buildGatewayMessageChannelTool(
   sources: ChannelTurnSource[],
   runtime?: RuntimeScope,
 ): Promise<ExternalToolDefinitionPayload | null> {
-  const seen = new Set<string>();
-  const channelScopes = (
+  const channelScopes =
     sources.length > 0
       ? sources.map((source) => ({
           channelId: source.channel,
           accountId: source.accountId ?? null,
+          routedDestinationKey: JSON.stringify({
+            channel: source.channel,
+            accountId: source.accountId ?? null,
+            chatId: source.chatId,
+            threadId: source.threadId ?? null,
+          }),
         }))
       : runtime
         ? listEligibleProactiveSlackAccounts({
@@ -25,18 +31,17 @@ export async function buildGatewayMessageChannelTool(
             channelId: "slack",
             accountId: account.accountId,
           }))
-        : []
-  ).filter(({ channelId, accountId }) => {
-    const key = `${channelId}:${accountId ?? ""}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  if (channelScopes.length === 0) return null;
+        : [];
+  const toolScopes = channelScopes.filter(
+    ({ channelId, accountId }) =>
+      !accountId ||
+      getChannelAccount(channelId, accountId)?.replyMode !== "relay",
+  );
+  if (toolScopes.length === 0) return null;
 
   return buildMessageChannelExternalToolDefinition({
     channels: await resolveLocalMessageChannelToolChannels({
-      channels: channelScopes,
+      channels: toolScopes,
     }),
     scoped: sources.length > 0,
     allowProactiveTargets: true,

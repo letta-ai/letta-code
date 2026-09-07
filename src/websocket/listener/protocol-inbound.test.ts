@@ -534,6 +534,51 @@ describe("agent/conversation management protocol-inbound validators", () => {
 });
 
 describe("discord protocol-inbound validators", () => {
+  test("channel account commands accept known reply modes and reject unknown values", () => {
+    const create = {
+      type: "channel_account_create",
+      channel_id: "discord",
+      request_id: "create-reply-mode",
+      account: { reply_mode: "relay", config: { token: "test-token" } },
+    };
+    const update = {
+      type: "channel_account_update",
+      channel_id: "discord",
+      account_id: "acc-1",
+      request_id: "update-reply-mode",
+      patch: { reply_mode: "tool" },
+    };
+    const setConfig = {
+      type: "channel_set_config",
+      channel_id: "discord",
+      account_id: "acc-1",
+      request_id: "set-reply-mode",
+      config: { reply_mode: "relay" },
+    };
+
+    expect(isChannelAccountCreateCommand(create)).toBe(true);
+    expect(isChannelAccountUpdateCommand(update)).toBe(true);
+    expect(isChannelSetConfigCommand(setConfig)).toBe(true);
+    expect(
+      isChannelAccountCreateCommand({
+        ...create,
+        account: { ...create.account, reply_mode: "automatic" },
+      }),
+    ).toBe(false);
+    expect(
+      isChannelAccountUpdateCommand({
+        ...update,
+        patch: { reply_mode: "automatic" },
+      }),
+    ).toBe(false);
+    expect(
+      isChannelSetConfigCommand({
+        ...setConfig,
+        config: { reply_mode: "automatic" },
+      }),
+    ).toBe(false);
+  });
+
   test("valid discord account create passes", () => {
     const msg = {
       type: "channel_account_create",

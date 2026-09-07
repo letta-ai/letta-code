@@ -98,6 +98,7 @@ function createLocalMessageChannelResolver(): MessageChannelExecutionResolver {
 function resolveLocalMessageChannelExecution(
   args: MessageChannelArgs,
   idempotencyScope?: MessageChannelIdempotencyScope | null,
+  idempotencyMode: "explicit" | "relay" = "explicit",
 ): ExecuteMessageChannelOptions | string {
   if (!getChannelRegistry()) {
     return "Error: Channel system is not initialized. Start with --channels flag.";
@@ -110,6 +111,7 @@ function resolveLocalMessageChannelExecution(
     resolver: createLocalMessageChannelResolver(),
     channelTurnSources: args.channelTurnSources,
     idempotencyScope,
+    idempotencyMode,
   };
 }
 
@@ -118,6 +120,20 @@ export async function message_channel(
   idempotencyScope?: MessageChannelIdempotencyScope | null,
 ): Promise<string> {
   const execution = resolveLocalMessageChannelExecution(args, idempotencyScope);
+  return typeof execution === "string"
+    ? execution
+    : await executeMessageChannel(args, execution);
+}
+
+export async function relayLocalMessageChannel(
+  args: MessageChannelArgs,
+  idempotencyScope: MessageChannelIdempotencyScope,
+): Promise<string> {
+  const execution = resolveLocalMessageChannelExecution(
+    args,
+    idempotencyScope,
+    "relay",
+  );
   return typeof execution === "string"
     ? execution
     : await executeMessageChannel(args, execution);

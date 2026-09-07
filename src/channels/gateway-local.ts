@@ -3,7 +3,10 @@ import WebSocket from "ws";
 import { getModelInfo } from "@/agent/model";
 import { createAppServerClient } from "@/app-server-client";
 import { settingsManager } from "@/settings-manager";
-import { executeLocalMessageChannelExternalTool } from "@/tools/impl/message-channel";
+import {
+  executeLocalMessageChannelExternalTool,
+  relayLocalMessageChannel,
+} from "@/tools/impl/message-channel";
 import type {
   ExecuteCommandResponseMessage,
   ListModelsResponseMessage,
@@ -16,6 +19,7 @@ import type {
   ServiceCommandResponse,
   ServiceEvent,
 } from "@/types/service-protocol";
+import { getChannelAccount } from "./accounts";
 import { createChannelRichDraftStreamer } from "./channel-rich-draft-streamer";
 import {
   type RuntimeCommandClient,
@@ -29,15 +33,27 @@ import {
   buildChannelCurrentModelMessage,
   buildChannelCurrentModelUnavailableMessage,
 } from "./commands";
-import { ChannelGateway, type ChannelGatewayDelivery } from "./gateway-core";
+import {
+  ChannelGateway,
+  type ChannelGatewayDelivery,
+  type ChannelGatewayHooks,
+} from "./gateway-core";
 import { buildGatewayMessageChannelTool } from "./message-channel-gateway-tool";
+import {
+  MessageChannelDuplicateActionError,
+  type MessageChannelIdempotencyScope,
+} from "./message-channel-idempotency";
 import { getChannelDisplayName } from "./plugin-registry";
 import {
   type ChannelsCommand,
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
 } from "./protocol-command-handler";
-import { getChannelRegistry, initializeChannels } from "./registry";
+import {
+  type ChannelRegistry,
+  getChannelRegistry,
+  initializeChannels,
+} from "./registry";
 import type { ChannelRestoreAgentScope } from "./restore-scope";
 import { createRoutedRuntimeRegistrationRefresher } from "./routed-runtime-registration";
 import { subscribeChannelRoutesChanged } from "./routing";
@@ -184,6 +200,87 @@ function isExecuteCommandResponse(
   );
 }
 
+export async function relayLocalAssistantText(options: {
+  text: string;
+  sources: ChannelTurnSource[];
+  idempotencyScope: MessageChannelIdempotencyScope;
+}): Promise<void> {
+  const source = options.sources.length === 1 ? options.sources[0] : undefined;
+  if (!source?.accountId) return;
+  const account = getChannelAccount(source.channel, source.accountId);
+  if (!account || account.replyMode !== "relay") return;
+  try {
+    const result = await relayLocalMessageChannel(
+      {
+        channel: source.channel,
+        action: "send",
+        chat_id: source.chatId,
+        accountId: source.accountId,
+        message: options.text,
+        parentScope: {
+          agentId: source.agentId,
+          conversationId: source.conversationId,
+        },
+        channelTurnSources: options.sources,
+      },
+      options.idempotencyScope,
+    );
+    if (result.startsWith("Error:")) throw new Error(result);
+  } catch (error) {
+    if (error instanceof MessageChannelDuplicateActionError) return;
+    throw error;
+  }
+}
+
+export function createLocalChannelGatewayHooks(
+  registry: ChannelRegistry,
+): ChannelGatewayHooks {
+  return {
+    createRichDraft: ({ batchId, sources }) => {
+      const streamer = createChannelRichDraftStreamer({ batchId, sources });
+      return streamer
+        ? {
+            handleDelta: (delta) => {
+              streamer.handleChunk(
+                delta as unknown as import("@letta-ai/letta-client/resources/agents/messages").LettaStreamingResponse,
+              );
+            },
+            flushPending: () => streamer.flushPending(),
+            dispose: () => streamer.dispose(),
+          }
+        : null;
+    },
+    buildExternalTool: async (runtime, sources) => {
+      return buildGatewayMessageChannelTool(sources, runtime);
+    },
+    executeExternalTool: async (request, sources, idempotencyScope) => {
+      if (
+        request.tool_name !== "MessageChannel" ||
+        !request.runtime?.agent_id
+      ) {
+        throw new Error(`Unsupported gateway tool: ${request.tool_name}`);
+      }
+      return await executeLocalMessageChannelExternalTool(
+        {
+          ...request.input,
+          channel: String(request.input.channel ?? ""),
+          action: String(request.input.action ?? ""),
+          parentScope: {
+            agentId: request.runtime.agent_id,
+            conversationId: request.runtime.conversation_id,
+          },
+          channelTurnSources: sources,
+        },
+        idempotencyScope,
+      );
+    },
+    relayAssistantText: relayLocalAssistantText,
+    onLifecycle: (event) => registry.dispatchTurnLifecycleEvent(event),
+    onProgress: (event) => registry.dispatchTurnProgressEvent(event),
+    onControlRequest: (event) => registry.registerPendingControlRequest(event),
+  };
+}
+
 export async function startLocalChannelGateway(
   options: StartLocalChannelGatewayOptions,
 ): Promise<LocalChannelGatewayHandle> {
@@ -229,49 +326,10 @@ export async function startLocalChannelGateway(
   }
 
   let gateway: ChannelGateway;
-  gateway = new ChannelGateway(client, {
-    createRichDraft: ({ batchId, sources }) => {
-      const streamer = createChannelRichDraftStreamer({ batchId, sources });
-      return streamer
-        ? {
-            handleDelta: (delta) => {
-              streamer.handleChunk(
-                delta as unknown as import("@letta-ai/letta-client/resources/agents/messages").LettaStreamingResponse,
-              );
-            },
-            flushPending: () => streamer.flushPending(),
-            dispose: () => streamer.dispose(),
-          }
-        : null;
-    },
-    buildExternalTool: async (runtime, sources) => {
-      return buildGatewayMessageChannelTool(sources, runtime);
-    },
-    executeExternalTool: async (request, sources, idempotencyScope) => {
-      if (
-        request.tool_name !== "MessageChannel" ||
-        !request.runtime?.agent_id
-      ) {
-        throw new Error(`Unsupported gateway tool: ${request.tool_name}`);
-      }
-      return await executeLocalMessageChannelExternalTool(
-        {
-          ...request.input,
-          channel: String(request.input.channel ?? ""),
-          action: String(request.input.action ?? ""),
-          parentScope: {
-            agentId: request.runtime.agent_id,
-            conversationId: request.runtime.conversation_id,
-          },
-          channelTurnSources: sources,
-        },
-        idempotencyScope,
-      );
-    },
-    onLifecycle: (event) => registry.dispatchTurnLifecycleEvent(event),
-    onProgress: (event) => registry.dispatchTurnProgressEvent(event),
-    onControlRequest: (event) => registry.registerPendingControlRequest(event),
-  });
+  gateway = new ChannelGateway(
+    client,
+    createLocalChannelGatewayHooks(registry),
+  );
 
   const routedRuntimeRegistrationRefresher =
     createRoutedRuntimeRegistrationRefresher({
