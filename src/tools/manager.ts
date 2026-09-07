@@ -2813,14 +2813,8 @@ async function executeToolInner(
 /**
  * Executes a tool and gives mods a chance to observe or replace the result via
  * the `tool_end` event. A handler returning `{ result: { status, output } }`
- * overrides what the agent sees (first handler wins). Only fires for string
- * results — multimodal/image results pass through unchanged. Delivery is
- * capability-gated (`events.tools`), so only enabled surfaces receive it.
- *
- * @param name - Name of the tool to execute
- * @param args - Arguments object to pass to the tool
- * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
- * @returns Promise with the tool's execution result including status and optional stdout/stderr
+ * overrides what the agent sees (first handler wins). Delivery is capability-
+ * gated (`events.tools`), so only enabled surfaces receive it.
  */
 export async function executeTool(
   ...params: Parameters<typeof executeToolInner>
@@ -2836,9 +2830,13 @@ export async function executeTool(
     ? getExecutionContextById(options.toolContextId)
     : undefined;
   const modEvents = context?.modEvents;
-  if (!modEvents || typeof res.toolReturn !== "string") {
-    return res;
-  }
+  const textOutput =
+    typeof res.toolReturn === "string"
+      ? res.toolReturn
+      : res.toolReturn.every((part) => part.type === "text")
+        ? getDisplayableToolReturn(res.toolReturn)
+        : null;
+  if (!modEvents || textOutput === null) return res;
 
   const executionScope = context?.runtimeContext
     ? buildExecutionRuntimeContextSnapshot({
@@ -2865,7 +2863,7 @@ export async function executeTool(
     toolCallId: options?.toolCallId,
     toolName: name,
     status: res.status,
-    output: res.toolReturn,
+    output: textOutput,
   });
 
   return override
