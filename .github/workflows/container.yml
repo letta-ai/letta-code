@@ -73,6 +73,13 @@ jobs:
           grep -F "SECURE" <<< "$output"
           grep -F "https://docs.letta.com/self-hosting/" <<< "$output"
 
+          if output=$(docker run --rm --env SECURE=true letta-code:smoke sh -lc true 2>&1); then
+            echo "Expected a shell command with legacy configuration to fail, but the container exited successfully."
+            exit 1
+          fi
+
+          grep -F "SECURE" <<< "$output"
+
           legacy_data_dir="$(mktemp -d)"
           if output=$(docker run --rm \
             --volume "$legacy_data_dir:/var/lib/postgresql/data" \

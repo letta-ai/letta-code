@@ -18,9 +18,6 @@ case "${1:-}" in
     ;;
   letta|letta.js)
     ;;
-  *)
-    legacy_setting=""
-    ;;
 esac
 
 if [ -n "$legacy_setting" ]; then
