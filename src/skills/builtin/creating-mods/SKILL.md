@@ -7,7 +7,7 @@ description: Creates and edits trusted local Letta Code mods, including tools, s
 
 Use this skill to create or update trusted Letta Code mod files. Mods are trusted local code that add small composable capabilities through mod APIs, not by importing app internals. Dynamic agent/conversation/workspace/model state is passed as `ctx` to tool, command, event, and permission callbacks (panels receive live `agent`/`model` in their render context); do not read mutable global context for model-callable behavior. Prefer scoped handles (`ctx.conversation`, `ctx.cwd`, `ctx.agent`) and guard optional UI with `letta.capabilities`.
 
-Capabilities vary by surface — not every surface loads every capability. The TUI/headless host can load tools, commands, events, UI, and providers; the desktop listener loads tools, commands, providers, and tool/turn events, but not panel UI. Always guard each registration on the capabilities its behavior needs.
+Capabilities vary by surface — not every surface loads every capability. The TUI host can load tools, commands, events, UI panels, permissions, and providers; headless can load tools, events (all), permissions, and providers, but not commands or UI panels; the desktop listener can load tools, commands, permissions, providers, and tool/turn events, but not lifecycle/compact/llm events or panel UI. Always guard each registration on the capabilities its behavior needs.
 
 ## Choose where the mod file lives
 
