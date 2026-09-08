@@ -32,7 +32,7 @@ type SafeSocketSend = (
   context: string,
 ) => boolean;
 
-const TELEPORT_RECOVERY_TTL_MS = 5 * 60_000;
+export const TELEPORT_RECOVERY_TTL_MS = 5 * 60_000;
 
 export function buildTeleportContinuationMessages(params: {
   teleportId: string;
@@ -192,6 +192,22 @@ function sendTeleportReady(
   return true;
 }
 
+export function pruneRecoveredTeleports(
+  runtime: ListenerRuntime,
+  now = Date.now(),
+): void {
+  const pendingTeleports = runtime.pendingTeleports;
+  if (!pendingTeleports) return;
+  for (const [teleportId, pending] of pendingTeleports) {
+    if (
+      pending.readyAt !== undefined &&
+      now - pending.readyAt >= TELEPORT_RECOVERY_TTL_MS
+    ) {
+      pendingTeleports.delete(teleportId);
+    }
+  }
+}
+
 function retainTeleportForRecovery(
   runtime: ListenerRuntime,
   pending: PendingTeleport,
@@ -203,6 +219,17 @@ function retainTeleportForRecovery(
     }
   }, TELEPORT_RECOVERY_TTL_MS);
   timeout.unref?.();
+}
+
+function markTeleportReadyAndSend(
+  runtime: ListenerRuntime,
+  pending: PendingTeleport,
+  input: { success: boolean; error?: string },
+): boolean {
+  pending.readyAt = Date.now();
+  const sent = sendTeleportReady(runtime, pending, input);
+  retainTeleportForRecovery(runtime, pending);
+  return sent;
 }
 
 export function handleTeleportProbe(
@@ -232,10 +259,17 @@ export function handleTeleportRequest(params: {
 }): void {
   const { listener, command, connectionId } = params;
   const pendingTeleports = getPendingTeleports(listener);
+  pruneRecoveredTeleports(listener);
   const existing = pendingTeleports.get(command.teleport_id);
   if (existing) {
+    if (
+      existing.agentId === command.runtime.agent_id &&
+      existing.conversationId === command.runtime.conversation_id
+    ) {
+      existing.connectionId = connectionId;
+    }
     if (existing.readyAt !== undefined) {
-      sendTeleportReady(listener, existing, {
+      markTeleportReadyAndSend(listener, existing, {
         success: existing.error === undefined,
         error: existing.error,
       });
@@ -259,13 +293,11 @@ export function handleTeleportRequest(params: {
   );
   if (conflicting) {
     pendingTeleports.set(pending.teleportId, pending);
-    pending.readyAt = Date.now();
     pending.error = "Conversation already has a teleport pending";
-    sendTeleportReady(listener, pending, {
+    markTeleportReadyAndSend(listener, pending, {
       success: false,
       error: pending.error,
     });
-    retainTeleportForRecovery(listener, pending);
     return;
   }
 
@@ -279,10 +311,7 @@ export function handleTeleportRequest(params: {
     ? hasAcceptedInputsWaiting(conversationRuntime, true)
     : false;
   if (!conversationRuntime?.isProcessing && !pending.drainAcceptedInputs) {
-    if (sendTeleportReady(listener, pending, { success: true })) {
-      pending.readyAt = Date.now();
-      retainTeleportForRecovery(listener, pending);
-    }
+    markTeleportReadyAndSend(listener, pending, { success: true });
   }
 }
 
@@ -320,11 +349,7 @@ export function emitClaimedTeleportReady(
   listener: ListenerRuntime,
   pending: PendingTeleport,
 ): boolean {
-  const sent = sendTeleportReady(listener, pending, { success: true });
-  if (sent) {
-    retainTeleportForRecovery(listener, pending);
-  }
-  return sent;
+  return markTeleportReadyAndSend(listener, pending, { success: true });
 }
 
 export function finishTeleport(
