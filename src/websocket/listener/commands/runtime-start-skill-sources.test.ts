@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type WebSocket from "ws";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
+import { settingsManager } from "@/settings-manager";
 import {
   clearExternalTools,
   prepareToolExecutionContextForModel,
@@ -126,10 +127,8 @@ describe("runtime_start skill sources", () => {
     }
   });
 
-  test("delayed older runtime_start does not overwrite newer state for the same connection runtime", async () => {
-    const storageDir = await mkdtemp(join(tmpdir(), "runtime-generation-"));
-    const firstCwd = await mkdtemp(join(tmpdir(), "runtime-generation-old-"));
-    const secondCwd = await mkdtemp(join(tmpdir(), "runtime-generation-new-"));
+  test("serializes same-scope runtime_start before source-tag mutations", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "runtime-source-tags-"));
     try {
       const backend = new LocalBackend({
         storageDir,
@@ -137,55 +136,233 @@ describe("runtime_start skill sources", () => {
       });
       __testSetBackend(backend);
       const agent = await backend.createAgent({
-        name: "Generation guarded worker",
+        name: "Source tag worker",
         model: "anthropic/claude-sonnet-4-6",
       } as AgentCreateBody);
       const conversation = await backend.createConversation({
         agent_id: agent.id,
       });
       const listener = createRuntime();
-      const responses: Array<{ request_id: string; success: boolean }> = [];
-      const replayed: string[] = [];
-      let retrieveCount = 0;
-      let firstRetrieveStarted!: () => void;
-      let releaseFirstRetrieve!: () => void;
-      const firstRetrieveReady = new Promise<void>((resolve) => {
-        firstRetrieveStarted = resolve;
+      const responses: string[] = [];
+      const updates: string[] = [];
+      const originalUpdateConversation =
+        backend.updateConversation.bind(backend);
+      let firstUpdateStarted!: () => void;
+      let releaseFirstUpdate!: () => void;
+      const firstUpdateReady = new Promise<void>((resolve) => {
+        firstUpdateStarted = resolve;
       });
-      const firstRetrieveBlocked = new Promise<void>((resolve) => {
-        releaseFirstRetrieve = resolve;
+      const firstUpdateBlocked = new Promise<void>((resolve) => {
+        releaseFirstUpdate = resolve;
       });
+      backend.updateConversation = async (conversationId, body) => {
+        updates.push(
+          (Reflect.get(body, "tags") as string[] | undefined)?.join(",") ??
+            "none",
+        );
+        if (updates.length === 1) {
+          firstUpdateStarted();
+          await firstUpdateBlocked;
+        }
+        return originalUpdateConversation(conversationId, body);
+      };
       const context = {
         socket: {} as WebSocket,
         connectionId: "test-connection",
         runtime: listener,
         safeSocketSend: (_socket: WebSocket, payload: unknown) => {
-          const message = payload as { request_id: string; success: boolean };
-          responses.push({
-            request_id: message.request_id,
-            success: message.success,
-          });
+          responses.push((payload as { request_id: string }).request_id);
+          return true;
+        },
+        runDetachedListenerTask: () => {},
+        getOrCreateScopedRuntime,
+        replaySyncStateForRuntime: async () => {},
+      };
+
+      const first = handleRuntimeStartCommand(
+        {
+          type: "runtime_start",
+          request_id: "first",
+          agent_id: agent.id,
+          conversation_id: conversation.id,
+          conversation_source_tags: ["channel:slack"],
+          recover_approvals: false,
+        },
+        context,
+      );
+      await firstUpdateReady;
+      const second = handleRuntimeStartCommand(
+        {
+          type: "runtime_start",
+          request_id: "second",
+          agent_id: agent.id,
+          conversation_id: conversation.id,
+          conversation_source_tags: ["origin:schedule"],
+          recover_approvals: false,
+        },
+        context,
+      );
+      await Bun.sleep(10);
+      expect(responses).toEqual([]);
+      expect(updates).toEqual(["channel:slack"]);
+      releaseFirstUpdate();
+      await Promise.all([first, second]);
+
+      const updated = await backend.retrieveConversation(conversation.id);
+      expect(responses).toEqual(["first", "second"]);
+      expect(updates).toEqual([
+        "channel:slack",
+        "channel:slack,origin:schedule",
+      ]);
+      expect(Reflect.get(updated, "tags")).toEqual([
+        "channel:slack",
+        "origin:schedule",
+      ]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps distinct runtime_start scopes concurrent", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "runtime-distinct-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Distinct scope worker",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const firstConversation = await backend.createConversation({
+        agent_id: agent.id,
+      });
+      const secondConversation = await backend.createConversation({
+        agent_id: agent.id,
+      });
+      const listener = createRuntime();
+      const responses: string[] = [];
+      const originalUpdateConversation =
+        backend.updateConversation.bind(backend);
+      let firstUpdateStarted!: () => void;
+      let releaseFirstUpdate!: () => void;
+      const firstUpdateReady = new Promise<void>((resolve) => {
+        firstUpdateStarted = resolve;
+      });
+      const firstUpdateBlocked = new Promise<void>((resolve) => {
+        releaseFirstUpdate = resolve;
+      });
+      backend.updateConversation = async (conversationId, body) => {
+        if (conversationId === firstConversation.id) {
+          firstUpdateStarted();
+          await firstUpdateBlocked;
+        }
+        return originalUpdateConversation(conversationId, body);
+      };
+      const context = {
+        socket: {} as WebSocket,
+        connectionId: "test-connection",
+        runtime: listener,
+        safeSocketSend: (_socket: WebSocket, payload: unknown) => {
+          responses.push((payload as { request_id: string }).request_id);
+          return true;
+        },
+        runDetachedListenerTask: () => {},
+        getOrCreateScopedRuntime,
+        replaySyncStateForRuntime: async () => {},
+      };
+
+      const first = handleRuntimeStartCommand(
+        {
+          type: "runtime_start",
+          request_id: "first",
+          agent_id: agent.id,
+          conversation_id: firstConversation.id,
+          conversation_source_tags: ["channel:slack"],
+          recover_approvals: false,
+        },
+        context,
+      );
+      await firstUpdateReady;
+      await handleRuntimeStartCommand(
+        {
+          type: "runtime_start",
+          request_id: "second",
+          agent_id: agent.id,
+          conversation_id: secondConversation.id,
+          conversation_source_tags: ["origin:schedule"],
+          recover_approvals: false,
+        },
+        context,
+      );
+      expect(responses).toEqual(["second"]);
+      releaseFirstUpdate();
+      await first;
+      expect(responses).toEqual(["second", "first"]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("serializes same-scope runtime_start before cwd mutations", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "runtime-cwd-"));
+    const firstCwd = await mkdtemp(join(tmpdir(), "runtime-cwd-old-"));
+    const secondCwd = await mkdtemp(join(tmpdir(), "runtime-cwd-new-"));
+    const originalLoadProjectSettings =
+      settingsManager.loadProjectSettings.bind(settingsManager);
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "CWD guarded worker",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      });
+      const listener = createRuntime();
+      const responses: string[] = [];
+      const replayed: string[] = [];
+      let firstCwdLoadStarted!: () => void;
+      let releaseFirstCwdLoad!: () => void;
+      let blockedFirstCwd = false;
+      const firstCwdLoadReady = new Promise<void>((resolve) => {
+        firstCwdLoadStarted = resolve;
+      });
+      const firstCwdLoadBlocked = new Promise<void>((resolve) => {
+        releaseFirstCwdLoad = resolve;
+      });
+      settingsManager.loadProjectSettings = async (workingDirectory) => {
+        if (workingDirectory === firstCwd && !blockedFirstCwd) {
+          blockedFirstCwd = true;
+          firstCwdLoadStarted();
+          await firstCwdLoadBlocked;
+        }
+        return originalLoadProjectSettings(workingDirectory);
+      };
+      const context = {
+        socket: {} as WebSocket,
+        connectionId: "test-connection",
+        runtime: listener,
+        safeSocketSend: (_socket: WebSocket, payload: unknown) => {
+          responses.push((payload as { request_id: string }).request_id);
           return true;
         },
         runDetachedListenerTask: () => {},
         getOrCreateScopedRuntime,
         replaySyncStateForRuntime: async () => {
-          replayed.push(responses.at(-1)?.request_id ?? "missing-response");
-        },
-        retrieveConversation: async (conversationId: string) => {
-          retrieveCount += 1;
-          if (retrieveCount === 1) {
-            firstRetrieveStarted();
-            await firstRetrieveBlocked;
-          }
-          return backend.retrieveConversation(conversationId);
+          replayed.push(responses.at(-1) ?? "missing-response");
         },
       };
 
-      const older = handleRuntimeStartCommand(
+      const first = handleRuntimeStartCommand(
         {
           type: "runtime_start",
-          request_id: "older",
+          request_id: "first",
           agent_id: agent.id,
           conversation_id: conversation.id,
           cwd: firstCwd,
@@ -206,11 +383,11 @@ describe("runtime_start skill sources", () => {
         },
         context,
       );
-      await firstRetrieveReady;
-      const newer = handleRuntimeStartCommand(
+      await firstCwdLoadReady;
+      const second = handleRuntimeStartCommand(
         {
           type: "runtime_start",
-          request_id: "newer",
+          request_id: "second",
           agent_id: agent.id,
           conversation_id: conversation.id,
           cwd: secondCwd,
@@ -231,20 +408,18 @@ describe("runtime_start skill sources", () => {
         },
         context,
       );
-      await newer;
-      releaseFirstRetrieve();
-      await older;
+      await Bun.sleep(10);
+      expect(responses).toEqual([]);
+      releaseFirstCwdLoad();
+      await Promise.all([first, second]);
 
       const scoped = getOrCreateScopedRuntime(
         listener,
         agent.id,
         conversation.id,
       );
-      expect(responses).toEqual([
-        { request_id: "newer", success: true },
-        { request_id: "older", success: false },
-      ]);
-      expect(replayed).toEqual(["newer"]);
+      expect(responses).toEqual(["first", "second"]);
+      expect(replayed).toEqual(["first", "second"]);
       expect(scoped.skillSources).toEqual(["global"]);
       expect(
         getConversationWorkingDirectory(listener, agent.id, conversation.id),
@@ -264,6 +439,7 @@ describe("runtime_start skill sources", () => {
         "newer_tool",
       ]);
     } finally {
+      settingsManager.loadProjectSettings = originalLoadProjectSettings;
       await rm(firstCwd, { recursive: true, force: true });
       await rm(secondCwd, { recursive: true, force: true });
       await rm(storageDir, { recursive: true, force: true });
