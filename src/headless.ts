@@ -9,6 +9,7 @@ import type {
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import { prepareHeadlessToolExecutionContext } from "@/agent/headless-tool-context";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import {
   trackBoundaryError,
@@ -169,16 +170,12 @@ import {
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
-import {
-  INTERACTIVE_USER_INPUT_TOOL_NAMES,
-  isInteractiveApprovalTool,
-} from "./tools/interactive-policy";
+import { isInteractiveApprovalTool } from "./tools/interactive-policy";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
   setExternalToolExecutor,
 } from "./tools/manager";
-import { prepareToolExecutionContextForScope } from "./tools/toolset";
 import type {
   BootstrapSessionStateRequest,
   CanUseToolControlRequest,
@@ -401,38 +398,6 @@ function parseReflectionOverrides(
   }
 
   return overrides;
-}
-
-async function prepareHeadlessToolExecutionContext(params: {
-  agentId: string;
-  conversationId: string;
-  overrideModel?: string | null;
-  cachedAgent?: AgentState | null;
-  modContext?: ModContext;
-  modEvents?: ModAdapter["events"];
-}): Promise<{
-  preparedToolContext: Awaited<
-    ReturnType<typeof prepareToolExecutionContextForScope>
-  >;
-  availableTools: string[];
-}> {
-  const preparedToolContext = await prepareToolExecutionContextForScope({
-    agentId: params.agentId,
-    conversationId: params.conversationId,
-    overrideModel: params.overrideModel,
-    workingDirectory: getCurrentWorkingDirectory(),
-    exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES],
-    cachedAgent: params.cachedAgent,
-    modContext: params.modContext,
-    modEvents: params.modEvents,
-  });
-
-  return {
-    preparedToolContext,
-    availableTools: preparedToolContext.preparedToolContext.clientTools.map(
-      (tool) => tool.name,
-    ),
-  };
 }
 
 function isTurnInputArray(

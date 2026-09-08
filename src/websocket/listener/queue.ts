@@ -7,6 +7,7 @@ import type {
 import { isCoalescable } from "@/queue/queue-runtime";
 import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { getExecutionContextById } from "@/tools/manager";
 import { debugWarn } from "@/utils/debug";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
 import { getInboundImageFailureMode } from "./image-policy";
@@ -282,13 +283,28 @@ export function shouldProcessInboundMessageDirectly(
   );
 }
 
-export function consumeQueuedTurn(runtime: ConversationRuntime): {
+export function consumeQueuedTurn(
+  runtime: ConversationRuntime,
+  toolContextId?: string | null,
+): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;
 } | null {
   const queuedItems = runtime.queueRuntime.peek();
   const firstQueuedItem = queuedItems[0];
   if (!firstQueuedItem || !isCoalescable(firstQueuedItem.kind)) {
+    return null;
+  }
+  // Approval continuation must not consume another person's request under
+  // the old tool context. Leave it queued for its own turn after completion.
+  if (
+    runtime.isProcessing &&
+    ((toolContextId &&
+      getExecutionContextById(toolContextId)?.runtimeContext
+        .githubWriteCapability) ||
+      runtime.queuedMessagesByItemId.get(firstQueuedItem.id)
+        ?.githubWriteCapability)
+  ) {
     return null;
   }
 

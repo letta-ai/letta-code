@@ -286,6 +286,7 @@ export async function prepareListenerTurn(params: {
     : runtime.listener.connections.values().next().value?.options;
   const environmentDeviceId = listenerOptions?.deviceId;
   const preparedToolContext = await prepareToolExecutionContextForScope({
+    githubWriteCapability: msg.githubWriteCapability ?? null,
     connectionId,
     environmentDeviceId,
     agentId,

@@ -1,3 +1,4 @@
+import { releaseGithubWriteContexts } from "@/tools/manager";
 import { debugWarn } from "@/utils/debug";
 import type { IncomingMessage } from "./types";
 
@@ -52,6 +53,10 @@ export function notifyTurnStarted(msg: IncomingMessage): void {
 }
 
 export function notifyTurnFinished(msg: IncomingMessage): void {
+  if (msg.githubWriteCapability) {
+    releaseGithubWriteContexts(msg.githubWriteCapability);
+    msg.githubWriteCapability = null;
+  }
   for (const otid of otidsOf(msg)) {
     try {
       hooksByOtid.get(otid)?.onFinished();

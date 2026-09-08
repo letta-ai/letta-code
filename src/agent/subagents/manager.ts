@@ -27,6 +27,7 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
+import { getGithubWriteCapability } from "@/github-write-authority";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { sessionPermissions } from "@/permissions/session";
@@ -456,6 +457,7 @@ async function executeSubagent(
       },
     );
     const childEnv = composeSubagentChildEnv({
+      githubWriteCapability: getGithubWriteCapability(),
       parentProcessEnv: {
         ...process.env,
         USER_CWD: subagentWorkingDirectory,

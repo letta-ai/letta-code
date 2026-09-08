@@ -74,10 +74,8 @@ import {
   getEffectivePermissionModeState,
   type PermissionModeState,
 } from "./permission-mode-state";
-import {
-  extractSecretEnvFromCommand,
-  scrubSecretsFromString,
-} from "./secret-substitution";
+import { scrubSecretsFromString } from "./secret-substitution";
+import { prepareShellInvocationSecrets } from "./shell-invocation-secrets";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 import { TOOL_PERMISSIONS } from "./tool-permissions";
 
@@ -619,6 +617,14 @@ export function clearCapturedToolExecutionContexts(): void {
 
 export function releaseToolExecutionContext(contextId: string): void {
   getExecutionContexts().delete(contextId);
+}
+
+export function releaseGithubWriteContexts(capability: string): void {
+  for (const [id, context] of getExecutionContexts()) {
+    if (context.runtimeContext.githubWriteCapability === capability) {
+      getExecutionContexts().delete(id);
+    }
+  }
 }
 
 /**
@@ -2573,29 +2579,14 @@ async function executeToolInner(
       }
 
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
-        // Keep secret values out of shell interpolation and only redact values
-        // that this invocation can access.
-        const command = enhancedArgs.command ?? enhancedArgs.cmd;
-        invocationSecrets =
-          typeof command === "string" ||
-          (Array.isArray(command) &&
-            command.every((part) => typeof part === "string"))
-            ? extractSecretEnvFromCommand(command, scopedAgentId)
-            : {};
-        if (options?.onOutput) {
-          enhancedArgs = {
-            ...enhancedArgs,
-            onOutput: (chunk: string, stream: "stdout" | "stderr") => {
-              options.onOutput?.(
-                stripAnsi(scrubSecretsFromString(chunk, invocationSecrets)),
-                stream,
-              );
-            },
-          };
-        }
-        if (Object.keys(invocationSecrets).length > 0) {
-          enhancedArgs = { ...enhancedArgs, secretEnv: invocationSecrets };
-        }
+        const shellInvocation = prepareShellInvocationSecrets(
+          enhancedArgs,
+          scopedAgentId,
+          executionScope.githubWriteCapability,
+          options?.onOutput,
+        );
+        enhancedArgs = shellInvocation.args;
+        invocationSecrets = shellInvocation.secrets;
         if (options?.parentScope) {
           enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
         }

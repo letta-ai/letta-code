@@ -34,6 +34,8 @@ export interface RuntimeContextSnapshot {
    */
   workingDirectoryRecoveredFrom?: string | null;
   toolContextId?: string | null;
+  /** Private authority captured for this turn's tools, not model context. */
+  githubWriteCapability?: string | null;
   permissionMode?: RuntimePermissionMode;
   workspaceSandbox?: RuntimeWorkspaceSandbox;
 }
