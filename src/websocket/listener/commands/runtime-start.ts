@@ -28,6 +28,7 @@ import {
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
 import { isRuntimeStartCommand } from "@/websocket/listener/protocol-inbound";
+import { getConversationRuntimeKey } from "@/websocket/listener/runtime";
 import { assertRuntimeWorkspaceSandboxChangeAllowed } from "@/websocket/listener/runtime-workspace-sandbox";
 import type {
   ConversationRuntime,
@@ -65,6 +66,66 @@ type CreatedResources = {
   agent: boolean;
   conversation: boolean;
 };
+
+type RuntimeStartGenerationState = {
+  nextGeneration: number;
+  latestByRuntime: Map<string, number>;
+};
+
+const runtimeStartGenerationByListener = new WeakMap<
+  ListenerRuntime,
+  RuntimeStartGenerationState
+>();
+
+function getRuntimeStartGenerationState(
+  runtime: ListenerRuntime,
+): RuntimeStartGenerationState {
+  let state = runtimeStartGenerationByListener.get(runtime);
+  if (!state) {
+    state = { nextGeneration: 0, latestByRuntime: new Map() };
+    runtimeStartGenerationByListener.set(runtime, state);
+  }
+  return state;
+}
+
+function beginRuntimeStartRequest(runtime: ListenerRuntime): number {
+  const state = getRuntimeStartGenerationState(runtime);
+  state.nextGeneration += 1;
+  return state.nextGeneration;
+}
+
+function getRuntimeStartGenerationKey(scope: RuntimeStartScope): string {
+  return getConversationRuntimeKey(scope.agent_id, scope.conversation_id);
+}
+
+function markLatestRuntimeStartRequest(
+  runtime: ListenerRuntime,
+  _connectionId: ListenerConnectionId,
+  scope: RuntimeStartScope,
+  generation: number,
+): boolean {
+  const state = getRuntimeStartGenerationState(runtime);
+  const key = getRuntimeStartGenerationKey(scope);
+  const latest = state.latestByRuntime.get(key) ?? 0;
+  if (generation < latest) {
+    return false;
+  }
+  state.latestByRuntime.set(key, generation);
+  return true;
+}
+
+function isLatestRuntimeStartRequest(
+  runtime: ListenerRuntime,
+  _connectionId: ListenerConnectionId,
+  scope: RuntimeStartScope,
+  generation: number,
+): boolean {
+  const state = getRuntimeStartGenerationState(runtime);
+  return (
+    state.latestByRuntime.get(getRuntimeStartGenerationKey(scope)) ===
+    generation
+  );
+}
 
 function buildDefaultConversation(agent: AgentState): Conversation {
   const now = new Date().toISOString();
@@ -121,6 +182,23 @@ function sendRuntimeStartResponse(
     "listener_runtime_start_send_failed",
     "listener_runtime_start",
   );
+}
+
+function sendSupersededRuntimeStartResponse(
+  context: RuntimeStartCommandContext,
+  parsed: RuntimeStartCommand,
+  agent: AgentState | null,
+  conversation: Conversation | null,
+  created: CreatedResources,
+): boolean {
+  return sendRuntimeStartResponse(context, parsed, {
+    success: false,
+    runtime: null,
+    agent,
+    conversation,
+    created,
+    error: "Superseded by a newer runtime_start request",
+  });
 }
 
 function validateRuntimeStartShape(parsed: RuntimeStartCommand): void {
@@ -401,6 +479,7 @@ export async function handleRuntimeStartCommand(
   parsed: RuntimeStartCommand,
   context: RuntimeStartCommandContext,
 ): Promise<boolean> {
+  const generation = beginRuntimeStartRequest(context.runtime);
   const created = { agent: false, conversation: false };
   let agent: AgentState | null = null;
   let conversation: Conversation | null = null;
@@ -418,12 +497,46 @@ export async function handleRuntimeStartCommand(
       context.retrieveConversation ??
         ((id) => getBackend().retrieveConversation(id)),
     );
+    runtimeScope = buildRuntimeScope(agent, conversation);
+    const { connectionId } = context;
+    if (
+      !markLatestRuntimeStartRequest(
+        context.runtime,
+        connectionId,
+        runtimeScope,
+        generation,
+      )
+    ) {
+      sendSupersededRuntimeStartResponse(
+        context,
+        parsed,
+        agent,
+        conversation,
+        created,
+      );
+      return true;
+    }
     conversation = await applyRuntimeStartConversationSourceTags(
       parsed,
       conversation,
     );
-    runtimeScope = buildRuntimeScope(agent, conversation);
-    const { connectionId } = context;
+    if (
+      !isLatestRuntimeStartRequest(
+        context.runtime,
+        connectionId,
+        runtimeScope,
+        generation,
+      )
+    ) {
+      sendSupersededRuntimeStartResponse(
+        context,
+        parsed,
+        agent,
+        conversation,
+        created,
+      );
+      return true;
+    }
     const assertConnectionOpen = () => {
       if (
         context.runtime.connections.size > 0 &&
@@ -441,6 +554,23 @@ export async function handleRuntimeStartCommand(
       runtimeScope.conversation_id,
     );
     await applyRuntimeStartState(parsed, context, runtimeScope, scopedRuntime);
+    if (
+      !isLatestRuntimeStartRequest(
+        context.runtime,
+        connectionId,
+        runtimeScope,
+        generation,
+      )
+    ) {
+      sendSupersededRuntimeStartResponse(
+        context,
+        parsed,
+        agent,
+        conversation,
+        created,
+      );
+      return true;
+    }
     assertConnectionOpen();
     subscribeListenerConnection(context.runtime, connectionId, runtimeScope);
     registerRuntimeExternalTools(
@@ -451,6 +581,23 @@ export async function handleRuntimeStartCommand(
     );
 
     if (parsed.wait_for_replay) {
+      if (
+        !isLatestRuntimeStartRequest(
+          context.runtime,
+          connectionId,
+          runtimeScope,
+          generation,
+        )
+      ) {
+        sendSupersededRuntimeStartResponse(
+          context,
+          parsed,
+          agent,
+          conversation,
+          created,
+        );
+        return true;
+      }
       await context.replaySyncStateForRuntime(
         context.runtime,
         context.socket,
@@ -460,6 +607,23 @@ export async function handleRuntimeStartCommand(
           forceDeviceStatus: parsed.force_device_status !== false,
         },
       );
+      if (
+        !isLatestRuntimeStartRequest(
+          context.runtime,
+          connectionId,
+          runtimeScope,
+          generation,
+        )
+      ) {
+        sendSupersededRuntimeStartResponse(
+          context,
+          parsed,
+          agent,
+          conversation,
+          created,
+        );
+        return true;
+      }
     }
     const sent = sendRuntimeStartResponse(context, parsed, {
       success: true,
@@ -480,7 +644,16 @@ export async function handleRuntimeStartCommand(
     });
   }
 
-  if (shouldReplayState && runtimeScope) {
+  if (
+    shouldReplayState &&
+    runtimeScope &&
+    isLatestRuntimeStartRequest(
+      context.runtime,
+      context.connectionId,
+      runtimeScope,
+      generation,
+    )
+  ) {
     await context.replaySyncStateForRuntime(
       context.runtime,
       context.socket,
