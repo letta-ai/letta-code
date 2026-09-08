@@ -63,6 +63,12 @@ import type {
   CronProtocolCommand,
   CronProtocolResponseMessage,
 } from "./schedule-protocol";
+import type {
+  MonitorStopCommand,
+  MonitorStopResponse,
+  RemoveQueueItemCommand,
+  RemoveQueueItemResponse,
+} from "./task-control-protocol";
 import type * as TeleportProtocol from "./teleport-protocol";
 
 export type * from "./approval-classification-protocol";
@@ -73,6 +79,7 @@ export type * from "./loop-status-protocol";
 export type * from "./runtime-scope";
 export type * from "./runtime-start-protocol";
 export type * from "./schedule-protocol";
+export type * from "./task-control-protocol";
 export type * from "./teleport-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
@@ -2333,24 +2340,6 @@ export interface ExecuteCommandResponseMessage {
 }
 
 // ─────────────────────────────────────────────────
-//  Queue item commands
-// ─────────────────────────────────────────────────
-
-/**
- * Remove a specific item from the queue by ID.
- * Used by desktop to implement queue editing (load into input, remove from queue).
- */
-export interface RemoveQueueItemCommand {
-  type: "remove_queue_item";
-  /** Correlation id (echoed back in the response for request correlation). */
-  request_id: string;
-  /** Runtime scope — identifies which agent + conversation this targets. */
-  runtime: AgentRuntimeScope;
-  /** The queue item ID to remove. */
-  item_id: string;
-}
-
-// ─────────────────────────────────────────────────
 //  Git branch commands
 // ─────────────────────────────────────────────────
 
@@ -2462,13 +2451,6 @@ export interface SecretApplyResponse {
   error?: string;
 }
 
-export interface RemoveQueueItemResponse {
-  type: "remove_queue_item_response";
-  request_id: string;
-  success: boolean;
-  item_id: string;
-}
-
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
@@ -2553,6 +2535,7 @@ export type WsProtocolCommand =
   | ChannelRouteUpdateCommand
   | ExecuteCommandCommand
   | RemoveQueueItemCommand
+  | MonitorStopCommand
   | SearchBranchesCommand
   | CheckoutBranchCommand
   | SecretListCommand
@@ -2659,7 +2642,8 @@ export type WsProtocolMessage =
   | CheckoutBranchResponse
   | SecretListResponse
   | SecretApplyResponse
-  | RemoveQueueItemResponse;
+  | RemoveQueueItemResponse
+  | MonitorStopResponse;
 
 export type WsProtocolMessageType = WsProtocolMessage["type"];
 

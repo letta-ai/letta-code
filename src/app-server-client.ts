@@ -13,6 +13,8 @@ import type {
   ExternalToolCallResult,
   InputAcceptedResponseMessage,
   InputCommand,
+  MonitorStopCommand,
+  MonitorStopResponse,
   RuntimeExternalToolsUpdateCommand,
   RuntimeExternalToolsUpdateResponseMessage,
   RuntimeStartCommand,
@@ -460,6 +462,32 @@ export class AppServerClient {
       {
         ...options,
         predicate: isAppServerInfoResponseMessage,
+      },
+    );
+  }
+
+  stopMonitor(
+    command: Omit<MonitorStopCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<MonitorStopResponse>,
+      "predicate"
+    > = {},
+  ): Promise<MonitorStopResponse> {
+    return this.request(
+      {
+        type: "monitor_stop",
+        ...command,
+        request_id: command.request_id ?? this.nextRequestId("monitor-stop"),
+      },
+      {
+        ...options,
+        predicate: (message): message is MonitorStopResponse =>
+          message.type === "monitor_stop_response" &&
+          message.process_id === command.process_id &&
+          message.runtime.agent_id === command.runtime.agent_id &&
+          message.runtime.conversation_id === command.runtime.conversation_id,
       },
     );
   }
