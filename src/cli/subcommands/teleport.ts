@@ -17,7 +17,6 @@ import { type SessionRef, settingsManager } from "@/settings-manager";
 interface TeleportSubcommandDeps {
   initializeSettings?: () => Promise<void>;
   getLastSession?: () => SessionRef | null;
-  listActiveChannelRouteNames?: typeof listActiveChannelRouteNames;
   listEnvironments?: typeof listEnvironments;
   resolveEnvironmentConnectionId?: typeof resolveEnvironmentConnectionId;
   resolveAgentSandboxConnectionId?: typeof resolveAgentSandboxConnectionId;
@@ -213,9 +212,7 @@ export async function runTeleportSubcommand(
       )(),
     );
 
-    const activeChannelRoutes = (
-      deps.listActiveChannelRouteNames ?? listActiveChannelRouteNames
-    )(session);
+    const activeChannelRoutes = listActiveChannelRouteNames(session);
     if (activeChannelRoutes.length > 0) {
       throw new Error(
         `This conversation is bound to ${activeChannelRoutes.join(", ")} on this computer. Teleport is blocked because MessageChannel cannot follow the conversation to another computer yet. Remove the channel route or continue locally.`,
