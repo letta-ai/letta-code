@@ -622,6 +622,83 @@ describe("listener auth lifecycle", () => {
     expect(connections).toHaveLength(1);
   });
 
+  test("registration-invalidating 1008 relay reasons request re-registration", async () => {
+    const reasons = [
+      "Environment not found",
+      "Connection not found",
+      "Listener pair is not current",
+      "Listener attempt is stale",
+      "Listener pair is no longer current",
+    ];
+
+    for (const [index, reason] of reasons.entries()) {
+      const onNeedsReregister = mock(() => {});
+      const onError = mock((_error: Error) => {});
+      await startClient({ onNeedsReregister, onError });
+      await waitFor(
+        () => connections.length >= index + 1,
+        `socket did not open for ${reason}`,
+      );
+
+      connections.at(-1)?.close(1008, reason);
+      await waitFor(
+        () => onNeedsReregister.mock.calls.length === 1,
+        `${reason} did not request re-registration`,
+      );
+
+      expect(onError).not.toHaveBeenCalled();
+      expect(getActiveRuntime()).toBeNull();
+    }
+  });
+
+  test("unrelated 1008 relay policy reasons fail terminally without re-registering", async () => {
+    const onDisconnected = mock(() => {});
+    const onNeedsReregister = mock(() => {});
+    const onError = mock((_error: Error) => {});
+    await startClient({ onDisconnected, onNeedsReregister, onError });
+    await waitFor(
+      () => connections.length === 1,
+      "initial socket did not open",
+    );
+
+    connections[0]?.close(1008, "No cloud API key configured");
+    await waitFor(
+      () => onError.mock.calls.length === 1,
+      "policy close did not surface a terminal diagnostic",
+    );
+
+    expect(onNeedsReregister).not.toHaveBeenCalled();
+    expect(onDisconnected).not.toHaveBeenCalled();
+    expect(onError.mock.calls[0]?.[0].message).toBe(
+      "Listener WebSocket rejected by relay policy (1008: No cloud API key configured)",
+    );
+    expect(getActiveRuntime()).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(connections).toHaveLength(1);
+  });
+
+  test("unrecognized 1008 relay policy reasons fail terminally without re-registering", async () => {
+    const onNeedsReregister = mock(() => {});
+    const onError = mock((_error: Error) => {});
+    await startClient({ onNeedsReregister, onError });
+    await waitFor(
+      () => connections.length === 1,
+      "initial socket did not open",
+    );
+
+    connections[0]?.close(1008, "Paired listener channels not enabled");
+    await waitFor(
+      () => onError.mock.calls.length === 1,
+      "unrecognized policy close did not surface a terminal diagnostic",
+    );
+
+    expect(onNeedsReregister).not.toHaveBeenCalled();
+    expect(onError.mock.calls[0]?.[0].message).toBe(
+      "Listener WebSocket rejected by relay policy (1008: Paired listener channels not enabled)",
+    );
+    expect(getActiveRuntime()).toBeNull();
+  });
+
   test("1008 re-registration closes tear down same-process runtime state", async () => {
     const onNeedsReregister = mock(() => {});
     await startClient({ onNeedsReregister });
