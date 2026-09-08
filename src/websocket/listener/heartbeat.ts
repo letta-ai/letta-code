@@ -94,16 +94,6 @@ function getMaxUnansweredPings(): number {
   );
 }
 
-function getHeartbeatIntervalMs(options: ConnectionHeartbeatOptions): number {
-  if (options.intervalMs !== undefined) return options.intervalMs;
-  const override = process.env.LETTA_LISTENER_HEARTBEAT_INTERVAL_MS;
-  if (override !== undefined) {
-    const parsed = Number(override);
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  }
-  return LISTENER_HEARTBEAT_INTERVAL_MS;
-}
-
 function syncStreamHeartbeatState(
   runtime: ListenerRuntime,
   controlTransport: ListenerTransport,
@@ -186,5 +176,5 @@ export function startConnectionHeartbeat(
     if (streamState && sendPing(streamState.transport)) {
       streamState.watchdog.recordPing(sentAt);
     }
-  }, getHeartbeatIntervalMs(options));
+  }, options.intervalMs ?? LISTENER_HEARTBEAT_INTERVAL_MS);
 }
