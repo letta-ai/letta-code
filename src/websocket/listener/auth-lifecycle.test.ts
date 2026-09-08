@@ -48,6 +48,8 @@ describe("listener auth lifecycle", () => {
   const originalDisableMods = process.env.LETTA_DISABLE_MODS;
   const originalApiKey = process.env.LETTA_API_KEY;
   const originalBaseUrl = process.env.LETTA_BASE_URL;
+  const originalListenerHeartbeatInterval =
+    process.env.LETTA_LISTENER_HEARTBEAT_INTERVAL_MS;
   const originalGetSettingsWithSecureTokens =
     settingsManager.getSettingsWithSecureTokens;
   const originalUpdateSettings = settingsManager.updateSettings;
@@ -171,6 +173,12 @@ describe("listener auth lifecycle", () => {
       delete process.env.LETTA_BASE_URL;
     } else {
       process.env.LETTA_BASE_URL = originalBaseUrl;
+    }
+    if (originalListenerHeartbeatInterval === undefined) {
+      delete process.env.LETTA_LISTENER_HEARTBEAT_INTERVAL_MS;
+    } else {
+      process.env.LETTA_LISTENER_HEARTBEAT_INTERVAL_MS =
+        originalListenerHeartbeatInterval;
     }
   });
 
@@ -483,6 +491,44 @@ describe("listener auth lifecycle", () => {
         countConnectionsForChannel("control") === 2 &&
         countConnectionsForChannel("stream") === 2,
       "split stream close did not reconnect paired sockets",
+    );
+
+    expect(getActiveRuntime()).toBe(listener);
+    expect(onDisconnected).not.toHaveBeenCalled();
+    expect(onNeedsReregister).not.toHaveBeenCalled();
+  });
+
+  test("healthy control pongs do not mask a silent split stream", async () => {
+    const onDisconnected = mock(() => {});
+    const onNeedsReregister = mock(() => {});
+    process.env.LETTA_LISTENER_HEARTBEAT_INTERVAL_MS = "5";
+    await startClient({
+      onDisconnected,
+      onNeedsReregister,
+      supportsSplitStatusChannels: true,
+    });
+    await waitFor(
+      () =>
+        countConnectionsForChannel("control") === 1 &&
+        countConnectionsForChannel("stream") === 1,
+      "initial split sockets did not open",
+    );
+
+    const controlIndex = lastConnectionIndexForChannel("control");
+    connections[controlIndex]?.on("message", (data) => {
+      const message = JSON.parse(data.toString()) as { type?: string };
+      if (message.type === "ping") {
+        connections[controlIndex]?.send(JSON.stringify({ type: "pong" }));
+      }
+    });
+
+    const listener = getActiveRuntime();
+    expect(listener).not.toBeNull();
+    await waitFor(
+      () =>
+        countConnectionsForChannel("control") === 2 &&
+        countConnectionsForChannel("stream") === 2,
+      "silent split stream did not reconnect paired sockets",
     );
 
     expect(getActiveRuntime()).toBe(listener);

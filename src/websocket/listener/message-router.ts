@@ -38,6 +38,7 @@ import {
   handleExternalToolCallResponseCommand,
   updateRuntimeExternalTools,
 } from "./external-tools";
+import { recordListenerPong } from "./heartbeat";
 import {
   dispatchInboundMessageWhenReady,
   getAcceptedInputDisposition,
@@ -224,7 +225,7 @@ export function createListenerMessageHandler(
         // Record relay pongs so the heartbeat watchdog can detect a half-open
         // socket (no pong within the timeout) and force a reconnect.
         if (lifecycleMessage.type === "pong") {
-          runtime.lastPongAt = Date.now();
+          recordListenerPong(runtime, socket);
         }
         safeEmitWsEvent("recv", "lifecycle", lifecycleMessage);
         return;
