@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { DIRECTORY_LIMIT_DEFAULTS } from "@/utils/directory-limits";
 import {
   isCronPauseCommand,
   isCronResumeCommand,
@@ -24,6 +25,98 @@ describe("app-server protocol hard cut", () => {
     const parsed = parseServerMessage(Buffer.from(JSON.stringify({ type })));
     expect(parsed).toBeNull();
   });
+});
+
+describe("protocol numeric bounds", () => {
+  test.each(["terminal_spawn", "terminal_resize"])(
+    "rejects invalid %s dimensions",
+    (type) => {
+      const base = { type, terminal_id: "terminal-1", cols: 80, rows: 24 };
+
+      for (const patch of [
+        { cols: -1 },
+        { cols: 1.5 },
+        { cols: 0 },
+        { rows: -1 },
+        { rows: 1.5 },
+        { rows: 0 },
+      ]) {
+        expect(
+          parseServerMessage(
+            Buffer.from(JSON.stringify({ ...base, ...patch })),
+          ),
+        ).toBeNull();
+      }
+
+      expect(
+        parseServerMessage(
+          Buffer.from(
+            `{"type":"${type}","terminal_id":"terminal-1","cols":1e309,"rows":24}`,
+          ),
+        ),
+      ).toBeNull();
+      expect(
+        parseServerMessage(
+          Buffer.from(
+            `{"type":"${type}","terminal_id":"terminal-1","cols":80,"rows":1e309}`,
+          ),
+        ),
+      ).toBeNull();
+    },
+  );
+
+  test.each(["terminal_spawn", "terminal_resize"])(
+    "accepts valid %s dimensions",
+    (type) => {
+      const message = { type, terminal_id: "terminal-1", cols: 1, rows: 1 };
+
+      expect(parseServerMessage(Buffer.from(JSON.stringify(message)))).toEqual(
+        message,
+      );
+    },
+  );
+
+  test("rejects invalid get_tree depths", () => {
+    const base = {
+      type: "get_tree",
+      path: ".",
+      depth: 0,
+      request_id: "tree-1",
+    };
+
+    for (const depth of [
+      -1,
+      1.5,
+      DIRECTORY_LIMIT_DEFAULTS.listDirMaxDepth + 1,
+    ]) {
+      expect(
+        parseServerMessage(Buffer.from(JSON.stringify({ ...base, depth }))),
+      ).toBeNull();
+    }
+    expect(
+      parseServerMessage(
+        Buffer.from(
+          '{"type":"get_tree","path":".","depth":1e309,"request_id":"tree-1"}',
+        ),
+      ),
+    ).toBeNull();
+  });
+
+  test.each([0, DIRECTORY_LIMIT_DEFAULTS.listDirMaxDepth])(
+    "accepts get_tree depth boundary %s",
+    (depth) => {
+      const message = {
+        type: "get_tree" as const,
+        path: ".",
+        depth,
+        request_id: `tree-${depth}`,
+      };
+
+      expect(parseServerMessage(Buffer.from(JSON.stringify(message)))).toEqual(
+        message,
+      );
+    },
+  );
 });
 
 describe("connect provider protocol", () => {

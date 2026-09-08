@@ -135,7 +135,9 @@ import {
 } from "./management-protocol-inbound";
 import {
   isAgentRuntimeScope,
+  isNonNegativeIntegerAtMost,
   isObjectRecord,
+  isPositiveInteger,
   isRuntimeScope,
   isStringArray,
 } from "./protocol-validation";
@@ -151,9 +153,7 @@ import {
 } from "./teleport-protocol-inbound";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
-export type ServerLifecycleMessage = {
-  type: "pong";
-};
+export type ServerLifecycleMessage = { type: "pong" };
 
 const TOOLSET_PREFERENCES = new Set([
   "auto",
@@ -164,7 +164,6 @@ const TOOLSET_PREFERENCES = new Set([
   "gemini_snake",
   "none",
 ]);
-
 function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
   if (!isObjectRecord(value)) return false;
   return (
@@ -558,8 +557,8 @@ function isTerminalSpawnCommand(value: unknown): value is TerminalSpawnCommand {
   return (
     c.type === "terminal_spawn" &&
     typeof c.terminal_id === "string" &&
-    typeof c.cols === "number" &&
-    typeof c.rows === "number"
+    isPositiveInteger(c.cols) &&
+    isPositiveInteger(c.rows)
   );
 }
 
@@ -586,8 +585,8 @@ function isTerminalResizeCommand(
   return (
     c.type === "terminal_resize" &&
     typeof c.terminal_id === "string" &&
-    typeof c.cols === "number" &&
-    typeof c.rows === "number"
+    isPositiveInteger(c.cols) &&
+    isPositiveInteger(c.rows)
   );
 }
 
@@ -640,7 +639,7 @@ export function isGetTreeCommand(value: unknown): value is GetTreeCommand {
   return (
     c.type === "get_tree" &&
     typeof c.path === "string" &&
-    typeof c.depth === "number" &&
+    isNonNegativeIntegerAtMost(c.depth, 5) &&
     typeof c.request_id === "string"
   );
 }

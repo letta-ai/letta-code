@@ -6,6 +6,22 @@ export function isStringArray(value: unknown): value is string[] {
   );
 }
 
+export function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+export function isNonNegativeIntegerAtMost(
+  value: unknown,
+  max: number,
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= max
+  );
+}
+
 export function isStringRecord(
   value: unknown,
 ): value is Record<string, string> {
