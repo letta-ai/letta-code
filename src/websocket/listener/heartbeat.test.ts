@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import { __listenClientTestUtils } from "./client";
 import { openListenerConnection } from "./connection";
 import {
+  calculateMaxUnansweredPings,
   createMissedPongWatchdog,
   recordListenerPong,
   startConnectionHeartbeat,
@@ -83,6 +84,14 @@ describe("listener heartbeat watchdog", () => {
     expect(watchdog.shouldTerminate(120_000)).toBe(false);
   });
 
+  test("derives missed-probe budget from the effective interval", () => {
+    expect(calculateMaxUnansweredPings(30_000, 90_000)).toBe(3);
+    expect(calculateMaxUnansweredPings(10_000, 90_000)).toBe(9);
+    expect(calculateMaxUnansweredPings(5, 45)).toBe(9);
+    expect(calculateMaxUnansweredPings(30_001, 90_000)).toBe(3);
+    expect(calculateMaxUnansweredPings(90_001, 90_000)).toBe(1);
+  });
+
   test("split listeners ping control and the current stream transport", async () => {
     const runtime = __listenClientTestUtils.createListenerRuntime();
     const connectionId = "split-heartbeat";
@@ -160,7 +169,7 @@ describe("listener heartbeat watchdog", () => {
           }
           return true;
         },
-        { intervalMs: 5 },
+        { intervalMs: 5, pongTimeoutMs: 15 },
       );
       await waitFor(
         () => onStale.mock.calls.length === 1,

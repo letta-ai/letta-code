@@ -23,6 +23,7 @@ type ConnectionHeartbeatState = {
 
 export interface ConnectionHeartbeatOptions {
   intervalMs?: number;
+  pongTimeoutMs?: number;
 }
 
 const heartbeatStateByRuntime = new WeakMap<
@@ -87,11 +88,21 @@ function createHeartbeatChannelState(
   };
 }
 
-function getMaxUnansweredPings(): number {
-  return Math.max(
-    1,
-    Math.ceil(LISTENER_PONG_TIMEOUT_MS / LISTENER_HEARTBEAT_INTERVAL_MS),
-  );
+export function calculateMaxUnansweredPings(
+  heartbeatIntervalMs: number,
+  pongTimeoutMs: number = LISTENER_PONG_TIMEOUT_MS,
+): number {
+  return Math.max(1, Math.ceil(pongTimeoutMs / heartbeatIntervalMs));
+}
+
+function getHeartbeatIntervalMs(options: ConnectionHeartbeatOptions): number {
+  if (options.intervalMs !== undefined) return options.intervalMs;
+  const override = process.env.LETTA_LISTENER_HEARTBEAT_INTERVAL_MS;
+  if (override !== undefined) {
+    const parsed = Number(override);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return LISTENER_HEARTBEAT_INTERVAL_MS;
 }
 
 function syncStreamHeartbeatState(
@@ -142,7 +153,11 @@ export function startConnectionHeartbeat(
   options: ConnectionHeartbeatOptions = {},
 ): void {
   runtime.lastPongAt = Date.now();
-  const maxUnansweredPings = getMaxUnansweredPings();
+  const heartbeatIntervalMs = getHeartbeatIntervalMs(options);
+  const maxUnansweredPings = calculateMaxUnansweredPings(
+    heartbeatIntervalMs,
+    options.pongTimeoutMs,
+  );
   heartbeatStateByRuntime.set(runtime, {
     control: createHeartbeatChannelState(transport, maxUnansweredPings),
     stream: null,
@@ -176,5 +191,5 @@ export function startConnectionHeartbeat(
     if (streamState && sendPing(streamState.transport)) {
       streamState.watchdog.recordPing(sentAt);
     }
-  }, options.intervalMs ?? LISTENER_HEARTBEAT_INTERVAL_MS);
+  }, heartbeatIntervalMs);
 }
