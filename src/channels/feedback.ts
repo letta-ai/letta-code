@@ -1,4 +1,8 @@
-import { submitFeedbackMetadata } from "@/backend/api/metadata";
+import {
+  type FeedbackResult,
+  feedbackResultMessage,
+  submitFeedbackMetadata,
+} from "@/backend/api/metadata";
 import { settingsManager } from "@/settings-manager";
 import { getVersion } from "@/version";
 import { getChannelDisplayName } from "./plugin-registry";
@@ -18,7 +22,7 @@ export interface ChannelFeedbackSubmission {
 
 export type ChannelFeedbackMetadataSubmitter = (
   payload: Record<string, unknown>,
-) => Promise<void>;
+) => Promise<FeedbackResult>;
 
 let submitOverride: ChannelFeedbackMetadataSubmitter | null = null;
 
@@ -97,16 +101,15 @@ export function buildChannelFeedbackPayload(
 
 export async function submitChannelFeedback(
   submission: ChannelFeedbackSubmission,
-): Promise<void> {
+): Promise<FeedbackResult> {
   const payload = buildChannelFeedbackPayload(submission);
   if (submitOverride) {
-    await submitOverride(payload);
-    return;
+    return submitOverride(payload);
   }
 
   const settings = settingsManager.getSettings();
   const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-  await submitFeedbackMetadata(
+  return submitFeedbackMetadata(
     apiKey,
     settingsManager.getOrCreateDeviceId(),
     payload,
@@ -133,13 +136,14 @@ export async function handleChannelFeedbackCommand(params: {
 
   try {
     const accountId = route.accountId ?? params.msg.accountId;
-    await submitChannelFeedback({
+    const result = await submitChannelFeedback({
       message,
       channel: params.msg.channel,
       ...(accountId !== undefined ? { accountId } : {}),
       agentId: route.agentId,
       conversationId: route.conversationId,
     });
+    if (!result.success || result.message) return feedbackResultMessage(result);
     return buildChannelFeedbackSubmittedMessage(params.msg.channel);
   } catch {
     return buildChannelFeedbackFailedMessage(params.msg.channel);
