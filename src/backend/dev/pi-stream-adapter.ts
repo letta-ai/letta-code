@@ -61,6 +61,18 @@ const LOCAL_PROVIDER_ADAPTIVE_IMAGE_ELISION_AFTER_RETRIES =
   LOCAL_PROVIDER_MAX_RETRIES - 1;
 const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
 
+function providerRequestHeaders(
+  provider: string,
+  headers: Record<string, string> | undefined,
+  conversationId: string,
+): Record<string, string> | undefined {
+  if (provider !== "opencode-go") return headers;
+  return {
+    ...headers,
+    "x-opencode-session": conversationId,
+  };
+}
+
 export type PiStreamFunction = (
   model: Model<string>,
   context: Context,
@@ -637,11 +649,16 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       input.agent.model,
       resolved.model,
     );
+    const headers = providerRequestHeaders(
+      resolved.model.provider,
+      resolved.headers,
+      input.conversationId,
+    );
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
       ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
-      ...(resolved.headers ? { headers: resolved.headers } : {}),
+      ...(headers ? { headers } : {}),
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
       sessionId: input.conversationId,
