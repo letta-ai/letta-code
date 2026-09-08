@@ -103,14 +103,19 @@ describe("personality helpers", () => {
     );
   });
 
-  test("tutorial owns its default profile picture metadata", () => {
-    expect(getPersonalityDefaultMemoryFiles("tutorial")).toEqual([
-      {
-        path: "profile.png",
-        assetId: "tutor-profile",
-        commitMessage: "chore: set default Tutor profile picture",
-      },
-    ]);
+  test("tutorial owns its default profile picture and skill metadata", () => {
+    const tutorFiles = getPersonalityDefaultMemoryFiles("tutorial");
+    expect(tutorFiles[0]).toEqual({
+      path: "profile.png",
+      assetId: "tutor-profile",
+      commitMessage: "chore: set default Tutor profile picture",
+    });
+    expect(
+      tutorFiles
+        .slice(1)
+        .every((file) => file.path.startsWith("skills/designing-an-agent/")),
+    ).toBe(true);
+    expect(tutorFiles.length).toBe(6);
     expect(getPersonalityCreationTags("tutorial")).toEqual([
       buildPersonalityTag("tutorial"),
     ]);
