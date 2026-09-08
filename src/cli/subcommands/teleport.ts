@@ -10,6 +10,8 @@ import {
   teleportToEnvironment,
 } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
+import { getSupportedChannelIds } from "@/channels/plugin-registry";
+import { listChannelRouteSnapshots } from "@/channels/service-routes";
 import { type SessionRef, settingsManager } from "@/settings-manager";
 
 interface TeleportSubcommandDeps {
@@ -156,6 +158,16 @@ async function initializeTeleportSettings(): Promise<void> {
   await settingsManager.loadLocalProjectSettings();
 }
 
+function listActiveChannelRouteNames(session: SessionRef): string[] {
+  return getSupportedChannelIds().filter((channelId) =>
+    listChannelRouteSnapshots({
+      channelId,
+      agentId: session.agentId,
+      conversationId: session.conversationId,
+    }).some((route) => route.enabled && route.outboundEnabled !== false),
+  );
+}
+
 export async function runTeleportSubcommand(
   argv: string[],
   deps: TeleportSubcommandDeps = {},
@@ -199,6 +211,13 @@ export async function runTeleportSubcommand(
         deps.getLastSession ?? (() => settingsManager.getEffectiveLastSession())
       )(),
     );
+
+    const activeChannelRoutes = listActiveChannelRouteNames(session);
+    if (activeChannelRoutes.length > 0) {
+      throw new Error(
+        `This conversation is bound to ${activeChannelRoutes.join(", ")} on this computer. Teleport is blocked because MessageChannel cannot follow the conversation to another computer yet. Remove the channel route or continue locally.`,
+      );
+    }
 
     let targetConnectionId: string;
 

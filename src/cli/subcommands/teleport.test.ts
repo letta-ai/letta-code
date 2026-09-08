@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { apiRequest } from "@/backend/api/request";
 import { ApiRequestError } from "@/backend/api/request";
+import { __testOverrideLoadRoutes, loadRoutes } from "@/channels/routing";
 import {
   formatTeleportApiError,
   resolveTeleportSession,
@@ -255,6 +256,57 @@ describe("teleport subcommand", () => {
       expect(parsed.status).toBe("waiting_for_source");
       expect(parsed.targetConnectionId).toBe("sandbox-conn-1");
     } finally {
+      out.restore();
+    }
+  });
+
+  test("blocks teleport when the conversation has an active local channel route", async () => {
+    const out = captureOutput();
+    let resolvedSandbox = false;
+    __testOverrideLoadRoutes((channelId) =>
+      channelId === "telegram"
+        ? [
+            {
+              accountId: "telegram-account",
+              chatId: "12345",
+              chatType: "direct",
+              threadId: null,
+              agentId: "agent-1",
+              conversationId: "conv-1",
+              enabled: true,
+              outboundEnabled: true,
+              createdAt: "2026-09-04T00:00:00.000Z",
+              updatedAt: "2026-09-04T00:00:00.000Z",
+            },
+          ]
+        : [],
+    );
+    try {
+      const exitCode = await withEnvironment(CLOUD_ENV, () =>
+        runTeleportSubcommand(["cloud"], {
+          initializeSettings: async () => {},
+          getLastSession: () => null,
+          resolveAgentSandboxConnectionId: async () => {
+            resolvedSandbox = true;
+            return {
+              connectionId: "sandbox-conn-1",
+              environment: {} as never,
+            };
+          },
+          teleportToEnvironment: async () => {
+            throw new Error("teleport should not be submitted");
+          },
+        }),
+      );
+
+      expect(exitCode).toBe(1);
+      expect(resolvedSandbox).toBe(false);
+      expect(out.errors[0]).toContain("bound to telegram");
+      expect(out.errors[0]).toContain("MessageChannel cannot follow");
+    } finally {
+      __testOverrideLoadRoutes(() => []);
+      loadRoutes("telegram");
+      __testOverrideLoadRoutes(null);
       out.restore();
     }
   });
