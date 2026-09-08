@@ -321,6 +321,44 @@ test("same teleport id retries readiness after reconnect", () => {
   );
 });
 
+test("same teleport id retries delayed boundary readiness after reconnect", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const socket = new MockSocket();
+  openSource(listener, socket);
+  setActiveRuntime(listener);
+  const lease = runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: process.cwd(),
+  });
+
+  requestTeleport(listener);
+  const pending = listener.pendingTeleports?.get("teleport-1");
+  expect(pending?.readyAt).toBeUndefined();
+  closeListenerConnection(listener, "source");
+  runtime.turnLifecycle.finish(lease, "end_turn");
+  finishPendingTeleport(runtime);
+  expect(pending?.readyAt).toBeUndefined();
+
+  const retrySocket = new MockSocket();
+  openSource(listener, retrySocket, "source-reconnect");
+  requestTeleport(listener, "source-reconnect");
+
+  expect(retrySocket.sent).toContainEqual(
+    expect.objectContaining({
+      type: "teleport_ready",
+      teleport_id: "teleport-1",
+      active_turn: false,
+      success: true,
+    }),
+  );
+  expect(pending?.readyAt).toEqual(expect.any(Number));
+});
+
 test("undelivered ready teleport is pruned after recovery ttl", () => {
   const listener = createRuntime();
   const socket = new MockSocket();

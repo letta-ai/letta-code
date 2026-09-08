@@ -232,6 +232,27 @@ function markTeleportReadyAndSend(
   return sent;
 }
 
+function retryReadyTeleportIfDrained(
+  runtime: ListenerRuntime,
+  pending: PendingTeleport,
+): void {
+  const conversationRuntime = getConversationRuntime(
+    runtime,
+    pending.agentId,
+    pending.conversationId,
+  );
+  if (conversationRuntime?.isProcessing) return;
+  const claimed = claimPendingTeleportAtBoundary({
+    listener: runtime,
+    agentId: pending.agentId,
+    conversationId: pending.conversationId,
+    activeTurn: false,
+  });
+  if (claimed === pending) {
+    emitClaimedTeleportReady(runtime, claimed);
+  }
+}
+
 export function handleTeleportProbe(
   command: TeleportProbeCommand,
   socket: WebSocket,
@@ -273,6 +294,11 @@ export function handleTeleportRequest(params: {
         success: existing.error === undefined,
         error: existing.error,
       });
+    } else if (
+      existing.agentId === command.runtime.agent_id &&
+      existing.conversationId === command.runtime.conversation_id
+    ) {
+      retryReadyTeleportIfDrained(listener, existing);
     }
     return;
   }
