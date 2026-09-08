@@ -54,16 +54,48 @@ function runtimeMatches(
   agentId: string,
   conversationId: string,
 ): boolean {
-  if (!runtime || typeof runtime !== "object") return true;
+  if (!runtime || typeof runtime !== "object") return false;
   const scope = runtime as { agent_id?: unknown; conversation_id?: unknown };
-  return (
-    (scope.agent_id === undefined ||
-      scope.agent_id === null ||
-      scope.agent_id === agentId) &&
-    (scope.conversation_id === undefined ||
-      scope.conversation_id === null ||
-      scope.conversation_id === conversationId)
-  );
+  return scope.agent_id === agentId && scope.conversation_id === conversationId;
+}
+
+function runIdFromStatusMessage(
+  message: EnvironmentStatusMessage,
+): string | null {
+  if (message.type !== "stream_delta") return null;
+  if (!message.delta || typeof message.delta !== "object") return null;
+  const runId = (message.delta as { run_id?: unknown }).run_id;
+  return typeof runId === "string" && runId.length > 0 ? runId : null;
+}
+
+function correlatedRunIdsFromStatusMessage(
+  message: EnvironmentStatusMessage,
+  clientMessageId: string,
+): string[] {
+  if (message.type !== "update_loop_status") return [];
+  if (!message.loop_status || typeof message.loop_status !== "object")
+    return [];
+  const correlations = (
+    message.loop_status as {
+      client_message_ids_by_run_id?: unknown;
+    }
+  ).client_message_ids_by_run_id;
+  if (!correlations || typeof correlations !== "object") return [];
+
+  const runIds: string[] = [];
+  for (const [runId, clientMessageIds] of Object.entries(
+    correlations as Record<string, unknown>,
+  )) {
+    if (
+      typeof runId === "string" &&
+      runId.length > 0 &&
+      Array.isArray(clientMessageIds) &&
+      clientMessageIds.includes(clientMessageId)
+    ) {
+      runIds.push(runId);
+    }
+  }
+  return runIds;
 }
 
 export function environmentStatusMessageToStreamJsonWire(params: {
@@ -116,6 +148,7 @@ export async function startEnvironmentStatusStream(params: {
   connectionId: string;
   agentId: string;
   conversationId: string;
+  clientMessageId: string;
   onMessage: (message: EnvironmentStatusMessage) => void;
   connectTimeoutMs?: number;
   deps?: {
@@ -133,6 +166,16 @@ export async function startEnvironmentStatusStream(params: {
     conversationId: params.conversationId,
   });
   const runIds = new Set<string>();
+  const pendingMessagesByRunId = new Map<string, EnvironmentStatusMessage[]>();
+  const emitCorrelatedRun = (runId: string): void => {
+    if (runIds.has(runId)) return;
+    runIds.add(runId);
+    const pendingMessages = pendingMessagesByRunId.get(runId) ?? [];
+    pendingMessagesByRunId.delete(runId);
+    for (const pendingMessage of pendingMessages) {
+      params.onMessage(pendingMessage);
+    }
+  };
   const socket = new WebSocketImpl(url, {
     headers: getLettaCodeHeaders(config.apiKey),
   });
@@ -167,13 +210,22 @@ export async function startEnvironmentStatusStream(params: {
       return;
     }
     if (parsed.type === "stream_delta") {
-      const runId = (parsed.delta as { run_id?: unknown }).run_id;
-      if (typeof runId === "string" && runId.length > 0) runIds.add(runId);
-    } else if (parsed.type === "update_loop_status") {
-      const loopStatus = parsed.loop_status as { active_run_ids?: unknown[] };
-      for (const runId of loopStatus.active_run_ids ?? []) {
-        if (typeof runId === "string" && runId.length > 0) runIds.add(runId);
+      const runId = runIdFromStatusMessage(parsed);
+      if (!runId) return;
+      if (runIds.has(runId)) {
+        params.onMessage(parsed);
+      } else {
+        const pendingMessages = pendingMessagesByRunId.get(runId) ?? [];
+        pendingMessages.push(parsed);
+        pendingMessagesByRunId.set(runId, pendingMessages);
       }
+      return;
+    }
+    for (const runId of correlatedRunIdsFromStatusMessage(
+      parsed,
+      params.clientMessageId,
+    )) {
+      emitCorrelatedRun(runId);
     }
     params.onMessage(parsed);
   });
@@ -207,6 +259,7 @@ export function buildEnvironmentCreateMessageBody(params: {
   conversationId: string | null;
   content: MessageCreate["content"];
   otid: string;
+  clientMessageId: string;
 }): SendEnvironmentMessageBody {
   const clientToolAllowlist = toolFilter.getEnabledTools();
   return {
@@ -219,7 +272,7 @@ export function buildEnvironmentCreateMessageBody(params: {
       {
         role: "user",
         content: params.content,
-        client_message_id: randomUUID(),
+        client_message_id: params.clientMessageId,
         otid: params.otid,
       },
     ],
@@ -241,14 +294,28 @@ export async function runEnvironmentRoutedHeadlessTurn(params: {
   getStats: () => { totalWallMs: number; totalApiMs: number };
   writeFinalStdout: (text: string) => Promise<void>;
   writeWireMessage: (message: WireMessage) => void;
+  deps?: {
+    startEnvironmentStatusStream?: typeof startEnvironmentStatusStream;
+    sendEnvironmentMessage?: typeof sendEnvironmentMessage;
+    waitForEnvironmentAssistantMessage?: typeof waitForEnvironmentAssistantMessage;
+  };
 }): Promise<void> {
   const otid = randomUUID();
+  const clientMessageId = randomUUID();
+  const startStatusStream =
+    params.deps?.startEnvironmentStatusStream ?? startEnvironmentStatusStream;
+  const sendMessage =
+    params.deps?.sendEnvironmentMessage ?? sendEnvironmentMessage;
+  const waitForAssistant =
+    params.deps?.waitForEnvironmentAssistantMessage ??
+    waitForEnvironmentAssistantMessage;
   const environmentStatusStream =
     params.outputFormat === "stream-json"
-      ? await startEnvironmentStatusStream({
+      ? await startStatusStream({
           connectionId: params.connectionId,
           agentId: params.agentId,
           conversationId: params.conversationId,
+          clientMessageId,
           onMessage: (message) => {
             const wire = environmentStatusMessageToStreamJsonWire({
               message,
@@ -259,26 +326,35 @@ export async function runEnvironmentRoutedHeadlessTurn(params: {
           },
         })
       : null;
-  await environmentStatusStream?.ready;
-  await sendEnvironmentMessage(
-    params.connectionId,
-    buildEnvironmentCreateMessageBody({
+  let environmentResult: {
+    text: string;
+    stopReason: StopReasonType | null;
+    runId: string | null;
+  };
+  try {
+    await environmentStatusStream?.ready;
+    await sendMessage(
+      params.connectionId,
+      buildEnvironmentCreateMessageBody({
+        agentId: params.agentId,
+        conversationId: params.conversationId,
+        content: params.content,
+        otid,
+        clientMessageId,
+      }),
+    );
+
+    environmentResult = await waitForAssistant({
+      backend: params.backend,
       agentId: params.agentId,
       conversationId: params.conversationId,
-      content: params.content,
       otid,
-    }),
-  );
-
-  const environmentResult = await waitForEnvironmentAssistantMessage({
-    backend: params.backend,
-    agentId: params.agentId,
-    conversationId: params.conversationId,
-    otid,
-    deviceId: params.deviceId,
-  });
+      deviceId: params.deviceId,
+    });
+  } finally {
+    environmentStatusStream?.close();
+  }
   const stats = params.getStats();
-  environmentStatusStream?.close();
 
   if (params.outputFormat === "json") {
     await params.writeFinalStdout(

@@ -290,12 +290,25 @@ describe("headless environment-routed responses", () => {
           },
         }),
       );
+      socket.send(
+        JSON.stringify({
+          type: "update_loop_status",
+          runtime: { agent_id: "agent-env", conversation_id: "conv-env" },
+          loop_status: {
+            status: "WAITING_FOR_API_RESPONSE",
+            active_run_ids: ["run-env"],
+            client_message_ids_by_run_id: { "run-env": ["cm-requested"] },
+            executing_tool_call_ids: [],
+          },
+        }),
+      );
     });
 
     const stream = await startEnvironmentStatusStream({
       connectionId: "conn-env",
       agentId: "agent-env",
       conversationId: "conv-env",
+      clientMessageId: "cm-requested",
       onMessage: (message) => {
         if (message.type === "stream_delta") {
           order.push("delta");
@@ -368,6 +381,7 @@ describe("buildEnvironmentCreateMessageBody", () => {
       conversationId: "conv-1",
       content: [{ type: "text", text: "hello" }],
       otid: "otid-1",
+      clientMessageId: "cm-1",
     });
 
     expect(body.client_tool_allowlist).toEqual(["Read", "Grep"]);
@@ -375,6 +389,7 @@ describe("buildEnvironmentCreateMessageBody", () => {
     expect(body.conversationId).toBe("conv-1");
     expect(body.messages).toHaveLength(1);
     expect(body.messages[0]?.otid).toBe("otid-1");
+    expect(body.messages[0]?.client_message_id).toBe("cm-1");
   });
 
   test("sends an empty allowlist when the filter allows no tools", () => {
@@ -385,6 +400,7 @@ describe("buildEnvironmentCreateMessageBody", () => {
       conversationId: "conv-1",
       content: [{ type: "text", text: "hello" }],
       otid: "otid-1",
+      clientMessageId: "cm-1",
     });
 
     expect(body.client_tool_allowlist).toEqual([]);
@@ -396,6 +412,7 @@ describe("buildEnvironmentCreateMessageBody", () => {
       conversationId: "conv-1",
       content: [{ type: "text", text: "hello" }],
       otid: "otid-1",
+      clientMessageId: "cm-1",
     });
 
     expect("client_tool_allowlist" in body).toBe(false);
