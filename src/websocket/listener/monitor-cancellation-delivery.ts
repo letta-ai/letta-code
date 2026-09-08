@@ -163,24 +163,55 @@ export async function wasCancellationInputPersisted(
 
 const deliveries = new WeakMap<ListenerRuntime, MonitorCancellationDelivery>();
 const cleanups = new WeakMap<ListenerRuntime, () => void>();
+const starters = new WeakMap<ListenerRuntime, () => void>();
 export function clearMonitorCancellationDelivery(
   runtime: ListenerRuntime,
 ): void {
   cleanups.get(runtime)?.();
   cleanups.delete(runtime);
+  starters.delete(runtime);
 }
 export function pumpMonitorCancellations(runtime: ListenerRuntime): void {
+  starters.get(runtime)?.();
   void deliveries.get(runtime)?.pump();
 }
 
-export function installMonitorCancellationDelivery(params: {
+type DeliveryInstallation = {
   runtime: ListenerRuntime;
   processTransport: ListenerTransport;
   opts: StartListenerOptions;
   processQueuedTurn: ProcessQueuedTurn;
-}): () => void {
+};
+
+export function installMonitorCancellationDelivery(
+  params: DeliveryInstallation,
+): () => void {
+  clearMonitorCancellationDelivery(params.runtime);
+  let stopDelivery: (() => void) | undefined;
+  // Embedded listeners can attach before application settings finish loading.
+  // Do not choose a receipt namespace from incomplete configuration.
+  const start = () => {
+    if (stopDelivery || !settingsManager.isReady) return;
+    stopDelivery = startMonitorCancellationDelivery(params);
+    clearInterval(timer);
+  };
+  const timer = setInterval(start, 30_000);
+  timer.unref();
+  const cleanup = () => {
+    clearInterval(timer);
+    stopDelivery?.();
+    starters.delete(params.runtime);
+  };
+  starters.set(params.runtime, start);
+  cleanups.set(params.runtime, cleanup);
+  start();
+  return cleanup;
+}
+
+function startMonitorCancellationDelivery(
+  params: DeliveryInstallation,
+): () => void {
   const { runtime, processTransport, opts, processQueuedTurn } = params;
-  clearMonitorCancellationDelivery(runtime);
   const { store } = getMonitorCancellationServices();
   const submitted = new Set<string>();
   const scoped = (receipt: MonitorCancellationReceipt) =>
@@ -251,6 +282,5 @@ export function installMonitorCancellationDelivery(params: {
     delivery.dispose();
     if (deliveries.get(runtime) === delivery) deliveries.delete(runtime);
   };
-  cleanups.set(runtime, cleanup);
   return cleanup;
 }

@@ -41,7 +41,7 @@ for (const busy of [false, true])
     const directory = mkdtempSync(join(tmpdir(), "monitor-wire-"));
     directories.push(directory);
     process.env.LETTA_HOME = directory;
-    await settingsManager.initialize();
+    await settingsManager.reset();
     const local = new LocalStore("agent-a", {
       storageDir: join(directory, "backend"),
     });
@@ -116,6 +116,9 @@ for (const busy of [false, true])
       trackListenerError() {},
     });
     try {
+      // Embedded startup installs services before settings are ready. The
+      // first cancellation must start delivery using the loaded namespace.
+      await settingsManager.initialize();
       const command = {
         type: "monitor_stop",
         request_id: "stop-1",
