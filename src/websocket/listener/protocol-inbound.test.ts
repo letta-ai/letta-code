@@ -12,6 +12,7 @@ import {
   isUpdateModelCommand,
   parseServerMessage,
 } from "@/websocket/listener/protocol-inbound";
+import { TERMINAL_DIMENSION_MAX } from "@/websocket/listener/protocol-validation";
 
 describe("app-server protocol hard cut", () => {
   test.each([
@@ -40,6 +41,10 @@ describe("protocol numeric bounds", () => {
         { rows: -1 },
         { rows: 1.5 },
         { rows: 0 },
+        { cols: TERMINAL_DIMENSION_MAX + 1 },
+        { rows: TERMINAL_DIMENSION_MAX + 1 },
+        { cols: Number.MAX_SAFE_INTEGER + 1 },
+        { rows: Number.MAX_SAFE_INTEGER + 1 },
       ]) {
         expect(
           parseServerMessage(
@@ -68,7 +73,12 @@ describe("protocol numeric bounds", () => {
   test.each(["terminal_spawn", "terminal_resize"])(
     "accepts valid %s dimensions",
     (type) => {
-      const message = { type, terminal_id: "terminal-1", cols: 1, rows: 1 };
+      const message = {
+        type,
+        terminal_id: "terminal-1",
+        cols: TERMINAL_DIMENSION_MAX,
+        rows: TERMINAL_DIMENSION_MAX,
+      };
 
       expect(parseServerMessage(Buffer.from(JSON.stringify(message)))).toEqual(
         message,

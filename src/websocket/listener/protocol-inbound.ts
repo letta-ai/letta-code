@@ -137,9 +137,10 @@ import {
   isAgentRuntimeScope,
   isNonNegativeIntegerAtMost,
   isObjectRecord,
-  isPositiveInteger,
+  isPositiveSafeIntegerAtMost,
   isRuntimeScope,
   isStringArray,
+  TERMINAL_DIMENSION_MAX,
 } from "./protocol-validation";
 import {
   isRuntimeStartClientInfo,
@@ -548,17 +549,12 @@ export function isRuntimeStartCommand(
 
 function isTerminalSpawnCommand(value: unknown): value is TerminalSpawnCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    terminal_id?: unknown;
-    cols?: unknown;
-    rows?: unknown;
-  };
+  const c = value as Record<string, unknown>;
   return (
     c.type === "terminal_spawn" &&
     typeof c.terminal_id === "string" &&
-    isPositiveInteger(c.cols) &&
-    isPositiveInteger(c.rows)
+    isPositiveSafeIntegerAtMost(c.cols, TERMINAL_DIMENSION_MAX) &&
+    isPositiveSafeIntegerAtMost(c.rows, TERMINAL_DIMENSION_MAX)
   );
 }
 
@@ -576,17 +572,12 @@ function isTerminalResizeCommand(
   value: unknown,
 ): value is TerminalResizeCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    terminal_id?: unknown;
-    cols?: unknown;
-    rows?: unknown;
-  };
+  const c = value as Record<string, unknown>;
   return (
     c.type === "terminal_resize" &&
     typeof c.terminal_id === "string" &&
-    isPositiveInteger(c.cols) &&
-    isPositiveInteger(c.rows)
+    isPositiveSafeIntegerAtMost(c.cols, TERMINAL_DIMENSION_MAX) &&
+    isPositiveSafeIntegerAtMost(c.rows, TERMINAL_DIMENSION_MAX)
   );
 }
 
