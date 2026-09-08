@@ -127,13 +127,18 @@ export async function resolveDesktopEnvironmentConnectionId(
   const response = await list({ limit: 100, onlineOnly: true });
   const matches = response.connections.filter(
     (environment) =>
-      environment.listenerInstanceId?.startsWith("desktop-direct-cloud:") ===
-        true && isEnvironmentOnline(environment),
+      ((environment.deviceId.startsWith("desktop:") &&
+        environment.listenerInstanceId?.startsWith("desktop-primary:") ===
+          true) ||
+        environment.listenerInstanceId?.startsWith("desktop-direct-cloud:") ===
+          true) &&
+      environment.organizationId !== "local" &&
+      isEnvironmentOnline(environment),
   );
 
   if (matches.length === 0) {
     throw new Error(
-      "Desktop Local is unavailable. Open Letta Desktop, enable Remote Access, and wait for its computer connection to come online.",
+      "Desktop Local is unavailable. Open Letta Desktop and wait for its computer connection to come online.",
     );
   }
   if (matches.length > 1) {

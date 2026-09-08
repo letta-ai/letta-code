@@ -108,7 +108,7 @@ describe("Desktop environment resolution", () => {
     expect(result.environment.connectionName).toBe("Caren's Mac");
   });
 
-  test("requires Desktop Remote Access to be online", async () => {
+  test("requires the Desktop computer to be online", async () => {
     const list = (async () => ({
       connections: [
         environment({
@@ -121,7 +121,7 @@ describe("Desktop environment resolution", () => {
     })) as typeof listEnvironments;
 
     await expect(resolveDesktopEnvironmentConnectionId(list)).rejects.toThrow(
-      "enable Remote Access",
+      "wait for its computer connection",
     );
   });
 
@@ -146,6 +146,22 @@ describe("Desktop environment resolution", () => {
     await expect(resolveDesktopEnvironmentConnectionId(list)).rejects.toThrow(
       "Multiple Desktop computers are online",
     );
+  });
+
+  test("resolves the account-scoped direct primary without a Remote Access sibling", async () => {
+    const list = (async () => ({
+      connections: [
+        environment({
+          deviceId: "desktop:installation:user-1",
+          listenerInstanceId: "desktop-primary:installation",
+          connectionId: "conn-primary",
+        }),
+      ],
+      hasNextPage: false,
+    })) as typeof listEnvironments;
+    expect(
+      (await resolveDesktopEnvironmentConnectionId(list)).connectionId,
+    ).toBe("conn-primary");
   });
 });
 

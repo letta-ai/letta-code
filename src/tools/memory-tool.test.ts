@@ -28,7 +28,7 @@ async function getMockClient() {
   }
 
   return {
-    _options: { apiKey: process.env.LETTA_API_KEY ?? "" },
+    apiKey: process.env.LETTA_API_KEY ?? "",
     agents: {
       retrieve: mock(() => Promise.resolve({ name: TEST_AGENT_NAME })),
     },

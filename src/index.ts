@@ -29,6 +29,7 @@ import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
 import { resolvePersonalityId } from "./agent/personality-presets";
 import type { MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
+import { initializeDesktopCredentials } from "./auth/desktop-credentials";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "./auth/oauth";
 import {
   type Backend,
@@ -588,10 +589,9 @@ async function getLocalBackendStartupFallbackSession(
 
 async function main(): Promise<void> {
   markMilestone("CLI_START");
+  await initializeDesktopCredentials();
 
-  // Detect if the parent process (Desktop, terminal) dies and we get
-  // orphaned to PID 1. Without this, a detached CLI can run for days
-  // accumulating memory after the parent exits without cleanly killing it.
+  // Exit when the owning Desktop or terminal process dies.
   startOrphanDetection();
 
   const rawCliArgs = process.argv.slice(2);

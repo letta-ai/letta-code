@@ -36,7 +36,10 @@ import {
   MissingListenerApiKeyError,
   resolveListenerRegistrationOptions,
 } from "@/websocket/listener/auth";
-import { getSpawnerListenerInstanceId } from "@/websocket/listener/identity";
+import {
+  getSpawnerDeviceId,
+  getSpawnerListenerInstanceId,
+} from "@/websocket/listener/identity";
 import {
   acquireManualListenerLock,
   ManualListenerAlreadyRunningError,
@@ -398,10 +401,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   let connectionName: string;
 
   const explicitComputerName = values["computer-name"] ?? values["env-name"];
+  const spawnerDeviceId = getSpawnerDeviceId();
   if (explicitComputerName) {
     // Explicitly provided - use it and save to local project settings
     connectionName = explicitComputerName;
-    settingsManager.setListenerEnvName(connectionName);
+    if (!spawnerDeviceId) settingsManager.setListenerEnvName(connectionName);
   } else {
     // Not provided - check saved local project settings
     const savedName = settingsManager.getListenerEnvName();
@@ -442,7 +446,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   try {
     // Get device ID
-    const deviceId = settingsManager.getOrCreateDeviceId();
+    const deviceId = spawnerDeviceId ?? settingsManager.getOrCreateDeviceId();
+    if (spawnerDeviceId)
+      process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = deviceId;
     const startupMode = await resolveListenerStartupMode(
       channelNames,
       channelNames.length > 0 || restoreEnabledChannels,
