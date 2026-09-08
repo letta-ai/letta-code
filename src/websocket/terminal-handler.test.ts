@@ -37,47 +37,50 @@ describe("makeOutputBatcher", () => {
     expect(flushed).toEqual(["tail output"]);
   });
 
-  test("Bun emits buffered PTY output before terminal exit", async () => {
-    const messages: Array<Record<string, unknown>> = [];
-    const socket = {
-      readyState: WebSocket.OPEN,
-      send: (raw: string) => messages.push(JSON.parse(raw)),
-    } as unknown as WebSocket;
-    const terminalId = "bun-exit-order";
-    const connectionId = "terminal-handler-test";
+  test.skipIf(process.platform === "win32")(
+    "Bun emits buffered PTY output before terminal exit",
+    async () => {
+      const messages: Array<Record<string, unknown>> = [];
+      const socket = {
+        readyState: WebSocket.OPEN,
+        send: (raw: string) => messages.push(JSON.parse(raw)),
+      } as unknown as WebSocket;
+      const terminalId = "bun-exit-order";
+      const connectionId = "terminal-handler-test";
 
-    handleTerminalSpawn(
-      { terminal_id: terminalId, cols: 80, rows: 24 },
-      socket,
-      process.cwd(),
-      connectionId,
-    );
-    await waitFor(() =>
-      messages.some(({ type }) => type === "terminal_spawned"),
-    );
-    handleTerminalInput(
-      { terminal_id: terminalId, data: "printf '__FINAL_TAIL__'; exit\n" },
-      connectionId,
-    );
-    await waitFor(() =>
-      messages.some(({ type }) => type === "terminal_exited"),
-    );
+      handleTerminalSpawn(
+        { terminal_id: terminalId, cols: 80, rows: 24 },
+        socket,
+        process.cwd(),
+        connectionId,
+      );
+      await waitFor(() =>
+        messages.some(({ type }) => type === "terminal_spawned"),
+      );
+      handleTerminalInput(
+        { terminal_id: terminalId, data: "printf '__FINAL_TAIL__'; exit\n" },
+        connectionId,
+      );
+      await waitFor(() =>
+        messages.some(({ type }) => type === "terminal_exited"),
+      );
 
-    const exitIndex = messages.findIndex(
-      ({ type }) => type === "terminal_exited",
-    );
-    const outputBeforeExit = messages
-      .slice(0, exitIndex)
-      .filter(({ type }) => type === "terminal_output")
-      .map(({ data }) => String(data))
-      .join("");
-    expect(outputBeforeExit).toContain("__FINAL_TAIL__");
-    expect(
-      messages
-        .slice(exitIndex + 1)
-        .some(({ type }) => type === "terminal_output"),
-    ).toBe(false);
-  });
+      const exitIndex = messages.findIndex(
+        ({ type }) => type === "terminal_exited",
+      );
+      const outputBeforeExit = messages
+        .slice(0, exitIndex)
+        .filter(({ type }) => type === "terminal_output")
+        .map(({ data }) => String(data))
+        .join("");
+      expect(outputBeforeExit).toContain("__FINAL_TAIL__");
+      expect(
+        messages
+          .slice(exitIndex + 1)
+          .some(({ type }) => type === "terminal_output"),
+      ).toBe(false);
+    },
+  );
 
   test("lets terminal exit follow the final output", () => {
     const messages: string[] = [];
