@@ -57,6 +57,10 @@ function captureOutput(): {
   };
 }
 
+const NO_CHANNEL_ROUTES = {
+  listActiveChannelRouteNames: () => [],
+};
+
 describe("teleport subcommand", () => {
   test("prints help and returns 0", async () => {
     const out = captureOutput();
@@ -210,6 +214,7 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["cloud"], {
+          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
           resolveAgentSandboxConnectionId: async (agentId, options) => {
@@ -264,6 +269,7 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["back"], {
+          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
         }),
@@ -276,12 +282,41 @@ describe("teleport subcommand", () => {
     }
   });
 
+  test("blocks teleport for active channel routes", async () => {
+    const out = captureOutput();
+    let resolveCalled = false;
+    try {
+      const exitCode = await withEnvironment(CLOUD_ENV, () =>
+        runTeleportSubcommand(["cloud"], {
+          initializeSettings: async () => {},
+          getLastSession: () => null,
+          listActiveChannelRouteNames: () => ["slack"],
+          resolveAgentSandboxConnectionId: async () => {
+            resolveCalled = true;
+            return {
+              connectionId: "sandbox-conn-1",
+              environment: {} as never,
+            };
+          },
+        }),
+      );
+
+      expect(exitCode).toBe(1);
+      expect(resolveCalled).toBe(false);
+      expect(out.errors[0]).toContain("bound to slack");
+      expect(out.errors[0]).toContain("Teleport is blocked");
+    } finally {
+      out.restore();
+    }
+  });
+
   test("local resolves the online Desktop lease and submits teleport", async () => {
     const out = captureOutput();
     const teleportCalls: Array<{ targetConnectionId: string }> = [];
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["local"], {
+          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
           resolveDesktopEnvironmentConnectionId: async () => ({
@@ -326,6 +361,7 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["caren-mac.local"], {
+          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
           resolveEnvironmentConnectionId: async () => ({
@@ -361,6 +397,7 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["my-laptop"], {
+          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
           resolveEnvironmentConnectionId: async (selector) => {
@@ -433,6 +470,7 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["my-target"], {
+          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
           resolveEnvironmentConnectionId: async () => ({
@@ -471,6 +509,7 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["cloud"], {
+          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
           resolveAgentSandboxConnectionId: async () => ({
@@ -510,6 +549,7 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["cloud"], {
+          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
           resolveAgentSandboxConnectionId: async () => ({

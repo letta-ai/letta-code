@@ -10,6 +10,8 @@ import {
   teleportToEnvironment,
 } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
+import { getSupportedChannelIds } from "@/channels/plugin-registry";
+import { listChannelRouteSnapshots } from "@/channels/service-routes";
 import { type SessionRef, settingsManager } from "@/settings-manager";
 
 interface TeleportSubcommandDeps {
@@ -20,6 +22,7 @@ interface TeleportSubcommandDeps {
   resolveAgentSandboxConnectionId?: typeof resolveAgentSandboxConnectionId;
   resolveDesktopEnvironmentConnectionId?: typeof resolveDesktopEnvironmentConnectionId;
   teleportToEnvironment?: typeof teleportToEnvironment;
+  listActiveChannelRouteNames?: (session: SessionRef) => string[];
 }
 
 const TELEPORT_OPTIONS = {
@@ -156,6 +159,16 @@ async function initializeTeleportSettings(): Promise<void> {
   await settingsManager.loadLocalProjectSettings();
 }
 
+function listActiveChannelRouteNames(session: SessionRef): string[] {
+  return getSupportedChannelIds().filter((channelId) =>
+    listChannelRouteSnapshots({
+      channelId,
+      agentId: session.agentId,
+      conversationId: session.conversationId,
+    }).some((route) => route.enabled && route.outboundEnabled !== false),
+  );
+}
+
 export async function runTeleportSubcommand(
   argv: string[],
   deps: TeleportSubcommandDeps = {},
@@ -200,6 +213,21 @@ export async function runTeleportSubcommand(
       )(),
     );
 
+    if (action === "back") {
+      throw new Error(
+        "Teleport back is not supported. Use `letta teleport local` or choose an explicit computer.",
+      );
+    }
+
+    const activeChannelRoutes = (
+      deps.listActiveChannelRouteNames ?? listActiveChannelRouteNames
+    )(session);
+    if (activeChannelRoutes.length > 0) {
+      throw new Error(
+        `This conversation is bound to ${activeChannelRoutes.join(", ")} on this computer. Teleport is blocked because MessageChannel cannot follow the conversation to another computer yet. Remove the channel route or continue locally.`,
+      );
+    }
+
     let targetConnectionId: string;
 
     if (action === "cloud") {
@@ -215,10 +243,6 @@ export async function runTeleportSubcommand(
         resolveDesktopEnvironmentConnectionId;
       const result = await resolve();
       targetConnectionId = result.connectionId;
-    } else if (action === "back") {
-      throw new Error(
-        "Teleport back is not supported. Use `letta teleport local` or choose an explicit computer.",
-      );
     } else {
       const resolve =
         deps.resolveEnvironmentConnectionId ?? resolveEnvironmentConnectionId;
