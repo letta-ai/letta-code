@@ -3915,7 +3915,7 @@ The allowlist applies to hooks from every source, including managed settings.
 
 ### `workflowKeywordTriggerEnabled`
 
-Choose whether typing the keyword `ultracode` in a prompt triggers a [dynamic workflow](/docs/en/workflows#ask-for-a-workflow-in-your-prompt). Set it to `false` to type the word without triggering one. Requires Claude Code v2.1.157 or later.
+Choose whether typing the keyword `ultracode` in a prompt triggers a [dynamic workflow](/docs/en/workflows#ask-for-a-workflow-in-your-prompt). Set it to `false` to type the word without triggering one.
 
 * **Scope**: [`Any file`](#scopes). Appears in `/config` as **Ultracode keyword trigger**.
 * **Type**: Boolean
@@ -3929,7 +3929,7 @@ Choose whether typing the keyword `ultracode` in a prompt triggers a [dynamic wo
 }
 ```
 
-The `ultracode` effort setting, `/workflows`, and saved workflow commands are unaffected. Requires Claude Code v2.1.157 or later. Before v2.1.160, the trigger keyword was `workflow`.
+The `ultracode` effort setting, `/workflows`, and saved workflow commands are unaffected.
 
 ### `workflowSizeGuideline`
 
@@ -5339,7 +5339,7 @@ Set the newest Claude Code version your organization allows to start. When the r
 }
 ```
 
-Background auto-updates and `claude update` skip versions above the ceiling, so an installation inside the range stays inside it. `claude update`, `claude install`, and `claude doctor` keep working above the ceiling so users can recover. Pair it with [`requiredMinimumVersion`](#requiredminimumversion) to enforce a range. Requires Claude Code v2.1.163 or later.
+Background auto-updates and `claude update` skip versions above the ceiling, so an installation inside the range stays inside it. `claude update`, `claude install`, and `claude doctor` keep working above the ceiling so users can recover. Pair it with [`requiredMinimumVersion`](#requiredminimumversion) to enforce a range.
 
 ### `requiredMinimumVersion`
 
@@ -5355,7 +5355,7 @@ Set the oldest Claude Code version your organization allows to start. When the r
 }
 ```
 
-`claude update`, `claude install`, and `claude doctor` keep working below the floor so users can recover. Unlike [`minimumVersion`](#minimumversion), which only prevents downgrades, this key blocks startup. Pair it with [`requiredMaximumVersion`](#requiredmaximumversion) to enforce a range. Requires Claude Code v2.1.163 or later.
+`claude update`, `claude install`, and `claude doctor` keep working below the floor so users can recover. Unlike [`minimumVersion`](#minimumversion), which only prevents downgrades, this key blocks startup. Pair it with [`requiredMaximumVersion`](#requiredmaximumversion) to enforce a range.
 
 ## Tools
 
