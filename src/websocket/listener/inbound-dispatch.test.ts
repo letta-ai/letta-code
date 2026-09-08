@@ -17,7 +17,7 @@ import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import { createRuntime } from "./lifecycle";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
-import { setActiveRuntime } from "./runtime";
+import { evictConversationRuntimeIfIdle, setActiveRuntime } from "./runtime";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import { createTurnInputState } from "./turn-input-state";
@@ -217,6 +217,91 @@ test("direct App Server turn follows a subscribed client after origin disconnect
   expect(branchResult?.kind).toBe("terminal");
   expect(executeApprovalBatch).toHaveBeenCalledTimes(1);
   expect(sendApprovalContinuation).toHaveBeenCalledTimes(1);
+});
+
+test("accepted input disposition survives idle runtime eviction", async () => {
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  const socket = new MockSocket();
+  const options = makeOptions("client-a");
+  const scope = { agent_id: "agent-1", conversation_id: "conversation-1" };
+  const processIncomingMessage = mock(async () => {});
+  const acknowledgements: Array<{
+    accepted: boolean;
+    disposition?: "started" | "queued";
+  }> = [];
+
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime,
+    incoming: {
+      type: "message",
+      connectionId: "client-a",
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+      messages: [
+        {
+          role: "user",
+          content: "Run once",
+          client_message_id: "cm-accepted-once",
+        },
+      ],
+    },
+    socket: socket as never,
+    options,
+    processQueuedTurn: mock(async () => {}),
+    processIncomingMessage,
+    trackListenerError: mock(() => {}),
+    onInputAccepted: (result) => acknowledgements.push(result),
+  });
+
+  await runtime.messageQueue;
+  expect(processIncomingMessage).toHaveBeenCalledTimes(1);
+  expect(acknowledgements).toEqual([
+    { accepted: true, disposition: "started" },
+  ]);
+  expect(evictConversationRuntimeIfIdle(runtime)).toBe(true);
+
+  const recreatedRuntime = getOrCreateScopedRuntime(
+    listener,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime: recreatedRuntime,
+    incoming: {
+      type: "message",
+      connectionId: "client-a",
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+      messages: [
+        {
+          role: "user",
+          content: "Run once",
+          client_message_id: "cm-accepted-once",
+        },
+      ],
+    },
+    socket: socket as never,
+    options,
+    processQueuedTurn: mock(async () => {}),
+    processIncomingMessage,
+    trackListenerError: mock(() => {}),
+    onInputAccepted: (result) => acknowledgements.push(result),
+  });
+
+  await recreatedRuntime.messageQueue;
+  expect(processIncomingMessage).toHaveBeenCalledTimes(1);
+  expect(acknowledgements).toEqual([
+    { accepted: true, disposition: "started" },
+    { accepted: true, disposition: "started" },
+  ]);
 });
 
 test("direct remote turn follows the replacement WS pair after reconnect", async () => {
