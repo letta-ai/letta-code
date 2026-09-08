@@ -22,6 +22,7 @@ interface TeleportSubcommandDeps {
   resolveAgentSandboxConnectionId?: typeof resolveAgentSandboxConnectionId;
   resolveDesktopEnvironmentConnectionId?: typeof resolveDesktopEnvironmentConnectionId;
   teleportToEnvironment?: typeof teleportToEnvironment;
+  listActiveChannelRouteNames?: (session: SessionRef) => string[];
 }
 
 const TELEPORT_OPTIONS = {
@@ -212,7 +213,9 @@ export async function runTeleportSubcommand(
       )(),
     );
 
-    const activeChannelRoutes = listActiveChannelRouteNames(session);
+    const activeChannelRoutes = (
+      deps.listActiveChannelRouteNames ?? listActiveChannelRouteNames
+    )(session);
     if (activeChannelRoutes.length > 0) {
       throw new Error(
         `This conversation is bound to ${activeChannelRoutes.join(", ")} on this computer. Teleport is blocked because MessageChannel cannot follow the conversation to another computer yet. Remove the channel route or continue locally.`,
