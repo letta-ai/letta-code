@@ -82,6 +82,22 @@ function requireIncludes(
   }
 }
 
+type ShellExecution = {
+  id: string;
+  command: string;
+  output: string;
+};
+
+function requireExecution(
+  executions: ShellExecution[],
+  matches: (command: string) => boolean,
+  description: string,
+): ShellExecution {
+  const execution = executions.find(({ command }) => matches(command));
+  if (!execution) throw new Error(`Missing ${description} command`);
+  return execution;
+}
+
 export function validateWindowsScenarioOutput(stdout: string): void {
   const records = parseWireRecords(stdout);
   const shellCalls = records.flatMap((record) => {
@@ -101,17 +117,6 @@ export function validateWindowsScenarioOutput(stdout: string): void {
     throw new Error("No Bash tool_call_message records were emitted");
   }
 
-  const allArguments = shellCalls
-    .map((call) => (typeof call.arguments === "string" ? call.arguments : ""))
-    .join("\n");
-  requireIncludes(allArguments, "Hello from Windows", "echo command");
-  requireIncludes(allArguments, "Line1", "multiline command first line");
-  requireIncludes(allArguments, "Line2", "multiline command second line");
-  requireIncludes(allArguments, "git --version", "git command");
-  if (allArguments.includes("<<") || allArguments.includes("&&")) {
-    throw new Error("Windows shell command used forbidden bash syntax");
-  }
-
   const toolReturns = records.filter(
     (record) =>
       record.type === "message" &&
@@ -126,7 +131,7 @@ export function validateWindowsScenarioOutput(stdout: string): void {
       )
       .map((record) => [record.tool_call_id as string, record] as const),
   );
-  const shellOutput: string[] = [];
+  const executions: ShellExecution[] = [];
   for (const call of shellCalls) {
     if (typeof call.tool_call_id !== "string") {
       throw new Error("Bash tool call is missing its ID");
@@ -138,18 +143,64 @@ export function validateWindowsScenarioOutput(stdout: string): void {
     if (toolReturn.status !== "success") {
       throw new Error(`Shell tool call failed: ${call.tool_call_id}`);
     }
-    shellOutput.push(
-      typeof toolReturn.tool_return === "string"
-        ? toolReturn.tool_return
-        : JSON.stringify(toolReturn.tool_return),
-    );
+    if (typeof call.arguments !== "string") {
+      throw new Error(
+        `Bash tool call has invalid arguments: ${call.tool_call_id}`,
+      );
+    }
+    let argumentsRecord: WireRecord;
+    try {
+      const parsed = JSON.parse(call.arguments) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Invalid arguments object");
+      }
+      argumentsRecord = parsed as WireRecord;
+    } catch {
+      throw new Error(
+        `Bash tool call has invalid arguments: ${call.tool_call_id}`,
+      );
+    }
+    if (typeof argumentsRecord.command !== "string") {
+      throw new Error(`Bash tool call has no command: ${call.tool_call_id}`);
+    }
+    if (
+      argumentsRecord.command.includes("<<") ||
+      argumentsRecord.command.includes("&&")
+    ) {
+      throw new Error("Windows shell command used forbidden bash syntax");
+    }
+    executions.push({
+      id: call.tool_call_id,
+      command: argumentsRecord.command,
+      output:
+        typeof toolReturn.tool_return === "string"
+          ? toolReturn.tool_return
+          : JSON.stringify(toolReturn.tool_return),
+    });
   }
 
-  const allToolOutput = shellOutput.join("\n");
-  requireIncludes(allToolOutput, "Hello from Windows", "echo output");
-  requireIncludes(allToolOutput, "Line1", "multiline output first line");
-  requireIncludes(allToolOutput, "Line2", "multiline output second line");
-  if (!/git version \d/i.test(allToolOutput)) {
+  const echo = requireExecution(
+    executions,
+    (command) => command.includes("Hello from Windows"),
+    "echo",
+  );
+  const multiline = requireExecution(
+    executions,
+    (command) => command.includes("Line1") && command.includes("Line2"),
+    "multiline",
+  );
+  const git = requireExecution(
+    executions,
+    (command) => command.includes("git --version"),
+    "git",
+  );
+  if (new Set([echo.id, multiline.id, git.id]).size !== 3) {
+    throw new Error("Required Windows commands were not executed separately");
+  }
+  requireIncludes(echo.output, "Hello from Windows", "echo output");
+  requireIncludes(multiline.output, "Line1", "multiline output first line");
+  requireIncludes(multiline.output, "Line2", "multiline output second line");
+  if (!/git version \d/i.test(git.output)) {
     throw new Error("Missing successful git --version output");
   }
 

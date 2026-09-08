@@ -106,4 +106,20 @@ describe("Windows headless scenario validation", () => {
 
     expect(() => validateWindowsScenarioOutput(output)).toThrow("git command");
   });
+
+  test("rejects git output substituted by another successful call", () => {
+    const output = validOutput()
+      .replace(
+        '"tool_return":"Hello from Windows"',
+        '"tool_return":"Hello from Windows\\ngit version 9"',
+      )
+      .replace(
+        '"tool_return":"git version 2.51.0.windows.1"',
+        '"tool_return":""',
+      );
+
+    expect(() => validateWindowsScenarioOutput(output)).toThrow(
+      "Missing successful git --version output",
+    );
+  });
 });
