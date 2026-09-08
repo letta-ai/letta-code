@@ -667,7 +667,7 @@ This [repository](https://github.com/anthropics/claude-code/tree/main/examples/s
 
 ## See also
 
-* [Settings reference](/docs/en/settings-reference#permission-settings): every settings key, including the permission keys
+* [All settings](/docs/en/settings-reference#permission-settings): every settings key, including the permission keys
 * [Configure auto mode](/docs/en/auto-mode-config): tell the auto mode classifier which infrastructure your organization trusts
 * [Sandboxing](/docs/en/sandboxing): OS-level filesystem and network isolation for Bash commands
 * [Authentication](/docs/en/authentication): set up user access to Claude Code

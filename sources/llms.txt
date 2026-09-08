@@ -186,8 +186,8 @@
 
 ### Settings
 
-- [Claude Code settings](https://code.claude.com/docs/en/settings.md): Change Claude Code settings, pick the scope a key belongs in, verify the change, and learn which value Claude Code uses when a key is set in several places.
-- [Claude Code settings reference](https://code.claude.com/docs/en/settings-reference.md): Complete reference for every Claude Code settings.json key: where each one goes, its type and default, and a paste-ready example, with an index of every key.
+- [Settings files and precedence](https://code.claude.com/docs/en/settings.md): Change Claude Code settings, pick the scope a key belongs in, verify the change, and learn which value Claude Code uses when a key is set in several places.
+- [All settings](https://code.claude.com/docs/en/settings-reference.md): Complete reference for every Claude Code settings.json key: where each one goes, its type and default, and a paste-ready example, with an index of every key.
 - [Example settings files](https://code.claude.com/docs/en/settings-example.md): Realistic settings.json files for a developer, a team, and an organization: copy one, keep the keys you want, and change the values.
 
 ### Permissions and sandboxing

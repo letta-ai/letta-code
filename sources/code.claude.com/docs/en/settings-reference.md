@@ -2,7 +2,7 @@
 > Fetch the complete documentation index at: https://code.claude.com/docs/llms.txt
 > Use this file to discover all available pages before exploring further.
 
-# Claude Code settings reference
+# All settings
 
 > Complete reference for every Claude Code settings.json key: where each one goes, its type and default, and a paste-ready example, with an index of every key.
 
@@ -565,13 +565,15 @@ export const ReferenceFilter = ({placeholder, noun, facets, facetOrder, columnHe
 
 <BackToIndex href="#all-settings" label="Back to index" />
 
-This reference page lists each key Claude Code reads from a settings file, plus the [short group of keys](#global-config-settings) it keeps in `~/.claude.json` instead. To pick a file, or check precedence, start with [Claude Code settings](/docs/en/settings).
+This reference page lists each key Claude Code reads from a settings file, plus the [short group of keys](#global-config-settings) it keeps in `~/.claude.json` instead. To pick a file, or check precedence, start with [Settings files and precedence](/docs/en/settings).
 
 <span id="available-settings" />
 
 <span id="scopes" />
 
-## All settings
+<span id="all-settings" />
+
+## Settings index
 
 Every key below links to its entry. Scope lists the [files](/docs/en/settings#settings-files-and-who-they-affect) it can go in: `User` is `~/.claude/settings.json`, `Project` is `.claude/settings.json`, `Local` is `.claude/settings.local.json`, and `Managed` is [what your organization deploys](/docs/en/managed-settings). `Any file` means all four, and `Global config` means [`~/.claude.json`](#global-config-settings).
 
