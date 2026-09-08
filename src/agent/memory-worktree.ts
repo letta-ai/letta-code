@@ -4,7 +4,9 @@ import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { getAuthToken, runGit as runMemoryGit } from "@/agent/memory-git";
 import { GIT_DISABLE_COMMIT_SIGNING_ARGS } from "@/agent/memory-git-signing";
+import { getMemfsServerUrl } from "@/backend/api/memfs-git-proxy";
 import { debugLog } from "@/utils/debug";
 
 const execFile = promisify(execFileCb);
@@ -267,15 +269,23 @@ async function getHead(cwd: string): Promise<string | undefined> {
 
 async function refreshParentFromOrigin(parentMemoryDir: string): Promise<void> {
   const origin = await tryRunGit(parentMemoryDir, [
-    "remote",
-    "get-url",
-    "origin",
+    "config",
+    "--get",
+    "remote.origin.url",
   ]);
   if (!origin) {
     return;
   }
 
-  await runGit(parentMemoryDir, ["fetch", "origin", "main"]);
+  // Use the same authentication and transient Desktop proxy as memory sync.
+  // Other origins (including local repositories) keep their own credentials.
+  const memfsPrefix = `${getMemfsServerUrl().trim().replace(/\/+$/, "")}/v1/git/`;
+  const token = origin.stdout.trim().startsWith(memfsPrefix)
+    ? await getAuthToken()
+    : undefined;
+  await runMemoryGit(parentMemoryDir, ["fetch", "origin", "main"], token, {
+    timeoutMs: GIT_TIMEOUT_MS,
+  });
 
   const remoteIsAncestor = await tryRunGit(parentMemoryDir, [
     "merge-base",
