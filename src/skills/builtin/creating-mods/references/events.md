@@ -59,7 +59,7 @@ letta.events.on("tool_start", (event, ctx) => {
 
 Lifecycle, turn, tool, compaction, and llm events are wired today.
 
-Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform or cancel outbound user-message turns. `tool_start` handlers can transform the tool arguments before execution. Compaction and llm handlers are notification-only.
+Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform or cancel outbound user-message turns. `turn_end` handlers can append a follow-up turn via `{ continue: "..." }`. `tool_start` handlers can transform the tool arguments before execution. Compaction and llm handlers are notification-only.
 
 `compact_start`/`compact_end` and `llm_start`/`llm_end` only fire on the **local backend**, where compaction and provider requests run client-side. On the Letta Cloud backend that work happens server-side and these events do not fire, so guard with `letta.capabilities.events.compact` / `letta.capabilities.events.llm` for portable mods.
 
@@ -71,6 +71,7 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
 "tool_start"
 "tool_end"
 "turn_start"
+"turn_end"
 "compact_start"
 "compact_end"
 "llm_start"
@@ -229,6 +230,29 @@ If multiple handlers cancel, the first valid cancel reason wins. A valid reason 
 Handlers run in registration order. Later handlers see the current input after earlier mutations/returns. If a handler throws, its partial `event.input` mutation is rolled back and the error is recorded as a mod diagnostic.
 
 `turn_start` is intentionally a trusted local mod point: it can rewrite user messages, approval results, and ordering. Keep transforms focused and unsurprising.
+
+`turn_end` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  stopReason: string;
+  assistantMessage?: string;
+}
+```
+
+`turn_end` fires after a turn completes, carrying the stop reason and the assistant's final message. Handlers can return `{ continue: "..." }` to append a follow-up user message and start a new turn:
+
+```ts
+letta.events.on("turn_end", (event) => {
+  if (event.stopReason === "tool_use" && needsFollowUp(event.conversationId)) {
+    return { continue: "Check the results and continue." };
+  }
+});
+```
+
+The first handler that returns a `continue` wins; later handlers are shadowed. `continue` is best-effort and never blocks turn completion. A throwing handler is isolated and never breaks the turn.
 
 `compact_start` event:
 
