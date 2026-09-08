@@ -35,6 +35,10 @@ import {
   buildReflectionIntegrationPrompt,
 } from "@/cli/helpers/reflection-integration";
 import {
+  isReflectionRetryDeferred,
+  recordReflectionIntegrationRetry,
+} from "@/cli/helpers/reflection-retry";
+import {
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
@@ -80,6 +84,7 @@ export type ReflectionLaunchSkippedReason =
   | "cutover"
   | "already_active"
   | "configuration_error"
+  | "retry_backoff"
   | "parent_dirty"
   | "no_payload"
   | "error";
@@ -108,6 +113,7 @@ export function getReflectionLaunchSkippedMessage(
     case "parent_dirty":
       return "Parent memory has uncommitted changes; commit or discard them before reflecting.";
     case "error":
+    case "retry_backoff":
       return undefined;
   }
 }
@@ -341,6 +347,9 @@ export async function shouldRunQueuedReflectionLaunch(
     getSettings?: typeof getReflectionSettings;
   } = {},
 ): Promise<boolean> {
+  if (isReflectionRetryDeferred(options.agentId, options.triggerSource)) {
+    return false;
+  }
   if (options.triggerSource !== "step-count") {
     return true;
   }
@@ -575,6 +584,7 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   integration: ReflectionMemoryWorktreeFinalizeResult;
   completionSuccess: boolean;
   completionMessage: string;
+  shouldNotify: boolean;
   integrationConversationId?: string;
 }> {
   const configurationFailure =
@@ -618,6 +628,12 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   const completionSuccess =
     params.subagentSuccess &&
     reflectionIntegrationConsumesTranscript(integration);
+  const shouldNotify = recordReflectionIntegrationRetry(
+    params.agentId,
+    integration,
+    completionSuccess,
+    params.telemetryContext?.triggerSource ?? "manual",
+  );
 
   const cleanup = getReflectionWorktreeCleanupOutcome(integration);
   if (cleanup) {
@@ -689,6 +705,7 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
     integration,
     completionSuccess,
     completionMessage,
+    shouldNotify,
     integrationConversationId: integrationRun?.conversationId,
   };
 }
@@ -730,6 +747,10 @@ export async function launchReflectionSubagent(
 
   if (!memfsEnabled) {
     return { launched: false, reason: "memfs_disabled" };
+  }
+
+  if (isReflectionRetryDeferred(agentId, triggerSource)) {
+    return { launched: false, reason: "retry_backoff" };
   }
 
   if (await (dependencies.isCutover ?? isReflectionCutover)(agentId)) {
@@ -847,6 +868,7 @@ export async function launchReflectionSubagent(
           const {
             completionSuccess,
             completionMessage,
+            shouldNotify,
             integrationConversationId,
           } = await finalizeReflectionMemoryWorktreeLaunch({
             worktree,
@@ -872,12 +894,14 @@ export async function launchReflectionSubagent(
             autoPayload.endMessageId,
             completionSuccess,
           );
-          await onCompletionMessage?.(completionMessage, {
-            success: completionSuccess,
-            error,
-            reflectionAgentId: reflectionAgentId ?? undefined,
-            integrationConversationId,
-          });
+          if (shouldNotify) {
+            await onCompletionMessage?.(completionMessage, {
+              success: completionSuccess,
+              error,
+              reflectionAgentId: reflectionAgentId ?? undefined,
+              integrationConversationId,
+            });
+          }
         } finally {
           releaseReflectionLaunch(agentId);
         }
