@@ -70,6 +70,7 @@ export class UserMonitorStopper {
         description: process.description ?? command.process_id,
         state: "intent" as const,
         createdAt: receipt?.createdAt ?? Date.now(),
+        creatorPid: globalThis.process.pid,
       };
       // A failed write must leave the running Monitor untouched.
       this.store.write(intent);

@@ -16,6 +16,11 @@ import { UserMonitorStopper } from "@/tools/impl/stop-monitor";
 import { formatMonitorEventNotification } from "@/utils/task-notifications";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
+import {
+  acquireMonitorCancellationOwner,
+  isCancellationOwnerAlive,
+  type MonitorCancellationOwner,
+} from "./monitor-cancellation-lock";
 import { scheduleQueuePump } from "./queue";
 import type { ListenerTransport } from "./transport";
 import type {
@@ -34,24 +39,69 @@ export interface CancellationDeliveryDependencies {
 
 /** A cancellation receipt is retired only after its identified input is visible. */
 export class MonitorCancellationDelivery {
-  private pumping = false;
+  private pumping: Promise<void> | undefined;
   private disposed = false;
   constructor(
     private readonly store: MonitorCancellationStore,
     private readonly deps: CancellationDeliveryDependencies,
+    private readonly owners = new Map<string, MonitorCancellationOwner>(),
   ) {}
   dispose(): void {
     this.disposed = true;
   }
 
-  async pump(): Promise<void> {
-    if (this.pumping || this.disposed) return;
-    this.pumping = true;
+  pump(): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    this.pumping ??= this.deliver().finally(() => {
+      this.pumping = undefined;
+    });
+    return this.pumping;
+  }
+
+  private async deliver(): Promise<void> {
     try {
       for (const stored of this.store.list()) {
         if (this.disposed) break;
         try {
-          let receipt = stored;
+          if (!["intent", "stopped", "uncertain"].includes(stored.state))
+            continue;
+          if (
+            stored.state === "intent" &&
+            this.deps.isRunning(stored.processId)
+          )
+            continue;
+          if (
+            stored.state === "intent" &&
+            stored.creatorPid !== undefined &&
+            stored.creatorPid !== process.pid &&
+            isCancellationOwnerAlive(stored.creatorPid)
+          )
+            continue;
+          let owner = this.owners.get(stored.processId);
+          if (!owner) {
+            owner =
+              (await acquireMonitorCancellationOwner(
+                this.store.directory,
+                stored,
+              )) ?? undefined;
+            if (!owner) continue;
+            if (this.disposed) {
+              await owner.release();
+              break;
+            }
+            this.owners.set(stored.processId, owner);
+          }
+          // Another holder may have completed delivery while we were acquiring.
+          let receipt = this.store.read(stored.processId);
+          if (
+            !receipt ||
+            receipt.state === "delivered" ||
+            receipt.state === "failed"
+          ) {
+            await owner.release();
+            this.owners.delete(stored.processId);
+            continue;
+          }
           if (receipt.state === "intent") {
             if (this.deps.isRunning(receipt.processId)) continue;
             // We may have restarted before OR after the stop. Never invent confirmation.
@@ -61,8 +111,11 @@ export class MonitorCancellationDelivery {
           if (receipt.state !== "stopped" && receipt.state !== "uncertain")
             continue;
           if (await this.deps.wasPersisted(receipt)) {
-            if (!this.disposed)
+            if (!this.disposed) {
               this.store.write({ ...receipt, state: "delivered" });
+              await owner.release();
+              this.owners.delete(receipt.processId);
+            }
             continue;
           }
           if (this.disposed || this.deps.isPending(receipt)) continue;
@@ -85,8 +138,6 @@ export class MonitorCancellationDelivery {
       }
     } catch (error) {
       this.deps.onError(error);
-    } finally {
-      this.pumping = false;
     }
   }
 }
@@ -164,6 +215,13 @@ export async function wasCancellationInputPersisted(
 const deliveries = new WeakMap<ListenerRuntime, MonitorCancellationDelivery>();
 const cleanups = new WeakMap<ListenerRuntime, () => void>();
 const starters = new WeakMap<ListenerRuntime, () => void>();
+// Keep ownership and submission identity through transport/service reinstalls.
+// Pending locks are not released on disposal: queued input can still be running.
+const runtimeOwners = new WeakMap<
+  ListenerRuntime,
+  Map<string, MonitorCancellationOwner>
+>();
+const runtimeSubmitted = new WeakMap<ListenerRuntime, Set<string>>();
 export function clearMonitorCancellationDelivery(
   runtime: ListenerRuntime,
 ): void {
@@ -171,9 +229,11 @@ export function clearMonitorCancellationDelivery(
   cleanups.delete(runtime);
   starters.delete(runtime);
 }
-export function pumpMonitorCancellations(runtime: ListenerRuntime): void {
+export function pumpMonitorCancellations(
+  runtime: ListenerRuntime,
+): Promise<void> {
   starters.get(runtime)?.();
-  void deliveries.get(runtime)?.pump();
+  return deliveries.get(runtime)?.pump() ?? Promise.resolve();
 }
 
 type DeliveryInstallation = {
@@ -213,66 +273,74 @@ function startMonitorCancellationDelivery(
 ): () => void {
   const { runtime, processTransport, opts, processQueuedTurn } = params;
   const { store } = getMonitorCancellationServices();
-  const submitted = new Set<string>();
+  const submitted = runtimeSubmitted.get(runtime) ?? new Set<string>();
+  runtimeSubmitted.set(runtime, submitted);
+  const owners =
+    runtimeOwners.get(runtime) ?? new Map<string, MonitorCancellationOwner>();
+  runtimeOwners.set(runtime, owners);
   const scoped = (receipt: MonitorCancellationReceipt) =>
     getOrCreateScopedRuntime(
       runtime,
       receipt.runtime.agent_id,
       receipt.runtime.conversation_id,
     );
-  const delivery = new MonitorCancellationDelivery(store, {
-    wasPersisted: wasCancellationInputPersisted,
-    isRunning: (processId) =>
-      backgroundProcesses.get(processId)?.status === "running",
-    isPending(receipt) {
-      const target = scoped(receipt);
-      if (
-        target.queueRuntime
-          .peek()
-          .some((item) => item.clientMessageId === receipt.noticeId)
-      )
-        return true;
-      return (
-        submitted.has(receipt.noticeId) &&
-        (target.isProcessing ||
-          target.queuePumpActive ||
-          target.queuePumpScheduled)
-      );
+  const delivery = new MonitorCancellationDelivery(
+    store,
+    {
+      wasPersisted: wasCancellationInputPersisted,
+      isRunning: (processId) =>
+        backgroundProcesses.get(processId)?.status === "running",
+      isPending(receipt) {
+        const target = scoped(receipt);
+        if (
+          target.queueRuntime
+            .peek()
+            .some((item) => item.clientMessageId === receipt.noticeId)
+        )
+          return true;
+        return (
+          submitted.has(receipt.noticeId) &&
+          (target.isProcessing ||
+            target.queuePumpActive ||
+            target.queuePumpScheduled)
+        );
+      },
+      enqueue(receipt, text) {
+        const target = scoped(receipt);
+        const accepted = enqueueInboundUserMessage(
+          target,
+          {
+            type: "message",
+            agentId: receipt.runtime.agent_id,
+            conversationId: receipt.runtime.conversation_id,
+            actingUserId: receipt.runtime.acting_user_id,
+            noCoalesce: true,
+            messages: [
+              {
+                role: "user",
+                content: text,
+                otid: receipt.noticeId,
+                client_message_id: receipt.noticeId,
+              },
+            ],
+          },
+          receipt.runtime.acting_user_id,
+        );
+        if (accepted) {
+          submitted.add(receipt.noticeId);
+          scheduleQueuePump(target, processTransport, opts, processQueuedTurn);
+        }
+        return accepted;
+      },
+      onError(error) {
+        console.warn(
+          "[Monitor cancellation] Delivery remains pending:",
+          error instanceof Error ? error.message : String(error),
+        );
+      },
     },
-    enqueue(receipt, text) {
-      const target = scoped(receipt);
-      const accepted = enqueueInboundUserMessage(
-        target,
-        {
-          type: "message",
-          agentId: receipt.runtime.agent_id,
-          conversationId: receipt.runtime.conversation_id,
-          actingUserId: receipt.runtime.acting_user_id,
-          noCoalesce: true,
-          messages: [
-            {
-              role: "user",
-              content: text,
-              otid: receipt.noticeId,
-              client_message_id: receipt.noticeId,
-            },
-          ],
-        },
-        receipt.runtime.acting_user_id,
-      );
-      if (accepted) {
-        submitted.add(receipt.noticeId);
-        scheduleQueuePump(target, processTransport, opts, processQueuedTurn);
-      }
-      return accepted;
-    },
-    onError(error) {
-      console.warn(
-        "[Monitor cancellation] Delivery remains pending:",
-        error instanceof Error ? error.message : String(error),
-      );
-    },
-  });
+    owners,
+  );
   deliveries.set(runtime, delivery);
   const timer = setInterval(() => void delivery.pump(), 30_000);
   timer.unref();

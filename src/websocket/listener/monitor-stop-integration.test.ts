@@ -17,6 +17,7 @@ import {
   clearMonitorCancellationDelivery,
   getMonitorCancellationServices,
   installMonitorCancellationDelivery,
+  pumpMonitorCancellations,
   wasCancellationInputPersisted,
 } from "./monitor-cancellation-delivery";
 import { setActiveRuntime } from "./runtime";
@@ -171,6 +172,7 @@ for (const busy of [false, true])
       });
       expect(delivered).toHaveLength(1);
     } finally {
+      await pumpMonitorCancellations(listener);
       cleanup();
       clearMonitorCancellationDelivery(listener);
     }

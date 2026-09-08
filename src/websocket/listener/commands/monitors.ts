@@ -26,6 +26,6 @@ export async function handleMonitorStopCommand(
   }
   const response = await getMonitorCancellationServices().stopper.stop(command);
   // Even a post-stop receipt-write failure may have left a recoverable intent.
-  pumpMonitorCancellations(runtime);
+  void pumpMonitorCancellations(runtime);
   return response;
 }

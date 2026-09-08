@@ -21,6 +21,8 @@ export interface MonitorCancellationReceipt {
   description: string;
   state: "intent" | "stopped" | "uncertain" | "failed" | "delivered";
   createdAt: number;
+  /** Prevent another listener from recovering an intent while its writer lives. */
+  creatorPid?: number;
 }
 
 /** Cancellation-only receipts. Kept after delivery so retries cannot notify twice. */
@@ -103,7 +105,9 @@ export class MonitorCancellationStore {
       !["intent", "stopped", "uncertain", "failed", "delivered"].includes(
         row.state,
       ) ||
-      !Number.isFinite(row.createdAt)
+      !Number.isFinite(row.createdAt) ||
+      (row.creatorPid !== undefined &&
+        (!Number.isSafeInteger(row.creatorPid) || row.creatorPid <= 0))
     )
       throw new Error("Invalid Monitor cancellation receipt");
     return row;

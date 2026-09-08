@@ -10,9 +10,11 @@ import {
   type CancellationDeliveryDependencies,
   MonitorCancellationDelivery,
 } from "./monitor-cancellation-delivery";
+import type { MonitorCancellationOwner } from "./monitor-cancellation-lock";
 
 let dir: string;
 let store: MonitorCancellationStore;
+let owners: Map<string, MonitorCancellationOwner>;
 const receipt: MonitorCancellationReceipt = {
   version: 1,
   processId: "monitor-1",
@@ -29,6 +31,7 @@ const receipt: MonitorCancellationReceipt = {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "cancel-delivery-"));
   store = new MonitorCancellationStore(dir);
+  owners = new Map();
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 function harness(overrides: Partial<CancellationDeliveryDependencies> = {}) {
@@ -52,7 +55,7 @@ function harness(overrides: Partial<CancellationDeliveryDependencies> = {}) {
     deps,
     sent,
     errors,
-    delivery: new MonitorCancellationDelivery(store, deps),
+    delivery: new MonitorCancellationDelivery(store, deps, owners),
     finish: () => {
       persisted = true;
       queued = false;
@@ -84,7 +87,7 @@ describe("Monitor cancellation recovery", () => {
     expect(h.sent).toHaveLength(1);
   });
 
-  test("recovers after restart and checks persisted input before replay", async () => {
+  test("reinstalls delivery and checks persisted input before replay", async () => {
     store.write(receipt);
     const h = harness();
     await h.delivery.pump();
@@ -93,6 +96,7 @@ describe("Monitor cancellation recovery", () => {
     await new MonitorCancellationDelivery(
       new MonitorCancellationStore(dir),
       h.deps,
+      owners,
     ).pump();
     expect(h.sent).toHaveLength(1);
     expect(store.read(receipt.processId)?.state).toBe("delivered");
@@ -156,13 +160,19 @@ describe("Monitor cancellation recovery", () => {
     expect(h.sent).toEqual([]);
     store.write(receipt);
     let resolveLookup!: (persisted: boolean) => void;
+    let startLookup!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => {
+      startLookup = resolve;
+    });
     const delayed = harness({
       wasPersisted: () =>
         new Promise((resolve) => {
           resolveLookup = resolve;
+          startLookup();
         }),
     });
     const work = delayed.delivery.pump();
+    await lookupStarted;
     delayed.delivery.dispose();
     resolveLookup(false);
     await work;
