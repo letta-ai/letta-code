@@ -8,6 +8,8 @@
  * The optional tracked `.memfs.config.json` file accepts:
  * - `version`: the required config format version (currently 1)
  * - `maxFileCharacters`: a default cap for each projected memory Markdown file
+ * - `maxCoreMemoryCharacters`: a cap for all root Markdown loaded into a v2
+ *   agent's system prompt
  * - `fileCharacterLimits`: ordered glob overrides; the first match wins, and a
  *   null limit leaves matching files uncapped
  * - `maxDepth`: the number of directories allowed between the repo root and a
@@ -17,6 +19,7 @@
  */
 
 import {
+  DEFAULT_MEMORY_CONSTRAINTS_CONFIG,
   MEMORY_CONSTRAINTS_CONFIG_PATH,
   MEMORY_CONSTRAINTS_CONFIG_VERSION,
 } from "@/memory-constraints";
@@ -33,12 +36,16 @@ const { resolve } = require("node:path");
 
 const CONFIG_PATH = ${JSON.stringify(MEMORY_CONSTRAINTS_CONFIG_PATH)};
 const CONFIG_VERSION = ${JSON.stringify(MEMORY_CONSTRAINTS_CONFIG_VERSION)};
+const DEFAULT_CONFIG = ${JSON.stringify(DEFAULT_MEMORY_CONSTRAINTS_CONFIG)};
 const CONFIG_UPDATE_ENV = ${JSON.stringify(MEMORY_CONSTRAINTS_UPDATE_ENV)};
 const LAYOUT_POLICY_FILE = "letta-memory-layout-policy";
+const AUDIT_MODE = process.argv.includes("--audit");
+let activeLayoutPolicy = "legacy-only";
 const ALLOWED_CONFIG_KEYS = new Set([
   "version",
   "maxDepth",
   "maxFileCharacters",
+  "maxCoreMemoryCharacters",
   "fileCharacterLimits",
 ]);
 const ALLOWED_OVERRIDE_KEYS = new Set(["pattern", "maxCharacters"]);
@@ -166,6 +173,14 @@ function parseConfig(content, errors) {
       CONFIG_PATH + ": maxFileCharacters must be a positive integer",
     );
   }
+  if (
+    value.maxCoreMemoryCharacters !== undefined &&
+    !isPositiveInteger(value.maxCoreMemoryCharacters)
+  ) {
+    errors.push(
+      CONFIG_PATH + ": maxCoreMemoryCharacters must be a positive integer",
+    );
+  }
 
   const overrides = value.fileCharacterLimits;
   if (overrides !== undefined && !Array.isArray(overrides)) {
@@ -229,40 +244,65 @@ function globToRegExp(pattern) {
   return new RegExp(source + "$");
 }
 
-function projectedV2Path(path, stagedPaths) {
-  if (!path.includes("/")) return true;
+function missingV2Index(path, stagedPaths) {
+  if (!path.includes("/")) return null;
   const directories = path.split("/").slice(0, -1);
   let current = "";
   for (const directory of directories) {
     current = current ? current + "/" + directory : directory;
-    if (!stagedPaths.has(current + "/MEMORY.md")) return false;
+    const index = current + "/MEMORY.md";
+    if (!stagedPaths.has(index)) return index;
   }
-  return true;
+  return null;
 }
 
 function projectedLegacyPath(path) {
   return /^(?:memory\/)?(?:system|reference)\/.*\.md$/.test(path);
 }
 
-function listMemoryFiles(layoutPolicy) {
+function listMemoryFiles(layoutPolicy, errors) {
   const output = runGit(["ls-files", "-z", "--", "*.md"]);
   const paths = output.split("\0").filter(Boolean);
   const stagedPaths = new Set(paths);
-  const hasRootMarker =
-    stagedPaths.has("MEMORY.md") ||
-    gitSucceeds(["cat-file", "-e", "HEAD:MEMORY.md"]);
+  const stagedHasRootMarker = stagedPaths.has("MEMORY.md");
+  const headHasRootMarker = gitSucceeds([
+    "cat-file",
+    "-e",
+    "HEAD:MEMORY.md",
+  ]);
+
+  if (layoutPolicy === "root-marker" && headHasRootMarker && !stagedHasRootMarker) {
+    errors.push("MEMORY.md: root memory index is required for MemFS v2");
+  }
+
+  if (layoutPolicy === "root-marker" && (stagedHasRootMarker || headHasRootMarker)) {
+    const memoryPaths = paths.filter(
+      (path) => path !== "skills" && !path.startsWith("skills/"),
+    );
+    for (const path of memoryPaths) {
+      const missingIndex = missingV2Index(path, stagedPaths);
+      if (missingIndex) {
+        errors.push(path + ": missing required index " + missingIndex);
+      }
+    }
+    return memoryPaths;
+  }
 
   return paths.filter((path) => {
     if (path === "skills" || path.startsWith("skills/")) return false;
     if (layoutPolicy === "shared-memory") return true;
-    if (layoutPolicy === "root-marker" && hasRootMarker) {
-      return projectedV2Path(path, stagedPaths);
-    }
     return projectedLegacyPath(path);
   });
 }
 
 function readLayoutPolicy() {
+  const layoutArgument = process.argv.indexOf("--layout");
+  if (layoutArgument >= 0) {
+    const policy = process.argv[layoutArgument + 1];
+    if (["legacy-only", "root-marker", "shared-memory"].includes(policy)) {
+      return policy;
+    }
+  }
   try {
     const commonDir = runGit(["rev-parse", "--git-common-dir"]).trim();
     return readFileSync(resolve(commonDir, LAYOUT_POLICY_FILE), "utf8").trim();
@@ -288,13 +328,40 @@ function characterLimitFor(path, config) {
 
 function report(errors) {
   if (errors.length === 0) return;
-  console.error("Memory constraints failed:");
+  if (AUDIT_MODE) {
+    console.error("Memory constraints failed:");
+  } else {
+    console.error("Memory validation blocked this commit.");
+    console.error("No files were committed. Your staged changes are still present.");
+    console.error(
+      "Validation checks the complete repository, so these problems may predate your staged changes.",
+    );
+    console.error("");
+    console.error("Fix these problems:");
+  }
   for (const error of errors) console.error("  " + error);
+  if (!AUDIT_MODE) {
+    console.error("");
+    if (activeLayoutPolicy === "root-marker") {
+      console.error(
+        "Move non-core detail out of root Markdown and behind MEMORY.md indexes.",
+      );
+    }
+    console.error("Split files above their per-file limit, then retry the commit.");
+    console.error(
+      "Limits come from .memfs.config.json, or the Letta Code defaults when it is absent.",
+    );
+    console.error(
+      "Do not raise or disable these limits unless the user explicitly approves it.",
+    );
+  }
   process.exit(1);
 }
 
 async function main() {
   const errors = [];
+  const layoutPolicy = readLayoutPolicy();
+  activeLayoutPolicy = layoutPolicy;
   const configChanged = !gitSucceeds([
     "diff",
     "--cached",
@@ -308,24 +375,40 @@ async function main() {
     );
   }
 
-  if (!gitSucceeds(["cat-file", "-e", ":" + CONFIG_PATH])) {
+  const hasConfig = gitSucceeds(["cat-file", "-e", ":" + CONFIG_PATH]);
+  const hasV2Root =
+    layoutPolicy === "root-marker" &&
+    (gitSucceeds(["cat-file", "-e", ":MEMORY.md"]) ||
+      gitSucceeds(["cat-file", "-e", "HEAD:MEMORY.md"]));
+  if (!hasConfig && !hasV2Root) {
     report(errors);
     return;
   }
 
-  if (!stagedMode(CONFIG_PATH).startsWith("100")) {
-    errors.push(CONFIG_PATH + ": constraint config must be a regular file");
-    report(errors);
+  let config = DEFAULT_CONFIG;
+  if (hasConfig) {
+    if (!stagedMode(CONFIG_PATH).startsWith("100")) {
+      errors.push(CONFIG_PATH + ": constraint config must be a regular file");
+      report(errors);
+    }
+
+    const parsedConfig = parseConfig(stagedFile(CONFIG_PATH), errors);
+    if (!parsedConfig || errors.length > 0) report(errors);
+    config =
+      layoutPolicy === "root-marker"
+        ? { ...DEFAULT_CONFIG, ...parsedConfig }
+        : parsedConfig;
   }
 
-  const config = parseConfig(stagedFile(CONFIG_PATH), errors);
-  if (!config || errors.length > 0) report(errors);
-
-  for (const path of listMemoryFiles(readLayoutPolicy())) {
+  const characterCounts = new Map();
+  const memoryFiles = listMemoryFiles(layoutPolicy, errors);
+  const regularMemoryFiles = [];
+  for (const path of memoryFiles) {
     if (!stagedMode(path).startsWith("100")) {
       errors.push(path + ": memory Markdown must be a regular file");
       continue;
     }
+    regularMemoryFiles.push(path);
 
     const depth = path.split("/").length - 1;
     if (config.maxDepth !== undefined && depth > config.maxDepth) {
@@ -337,6 +420,7 @@ async function main() {
     const constraint = characterLimitFor(path, config);
     if (constraint.limit === undefined || constraint.limit === null) continue;
     const characters = await stagedCharacterCount(path);
+    characterCounts.set(path, characters);
     if (characters > constraint.limit) {
       errors.push(
         path +
@@ -346,6 +430,29 @@ async function main() {
           constraint.limit +
           " from " +
           constraint.source,
+      );
+    }
+  }
+
+  if (
+    layoutPolicy === "root-marker" &&
+    config.maxCoreMemoryCharacters !== undefined
+  ) {
+    let coreCharacters = 0;
+    for (const path of regularMemoryFiles) {
+      if (path.includes("/")) continue;
+      const characters =
+        characterCounts.get(path) ?? (await stagedCharacterCount(path));
+      characterCounts.set(path, characters);
+      coreCharacters += characters;
+    }
+    if (coreCharacters > config.maxCoreMemoryCharacters) {
+      errors.push(
+        "core memory: " +
+          coreCharacters +
+          " characters exceeds " +
+          config.maxCoreMemoryCharacters +
+          " from maxCoreMemoryCharacters",
       );
     }
   }
