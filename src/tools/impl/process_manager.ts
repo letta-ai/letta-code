@@ -92,9 +92,8 @@ export function getNextBashId() {
   return `bash_${bashIdCounter++}`;
 }
 
-let monitorIdCounter = 1;
 export function getNextMonitorId() {
-  return `monitor_${monitorIdCounter++}`;
+  return `monitor_${crypto.randomUUID()}`;
 }
 
 let execSessionIdCounter = 1;

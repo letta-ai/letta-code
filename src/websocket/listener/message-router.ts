@@ -268,6 +268,20 @@ export function createListenerMessageHandler(
         return;
       }
 
+      if (parsed.type === "monitor_stop") {
+        const { handleMonitorStopCommand } = await import(
+          "./commands/monitors"
+        );
+        const response = await handleMonitorStopCommand(parsed, runtime);
+        safeSocketSend(
+          socket,
+          response,
+          "monitor_stop_response",
+          "monitor_stop",
+        );
+        return;
+      }
+
       if (parsed.type === "app_server_info") {
         handleAppServerInfoCommand(parsed, { socket, safeSocketSend });
         return;
