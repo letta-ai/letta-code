@@ -1,7 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import type { apiRequest } from "@/backend/api/request";
 import { ApiRequestError } from "@/backend/api/request";
-import { __testOverrideLoadRoutes, loadRoutes } from "@/channels/routing";
+import {
+  __testOverrideLoadRoutes,
+  clearAllRoutes,
+  loadRoutes,
+} from "@/channels/routing";
 import {
   formatTeleportApiError,
   resolveTeleportSession,
@@ -59,6 +63,10 @@ function captureOutput(): {
 }
 
 describe("teleport subcommand", () => {
+  beforeEach(() => {
+    clearAllRoutes();
+  });
+
   test("prints help and returns 0", async () => {
     const out = captureOutput();
     try {
