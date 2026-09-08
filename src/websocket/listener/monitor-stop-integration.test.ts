@@ -1,56 +1,30 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import WebSocket from "ws";
-import { __testSetBackend, type Backend } from "@/backend";
-import { LocalStore } from "@/backend/local/local-store";
-import { settingsManager } from "@/settings-manager";
 import {
   backgroundProcesses,
   clearBackgroundProcessCleanup,
 } from "@/tools/impl/process_manager";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
 import {
-  clearMonitorCancellationDelivery,
-  getMonitorCancellationServices,
-  installMonitorCancellationDelivery,
-  pumpMonitorCancellations,
-  wasCancellationInputPersisted,
-} from "./monitor-cancellation-delivery";
+  clearProcessServices,
+  installProcessEventRouting,
+} from "./process-services";
+import { scheduleQueuePump } from "./queue";
 import { setActiveRuntime } from "./runtime";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
-const previousHome = process.env.LETTA_HOME;
-const directories: string[] = [];
 afterEach(() => {
-  __testSetBackend(null);
   setActiveRuntime(null);
-  if (previousHome === undefined) delete process.env.LETTA_HOME;
-  else process.env.LETTA_HOME = previousHome;
   for (const id of backgroundProcesses.keys())
     clearBackgroundProcessCleanup(id);
   backgroundProcesses.clear();
-  for (const directory of directories.splice(0))
-    rmSync(directory, { recursive: true, force: true });
 });
 
 for (const busy of [false, true])
-  test(`wire cancellation persists and delivers the relay actor while ${busy ? "busy" : "idle"}`, async () => {
-    const directory = mkdtempSync(join(tmpdir(), "monitor-wire-"));
-    directories.push(directory);
-    process.env.LETTA_HOME = directory;
-    await settingsManager.reset();
-    const local = new LocalStore("agent-a", {
-      storageDir: join(directory, "backend"),
-    });
-    const backend = {
-      listConversationMessages: async (id: string, query: never) =>
-        local.listConversationMessages(id, query),
-    };
-    __testSetBackend(backend as unknown as Backend);
+  test(`wire cancellation uses the normal notification queue while ${busy ? "busy" : "idle"}`, async () => {
     const listener = createRuntime();
     setActiveRuntime(listener);
     const target = getOrCreateScopedRuntime(listener, "agent-a", "default");
@@ -71,14 +45,15 @@ for (const busy of [false, true])
       onError() {},
     };
     const delivered: IncomingMessage[] = [];
+    let onDelivered!: () => void;
+    const deliveredPromise = new Promise<void>((resolve) => {
+      onDelivered = resolve;
+    });
     const processQueuedTurn = async (incoming: IncomingMessage) => {
       delivered.push(incoming);
-      local.appendTurnInput("default", {
-        agent_id: "agent-a",
-        messages: incoming.messages,
-      } as never);
+      onDelivered();
     };
-    const cleanup = installMonitorCancellationDelivery({
+    installProcessEventRouting({
       runtime: listener,
       processTransport: socket,
       opts,
@@ -117,9 +92,18 @@ for (const busy of [false, true])
       trackListenerError() {},
     });
     try {
-      // Embedded startup installs services before settings are ready. The
-      // first cancellation must start delivery using the loaded namespace.
-      await settingsManager.initialize();
+      if (busy) {
+        enqueueInboundUserMessage(
+          target,
+          {
+            type: "message",
+            agentId: "agent-a",
+            conversationId: "default",
+            messages: [{ role: "user", content: "Also run the tests." }],
+          },
+          "human-a",
+        );
+      }
       const command = {
         type: "monitor_stop",
         request_id: "stop-1",
@@ -137,29 +121,25 @@ for (const busy of [false, true])
         success: true,
         stopped: true,
       });
-      const receipt =
-        getMonitorCancellationServices().store.read("monitor-wire");
-      expect(receipt?.runtime.acting_user_id).toBe("human-a");
-      for (
-        let i = 0;
-        i < 100 && target.queueRuntime.length === 0 && delivered.length === 0;
-        i++
-      )
-        await Bun.sleep(2);
       if (busy) {
         expect(delivered).toHaveLength(0);
-        expect(target.queueRuntime.length).toBe(1);
+        expect(target.queueRuntime.length).toBe(2);
+        expect(target.queueRuntime.peek()[1]).toMatchObject({
+          kind: "task_notification",
+          actingUserId: "human-a",
+        });
         target.turnLifecycle.finishCommand();
-        const { scheduleQueuePump } = await import("./queue");
         scheduleQueuePump(target, socket, opts, processQueuedTurn);
       }
-      for (let i = 0; i < 100 && delivered.length === 0; i++)
-        await Bun.sleep(2);
+      await deliveredPromise;
       expect(delivered).toHaveLength(1);
       expect(delivered[0]?.actingUserId).toBe("human-a");
-      expect(receipt && (await wasCancellationInputPersisted(receipt))).toBe(
-        true,
-      );
+      expect(delivered[0]?.messages[0]).toMatchObject({ role: "user" });
+      const content = JSON.stringify(delivered[0]?.messages);
+      expect(content).toContain("The user cancelled this Monitor.");
+      expect(content).toContain("monitor-wire");
+      expect(content).not.toContain("Notice ID:");
+      if (busy) expect(content).toContain("Also run the tests.");
       await handler(
         Buffer.from(JSON.stringify({ ...command, request_id: "stop-2" })),
       );
@@ -172,8 +152,6 @@ for (const busy of [false, true])
       });
       expect(delivered).toHaveLength(1);
     } finally {
-      await pumpMonitorCancellations(listener);
-      cleanup();
-      clearMonitorCancellationDelivery(listener);
+      clearProcessServices(listener);
     }
   });

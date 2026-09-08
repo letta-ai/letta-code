@@ -1,11 +1,8 @@
+import { stopMonitor } from "@/tools/impl/stop-monitor";
 import type {
   MonitorStopCommand,
   MonitorStopResponse,
 } from "@/types/task-control-protocol";
-import {
-  getMonitorCancellationServices,
-  pumpMonitorCancellations,
-} from "@/websocket/listener/monitor-cancellation-delivery";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
 import type { ListenerRuntime } from "@/websocket/listener/types";
 
@@ -24,8 +21,5 @@ export async function handleMonitorStopCommand(
       error: "Runtime is no longer active",
     };
   }
-  const response = await getMonitorCancellationServices().stopper.stop(command);
-  // Even a post-stop receipt-write failure may have left a recoverable intent.
-  void pumpMonitorCancellations(runtime);
-  return response;
+  return stopMonitor(command);
 }

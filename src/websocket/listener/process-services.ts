@@ -8,10 +8,6 @@ import { subscribeToBackgroundProcessState } from "@/tools/impl/process_manager"
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
-  clearMonitorCancellationDelivery,
-  installMonitorCancellationDelivery,
-} from "./monitor-cancellation-delivery";
-import {
   emitDeviceStatusIfOpen,
   emitStreamDelta,
   emitSubagentStateIfOpen,
@@ -33,7 +29,6 @@ export function installProcessEventRouting(params: {
   processQueuedTurn: ProcessQueuedTurn;
 }): void {
   const { runtime, processTransport, opts, processQueuedTurn } = params;
-  installMonitorCancellationDelivery(params);
   runtime._unsubscribeSubagentState?.();
   runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
     if (runtime.conversationRuntimes.size === 0) {
@@ -105,6 +100,7 @@ export function installProcessEventRouting(params: {
       kind: "task_notification",
       source: "task_notification",
       text: queuedMessage.text,
+      actingUserId: queuedMessage.actingUserId,
       agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
       conversationId:
         queuedMessage.conversationId ?? targetRuntime.conversationId,
@@ -117,7 +113,6 @@ export function installProcessEventRouting(params: {
 }
 
 export function clearProcessServices(runtime: ListenerRuntime): void {
-  clearMonitorCancellationDelivery(runtime);
   runtime._unsubscribeSubagentState?.();
   runtime._unsubscribeSubagentState = undefined;
   runtime._unsubscribeSubagentStreamEvents?.();

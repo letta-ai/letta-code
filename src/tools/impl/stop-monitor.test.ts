@@ -9,19 +9,17 @@ import {
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { monitor } from "./monitor";
-import { MonitorCancellationStore } from "./monitor-cancellation-store";
 import {
   type BackgroundProcess,
   backgroundProcesses,
   clearBackgroundProcessCleanup,
   getNextMonitorId,
 } from "./process_manager";
-import { UserMonitorStopper } from "./stop-monitor";
+import { stopMonitor } from "./stop-monitor";
 import { task_stop } from "./task-stop";
 
 let dir: string;
-let store: MonitorCancellationStore;
-let stopper: UserMonitorStopper;
+let notices: import("@/utils/message-queue-bridge").QueuedMessage[];
 const scope = {
   agent_id: "agent-a",
   conversation_id: "conv-a",
@@ -56,8 +54,8 @@ function fakeMonitor(
 }
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "monitor-cancel-test-"));
-  store = new MonitorCancellationStore(join(dir, "receipts"));
-  stopper = new UserMonitorStopper(store);
+  notices = [];
+  setMessageQueueAdder((message) => notices.push(message));
 });
 afterEach(() => {
   for (const [id, process] of backgroundProcesses) {
@@ -75,83 +73,68 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe("UserMonitorStopper", () => {
+describe("stopMonitor", () => {
   test("uses restart-safe IDs and stops only the scoped Monitor", async () => {
     const id = getNextMonitorId();
     expect(id).toMatch(/^monitor_[0-9a-f-]{36}$/);
     expect(getNextMonitorId()).not.toBe(id);
     const process = fakeMonitor(id);
     const other = fakeMonitor("other");
-    const wrong = await stopper.stop(
+    const wrong = await stopMonitor(
       command(id, { ...scope, conversation_id: "other" }),
     );
     expect(wrong.success).toBe(false);
     expect(process.status).toBe("running");
-    expect(store.read(id)).toBeNull();
-    const response = await stopper.stop(command(id));
+    expect(notices).toEqual([]);
+    const response = await stopMonitor(command(id));
     expect(response).toMatchObject({ success: true, stopped: true });
     expect(other.status).toBe("running");
-    expect(store.read(id)).toMatchObject({
-      state: "stopped",
-      runtime: scope,
-      description: "CI results",
+    expect(notices[0]).toMatchObject({
+      kind: "task_notification",
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+      actingUserId: scope.acting_user_id,
     });
     const [retry, second] = await Promise.all([
-      stopper.stop(command(id)),
-      stopper.stop(command(id)),
+      stopMonitor(command(id)),
+      stopMonitor(command(id)),
     ]);
     expect(retry).toMatchObject({ success: true, stopped: false });
     expect(second).toMatchObject({ success: true, stopped: false });
-    expect(store.list()).toHaveLength(1);
-    expect(
-      await new UserMonitorStopper(
-        new MonitorCancellationStore(store.directory),
-      ).stop(command(id)),
-    ).toMatchObject({ success: true, stopped: false });
+    expect(notices).toHaveLength(1);
   });
 
   test("rejects unknown tasks and non-Monitors", async () => {
-    expect((await stopper.stop(command("unknown"))).success).toBe(false);
+    expect((await stopMonitor(command("unknown"))).success).toBe(false);
     const process = fakeMonitor("bash-1");
     delete process.kind;
-    expect((await stopper.stop(command("bash-1"))).success).toBe(false);
+    expect((await stopMonitor(command("bash-1"))).success).toBe(false);
     expect(process.status).toBe("running");
-    expect(store.list()).toEqual([]);
+    expect(notices).toEqual([]);
   });
 
-  test("a failed initial persistence leaves the source running", async () => {
-    writeFileSync(join(dir, "not-a-directory"), "file");
-    const failing = new UserMonitorStopper(
-      new MonitorCancellationStore(join(dir, "not-a-directory")),
-    );
-    const process = fakeMonitor("monitor-fail");
-    expect((await failing.stop(command("monitor-fail"))).success).toBe(false);
-    expect(process.status).toBe("running");
+  test("concurrent stop requests enqueue only one notification", async () => {
+    let killed = 0;
+    fakeMonitor("monitor-double", () => {
+      killed++;
+    });
+    const responses = await Promise.all([
+      stopMonitor(command("monitor-double")),
+      stopMonitor({ ...command("monitor-double"), request_id: "req-2" }),
+    ]);
+    expect(responses.every((response) => response.success)).toBe(true);
+    expect(responses.filter((response) => response.stopped)).toHaveLength(1);
+    expect(killed).toBe(1);
+    expect(notices).toHaveLength(1);
   });
 
-  test("does not record a failed stop as a confirmed cancellation", async () => {
+  test("does not notify the agent when stopping fails", async () => {
     const process = fakeMonitor("monitor-fail", () => {
       throw new Error("stop failed");
     });
-    expect((await stopper.stop(command("monitor-fail"))).success).toBe(false);
-    expect(store.read("monitor-fail")?.state).toBe("failed");
+    expect((await stopMonitor(command("monitor-fail"))).success).toBe(false);
+    expect(notices).toEqual([]);
     expect(process.status).toBe("running");
-  });
-
-  test("keeps durable intent when confirming the successful stop fails", async () => {
-    const originalWrite = store.write.bind(store);
-    store.write = (receipt) => {
-      if (receipt.state === "stopped") throw new Error("disk full");
-      originalWrite(receipt);
-    };
-    fakeMonitor("monitor-1");
-    expect(await stopper.stop(command("monitor-1"))).toMatchObject({
-      success: false,
-      stopped: true,
-    });
-    expect(
-      new MonitorCancellationStore(store.directory).read("monitor-1")?.state,
-    ).toBe("intent");
   });
 
   test("stops a real command source and suppresses its ordinary completion", async () => {
@@ -168,13 +151,14 @@ describe("UserMonitorStopper", () => {
         conversationId: scope.conversation_id,
       },
     });
-    expect(await stopper.stop(command(result.taskId))).toMatchObject({
+    expect(await stopMonitor(command(result.taskId))).toMatchObject({
       success: true,
       stopped: true,
     });
     await Bun.sleep(50);
     expect(backgroundProcesses.get(result.taskId)?.status).toBe("failed");
-    expect(notices).toEqual([]);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("The user cancelled this Monitor.");
   });
 
   test("stops a real WebSocket source; agent TaskStop stays silent", async () => {
@@ -195,7 +179,7 @@ describe("UserMonitorStopper", () => {
           conversationId: scope.conversation_id,
         },
       });
-      expect(await stopper.stop(command(result.taskId))).toMatchObject({
+      expect(await stopMonitor(command(result.taskId))).toMatchObject({
         success: true,
         stopped: true,
       });
@@ -211,9 +195,10 @@ describe("UserMonitorStopper", () => {
       expect(await task_stop({ task_id: silent.taskId })).toEqual({
         killed: true,
       });
-      expect(store.read(silent.taskId)).toBeNull();
       await Bun.sleep(50);
-      expect(notices).toEqual([]);
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toContain(result.taskId);
+      expect(notices[0]).not.toContain(silent.taskId);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
