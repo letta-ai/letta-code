@@ -75,7 +75,6 @@ import {
   type EnvironmentConnection,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
-  sendEnvironmentMessage,
 } from "./backend/api/environments";
 import type { ParsedCliArgs } from "./cli/args";
 import {
@@ -116,10 +115,7 @@ import {
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
-import {
-  buildEnvironmentCreateMessageBody,
-  waitForEnvironmentAssistantMessage,
-} from "./headless-environment-response";
+import { runEnvironmentRoutedHeadlessTurn } from "./headless-environment-response";
 import {
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
@@ -2194,77 +2190,22 @@ ${SYSTEM_REMINDER_CLOSE}
       }
       await exitHeadless(1, "headless_environment_unsupported");
     }
-    const otid = randomUUID();
-    await sendEnvironmentMessage(
-      connectionId,
-      buildEnvironmentCreateMessageBody({
-        agentId: agent.id,
-        conversationId,
-        content: contentParts,
-        otid,
-      }),
-    );
-
-    const environmentResult = await waitForEnvironmentAssistantMessage({
+    await runEnvironmentRoutedHeadlessTurn({
       backend,
       agentId: agent.id,
+      publicAgentId,
       conversationId,
-      otid,
+      connectionId,
       deviceId: environment.deviceId,
+      content: contentParts,
+      outputFormat,
+      includePartialMessages,
+      sessionId,
+      environment: responseEnvironment,
+      getStats: () => sessionStats.getSnapshot(),
+      writeFinalStdout: writeFinalHeadlessStdout,
+      writeWireMessage,
     });
-    const stats = sessionStats.getSnapshot();
-
-    if (outputFormat === "json") {
-      await writeFinalHeadlessStdout(
-        `${JSON.stringify(
-          {
-            type: "result",
-            subtype: "success",
-            is_error: false,
-            duration_ms: Math.round(stats.totalWallMs),
-            duration_api_ms: Math.round(stats.totalApiMs),
-            num_turns: 1,
-            result: environmentResult.text,
-            agent_id: publicAgentId,
-            conversation_id: conversationId,
-            environment: responseEnvironment,
-            usage: null,
-            ...(environmentResult.stopReason &&
-            environmentResult.stopReason !== "end_turn"
-              ? { stop_reason: environmentResult.stopReason }
-              : {}),
-          },
-          null,
-          2,
-        )}\n`,
-      );
-    } else if (outputFormat === "stream-json") {
-      const resultEvent: ResultMessage & {
-        environment: ReplyEnvironmentMetadata;
-      } = {
-        type: "result",
-        subtype: "success",
-        session_id: sessionId,
-        duration_ms: Math.round(stats.totalWallMs),
-        duration_api_ms: Math.round(stats.totalApiMs),
-        num_turns: 1,
-        result: environmentResult.text,
-        agent_id: publicAgentId,
-        conversation_id: conversationId,
-        environment: responseEnvironment,
-        run_ids: [],
-        usage: null,
-        uuid: `result-${agent.id}-${Date.now()}`,
-        ...(environmentResult.stopReason &&
-        environmentResult.stopReason !== "end_turn"
-          ? { stop_reason: environmentResult.stopReason }
-          : {}),
-      };
-      writeWireMessage(resultEvent);
-    } else {
-      await writeFinalHeadlessStdout(`${environmentResult.text}\n`);
-    }
-
     await exitHeadless(0, "headless_environment_message_complete");
   }
 

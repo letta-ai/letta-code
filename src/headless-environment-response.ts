@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message as LettaMessage } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import WebSocket from "ws";
 import type { Backend } from "@/backend";
 import {
   type AgentRuntimeStatusEntry,
@@ -13,9 +14,182 @@ import {
   getEnvironmentConnection,
   isEnvironmentOnline,
   type SendEnvironmentMessageBody,
+  sendEnvironmentMessage,
 } from "@/backend/api/environments";
-import { ApiRequestError } from "@/backend/api/request";
+import { getLettaCodeHeaders } from "@/backend/api/http-headers";
+import { ApiRequestError, getApiRequestConfig } from "@/backend/api/request";
 import { toolFilter } from "@/tools/filter";
+import type {
+  MessageWire,
+  ResultMessage,
+  StreamEvent,
+  WireMessage,
+} from "@/types/protocol";
+import type {
+  LoopStatusUpdateMessage,
+  StreamDeltaMessage,
+} from "@/types/protocol_v2";
+
+type EnvironmentStatusMessage =
+  | StreamDeltaMessage
+  | LoopStatusUpdateMessage
+  | {
+      type: string;
+      runtime?: { agent_id?: string | null; conversation_id?: string | null };
+      [key: string]: unknown;
+    };
+
+export interface EnvironmentStatusStreamHandle {
+  ready: Promise<void>;
+  close: () => void;
+  getRunIds: () => string[];
+}
+
+function toWebSocketUrl(baseUrl: string): string {
+  return baseUrl.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
+}
+
+function runtimeMatches(
+  runtime: unknown,
+  agentId: string,
+  conversationId: string,
+): boolean {
+  if (!runtime || typeof runtime !== "object") return true;
+  const scope = runtime as { agent_id?: unknown; conversation_id?: unknown };
+  return (
+    (scope.agent_id === undefined ||
+      scope.agent_id === null ||
+      scope.agent_id === agentId) &&
+    (scope.conversation_id === undefined ||
+      scope.conversation_id === null ||
+      scope.conversation_id === conversationId)
+  );
+}
+
+export function environmentStatusMessageToStreamJsonWire(params: {
+  message: { type: string; delta?: unknown };
+  sessionId: string;
+  includePartialMessages: boolean;
+}): WireMessage | null {
+  if (params.message.type !== "stream_delta") return null;
+  const delta = params.message.delta;
+  if (!delta || typeof delta !== "object") return null;
+  if ((delta as { type?: unknown }).type !== "message") return null;
+
+  const chunk = delta as Record<string, unknown>;
+  const uuidCandidate = chunk.otid ?? chunk.id;
+  const uuid = typeof uuidCandidate === "string" ? uuidCandidate : randomUUID();
+  const { type: _protocolType, ...event } = chunk;
+
+  return params.includePartialMessages
+    ? ({
+        type: "stream_event",
+        event: event as StreamEvent["event"],
+        session_id: params.sessionId,
+        uuid,
+      } satisfies StreamEvent)
+    : ({
+        ...event,
+        type: "message",
+        session_id: params.sessionId,
+        uuid,
+      } as MessageWire);
+}
+
+export function buildEnvironmentStatusWebSocketUrl(params: {
+  baseUrl: string;
+  connectionId: string;
+  agentId: string;
+  conversationId: string;
+}): string {
+  const apiUrl = new URL(params.baseUrl);
+  const wsUrl = new URL(apiUrl.toString());
+  wsUrl.protocol = toWebSocketUrl(apiUrl.protocol);
+  wsUrl.pathname = `/v1/environments/${encodeURIComponent(params.connectionId)}/status/ws`;
+  wsUrl.searchParams.set("agentId", params.agentId);
+  wsUrl.searchParams.set("conversationId", params.conversationId);
+  wsUrl.searchParams.set("channel", "stream");
+  return wsUrl.toString();
+}
+
+export async function startEnvironmentStatusStream(params: {
+  connectionId: string;
+  agentId: string;
+  conversationId: string;
+  onMessage: (message: EnvironmentStatusMessage) => void;
+  connectTimeoutMs?: number;
+  deps?: {
+    getApiRequestConfig?: typeof getApiRequestConfig;
+    WebSocket?: typeof WebSocket;
+  };
+}): Promise<EnvironmentStatusStreamHandle> {
+  const getConfig = params.deps?.getApiRequestConfig ?? getApiRequestConfig;
+  const WebSocketImpl = params.deps?.WebSocket ?? WebSocket;
+  const config = await getConfig();
+  const url = buildEnvironmentStatusWebSocketUrl({
+    baseUrl: config.baseUrl,
+    connectionId: params.connectionId,
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+  });
+  const runIds = new Set<string>();
+  const socket = new WebSocketImpl(url, {
+    headers: getLettaCodeHeaders(config.apiKey),
+  });
+  let closed = false;
+
+  const ready = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error("Timed out opening environment status stream"));
+      socket.close();
+    }, params.connectTimeoutMs ?? 5_000);
+
+    socket.once("open", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    socket.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+
+  socket.on("message", (data) => {
+    let parsed: EnvironmentStatusMessage;
+    try {
+      parsed = JSON.parse(data.toString()) as EnvironmentStatusMessage;
+    } catch {
+      return;
+    }
+    if (
+      !runtimeMatches(parsed.runtime, params.agentId, params.conversationId)
+    ) {
+      return;
+    }
+    if (parsed.type === "stream_delta") {
+      const runId = (parsed.delta as { run_id?: unknown }).run_id;
+      if (typeof runId === "string" && runId.length > 0) runIds.add(runId);
+    } else if (parsed.type === "update_loop_status") {
+      const loopStatus = parsed.loop_status as { active_run_ids?: unknown[] };
+      for (const runId of loopStatus.active_run_ids ?? []) {
+        if (typeof runId === "string" && runId.length > 0) runIds.add(runId);
+      }
+    }
+    params.onMessage(parsed);
+  });
+
+  socket.once("close", () => {
+    closed = true;
+  });
+
+  return {
+    ready,
+    close: () => {
+      if (!closed) socket.close();
+    },
+    getRunIds: () => [...runIds],
+  };
+}
 
 /**
  * Build the POST body for an environment-routed turn.
@@ -50,6 +224,114 @@ export function buildEnvironmentCreateMessageBody(params: {
       },
     ],
   };
+}
+
+export async function runEnvironmentRoutedHeadlessTurn(params: {
+  backend: Backend;
+  agentId: string;
+  publicAgentId: string | null;
+  conversationId: string;
+  connectionId: string;
+  deviceId?: string;
+  content: MessageCreate["content"];
+  outputFormat: string;
+  includePartialMessages: boolean;
+  sessionId: string;
+  environment: Record<string, unknown>;
+  getStats: () => { totalWallMs: number; totalApiMs: number };
+  writeFinalStdout: (text: string) => Promise<void>;
+  writeWireMessage: (message: WireMessage) => void;
+}): Promise<void> {
+  const otid = randomUUID();
+  const environmentStatusStream =
+    params.outputFormat === "stream-json"
+      ? await startEnvironmentStatusStream({
+          connectionId: params.connectionId,
+          agentId: params.agentId,
+          conversationId: params.conversationId,
+          onMessage: (message) => {
+            const wire = environmentStatusMessageToStreamJsonWire({
+              message,
+              sessionId: params.sessionId,
+              includePartialMessages: params.includePartialMessages,
+            });
+            if (wire) params.writeWireMessage(wire);
+          },
+        })
+      : null;
+  await environmentStatusStream?.ready;
+  await sendEnvironmentMessage(
+    params.connectionId,
+    buildEnvironmentCreateMessageBody({
+      agentId: params.agentId,
+      conversationId: params.conversationId,
+      content: params.content,
+      otid,
+    }),
+  );
+
+  const environmentResult = await waitForEnvironmentAssistantMessage({
+    backend: params.backend,
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+    otid,
+    deviceId: params.deviceId,
+  });
+  const stats = params.getStats();
+  environmentStatusStream?.close();
+
+  if (params.outputFormat === "json") {
+    await params.writeFinalStdout(
+      `${JSON.stringify(
+        {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          duration_ms: Math.round(stats.totalWallMs),
+          duration_api_ms: Math.round(stats.totalApiMs),
+          num_turns: 1,
+          result: environmentResult.text,
+          agent_id: params.publicAgentId,
+          conversation_id: params.conversationId,
+          environment: params.environment,
+          usage: null,
+          ...(environmentResult.stopReason &&
+          environmentResult.stopReason !== "end_turn"
+            ? { stop_reason: environmentResult.stopReason }
+            : {}),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  } else if (params.outputFormat === "stream-json") {
+    const runIds = new Set(environmentStatusStream?.getRunIds() ?? []);
+    if (environmentResult.runId) runIds.add(environmentResult.runId);
+    const resultEvent: ResultMessage & {
+      environment: Record<string, unknown>;
+    } = {
+      type: "result",
+      subtype: "success",
+      session_id: params.sessionId,
+      duration_ms: Math.round(stats.totalWallMs),
+      duration_api_ms: Math.round(stats.totalApiMs),
+      num_turns: 1,
+      result: environmentResult.text,
+      agent_id: params.publicAgentId,
+      conversation_id: params.conversationId,
+      environment: params.environment,
+      run_ids: [...runIds],
+      usage: null,
+      uuid: `result-${params.agentId}-${Date.now()}`,
+      ...(environmentResult.stopReason &&
+      environmentResult.stopReason !== "end_turn"
+        ? { stop_reason: environmentResult.stopReason }
+        : {}),
+    };
+    params.writeWireMessage(resultEvent);
+  } else {
+    await params.writeFinalStdout(`${environmentResult.text}\n`);
+  }
 }
 
 function pageItems<T>(page: unknown): T[] {
@@ -218,7 +500,11 @@ export async function waitForEnvironmentAssistantMessage(params: {
       conversationIds: string[],
     ) => Promise<AgentRuntimeStatusSnapshot>;
   };
-}): Promise<{ text: string; stopReason: StopReasonType | null }> {
+}): Promise<{
+  text: string;
+  stopReason: StopReasonType | null;
+  runId: string | null;
+}> {
   const now = params.deps?.now ?? Date.now;
   const sleep =
     params.deps?.sleep ??
@@ -384,7 +670,7 @@ export async function waitForEnvironmentAssistantMessage(params: {
                   // Field is informational; the reply is already in hand.
                 }
               }
-              return { text, stopReason };
+              return { text, stopReason, runId: newestRunId };
             }
             // Turn over without a reply: allow a short lag for the assistant
             // message to land, then give up.
@@ -415,7 +701,11 @@ export async function waitForEnvironmentAssistantMessage(params: {
         } else if (run.stop_reason !== "requires_approval") {
           const text = assistant ? extractMessageText(assistant).trim() : "";
           if (text.length > 0) {
-            return { text, stopReason: run.stop_reason ?? null };
+            return {
+              text,
+              stopReason: run.stop_reason ?? null,
+              runId: newestRunId,
+            };
           }
           if (run.status === "failed" || run.status === "cancelled") {
             throw new Error(
