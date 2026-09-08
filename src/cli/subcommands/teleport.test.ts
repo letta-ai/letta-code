@@ -1,7 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { apiRequest } from "@/backend/api/request";
 import { ApiRequestError } from "@/backend/api/request";
-import { __testOverrideLoadRoutes, loadRoutes } from "@/channels/routing";
+import { getSupportedChannelIds } from "@/channels/plugin-registry";
+import {
+  __testOverrideLoadRoutes,
+  clearAllRoutes,
+  loadRoutes,
+} from "@/channels/routing";
 import {
   formatTeleportApiError,
   resolveTeleportSession,
@@ -12,6 +17,14 @@ const CLOUD_ENV = {
   LETTA_AGENT_ID: "agent-1",
   LETTA_CONVERSATION_ID: "conv-1",
 };
+
+function resetTeleportRouteState(): void {
+  __testOverrideLoadRoutes(() => []);
+  for (const channelId of getSupportedChannelIds()) {
+    loadRoutes(channelId);
+  }
+  clearAllRoutes();
+}
 
 async function withEnvironment<T>(
   values: Record<string, string | undefined>,
@@ -59,6 +72,15 @@ function captureOutput(): {
 }
 
 describe("teleport subcommand", () => {
+  beforeEach(() => {
+    resetTeleportRouteState();
+  });
+
+  afterEach(() => {
+    resetTeleportRouteState();
+    __testOverrideLoadRoutes(null);
+  });
+
   test("prints help and returns 0", async () => {
     const out = captureOutput();
     try {
