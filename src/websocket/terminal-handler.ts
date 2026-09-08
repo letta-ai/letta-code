@@ -92,9 +92,7 @@ function sendTerminalMessage(
 }
 
 /** Create a flush-on-size-or-timer output batcher. */
-function makeOutputBatcher(
-  onFlush: (data: string) => void,
-): (chunk: string) => void {
+export function makeOutputBatcher(onFlush: (data: string) => void) {
   let buffer = "";
   let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -109,7 +107,7 @@ function makeOutputBatcher(
     }
   };
 
-  return (chunk: string) => {
+  const push = (chunk: string) => {
     buffer += chunk;
     if (buffer.length >= MAX_BUFFER_BYTES) {
       flush();
@@ -117,6 +115,8 @@ function makeOutputBatcher(
       timer = setTimeout(flush, FLUSH_INTERVAL_MS);
     }
   };
+
+  return { push, flush };
 }
 
 // ── Bun spawn ──────────────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ function spawnBun(
   socket: WebSocket,
 ): TerminalSession {
   const terminalKey = getTerminalKey(connectionId, terminal_id);
-  const handleData = makeOutputBatcher((data) =>
+  const outputBatcher = makeOutputBatcher((data) =>
     sendTerminalMessage(socket, { type: "terminal_output", terminal_id, data }),
   );
 
@@ -142,7 +142,7 @@ function spawnBun(
       cols: cols || 80,
       rows: rows || 24,
       data: (_t: unknown, chunk: Uint8Array) =>
-        handleData(new TextDecoder().decode(chunk)),
+        outputBatcher.push(new TextDecoder().decode(chunk)),
     },
   });
 
@@ -163,6 +163,7 @@ function spawnBun(
   proc.exited.then((exitCode) => {
     const current = terminals.get(terminalKey);
     if (current && current.pid === proc.pid) {
+      outputBatcher.flush();
       terminals.delete(terminalKey);
       sendTerminalMessage(socket, {
         type: "terminal_exited",
@@ -213,7 +214,7 @@ function spawnNodePty(
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const pty = require("node-pty") as NodePtyModule;
 
-  const handleData = makeOutputBatcher((data) =>
+  const outputBatcher = makeOutputBatcher((data) =>
     sendTerminalMessage(socket, { type: "terminal_output", terminal_id, data }),
   );
 
@@ -229,11 +230,12 @@ function spawnNodePty(
     },
   });
 
-  ptyProcess.onData(handleData);
+  ptyProcess.onData(outputBatcher.push);
 
   ptyProcess.onExit(({ exitCode }: NodePtyExitEvent) => {
     const current = terminals.get(terminalKey);
     if (current && current.pid === ptyProcess.pid) {
+      outputBatcher.flush();
       terminals.delete(terminalKey);
       sendTerminalMessage(socket, {
         type: "terminal_exited",
