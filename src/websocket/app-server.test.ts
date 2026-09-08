@@ -541,12 +541,11 @@ describe("app-server native websocket", () => {
     let handle: AppServerHandle | null = null;
     let stream: WebSocket | null = null;
     try {
-      // A 1ms pong timeout means the seeded connect timestamp is already stale
-      // by the first interval tick, so the watchdog reaps the socket.
       handle = await startAppServer({
         listen: "ws://127.0.0.1:0",
         heartbeatIntervalMs: 25,
-        pongTimeoutMs: 1,
+        pongTimeoutMs: 25,
+        shouldRecordPong: () => false,
       });
       stream = new WebSocket(handle.controlUrl);
       await waitForOpen(stream);
