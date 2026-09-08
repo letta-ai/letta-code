@@ -22,7 +22,6 @@ interface TeleportSubcommandDeps {
   resolveAgentSandboxConnectionId?: typeof resolveAgentSandboxConnectionId;
   resolveDesktopEnvironmentConnectionId?: typeof resolveDesktopEnvironmentConnectionId;
   teleportToEnvironment?: typeof teleportToEnvironment;
-  listActiveChannelRouteNames?: (session: SessionRef) => string[];
 }
 
 const TELEPORT_OPTIONS = {
@@ -213,15 +212,7 @@ export async function runTeleportSubcommand(
       )(),
     );
 
-    if (action === "back") {
-      throw new Error(
-        "Teleport back is not supported. Use `letta teleport local` or choose an explicit computer.",
-      );
-    }
-
-    const activeChannelRoutes = (
-      deps.listActiveChannelRouteNames ?? listActiveChannelRouteNames
-    )(session);
+    const activeChannelRoutes = listActiveChannelRouteNames(session);
     if (activeChannelRoutes.length > 0) {
       throw new Error(
         `This conversation is bound to ${activeChannelRoutes.join(", ")} on this computer. Teleport is blocked because MessageChannel cannot follow the conversation to another computer yet. Remove the channel route or continue locally.`,
@@ -243,6 +234,10 @@ export async function runTeleportSubcommand(
         resolveDesktopEnvironmentConnectionId;
       const result = await resolve();
       targetConnectionId = result.connectionId;
+    } else if (action === "back") {
+      throw new Error(
+        "Teleport back is not supported. Use `letta teleport local` or choose an explicit computer.",
+      );
     } else {
       const resolve =
         deps.resolveEnvironmentConnectionId ?? resolveEnvironmentConnectionId;

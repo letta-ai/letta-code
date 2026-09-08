@@ -58,10 +58,6 @@ function captureOutput(): {
   };
 }
 
-const NO_CHANNEL_ROUTES = {
-  listActiveChannelRouteNames: () => [],
-};
-
 describe("teleport subcommand", () => {
   test("prints help and returns 0", async () => {
     const out = captureOutput();
@@ -215,7 +211,6 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["cloud"], {
-          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
           resolveAgentSandboxConnectionId: async (agentId, options) => {
@@ -321,7 +316,6 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["back"], {
-          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
         }),
@@ -340,7 +334,6 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["local"], {
-          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
           resolveDesktopEnvironmentConnectionId: async () => ({
@@ -385,7 +378,6 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["caren-mac.local"], {
-          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
           resolveEnvironmentConnectionId: async () => ({
@@ -421,7 +413,6 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["my-laptop"], {
-          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
           resolveEnvironmentConnectionId: async (selector) => {
@@ -494,7 +485,6 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["my-target"], {
-          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
           resolveEnvironmentConnectionId: async () => ({
@@ -533,7 +523,6 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["cloud"], {
-          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
           resolveAgentSandboxConnectionId: async () => ({
@@ -573,7 +562,6 @@ describe("teleport subcommand", () => {
     try {
       const exitCode = await withEnvironment(CLOUD_ENV, () =>
         runTeleportSubcommand(["cloud"], {
-          ...NO_CHANNEL_ROUTES,
           initializeSettings: async () => {},
           getLastSession: () => null,
           resolveAgentSandboxConnectionId: async () => ({
