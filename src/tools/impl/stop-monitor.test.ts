@@ -55,6 +55,7 @@ function fakeMonitor(
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "monitor-cancel-test-"));
   notices = [];
+  clearPendingMessages();
   setMessageQueueAdder((message) => notices.push(message));
 });
 afterEach(() => {
