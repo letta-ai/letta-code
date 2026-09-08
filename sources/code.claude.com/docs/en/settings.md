@@ -587,7 +587,6 @@ Claude Code reads some keys only once, at session start, so an edit to one of th
 
 * [`model`](/docs/en/settings-reference#model): use [`/model`](/docs/en/model-config#setting-your-model) to switch mid-session. Each model has its own prompt cache, so the first request after a switch re-reads the whole conversation uncached; see [Switching models](/docs/en/prompt-caching#switching-models)
 * [`effortLevel`](/docs/en/settings-reference#effortlevel) and [`modelSettings`](/docs/en/settings-reference#modelsettings): use [`/effort`](/docs/en/model-config#adjust-effort-level) to change effort mid-session
-* [`outputStyle`](/docs/en/settings-reference#outputstyle): part of the system prompt, so Claude Code applies the edit after `/clear` or a restart
 
 <span id="verify-active-settings" />
 

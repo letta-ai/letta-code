@@ -276,7 +276,7 @@ Save skills at either of the two most common [discovery levels](/docs/en/skills#
 * **Project skills**: `.claude/skills/`, available only in the current project
 * **Personal skills**: `~/.claude/skills/`, available across all your projects
 
-If you have existing custom command files in `.claude/commands/`, they keep working. A command file at `.claude/commands/deploy.md` creates `/deploy` and works the same way as a skill at `.claude/skills/deploy/SKILL.md` would. If a command file and a skill share a name, see [Where skills live](/docs/en/skills#where-skills-live) for which one runs. The SDK loads `.claude/commands/` and `~/.claude/commands/` files from the same two scopes as skills. See [Extend Claude with skills](/docs/en/skills) for the complete guide to both artifact forms.
+If you have existing custom command files in `.claude/commands/`, they keep working. A command file at `.claude/commands/deploy.md` creates `/deploy` and works the same way as a skill at `.claude/skills/deploy/SKILL.md` would. If a command file and a skill share a name, see [Resolve skills that share a name](/docs/en/skills#resolve-skills-that-share-a-name) for which one runs. The SDK loads `.claude/commands/` and `~/.claude/commands/` files from the same two scopes as skills. See [Extend Claude with skills](/docs/en/skills) for the complete guide to both artifact forms.
 
 ### Create and dispatch your first skill
 
@@ -515,7 +515,7 @@ The [Claude Code skills guide](/docs/en/skills) covers authoring in depth. Its g
 * [Frontmatter reference](/docs/en/skills#frontmatter-reference): every supported field
 * [Pass arguments to skills](/docs/en/skills#pass-arguments-to-skills): `$ARGUMENTS`, `$0`, `$1`, and skill stacking. The [full substitution table](/docs/en/skills#available-string-substitutions) adds named arguments and the `${CLAUDE_*}` variables
 * [Inject dynamic context](/docs/en/skills#inject-dynamic-context): `` !`command` `` lines that run before Claude sees the skill content
-* [Where skills live](/docs/en/skills#where-skills-live): all discovery levels, plugin namespacing, and what happens when a skill and a command file share a name
+* [Choose where skills load](/docs/en/skills#where-skills-live): every skill location, plugin namespacing, and which skill runs when two share a name
 
 ## Related resources
 

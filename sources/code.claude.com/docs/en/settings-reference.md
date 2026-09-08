@@ -1157,7 +1157,7 @@ Run `/effort auto` to clear your saved level for the model you're using. Claude 
 
 Select an [output style](/docs/en/output-styles) by name. An output style is a saved set of instructions that Claude Code adds to the system prompt to change Claude's role, tone, and output format, such as the built-in Explanatory and Learning styles or one you wrote yourself.
 
-Claude Code builds the style into the system prompt once per conversation. An edit to this key takes effect after you run `/clear` or start a new session.
+If you change this key during a session, Claude uses the new style starting with your next message. That message rebuilds the [prompt cache](/docs/en/prompt-caching#changing-output-style) once, because the style is part of the system prompt. Before v2.1.251, the edit applied only after you ran `/clear` or started a new session.
 
 * **Scope**: [`Any file`](#scopes)
 * **Type**: string, the name of a [built-in](/docs/en/output-styles#built-in-output-styles) or [custom](/docs/en/output-styles#create-a-custom-output-style) output style
