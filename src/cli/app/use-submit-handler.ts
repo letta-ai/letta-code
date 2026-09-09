@@ -747,7 +747,15 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         // Continue processing the new message
       }
 
-      if (!msg && !hasOverrideContent) return { submitted: false };
+      if (!msg && !hasOverrideContent) {
+        // Enter on an empty input resumes a queue parked by Esc (no new message).
+        const paused = tuiQueueRef.current?.pausedCount ?? 0;
+        if (paused === 0) return { submitted: false };
+        tuiQueueRef.current?.resume();
+        userCancelledRef.current = false;
+        setDequeueEpoch((e: number) => e + 1);
+        return { submitted: true };
+      }
 
       // If the user just cycled reasoning tiers, flush the final choice before
       // sending the next message so the upcoming run uses the selected tier.
@@ -811,30 +819,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           .slice(0, 100);
       }
 
-      // Block submission if waiting for explicit user action (approvals)
-      // In this case, input is hidden anyway, so this shouldn't happen
+      // Block submission while approvals are pending (input is hidden anyway).
       if (pendingApprovals.length > 0) {
         return { submitted: false };
       }
 
-      // Queue message if agent is busy (streaming, executing tool, or running command)
-      // This allows messages to queue up while agent is working
-
-      // Reset cancellation flag before queue check - this ensures queued messages
-      // can be dequeued even if the user just cancelled. The dequeue effect checks
-      // userCancelledRef.current, so we must clear it here to prevent blocking.
+      // Release cancellation, but wake dequeue only after the new input is queued.
       userCancelledRef.current = false;
-
-      // If there are queued messages and agent is not busy, bump epoch to trigger
-      // dequeue effect. Without this, the effect won't re-run because refs aren't
-      // in its deps array (only state values are).
-      if (!isAgentBusy() && (tuiQueueRef.current?.length ?? 0) > 0) {
-        debugLog(
-          "queue",
-          `Bumping dequeueEpoch: userCancelledRef was reset, ${tuiQueueRef.current?.length ?? 0} message(s) queued, agent not busy`,
-        );
-        setDequeueEpoch((e: number) => e + 1);
-      }
 
       const isSlashCommand = routedUserText.startsWith("/");
       const parsedModCommand = isSlashCommand
@@ -864,19 +855,21 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         return { submitted: true }; // Clears input
       }
 
-      if (isAgentBusy() && !shouldBypassQueue) {
+      if (
+        !shouldBypassQueue &&
+        (isAgentBusy() ||
+          (!hasOverrideContent && (tuiQueueRef.current?.length ?? 0) > 0))
+      ) {
         // Enqueue via QueueRuntime — onEnqueued callback updates queueDisplay.
         tuiQueueRef.current?.enqueue({
           kind: "message",
           source: "user",
           content: msg,
         } as Parameters<typeof tuiQueueRef.current.enqueue>[0]);
+        if (!hasOverrideContent && !isSystemOnly) tuiQueueRef.current?.resume();
         setDequeueEpoch((e: number) => e + 1);
         return { submitted: true }; // Clears input
       }
-
-      // Note: userCancelledRef.current was already reset above before the queue check
-      // to ensure the dequeue effect isn't blocked by a stale cancellation flag.
 
       const aliasedMsg = routedUserText;
 

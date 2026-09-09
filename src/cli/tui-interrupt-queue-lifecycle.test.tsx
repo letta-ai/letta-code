@@ -282,4 +282,72 @@ describe("TUI interrupt queue lifecycle", () => {
       "arrived after Esc",
     );
   }, 15_000);
+
+  test.each(["Enter", "new message", "cron event"])(
+    "Esc parks a user message; a notification still drains; %s resumes",
+    async (resumeWith) => {
+      const executor = new DelayedInterruptExecutor();
+      const { stdin } = await renderTestApp(executor);
+
+      await typePrompt(stdin, "start turn");
+      await waitFor(
+        () => executor.inputs.length === 1,
+        "the typed initial turn",
+      );
+      // A user message queued behind the active turn (source: user).
+      addToMessageQueue({ kind: "user", text: "queued while busy" });
+
+      addToMessageQueue(
+        resumeWith === "cron event"
+          ? { kind: "user", source: "cron", text: "scheduled event" }
+          : {
+              kind: "task_notification",
+              text: monitorNotification("arrived during turn"),
+            },
+      );
+      stdin.push("\u001b");
+      await executor.abortObserved;
+      executor.settleInterruptedTurn();
+
+      // The notification starts a turn on its own; the parked user message does not.
+      await waitFor(
+        () => executor.inputs.length === 2,
+        "the notification turn after Esc",
+      );
+      const notificationTurn = JSON.stringify(executor.inputs[1]?.body);
+      expect(notificationTurn).toContain(
+        resumeWith === "cron event" ? "scheduled event" : "arrived during turn",
+      );
+      expect(notificationTurn).not.toContain("queued while busy");
+      await sleep(300);
+      expect(executor.inputs).toHaveLength(2);
+
+      if (resumeWith !== "new message") {
+        stdin.push("\r");
+      } else {
+        await typePrompt(stdin, "sent after interrupt");
+      }
+      await waitFor(
+        () => executor.inputs.length === 3,
+        "the parked message to run after resuming",
+      );
+      expect(JSON.stringify(executor.inputs[2]?.body)).toContain(
+        "queued while busy",
+      );
+      if (resumeWith === "new message") {
+        await waitFor(
+          () =>
+            JSON.stringify(executor.inputs.slice(2)).includes(
+              "sent after interrupt",
+            ),
+          "the new message to reach the backend",
+        );
+        const resumed = JSON.stringify(executor.inputs.slice(2));
+        expect(resumed.indexOf("queued while busy")).toBeLessThan(
+          resumed.indexOf("sent after interrupt"),
+        );
+      }
+    },
+    20_000,
+  );
 });

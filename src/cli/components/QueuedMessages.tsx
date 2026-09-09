@@ -12,8 +12,8 @@ interface QueuedMessagesProps {
 export const QueuedMessages = memo(
   ({ messages, queueMode = "immediate" }: QueuedMessagesProps) => {
     const maxDisplay = 5;
-    const displayMessages = messages
-      .filter((msg) => msg.kind === "user")
+    const userMessages = messages.filter((msg) => msg.kind === "user");
+    const displayMessages = userMessages
       .map((msg) => msg.text.trim())
       .filter((msg) => msg.length > 0);
 
@@ -21,10 +21,24 @@ export const QueuedMessages = memo(
       return null;
     }
 
+    const paused = userMessages.some((msg) => msg.paused);
     const bullet = queueMode === "defer" ? "○" : CLI_GLYPHS.prompt;
 
     return (
       <Box flexDirection="column" marginBottom={1}>
+        {paused && (
+          <Box flexDirection="row">
+            <Box width={2} flexShrink={0}>
+              <Text dimColor>{CLI_GLYPHS.bullet}</Text>
+            </Box>
+            <Box flexGrow={1}>
+              <Text dimColor>
+                Queue paused by Esc. Enter to resume, or type to send with your
+                next message.
+              </Text>
+            </Box>
+          </Box>
+        )}
         {displayMessages.slice(0, maxDisplay).map((msg, index) => (
           <Box key={`${index}-${msg.slice(0, 50)}`} flexDirection="row">
             <Box width={2} flexShrink={0}>

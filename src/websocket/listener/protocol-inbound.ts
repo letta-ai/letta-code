@@ -120,6 +120,7 @@ import {
   isGetCwdMapCommand,
   isSetBootWorkingDirectoryCommand,
 } from "./cwd-protocol-inbound";
+import { isResumeQueueCommand } from "./queue-pause-protocol-inbound";
 
 export { isConnectProviderCommand } from "./connect-provider-protocol-inbound";
 
@@ -452,9 +453,7 @@ function isChangeDeviceStateCommand(
 }
 
 function isAbortMessageCommand(value: unknown): value is AbortMessageCommand {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+  if (!value || typeof value !== "object") return false;
   const candidate = value as {
     type?: unknown;
     runtime?: unknown;
@@ -2085,6 +2084,7 @@ export function parseServerMessage(
       isInputCommand(parsed) ||
       isChangeDeviceStateCommand(parsed) ||
       isAbortMessageCommand(parsed) ||
+      isResumeQueueCommand(parsed) ||
       isSyncCommand(parsed) ||
       isRuntimeStartCommand(parsed) ||
       isRuntimeExternalToolsUpdateCommand(parsed) ||

@@ -45,6 +45,13 @@ export function ensureConversationQueueRuntime(
           conversation_id: runtime.conversationId,
         });
       },
+      onPauseChanged: () => {
+        // Paused flags ride on the update_queue snapshot.
+        scheduleQueueEmit(listener, {
+          agent_id: runtime.agentId,
+          conversation_id: runtime.conversationId,
+        });
+      },
       onCleared: (_reason, _clearedCount, items) => {
         runtime.pendingTurns = 0;
         scheduleQueueEmit(

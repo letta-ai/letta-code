@@ -391,6 +391,8 @@ export interface QueueRuntimeItemWire {
   content: MessageCreate["content"] | string;
   /** ISO8601 UTC enqueue timestamp. */
   enqueued_at: string;
+  /** User input held by interrupt until resume or the next user message. */
+  paused?: boolean;
 }
 
 /**
@@ -447,6 +449,8 @@ export interface QueueBatchDequeuedEvent extends MessageEnvelope {
  * - command_running: Slash command is executing
  * - interrupt_in_progress: User interrupt (Esc) is being processed
  * - runtime_busy: Generic busy state (e.g., listen-client turn in flight)
+ * - paused_by_user: Only user messages parked by an interrupt remain; they
+ *   wait for an explicit resume or the user's next message
  */
 export type QueueBlockedReason =
   | "streaming"
@@ -454,7 +458,8 @@ export type QueueBlockedReason =
   | "overlay_open"
   | "command_running"
   | "interrupt_in_progress"
-  | "runtime_busy";
+  | "runtime_busy"
+  | "paused_by_user";
 
 /**
  * Emitted only on blocked-reason state transitions (not on every dequeue
