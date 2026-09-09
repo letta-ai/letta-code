@@ -2184,12 +2184,11 @@ describe("listen-client multi-worker concurrency", () => {
     let serverSecrets: Record<string, string> = {};
     __testOverrideSecretsBackend({
       capabilities: { serverSecrets: true },
-      retrieveAgent: async () => ({
-        secrets: Object.entries(serverSecrets).map(([key, value]) => ({
+      listAgentSecrets: async () =>
+        Object.entries(serverSecrets).map(([key, value]) => ({
           key,
           value,
         })),
-      }),
       updateAgent: async (_agentId, body) => {
         serverSecrets = { ...body.secrets };
       },

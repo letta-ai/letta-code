@@ -1475,7 +1475,7 @@ export async function handleHeadlessCommand(
   const secretsAgentId = ephemeralFlag ? undefined : agent?.id;
   const secretsInitPromise = secretsAgentId
     ? import("@/utils/secrets-store").then(({ initSecretsFromServer }) =>
-        initSecretsFromServer(secretsAgentId, agent ?? undefined),
+        initSecretsFromServer(secretsAgentId),
       )
     : Promise.resolve();
 

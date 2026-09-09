@@ -3,31 +3,31 @@ import type WebSocket from "ws";
 import { createSharedReminderState } from "@/reminders/state";
 import {
   __testOverrideSecretsBackend,
+  __testSeedSecretsCache,
   clearSecretsCache,
-  initSecretsFromServer,
   loadSecrets,
 } from "@/utils/secrets-store";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { handleSecretsCommand } from "@/websocket/listener/commands/secrets";
 import {
-  __testOverrideRefreshSecretsForAgent,
   __testSetFreshnessMs,
   ensureSecretsHydratedForAgent,
   invalidateSecretsCacheForAgent,
 } from "@/websocket/listener/secrets-sync";
 
-const retrieveMock = mock((_agentId: string, _opts?: Record<string, unknown>) =>
+const retrieveMock = mock((_agentId: string) =>
   Promise.resolve({ secrets: [] as Array<{ key: string; value: string }> }),
 );
 
 describe("listener secrets sync", () => {
   beforeEach(() => {
     retrieveMock.mockReset();
-    __testOverrideRefreshSecretsForAgent(async (agentId) => {
-      const agent = await retrieveMock(agentId, {
-        include: ["agent.secrets"],
-      });
-      await initSecretsFromServer(agentId, agent);
+    retrieveMock.mockResolvedValue({ secrets: [] });
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      listAgentSecrets: async (agentId) =>
+        (await retrieveMock(agentId)).secrets,
+      updateAgent: async () => ({}),
     });
     // Use a short freshness window for deterministic tests.
     __testSetFreshnessMs(500);
@@ -35,7 +35,6 @@ describe("listener secrets sync", () => {
   });
 
   afterEach(() => {
-    __testOverrideRefreshSecretsForAgent(null);
     __testOverrideSecretsBackend(null);
     __testSetFreshnessMs(null);
     clearSecretsCache("agent-listener-secret");
@@ -50,9 +49,7 @@ describe("listener secrets sync", () => {
 
     await ensureSecretsHydratedForAgent(listener, "agent-listener-secret");
 
-    expect(retrieveMock).toHaveBeenCalledWith("agent-listener-secret", {
-      include: ["agent.secrets"],
-    });
+    expect(retrieveMock).toHaveBeenCalledWith("agent-listener-secret");
     expect(loadSecrets("agent-listener-secret")).toEqual({
       WS_SECRET_TOKEN: "listenersecret",
     });
@@ -206,13 +203,14 @@ describe("listener secrets sync", () => {
   });
 
   test("secret_apply schedules fresh secrets reminders for existing conversations", async () => {
-    await initSecretsFromServer("agent-listener-secret", {
-      secrets: [{ key: "WS_SECRET_TOKEN", value: "first" }],
+    __testSeedSecretsCache("agent-listener-secret", {
+      WS_SECRET_TOKEN: "first",
     });
     const updateAgentMock = mock(() => Promise.resolve({}));
     __testOverrideSecretsBackend({
       capabilities: { serverSecrets: true },
-      retrieveAgent: retrieveMock,
+      listAgentSecrets: async (agentId) =>
+        (await retrieveMock(agentId)).secrets,
       updateAgent: updateAgentMock,
     });
     const listener = __listenClientTestUtils.createListenerRuntime();
