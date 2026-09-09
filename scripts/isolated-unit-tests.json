@@ -57,6 +57,11 @@
       "reason": "Imports the real media module while Slack adapter tests replace it."
     },
     {
+      "path": "src/cli/subcommands/teleport.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Reads process-global channel route state that other shared-batch suites mutate."
+    },
+    {
       "path": "src/cli/components/provider-mod-selector-refresh.test.tsx",
       "timeoutMs": 15000,
       "reason": "Renders Ink while mutating the backend mode, backend instance, provider registry, settings singleton, and model cache."

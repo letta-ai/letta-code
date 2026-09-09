@@ -38,6 +38,7 @@ import {
   resolvePiModelForAgent,
 } from "./pi-model-factory";
 import { LocalPiModelsRuntime } from "./pi-models-runtime";
+import { resolvePiRequestHeaders } from "./pi-request-headers";
 import type {
   LlmEndErrorInfo,
   LlmEndInfo,
@@ -637,11 +638,16 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       input.agent.model,
       resolved.model,
     );
+    const headers = resolvePiRequestHeaders({
+      provider: resolved.model.provider,
+      configuredHeaders: resolved.headers,
+      conversationId: input.conversationId,
+    });
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
       ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
-      ...(resolved.headers ? { headers: resolved.headers } : {}),
+      ...(headers ? { headers } : {}),
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
       sessionId: input.conversationId,

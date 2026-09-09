@@ -391,9 +391,7 @@ export class LocalBackend extends HeadlessBackend {
     ...args: Parameters<HeadlessBackend["createAgent"]>
   ) {
     let [body, ...restArgs] = args;
-    // When local memfs is enabled, stamp the git-memory-enabled tag on the
-    // agent body so all downstream tag-checking paths (isMemfsEnabledOnServer,
-    // memfs-sync, etc.) see this agent as memfs-enabled from creation.
+    // Stamp local memfs agents so downstream tag checks enable memory sync.
     if (this.isLocalMemfsEnabled()) {
       const bodyRecord = body as Record<string, unknown>;
       const existingTags = Array.isArray(bodyRecord.tags)
@@ -839,6 +837,7 @@ export class LocalBackend extends HeadlessBackend {
     const contextTokensBefore = estimateLocalMessageTokens(messages);
     const plan = planLocalAllCompaction(messages);
     const summary = await summarizeLocalMessagesAll({
+      conversationId,
       agent,
       messages: plan.messagesToSummarize,
       complete: this.complete,
@@ -892,6 +891,7 @@ export class LocalBackend extends HeadlessBackend {
       contextWindow,
     });
     const summary = await summarizeLocalMessagesSlidingWindow({
+      conversationId,
       agent,
       messages: plan.messagesToSummarize,
       complete: this.complete,

@@ -24,6 +24,48 @@ function summaryAssistantMessage(): AssistantMessage {
 }
 
 describe("local compaction summarizer options", () => {
+  test("sends the OpenCode Go conversation identity during compaction", async () => {
+    const previousKey = process.env.OPENCODE_API_KEY;
+    process.env.OPENCODE_API_KEY = "test-opencode-key";
+    try {
+      let capturedOptions:
+        | (SimpleStreamOptions & Record<string, unknown>)
+        | undefined;
+      await summarizeLocalMessagesAll({
+        conversationId: "conv-opencode-compaction",
+        agent: {
+          id: "agent-local-1",
+          name: "Local",
+          description: null,
+          system: "",
+          tags: [],
+          model: "opencode-go/glm-5.2",
+          model_settings: {},
+        },
+        messages: [
+          {
+            id: "ui-msg-1",
+            role: "user",
+            content: "please summarize this conversation",
+            timestamp: Date.now(),
+          },
+        ],
+        complete: async (_model, _context, options) => {
+          capturedOptions = options;
+          return summaryAssistantMessage();
+        },
+      });
+
+      expect(capturedOptions?.sessionId).toBe("conv-opencode-compaction");
+      expect(capturedOptions?.headers).toEqual({
+        "x-opencode-session": "conv-opencode-compaction",
+      });
+    } finally {
+      if (previousKey === undefined) delete process.env.OPENCODE_API_KEY;
+      else process.env.OPENCODE_API_KEY = previousKey;
+    }
+  });
+
   test("uses Opus for Fable compaction summaries while preserving reasoning", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-compaction-"));
     try {
@@ -48,6 +90,7 @@ describe("local compaction summarizer options", () => {
         | undefined;
       let capturedModelId: string | undefined;
       const summary = await summarizeLocalMessagesAll({
+        conversationId: "conv-fable-compaction",
         agent: {
           id: "agent-local-1",
           name: "Local",
@@ -100,6 +143,7 @@ describe("local compaction summarizer options", () => {
         | undefined;
       let capturedModelId: string | undefined;
       await summarizeLocalMessagesAll({
+        conversationId: "conv-anthropic-compaction",
         agent: {
           id: "agent-local-1",
           name: "Local",
