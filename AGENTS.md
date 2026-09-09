@@ -374,6 +374,20 @@ layer differs. Features added to one tool may be missing from others.
 
 - **Review signal:** any shell tool change, check ALL variants have parity.
 
+### Path Tools Resolve Relative Paths from Runtime CWD
+
+Path-accepting built-in tools must resolve relative paths against the
+conversation working directory via `getCurrentWorkingDirectory()` from
+`src/runtime-context.ts` (AsyncLocalStorage) — never `process.cwd()` or a bare
+`resolve(inputPath)` — and pass absolute paths through unchanged. This matches
+the standing pattern across Read/Write/Edit/MultiEdit/Glob/Grep/Bash.
+`process.cwd()` usually matches the conversation CWD, but under worktrees,
+teleport, or multi-runtime listeners it silently diverges and relative paths
+resolve against the wrong tree.
+
+- **Review signal:** any new or edited path-accepting tool, resolve relative
+  inputs with `getCurrentWorkingDirectory()`.
+
 ### Interrupt Lock / State Cleanup
 
 `EAGER_CANCEL` path and non-EAGER fallback BOTH need to clear ALL state flags
