@@ -1337,6 +1337,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             lastRunId,
             lastSeqId,
             fallbackError,
+            errorInfo: streamErrorInfo,
           } = await drainResult;
 
           if (lastSeqId != null) {
@@ -2241,7 +2242,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
           }
 
-          // Fetch run error metadata for recovery decisions.
           const runErrorInfo = await fetchRunErrorInfo(lastRunId),
             detailFromRun = runErrorInfo?.detail ?? runErrorInfo?.message;
           const invalidIdsDetected =
@@ -2382,7 +2382,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               agentId: agentIdRef.current,
               conversationId: conversationIdRef.current,
               currentHandle: currentModelId,
-              error: runErrorInfo ?? detailFromRun ?? fallbackError,
+              error: streamErrorInfo ?? runErrorInfo ?? fallbackError,
               exhaustedProviders: chatgptExhaustedProvidersRef.current,
             });
             if (rotation) {

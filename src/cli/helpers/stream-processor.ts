@@ -51,6 +51,7 @@ export class StreamProcessor {
   public lastRunId: string | null = null;
   public lastSeqId: number | null = null;
   public stopReason: StopReasonType | null = null;
+  public lastErrorInfo: ErrorInfo | undefined;
 
   constructor(private readonly seenSeqIdThreshold: number | null = null) {}
 
@@ -115,6 +116,8 @@ export class StreamProcessor {
         run_id: this.lastRunId || undefined,
       };
     }
+
+    if (errorInfo) this.lastErrorInfo = errorInfo;
 
     // Suppress mid-stream desync errors (match headless behavior)
     // These are transient and will be handled by end-of-turn desync recovery
