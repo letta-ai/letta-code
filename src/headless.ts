@@ -2882,7 +2882,7 @@ ${SYSTEM_REMINDER_CLOSE}
           agentId: agent.id,
           conversationId,
           currentHandle: null,
-          error: runErrorInfo ?? detailFromRun ?? latestErrorText,
+          error: result.errorInfo ?? runErrorInfo ?? latestErrorText,
           exhaustedProviders: chatgptExhaustedProviders,
         });
         if (rotation) {

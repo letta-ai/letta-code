@@ -26,7 +26,6 @@ import {
 } from "@/cli/helpers/accumulator";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
-import type { ErrorInfo } from "@/cli/helpers/stream-processor";
 import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
@@ -349,7 +348,6 @@ async function handleIncomingMessageInner(
     seedInboundUserTranscriptLines(buffers, inboundUserTranscriptLines);
     while (true) {
       runIdSent = false;
-      const latestErrorInfoRef = { current: null as ErrorInfo | null };
       const result = await drainStreamWithResume(
         stream as Stream<LettaStreamingResponse>,
         buffers,
@@ -377,9 +375,6 @@ async function handleIncomingMessageInner(
           if (errorInfo) {
             const recoverableApprovalErrorText =
               getApprovalToolCallDesyncErrorText(errorInfo);
-            latestErrorInfoRef.current = recoverableApprovalErrorText
-              ? { ...errorInfo, detail: recoverableApprovalErrorText }
-              : errorInfo;
             if (!recoverableApprovalErrorText) {
               emitLoopErrorNotice(socket, runtime, {
                 message: errorInfo.message || "Stream error",
@@ -494,8 +489,9 @@ async function handleIncomingMessageInner(
         if (finishIfInterrupted(lastRunId || runtime.activeRunId)) {
           break;
         }
-        const latestErrorInfo = latestErrorInfoRef.current;
+        const latestErrorInfo = result.errorInfo;
         const errorDetail =
+          getApprovalToolCallDesyncErrorText(latestErrorInfo ?? {}) ||
           latestErrorInfo?.detail ||
           latestErrorInfo?.message ||
           runErrorInfo?.detail ||
