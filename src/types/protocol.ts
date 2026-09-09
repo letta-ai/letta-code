@@ -391,6 +391,8 @@ export interface QueueRuntimeItemWire {
   content: MessageCreate["content"] | string;
   /** ISO8601 UTC enqueue timestamp. */
   enqueued_at: string;
+  /** User input held by interrupt until resume or the next user message. */
+  paused?: boolean;
 }
 
 /**
