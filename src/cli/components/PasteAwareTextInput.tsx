@@ -111,13 +111,44 @@ const OPTION_LEFT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|7|8|9)D$/;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequences require ESC control character
 const OPTION_RIGHT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|7|8|9)C$/;
 
-function detectOptionWordDirection(sequence: string): WordDirection | null {
+export function detectOptionWordDirection(
+  sequence: string,
+): WordDirection | null {
   if (!sequence.startsWith("\u001b")) return null;
   if (sequence === "\u001bb" || sequence === "\u001bB") return "left";
   if (sequence === "\u001bf" || sequence === "\u001bF") return "right";
   if (OPTION_LEFT_PATTERN.test(sequence)) return "left";
   if (OPTION_RIGHT_PATTERN.test(sequence)) return "right";
+
+  // Kitty's CSI-u protocol encodes Alt/Option as bit 2 in the modifier
+  // field (the wire value is 1 + bitmask).  Keep handling the traditional
+  // ESC-prefixed forms above, but also recognize the CSI-u form emitted by
+  // terminals such as Kitty, Ghostty, and iTerm2.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequence requires ESC.
+  const csiUMatch = sequence.match(/^\u001b\[(\d+);(\d+)(?::(\d+))?u$/);
+  if (csiUMatch) {
+    const keycode = Number(csiUMatch[1]);
+    const modifier = Number(csiUMatch[2]) - 1;
+    const event = csiUMatch[3] ? Number(csiUMatch[3]) : 1;
+    if (event !== 3 && (modifier & 2) !== 0) {
+      const key = String.fromCharCode(keycode).toLowerCase();
+      if (key === "b") return "left";
+      if (key === "f") return "right";
+    }
+  }
+
   return null;
+}
+
+/** Return true for a pressed/repeated Kitty Alt+Backspace sequence. */
+export function isKittyOptionDeleteSequence(sequence: string): boolean {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequence requires ESC.
+  const match = sequence.match(/^\u001b\[127;(\d+)(?::(\d+))?u$/);
+  if (!match) return false;
+
+  const modifier = Number(match[1]) - 1;
+  const event = match[2] ? Number(match[2]) : 1;
+  return event !== 3 && (modifier & 2) !== 0;
 }
 
 export function PasteAwareTextInput({
@@ -564,7 +595,8 @@ export function PasteAwareTextInput({
         sequence === "\x1b\x7f" ||
         sequence === "\x1b\x08" ||
         sequence === "\x1b\b" ||
-        sequence === "\x17"
+        sequence === "\x17" ||
+        isKittyOptionDeleteSequence(sequence)
       ) {
         deletePreviousWord();
         return;

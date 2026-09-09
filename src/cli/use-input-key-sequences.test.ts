@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import {
+  detectOptionWordDirection,
+  isKittyOptionDeleteSequence,
+} from "@/cli/components/PasteAwareTextInput";
 
 const useInputModuleUrl = new URL(
   "../../node_modules/ink/build/hooks/use-input.js",
@@ -82,5 +86,21 @@ describe("use-input key sequence handling", () => {
     expect(
       t.shouldSuppressBareEnterAfterModifiedEnter("\n", true, "darwin"),
     ).toBe(false);
+  });
+
+  test("recognizes Kitty CSI-u Option word navigation", () => {
+    expect(detectOptionWordDirection("\x1b[98;3u")).toBe("left");
+    expect(detectOptionWordDirection("\x1b[102;3u")).toBe("right");
+    expect(detectOptionWordDirection("\x1b[98;3:1u")).toBe("left");
+    expect(detectOptionWordDirection("\x1b[98;3:3u")).toBeNull();
+    expect(detectOptionWordDirection("\x1b[98;2u")).toBeNull();
+  });
+
+  test("recognizes Kitty CSI-u Option+Backspace without key-release events", () => {
+    expect(isKittyOptionDeleteSequence("\x1b[127;3u")).toBe(true);
+    expect(isKittyOptionDeleteSequence("\x1b[127;3:2u")).toBe(true);
+    expect(isKittyOptionDeleteSequence("\x1b[127;3:3u")).toBe(false);
+    expect(isKittyOptionDeleteSequence("\x1b[127;2u")).toBe(false);
+    expect(isKittyOptionDeleteSequence("\x1b[126;3u")).toBe(false);
   });
 });
