@@ -32,8 +32,19 @@ describe("sendMessageStream skill sources", () => {
       buildClientSkillsUpdateReminder([skill, other], [other, skill]),
     ).toBeNull();
     const reminder = buildClientSkillsUpdateReminder([skill], [other]);
-    expect(reminder).toContain(JSON.stringify([other]));
-    expect(reminder).toContain('Skills no longer available: ["search"]');
+    expect(reminder).toContain(
+      "Additional skills are now available:\n<available_skills>\n  <skill>\n    <name>review</name>\n    <description>Review</description>\n  </skill>\n</available_skills>",
+    );
+    expect(reminder).not.toContain(other.location);
+    expect(reminder).toContain("Skills no longer available:\n- search");
+    expect(
+      buildClientSkillsUpdateReminder(
+        [],
+        [{ ...skill, name: "a&b", description: "<example>" }],
+      ),
+    ).toContain(
+      "<name>a&amp;b</name>\n    <description>&lt;example&gt;</description>",
+    );
     expect(
       buildClientSkillsUpdateReminder(
         [skill],
@@ -45,7 +56,7 @@ describe("sendMessageStream skill sources", () => {
         [skill],
         [{ ...skill, location: "/moved/SKILL.md" }],
       ),
-    ).toContain("/moved/SKILL.md");
+    ).toContain("<name>search</name>");
   });
 
   test("notifies each conversation once, preserves approvals, and retries rejected sends", async () => {

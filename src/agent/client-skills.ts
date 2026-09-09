@@ -244,19 +244,35 @@ export function buildClientSkillsUpdateReminder(
     .map((skill) => skill.name);
   if (changed.length === 0 && removed.length === 0) return null;
 
+  const escapeXml = (text: string): string =>
+    text
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#x27;");
   // Keep this metadata-only. Skill bodies stay lazy-loaded through Skill.
   return [
     "<system-reminder>",
-    "The skills available through the Skill tool have changed.",
     ...(changed.length > 0
       ? [
-          `New or updated skills (name, description, location):\n${JSON.stringify(changed)}`,
+          "Additional skills are now available:",
+          "<available_skills>",
+          ...changed.flatMap((skill) => [
+            "  <skill>",
+            `    <name>${escapeXml(skill.name)}</name>`,
+            `    <description>${escapeXml(skill.description)}</description>`,
+            "  </skill>",
+          ]),
+          "</available_skills>",
         ]
       : []),
     ...(removed.length > 0
-      ? [`Skills no longer available: ${JSON.stringify(removed)}`]
+      ? [
+          "Skills no longer available:",
+          ...removed.map((name) => `- ${escapeXml(name)}`),
+        ]
       : []),
-    "Use the Skill tool to load a skill's full instructions before using it.",
     "</system-reminder>",
   ].join("\n");
 }
