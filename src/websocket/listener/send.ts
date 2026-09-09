@@ -408,7 +408,10 @@ export async function resolveStaleApprovals(
       ]);
       let continuationActingUserId: string | undefined;
       let recoveryTurnCorrelation: TurnCorrelation | undefined;
-      const consumedQueuedTurn = consumeQueuedTurn(runtime);
+      const consumedQueuedTurn = consumeQueuedTurn(
+        runtime,
+        preparedToolContext.preparedToolContext.contextId,
+      );
       if (consumedQueuedTurn) {
         const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
         recoveryTurnCorrelation = createTurnCorrelation(

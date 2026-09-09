@@ -379,6 +379,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 }
 
 export async function prepareToolExecutionContextForScope(params: {
+  githubWriteCapability?: string | null;
   connectionId?: string;
   environmentDeviceId?: string;
   agentId: string | null;
@@ -502,6 +503,7 @@ export async function prepareToolExecutionContextForScope(params: {
     agent: agent as AgentState | null,
     runtimeContext: {
       connectionId,
+      githubWriteCapability: params.githubWriteCapability ?? null,
       environmentDeviceId,
       agentId,
       agentName: (agent as AgentState | null)?.name ?? null,

@@ -122,6 +122,7 @@ export function resolveSubagentLauncher(
 }
 
 export interface ComposeSubagentChildEnvOptions {
+  githubWriteCapability?: string | null;
   /** The env of the process spawning the subagent (parent). */
   parentProcessEnv: NodeJS.ProcessEnv;
   /** Active backend mode to force in the child CLI process. */
@@ -198,6 +199,12 @@ export function composeSubagentChildEnv(
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
   };
+  delete childEnv.LETTA_GITHUB_WRITE_CAPABILITY;
+  delete childEnv.LETTA_SUBAGENT_GITHUB_WRITE_CAPABILITY;
+  if (options.githubWriteCapability && launchProfile !== "memory-subagent") {
+    childEnv.LETTA_SUBAGENT_GITHUB_WRITE_CAPABILITY =
+      options.githubWriteCapability;
+  }
 
   if (backendMode === "local") {
     childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";

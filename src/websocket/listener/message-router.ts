@@ -4,6 +4,7 @@ import {
   estimateActiveMemorySystemPromptTokens,
   setSystemPromptDoctorState,
 } from "@/cli/helpers/system-prompt-warning";
+import { takeGithubWriteCapability } from "@/github-write-authority";
 import { settingsManager } from "@/settings-manager";
 import type {
   AbortMessageCommand,
@@ -48,6 +49,7 @@ import {
   enqueueInboundUserMessage,
   getInboundClientMessageId,
 } from "./inbound-queue";
+import { logInboundMessage } from "./log-inbound-message";
 import {
   isExecuteCommandCommand,
   parseServerLifecycleMessage,
@@ -229,21 +231,9 @@ export function createListenerMessageHandler(
       }
 
       const parsed = parseServerMessage(data);
+      const githubWriteCapability = takeGithubWriteCapability(parsed);
       parsedScope = getParsedRuntimeScope(parsed);
-      if (parsed) {
-        safeEmitWsEvent("recv", "client", parsed);
-      } else {
-        // Log unparseable frames so protocol drift is visible in debug mode
-        safeEmitWsEvent("recv", "lifecycle", {
-          type: "_ws_unparseable",
-          raw,
-        });
-      }
-      if (isDebugEnabled()) {
-        console.log(
-          `[Listen] Received message: ${JSON.stringify(parsed, null, 2)}`,
-        );
-      }
+      logInboundMessage(parsed, raw);
 
       if (!parsed) {
         return;
@@ -543,6 +533,8 @@ export function createListenerMessageHandler(
           excludeInteractiveTools: inputPayload.exclude_interactive_tools,
           imageFailureMode: inputPayload.image_failure_mode,
           messages: inputPayload.messages,
+          githubWriteCapability,
+          ...(githubWriteCapability ? { noCoalesce: true } : {}),
         };
         const hasApprovalPayload = incoming.messages.some(
           (payload): payload is ApprovalCreate =>

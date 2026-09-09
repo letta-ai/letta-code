@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runWithRuntimeContext } from "@/runtime-context";
 import {
   __clearExecSessionsForTests,
   exec_command,
@@ -27,6 +28,34 @@ function deleteOverflowFiles(output: string): void {
 }
 
 describe.skipIf(isWindows)("Codex unified exec tools", () => {
+  test("a later human cannot type into an earlier human's authorized shell", async () => {
+    const first = await exec_command({
+      cmd: "read answer; printf '%s' \"$answer\"",
+      tty: true,
+      yield_time_ms: 250,
+      secretEnv: { LETTA_GITHUB_WRITE_CAPABILITY: "alice-authority" },
+    });
+    const sessionId = Number(
+      first.output.match(/Process running with session ID (\d+)/)?.[1],
+    );
+    expect(Number.isFinite(sessionId)).toBe(true);
+    await expect(
+      runWithRuntimeContext({ githubWriteCapability: "bob-authority" }, () =>
+        write_stdin({ session_id: sessionId, chars: "write-as-alice\n" }),
+      ),
+    ).rejects.toThrow("different GitHub-authorized turn");
+    const result = await runWithRuntimeContext(
+      { githubWriteCapability: "alice-authority" },
+      () =>
+        write_stdin({
+          session_id: sessionId,
+          chars: "own-request\n",
+          yield_time_ms: 1000,
+        }),
+    );
+    expect(result.output).toContain("own-request");
+    expect(result.output).not.toContain("write-as-alice");
+  });
   beforeEach(() => {
     __resetBackgroundRetentionConfigForTests();
     clearPendingMessages();

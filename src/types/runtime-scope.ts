@@ -14,6 +14,8 @@ export interface RuntimeScope<AgentId extends string | null = string> {
   agent_id: AgentId;
   conversation_id: string;
   acting_user_id?: string;
+  /** Opaque Cloud-issued GitHub write authority; inbound only, never echoed. */
+  github_write_capability?: string;
 }
 
 export type AgentRuntimeScope = RuntimeScope<string>;

@@ -1,3 +1,7 @@
+import {
+  GITHUB_WRITE_CAPABILITY_ENV,
+  getGithubWriteCapability,
+} from "@/github-write-authority";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
@@ -711,6 +715,16 @@ export async function write_stdin(
   }
 
   const chars = args.chars ?? "";
+  if (
+    chars &&
+    chars !== INTERRUPT &&
+    (session.secrets[GITHUB_WRITE_CAPABILITY_ENV] || null) !==
+      getGithubWriteCapability()
+  ) {
+    throw new Error(
+      "This shell belongs to a different GitHub-authorized turn. Start a new exec_command session.",
+    );
+  }
   if (chars && !session.tty) {
     if (chars === INTERRUPT) {
       (backgroundProcess.process as ShellProcessHandle).interrupt();

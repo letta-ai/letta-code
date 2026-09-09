@@ -266,8 +266,10 @@ describe("listener message router ownership handoff", () => {
     const socket = new MockSocket();
     const sent: unknown[] = [];
     let receivedActingUserId: string | undefined;
+    let receivedGithubAuthority: string | null | undefined;
     const processIncomingMessage = mock(async (incoming: IncomingMessage) => {
       receivedActingUserId = incoming.actingUserId;
+      receivedGithubAuthority = incoming.githubWriteCapability;
     });
     setActiveRuntime(listener);
     const handleMessage = createListenerMessageHandler({
@@ -301,6 +303,7 @@ describe("listener message router ownership handoff", () => {
             agent_id: "agent-1",
             conversation_id: "conv-1",
             acting_user_id: "cloud-user-1",
+            github_write_capability: "private-github-authority",
           },
           payload: {
             kind: "create_message",
@@ -344,6 +347,8 @@ describe("listener message router ownership handoff", () => {
 
     expect(processIncomingMessage).toHaveBeenCalledTimes(1);
     expect(receivedActingUserId).toBe("cloud-user-1");
+    expect(receivedGithubAuthority).toBe("private-github-authority");
+    expect(JSON.stringify(sent)).not.toContain("private-github-authority");
     expect(sent).toContainEqual(
       expect.objectContaining({
         type: "input_accepted",

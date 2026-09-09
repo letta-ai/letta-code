@@ -109,6 +109,8 @@ export interface IncomingMessage {
    * self-hosted, single-user, or pre-channel-split flows.
    */
   actingUserId?: string;
+  /** Private, inbound-only Cloud authority for this request. */
+  githubWriteCapability?: string | null;
 }
 
 export type ProcessQueuedTurn = (
