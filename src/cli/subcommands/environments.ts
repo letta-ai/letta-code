@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { getRuntimeEnvironmentDeviceId } from "@/backend/api/client";
 import {
   type EnvironmentConnection,
   listEnvironments,
@@ -164,7 +165,7 @@ export async function runEnvironmentsSubcommand(
 
   await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
   const list = deps.listEnvironments ?? listEnvironments;
-  const deviceId = settingsManager.getOrCreateDeviceId();
+  const deviceId = getRuntimeEnvironmentDeviceId();
   const savedName = settingsManager.getListenerEnvName();
   const currentVersion = getVersion();
   if (action === "current") {

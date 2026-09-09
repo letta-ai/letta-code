@@ -560,7 +560,7 @@ describe("pullMemory recovery", () => {
 
     process.env.LETTA_API_KEY = "test-token";
     __testOverrideGetClient(async () => ({
-      _options: { apiKey: "test-token" },
+      apiKey: "test-token",
     }));
 
     const result = await pullMemory(agentId);
@@ -596,7 +596,7 @@ describe("pullMemory recovery", () => {
 
     process.env.LETTA_API_KEY = "test-token";
     __testOverrideGetClient(async () => ({
-      _options: { apiKey: "test-token" },
+      apiKey: "test-token",
     }));
 
     const result = await pullMemory(agentId);
@@ -623,7 +623,7 @@ describe("credential helper reset", () => {
     }
     process.env.LETTA_API_KEY = "fresh-token";
     __testOverrideGetClient(async () => ({
-      _options: { apiKey: "fresh-token" },
+      apiKey: "fresh-token",
     }));
 
     await syncPendingMemoryCommitsAfterTurn("agent-123", {
@@ -705,7 +705,7 @@ describe("assertMemoryRepoCleanForWrite", () => {
     const localSha = commitFile(repo, "local.md", "local");
     process.env.LETTA_API_KEY = "test-token";
     __testOverrideGetClient(async () => ({
-      _options: { apiKey: "test-token" },
+      apiKey: "test-token",
     }));
 
     await assertMemoryRepoCleanForWrite(repo);
@@ -726,7 +726,7 @@ describe("assertMemoryRepoCleanForWrite", () => {
     git(other, "push");
     process.env.LETTA_API_KEY = "test-token";
     __testOverrideGetClient(async () => ({
-      _options: { apiKey: "test-token" },
+      apiKey: "test-token",
     }));
 
     await assertMemoryRepoCleanForWrite(repo);
@@ -765,7 +765,7 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
     const localSha = commitFile(repo, "local.md", "local");
     process.env.LETTA_API_KEY = "test-token";
     __testOverrideGetClient(async () => ({
-      _options: { apiKey: "test-token" },
+      apiKey: "test-token",
     }));
 
     const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
@@ -786,7 +786,7 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
     writeFileSync(join(repo, "dirty.md"), "dirty", "utf-8");
     process.env.LETTA_API_KEY = "test-token";
     __testOverrideGetClient(async () => ({
-      _options: { apiKey: "test-token" },
+      apiKey: "test-token",
     }));
 
     const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
@@ -803,7 +803,7 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
     writeFileSync(join(repo, ".git", "MERGE_HEAD"), `${head}\n`, "utf-8");
     process.env.LETTA_API_KEY = "test-token";
     __testOverrideGetClient(async () => ({
-      _options: { apiKey: "test-token" },
+      apiKey: "test-token",
     }));
 
     const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {

@@ -4,6 +4,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { getSelfUpdateStatus } from "@/updater/auto-update";
 import { getVersion } from "@/version.ts";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener/listener-constants";
@@ -116,7 +117,7 @@ export async function registerWithCloud(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${opts.apiKey}`,
+      Authorization: `Bearer ${getDesktopAccessToken() ?? opts.apiKey}`,
       "X-Letta-Source": "letta-code",
     },
     body: JSON.stringify({

@@ -43,6 +43,19 @@ export function isValidListenerInstanceId(value: string): boolean {
  * cached for the lifetime of this listener process.
  */
 let cachedSpawnerListenerInstanceId: string | null | undefined;
+let cachedSpawnerDeviceId: string | null | undefined;
+
+/** Registration identity is owned by the spawner, not the shared CLI settings. */
+export function getSpawnerDeviceId(): string | null {
+  if (cachedSpawnerDeviceId !== undefined) return cachedSpawnerDeviceId;
+  const value = process.env.LETTA_LISTENER_DEVICE_ID;
+  delete process.env.LETTA_LISTENER_DEVICE_ID;
+  if (value && !isValidListenerInstanceId(value)) {
+    throw new Error("Invalid spawner device ID");
+  }
+  cachedSpawnerDeviceId = value || null;
+  return cachedSpawnerDeviceId;
+}
 
 /**
  * The spawner-assigned identity for THIS process, or null when none was
@@ -69,5 +82,6 @@ export function getSpawnerListenerInstanceId(): string | null {
 export const __listenerIdentityTestUtils = {
   resetCachedSpawnerIdentity() {
     cachedSpawnerListenerInstanceId = undefined;
+    cachedSpawnerDeviceId = undefined;
   },
 };

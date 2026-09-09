@@ -1,3 +1,4 @@
+import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import {
   LETTA_CLOUD_API_URL,
   OAuthRefreshError,
@@ -198,7 +199,7 @@ async function resolveListenerAuth(
   const allowInteractiveOAuth = options.allowInteractiveOAuth ?? true;
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
-  const envApiKey = process.env.LETTA_API_KEY;
+  const envApiKey = getDesktopAccessToken() || process.env.LETTA_API_KEY;
 
   if (envApiKey) {
     return { serverUrl, apiKey: envApiKey };

@@ -1,6 +1,11 @@
 {
   "tests": [
     {
+      "path": "src/auth/desktop-credentials.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Builds Bun and Node child fixtures with Bun.build; running channel imports afterward in the same Bun process produces alias-resolution failures."
+    },
+    {
       "path": "src/cli/tui-interrupt-queue-lifecycle.test.tsx",
       "timeoutMs": 30000,
       "reason": "Mounts the production TUI, which updates process-wide agent/tool context and settings; keep its proof agent out of later permission and mod tests."

@@ -1,5 +1,9 @@
 import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
+import {
+  bindDesktopCredentials,
+  getDesktopAccessToken,
+} from "@/auth/desktop-credentials";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
 import { type Settings, settingsManager } from "@/settings-manager";
@@ -161,7 +165,11 @@ export async function getClient() {
       ? cachedSettings
       : await settingsManager.getSettingsWithSecureTokens();
 
-  let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+  const desktopAccessToken = getDesktopAccessToken();
+  let apiKey =
+    desktopAccessToken ||
+    process.env.LETTA_API_KEY ||
+    settings.env?.LETTA_API_KEY;
 
   if (!process.env.LETTA_API_KEY) {
     if (apiKey) {
@@ -177,6 +185,7 @@ export async function getClient() {
 
   // Check if token is expired and refresh if needed
   if (
+    !desktopAccessToken &&
     !process.env.LETTA_API_KEY &&
     settings.tokenExpiresAt &&
     settings.refreshToken
@@ -286,5 +295,5 @@ export async function getClient() {
     return promise;
   }) as typeof client.messages.retrieve;
 
-  return client;
+  return bindDesktopCredentials(client);
 }

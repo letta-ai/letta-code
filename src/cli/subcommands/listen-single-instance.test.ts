@@ -9,6 +9,7 @@ import {
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { deriveListenerInstanceId } from "@/websocket/listen-register";
+import { __listenerIdentityTestUtils } from "@/websocket/listener/identity";
 import { acquireManualListenerLock } from "@/websocket/listener/manual-instance-lock";
 
 describe("standalone listener single-instance wiring", () => {
@@ -26,12 +27,16 @@ describe("standalone listener single-instance wiring", () => {
   const originalBaseUrl = process.env.LETTA_BASE_URL;
   const originalSpawnerIdentity = process.env.LETTA_LISTENER_INSTANCE_ID;
   const originalDesktopMode = process.env.LETTA_DESKTOP_MODE;
+  const originalSpawnerDevice = process.env.LETTA_LISTENER_DEVICE_ID;
+  const originalRuntimeDevice = process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID;
   const originalDebug = process.env.LETTA_DEBUG;
 
   let tempHome: string;
   let errors: string[];
 
   beforeEach(async () => {
+    __listenerIdentityTestUtils.resetCachedSpawnerIdentity();
+    delete process.env.LETTA_LISTENER_DEVICE_ID;
     tempHome = await mkdtemp(path.join(tmpdir(), "letta-listener-wiring-"));
     errors = [];
     process.env.HOME = tempHome;
@@ -63,6 +68,14 @@ describe("standalone listener single-instance wiring", () => {
   });
 
   afterEach(async () => {
+    __listenerIdentityTestUtils.resetCachedSpawnerIdentity();
+    if (originalSpawnerDevice === undefined)
+      delete process.env.LETTA_LISTENER_DEVICE_ID;
+    else process.env.LETTA_LISTENER_DEVICE_ID = originalSpawnerDevice;
+    if (originalRuntimeDevice === undefined)
+      delete process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID;
+    else
+      process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = originalRuntimeDevice;
     settingsManager.initialize = originalInitialize;
     settingsManager.loadLocalProjectSettings = originalLoadLocalProjectSettings;
     settingsManager.setListenerEnvName = originalSetListenerEnvName;
@@ -147,6 +160,26 @@ describe("standalone listener single-instance wiring", () => {
     expect(
       __listenSubcommandTestUtils.shouldAcquireStandaloneListenerLock(),
     ).toBe(false);
+  });
+
+  test("uses Desktop registration identity without writing CLI device or name", async () => {
+    process.env.LETTA_LISTENER_DEVICE_ID = "desktop:install-1:user-1";
+    process.env.LETTA_LISTENER_INSTANCE_ID = "desktop-primary:install-1";
+    const exitCode = await runListenSubcommand([
+      "--env-name",
+      "My Desktop",
+      "--channels",
+      "not-a-channel",
+      "--install-channel-runtimes",
+    ]);
+    // Stop at the existing channel validation boundary, before connecting to Cloud.
+    expect(exitCode).toBe(1);
+    expect(settingsManager.getOrCreateDeviceId).not.toHaveBeenCalled();
+    expect(settingsManager.setListenerEnvName).not.toHaveBeenCalled();
+    expect(process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID).toBe(
+      "desktop:install-1:user-1",
+    );
+    expect(process.env.LETTA_LISTENER_DEVICE_ID).toBeUndefined();
   });
 
   test("enables shared debug logging in --debug mode", async () => {
