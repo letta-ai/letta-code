@@ -1,6 +1,11 @@
 {
   "tests": [
     {
+      "path": "src/websocket/listener/turn-cleanup-shared-memory.e2e.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Runs real Git pushes while replacing global fetch and mutating the backend, settings, MemFS URL, and a synthetic agent mount."
+    },
+    {
       "path": "src/auth/desktop-credentials.test.ts",
       "timeoutMs": 30000,
       "reason": "Builds Bun and Node child fixtures with Bun.build; running channel imports afterward in the same Bun process produces alias-resolution failures."
