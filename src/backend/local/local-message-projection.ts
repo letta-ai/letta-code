@@ -117,6 +117,24 @@ function toolResultToStoredReturnValue(
   });
 }
 
+function segmentIdentity(
+  message: LocalAssistantMessage,
+  contentStartIndex: number,
+  messageType:
+    | "assistant_message"
+    | "reasoning_message"
+    | "approval_request_message",
+): { otid?: string } {
+  const provenance = message.metadata?.stream_provenance;
+  if (provenance?.version !== 1) return {};
+  const segment = provenance.segments.find(
+    (entry) =>
+      entry.content_start_index === contentStartIndex &&
+      entry.message_type === messageType,
+  );
+  return segment ? { otid: segment.otid } : {};
+}
+
 function projectThinkingContent(
   message: LocalAssistantMessage,
   reasoning: string,
@@ -132,6 +150,7 @@ function projectThinkingContent(
     agent_id: agentId,
     conversation_id: conversationId,
     message_type: "reasoning_message",
+    ...segmentIdentity(message, contentStartIndex, "reasoning_message"),
     reasoning,
   } as StoredMessage;
 }
@@ -139,6 +158,7 @@ function projectThinkingContent(
 function projectToolCallContent(
   message: LocalAssistantMessage,
   content: ToolCall,
+  contentIndex: number,
   date: string,
   agentId: string,
   conversationId: string,
@@ -149,6 +169,7 @@ function projectToolCallContent(
     agent_id: agentId,
     conversation_id: conversationId,
     message_type: "approval_request_message",
+    ...segmentIdentity(message, contentIndex, "approval_request_message"),
     tool_call: {
       tool_call_id: content.id,
       name: content.name,
@@ -254,6 +275,7 @@ export function projectLocalMessageToStoredMessages(
       message_type: "assistant_message",
       role: "assistant",
       content: pendingTextContent,
+      ...segmentIdentity(message, pendingTextStartIndex, "assistant_message"),
     } as StoredMessage);
     pendingTextContent = [];
     pendingTextStartIndex = -1;
@@ -285,10 +307,10 @@ export function projectLocalMessageToStoredMessages(
 
     if (isThinkingContent(content)) {
       flushPendingText();
+      if (pendingReasoningStartIndex === -1) {
+        pendingReasoningStartIndex = contentIndex;
+      }
       if (content.thinking.length > 0) {
-        if (pendingReasoningStartIndex === -1) {
-          pendingReasoningStartIndex = contentIndex;
-        }
         pendingReasoningContent.push(content.thinking);
       }
       continue;
@@ -298,7 +320,14 @@ export function projectLocalMessageToStoredMessages(
       flushPendingText();
       flushPendingReasoning();
       messages.push(
-        projectToolCallContent(message, content, date, agentId, conversationId),
+        projectToolCallContent(
+          message,
+          content,
+          contentIndex,
+          date,
+          agentId,
+          conversationId,
+        ),
       );
       continue;
     }

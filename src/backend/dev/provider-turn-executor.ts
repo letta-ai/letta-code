@@ -13,6 +13,7 @@ import {
 import type {
   LocalAssistantMessage,
   LocalMessage,
+  LocalStreamSegment,
 } from "@/backend/local/local-message";
 import type {
   LocalAgentRecord,
@@ -395,6 +396,54 @@ function otidForContentSegment(
   return otid;
 }
 
+function withStreamProvenance(
+  message: LocalMessage,
+  assistantOtids: Map<number, string>,
+  reasoningOtids: Map<number, string>,
+  toolOtids: Map<number, string>,
+): LocalMessage {
+  if (message.role !== "assistant") return message;
+  const segments: LocalStreamSegment[] = [];
+  for (let start = 0; start < message.content.length; ) {
+    const content = message.content[start];
+    if (!content) break;
+    let end = start + 1;
+    if (content.type !== "toolCall") {
+      while (message.content[end]?.type === content.type) end++;
+    }
+    const messageType =
+      content.type === "text"
+        ? "assistant_message"
+        : content.type === "thinking"
+          ? "reasoning_message"
+          : "approval_request_message";
+    const otid = (
+      content.type === "text"
+        ? assistantOtids
+        : content.type === "thinking"
+          ? reasoningOtids
+          : toolOtids
+    ).get(start);
+    if (otid) {
+      segments.push({
+        content_start_index: start,
+        content_end_index: end,
+        message_type: messageType,
+        otid,
+      });
+    }
+    start = end;
+  }
+  if (segments.length === 0) return message;
+  return {
+    ...message,
+    metadata: {
+      ...message.metadata,
+      stream_provenance: { version: 1, segments },
+    },
+  };
+}
+
 function createProviderLettaStream(
   events: AsyncIterable<ProviderStreamEvent>,
   contextTokensEstimate?: number,
@@ -408,6 +457,7 @@ function createProviderLettaStream(
       let sawUsageStatistics = false;
       const assistantOtids = new Map<number, string>();
       const reasoningOtids = new Map<number, string>();
+      const toolOtids = new Map<number, string>();
       try {
         for await (const event of events) {
           if (event.type === "error") {
@@ -416,7 +466,19 @@ function createProviderLettaStream(
           }
 
           if (event.type === "local-message") {
-            yield createLocalMessageChunk(event.message);
+            yield createLocalMessageChunk(
+              withStreamProvenance(
+                event.message,
+                assistantOtids,
+                reasoningOtids,
+                toolOtids,
+              ),
+            );
+            if (event.message.role === "assistant") {
+              assistantOtids.clear();
+              reasoningOtids.clear();
+              toolOtids.clear();
+            }
             continue;
           }
 
@@ -458,8 +520,13 @@ function createProviderLettaStream(
 
           if (part.type === "toolcall_end") {
             sawToolCall = true;
+            const otid =
+              toolOtids.get(part.contentIndex) ??
+              `provider-tool-${part.contentIndex}-${randomUUID()}`;
+            toolOtids.set(part.contentIndex, otid);
             yield {
               message_type: "approval_request_message",
+              otid,
               tool_call: {
                 tool_call_id: part.toolCall.id,
                 name: part.toolCall.name,

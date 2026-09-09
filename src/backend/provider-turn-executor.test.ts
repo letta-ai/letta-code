@@ -226,6 +226,44 @@ describe("ProviderTurnExecutor", () => {
     expect(reasoningOtids[0]).not.toBe(reasoningOtids[2]);
   });
 
+  test("scopes segment identities to each final assistant snapshot", async () => {
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        for (let index = 0; index < 2; index++) {
+          const message = assistantMessage();
+          yield providerStreamPart(
+            part({
+              type: "text_delta",
+              contentIndex: 0,
+              delta: "done",
+              partial: message,
+            }),
+          );
+          yield providerLocalMessage(message);
+          yield providerStreamPart(
+            part({ type: "done", reason: "stop", message }),
+          );
+        }
+      },
+    };
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    const otids = chunks
+      .filter((chunk) => chunk.message_type === "assistant_message")
+      .map((chunk) => (chunk as { otid?: string }).otid);
+    const snapshots = chunks
+      .map(getAttachedLocalMessage)
+      .filter((message) => message !== undefined);
+    expect(otids).toHaveLength(2);
+    expect(otids[0]).not.toBe(otids[1]);
+    expect(
+      snapshots.map(
+        (message) => message.metadata?.stream_provenance?.segments[0]?.otid,
+      ),
+    ).toEqual(otids);
+  });
+
   test("emits final local assistant messages as state-only chunks before stop_reason", async () => {
     const finalMessage = assistantMessage();
     const adapter: ProviderStreamAdapter = {

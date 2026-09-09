@@ -21,7 +21,25 @@ export interface LocalMessageProviderMetadata {
   usage?: unknown;
 }
 
+/** Exact live identities, indexed into the persisted assistant content array.
+ * Adjacent text/thinking blocks form one segment; tools form individual segments.
+ * Missing entries mean no live identity is known (including legacy history).
+ */
+export interface LocalStreamSegment {
+  content_start_index: number;
+  content_end_index: number; // Exclusive.
+  message_type:
+    | "assistant_message"
+    | "reasoning_message"
+    | "approval_request_message";
+  otid: string;
+}
+
 export interface LocalMessageMetadata {
+  stream_provenance?: {
+    version: 1;
+    segments: LocalStreamSegment[];
+  };
   created_at?: string;
   updated_at?: string;
   agent_id?: string;
