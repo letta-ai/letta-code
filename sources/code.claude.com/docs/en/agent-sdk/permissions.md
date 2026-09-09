@@ -30,7 +30,12 @@ When Claude requests a tool, the SDK checks permissions in this order:
   </Step>
 
   <Step title="Permission mode">
-    Apply the active [permission mode](#permission-modes). `bypassPermissions` approves everything that reaches this step except `rm` and `rmdir` removals targeting a [critical path](/docs/en/permission-modes#critical-paths), which fall through instead. `acceptEdits` approves the file operations listed under [Accept edits mode](#accept-edits-mode-acceptedits). `plan` routes file-edit and shell-write tools to your `canUseTool` callback regardless of allow rules, so write operations cannot be auto-approved while planning. Other modes fall through.
+    Apply the active [permission mode](#permission-modes):
+
+    * In `bypassPermissions` mode, Claude Code approves everything that reaches this step except `rm` and `rmdir` removals targeting a [critical path](/docs/en/permission-modes#critical-paths), which fall through instead.
+    * In `acceptEdits` mode, Claude Code approves the file operations listed under [Accept edits mode](#accept-edits-mode-acceptedits).
+    * In `plan` mode, Claude Code sends file-edit and shell-write tools to your `canUseTool` callback regardless of allow rules, so write operations can't be auto-approved while planning.
+    * In other modes, the request falls through.
   </Step>
 
   <Step title="Allow rules">
@@ -240,7 +245,11 @@ Auto-approves file operations so Claude can edit code without prompting. Other t
 * File edits (Edit, Write tools)
 * Filesystem commands: `mkdir`, `touch`, `rm`, `rmdir`, `mv`, `cp`, `sed`
 
-Both apply only to paths inside the working directory or `additionalDirectories`. Paths outside that scope, writes to protected paths, and `rm` and `rmdir` removals targeting a [critical path](/docs/en/permission-modes#critical-paths) still prompt.
+Both apply only to paths inside the working directory or `additionalDirectories`. In `acceptEdits` mode, Claude Code doesn't auto-approve the request when Claude:
+
+* Works on a path outside that scope
+* Writes to a protected path
+* Removes a [critical path](/docs/en/permission-modes#critical-paths) with `rm` or `rmdir`
 
 **Use when:** you trust Claude's edits and want faster iteration, such as during prototyping or when working in an isolated directory.
 

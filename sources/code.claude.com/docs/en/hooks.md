@@ -729,6 +729,7 @@ Hook events receive these fields as JSON, in addition to event-specific fields d
 | `prompt_id`       | UUID identifying the user prompt currently being processed. Matches the [`prompt.id` attribute on OpenTelemetry events](/docs/en/monitoring-usage#event-correlation-attributes), so you can correlate hook output with telemetry for a single prompt. Absent until the first user input. Requires Claude Code v2.1.196 or later                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `transcript_path` | Path to conversation JSON. The transcript file is written asynchronously and may lag the in-memory conversation, so it may not yet include the current turn's most recent messages when a hook fires. Hooks that need the final assistant text of the current turn should use `last_assistant_message` on [Stop](#stop) and [SubagentStop](#subagentstop) instead of reading the transcript                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `cwd`             | Current working directory when the hook is invoked                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `scratchpad_dir`  | Path to the session's scratchpad directory, where Claude keeps temporary working files. Absent when the session has no scratchpad or the temp directory is unavailable. Requires Claude Code v2.1.257 or later                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `permission_mode` | Current [permission mode](/docs/en/permissions#permission-modes): `"default"`, `"plan"`, `"acceptEdits"`, `"auto"`, `"dontAsk"`, or `"bypassPermissions"`. The mode labeled **Manual** arrives as `"default"`, never as `"manual"`, so scripts that match `"default"` keep working. Not all events receive this field. Check the JSON example in each [hook event](#hook-events) section                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `effort`          | Object with a `level` field holding the [effort level](/docs/en/model-config#adjust-effort-level) in effect when the hook runs: `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"`. If you set a level the active model doesn't support, `level` reports the level Claude Code ran instead; [Adjust effort level](/docs/en/model-config#adjust-effort-level) says how it picks that level. Ultracode is not a distinct level and reports as `"xhigh"`. The object matches the [status line](/docs/en/statusline#available-data) `effort` field. Present for events that fire within a tool-use context, such as `PreToolUse`, `PostToolUse`, `Stop`, and `SubagentStop`, when the current model supports the effort parameter. The level is also available to hook commands and the Bash tool as the `$CLAUDE_EFFORT` environment variable. |
 | `hook_event_name` | Name of the event that fired                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -754,6 +755,7 @@ For example, a `PreToolUse` hook for a Bash command receives this on stdin:
   "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
   "transcript_path": "/home/user/.claude/projects/.../transcript.jsonl",
   "cwd": "/home/user/my-project",
+  "scratchpad_dir": "/tmp/claude-1000/-home-user-my-project/abc123/scratchpad",
   "permission_mode": "default",
   "hook_event_name": "PreToolUse",
   "tool_name": "Bash",
@@ -2227,6 +2229,8 @@ In terminal sessions, `permission_prompt` for a sandboxed command's network requ
   * Expect `permission_prompt` once you haven't typed for about six seconds. The timer starts when the permission prompt appears, and each keystroke defers it. To run a hook immediately when Claude asks for permission to use a tool, use [PermissionRequest](#permissionrequest) instead.
   * Expect `idle_prompt` about 60 seconds after Claude finishes responding, and only if you haven't typed since. Claude Code doesn't send `idle_prompt` while it waits for a claude.ai usage limit to reset. When the wait ends on its own, one of the `quota_auto_resume_*` types fires instead.
   * Expect `elicitation_dialog` for an elicitation form, or `elicitation_url_dialog` for a browser URL request, once you haven't typed for about six seconds. Both share the same six-second gate as `permission_prompt`: the timer starts when the dialog appears, and each keystroke defers it.
+
+  A permission request or elicitation that arrives while another dialog is on screen keeps the same six-second gate, timed from when the request arrives. Its notification can reach you while the request still waits behind the open dialog.
 </Note>
 
 Claude Code times `permission_prompt` differently in sessions where it sends permission requests to the Agent SDK's [`canUseTool` callback](/docs/en/agent-sdk/user-input), which is how Claude Desktop and the VS Code extension host Claude Code:
@@ -2978,10 +2982,10 @@ Runs before Claude Code is about to run a compact operation.
 
 The matcher value indicates whether compaction was triggered manually or automatically:
 
-| Matcher  | When it fires                                |
-| :------- | :------------------------------------------- |
-| `manual` | `/compact`                                   |
-| `auto`   | Auto-compact when the context window is full |
+| Matcher  | When it fires                                                                                                      |
+| :------- | :----------------------------------------------------------------------------------------------------------------- |
+| `manual` | `/compact`                                                                                                         |
+| `auto`   | Auto-compact when the conversation reaches the [auto-compact window](/docs/en/model-config#set-the-auto-compact-window) |
 
 Exit with code 2 to block compaction. For a manual `/compact`, the stderr message is shown to the user. You can also block by returning JSON with `"decision": "block"`.
 
@@ -3010,10 +3014,10 @@ Runs after Claude Code completes a compact operation. Use this event to react to
 
 The same matcher values apply as for `PreCompact`:
 
-| Matcher  | When it fires                                      |
-| :------- | :------------------------------------------------- |
-| `manual` | After `/compact`                                   |
-| `auto`   | After auto-compact when the context window is full |
+| Matcher  | When it fires                                                                                                            |
+| :------- | :----------------------------------------------------------------------------------------------------------------------- |
+| `manual` | After `/compact`                                                                                                         |
+| `auto`   | After auto-compact when the conversation reaches the [auto-compact window](/docs/en/model-config#set-the-auto-compact-window) |
 
 #### PostCompact input
 

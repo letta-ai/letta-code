@@ -325,6 +325,8 @@ An error starting `Refusing to use <path> as an isolation worktree` means Claude
 
 In most cases the rest of the message says the directory's git metadata resolves into the main checkout: for example, its `.git` file points at the main repository's own `.git` directory, or git resolves its working tree to the main checkout through a `core.worktree` redirect. From such a directory, an ordinary git command such as `git reset --hard` would act on the main checkout instead of the worktree. Claude Code also refuses when the directory has a `.git` entry it can't read, rather than assuming the worktree is safe.
 
+A directory with no git metadata at all, such as one your [`WorktreeCreate` hook](#non-git-version-control) creates, passes the check only when no git repository contains it. If the hook creates the directory inside a repository, git resolves it to that repository's checkout and Claude Code refuses it with the `git resolves its working tree to` message, so have the hook create its directories outside any repository.
+
 Claude Code leaves the refused directory in place, since it may hold work. Match the message to its recovery, whether it follows `Refusing to use <path>` or appears in a [resume message](#the-session-resumes-outside-its-worktree); some endings occur only in resume messages:
 
 * **Says `launch from the parent checkout` or `Run the resume from the project checkout`**: you launched Claude Code from inside the worktree. Launch from the main checkout instead; the worktree needs no recreation.
@@ -336,7 +338,7 @@ Claude Code leaves the refused directory in place, since it may hold work. Match
 
 ### The session resumes outside its worktree
 
-When an interactive resume can't return the session to its worktree, Claude Code says so with one of the messages below.
+When you resume a session interactively and Claude Code can't return it to its worktree, Claude Code says so with one of the messages below. When Claude Code clears the worktree binding, it records the clear in the session transcript. If you [suppress transcript writes](/docs/en/sessions#where-transcripts-are-stored), the message says instead that the binding could not be cleared and that Claude Code will re-check the worktree on a later resume.
 
 | Message starts with                               | What happened and what to do                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | :------------------------------------------------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -345,9 +347,15 @@ When an interactive resume can't return the session to its worktree, Claude Code
 | `Did not re-enter your worktree <path>`           | Claude Code refused the worktree binding as unsafe; it clears the binding and the session continues without isolation. The message includes the specific refusal: match it under [Claude Code refuses to use a worktree](#claude-code-refuses-to-use-a-worktree), since the fix is recreation for some refusals and a path change for others.                                                                                                       |
 | `Could not re-enter your worktree <path>`         | Claude Code couldn't vouch for the worktree from where you launched, most commonly because you launched from inside it; the binding is kept. The rest of the message names the fix; match it under [Claude Code refuses to use a worktree](#claude-code-refuses-to-use-a-worktree).                                                                                                                                                                 |
 
-In [non-interactive mode](/docs/en/headless) with `-p`, and on resumes the [Agent SDK](/docs/en/agent-sdk/sessions) runs, Claude Code stops the resume with a stderr error for every refusal except a gone worktree, instead of continuing without isolation, and the messages take different shapes from the ones in the table above:
+In [non-interactive mode](/docs/en/headless) with `-p`, and on resumes that the [Agent SDK](/docs/en/agent-sdk/sessions) runs, Claude Code stops the resume with a stderr error for every refusal except a gone worktree, instead of continuing without isolation.
 
-* `Error: cannot resume into worktree <path>: ...This session was not started.` for a refusal the table shows as `Did not re-enter`
+With `--output-format stream-json`, the refusal also arrives on stdout as a `result` message with subtype `error_during_execution` whose `errors` array carries the same text, so an Agent SDK application receives the reason rather than only a non-zero exit. Before v2.1.260, a worktree-resume refusal produced no `result` message.
+
+The messages take different shapes from the interactive messages in the table:
+
+* `Error: cannot resume into worktree <path>: ...This session was not started.` for a refusal the table shows as `Did not re-enter`. Claude Code clears the worktree binding before exiting, and the error says so; the next time you resume the conversation, the session continues in the current directory without worktree isolation. Before v2.1.260, Claude Code didn't write the cleared binding, so every retry of the same resume failed with the same error.
+
+  If you [suppress transcript writes](/docs/en/sessions#where-transcripts-are-stored), the clear can't be saved. The error then says the same command will be refused again, and names `--fork-session` and starting a new conversation as ways to continue without the worktree.
 * `Error: could not verify worktree <path> for this resume, so the resume was aborted...` for `Could not verify`
 * `Error: ...The worktree binding is kept.` for `Could not re-enter`
 * `Notice: the worktree <path> for this session no longer exists...` for a gone worktree; Claude Code prints it and continues the session, as an interactive resume does

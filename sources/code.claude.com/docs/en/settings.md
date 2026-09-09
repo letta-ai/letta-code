@@ -569,9 +569,9 @@ To try a value without saving it, set it when you start Claude Code. The value a
 
 Each key's entry on the [settings reference](/docs/en/settings-reference) lists its per-session overrides and which one takes precedence, so check the entry for the key you want to change.
 
-Commands you run inside a session mostly save your choice: `/config` writes to your settings files, `/model` saves the value as your default for new sessions, and `/effort` on your machine saves the level as your default for the model you're using.
+Commands you run inside a session mostly save your choice: when you change a setting in `/config`, Claude Code writes it to your settings files, and `/model` saves the value as your default for new sessions.
 
-If you press `s` in the `/model` picker, Claude Code switches the model without saving it as your user default. Claude Code applies some `/effort` levels, such as `max` and `ultracode`, to the current session only; see [Adjust effort level](/docs/en/model-config#adjust-effort-level).
+If you press `s` in the `/model` picker, Claude Code switches the model without saving it as your user default. [Adjust effort level](/docs/en/model-config#adjust-effort-level) says which `/effort` picks Claude Code saves as your default for the model you're using and which apply to the current session only.
 
 For example, to start one session on Opus without changing your default:
 

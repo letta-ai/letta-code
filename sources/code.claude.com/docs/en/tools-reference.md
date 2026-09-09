@@ -275,6 +275,8 @@ Results are sorted by modification time and capped at 100 files. If the cap is h
 
 Glob doesn't respect `.gitignore` by default, so it finds gitignored files alongside tracked ones. This differs from [Grep](#grep-tool-behavior), which skips gitignored files. To make Glob respect `.gitignore`, set `CLAUDE_CODE_GLOB_NO_IGNORE=false` before launching Claude Code.
 
+Claude Code decides permission for a Glob call before it checks whether the search directory exists. It still runs the read-permission check for a missing `path` outside the [working directories](/docs/en/permissions#working-directories), so a permission prompt for a path doesn't mean the path exists.
+
 A `pattern` or `path` value that contains a null byte returns an error asking Claude to remove it.&#x20;
 
 ## Grep tool behavior
@@ -294,6 +296,8 @@ Three output modes control what comes back:
 Claude can scope results by file with the `glob` parameter, such as `**/*.tsx`, or by language with the `type` parameter, such as `py` or `rust`. By default, patterns match within a single line. Claude can set `multiline: true` to match across line boundaries.
 
 Grep respects `.gitignore`, so gitignored files are skipped. To search a gitignored file, Claude passes its path directly.
+
+Claude Code decides permission for a Grep call before it checks whether the search `path` exists. It still runs the read-permission check for a missing `path` outside the [working directories](/docs/en/permissions#working-directories), so a permission prompt for a path doesn't mean the path exists.
 
 ## LSP tool behavior
 
