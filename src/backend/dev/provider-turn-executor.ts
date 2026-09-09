@@ -19,6 +19,7 @@ import type {
   StoredMessage,
 } from "@/backend/local/local-store";
 import {
+  attachLocalContentPrefix,
   attachLocalMessage,
   markLocalStateChunkOnly,
   type ProviderStreamPart,
@@ -427,32 +428,40 @@ function createProviderLettaStream(
 
           const { part } = event;
           if (part.type === "text_delta") {
-            yield {
-              message_type: "assistant_message",
-              otid: otidForContentSegment(
-                assistantOtids,
-                "provider-assistant",
-                part.contentIndex,
-                part.partial,
-                "assistant_message",
-              ),
-              content: [{ type: "text", text: part.delta }],
-            } as LettaStreamingResponse;
+            yield attachLocalContentPrefix(
+              {
+                message_type: "assistant_message",
+                otid: otidForContentSegment(
+                  assistantOtids,
+                  "provider-assistant",
+                  part.contentIndex,
+                  part.partial,
+                  "assistant_message",
+                ),
+                content: [{ type: "text", text: part.delta }],
+              } as LettaStreamingResponse,
+              part.partial.content,
+              part.contentIndex,
+            );
             continue;
           }
 
           if (part.type === "thinking_delta") {
-            yield {
-              message_type: "reasoning_message",
-              otid: otidForContentSegment(
-                reasoningOtids,
-                "provider-reasoning",
-                part.contentIndex,
-                part.partial,
-                "reasoning_message",
-              ),
-              reasoning: part.delta,
-            } as LettaStreamingResponse;
+            yield attachLocalContentPrefix(
+              {
+                message_type: "reasoning_message",
+                otid: otidForContentSegment(
+                  reasoningOtids,
+                  "provider-reasoning",
+                  part.contentIndex,
+                  part.partial,
+                  "reasoning_message",
+                ),
+                reasoning: part.delta,
+              } as LettaStreamingResponse,
+              part.partial.content,
+              part.contentIndex,
+            );
             continue;
           }
 
