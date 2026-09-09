@@ -46,14 +46,14 @@ Use single-line `--flag=value` commands for TUI instructions.
 Required top-level fields:
 
 - `name`: human display name.
-- `slug`: stable kebab-case run/candidate slug.
 - `objective`: one-paragraph target for the generation agent.
 - `requirements`: concrete pass/fail behavior constraints.
 - `evaluation`: either a single prompt eval or a scenario suite.
 
 Common optional fields:
 
-- `targetModName`: display metadata for the intended mod filename. The harness still chooses the candidate filename from `slug` unless `--candidate-file-name` is passed.
+- `slug`: stable kebab-case run/candidate slug. Falls back to `name` when absent.
+- `targetModName`: display metadata for the intended mod filename. The harness still chooses the candidate filename from `slug` (or `name`) unless `--candidate-file-name` is passed.
 - `candidateDiversityHints`: strategies assigned across multi-candidate runs.
 - `modApiHints`: concise API reminders that prevent bad generated code.
 - `examples`: small input/expected demos for the generation prompt.
@@ -79,9 +79,7 @@ Evaluation fields:
 - Include discrimination scenarios when paths, IDs, or sources matter. Put a tempting wrong sentinel in an irrelevant fixture and forbid it in the final answer.
 - Put load failures in `forbiddenTraceMarkers`, usually:
   - `[mods] failed to load`
-  - `[extensions] failed to load`
   - `loaded 0 mod(s)`
-  - `loaded 0 extension(s)`
 - For eval-facing tools, require `requiresApproval: false`, `parallelSafe: true`, and a strict no-argument schema when applicable.
 - Avoid over-brittle trace markers. Prefer stable substrings like the tool name plus `"message_type":"tool_return_message"`.
 - Keep requirements behavioral; put fragile implementation details in `modApiHints` only when needed.
