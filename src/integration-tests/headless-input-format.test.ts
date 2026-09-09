@@ -36,6 +36,7 @@ async function runBidirectionalOnce(
   extraArgs: string[] = [],
   timeoutMs = 180000, // 180s timeout - CI can be very slow
   extraEnv: NodeJS.ProcessEnv = {},
+  backgroundResults = 0,
 ): Promise<object[]> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -78,7 +79,8 @@ async function runBidirectionalOnce(
         return "invalid"; // Invalid JSON
       }
     });
-    const expectedUserResults = inputTypes.filter((t) => t === "user").length;
+    const expectedUserResults =
+      inputTypes.filter((t) => t === "user").length + backgroundResults;
     const expectedControlResponses = inputTypes.filter(
       (t) => t === "control_request",
     ).length;
@@ -266,12 +268,19 @@ async function runBidirectionalWithRetry(
   timeoutMs = 180000,
   retryOnTimeouts = 1,
   extraEnv: NodeJS.ProcessEnv = {},
+  backgroundResults = 0,
 ): Promise<object[]> {
   let attempt = 0;
   const failedAttempts: Array<{ attempt: number; message: string }> = [];
   while (true) {
     try {
-      return await runBidirectionalOnce(inputs, extraArgs, timeoutMs, extraEnv);
+      return await runBidirectionalOnce(
+        inputs,
+        extraArgs,
+        timeoutMs,
+        extraEnv,
+        backgroundResults,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       failedAttempts.push({
@@ -656,10 +665,10 @@ describe("input-format stream-json", () => {
               message: {
                 role: "user",
                 content:
-                  "You MUST use the Agent tool with subagent_type='general-purpose' to recursively find all TypeScript files (*.ts) in the current working directory. " +
+                  "You MUST launch exactly one Agent tool with subagent_type='general-purpose' to recursively find all TypeScript files (*.ts) in the current working directory. " +
                   "Use a recursive search pattern such as **/*.ts; a top-level-only search is incomplete. " +
-                  "The correct result includes both alpha.ts and nested/beta.ts. " +
-                  "Return only the matching relative file paths, one per line, and do not mention any non-TypeScript files.",
+                  "After launching the agent, end your turn without polling or calling TaskOutput. " +
+                  "When its completion notification arrives, return only the matching relative file paths, one per line, and do not mention any non-TypeScript files.",
               },
             }),
           ],
@@ -667,11 +676,14 @@ describe("input-format stream-json", () => {
           240000,
           1,
           { USER_CWD: fixture.rootDir },
+          1, // Keep stdin open for the subagent completion notification's turn.
         )) as WireMessage[];
 
-        const result = objects.find(
+        const results = objects.filter(
           (o): o is ResultMessage => o.type === "result",
         );
+        expect(results).toHaveLength(2);
+        const result = results.at(-1);
         expect(result).toBeDefined();
         expect(result?.subtype).toBe("success");
 
@@ -689,7 +701,7 @@ describe("input-format stream-json", () => {
             m.tool_call?.name === "Agent"
           );
         });
-        expect(agentToolCalls.length).toBeGreaterThan(0);
+        expect(agentToolCalls).toHaveLength(1);
 
         // Approval-flow events are stripped from stream-json output so the
         // stream matches other coding agents.
