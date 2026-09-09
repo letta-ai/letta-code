@@ -256,7 +256,7 @@ export function buildClientSkillsUpdateReminder(
     "<system-reminder>",
     ...(changed.length > 0
       ? [
-          "Additional skills are now available:",
+          "Additional skills are now available. These supplement the skills already listed in your context:",
           "<available_skills>",
           ...changed.flatMap((skill) => [
             "  <skill>",

@@ -33,7 +33,7 @@ describe("sendMessageStream skill sources", () => {
     ).toBeNull();
     const reminder = buildClientSkillsUpdateReminder([skill], [other]);
     expect(reminder).toContain(
-      "Additional skills are now available:\n<available_skills>\n  <skill>\n    <name>review</name>\n    <description>Review</description>\n  </skill>\n</available_skills>",
+      "Additional skills are now available. These supplement the skills already listed in your context:\n<available_skills>\n  <skill>\n    <name>review</name>\n    <description>Review</description>\n  </skill>\n</available_skills>",
     );
     expect(reminder).not.toContain(other.location);
     expect(reminder).toContain("Skills no longer available:\n- search");
