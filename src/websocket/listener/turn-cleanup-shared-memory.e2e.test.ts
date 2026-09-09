@@ -15,6 +15,7 @@ const AGENT_ID = `agent-shared-memory-post-turn-e2e-${randomUUID()}`;
 const REPOSITORY_NAME = "shared-notes";
 const originalFetch = globalThis.fetch;
 const originalMemfsBaseUrl = process.env.LETTA_MEMFS_BASE_URL;
+const originalApiKey = process.env.LETTA_API_KEY;
 const tempDirs: string[] = [];
 
 function git(cwd: string, args: string[]): string {
@@ -27,6 +28,7 @@ function configureIdentity(repo: string): void {
 }
 
 beforeAll(async () => {
+  process.env.LETTA_API_KEY = "shared-memory-post-turn-e2e-token";
   await settingsManager.initialize();
   globalThis.fetch = mock(async (input) => {
     const url = String(input);
@@ -60,6 +62,11 @@ afterEach(() => {
 
 afterAll(async () => {
   globalThis.fetch = originalFetch;
+  if (originalApiKey === undefined) {
+    delete process.env.LETTA_API_KEY;
+  } else {
+    process.env.LETTA_API_KEY = originalApiKey;
+  }
   await settingsManager.reset();
 });
 
