@@ -222,6 +222,45 @@ export function invalidateClientSkillsPayloadCacheForAgent(
   invalidateAttachedRepositoriesCache(agentId);
 }
 
+/** Metadata-only reminder for changes since a conversation's last accepted send. */
+export function buildClientSkillsUpdateReminder(
+  previous: BuildClientSkillsPayloadResult["clientSkills"] | undefined,
+  current: BuildClientSkillsPayloadResult["clientSkills"],
+): string | null {
+  // The initial request already supplies the complete catalog in client_skills.
+  if (!previous) return null;
+  const previousByName = new Map(previous.map((skill) => [skill.name, skill]));
+  const currentNames = new Set(current.map((skill) => skill.name));
+  const changed = current.filter((skill) => {
+    const old = previousByName.get(skill.name);
+    return (
+      !old ||
+      old.description !== skill.description ||
+      old.location !== skill.location
+    );
+  });
+  const removed = previous
+    .filter((skill) => !currentNames.has(skill.name))
+    .map((skill) => skill.name);
+  if (changed.length === 0 && removed.length === 0) return null;
+
+  // Keep this metadata-only. Skill bodies stay lazy-loaded through Skill.
+  return [
+    "<system-reminder>",
+    "The skills available through the Skill tool have changed.",
+    ...(changed.length > 0
+      ? [
+          `New or updated skills (name, description, location):\n${JSON.stringify(changed)}`,
+        ]
+      : []),
+    ...(removed.length > 0
+      ? [`Skills no longer available: ${JSON.stringify(removed)}`]
+      : []),
+    "Use the Skill tool to load a skill's full instructions before using it.",
+    "</system-reminder>",
+  ].join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Skill discovery helpers
 // ---------------------------------------------------------------------------
