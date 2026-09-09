@@ -35,6 +35,7 @@ import { listAttachedAgentRepositories } from "./attached-repositories";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 import { withSerializedGitConfigMutation } from "./memory-git-config-lock";
 import {
+  installMemoryGitHooks,
   installPostCommitHook,
   installPreCommitHook,
   installSharedMemoryPreCommitHook,
@@ -1090,8 +1091,7 @@ async function prepareMemoryRepoForGitOps(
 ): Promise<void> {
   await maybeUpdateMemoryRemoteOrigin(memoryDir, agentId);
   await configureLocalCredentialHelper(memoryDir, token);
-  installPreCommitHook(memoryDir, true);
-  installPostCommitHook(memoryDir);
+  installMemoryGitHooks(memoryDir);
   await ensureLocalMemfsGitConfig(memoryDir, agentId);
 }
 
@@ -1642,8 +1642,7 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
   await configureLocalCredentialHelper(dir, token);
 
   // Install commit hooks (pre-commit validates frontmatter; post-commit mirrors)
-  installPreCommitHook(dir, true);
-  installPostCommitHook(dir);
+  installMemoryGitHooks(dir);
 
   // Set canonical local git identity (letta.agentId, user.email, user.name)
   await ensureLocalMemfsGitConfig(dir, agentId);
@@ -1670,8 +1669,7 @@ export async function pullMemory(
 
   // Self-healing: ensure credential helper, hooks, and identity config are current
   await configureLocalCredentialHelper(dir, token);
-  installPreCommitHook(dir, true);
-  installPostCommitHook(dir);
+  installMemoryGitHooks(dir);
   await ensureLocalMemfsGitConfig(dir, agentId);
 
   try {

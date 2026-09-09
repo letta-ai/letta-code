@@ -20,6 +20,15 @@ export interface DiscordAttachmentLike {
   url: string;
 }
 
+export interface DiscordMessageReferenceLike {
+  type?: number | null;
+}
+
+export interface DiscordMessageSnapshotLike {
+  content?: string | null;
+  attachments?: Map<string, DiscordAttachmentLike>;
+}
+
 export interface DiscordMentionsLike {
   has: (user: DiscordUserLike | null | undefined) => boolean;
 }
@@ -72,6 +81,8 @@ export interface DiscordMessageLike extends DiscordFetchedMessageLike {
   channel: DiscordChannelLike;
   mentions: DiscordMentionsLike;
   attachments: Map<string, DiscordAttachmentLike>;
+  reference?: DiscordMessageReferenceLike | null;
+  messageSnapshots?: Map<string, DiscordMessageSnapshotLike>;
   createdTimestamp: number;
   startThread: (options: {
     name: string;
