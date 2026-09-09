@@ -6,6 +6,8 @@ import {
   registerSubagent,
   updateSubagent,
 } from "@/agent/subagent-state";
+import type { SubagentResult } from "@/agent/subagents";
+import { runWithRuntimeContext } from "@/runtime-context";
 import {
   __resetBackgroundRetentionConfigForTests,
   __setBackgroundRetentionConfigForTests,
@@ -17,13 +19,11 @@ import {
   waitForBackgroundSubagentConversationId,
   waitForBackgroundSubagentLink,
 } from "@/tools/impl/task";
+import type { QueuedMessage } from "@/utils/message-queue-bridge";
 
 describe("spawnBackgroundSubagentTask", () => {
   let subagentCounter = 0;
-  const queueMessages: Array<{
-    kind: "user" | "task_notification";
-    text: string;
-  }> = [];
+  const queueMessages: QueuedMessage[] = [];
 
   const generateSubagentIdImpl = () => {
     subagentCounter += 1;
@@ -61,10 +61,7 @@ describe("spawnBackgroundSubagentTask", () => {
     agents: [buildSnapshot("subagent-test-1")],
     expanded: false,
   });
-  const addToMessageQueueImpl = (msg: {
-    kind: "user" | "task_notification";
-    text: string;
-  }) => {
+  const addToMessageQueueImpl = (msg: QueuedMessage) => {
     queueMessages.push(msg);
   };
   const formatTaskNotificationImpl = mock(
@@ -156,6 +153,59 @@ describe("spawnBackgroundSubagentTask", () => {
     const outputContent = readFileSync(launched.outputFile, "utf-8");
     expect(outputContent).toContain("[Task started: Reflect on memory]");
     expect(outputContent).toContain("[Task completed]");
+  });
+
+  test("keeps launch-time acting user through delayed completion", async () => {
+    let resolveSpawn: ((result: SubagentResult) => void) | undefined;
+    const spawnSubagentImpl = mock(
+      (..._args: unknown[]) =>
+        new Promise<SubagentResult>((resolve) => {
+          resolveSpawn = resolve;
+        }),
+    );
+
+    const launched = runWithRuntimeContext(
+      { actingUserId: "cloud-user-a" },
+      () =>
+        spawnBackgroundSubagentTask({
+          subagentType: "general-purpose",
+          prompt: "Investigate",
+          description: "Investigate billing",
+          parentScope: {
+            agentId: "agent-parent",
+            conversationId: "conv-parent",
+          },
+          deps: {
+            spawnSubagentImpl,
+            copyGitHubPullRequestTagsImpl: async () => {},
+            addToMessageQueueImpl,
+            formatTaskNotificationImpl,
+            runSubagentStopHooksImpl,
+            generateSubagentIdImpl,
+            registerSubagentImpl,
+            completeSubagentImpl,
+            getSubagentSnapshotImpl,
+          },
+        }),
+    );
+
+    expect(backgroundTasks.get(launched.taskId)?.actingUserId).toBe(
+      "cloud-user-a",
+    );
+    expect(spawnSubagentImpl.mock.calls[0]?.[15]).toBe("cloud-user-a");
+
+    runWithRuntimeContext({ actingUserId: "cloud-user-b" }, () => {
+      resolveSpawn?.({
+        agentId: "agent-child",
+        conversationId: "conv-child",
+        report: "done",
+        success: true,
+      });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(queueMessages).toHaveLength(1);
+    expect(queueMessages[0]?.actingUserId).toBe("cloud-user-a");
   });
 
   test("copies PR tags from the Agent conversation to its parent", async () => {

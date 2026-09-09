@@ -61,6 +61,8 @@ export interface BackgroundTask {
   abortController?: AbortController;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
+  /** Authenticated Cloud user responsible for launching this task. */
+  actingUserId?: string;
 }
 
 export const backgroundProcesses = new Map<string, BackgroundProcess>();

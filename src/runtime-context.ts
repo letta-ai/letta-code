@@ -24,6 +24,8 @@ export interface RuntimeContextSnapshot {
   agentId?: string | null;
   agentName?: string | null;
   conversationId?: string | null;
+  /** Authenticated Cloud user responsible for the current turn. */
+  actingUserId?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
   workingDirectory?: string | null;

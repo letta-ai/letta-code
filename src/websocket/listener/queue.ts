@@ -129,11 +129,10 @@ function getPrimaryQueueMessageItem(items: QueueItem[]): QueueItem | null {
 
 /**
  * Picks an acting cloud user id to attribute the outbound
- * createMessage to. When a batch coalesces messages from multiple
- * users we use the **last enqueued** sender — matches user intuition
- * ("whoever just hit send pays") and matches the seq order the queue
- * already preserves. Returns undefined when no item in the batch
- * carries an actingUserId (self-hosted / pre-channel-split flow).
+ * createMessage to. QueueRuntime keeps different non-empty acting users in
+ * separate batches; scanning from the end tolerates unattributed items around
+ * the attributed work. Returns undefined when no item in the batch carries an
+ * actingUserId (self-hosted / pre-channel-split flow).
  */
 export function pickBatchActingUserId(items: QueueItem[]): string | undefined {
   for (let i = items.length - 1; i >= 0; i -= 1) {
