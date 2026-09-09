@@ -343,6 +343,8 @@ claude -p "Continue that review" --resume "$session_id"
 
 You can run the two commands from different directories: Claude Code [finds the session by its ID](/docs/en/sessions#resume-a-session) in any project on this machine. Before v2.1.223, Claude Code looked for the ID only in the current project directory and its git worktrees, so you had to run both commands from the same directory.
 
+In place of the session ID, you can pass `--resume` the absolute path to a session's `.jsonl` [transcript file](/docs/en/sessions#where-transcripts-are-stored), and Claude Code continues the conversation stored in that file.
+
 ## Next steps
 
 * [Agent SDK quickstart](/docs/en/agent-sdk/quickstart): build your first agent with Python or TypeScript
