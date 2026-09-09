@@ -8,10 +8,8 @@ import {
 
 const AGENT_ID = "agent-registry-secret-command";
 
-const retrieveAgentMock = mock((_agentId: string, _options?: unknown) =>
-  Promise.resolve({
-    secrets: [] as Array<{ key: string; value: string }>,
-  }),
+const listAgentSecretsMock = mock((_agentId: string) =>
+  Promise.resolve([] as Array<{ key: string; value: string }>),
 );
 
 const updateAgentMock = mock(
@@ -32,15 +30,15 @@ const capabilities = {
 
 describe("command registry", () => {
   beforeEach(() => {
-    retrieveAgentMock.mockReset();
+    listAgentSecretsMock.mockReset();
     updateAgentMock.mockReset();
-    retrieveAgentMock.mockResolvedValue({ secrets: [] });
+    listAgentSecretsMock.mockResolvedValue([]);
     updateAgentMock.mockResolvedValue({ id: AGENT_ID });
     setCurrentAgentId(AGENT_ID);
     clearSecretsCache(AGENT_ID);
     __testOverrideSecretsBackend({
       capabilities,
-      retrieveAgent: retrieveAgentMock,
+      listAgentSecrets: listAgentSecretsMock,
       updateAgent: updateAgentMock,
     });
   });
@@ -62,9 +60,9 @@ describe("command registry", () => {
       refreshSecretsInfo: true,
     });
 
-    retrieveAgentMock.mockResolvedValueOnce({
-      secrets: [{ key: "REGISTRY_TOKEN", value: "registry-value" }],
-    });
+    listAgentSecretsMock.mockResolvedValueOnce([
+      { key: "REGISTRY_TOKEN", value: "registry-value" },
+    ]);
 
     const unsetResult = await executeCommand("/secret unset registry_token");
 

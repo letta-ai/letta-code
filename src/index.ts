@@ -2321,8 +2321,7 @@ async function main(): Promise<void> {
 
         // Init secrets cache — runs in parallel with memfs sync below.
         const secretsInitPromise = import("@/utils/secrets-store").then(
-          ({ initSecretsFromServer }) =>
-            initSecretsFromServer(agentId, agent ?? undefined),
+          ({ initSecretsFromServer }) => initSecretsFromServer(agentId),
         );
 
         // Check if we're resuming an existing agent

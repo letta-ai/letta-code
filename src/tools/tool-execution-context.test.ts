@@ -715,11 +715,9 @@ describe("tool execution context snapshot", () => {
     let seenSecret = "";
     __testOverrideSecretsBackend({
       capabilities: { serverSecrets: true },
-      retrieveAgent: async (agentId) => {
+      listAgentSecrets: async (agentId) => {
         retrieveCalls.push(agentId);
-        return {
-          secrets: [{ key: "TAVILY_API_KEY", value: "agent-secret-value" }],
-        };
+        return [{ key: "TAVILY_API_KEY", value: "agent-secret-value" }];
       },
       updateAgent: async () => ({}),
     });
@@ -762,7 +760,7 @@ describe("tool execution context snapshot", () => {
     process.env.TAVILY_API_KEY = "env-secret-value";
     __testOverrideSecretsBackend({
       capabilities: { serverSecrets: true },
-      retrieveAgent: async () => ({ secrets: [] }),
+      listAgentSecrets: async () => [],
       updateAgent: async () => ({}),
     });
     const chunks: Array<{ chunk: string; stream: string }> = [];
@@ -822,7 +820,7 @@ describe("tool execution context snapshot", () => {
     process.env.TAVILY_API_KEY = "throw-secret-value";
     __testOverrideSecretsBackend({
       capabilities: { serverSecrets: true },
-      retrieveAgent: async () => ({ secrets: [] }),
+      listAgentSecrets: async () => [],
       updateAgent: async () => ({}),
     });
     const diagnostics: ModDiagnostic[] = [];

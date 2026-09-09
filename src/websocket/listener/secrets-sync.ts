@@ -33,23 +33,7 @@ function getFreshnessMs(): number {
   return _testFreshnessMsOverride ?? DEFAULT_FRESHNESS_MS;
 }
 
-let _testRefreshSecretsForAgentOverride:
-  | ((agentId: string) => Promise<void>)
-  | null = null;
-
-export function __testOverrideRefreshSecretsForAgent(
-  factory: ((agentId: string) => Promise<void>) | null,
-): void {
-  _testRefreshSecretsForAgentOverride = factory;
-}
-
 async function refreshSecretsForAgent(agentId: string): Promise<void> {
-  if (_testRefreshSecretsForAgentOverride) {
-    await _testRefreshSecretsForAgentOverride(agentId);
-    debugLog("secrets-sync", `Refreshed secrets for agent ${agentId}`);
-    return;
-  }
-
   const { initSecretsFromServer } = await import("@/utils/secrets-store");
   await initSecretsFromServer(agentId);
   debugLog("secrets-sync", `Refreshed secrets for agent ${agentId}`);
