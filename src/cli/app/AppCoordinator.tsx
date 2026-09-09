@@ -1679,7 +1679,6 @@ export function App({
   const [dequeueEpoch, setDequeueEpoch] = useState(0);
   // Strict lock to ensure dequeue submit path is at-most-once while onSubmit is in flight.
   const dequeueInFlightRef = useRef(false);
-
   // Queue defer mode: when 'defer', queued messages only fire on end_turn stop reason.
   // Defer mode is only meaningful in API backend mode (local backend fires end_turn
   // between each sequential tool call, making defer indistinguishable from immediate).
@@ -3814,6 +3813,7 @@ export function App({
     setCurrentModelHandle,
     setCurrentModelId,
     setDequeueEpoch,
+    setInterruptRequested,
     lastStopReasonRef,
     setIsExecutingTool,
     setLlmConfig,
