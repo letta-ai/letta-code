@@ -21,7 +21,8 @@
 import {
   DEFAULT_MEMORY_CONSTRAINTS_CONFIG,
   MEMORY_CONSTRAINTS_CONFIG_PATH,
-  MEMORY_CONSTRAINTS_CONFIG_VERSION,
+  parseMemoryConstraintsConfig,
+  validateMemoryTreeConstraints,
 } from "@/memory-constraints";
 
 export { MEMORY_CONSTRAINTS_CONFIG_PATH } from "@/memory-constraints";
@@ -35,20 +36,13 @@ const { readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
 
 const CONFIG_PATH = ${JSON.stringify(MEMORY_CONSTRAINTS_CONFIG_PATH)};
-const CONFIG_VERSION = ${JSON.stringify(MEMORY_CONSTRAINTS_CONFIG_VERSION)};
+const parseMemoryConstraintsConfig = ${parseMemoryConstraintsConfig.toString()};
+const validateMemoryTreeConstraints = ${validateMemoryTreeConstraints.toString()};
 const DEFAULT_CONFIG = ${JSON.stringify(DEFAULT_MEMORY_CONSTRAINTS_CONFIG)};
 const CONFIG_UPDATE_ENV = ${JSON.stringify(MEMORY_CONSTRAINTS_UPDATE_ENV)};
 const LAYOUT_POLICY_FILE = "letta-memory-layout-policy";
 const AUDIT_MODE = process.argv.includes("--audit");
 let activeLayoutPolicy = "legacy-only";
-const ALLOWED_CONFIG_KEYS = new Set([
-  "version",
-  "maxDepth",
-  "maxFileCharacters",
-  "maxCoreMemoryCharacters",
-  "fileCharacterLimits",
-]);
-const ALLOWED_OVERRIDE_KEYS = new Set(["pattern", "maxCharacters"]);
 
 function runGit(args, encoding = "utf8") {
   return execFileSync("git", args, {
@@ -69,230 +63,13 @@ function stagedMode(path) {
   return runGit(["ls-files", "--stage", "--", path]).split(" ", 1)[0];
 }
 
-function stagedCharacterCount(path) {
-  return new Promise((resolveCount, reject) => {
-    const child = spawn("git", ["show", ":" + path], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let characters = 0;
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      characters += Array.from(chunk).length;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolveCount(characters);
-      } else {
-        reject(new Error(stderr.trim() || "git show failed for " + path));
-      }
-    });
-  });
-}
-
-function isPlainObject(value) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value)
-  );
-}
-
-function isPositiveInteger(value) {
-  return Number.isSafeInteger(value) && value > 0;
-}
-
-function isNonNegativeInteger(value) {
-  return Number.isSafeInteger(value) && value >= 0;
-}
-
-function validatePattern(pattern, label, errors) {
-  if (
-    typeof pattern !== "string" ||
-    pattern.length === 0 ||
-    pattern.startsWith("/") ||
-    pattern.includes(String.fromCharCode(92)) ||
-    pattern.split("/").includes("..")
-  ) {
-    errors.push(
-      label + ": pattern must be a non-empty repo-relative glob using '/'",
-    );
-    return false;
-  }
-  if (
-    pattern
-      .split("/")
-      .some((segment) => segment.includes("**") && segment !== "**")
-  ) {
-    errors.push(label + ": '**' must be a complete path segment");
-    return false;
-  }
-  return true;
-}
-
 function parseConfig(content, errors) {
-  let value;
   try {
-    value = JSON.parse(content);
+    return parseMemoryConstraintsConfig(content);
   } catch (error) {
-    errors.push(CONFIG_PATH + ": invalid JSON (" + error.message + ")");
+    errors.push(...error.message.split("\n"));
     return null;
   }
-
-  if (!isPlainObject(value)) {
-    errors.push(CONFIG_PATH + ": expected a JSON object");
-    return null;
-  }
-
-  for (const key of Object.keys(value)) {
-    if (!ALLOWED_CONFIG_KEYS.has(key)) {
-      errors.push(CONFIG_PATH + ": unknown field '" + key + "'");
-    }
-  }
-
-  if (value.version !== CONFIG_VERSION) {
-    errors.push(CONFIG_PATH + ": version must be " + CONFIG_VERSION);
-  }
-
-  if (
-    value.maxDepth !== undefined &&
-    !isNonNegativeInteger(value.maxDepth)
-  ) {
-    errors.push(CONFIG_PATH + ": maxDepth must be a non-negative integer");
-  }
-  if (
-    value.maxFileCharacters !== undefined &&
-    !isPositiveInteger(value.maxFileCharacters)
-  ) {
-    errors.push(
-      CONFIG_PATH + ": maxFileCharacters must be a positive integer",
-    );
-  }
-  if (
-    value.maxCoreMemoryCharacters !== undefined &&
-    !isPositiveInteger(value.maxCoreMemoryCharacters)
-  ) {
-    errors.push(
-      CONFIG_PATH + ": maxCoreMemoryCharacters must be a positive integer",
-    );
-  }
-
-  const overrides = value.fileCharacterLimits;
-  if (overrides !== undefined && !Array.isArray(overrides)) {
-    errors.push(CONFIG_PATH + ": fileCharacterLimits must be an array");
-  }
-  if (Array.isArray(overrides)) {
-    overrides.forEach((override, index) => {
-      const label = CONFIG_PATH + ": fileCharacterLimits[" + index + "]";
-      if (!isPlainObject(override)) {
-        errors.push(label + " must be an object");
-        return;
-      }
-      for (const key of Object.keys(override)) {
-        if (!ALLOWED_OVERRIDE_KEYS.has(key)) {
-          errors.push(label + ": unknown field '" + key + "'");
-        }
-      }
-      validatePattern(override.pattern, label, errors);
-      if (
-        override.maxCharacters !== null &&
-        !isPositiveInteger(override.maxCharacters)
-      ) {
-        errors.push(label + ": maxCharacters must be a positive integer or null");
-      }
-    });
-  }
-
-  return value;
-}
-
-function escapeGlobRegExpCharacter(character) {
-  return "^$.*+?()[]{}|".includes(character) || character.charCodeAt(0) === 92
-    ? String.fromCharCode(92) + character
-    : character;
-}
-
-function globToRegExp(pattern) {
-  let source = "^";
-  for (let index = 0; index < pattern.length; index += 1) {
-    const character = pattern[index];
-    if (character === "*") {
-      if (pattern[index + 1] === "*") {
-        if (pattern[index + 2] === "/") {
-          source += "(?:.*/)?";
-          index += 2;
-        } else {
-          source += ".*";
-          index += 1;
-        }
-      } else {
-        source += "[^/]*";
-      }
-      continue;
-    }
-    if (character === "?") {
-      source += "[^/]";
-      continue;
-    }
-    source += escapeGlobRegExpCharacter(character);
-  }
-  return new RegExp(source + "$");
-}
-
-function missingV2Index(path, stagedPaths) {
-  if (!path.includes("/")) return null;
-  const directories = path.split("/").slice(0, -1);
-  let current = "";
-  for (const directory of directories) {
-    current = current ? current + "/" + directory : directory;
-    const index = current + "/MEMORY.md";
-    if (!stagedPaths.has(index)) return index;
-  }
-  return null;
-}
-
-function projectedLegacyPath(path) {
-  return /^(?:memory\/)?(?:system|reference)\/.*\.md$/.test(path);
-}
-
-function listMemoryFiles(layoutPolicy, errors) {
-  const output = runGit(["ls-files", "-z", "--", "*.md"]);
-  const paths = output.split("\0").filter(Boolean);
-  const stagedPaths = new Set(paths);
-  const stagedHasRootMarker = stagedPaths.has("MEMORY.md");
-  const headHasRootMarker = gitSucceeds([
-    "cat-file",
-    "-e",
-    "HEAD:MEMORY.md",
-  ]);
-
-  if (layoutPolicy === "root-marker" && headHasRootMarker && !stagedHasRootMarker) {
-    errors.push("MEMORY.md: root memory index is required for MemFS v2");
-  }
-
-  if (layoutPolicy === "root-marker" && (stagedHasRootMarker || headHasRootMarker)) {
-    const memoryPaths = paths.filter(
-      (path) => path !== "skills" && !path.startsWith("skills/"),
-    );
-    for (const path of memoryPaths) {
-      const missingIndex = missingV2Index(path, stagedPaths);
-      if (missingIndex) {
-        errors.push(path + ": missing required index " + missingIndex);
-      }
-    }
-    return memoryPaths;
-  }
-
-  return paths.filter((path) => {
-    if (path === "skills" || path.startsWith("skills/")) return false;
-    if (layoutPolicy === "shared-memory") return true;
-    return projectedLegacyPath(path);
-  });
 }
 
 function readLayoutPolicy() {
@@ -309,21 +86,6 @@ function readLayoutPolicy() {
   } catch {
     return "legacy-only";
   }
-}
-
-function characterLimitFor(path, config) {
-  for (const override of config.fileCharacterLimits || []) {
-    if (globToRegExp(override.pattern).test(path)) {
-      return {
-        limit: override.maxCharacters,
-        source: "glob '" + override.pattern + "'",
-      };
-    }
-  }
-  return {
-    limit: config.maxFileCharacters,
-    source: "maxFileCharacters",
-  };
 }
 
 function report(errors) {
@@ -400,62 +162,37 @@ async function main() {
         : parsedConfig;
   }
 
-  const characterCounts = new Map();
-  const memoryFiles = listMemoryFiles(layoutPolicy, errors);
-  const regularMemoryFiles = [];
-  for (const path of memoryFiles) {
-    if (!stagedMode(path).startsWith("100")) {
-      errors.push(path + ": memory Markdown must be a regular file");
-      continue;
-    }
-    regularMemoryFiles.push(path);
-
-    const depth = path.split("/").length - 1;
-    if (config.maxDepth !== undefined && depth > config.maxDepth) {
-      errors.push(
-        path + ": depth " + depth + " exceeds maxDepth " + config.maxDepth,
-      );
-    }
-
-    const constraint = characterLimitFor(path, config);
-    if (constraint.limit === undefined || constraint.limit === null) continue;
-    const characters = await stagedCharacterCount(path);
-    characterCounts.set(path, characters);
-    if (characters > constraint.limit) {
-      errors.push(
-        path +
-          ": " +
-          characters +
-          " characters exceeds " +
-          constraint.limit +
-          " from " +
-          constraint.source,
-      );
-    }
-  }
-
-  if (
-    layoutPolicy === "root-marker" &&
-    config.maxCoreMemoryCharacters !== undefined
-  ) {
-    let coreCharacters = 0;
-    for (const path of regularMemoryFiles) {
-      if (path.includes("/")) continue;
-      const characters =
-        characterCounts.get(path) ?? (await stagedCharacterCount(path));
-      characterCounts.set(path, characters);
-      coreCharacters += characters;
-    }
-    if (coreCharacters > config.maxCoreMemoryCharacters) {
-      errors.push(
-        "core memory: " +
-          coreCharacters +
-          " characters exceeds " +
-          config.maxCoreMemoryCharacters +
-          " from maxCoreMemoryCharacters",
-      );
-    }
-  }
+  errors.push(...await validateMemoryTreeConstraints({
+    async countCharacters(path) {
+      return new Promise((resolveCount, reject) => {
+        const child = spawn("git", ["show", ":" + path], { stdio: ["ignore", "pipe", "pipe"] });
+        let characters = 0;
+        let stderr = "";
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", (chunk) => { for (const character of chunk) characters++; });
+        child.stderr.on("data", (chunk) => { stderr += chunk; });
+        child.on("error", reject);
+        child.on("close", (code) => code === 0 ? resolveCount(characters) : reject(new Error(stderr || "git show failed for " + path)));
+      });
+    },
+    async listFiles() {
+      return runGit(["ls-files", "--stage", "-z"]).split("\0").filter(Boolean).map((entry) => {
+        const separator = entry.indexOf("\t");
+        return { path: entry.slice(separator + 1), mode: entry.split(" ", 1)[0] };
+      });
+    },
+    async readFile(path) {
+      return new Promise((resolveBytes, reject) => {
+        const child = spawn("git", ["show", ":" + path], { stdio: ["ignore", "pipe", "pipe"] });
+        const chunks = [];
+        let stderr = "";
+        child.stdout.on("data", (chunk) => chunks.push(chunk));
+        child.stderr.on("data", (chunk) => { stderr += chunk; });
+        child.on("error", reject);
+        child.on("close", (code) => code === 0 ? resolveBytes(Buffer.concat(chunks)) : reject(new Error(stderr || "git show failed for " + path)));
+      });
+    },
+  }, { config, layout: layoutPolicy, requireRootMarker: gitSucceeds(["cat-file", "-e", "HEAD:MEMORY.md"]) }));
 
   report(errors);
 }
