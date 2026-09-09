@@ -824,19 +824,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         return { submitted: false };
       }
 
-      // Queue the message if the agent is busy. Clear the cancel guard first so
-      // a stale Esc cannot block dequeue; bump the epoch (refs are not deps).
+      // Release cancellation, but wake dequeue only after the new input is queued.
       userCancelledRef.current = false;
-      if (!isAgentBusy() && (tuiQueueRef.current?.length ?? 0) > 0) {
-        debugLog("queue", "Bumping dequeueEpoch: cancel guard reset, idle");
-        setDequeueEpoch((e: number) => e + 1);
-      }
 
       const isSlashCommand = routedUserText.startsWith("/");
-      // A new message releases Esc-parked ones, which run first. Slash commands don't.
-      if (!isSlashCommand && !isSystemOnly) {
-        tuiQueueRef.current?.resume();
-      }
       const parsedModCommand = isSlashCommand
         ? parseModSlashCommand(routedUserText.trim())
         : null;
@@ -864,19 +855,21 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         return { submitted: true }; // Clears input
       }
 
-      if (isAgentBusy() && !shouldBypassQueue) {
+      if (
+        !shouldBypassQueue &&
+        (isAgentBusy() ||
+          (!hasOverrideContent && (tuiQueueRef.current?.length ?? 0) > 0))
+      ) {
         // Enqueue via QueueRuntime — onEnqueued callback updates queueDisplay.
         tuiQueueRef.current?.enqueue({
           kind: "message",
           source: "user",
           content: msg,
         } as Parameters<typeof tuiQueueRef.current.enqueue>[0]);
+        if (!hasOverrideContent && !isSystemOnly) tuiQueueRef.current?.resume();
         setDequeueEpoch((e: number) => e + 1);
         return { submitted: true }; // Clears input
       }
-
-      // Note: userCancelledRef.current was already reset above before the queue check
-      // to ensure the dequeue effect isn't blocked by a stale cancellation flag.
 
       const aliasedMsg = routedUserText;
 

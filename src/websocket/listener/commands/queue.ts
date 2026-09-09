@@ -1,5 +1,7 @@
 import type WebSocket from "ws";
+import type { RemoveQueueItemCommand } from "@/types/protocol_v2";
 import type { ResumeQueueCommand } from "@/types/queue-update-protocol";
+import { emitQueueUpdateIfOpen } from "@/websocket/listener/protocol-outbound";
 import { scheduleQueuePump } from "@/websocket/listener/queue";
 import type {
   ListenerRuntime,
@@ -8,13 +10,9 @@ import type {
 } from "@/websocket/listener/types";
 import type { GetOrCreateScopedRuntime, SafeSocketSend } from "./types";
 
-/**
- * `resume_queue`: release queue items parked by `abort_message` and pump the
- * queue so the released user messages start the next turn without a new
- * `input` message (the "Resume" affordance).
- */
-export function handleResumeQueueCommand(
-  command: ResumeQueueCommand,
+/** Mutate the listener's queue without submitting a new user message. */
+export function handleQueueCommand(
+  command: ResumeQueueCommand | RemoveQueueItemCommand,
   deps: {
     listener: ListenerRuntime;
     socket: WebSocket;
@@ -29,6 +27,24 @@ export function handleResumeQueueCommand(
     command.runtime.agent_id,
     command.runtime.conversation_id || "default",
   );
+  if (command.type === "remove_queue_item") {
+    const removed = scopedRuntime.queueRuntime.removeItem(command.item_id);
+    deps.safeSocketSend(
+      deps.socket,
+      {
+        type: "remove_queue_item_response",
+        request_id: command.request_id,
+        success: removed !== null,
+        item_id: command.item_id,
+      },
+      "remove_queue_item_response",
+      "remove_queue_item",
+    );
+    // Even a missing item requires a snapshot to repair a stale client queue.
+    emitQueueUpdateIfOpen(deps.listener, command.runtime);
+    return;
+  }
+
   const resumed = scopedRuntime.queueRuntime.resume();
   scheduleQueuePump(
     scopedRuntime,

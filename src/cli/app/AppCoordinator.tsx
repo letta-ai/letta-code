@@ -1431,7 +1431,7 @@ export function App({
             } as Parameters<typeof tuiQueueRef.current.enqueue>[0])
           : ({
               kind: "message",
-              source: "user",
+              source: message.source ?? "user",
               content: message.text,
             } as Parameters<typeof tuiQueueRef.current.enqueue>[0]),
       );
@@ -1510,6 +1510,7 @@ export function App({
             });
             addToMessageQueue({
               kind: "user",
+              source: "cron",
               text,
               agentId: freshTask.agent_id,
               conversationId: freshTask.conversation_id,
@@ -1682,8 +1683,7 @@ export function App({
     [appendTaskNotificationEvents],
   );
 
-  // consumeItems fires onDequeued → setQueueDisplay(prev => prev.slice(n))
-  // so no direct setQueueDisplay call is needed here.
+  // Queue callbacks remove consumed display entries by item ID.
   const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
     const len = tuiQueueRef.current?.length ?? 0;
     if (len === 0) return null;

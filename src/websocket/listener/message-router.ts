@@ -28,7 +28,7 @@ import { handleCronProtocolCommand } from "./commands/cron";
 import { handleGitBranchCommand } from "./commands/git-branches";
 import { handleMemfsSyncedMemoryProtocolCommand } from "./commands/memory-command-sync";
 import { handleModelToolsetCommand } from "./commands/model-toolset";
-import { handleResumeQueueCommand } from "./commands/resume-queue";
+import { handleQueueCommand } from "./commands/queue";
 import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
@@ -54,10 +54,7 @@ import {
   parseServerMessage,
 } from "./protocol-inbound";
 import { summarizeV2Command } from "./protocol-logging";
-import {
-  emitDeviceStatusUpdate,
-  emitQueueUpdateIfOpen,
-} from "./protocol-outbound";
+import { emitDeviceStatusUpdate } from "./protocol-outbound";
 import {
   scheduleQueuePump,
   shouldProcessInboundMessageDirectly,
@@ -728,43 +725,17 @@ export function createListenerMessageHandler(
         return;
       }
 
-      if (parsed.type === "resume_queue") {
-        handleResumeQueueCommand(parsed, {
+      if (
+        parsed.type === "resume_queue" ||
+        parsed.type === "remove_queue_item"
+      ) {
+        handleQueueCommand(parsed, {
           listener: runtime,
           socket,
           opts,
           processQueuedTurn,
           getOrCreateScopedRuntime,
           safeSocketSend,
-        });
-        return;
-      }
-
-      if (parsed.type === "remove_queue_item") {
-        const scopedRuntime = getOrCreateScopedRuntime(
-          runtime,
-          parsed.runtime.agent_id,
-          parsed.runtime.conversation_id || "default",
-        );
-        const removed = scopedRuntime.queueRuntime.removeItem(parsed.item_id);
-        // Emit a response so the client knows if the item was found/removed
-        safeSocketSend(
-          socket,
-          {
-            type: "remove_queue_item_response",
-            request_id: parsed.request_id,
-            success: removed !== null,
-            item_id: parsed.item_id,
-          },
-          "remove_queue_item_response",
-          "remove_queue_item",
-        );
-        // Broadcast the authoritative queue snapshot even when the item was
-        // NOT found: a consumer removing an already-drained item is holding
-        // a stale queue copy, and this snapshot repairs it. (LET-11174)
-        emitQueueUpdateIfOpen(runtime, {
-          agent_id: parsed.runtime.agent_id,
-          conversation_id: parsed.runtime.conversation_id,
         });
         return;
       }
