@@ -65,9 +65,8 @@ The context in the memory filesystem should have a clear structure, with a well-
 
 #### Invalid context format
 Files in the memory filesystem must follow certain structural requirements: 
-- Must have root `MEMORY.md` and root `persona.md`
+- Must have root `MEMORY.md`
 - Root and child `MEMORY.md` files have no frontmatter; every other memory Markdown file has exactly `name` and `description` frontmatter
-- Must NOT have overlapping file and folder names (e.g. `human.md` and `human/identity.md`)
 - Must follow specification for skills (e.g. `skills/{skill_name}/`) with the format:
 ```
 skill-name/

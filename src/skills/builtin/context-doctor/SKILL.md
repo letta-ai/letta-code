@@ -65,8 +65,6 @@ The context in the memory filesystem should have a clear structure, with a well-
 
 #### Invalid context format
 Files in the memory filesystem must follow certain structural requirements: 
-- Must have a `system/persona.md`
-- Must NOT have overlapping file and folder names (e.g. `system/human.md` and `system/human/identity.md`) 
 - Must follow specification for skills (e.g. `skills/{skill_name}/`) with the format:
 ```
 skill-name/
