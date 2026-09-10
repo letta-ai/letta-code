@@ -38,9 +38,10 @@ function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
  * Builds model_settings from updateArgs based on provider type.
  * Always ensures parallel_tool_calls is enabled.
  */
-function buildModelSettings(
+export function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
+  localModelCatalog = false,
 ): ModelSettings {
   const explicitProviderType =
     typeof updateArgs?.provider_type === "string"
@@ -170,6 +171,9 @@ function buildModelSettings(
     settings = {
       provider_type: "zai",
       parallel_tool_calls: true,
+      ...(typeof updateArgs?.reasoning_effort === "string" && {
+        reasoning_effort: updateArgs.reasoning_effort,
+      }),
     };
   } else if (isXai) {
     // xAI is OpenAI-compatible on the wire, but direct xAI handles must route
@@ -286,6 +290,16 @@ function buildModelSettings(
       updateArgs.capabilities;
   }
 
+  // Local pi-ai reads a provider-neutral effort as well. Cloud-specific
+  // settings for Google/xAI/zAI do not otherwise preserve the selected level.
+  if (
+    localModelCatalog &&
+    (typeof updateArgs?.reasoning_effort === "string" ||
+      updateArgs?.reasoning_effort === null)
+  ) {
+    (settings as Record<string, unknown>).reasoning_effort =
+      updateArgs.reasoning_effort;
+  }
   return settings;
 }
 
@@ -418,6 +432,7 @@ export async function updateAgentLLMConfig(
   const modelSettings = buildModelSettings(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+    useBackendModelCatalog,
   );
   const contextWindow = await resolveContextWindowForUpdate({
     modelHandle,
@@ -468,6 +483,7 @@ export async function updateConversationLLMConfig(
   const modelSettings = buildModelSettings(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+    useBackendModelCatalog,
   );
   const contextWindow = await resolveContextWindowForUpdate({
     modelHandle,
@@ -611,6 +627,7 @@ export async function updateModelConfig(
       ? buildModelSettings(
           modelHandle,
           updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+          useBackendModelCatalog,
         )
       : undefined;
   const hasModelSettings =

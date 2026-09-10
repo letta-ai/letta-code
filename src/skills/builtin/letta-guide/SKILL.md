@@ -51,6 +51,12 @@ helper below fetches the live index first, so you pick a URL that exists.
    give your best answer, and clearly mark it as possibly out of date with a
    link to https://docs.letta.com. Never silently fall back to memory.
 
+## Inspect or change your model from the CLI
+
+- `letta model list [--byok | --hosted]` lists available models.
+- `letta model set [model_handle] [--reasoning <reasoning-option>] [--default]` overrides the current conversation's model or reasoning; `--default` overrides the agent's default instead.
+- `letta model get [--default]` gets the current model configuration; `--default` gets the agent's default configuration.
+
 ## Hard rules
 
 - **Never invent CLI commands, flags, slash commands, settings keys, config
@@ -94,4 +100,3 @@ The helper owns the cache. It uses the first writable temporary directory from
 when an explicit location is needed. Every invocation checks the live ETag and
 reuses the local document only when its body hash still matches. Do not create
 or manage a second cache yourself.
-
