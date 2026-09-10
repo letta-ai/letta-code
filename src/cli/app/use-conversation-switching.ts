@@ -569,7 +569,9 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         }
 
         // Fetch new agent
-        const agent = await getBackend().retrieveAgent(targetAgentId);
+        const agent = await getBackend().retrieveAgent(targetAgentId, {
+          include: ["agent.blocks"],
+        });
 
         // Use specified conversation or default to the agent's default conversation
         const targetConversationId = opts?.conversationId ?? "default";
