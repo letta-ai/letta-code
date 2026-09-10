@@ -47,6 +47,24 @@ function routeKey(
 
 // ── Load/save ─────────────────────────────────────────────────────
 
+/** Read the current persisted routes without merging into the process cache. */
+export function readRoutes(channelId: string): ChannelRoute[] {
+  if (loadRoutesOverride) {
+    return loadRoutesOverride(channelId) ?? getRoutesForChannel(channelId);
+  }
+  try {
+    const text = readFileSync(getChannelRoutingPath(channelId), "utf-8");
+    const parsed = JSON.parse(text) as { routes?: ChannelRoute[] };
+    return Array.isArray(parsed.routes)
+      ? parsed.routes.filter(
+          (route) => route?.chatId && route.agentId && route.conversationId,
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Load routing table from disk for a given channel.
  */
@@ -92,9 +110,7 @@ export function loadRoutes(channelId: string): void {
   if (!existsSync(path)) return;
 
   try {
-    const text = readFileSync(path, "utf-8");
-    const parsed = JSON.parse(text) as { routes?: ChannelRoute[] };
-    const routes = parsed.routes ?? [];
+    const routes = readRoutes(channelId);
 
     for (const route of routes) {
       if (route.chatId && route.agentId && route.conversationId) {
