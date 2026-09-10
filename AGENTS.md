@@ -170,9 +170,7 @@ Practical rules:
 - Prefer dependency injection or object-level stubbing over module-level mocking.
 - Don't mock broad shared modules (`settings-manager`, telemetry, etc.).
 - If a test file must use `mock.module()`, register it with a reason in `scripts/isolated-unit-tests.json`; `scripts/run-unit-tests.cjs` will run it in a standalone Bun process, and the mock-isolation check rejects unregistered top-level mocks.
-- If a test passes alone but fails in the full suite (or only in CI), suspect cross-suite shared state first — module mocks are the most common leak, but process-global or singleton state (e.g. channel-route state) leaks the same way through shared workers.
-- CI is where these failures usually surface: `scripts/run-unit-tests.cjs` diff-scopes unit tests on PRs, but the shallow checkout can't resolve the synthetic merge SHA from the PR event, so it falls back to running the entire suite in one batch.
-- When the full suite exposes a cross-suite failure, isolate the *contaminating* suite (the one that reads or mutates the shared state) in `scripts/isolated-unit-tests.json`, not necessarily the newly added suite.
+- If a test passes alone but fails in the full suite, suspect shared module/process state and isolate the contaminating suite, not necessarily the newly added one.
 
 ---
 
