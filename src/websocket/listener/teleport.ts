@@ -1,5 +1,6 @@
 import type WebSocket from "ws";
 import { resolveBackendMode } from "@/backend/backend-mode";
+import { getLocalChannelTeleportError } from "@/channels/teleport-guard";
 import type {
   TeleportContinuation,
   TeleportFailedCommand,
@@ -253,6 +254,18 @@ export function handleTeleportRequest(params: {
     drainAcceptedInputs: false,
     activeTurn: false,
   };
+  const channelError = getLocalChannelTeleportError(pending);
+  if (channelError) {
+    pending.readyAt = Date.now();
+    pending.error = channelError;
+    pendingTeleports.set(pending.teleportId, pending);
+    sendTeleportReady(listener, pending, {
+      success: false,
+      error: channelError,
+    });
+    retainTeleportForRecovery(listener, pending);
+    return;
+  }
   const conflicting = findPendingTeleportForRuntime(
     listener,
     pending.agentId,
@@ -411,7 +424,8 @@ export function handleTeleportFailure(params: {
     agentId: params.command.runtime.agent_id,
     conversationId: params.command.runtime.conversation_id,
   });
-  if (!pending) return;
+  // Rejected requests never yielded, so their source turn needs no recovery.
+  if (!pending || pending.error) return;
 
   const runtime = params.getOrCreateScopedRuntime(
     params.listener,

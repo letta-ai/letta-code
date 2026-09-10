@@ -86,7 +86,11 @@ async function stop(child: ChildProcess) {
 }
 
 const testWithAPI = apiKey ? test : test.skip;
-testWithAPI.each(["destination lookup", "active handoff"])(
+testWithAPI.each([
+  "destination lookup",
+  "active handoff",
+  "local channel rejection",
+])(
   "Cloud teleport with saved local backend: %s",
   async (scenario) => {
     const root = await mkdtemp(join(tmpdir(), "letta-teleport-backend-"));
@@ -115,6 +119,25 @@ testWithAPI.each(["destination lookup", "active handoff"])(
             preferredBackendMode: role === "source" ? "api" : "local",
           }),
         );
+        if (role === "source" && scenario === "local channel rejection") {
+          const channelDir = join(home, ".letta", "channels", "telegram");
+          await mkdir(channelDir, { recursive: true });
+          await writeFile(
+            join(channelDir, "routing.yaml"),
+            JSON.stringify({
+              routes: [
+                {
+                  chatId: "teleport-test-chat",
+                  agentId,
+                  conversationId,
+                  enabled: true,
+                  outboundEnabled: true,
+                  createdAt: new Date().toISOString(),
+                },
+              ],
+            }),
+          );
+        }
         const env = createAuthenticatedCliTestEnv({
           HOME: home,
           LETTA_BASE_URL: baseURL,
@@ -239,6 +262,8 @@ testWithAPI.each(["destination lookup", "active handoff"])(
       } else {
         stage = "source runtime_start";
         const started = await source.client.runtimeStart(runtimeStart);
+        if (!started.success)
+          throw new Error(started.error ?? "Source runtime_start failed");
         expect(started.success).toBe(true);
         expect(started.runtime).toMatchObject(scope);
 
@@ -286,6 +311,11 @@ testWithAPI.each(["destination lookup", "active handoff"])(
           const result = await request<TeleportResponse>(
             `${runtimePath}/teleports/${encodeURIComponent(teleport.id)}`,
           );
+          if (scenario === "local channel rejection") {
+            return result.status === "failed" || result.status === "completed"
+              ? result
+              : undefined;
+          }
           if (result.status === "failed") {
             // On pre-fix code this produces the concrete local lookup failure,
             // rather than merely asserting that a backend flag has the wrong value.
@@ -297,16 +327,39 @@ testWithAPI.each(["destination lookup", "active handoff"])(
           }
           return result.status === "completed" ? result : undefined;
         });
-        expect(completed.agentId).toBe(agent.id);
-        expect(completed.conversationId).toBe(conversation.id);
-        expect(completed.targetConnectionId).toBe(destination.connectionId);
-        stage = "destination runtime_start";
-        const resumed = await destination.client.runtimeStart(runtimeStart);
-        expect(resumed.success).toBe(true);
-        expect(resumed.runtime).toMatchObject(scope);
-        expect(resumed.agent?.id).toBe(agent.id);
-        expect(resumed.conversation?.id).toBe(conversation.id);
-        expect(resumed.created).toEqual({ agent: false, conversation: false });
+        if (scenario === "local channel rejection") {
+          expect(completed.status).toBe("failed");
+          expect(completed.error).toContain("bound to telegram");
+          expect(completed.error).toContain("MessageChannel cannot follow");
+          stage = "source input after rejection";
+          const accepted = await source.client.submitInput({
+            runtime: scope,
+            payload: {
+              kind: "create_message",
+              messages: [
+                {
+                  role: "user",
+                  content: "Reply again after the rejected teleport.",
+                },
+              ],
+            },
+          });
+          expect(accepted.accepted).toBe(true);
+        } else {
+          expect(completed.agentId).toBe(agent.id);
+          expect(completed.conversationId).toBe(conversation.id);
+          expect(completed.targetConnectionId).toBe(destination.connectionId);
+          stage = "destination runtime_start";
+          const resumed = await destination.client.runtimeStart(runtimeStart);
+          expect(resumed.success).toBe(true);
+          expect(resumed.runtime).toMatchObject(scope);
+          expect(resumed.agent?.id).toBe(agent.id);
+          expect(resumed.conversation?.id).toBe(conversation.id);
+          expect(resumed.created).toEqual({
+            agent: false,
+            conversation: false,
+          });
+        }
       }
     } catch (error) {
       const httpStatus =
@@ -349,12 +402,16 @@ testWithAPI.each(["destination lookup", "active handoff"])(
         }
       }
       if (conversationId)
-        await sdk.conversations.delete(conversationId).catch(() => {
-          failures.push("conversation deletion");
+        await sdk.conversations.delete(conversationId).catch((error) => {
+          failures.push(
+            `conversation deletion ${conversationId}: ${error instanceof Letta.APIError ? error.status : "unknown"}`,
+          );
         });
       if (agentId)
-        await sdk.agents.delete(agentId).catch(() => {
-          failures.push("agent deletion");
+        await sdk.agents.delete(agentId).catch((error) => {
+          failures.push(
+            `agent deletion ${agentId}: ${error instanceof Letta.APIError ? error.status : "unknown"}`,
+          );
         });
       for (const id of environmentIds) {
         await request(
