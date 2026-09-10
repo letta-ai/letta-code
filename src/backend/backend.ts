@@ -159,7 +159,6 @@ export interface BackendCapabilities {
   remoteMemfs: boolean;
   serverSideToolManagement: boolean;
   serverSecrets: boolean;
-  agentFileImportExport: boolean;
   promptRecompile: boolean;
   byokProviderRefresh: boolean;
   localModelCatalog: boolean;
@@ -336,7 +335,6 @@ export class APIBackend implements Backend {
       remoteMemfs: true,
       serverSideToolManagement: true,
       serverSecrets: true,
-      agentFileImportExport: true,
       promptRecompile: true,
       byokProviderRefresh: true,
       localModelCatalog: false,

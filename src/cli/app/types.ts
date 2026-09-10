@@ -24,7 +24,6 @@ import type { ToolsetPreference } from "@/tools/toolset";
 
 export type AppLoadingState =
   | "assembling"
-  | "importing"
   | "initializing"
   | "checking"
   | "ready";
