@@ -8,7 +8,6 @@ import {
   buildAgentTerminalLink,
   buildChatUrl,
   buildChatWebUrl,
-  buildPlatformUrl,
   isLocalAgentId,
   LETTA_CHAT_API_KEYS_URL,
 } from "@/cli/helpers/app-urls";
@@ -70,9 +69,6 @@ describe("app URL helpers", () => {
     );
     expect(LETTA_CHAT_API_KEYS_URL).toBe(
       "https://chat.letta.com/preferences/api-keys",
-    );
-    expect(buildPlatformUrl("/projects/default-project/agents")).toBe(
-      "https://platform.letta.com/projects/default-project/agents",
     );
   });
 });

@@ -1,7 +1,6 @@
 import { isLocalAgentId as isLocalAgentIdShared } from "@/agent/agent-id";
 
 const CHAT_BASE = "https://chat.letta.com";
-const PLATFORM_BASE = "https://platform.letta.com";
 
 export const LETTA_CHAT_API_KEYS_URL = `${CHAT_BASE}/preferences/api-keys`;
 
@@ -74,11 +73,4 @@ export function buildAgentTerminalLink(
  */
 export function buildChatWebUrl(path: string): string {
   return `${CHAT_BASE}${path}`;
-}
-
-/**
- * Build a URL for developer and management pages on Letta Platform.
- */
-export function buildPlatformUrl(path: string): string {
-  return `${PLATFORM_BASE}${path}`;
 }
