@@ -81,6 +81,7 @@ import {
  * never trigger fresh agent creation, so base tools are out of scope.
  */
 const NO_BASE_TOOL_SUBAGENT_TYPES = new Set([
+  "doctor",
   "reflection",
   "memory",
   "history-analyzer",
@@ -293,8 +294,7 @@ export function buildSubagentArgs(
       args.push("--no-skills");
     }
 
-    // Skip server-side base tools (web_search, fetch_webpage) for subagents
-    // that operate purely on local memory/git state.
+    // Memory investigators use CLI evidence instead of server-side base tools.
     if (NO_BASE_TOOL_SUBAGENT_TYPES.has(type)) {
       args.push("--base-tools", "none");
     }

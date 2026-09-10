@@ -7,22 +7,19 @@ import {
   formatSetMaxContextResult,
 } from "@/agent/max-context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getActiveMemoryDirectory } from "@/agent/memory-runtime";
 import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
 import { refreshCustomCommands } from "@/cli/commands/custom";
+import { launchDoctor } from "@/cli/helpers/doctor-command";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
-  buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
-import {
-  formatSkillNameFrontmatterRepairReport,
-  repairMissingSkillNameFrontmatter,
-} from "@/cli/helpers/skill-name-frontmatter-repair";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
@@ -128,9 +125,23 @@ export async function handleExecuteCommand(
         });
         break;
 
-      case "doctor":
-        output = await handleDoctorCommand(socket, conversationRuntime, opts);
+      case "doctor": {
+        const agentId = conversationRuntime.agentId;
+        if (!agentId) throw new Error("Doctor requires an active agent.");
+        output = await launchDoctor({
+          agentId,
+          conversationId: conversationRuntime.conversationId,
+          memoryDir: getActiveMemoryDirectory(agentId),
+          symptom: trimmedArgs,
+          actingUserId: command.runtime.acting_user_id,
+          recompileByConversation:
+            conversationRuntime.listener.systemPromptRecompileByConversation,
+          recompileQueuedByConversation:
+            conversationRuntime.listener
+              .queuedSystemPromptRecompileByConversation,
+        });
         break;
+      }
 
       case "init":
         output = await handleInitCommand(socket, conversationRuntime, opts);
@@ -685,66 +696,6 @@ async function handleClearCommand(
   return opts.resetAllAgentMessages
     ? "All agent messages reset"
     : "Agent's in-context messages cleared & moved to conversation history";
-}
-
-/**
- * /doctor — Audit and refine memory structure.
- *
- * Builds the doctor system-reminder message (same as the CLI /doctor)
- * and feeds it through `handleIncomingMessage` so the agent runs a full
- * turn executing the `context-doctor` skill.
- */
-async function handleDoctorCommand(
-  socket: WebSocket,
-  conversationRuntime: ConversationRuntime,
-  opts: {
-    onStatusChange?: StartListenerOptions["onStatusChange"];
-    connectionId?: string;
-  },
-): Promise<string> {
-  const agentId = conversationRuntime.agentId;
-
-  if (!agentId) {
-    throw new Error("No agent ID available for /doctor command");
-  }
-
-  const { context: gitContext } = gatherInitGitContext();
-  const memoryDir = settingsManager.isMemfsEnabled(agentId)
-    ? getScopedMemoryFilesystemRoot(agentId)
-    : undefined;
-  const skillNameFrontmatterRepair =
-    await repairMissingSkillNameFrontmatter(memoryDir);
-  const skillNameFrontmatterRepairReport =
-    formatSkillNameFrontmatterRepairReport(skillNameFrontmatterRepair);
-
-  const doctorMessage = buildDoctorMessage({
-    gitContext,
-    memoryDir,
-    skillNameFrontmatterRepairReport,
-  });
-
-  // Feed the doctor prompt as a user message through the normal turn pipeline.
-  // This triggers a full agent turn whose deltas stream back to the web UI.
-  await handleIncomingMessage(
-    {
-      type: "message",
-      agentId,
-      conversationId: conversationRuntime.conversationId,
-      messages: [
-        {
-          type: "message",
-          role: "user",
-          content: [{ type: "text", text: doctorMessage }],
-        },
-      ],
-    },
-    socket,
-    conversationRuntime,
-    opts.onStatusChange,
-    opts.connectionId,
-  );
-
-  return "Memory doctor completed";
 }
 
 /**

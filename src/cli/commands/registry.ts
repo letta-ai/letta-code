@@ -53,11 +53,11 @@ export const commands: Record<string, Command> = {
     },
   },
   "/doctor": {
-    desc: "Audit and refine your memory structure",
+    desc: "Investigate agent behavior and repair memory or skills",
     order: 12.1,
-    noArgs: true,
+    args: "[symptom]",
     handler: () => {
-      // Handled specially in App.tsx to send doctor prompt
+      // Handled by the doctor subagent launcher
       return "Running memory doctor...";
     },
   },

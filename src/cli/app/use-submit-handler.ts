@@ -56,9 +56,9 @@ import {
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { resetContextHistory } from "@/cli/helpers/context-tracker";
 import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switch-alert";
+import { launchDoctor } from "@/cli/helpers/doctor-command";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
-  buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
@@ -99,10 +99,6 @@ import {
   buildReflectionSelectorPrompt,
   readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
-import {
-  formatSkillNameFrontmatterRepairReport,
-  repairMissingSkillNameFrontmatter,
-} from "@/cli/helpers/skill-name-frontmatter-repair";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
@@ -3562,10 +3558,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /doctor command
-        if (trimmed === "/doctor") {
-          const cmd = commandRunner.start(msg, "Gathering project context...");
-
+        if (trimmed === "/doctor" || trimmed.startsWith("/doctor ")) {
+          const targetConversationId = conversationIdRef.current;
+          const cmd = commandRunner.start(msg, "Starting doctor...");
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
             cmd.fail(
@@ -3573,39 +3568,25 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
             return { submitted: false };
           }
-
           setCommandRunning(true);
           try {
             cmd.finish(
-              "Running memory doctor... I'll ask a few questions to refine memory structure.",
+              await launchDoctor({
+                agentId,
+                conversationId: targetConversationId,
+                memoryDir: getActiveMemoryDirectory(agentId),
+                symptom: trimmed.slice("/doctor".length).trim(),
+                recompileByConversation:
+                  systemPromptRecompileByConversationRef.current,
+                recompileQueuedByConversation:
+                  queuedSystemPromptRecompileByConversationRef.current,
+              }),
               true,
             );
-
-            const { context: gitContext } = gatherInitGitContext();
-            const memoryDir = getActiveMemoryDirectory(agentId);
-            const skillNameFrontmatterRepair =
-              await repairMissingSkillNameFrontmatter(memoryDir);
-            const skillNameFrontmatterRepairReport =
-              formatSkillNameFrontmatterRepairReport(
-                skillNameFrontmatterRepair,
-              );
-
-            const doctorMessage = buildDoctorMessage({
-              gitContext,
-              memoryDir,
-              skillNameFrontmatterRepairReport,
-            });
-
-            await processConversationWithQueuedApprovals([
-              {
-                type: "message",
-                role: "user",
-                content: buildTextParts(doctorMessage),
-              },
-            ]);
           } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed: ${errorDetails}`);
+            cmd.fail(
+              `Failed to start doctor: ${formatErrorDetails(error, agentId)}`,
+            );
           } finally {
             setCommandRunning(false);
           }

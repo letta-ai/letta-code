@@ -204,12 +204,12 @@ SUBCOMMANDS
   letta memory pull --agent <id>
   letta memory tokens [--memory-dir <path>] [--agent <id>] [--format text|json]
   letta agents list [--query <text> | --name <name> | --tags <tags>]
-  letta computers list [--online-only]
-  letta computers current
+  letta computers list [--online-only] | current
   letta teleport list|cloud|local|<computer>
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
+  letta steps trace --agent <id> --step <id>
   letta mods list [--agent <id>]
   letta mods package <mod-file> --name <package-name> [--out <dir>]
   letta mods enable <package-spec>

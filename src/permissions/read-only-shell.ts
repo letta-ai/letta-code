@@ -177,9 +177,9 @@ const SAFE_MEMORY_COMMANDS = new Set([
 // letta CLI read-only subcommands: group -> allowed actions
 const SAFE_LETTA_COMMANDS: Record<string, Set<string>> = {
   memory: new Set(["status", "help", "backups", "export", "tokens"]),
-  // Legacy alias for `letta memory ...`.
   memfs: new Set(["status", "help", "backups", "export", "tokens"]),
   agents: new Set(["list", "help"]),
+  steps: new Set(["trace", "help"]),
   messages: new Set(["search", "list", "help"]),
 };
 

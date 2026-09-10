@@ -103,7 +103,7 @@ interface SkillResources {
   truncated: boolean;
 }
 
-const ROOT_MEMORY_SKILLS = new Set(["initializing-memory", "context-doctor"]);
+const ROOT_MEMORY_SKILLS = new Set(["initializing-memory"]);
 
 export function resolveBundledSkillContentPath(input: {
   skillId: string;

@@ -152,7 +152,7 @@ describe("Skill tool memory filesystem lookup", () => {
     mkdirSync(memoryDir, { recursive: true });
     writeFileSync(join(memoryDir, "MEMORY.md"), "# Memory\n");
 
-    for (const skillId of ["initializing-memory", "context-doctor"]) {
+    for (const skillId of ["initializing-memory"]) {
       const bundledSkillPath = join(
         import.meta.dir,
         "..",
@@ -172,6 +172,30 @@ describe("Skill tool memory filesystem lookup", () => {
       expect(
         SYSTEM_DIRECTORY_PATH.test(readFileSync(selectedPath, "utf8")),
       ).toBe(false);
+    }
+  });
+
+  test("doctor uses the same investigation skill for both memory formats", () => {
+    const memoryDir = join(tempRoot, "doctor-memory");
+    mkdirSync(memoryDir, { recursive: true });
+    writeFileSync(join(memoryDir, "MEMORY.md"), "# Memory\n");
+    const bundledSkillPath = join(
+      import.meta.dir,
+      "..",
+      "skills",
+      "builtin",
+      "context-doctor",
+      "SKILL.md",
+    );
+    for (const localMemfs of [true, false]) {
+      expect(
+        resolveBundledSkillContentPath({
+          skillId: "context-doctor",
+          bundledSkillPath,
+          memoryDir,
+          localMemfs,
+        }),
+      ).toBe(bundledSkillPath);
     }
   });
 
