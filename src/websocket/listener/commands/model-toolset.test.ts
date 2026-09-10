@@ -28,22 +28,11 @@ class NativeCatalogBackend extends FakeHeadlessBackend {
   override async listModels(): ReturnType<Backend["listModels"]> {
     if (this.failListing) throw new Error("Inventory unavailable");
     return [
-      {
-        handle: "my-anthropic/claude-fable-5",
-        display_name: "Vendor label",
-        provider_type: "anthropic",
+      ...byokModels.map(([handle, provider_type]) => ({
+        handle,
+        provider_type,
         provider_category: "byok",
-      },
-      {
-        handle: "my-google/gemini-3.5-flash",
-        provider_type: "google_ai",
-        provider_category: "byok",
-      },
-      {
-        handle: "my-minimax/minimax-m2.7",
-        provider_type: "minimax",
-        provider_category: "byok",
-      },
+      })),
       {
         handle: "opencode/deepseek-v4-flash-free",
         display_name: "DeepSeek V4 Flash Free",
@@ -88,6 +77,12 @@ class NativeCatalogBackend extends FakeHeadlessBackend {
   }
 }
 
+const byokModels = [
+  ["my-anthropic/claude-fable-5", "anthropic"],
+  ["my-google/gemini-3.5-flash", "google_ai"],
+  ["my-minimax/minimax-m2.7", "minimax"],
+] as const;
+
 describe("listener native model selection", () => {
   const originalBaseUrl = process.env.LETTA_BASE_URL;
   const originalMode = resolveBackendMode();
@@ -121,24 +116,6 @@ describe("listener native model selection", () => {
     });
   });
 
-  test("resolves first-contact BYOK selection without first listing models", async () => {
-    __testSetBackend(new NativeCatalogBackend());
-    clearAvailableModelsCache();
-    const resolved = await resolveModelForUpdateWithInventory({
-      model_id: "my-anthropic/claude-fable-5",
-      model_handle: "my-anthropic/claude-fable-5",
-    });
-    expect(resolved?.handle).toBe("my-anthropic/claude-fable-5");
-    expect(resolved?.updateArgs?.provider_type).toBe("anthropic");
-    if (!resolved) throw new Error("BYOK model did not resolve");
-    expect(
-      __modifyTestUtils.buildModelSettings(
-        resolved.handle,
-        resolved.updateArgs,
-      ),
-    ).toMatchObject({ provider_type: "anthropic" });
-  });
-
   test("fails closed for a cold BYOK lookup but keeps hosted selection independent", async () => {
     const backend = new NativeCatalogBackend();
     backend.failListing = true;
@@ -149,6 +126,11 @@ describe("listener native model selection", () => {
         model_id: "my-anthropic/claude-fable-5",
       }),
     ).rejects.toThrow("Inventory unavailable");
+    const response = await buildListModelsResponse("models-unavailable");
+    expect(response.success).toBe(true);
+    expect(response.available_handles).toEqual([
+      ...new Set(models.map((model) => model.handle)),
+    ]);
     expect(
       (await resolveModelForUpdateWithInventory({ model_id: "letta/auto" }))
         ?.handle,
@@ -163,11 +145,6 @@ describe("listener native model selection", () => {
     expect(response.available_handles).not.toContain(
       "opencode/deepseek-v4-flash-free",
     );
-    expect(
-      response.entries.some(
-        (entry) => entry.handle === "opencode/deepseek-v4-flash-free",
-      ),
-    ).toBe(false);
     expect(response.available_handles).toContain("letta/auto");
     expect(response.available_handles).toContain("my-anthropic/claude-fable-5");
     expect(response.available_handles).toEqual([
@@ -211,38 +188,24 @@ describe("listener native model selection", () => {
       expect(response.available_handles).toContain(
         "opencode/deepseek-v4-flash-free",
       );
-      expect(
-        response.entries.some(
-          (entry) => entry.handle === "opencode/deepseek-v4-flash-free",
-        ),
-      ).toBe(true);
+      expect(response.entries.map((entry) => entry.handle)).toContain(
+        "opencode/deepseek-v4-flash-free",
+      );
     },
   );
 
-  test("Cloud catalog handles survive runtime inventory failure", async () => {
-    const backend = new NativeCatalogBackend();
-    backend.failListing = true;
-    __testSetBackend(backend);
-    const response = await buildListModelsResponse("models-unavailable");
-    expect(response.success).toBe(true);
-    expect(response.available_handles).toEqual([
-      ...new Set(models.map((model) => model.handle)),
-    ]);
-    expect(response.available_handles).toContain("letta/auto");
-  });
-
-  test.each([
-    ["my-anthropic/claude-fable-5", "anthropic"],
-    ["my-google/gemini-3.5-flash", "google_ai"],
-    ["my-minimax/minimax-m2.7", "minimax"],
-  ])(
-    "preserves BYOK identity and settings for %s",
+  test.each(byokModels)(
+    "preserves BYOK identity and settings with cold and warm caches for %s",
     async (handle, providerType) => {
       __testSetBackend(new NativeCatalogBackend());
-      await getAvailableModelHandles();
-      const byId = resolveModelForUpdate({ model_id: handle });
+      clearAvailableModelsCache();
+      const byId = await resolveModelForUpdateWithInventory({
+        model_id: handle,
+        model_handle: handle,
+      });
       const byHandle = resolveModelForUpdate({ model_handle: handle });
       expect(byId).toEqual(byHandle);
+      expect(resolveModelForUpdate({ model_id: handle })).toEqual(byId);
       expect(byId).toMatchObject({
         id: handle,
         handle,

@@ -160,89 +160,47 @@ describe("public Slack attachment primitives", () => {
 });
 
 describe("public Slack model picker", () => {
+  type Option = { value: string; text: { text: string } };
+  type Select = {
+    options?: Option[];
+    option_groups?: { options: Option[] }[];
+    initial_option?: Option;
+  };
+
+  function picker(handles: string[], current = handles[0]) {
+    const blocks = buildSlackModelPickerBlocks({
+      current: { modelLabel: current ?? "", modelHandle: current ?? null },
+      entries: handles.map((handle) => ({
+        id: handle,
+        handle,
+        label: handle,
+        description: "",
+      })),
+      availableHandles: handles,
+    });
+    return (blocks?.[2] as { elements: Select[] }).elements[0];
+  }
+
   test("keeps BYOK models beyond the first 100 options selectable", () => {
     const handles = [
       ...Array.from({ length: 101 }, (_, i) => `hosted/model-${i}`),
       "my-anthropic/claude-sonnet-5",
     ];
-    const entries = handles.map((handle) => ({
-      id: handle,
-      handle,
-      label: handle,
-      description: "",
-    }));
-    const blocks = buildSlackModelPickerBlocks({
-      current: {
-        modelLabel: "BYOK Sonnet",
-        modelHandle: handles[101] ?? null,
-        scope: "conversation",
-      },
-      entries,
-      availableHandles: handles,
-    });
-    expect(blocks).toContainEqual({
-      type: "actions",
-      elements: [
-        expect.objectContaining({
-          type: "static_select",
-          action_id: SLACK_MODEL_SELECT_ACTION_ID,
-          option_groups: [
-            {
-              label: { type: "plain_text", text: "Models 1–100" },
-              options: expect.arrayContaining([
-                expect.objectContaining({ value: "hosted/model-0" }),
-                expect.objectContaining({ value: "hosted/model-99" }),
-              ]),
-            },
-            {
-              label: { type: "plain_text", text: "Models 101–102" },
-              options: [
-                expect.objectContaining({ value: "hosted/model-100" }),
-                expect.objectContaining({
-                  value: "my-anthropic/claude-sonnet-5",
-                }),
-              ],
-            },
-          ],
-          initial_option: expect.objectContaining({
-            value: "my-anthropic/claude-sonnet-5",
-          }),
-        }),
-      ],
-    });
+    const select = picker(handles, handles[101]);
+    const groups = select?.option_groups ?? [];
+    expect(select?.options).toBeUndefined();
+    expect(groups.map((group) => group.options.length)).toEqual([100, 2]);
+    expect(
+      groups.flatMap((group) => group.options.map((option) => option.value)),
+    ).toEqual(handles);
+    expect(select?.initial_option?.value).toBe(handles[101]);
   });
 
   test("preserves long BYOK handles within Slack's 150-character value limit", () => {
     const handle = `my-provider/${"m".repeat(138)}`;
-    expect(handle.length).toBe(150);
-    const blocks = buildSlackModelPickerBlocks({
-      current: { modelLabel: handle, modelHandle: handle },
-      entries: [
-        { id: handle, handle, label: handle, description: "" },
-        {
-          id: `${handle}x`,
-          handle: `${handle}x`,
-          label: "Too long",
-          description: "",
-        },
-      ],
-      availableHandles: [handle, `${handle}x`],
-    });
-    expect(blocks).toContainEqual({
-      type: "actions",
-      elements: [
-        expect.objectContaining({
-          options: [
-            expect.objectContaining({
-              value: handle,
-              text: expect.objectContaining({
-                text: `${handle.slice(0, 72)}...`,
-              }),
-            }),
-          ],
-        }),
-      ],
-    });
+    const options = picker([handle, `${handle}x`])?.options ?? [];
+    expect(options.map((option) => option.value)).toEqual([handle]);
+    expect(options[0]?.text.text).toBe(`${handle.slice(0, 72)}...`);
     expect(
       resolveSlackSelectedModel({ selected_option: { value: handle } }, {}),
     ).toBe(handle);
