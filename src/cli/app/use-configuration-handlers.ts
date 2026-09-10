@@ -1,5 +1,3 @@
-// src/cli/app/useConfigurationHandlers.ts
-
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import {
@@ -380,7 +378,9 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               reasoningCapabilities,
             })
           : getReasoningTierOptionsForHandle(
-              registryHandle,
+              models.some((entry) => entry.handle === modelHandle)
+                ? modelHandle
+                : registryHandle,
               selectedContextWindow,
               reasoningCapabilities,
             );
