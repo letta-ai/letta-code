@@ -88,12 +88,19 @@ type ShellExecution = {
   output: string;
 };
 
+function normalizeCommand(command: string): string {
+  return command.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function requireExecution(
   executions: ShellExecution[],
-  matches: (command: string) => boolean,
+  expectedCommand: string,
   description: string,
 ): ShellExecution {
-  const execution = executions.find(({ command }) => matches(command));
+  const expected = normalizeCommand(expectedCommand);
+  const execution = executions.find(
+    ({ command }) => normalizeCommand(command) === expected,
+  );
   if (!execution) throw new Error(`Missing ${description} command`);
   return execution;
 }
@@ -181,19 +188,15 @@ export function validateWindowsScenarioOutput(stdout: string): void {
 
   const echo = requireExecution(
     executions,
-    (command) => command.includes("Hello from Windows"),
+    "echo 'Hello from Windows'",
     "echo",
   );
   const multiline = requireExecution(
     executions,
-    (command) => command.includes("Line1") && command.includes("Line2"),
+    "echo 'Line1'; echo 'Line2'",
     "multiline",
   );
-  const git = requireExecution(
-    executions,
-    (command) => command.includes("git --version"),
-    "git",
-  );
+  const git = requireExecution(executions, "git --version", "git");
   if (new Set([echo.id, multiline.id, git.id]).size !== 3) {
     throw new Error("Required Windows commands were not executed separately");
   }

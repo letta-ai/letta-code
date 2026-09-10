@@ -107,6 +107,15 @@ describe("Windows headless scenario validation", () => {
     expect(() => validateWindowsScenarioOutput(output)).toThrow("git command");
   });
 
+  test("rejects a PowerShell comment spoof of the requested git command", () => {
+    const output = validOutput().replace(
+      "git --version",
+      "echo 'git version 9'; # git --version",
+    );
+
+    expect(() => validateWindowsScenarioOutput(output)).toThrow("git command");
+  });
+
   test("rejects git output substituted by another successful call", () => {
     const output = validOutput()
       .replace(
