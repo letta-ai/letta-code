@@ -2884,11 +2884,11 @@ ${SYSTEM_REMINDER_CLOSE}
           currentHandle: null,
           error: result.errorInfo ?? runErrorInfo ?? latestErrorText,
           exhaustedProviders: chatgptExhaustedProviders,
+          signal: sigintSignal,
         });
         if (rotation) {
           chatgptPlanSwaps += 1;
           const rotationMessage = formatPlanRotationNotice(rotation);
-
           if (outputFormat === "stream-json") {
             const retryMsg: RetryMessage = {
               type: "retry",

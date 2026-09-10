@@ -22,9 +22,30 @@ import {
   selectChatGPTQuotaFailoverHandle,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
+import type { ChatGPTUsageSnapshot } from "@/providers/chatgpt-usage-service";
 
 /** Maximum plan swaps per turn, enforced by each consumer. */
 export const CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN = 3;
+
+/** Only account-wide limits apply to every model exposed by a plan. */
+export function isChatGPTPlanExhausted(
+  usage: ChatGPTUsageSnapshot,
+  now = Date.now(),
+): boolean {
+  const fetchedAt = Date.parse(usage.fetchedAt);
+  if (!Number.isFinite(fetchedAt) || now - fetchedAt > 30_000) return false;
+  // Subscription windows can be full while the account still has credits.
+  const hasCredits =
+    usage.credits?.unlimited === true || usage.credits?.hasCredits === true;
+  if (hasCredits) return false;
+  if (usage.limitReached != null) return usage.limitReached;
+  return [usage.primary, usage.secondary].some(
+    (window) =>
+      window?.usedPercent != null &&
+      window.usedPercent >= 100 &&
+      (window.resetsAt === null || window.resetsAt * 1000 > now),
+  );
+}
 
 export interface ChatGPTPlanRotationResult {
   fromProvider: string;
@@ -104,8 +125,9 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
   currentHandle: string | null;
   error: unknown;
   exhaustedProviders: Set<string>;
+  signal?: AbortSignal;
 }): Promise<ChatGPTPlanRotationResult | null> {
-  const { agentId, conversationId, error, exhaustedProviders } = params;
+  const { agentId, conversationId, error, exhaustedProviders, signal } = params;
 
   const parsedDetail = parseChatGPTUsageLimitDetail(error);
   if (!parsedDetail) return null;
@@ -138,11 +160,38 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
   // The current plan is out of quota regardless of whether a sibling exists.
   exhaustedProviders.add(fromProvider);
 
-  const toHandle = selectChatGPTQuotaFailoverHandle({
-    currentHandle,
-    models,
-    exhaustedProviders,
-  });
+  // Check candidates before changing the model, not by spending a swap/run on
+  // each exhausted plan. Failed usage reads leave the old fallback available.
+  const excludedProviders = new Set(exhaustedProviders);
+  const timeout = AbortSignal.timeout(3_000);
+  const usageSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  let toHandle: string | null = null;
+  while (!signal?.aborted) {
+    toHandle = selectChatGPTQuotaFailoverHandle({
+      currentHandle,
+      models,
+      exhaustedProviders: excludedProviders,
+    });
+    if (!toHandle) return null;
+    const provider = providerFromHandle(toHandle);
+    if (!provider) return null;
+    let usage: ChatGPTUsageSnapshot | null = null;
+    try {
+      usage =
+        (await getBackend().readChatGPTUsage?.(provider, usageSignal)) ?? null;
+    } catch {
+      // Unsupported servers and unavailable usage are not proof of exhaustion.
+    }
+    if (signal?.aborted) return null;
+    if (
+      !usage ||
+      usage.providerName !== provider ||
+      !isChatGPTPlanExhausted(usage)
+    )
+      break;
+    excludedProviders.add(provider);
+  }
+  if (signal?.aborted) return null;
   if (!toHandle) return null;
 
   const toProvider = providerFromHandle(toHandle);
@@ -150,13 +199,19 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
 
   try {
     if (conversationId === "default") {
-      await updateAgentLLMConfig(agentId, toHandle, {
-        provider_type: "chatgpt_oauth",
-      });
+      await updateAgentLLMConfig(
+        agentId,
+        toHandle,
+        { provider_type: "chatgpt_oauth" },
+        { signal },
+      );
     } else {
-      await updateConversationLLMConfig(conversationId, toHandle, {
-        provider_type: "chatgpt_oauth",
-      });
+      await updateConversationLLMConfig(
+        conversationId,
+        toHandle,
+        { provider_type: "chatgpt_oauth" },
+        { signal },
+      );
     }
   } catch {
     return null;

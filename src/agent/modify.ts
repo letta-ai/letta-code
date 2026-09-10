@@ -345,6 +345,7 @@ function maxTokensForUpdatePayload(
  * @returns The updated agent state from the server (includes llm_config and model_settings)
  */
 export interface UpdateLLMConfigOptions {
+  signal?: AbortSignal;
   /**
    * Context window to send explicitly. Wins over updateArgs.context_window
    * and catalog derivation on EVERY backend — including local backends, where
@@ -448,12 +449,17 @@ export async function updateAgentLLMConfig(
     useBackendModelCatalog,
   });
 
-  await backend.updateAgent(agentId, {
-    model: modelHandle,
-    ...(hasModelSettings && { model_settings: modelSettings }),
-    ...(contextWindow && { context_window_limit: contextWindow }),
-    ...(maxTokens !== undefined && { max_tokens: maxTokens }),
-  });
+  options?.signal?.throwIfAborted();
+  await backend.updateAgent(
+    agentId,
+    {
+      model: modelHandle,
+      ...(hasModelSettings && { model_settings: modelSettings }),
+      ...(contextWindow && { context_window_limit: contextWindow }),
+      ...(maxTokens !== undefined && { max_tokens: maxTokens }),
+    },
+    ...(options?.signal ? [{ signal: options.signal }] : []),
+  );
 
   const finalAgent = await backend.retrieveAgent(agentId, {
     include: ["agent.tools", "agent.tags"],
@@ -523,7 +529,12 @@ export async function updateConversationLLMConfig(
     ...(maxTokens !== undefined && { max_tokens: maxTokens }),
   } as Parameters<typeof backend.updateConversation>[1];
 
-  return backend.updateConversation(conversationId, payload);
+  options?.signal?.throwIfAborted();
+  return backend.updateConversation(
+    conversationId,
+    payload,
+    ...(options?.signal ? [{ signal: options.signal }] : []),
+  );
 }
 
 export interface ModelConfigUpdate {

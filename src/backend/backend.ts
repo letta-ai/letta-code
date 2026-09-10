@@ -2,6 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import {
+  type ChatGPTUsageSnapshot,
+  normalizeCloudChatGPTUsageResponse,
+} from "@/providers/chatgpt-usage-service";
 import type { getClient } from "./api/client";
 import type {
   ForkConversationOptions,
@@ -272,6 +276,11 @@ export interface Backend {
     options?: ModelsListOptions,
   ): Promise<Awaited<ReturnType<APIClient["models"]["list"]>>>;
 
+  readChatGPTUsage?(
+    providerName: string,
+    signal?: AbortSignal,
+  ): Promise<ChatGPTUsageSnapshot | null>;
+
   createConversationMessageStream(
     conversationId: string,
     body: ConversationMessageCreateBody,
@@ -527,6 +536,19 @@ export class APIBackend implements Backend {
   async listModels(options?: ModelsListOptions) {
     const client = await this.getClient();
     return client.models.list(options);
+  }
+
+  async readChatGPTUsage(providerName: string, signal?: AbortSignal) {
+    const client = await this.getClient();
+    // Use the same credentials/server as model selection. Do not reuse the
+    // provider selector's name-only cache across authenticated projects.
+    const raw = await client.get<unknown>("/v1/providers/chatgpt-usage", {
+      query: { provider_name: providerName },
+      signal,
+      timeout: 3_000,
+      maxRetries: 0,
+    });
+    return normalizeCloudChatGPTUsageResponse({ raw, providerName });
   }
 
   async createConversationMessageStream(
