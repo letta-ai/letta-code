@@ -6,6 +6,33 @@ export function isStringArray(value: unknown): value is string[] {
   );
 }
 
+// POSIX winsize stores rows/cols as unsigned shorts.
+export const TERMINAL_DIMENSION_MAX = 65_535;
+
+export function isPositiveSafeIntegerAtMost(
+  value: unknown,
+  max: number,
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value > 0 &&
+    value <= max
+  );
+}
+
+export function isNonNegativeIntegerAtMost(
+  value: unknown,
+  max: number,
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= max
+  );
+}
+
 export function isStringRecord(
   value: unknown,
 ): value is Record<string, string> {

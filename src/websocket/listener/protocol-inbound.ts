@@ -136,9 +136,12 @@ import {
 } from "./management-protocol-inbound";
 import {
   isAgentRuntimeScope,
+  isNonNegativeIntegerAtMost,
   isObjectRecord,
+  isPositiveSafeIntegerAtMost,
   isRuntimeScope,
   isStringArray,
+  TERMINAL_DIMENSION_MAX,
 } from "./protocol-validation";
 import {
   isRuntimeStartClientInfo,
@@ -152,9 +155,7 @@ import {
 } from "./teleport-protocol-inbound";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
-export type ServerLifecycleMessage = {
-  type: "pong";
-};
+export type ServerLifecycleMessage = { type: "pong" };
 
 const TOOLSET_PREFERENCES = new Set([
   "auto",
@@ -165,7 +166,6 @@ const TOOLSET_PREFERENCES = new Set([
   "gemini_snake",
   "none",
 ]);
-
 function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
   if (!isObjectRecord(value)) return false;
   return (
@@ -548,17 +548,12 @@ export function isRuntimeStartCommand(
 
 function isTerminalSpawnCommand(value: unknown): value is TerminalSpawnCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    terminal_id?: unknown;
-    cols?: unknown;
-    rows?: unknown;
-  };
+  const c = value as Record<string, unknown>;
   return (
     c.type === "terminal_spawn" &&
     typeof c.terminal_id === "string" &&
-    typeof c.cols === "number" &&
-    typeof c.rows === "number"
+    isPositiveSafeIntegerAtMost(c.cols, TERMINAL_DIMENSION_MAX) &&
+    isPositiveSafeIntegerAtMost(c.rows, TERMINAL_DIMENSION_MAX)
   );
 }
 
@@ -576,17 +571,12 @@ function isTerminalResizeCommand(
   value: unknown,
 ): value is TerminalResizeCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    terminal_id?: unknown;
-    cols?: unknown;
-    rows?: unknown;
-  };
+  const c = value as Record<string, unknown>;
   return (
     c.type === "terminal_resize" &&
     typeof c.terminal_id === "string" &&
-    typeof c.cols === "number" &&
-    typeof c.rows === "number"
+    isPositiveSafeIntegerAtMost(c.cols, TERMINAL_DIMENSION_MAX) &&
+    isPositiveSafeIntegerAtMost(c.rows, TERMINAL_DIMENSION_MAX)
   );
 }
 
@@ -639,7 +629,7 @@ export function isGetTreeCommand(value: unknown): value is GetTreeCommand {
   return (
     c.type === "get_tree" &&
     typeof c.path === "string" &&
-    typeof c.depth === "number" &&
+    isNonNegativeIntegerAtMost(c.depth, 5) &&
     typeof c.request_id === "string"
   );
 }
