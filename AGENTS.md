@@ -754,19 +754,8 @@ Harness manages the worktree lifecycle (not the reflection agent):
   `pending_integration(reason)` (merge failed, branch preserved).
 - Reflection agent NEVER semantically resolves conflicts.
 - Transcript marked consumed only when memory lands on main.
-- Memory-Git operations that reach the remote (e.g. reflection's parent-memory
-  `fetch origin`) must use the authenticated path `runGit` in
-  `src/agent/memory-git.ts`, which applies Desktop's transient Git proxy and
-  noninteractive credentials (`GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`).
-  Do not reach the persisted `api.letta.com` remote through `memory-worktree.ts`'s
-  own local `runGit` wrapper: Desktop holds its Cloud credential only in the
-  proxy (no persisted helper), so a direct fetch bypasses auth and breaks memory
-  integration (on Windows it can also raise a credential dialog that suppressing
-  alone does not fix).
-- On persistent integration failure, back off before rerunning reflection
-  (`reflection-retry.ts`: exponential 1–30 min, non-manual triggers deferred
-  until `retryAt`); never immediately re-mark the transcript eligible, or a
-  failing integration re-triggers work and re-warns every eligible turn.
+- Remote memory-Git operations must use the authenticated `runGit` path in `src/agent/memory-git.ts`; the worktree-local wrapper bypasses Desktop's transient Git proxy.
+- Persistent integration failures back off before reflection becomes eligible again; manual retries may bypass the delay.
 - Reflection settings are per-agent; trigger counter is per-conversation.
 - Counter increments on completed assistant steps (not user messages, not tool
   calls, not interrupted turns).
