@@ -340,7 +340,7 @@ Shell mode:
 * Exit with `Escape`, `Backspace`, or `Ctrl+U` on an empty prompt
 * Pasting text that starts with `!` into an empty prompt enters shell mode automatically, matching typed `!` behavior
 
-In a regular interactive session, commands you type in shell mode run outside the [sandbox](/docs/en/sandboxing) even when you've enabled sandboxing, because the sandbox applies to the commands Claude runs. See [strict sandbox mode](/docs/en/sandboxing#the-unsandboxed-retry-escape-hatch) for the sessions where shell-mode commands run sandboxed too, such as background sessions with strict sandbox mode on.
+Unless your session is one of those listed under [strict sandbox mode](/docs/en/sandboxing#the-unsandboxed-retry-escape-hatch), commands you type in shell mode run outside the [sandbox](/docs/en/sandboxing) even when you've enabled sandboxing, because the sandbox applies to the commands Claude runs.
 
 Claude responds to the command output automatically once it lands in the transcript, so you can run `! npm test` and get an explanation of the failures without a second prompt. The response costs the same as sending a normal prompt. To restore the earlier behavior where the output is added to context without a response, set [`respondToBashCommands`](/docs/en/settings-reference#respondtobashcommands) to `false` in `settings.json`. Before v2.1.186, shell mode always added output to context without a response.
 
@@ -601,7 +601,7 @@ In an attached [background session](/docs/en/agent-view#attach-to-a-session), `L
 
 The task list is Claude's to-do checklist: items Claude created to plan multi-step work, with indicators showing what's pending, in progress, or complete. It's separate from the background-task view. To see running shells and subagents, use [`/tasks`](/docs/en/commands) instead.
 
-On [Opus 4.8, Sonnet 5, Fable 5, Mythos 5, and later versions of those families](/docs/en/tools-reference#task-tool-availability), Claude keeps track of multi-step work without a written checklist, and Claude Code doesn't provide the tools that fill this list, so it stays empty. If you'd like the task list on those models anyway, opt in with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` or one of the other ways under [Task tool availability](/docs/en/tools-reference#task-tool-availability). On earlier models such as Opus 4.7, and after you opt in, the task list works as follows:
+The list fills only in sessions that have the task-tracking tools, which Claude Code provides by default on [Claude 3.x models, Opus 4 through 4.7, Sonnet 4 through 4.6, and Haiku 4.5](/docs/en/tools-reference#task-tool-availability). On any other model, including a model ID Claude Code doesn't recognize, the list stays empty unless you opt in with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` or one of the other ways under [Task tool availability](/docs/en/tools-reference#task-tool-availability). When the session has the tools, the task list works as follows:
 
 * Press `Ctrl+T` to toggle the task list view. The display shows up to five tasks at a time. When Claude hasn't created any checklist items yet, the toggle has no visible effect because there's nothing to display
 * If you leave the list expanded, Claude Code restores the expanded view the next time you launch into a session that still has tasks, such as with `--resume` or `--continue`. When the task list is empty, Claude Code starts it collapsed

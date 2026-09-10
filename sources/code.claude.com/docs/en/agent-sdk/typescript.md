@@ -666,9 +666,11 @@ Before Agent SDK v0.3.238, the response never carried the field, and Claude Code
 
 The response always reports `fast_mode_state`, and when something blocks [fast mode](/docs/en/fast-mode), `fast_mode_disabled_reason` carries the reason code alongside it, so you can explain the blocked state instead of re-deriving availability. Both behaviors require Claude Code v2.1.219 or later. Before v2.1.219, the response omitted `fast_mode_state` when fast mode wasn't available and never carried a reason. For the reason codes and their meanings, see [`fast_mode_disabled_reason`](#sdkresultmessage) on the result message.
 
-When a client sends `initialize` to a session that is already running, the control-response wrapper also carries an optional `pending_permission_requests` array. The field is on the response wrapper itself, not in the `SDKControlInitializeResponse` payload above. Each entry is a complete `control_request` message with the same `{ type: "control_request", request_id, request }` shape the session streams for permission requests while running.
+The control-response wrapper for a successful `initialize` also carries a `pending_permission_requests` array. The field is on the response wrapper itself, not in the `SDKControlInitializeResponse` payload above. Each entry is a complete `control_request` message with the same `{ type: "control_request", request_id, request }` shape the session streams for permission requests while running.
 
-These are requests that were issued before the client connected and are still awaiting a reply. The SDK reads the array for you and dispatches each entry to your [`canUseTool`](#canusetool) callback, the same redelivery that [`reinitialize()`](#query-object) triggers after a transport gap. Handle repeated request IDs idempotently, because an entry can repeat a request the callback already received before the connection dropped.
+The array lists the permission requests that this Claude Code process has issued and not yet resolved. The SDK reads the array for you and dispatches each entry to your [`canUseTool`](#canusetool) callback, the same redelivery that [`reinitialize()`](#query-object) triggers after a transport gap. Handle repeated request IDs idempotently, because an entry can repeat a request the callback already received before the connection dropped.
+
+The array is always present on a successful `initialize` response and is empty when this process has no unresolved permission request. Requires Claude Code v2.1.268 or later. Earlier versions could omit the field, so if you parse the wire protocol yourself, treat a missing field as an older CLI rather than as proof that nothing is pending.
 
 ### `SDKControlInterruptResponse`
 
@@ -2794,9 +2796,7 @@ type TodoWriteInput = {
 Creates and manages a structured task list for tracking progress.
 
 <Note>
-  On TypeScript Agent SDK 0.3.233 and later, the following restriction applies.
-
-  The following tools aren't available on Opus 4.8, Sonnet 5, Fable 5, Mythos 5, or later versions of those families unless you opt in:
+  The following tools are available by default only on Claude 3.x models, Opus 4 through 4.7, Sonnet 4 through 4.6, and Haiku 4.5. On every other model, including model IDs Claude Code doesn't recognize, they aren't available unless you opt in:
 
   * `TodoWrite`
   * `TaskCreate`
@@ -2804,7 +2804,9 @@ Creates and manages a structured task list for tracking progress.
   * `TaskUpdate`
   * `TaskList`
 
-  On other models, Claude Code provides the Task tools by default and `TodoWrite` only when you set `CLAUDE_CODE_ENABLE_TASKS=0`.
+  Wherever the tools are available, Claude Code provides the four Task tools, or `TodoWrite` instead when you set `CLAUDE_CODE_ENABLE_TASKS=0`.
+
+  This default set applies in Claude Code v2.1.268 and later, which the TypeScript Agent SDK bundles from v0.3.268.
 
   See [Model availability](/docs/en/agent-sdk/todo-tracking#model-availability) to opt in.
 </Note>
@@ -3112,7 +3114,7 @@ type ArtifactInput = {
 };
 ```
 
-Publishes a local `.html` or `.md` file as a hosted artifact page, or lists the user's published artifacts. Omit `action` or pass `"publish"` to publish `file_path`, which is required for the publish action along with `favicon`, one or two emoji for the browser tab. `title` names the published page in the browser tab and gallery when the HTML file has no `<title>` tag. `url` targets an existing artifact to update in place instead of minting a new one.
+Publishes a local `.html` or `.md` file as a hosted artifact page, or lists the user's published artifacts. Omit `action` or pass `"publish"` to publish `file_path`, which is required for the publish action along with `favicon`, one or two emoji that mark the artifact in the user's gallery. `title` names the published page in the browser tab and gallery when the HTML file has no `<title>` tag. `url` targets an existing artifact to update in place instead of minting a new one.
 
 `force` is a last-resort overwrite that discards a newer version another session published. On a conflict, the failed publish returns the newer content; Claude merges its changes onto that content, or re-reads the artifact, and publishes again. Pass `force` only when the user explicitly asks to discard that version.
 
@@ -3750,9 +3752,7 @@ type TodoWriteOutput = {
 Returns the previous and updated task lists.
 
 <Note>
-  On TypeScript Agent SDK 0.3.233 and later, the following restriction applies.
-
-  The following tools aren't available on Opus 4.8, Sonnet 5, Fable 5, Mythos 5, or later versions of those families unless you opt in:
+  The following tools are available by default only on Claude 3.x models, Opus 4 through 4.7, Sonnet 4 through 4.6, and Haiku 4.5. On every other model, including model IDs Claude Code doesn't recognize, they aren't available unless you opt in:
 
   * `TodoWrite`
   * `TaskCreate`
@@ -3760,7 +3760,9 @@ Returns the previous and updated task lists.
   * `TaskUpdate`
   * `TaskList`
 
-  On other models, Claude Code provides the Task tools by default and `TodoWrite` only when you set `CLAUDE_CODE_ENABLE_TASKS=0`.
+  Wherever the tools are available, Claude Code provides the four Task tools, or `TodoWrite` instead when you set `CLAUDE_CODE_ENABLE_TASKS=0`.
+
+  This default set applies in Claude Code v2.1.268 and later, which the TypeScript Agent SDK bundles from v0.3.268.
 
   See [Model availability](/docs/en/agent-sdk/todo-tracking#model-availability) to opt in.
 </Note>

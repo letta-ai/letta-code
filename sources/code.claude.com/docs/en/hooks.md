@@ -18,8 +18,8 @@ Claude Code runs hooks at specific points during a session. When an event fires 
 
 Events fall into three cadences:
 
-* once per session: `SessionStart` and `SessionEnd`
-* once per turn: `UserPromptSubmit`, `Stop`, and `StopFailure`
+* per session: `SessionStart` and `SessionEnd`
+* per turn: `UserPromptSubmit`, `Stop`, and `StopFailure`
 * on every tool call inside the agentic loop: `PreToolUse` and `PostToolUse`, except [`EndConversation`](/docs/en/tools-reference#endconversation-tool-behavior) calls, which skip both
 
 <div style={{maxWidth: "500px", margin: "0 auto"}}>
@@ -316,7 +316,7 @@ Each event type matches on a different field:
 | `PreModelSwitch`, `PostModelSwitch`                                                                                                               | canonical name of the model the session switches to, as described under [PreModelSwitch](#premodelswitch) | `claude-opus-5`, `claude-opus-4-6\|claude-opus-5`, `.*opus.*`                                                                                                                                                                                                                  |
 | `SubagentStop`                                                                                                                                    | agent type                                                                                                | same values as `SubagentStart`                                                                                                                                                                                                                                                 |
 | `ConfigChange`                                                                                                                                    | configuration source                                                                                      | `user_settings`, `project_settings`, `local_settings`, `policy_settings`, `skills`                                                                                                                                                                                             |
-| `CwdChanged`                                                                                                                                      | no matcher support                                                                                        | always fires on every directory change                                                                                                                                                                                                                                         |
+| `CwdChanged`                                                                                                                                      | no matcher support                                                                                        | always fires on every occurrence                                                                                                                                                                                                                                               |
 | `DirectoryAdded`                                                                                                                                  | how the directory was added                                                                               | `slash_command`, `register_repo_root`                                                                                                                                                                                                                                          |
 | `FileChanged`                                                                                                                                     | literal filenames to watch (see [FileChanged](#filechanged))                                              | `.envrc\|.env`                                                                                                                                                                                                                                                                 |
 | `StopFailure`                                                                                                                                     | error type                                                                                                | `rate_limit`, `overloaded`, `authentication_failed`, `oauth_org_not_allowed`, `account_on_hold`, `billing_error`, `invalid_request`, `model_not_found`, `server_error`, `max_output_tokens`, `cloud_credential_error`, `unknown`                                               |
@@ -555,8 +555,6 @@ In addition to the [common fields](#common-fields), MCP tool hooks accept these 
 
 Claude Code reads the tool's text content the same way it reads command-hook stdout, following the [parsing rule under exit code 0](#exit-code-0). If the named server is not connected, or the tool returns `isError: true`, the hook produces a non-blocking error and execution continues.
 
-MCP tool hooks are available on every hook event once Claude Code has connected to your MCP servers. `SessionStart` and `Setup` typically fire before servers finish connecting, so hooks on those events should expect the "not connected" error on first run.
-
 This example calls the `security_scan` tool on the `my_server` MCP server after each `Write` or `Edit`, passing the edited file's path:
 
 ```json theme={null}
@@ -578,6 +576,34 @@ This example calls the `security_scan` tool on the `my_server` MCP server after 
   }
 }
 ```
+
+An `mcp_tool` hook can run only once Claude Code has made the session's MCP servers available to hooks. `SessionStart` and `Setup` can fire before that point:
+
+* **At launch**: `SessionStart` fires before the servers are available, including when you launch with `--continue` or `--resume`. Claude Code skips the event's `mcp_tool` hooks without calling their tools, and the [debug log](#debug-hooks) records `mcp_tool hooks are not available for the 'SessionStart' hook event (no MCP client context)`.
+* **Later in a running session**: after `/clear` or a compaction, `SessionStart` fires again with the servers already available, and its `mcp_tool` hooks run.
+* **On `Setup`**: `Setup` always fires before the servers are available, so Claude Code skips its `mcp_tool` hooks every time and records the same message naming `Setup`.
+
+For example, this configuration calls the `load_context` tool on the `my_server` MCP server from a `SessionStart` hook with no matcher, so it applies to every `SessionStart` source:
+
+```json theme={null}
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "my_server",
+            "tool": "load_context"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+When you run `claude`, Claude Code skips this hook, never calls `load_context`, and writes the `no MCP client context` message to the debug log. Run `/clear` in that same session and the hook runs and calls `load_context`. A `type: "command"` hook on `SessionStart` runs at launch, so use one for anything the session needs from its first turn.
 
 #### Prompt and agent hook fields
 
@@ -665,8 +691,6 @@ In addition to settings files and plugins, hooks can be defined directly in [ski
 
 * **Subagent hooks**: Claude Code runs them only while that subagent is running and removes them when it finishes. Claude Code converts a `Stop` hook here to `SubagentStop`, the event it fires when a subagent completes.
 * **Skill hooks**: Claude Code registers them when you or Claude invoke the skill and keeps running them for the rest of the session, on turns after the skill's own turn as well. To have Claude Code remove a hook after its first successful run instead, set [`once: true`](#common-fields) on it.
-
-All hook events are supported.
 
 This skill defines a `PreToolUse` hook that runs a security validation script before each `Bash` command:
 
@@ -925,7 +949,7 @@ The JSON object supports three kinds of fields:
 | Field              | Default | Description                                                                                                                                                                                                                                                                                                                          |
 | :----------------- | :------ | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `continue`         | `true`  | If `false`, Claude stops processing entirely after the hook runs. Takes precedence over any event-specific decision fields                                                                                                                                                                                                           |
-| `stopReason`       | none    | Message shown to the user when `continue` is `false`. Not shown to Claude                                                                                                                                                                                                                                                            |
+| `stopReason`       | none    | Message shown to the user when `continue` is `false`. It stays in the conversation, so Claude sees it if the conversation continues                                                                                                                                                                                                  |
 | `suppressOutput`   | `false` | Has no effect: Claude Code accepts the field but doesn't act on it. A successful hook's stdout is never shown in the transcript and is recorded in the debug log                                                                                                                                                                     |
 | `systemMessage`    | none    | Warning message shown to the user. In [Agent SDK](/docs/en/agent-sdk/overview) and [`--output-format stream-json`](/docs/en/headless) output, it can arrive as an [`SDKInformationalMessage`](/docs/en/agent-sdk/typescript#sdkinformationalmessage)                                                                                                |
 | `terminalSequence` | none    | A terminal escape sequence for Claude Code to emit on your behalf, such as a desktop notification, window title, or bell. Restricted to OSC `0`/`1`/`2`/`9`/`99`/`777` and BEL. If the value contains anything outside the allowlist, the field is ignored. Use this instead of writing to `/dev/tty`, which is unavailable to hooks |
@@ -1096,7 +1120,7 @@ Each event corresponds to a point in Claude Code's lifecycle where hooks can run
 
 Runs when Claude Code starts a new session or resumes an existing session. Useful for loading development context like existing issues or recent changes to your codebase, or setting up environment variables. For static context that doesn't require a script, use [CLAUDE.md](/docs/en/memory) instead.
 
-SessionStart runs on every session, so keep these hooks fast. Only `type: "command"` and `type: "mcp_tool"` hooks are supported.
+SessionStart runs on every session, so keep these hooks fast. Only `type: "command"` and `type: "mcp_tool"` hooks are supported. See [MCP tool hook fields](#mcp-tool-hook-fields) for when `mcp_tool` hooks run.
 
 The matcher value corresponds to how the session was initiated:
 
@@ -1264,7 +1288,7 @@ In addition to the [common input fields](#common-input-fields), Setup hooks rece
 
 Setup hooks can't block; execution continues on any exit code. On every exit code, Claude Code discards a Setup hook's [JSON output fields](#json-output), such as `systemMessage`, `continue`, and `hookSpecificOutput.additionalContext`. With `-p`, a Setup hook's stdout, stderr, and exit code appear in the run's output only as [`hook_response` events](/docs/en/headless#read-session-metadata) when you launch with `--output-format stream-json --verbose`.
 
-Setup hooks have access to `CLAUDE_ENV_FILE`. Variables written to that file persist into subsequent Bash commands for the session, just as in [SessionStart hooks](#persist-environment-variables). Only `type: "command"` and `type: "mcp_tool"` hooks are supported.
+Setup hooks have access to `CLAUDE_ENV_FILE`. Variables written to that file persist into subsequent Bash commands for the session, just as in [SessionStart hooks](#persist-environment-variables). Only `type: "command"` hooks run on `Setup`. A `type: "mcp_tool"` hook on `Setup` is always skipped, as described under [MCP tool hook fields](#mcp-tool-hook-fields).
 
 ### InstructionsLoaded
 
@@ -1778,7 +1802,7 @@ A hook's `"ask"` also forces a permission prompt in [auto mode](/docs/en/permiss
 
 <span id="allow-with-updatedinput" />
 
-`AskUserQuestion` and `ExitPlanMode` require user interaction and normally block in [non-interactive mode](/docs/en/headless) with the `-p` flag. Returning `permissionDecision: "allow"` together with `updatedInput` satisfies that requirement: the hook reads the tool's input from stdin, collects the answer through your own UI, and returns it in `updatedInput` so the tool runs without prompting. Returning `"allow"` alone is not sufficient for these tools. For `AskUserQuestion`, echo back the original `questions` array and add an [`answers`](#askuserquestion) object mapping each question's text to the chosen answer.
+In [non-interactive mode](/docs/en/headless) with the `-p` flag, Claude Code offers `AskUserQuestion` and `ExitPlanMode` only when the run has a [permission host](/docs/en/headless#turn-off-permission-prompts-in-unattended-runs) to receive the prompt, such as an Agent SDK `canUseTool` callback. These tools require user interaction. Returning `permissionDecision: "allow"` together with `updatedInput` satisfies that requirement: the hook reads the tool's input from stdin, collects the answer through your own UI, and returns it in `updatedInput` so the tool runs without prompting. Returning `"allow"` alone is not sufficient for these tools. For `AskUserQuestion`, echo back the original `questions` array and add an [`answers`](#askuserquestion) object mapping each question's text to the chosen answer.
 
 As of v2.1.199, an MCP tool whose server marks it with [`_meta["anthropic/requiresUserInteraction"]`](/docs/en/mcp#require-approval-for-a-specific-tool) is stricter: a hook can't skip its approval prompt with `"allow"`, with or without `updatedInput`, because Claude Code can't confirm the hook collected the interaction the tool needs.
 
@@ -1790,12 +1814,12 @@ As of v2.1.199, an MCP tool whose server marks it with [`_meta["anthropic/requir
 
 `"defer"` is for integrations that run `claude -p` as a subprocess and read its JSON output, such as an Agent SDK app or a custom UI built on top of Claude Code. It lets that calling process pause Claude at a tool call, collect input through its own interface, and resume where it left off. Claude Code honors this value only in [non-interactive mode](/docs/en/headless) with the `-p` flag. In interactive sessions it logs a warning and ignores the hook result.
 
-The `AskUserQuestion` tool is the typical case: Claude wants to ask the user something, but there is no terminal to answer in. The round trip works like this:
+The `AskUserQuestion` tool is the typical case: Claude wants to ask the user something, but there is no terminal to answer in. A `-p` run offers `AskUserQuestion` only when it has a [permission host](/docs/en/headless#turn-off-permission-prompts-in-unattended-runs), such as an MCP tool you pass with `--permission-prompt-tool`, so start the run with one. The round trip works like this:
 
 1. Claude calls `AskUserQuestion`. The `PreToolUse` hook fires.
 2. The hook returns `permissionDecision: "defer"`. The tool doesn't execute. The process exits with `stop_reason: "tool_deferred"` and the pending tool call preserved in the transcript.
 3. The calling process reads `deferred_tool_use` from the SDK result, surfaces the question in its own UI, and waits for an answer.
-4. The calling process runs `claude -p --resume <session-id>`. The same tool call fires `PreToolUse` again.
+4. The calling process runs `claude -p --resume <session-id>` with the same permission host. The same tool call fires `PreToolUse` again.
 5. The hook returns `permissionDecision: "allow"` with the answer in `updatedInput`. The tool executes and Claude continues.
 
 The `deferred_tool_use` field carries the tool's `id`, `name`, and `input`. The `input` is the parameters Claude generated for the tool call, captured before execution:
@@ -1841,7 +1865,7 @@ Matches on tool name, same values as PreToolUse.
 
 PermissionRequest hooks receive `tool_name` and `tool_input` fields like PreToolUse hooks, but without `tool_use_id`. An optional `permission_suggestions` array contains the [permission updates](#permission-update-entries) Claude Code suggests for this request, such as adding an allow rule or changing the permission mode.
 
-The permission dialog builds its "always allow" options from these suggestions, but the array isn't an exact list of the options you see. The dialog can withhold an option whose suggestion stays in the array, for example when [`allowManagedPermissionRulesOnly`](/docs/en/settings-reference#allowmanagedpermissionrulesonly) hides rule-saving options. It can also offer options that have no suggestion entry, such as [**Yes, and switch to auto mode**](/docs/en/permission-modes#switch-permission-modes), which changes the permission mode directly rather than through a permission update.
+The `permission_suggestions` array isn't an exact list of the options you see, because each permission dialog builds its own options. Some dialogs, such as the one for file edits, don't read the array at all and derive their options from the request itself. A dialog that does read it can still withhold an option whose suggestion stays in the array, for example when [`allowManagedPermissionRulesOnly`](/docs/en/settings-reference#allowmanagedpermissionrulesonly) hides rule-saving options. It can also offer options that have no suggestion entry, such as [**Yes, and switch to auto mode**](/docs/en/permission-modes#switch-permission-modes), which changes the permission mode directly rather than through a permission update.
 
 PreToolUse hooks run before every tool call, whether or not it needs permission. PermissionRequest hooks run only when Claude Code is about to ask you for permission, or when it would otherwise auto-deny a call that can't prompt. Neither event fires for [`EndConversation`](/docs/en/tools-reference#endconversation-tool-behavior).
 
@@ -1955,7 +1979,7 @@ Match more broadly when the tool name isn't the right filter:
   },
   "tool_response": {
     "filePath": "/path/to/file.txt",
-    "success": true
+    "type": "create"
   },
   "tool_use_id": "toolu_01ABC123...",
   "duration_ms": 12
@@ -2076,7 +2100,7 @@ The `error` string is generally the same text Claude receives as the failed tool
 
 * For Bash and PowerShell, a command that ran and exited produces a first line `Exit code N`, then any output the command produced as one block with stdout and stderr interleaved
 * A payload may also carry a bare failure message with no exit-code line, when Claude Code could not start the shell process itself
-* Claude Code middle-truncates strings longer than 10,000 characters around a `... [N characters truncated] ...` marker, and can insert lines of its own, such as `Command timed out after 2m 0s`
+* Claude Code middle-truncates long strings around a `... [N characters truncated] ...` marker, and can insert lines of its own, such as `Command timed out after 2m 0s`
 
 #### PostToolUseFailure decision control
 
@@ -2130,7 +2154,7 @@ In addition to the [common input fields](#common-input-fields), PostToolBatch ho
 `tool_response` contains the same content the model receives in the corresponding `tool_result` block. The value is a serialized string or content-block array, exactly as the tool emitted it. For `Read`, that means line-number-prefixed text rather than raw file contents. Responses can be large, so parse only the fields you need.
 
 <Note>
-  The `tool_response` shape differs from `PostToolUse`'s. `PostToolUse` passes the tool's structured `Output` object, such as `{filePath: "...", success: true}` for `Write`; `PostToolBatch` passes the serialized `tool_result` content the model sees.
+  The `tool_response` shape differs from `PostToolUse`'s. `PostToolUse` passes the tool's structured `Output` object, such as `{filePath: "...", type: "create"}` for `Write`; `PostToolBatch` passes the serialized `tool_result` content the model sees.
 </Note>
 
 #### PostToolBatch decision control
@@ -2721,11 +2745,11 @@ Claude Code acts on the blocking decision from a ConfigChange hook's JSON output
 
 ### CwdChanged
 
-Runs when the working directory changes during a session, for example when Claude executes a `cd` command. Use this to react to directory changes: reload environment variables, activate project-specific toolchains, or run setup scripts automatically. Pairs with [FileChanged](#filechanged) for tools like [direnv](https://direnv.net/) that manage per-directory environment.
+Runs when a shell command in the main conversation changes the working directory, for example when Claude executes a `cd` command. Use this to react to directory changes: reload environment variables, activate project-specific toolchains, or run setup scripts automatically. Pairs with [FileChanged](#filechanged) for tools like [direnv](https://direnv.net/) that manage per-directory environment.
 
-CwdChanged hooks have access to `CLAUDE_ENV_FILE`. Variables written to that file persist into subsequent Bash commands for the session, just as in [SessionStart hooks](#persist-environment-variables).
+CwdChanged hooks have access to [`CLAUDE_ENV_FILE`](#persist-environment-variables). Variables written to that file persist into subsequent Bash commands until the next CwdChanged event, when Claude Code clears them.
 
-CwdChanged doesn't support matchers and fires on every directory change.
+CwdChanged doesn't support matchers and fires on every occurrence.
 
 #### CwdChanged input
 
@@ -2843,7 +2867,7 @@ To confirm the hook works, ask Claude to append a CRLF line to `data.csv` with a
 
 To watch files you can't name up front, return [`watchPaths`](#filechanged-output) from a hook to update the watch list dynamically. Claude Code starts the watcher only when something names a file to watch, so seed the list with a FileChanged group whose matcher names at least one file, or with a [SessionStart](#sessionstart-decision-control) or [CwdChanged](#cwdchanged) hook that returns `watchPaths`. The matcher still filters which hook groups run when a watched file changes, so give the group that handles dynamic paths an omitted matcher, which matches every watched file and adds nothing to the watch list. A `"*"` matcher also matches every file, but Claude Code registers it in the watch list like any other value, as a literal file named `*`.
 
-FileChanged hooks have access to `CLAUDE_ENV_FILE`. Variables written to that file persist into subsequent Bash commands for the session, just as in [SessionStart hooks](#persist-environment-variables).
+FileChanged hooks have access to [`CLAUDE_ENV_FILE`](#persist-environment-variables). Variables written to that file persist into subsequent Bash commands until the next [CwdChanged](#cwdchanged) event, when Claude Code clears them.
 
 #### FileChanged input
 
@@ -3307,7 +3331,6 @@ For form-mode elicitation, the most common case:
   "session_id": "abc123",
   "transcript_path": "/Users/.../.claude/projects/.../00893aaf-19fa-41d2-8238-13269b9b3ca0.jsonl",
   "cwd": "/Users/...",
-  "permission_mode": "default",
   "hook_event_name": "Elicitation",
   "mcp_server_name": "my-mcp-server",
   "message": "Please provide your credentials",
@@ -3328,7 +3351,6 @@ For URL-mode elicitation, used for browser-based authentication:
   "session_id": "abc123",
   "transcript_path": "/Users/.../.claude/projects/.../00893aaf-19fa-41d2-8238-13269b9b3ca0.jsonl",
   "cwd": "/Users/...",
-  "permission_mode": "default",
   "hook_event_name": "Elicitation",
   "mcp_server_name": "my-mcp-server",
   "message": "Please authenticate",
@@ -3377,7 +3399,6 @@ In addition to the [common input fields](#common-input-fields), ElicitationResul
   "session_id": "abc123",
   "transcript_path": "/Users/.../.claude/projects/.../00893aaf-19fa-41d2-8238-13269b9b3ca0.jsonl",
   "cwd": "/Users/...",
-  "permission_mode": "default",
   "hook_event_name": "ElicitationResult",
   "mcp_server_name": "my-mcp-server",
   "action": "accept",
@@ -3451,7 +3472,7 @@ Events that support `command`, `http`, and `mcp_tool` hooks but not `prompt` or 
 * `WorktreeCreate`
 * `WorktreeRemove`
 
-`SessionStart` and `Setup` support `command` and `mcp_tool` hooks. They don't support `http`, `prompt`, or `agent` hooks.
+`SessionStart` and `Setup` support `command` and `mcp_tool` hooks, and [MCP tool hook fields](#mcp-tool-hook-fields) describes when their `mcp_tool` hooks run. They don't support `http`, `prompt`, or `agent` hooks.
 
 ### How prompt-based hooks work
 
@@ -3763,14 +3784,13 @@ The example below shows a `settings.json` hook that runs a project script with t
 
 ## Debug hooks
 
-Hook execution details, including which hooks matched, their exit codes, and full stdout and stderr, are written to the debug log file. Start Claude Code with `claude --debug-file <path>` to write the log to a known location, or run `claude --debug` and read the log at `~/.claude/debug/<session-id>.txt`. The `--debug` flag doesn't print to the terminal.
+Hook execution details are written to the debug log file. Start Claude Code with `claude --debug-file <path>` to write the log to a known location, or run `claude --debug` and read the log at `~/.claude/debug/<session-id>.txt`. The `--debug` flag doesn't print to the terminal.
 
 For example, a `PostToolUse` hook on `Write` whose command prints `hook-ran` produces entries like:
 
 ```text theme={null}
 2026-07-19T02:03:24.382Z [DEBUG] Hook output does not start with {, treating as plain text
-2026-07-19T02:03:24.382Z [DEBUG] Hook PostToolUse:Write (PostToolUse) success:
-hook-ran
+2026-07-19T02:03:24.382Z [DEBUG] "Hook PostToolUse:Write (PostToolUse) success:\nhook-ran"
 ```
 
 For more granular hook matching details, set `CLAUDE_CODE_DEBUG_LOG_LEVEL=verbose` to see additional log lines such as hook matcher counts and query matching.

@@ -2882,9 +2882,7 @@ When Monitor runs a command, it follows the same permission rules as Bash; a Web
 **Tool name:** `TodoWrite`
 
 <Note>
-  On Python Agent SDK 0.2.139 and later, the following restriction applies.
-
-  The following tools aren't available on Opus 4.8, Sonnet 5, Fable 5, Mythos 5, or later versions of those families unless you opt in:
+  The following tools are available by default only on Claude 3.x models, Opus 4 through 4.7, Sonnet 4 through 4.6, and Haiku 4.5. On every other model, including model IDs Claude Code doesn't recognize, they aren't available unless you opt in:
 
   * `TodoWrite`
   * `TaskCreate`
@@ -2892,7 +2890,9 @@ When Monitor runs a command, it follows the same permission rules as Bash; a Web
   * `TaskUpdate`
   * `TaskList`
 
-  On other models, Claude Code provides the Task tools by default and `TodoWrite` only when you set `CLAUDE_CODE_ENABLE_TASKS=0`.
+  Wherever the tools are available, Claude Code provides the four Task tools, or `TodoWrite` instead when you set `CLAUDE_CODE_ENABLE_TASKS=0`.
+
+  This default set applies in Claude Code v2.1.268 and later, which the TypeScript Agent SDK bundles from v0.3.268.
 
   See [Model availability](/docs/en/agent-sdk/todo-tracking#model-availability) to opt in.
 </Note>
