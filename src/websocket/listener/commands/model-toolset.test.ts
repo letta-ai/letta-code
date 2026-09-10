@@ -178,6 +178,17 @@ describe("listener native model selection", () => {
     );
   });
 
+  test("channel picker IDs resolve to catalog handles, not echoed IDs", async () => {
+    for (const preset of models) {
+      const resolved = await resolveModelForUpdateWithInventory({
+        model_id: preset.id,
+        model_handle: preset.id,
+      });
+      expect(resolved?.handle).toBe(preset.handle);
+      expect(resolved?.updateArgs).toEqual(preset.updateArgs);
+    }
+  });
+
   test.each(["api", "local"] as const)(
     "%s runtime responses retain the full inventory outside Cloud",
     async (mode) => {

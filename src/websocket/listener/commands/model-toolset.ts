@@ -244,12 +244,11 @@ function resolveModelForUpdateBase(
   if (typeof payload.model_id === "string" && payload.model_id.length > 0) {
     const byId = getModelInfo(payload.model_id);
     if (byId) {
-      // When an explicit model_handle is also provided (e.g. BYOK tier
-      // changes), use the model_id entry for updateArgs/label but preserve
-      // the caller-specified handle so the BYOK identity is maintained
-      // end-to-end.
+      // Channels echo the picker ID into both fields. Resolve that ID through
+      // the catalog; preserve a distinct explicit handle for BYOK tier changes.
       const explicitHandle =
         typeof payload.model_handle === "string" &&
+        payload.model_handle !== byId.id &&
         payload.model_handle.length > 0
           ? payload.model_handle
           : null;
