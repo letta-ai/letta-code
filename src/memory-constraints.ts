@@ -1,3 +1,8 @@
+export {
+  type MemoryFileFrontmatterInput,
+  validateMemoryFileFrontmatter,
+} from "./memory-frontmatter";
+
 export interface MemoryFileCharacterLimit {
   pattern: string;
   maxCharacters: number | null;
