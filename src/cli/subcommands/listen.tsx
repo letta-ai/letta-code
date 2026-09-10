@@ -10,6 +10,7 @@ import { Box, render, Text } from "ink";
 import TextInput from "ink-text-input";
 import type React from "react";
 import { useState } from "react";
+import { configureBackendMode } from "@/backend";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import type { ChannelGatewaySupervisor } from "@/channels/gateway-supervisor";
 import {
@@ -453,6 +454,14 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       channelNames,
       channelNames.length > 0 || restoreEnabledChannels,
     );
+    if (
+      startupMode.kind === "remote" &&
+      isCloudListenerServerUrl(startupMode.serverUrl)
+    ) {
+      // Cloud handoffs carry API agent IDs, regardless of this computer's
+      // saved preference. Keep local App Server and channel listeners local.
+      configureBackendMode("api");
+    }
 
     if (startupMode.kind === "unsupported-self-hosted") {
       console.error(
