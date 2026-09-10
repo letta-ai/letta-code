@@ -362,7 +362,7 @@ export function buildAgentConfigReport(agent: unknown, conversation: unknown) {
   };
 }
 
-export async function runModelConfigAction(
+async function runModelConfigAction(
   values: {
     agent?: string;
     conversation?: string;

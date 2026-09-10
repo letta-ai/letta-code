@@ -56,9 +56,32 @@ describe("model CLI", () => {
     args: string[] = [],
     overrides: NodeJS.ProcessEnv = {},
   ) {
-    // Keep full cross-scope diagnostics for mutation assertions; model get
-    // intentionally returns only the selected configuration.
-    const result = await cli(["config", ...args], overrides, "agents");
+    // Inspect persisted state directly; don't retain a public diagnostic
+    // command just to compare both scopes in regression tests.
+    const explicitAgent = args[0] === "--agent" ? args[1] : undefined;
+    const explicitConversation = ["--conversation", "--conv"].includes(
+      args[0] ?? "",
+    )
+      ? args[1]
+      : undefined;
+    const result = await run(
+      [
+        "-e",
+        `
+      import { configureBackendMode, getBackend } from "./src/backend/backend";
+      import { buildAgentConfigReport } from "./src/cli/subcommands/model";
+      configureBackendMode("local");
+      const backend = getBackend();
+      const explicitAgent = ${JSON.stringify(explicitAgent)};
+      const conversationId = explicitAgent ? undefined : (${JSON.stringify(explicitConversation)} ?? process.env.CONVERSATION_ID);
+      const conversation = conversationId && conversationId !== "default"
+        ? await backend.retrieveConversation(conversationId) : null;
+      const agent = await backend.retrieveAgent(explicitAgent ?? conversation?.agent_id ?? process.env.AGENT_ID);
+      console.log(JSON.stringify(buildAgentConfigReport(agent, conversation)));
+    `,
+      ],
+      overrides,
+    );
     expect(result.code, result.stderr).toBe(0);
     return JSON.parse(result.stdout);
   }
@@ -120,6 +143,20 @@ describe("model CLI", () => {
   afterAll(async () => {
     if (home) await rm(home, { recursive: true, force: true });
   });
+
+  test("removes agents config and its help/options", async () => {
+    const removed = await cli(["config"], {}, "agents");
+    expect(removed.code).toBe(1);
+    expect(removed.stderr).toContain("Unknown action: config");
+    const help = await cli(["--help"], {}, "agents");
+    expect(help.code, help.stderr).toBe(0);
+    expect(help.stdout).toContain("letta agents list");
+    expect(help.stdout).toContain("letta agents create");
+    expect(help.stdout).not.toContain("agents config");
+    expect(help.stdout).not.toContain("--conversation");
+    const legacyOption = await cli(["list", "--agent", agentId], {}, "agents");
+    expect(legacyOption.code).toBe(1);
+  }, 30000);
 
   test("lists the runtime catalog without a target", async () => {
     const result = await cli(["list"], {

@@ -10,7 +10,6 @@ import { resolvePersonalityId } from "@/agent/personality-presets";
 import { getBackend } from "@/backend";
 import { listSharedAgentsForCurrentUser } from "@/cli/helpers/shared-agent-listing";
 import { settingsManager } from "@/settings-manager";
-import { runModelConfigAction } from "./model";
 
 function printUsage(): void {
   console.log(
@@ -18,14 +17,6 @@ function printUsage(): void {
 Usage:
   letta agents list [options]
   letta agents create [options]
-  letta agents config [--agent <id> | --conversation <id>]
-
-Config Options:
-  --agent <id>          Show an agent's default model configuration
-  --conversation <id>   Show a conversation override and its parent agent
-  --conv <id>           Alias for --conversation
-
-  With no options, uses AGENT_ID and CONVERSATION_ID from the current session.
 
 List Options:
   --name <name>         Exact name match
@@ -77,10 +68,6 @@ const AGENTS_OPTIONS = {
   "include-blocks": { type: "boolean" },
   shared: { type: "boolean" },
   limit: { type: "string" },
-  // Config options
-  agent: { type: "string" },
-  conversation: { type: "string" },
-  conv: { type: "string" },
   // Create options
   model: { type: "string" },
   personality: { type: "string" },
@@ -120,10 +107,6 @@ export async function runAgentsSubcommand(argv: string[]): Promise<number> {
 
   if (action === "list") {
     return runListAction(parsed.values);
-  }
-
-  if (action === "config") {
-    return runModelConfigAction(parsed.values);
   }
 
   console.error(`Unknown action: ${action}`);
