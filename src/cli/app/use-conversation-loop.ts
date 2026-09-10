@@ -2384,10 +2384,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               currentHandle: currentModelId,
               error: streamErrorInfo ?? runErrorInfo ?? fallbackError,
               exhaustedProviders: chatgptExhaustedProvidersRef.current,
+              signal: turnAbortController.signal,
             });
             if (rotation) {
               chatgptPlanSwapsRef.current += 1;
-
               const statusId = uid("status");
               buffersRef.current.byId.set(statusId, {
                 kind: "status",

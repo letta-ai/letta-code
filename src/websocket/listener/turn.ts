@@ -661,6 +661,7 @@ async function handleIncomingMessageInner(
             currentHandle: null,
             error: quotaError,
             exhaustedProviders: chatgptExhaustedProviders,
+            signal: turnAbortSignal,
           });
           if (rotation) {
             chatgptPlanSwaps += 1;
@@ -675,7 +676,6 @@ async function handleIncomingMessageInner(
               agentId,
               conversationId,
             });
-
             if (turnAbortSignal.aborted) {
               throw new Error("Cancelled by user");
             }

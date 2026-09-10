@@ -1,20 +1,203 @@
 import { describe, expect, test } from "bun:test";
+import Letta from "@letta-ai/letta-client";
 import { clearAvailableModelsCache } from "@/agent/available-models";
 import {
   formatPlanRotationNotice,
+  isChatGPTPlanExhausted,
   rotateChatGPTPlanOnQuotaLimit,
 } from "@/agent/chatgpt-plan-rotation";
 import {
   parseChatGPTUsageLimitDetail,
   selectChatGPTQuotaFailoverHandle,
 } from "@/agent/turn-recovery-policy";
-import { __testSetBackend } from "@/backend";
+import { __testSetBackend, APIBackend } from "@/backend";
+import type { ChatGPTUsageSnapshot } from "@/providers/chatgpt-usage-service";
 
 const FULL_DETAIL =
   'ChatGPT rate limit exceeded: {"error":{"type":"usage_limit_reached","message":"You have hit your usage limit.","plan_type":"plus","resets_at":1700000000,"resets_in_seconds":3600}}';
 
 const PRIMARY_HANDLE = "chatgpt-caren/gpt-5.2";
 const SIBLING_HANDLE = "chatgpt-jin/gpt-5.2";
+
+describe("quota-aware plan rotation over HTTP", () => {
+  for (const outcome of [
+    "available",
+    "all exhausted",
+    "unavailable",
+    "cancelled",
+    "cancelled during update",
+  ] as const) {
+    test(`${outcome}: checks quota before updating only the active conversation`, async () => {
+      const conversations = new Map([
+        ["conv-first", PRIMARY_HANDLE],
+        ["conv-second", PRIMARY_HANDLE],
+      ]);
+      const checked: string[] = [];
+      const updates: string[] = [];
+      const controller = new AbortController();
+      const server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const url = new URL(req.url);
+          const path = url.pathname.replace(/\/$/, "");
+          if (path === "/v1/models") {
+            if (outcome === "cancelled during update" && checked.length > 0)
+              controller.abort();
+            return Response.json(
+              [PRIMARY_HANDLE, SIBLING_HANDLE, "chatgpt-third/gpt-5.2"].map(
+                (handle) => ({
+                  handle,
+                  provider_type: "chatgpt_oauth",
+                  provider_category: "byok",
+                  max_context_window: 128_000,
+                }),
+              ),
+            );
+          }
+          if (path === "/v1/providers/chatgpt-usage") {
+            const provider = url.searchParams.get("provider_name") ?? "";
+            checked.push(provider);
+            if (outcome === "cancelled") controller.abort();
+            if (outcome === "cancelled during update")
+              clearAvailableModelsCache();
+            if (outcome === "unavailable")
+              return new Response("unavailable", { status: 503 });
+            return Response.json({
+              providerName: provider,
+              fetchedAt: new Date().toISOString(),
+              limitReached:
+                outcome === "all exhausted" ||
+                (outcome === "available" && checked.length === 1),
+            });
+          }
+          const id = path.split("/").at(-1) ?? "";
+          if (path.startsWith("/v1/conversations/") && conversations.has(id)) {
+            if (req.method === "PATCH") {
+              return req.json().then((body) => {
+                const model = (body as { model: string }).model;
+                updates.push(model);
+                conversations.set(id, model);
+                return Response.json({ id, model });
+              });
+            }
+            return Response.json({ id, model: conversations.get(id) });
+          }
+          return new Response("unexpected route", { status: 404 });
+        },
+      });
+      const client = new Letta({
+        apiKey: "test-key",
+        baseURL: server.url.toString(),
+        maxRetries: 0,
+      });
+      __testSetBackend(new APIBackend({ getClient: async () => client }));
+      clearAvailableModelsCache();
+      try {
+        const result = await rotateChatGPTPlanOnQuotaLimit({
+          agentId: "agent-rotation",
+          conversationId: "conv-first",
+          currentHandle: PRIMARY_HANDLE,
+          error: { error_code: "usage_limit_reached" },
+          exhaustedProviders: new Set(),
+          signal: controller.signal,
+        });
+        if (outcome === "available") {
+          expect(checked).toHaveLength(2);
+          expect(result?.toProvider).toBe(checked[1]);
+          expect(updates).toEqual([`${checked[1]}/gpt-5.2`]);
+        } else if (outcome === "unavailable") {
+          expect(checked).toHaveLength(1);
+          expect(result?.toProvider).toBe(checked[0]);
+          expect(updates).toHaveLength(1);
+        } else {
+          expect(checked).toHaveLength(outcome.startsWith("cancelled") ? 1 : 2);
+          expect(result).toBeNull();
+          expect(updates).toEqual([]);
+          expect(conversations.get("conv-first")).toBe(PRIMARY_HANDLE);
+        }
+        expect(conversations.get("conv-second")).toBe(PRIMARY_HANDLE);
+      } finally {
+        server.stop(true);
+        clearAvailableModelsCache();
+        __testSetBackend(null);
+      }
+    });
+  }
+});
+
+describe("plan-wide quota evidence", () => {
+  const now = Date.now();
+  const usage: ChatGPTUsageSnapshot = {
+    providerName: "plan",
+    fetchedAt: new Date(now).toISOString(),
+    summary: "",
+    primary: null,
+    secondary: null,
+    additional: [],
+  };
+  const fullWindow = {
+    label: "primary",
+    usedPercent: 100,
+    windowDurationMins: 300,
+    resetsAt: now / 1000 + 100,
+  };
+
+  test("uses the explicit limit verdict, including usable credits", () => {
+    expect(isChatGPTPlanExhausted({ ...usage, limitReached: true }, now)).toBe(
+      true,
+    );
+    expect(
+      isChatGPTPlanExhausted(
+        { ...usage, limitReached: false, primary: fullWindow },
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      isChatGPTPlanExhausted(
+        { ...usage, primary: fullWindow, credits: { hasCredits: true } },
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      isChatGPTPlanExhausted(
+        { ...usage, limitReached: true, credits: { hasCredits: true } },
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  test("uses unexpired primary/secondary windows, not unrelated model limits", () => {
+    expect(isChatGPTPlanExhausted({ ...usage, primary: fullWindow }, now)).toBe(
+      true,
+    );
+    expect(
+      isChatGPTPlanExhausted({ ...usage, secondary: fullWindow }, now),
+    ).toBe(true);
+    expect(
+      isChatGPTPlanExhausted(
+        { ...usage, primary: { ...fullWindow, resetsAt: now / 1000 - 1 } },
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      isChatGPTPlanExhausted({ ...usage, additional: [fullWindow] }, now),
+    ).toBe(false);
+    expect(isChatGPTPlanExhausted(usage, now)).toBe(false);
+  });
+
+  test("does not exclude a plan from stale quota data", () => {
+    expect(
+      isChatGPTPlanExhausted(
+        {
+          ...usage,
+          fetchedAt: new Date(now - 31_000).toISOString(),
+          limitReached: true,
+        },
+        now,
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("rotateChatGPTPlanOnQuotaLimit", () => {
   test("updates only the active conversation and keeps exhausted plans turn-local", async () => {
