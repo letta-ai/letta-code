@@ -843,7 +843,7 @@ export async function handleHeadlessCommand(
   let specifiedAgentId = values.agent;
   const specifiedAgentName = values.name;
   let specifiedConversationId = values.conversation;
-  let specifiedAgentIdFromAmbientBackendSwitch = false;
+  let specifiedAgentIdFromAmbient = false;
   const forceNew = values["new-agent"];
   const ephemeralFlag = values.ephemeral;
   const systemPromptPreset = values.system;
@@ -984,8 +984,9 @@ export async function handleHeadlessCommand(
     process.env.AGENT_ID ||
     ""
   ).trim();
+  // Infer the calling agent (ambient AGENT_ID) for --backend/--computer routes.
   if (
-    startupOptions.requestedBackendMode &&
+    (startupOptions.requestedBackendMode || usesRemoteEnvironment) &&
     ambientAgentId &&
     !specifiedAgentId &&
     !specifiedAgentName &&
@@ -995,7 +996,7 @@ export async function handleHeadlessCommand(
     !fromAgentId
   ) {
     specifiedAgentId = ambientAgentId;
-    specifiedAgentIdFromAmbientBackendSwitch = true;
+    specifiedAgentIdFromAmbient = true;
   }
 
   // Validate --conv default requires --agent (unless --new-agent will create one)
@@ -1230,16 +1231,15 @@ export async function handleHeadlessCommand(
         include: ["agent.tools", "agent.tags"],
       });
     } catch (_error) {
-      if (specifiedAgentIdFromAmbientBackendSwitch) {
-        console.error(
-          `Active agent ${specifiedAgentId} is not available on the ${startupOptions.requestedBackendMode} backend.`,
-        );
+      if (specifiedAgentIdFromAmbient) {
+        const ambientMissMessage = startupOptions.requestedBackendMode
+          ? `Active agent ${specifiedAgentId} is not available on the ${startupOptions.requestedBackendMode} backend.`
+          : `Active agent ${specifiedAgentId} (inferred from the AGENT_ID environment variable) was not found.`;
+        console.error(ambientMissMessage);
         if (startupOptions.requestedBackendMode === "local") {
           console.error(
-            "--backend local uses the local backend store and will not silently switch to a different cwd-local agent.",
-          );
-          console.error(
-            "Use --new-agent to create a local agent, or pass --agent <local-agent-id> to choose one explicitly.",
+            "--backend local uses the local backend store and will not silently switch to a different cwd-local agent.\n" +
+              "Use --new-agent to create a local agent, or pass --agent <local-agent-id> to choose one explicitly.",
           );
         } else {
           console.error(

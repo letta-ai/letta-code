@@ -99,4 +99,68 @@ describe("headless backend switches", () => {
       await rm(storageDir, { recursive: true, force: true });
     }
   });
+
+  test("--computer routing infers the ambient agent without --agent", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "lc-computer-ambient-agent-"),
+    );
+    try {
+      const result = await runCliWithEnv(
+        [
+          "-p",
+          "Reply with exactly: should-not-run",
+          "--computer",
+          "nonexistent-computer",
+          "--max-turns",
+          "1",
+          "--no-skills",
+        ],
+        {
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
+          LETTA_LOCAL_BACKEND_DIR: storageDir,
+          LETTA_AGENT_ID: "agent-ambient-remote",
+          AGENT_ID: "agent-ambient-remote",
+        },
+      );
+
+      // The ambient agent is inferred and lookup fails before any computer
+      // routing: the run must exit 1 with the ambient-agent error, not fall
+      // through to project/global session resolution or a routing error.
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).not.toContain("should-not-run");
+      expect(result.stderr).toContain(
+        "Active agent agent-ambient-remote (inferred from the AGENT_ID environment variable) was not found.",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("--computer routing does not infer an agent without an ambient AGENT_ID", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "lc-computer-no-ambient-"));
+    try {
+      const result = await runCliWithEnv(
+        [
+          "-p",
+          "Reply with exactly: should-not-run",
+          "--computer",
+          "nonexistent-computer",
+          "--max-turns",
+          "1",
+          "--no-skills",
+        ],
+        {
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
+          LETTA_LOCAL_BACKEND_DIR: storageDir,
+        },
+      );
+
+      // Without AGENT_ID there is nothing to infer; behavior is unchanged
+      // from before ambient inference existed.
+      expect(result.stdout).not.toContain("should-not-run");
+      expect(result.stderr).not.toContain("inferred from the AGENT_ID");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
 });
