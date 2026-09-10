@@ -10,6 +10,7 @@ import { runLocalBackendSubcommand } from "./local-backend";
 import { runMcpSubcommand } from "./mcp";
 import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
+import { runModelSubcommand } from "./model";
 import { runModsSubcommand } from "./mods";
 import { runSandboxSubcommand } from "./sandbox";
 import { runSecretSubcommand } from "./secret";
@@ -50,6 +51,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "memory":
     case "messages":
     case "mcp":
+    case "model":
     case "mods":
     case "remote":
     case "sandbox":
@@ -82,6 +84,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runMemorySubcommand(rest);
     case "agents":
       return runAgentsSubcommand(rest);
+    case "model":
+      return runModelSubcommand(rest);
     case "app-server":
       console.error(
         "Warning: `letta app-server` is deprecated. Use `letta server --listen` instead.",

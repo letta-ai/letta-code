@@ -1,6 +1,6 @@
 ---
 name: letta-guide
-description: Read the official Letta documentation (docs.letta.com) through its cached, ETag-checked fetch route. Load before ANY docs.letta.com retrieval — answering how Letta works, what Letta (or you) can do, setting up providers, models, channels, skills, memory, schedules, permissions, self-hosting, pricing, or billing, AND looking up Letta API, Agent SDK, or Letta Code reference while writing code. Do not use fetch_webpage or web_search on docs.letta.com; this skill's helper is the docs route. Never answer Letta product questions from memory alone.
+description: Read the official Letta documentation (docs.letta.com) through its cached, ETag-checked fetch route, and change your model with the CLI. Load before ANY docs.letta.com retrieval — answering how Letta works, what Letta (or you) can do, setting up providers, models, channels, skills, memory, schedules, permissions, self-hosting, pricing, or billing, AND looking up Letta API, Agent SDK, or Letta Code reference while writing code. Do not use fetch_webpage or web_search on docs.letta.com; this skill's helper is the docs route. Never answer Letta product questions from memory alone.
 ---
 
 # Letta Guide
@@ -51,6 +51,60 @@ helper below fetches the live index first, so you pick a URL that exists.
    give your best answer, and clearly mark it as possibly out of date with a
    link to https://docs.letta.com. Never silently fall back to memory.
 
+## Inspect or change your model from the CLI
+
+Use the backend-aware CLI rather than raw REST calls or editing settings files:
+
+```bash
+# Discover available handles and supported reasoning levels
+letta model list
+
+# Read or update the current conversation's model
+letta model get
+letta model set <model-handle-or-catalog-id> --reasoning high
+
+# Read or update the agent's default model
+letta model get --default
+letta model set <model-handle-or-catalog-id> --reasoning high --default
+```
+
+Omit IDs when inspecting or changing yourself: the CLI infers `AGENT_ID` and
+`CONVERSATION_ID`.
+
+- **Current conversation:** `get` returns its effective configuration, inheriting
+  the agent default when no conversation override exists. `set` writes an
+  override for this conversation without changing the agent default or other
+  conversations.
+- **Agent default:** add `--default` to `get` or `set`. It reads or updates the
+  agent default regardless of the current conversation's override. Conversations
+  without overrides inherit that default; existing overrides remain unchanged.
+- **No persisted conversation:** if `CONVERSATION_ID` is absent or `default`,
+  both commands target the inferred agent default even without `--default`.
+
+After updating, verify with the matching read: `letta model get` for the current
+conversation, or `letta model get --default` for the agent default. Do not use
+the current conversation's output to verify a default change when it has an override.
+
+To deliberately select another scope, use `--agent <id>` for the agent default
+or `--conversation <id>` for one conversation. Explicit targets ignore ambient
+conversation selection. Do not combine `--default` with `--conversation`.
+
+`letta model list` returns runtime catalog JSON rows with `id`, `handle`, `label`,
+`context_window_limit`, and `reasoning_levels`. Choose a verified handle or ID;
+do not guess model names or supported reasoning levels. `--reasoning high` is
+optional and valid only when the selected row advertises `high`. A positional
+model handle or ID is always required, including when changing reasoning.
+
+`get` returns only `model`, `context_window_limit`, and secret-redacted
+`model_settings` for the selected scope, not a multi-scope diagnostic report.
+`set` applies the model's settings/context defaults and prints the saved report;
+check its `effective` field, or run `letta model get` with the same target.
+`letta agents config` retains the full diagnostic report, and
+`letta agents list` continues to list agents, not models.
+Changes do not interrupt or restart in-flight inference. Inspect `letta model --help`
+on older installations; update the CLI if absent rather than using `letta --model`,
+which starts/resumes a session instead of performing a standalone update.
+
 ## Hard rules
 
 - **Never invent CLI commands, flags, slash commands, settings keys, config
@@ -94,4 +148,3 @@ The helper owns the cache. It uses the first writable temporary directory from
 when an explicit location is needed. Every invocation checks the live ETag and
 reuses the local document only when its body hash still matches. Do not create
 or manage a second cache yourself.
-

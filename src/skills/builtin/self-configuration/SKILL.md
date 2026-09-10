@@ -52,17 +52,35 @@ Local settings, server state, and the current process are different sources of t
 Start with the authenticated, backend-aware active configuration report:
 
 ```bash
-letta agents config
+letta model get
+letta model get --default
 ```
 
 With no arguments it uses `AGENT_ID` and `CONVERSATION_ID` from the current session. To inspect an explicit scope:
 
 ```bash
-letta agents config --agent "$AGENT_ID"
-letta agents config --conversation "$CONVERSATION_ID"
+letta model get --agent "$AGENT_ID"
+letta model get --conversation "$CONVERSATION_ID"
 ```
 
-The conversation form retrieves its parent agent automatically and reports both scopes plus the effective configured model. It works through the active API or local backend; do not read auth files, call REST directly, or decode local persistence paths yourself. A configured router handle such as `letta/auto` does not identify the underlying model selected for one inference.
+`model get` returns only the effective `model`, `context_window_limit`, and
+secret-redacted `model_settings`. Use `--default` to read the inferred agent's
+defaults instead; the same flag on `model set` changes those defaults. Do not
+combine `--default` with `--conversation`. Use `letta agents config` when you
+need the full agent/conversation comparison. These commands use the active API
+or local backend; do not read auth files, call REST directly, or decode local
+persistence paths. A router handle such as `letta/auto` does not identify the
+underlying model selected for one inference.
+
+For model changes, use `letta model set <model-handle-or-catalog-id> --reasoning high`
+with the same inferred or explicit target flags as `model get`. The positional
+handle or ID is required even when changing only reasoning; `--reasoning` is optional.
+Choose the model and supported reasoning levels from `letta model list` (JSON rows
+with `id`, `handle`, `label`, `context_window_limit`, and `reasoning_levels`), not
+from guessed enums. Use `high` only if advertised by that model.
+`letta agents config` remains compatible and `letta agents list` is unchanged. Load `letta-guide` for
+scope and verification rules; use the server-setting helpers below for other
+configuration fields, not as a replacement for this backend-aware command.
 
 Use the secret-safe local/runtime report for harness settings, permissions, and backend diagnostics:
 
