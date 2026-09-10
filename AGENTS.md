@@ -438,25 +438,8 @@ silently affect `bar.test.ts` if they share a worker.
 - **Review signal:** any test using `mock.module()` without `afterAll`
   restoration, especially if the mocked module is consumed by other test files.
 
-### Test Flakes: Timing & Process-Global State
-
-Bun runs test files concurrently in worker processes that share
-process-global state, and a loaded CI runner schedules work late. Guard these
-assumptions or a passing test turns red only in the full suite:
-
-- **Don't mutate `process.env` in tests.** Inject env/config into the function
-  under test (or the spawned process) instead. A mutation set in one test file
-  leaks to every other test file in the same worker — the same class of leak as
-  leaked module mocks above. If a mutation is unavoidable, restore it in
-  `finally`.
-- **Reading output written by a detached/background/headless process:** poll
-  for a completion marker with a deadline rather than reading once the parent
-  exits; the child may append after the parent returns.
-- **Use realistic synthetic timeouts.** An unrealistically short socket/process
-  setup timeout that passes locally races a loaded runner; keep it above the
-  real setup time.
-- **Give each spawned process its own timeout budget** rather than sharing one
-  Bun test timeout across multiple real processes.
+- Prefer injected config over mutating `process.env` in tests; if mutation is unavoidable, restore it in `finally`.
+- Poll detached-process output for a completion marker, and give each real process its own realistic timeout budget.
 
 ### Don't Rename Existing Test Fixtures
 
