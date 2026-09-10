@@ -206,7 +206,7 @@ Include context about what the user originally asked for, so you can give a help
 - **Recurring tasks**: No longer auto-expire. They remain active until explicitly cancelled.
 - **One-shot cleanup (local runner)**: One-shot local tasks are garbage-collected 24 hours after firing.
 - **Default binding**: `letta cron add` uses `--agent` first, then `LETTA_AGENT_ID`. Omit `--conversation` for a fresh conversation per fire; use `--conversation self` to capture `LETTA_CONVERSATION_ID` explicitly.
-- **Local scheduler requirement**: Local schedules only fire while a Letta session is running on their computer; fires while no session runs are marked as missed. Cloud schedules fire from the cloud regardless.
+- **Local scheduler requirement**: Local schedules only fire while a Letta session is running on their computer. One-shot fires missed while no session runs are marked as missed; recurring fires during that time are silently skipped. Cloud schedules fire from the cloud regardless.
 - **`--at` for specific times**: `--at "3:00pm"` schedules a one-shot. If the time has already passed today, it schedules for tomorrow.
 - **Cloud schedule creation failures are loud**: if creating a cloud schedule fails, no schedule is created — a failed create never silently becomes a local schedule. (The local placement for computers the cloud scheduler can't reach is decided before creation and reported in the output.)
 
