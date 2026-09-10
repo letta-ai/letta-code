@@ -70,6 +70,11 @@ import type {
   RemoveQueueItemResponse,
 } from "./task-control-protocol";
 import type * as TeleportProtocol from "./teleport-protocol";
+import type {
+  ToolsetName,
+  ToolsetOption,
+  ToolsetPreference,
+} from "./toolset-protocol";
 
 export type * from "./approval-classification-protocol";
 export type * from "./background-process-protocol";
@@ -81,6 +86,7 @@ export type * from "./runtime-start-protocol";
 export type * from "./schedule-protocol";
 export type * from "./task-control-protocol";
 export type * from "./teleport-protocol";
+export type * from "./toolset-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 
@@ -120,16 +126,6 @@ export type DevicePermissionMode =
   | "unrestricted"
   | "strict";
 
-export type ToolsetName =
-  | "codex"
-  | "codex_snake"
-  | "default"
-  | "gemini"
-  | "gemini_snake"
-  | "letta"
-  | "none";
-
-export type ToolsetPreference = ToolsetName | "auto";
 export interface ClientToolsetConfig {
   /** Request-scoped base toolset. Omitted preserves the runtime preference. */
   base?: ToolsetPreference;
@@ -386,6 +382,7 @@ export interface DeviceStatus {
   letta_code_version: string | null;
   current_toolset: ToolsetName | null;
   current_toolset_preference: ToolsetPreference;
+  available_toolsets: ToolsetOption[];
   current_loaded_tools: string[];
   current_available_skills: AvailableSkillSummary[];
   background_processes: BackgroundProcessSummary[];
