@@ -12,6 +12,7 @@ import type {
 } from "@/types/protocol_v2";
 import { debugLog, isDebugEnabled } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
+import { sealStartupLogs } from "@/utils/startup-log-boundary";
 import {
   handleTerminalInput,
   handleTerminalKill,
@@ -212,12 +213,16 @@ export function createListenerMessageHandler(
   const connectionId = explicitConnectionId ?? opts.connectionId;
 
   return async (data: WebSocket.RawData): Promise<void> => {
+    const lifecycleMessage =
+      parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
+    // Legacy relays can deliver input before onConnected. Fail outside the
+    // handler catch so no parsing, logging, or dispatch follows a failed seal.
+    // Only projected pongs are content-free; ready frames retain extra fields.
+    if (lifecycleMessage?.type !== "pong") sealStartupLogs();
     const raw = data.toString();
     let parsedScope: ParsedRuntimeScope = null;
 
     try {
-      const lifecycleMessage =
-        parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
       if (lifecycleMessage) {
         // Record relay pongs so the heartbeat watchdog can detect a half-open
         // socket (no pong within the timeout) and force a reconnect.

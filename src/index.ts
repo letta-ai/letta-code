@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import "@/utils/startup-log-boundary";
 import { hostname } from "node:os";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
@@ -95,7 +96,6 @@ import { markMilestone } from "./utils/timing";
 // Stable fallbacks avoid creating new arrays that retrigger effects on every render.
 const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
 const EMPTY_MESSAGE_ARRAY: Message[] = [];
-
 function normalizeUpdateCommandAliases(args: string[]): string[] {
   const [command, ...rest] = args;
 
