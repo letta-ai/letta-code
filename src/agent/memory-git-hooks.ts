@@ -39,6 +39,7 @@ export const PRE_COMMIT_HOOK_SCRIPT = `#!/usr/bin/env bash
 # Installed by Letta Code CLI
 
 errors=""
+memory_files=()
 
 memory_layout_policy_file="$(git rev-parse --git-common-dir 2>/dev/null)/${MEMORY_LAYOUT_POLICY}"
 memory_layout_policy=$(cat "$memory_layout_policy_file" 2>/dev/null || true)
@@ -53,22 +54,25 @@ validate_memory_constraints() {
   fi
 }
 
-validate_memory_file() {
+validate_memory_files() {
+  [ "\${#memory_files[@]}" -eq 0 ] && return
   local result
-  result=$(node - "$1" "$2" <<'LETTA_MEMORY_FRONTMATTER'
+  result=$(node - "$1" "\${memory_files[@]}" <<'LETTA_MEMORY_FRONTMATTER'
 const { execFileSync, spawnSync } = require("node:child_process");
 const validateMemoryFileFrontmatter = ${validateMemoryFileFrontmatter.toString()};
-const [path, format] = process.argv.slice(2);
+const [format, ...paths] = process.argv.slice(2);
 try {
-  const content = execFileSync("git", ["show", ":" + path], { encoding: "utf8", maxBuffer: Infinity, stdio: ["ignore", "pipe", "pipe"] });
-  let previousContent = null;
-  if (format === "legacy") {
-    const previous = spawnSync("git", ["show", "HEAD:" + path], { encoding: "utf8", maxBuffer: Infinity, stdio: ["ignore", "pipe", "pipe"] });
-    if (previous.error) throw previous.error;
-    if (previous.status === 0) previousContent = previous.stdout;
+  for (const path of paths) {
+    const content = execFileSync("git", ["show", ":" + path], { encoding: "utf8", maxBuffer: Infinity, stdio: ["ignore", "pipe", "pipe"] });
+    let previousContent = null;
+    if (format === "legacy") {
+      const previous = spawnSync("git", ["show", "HEAD:" + path], { encoding: "utf8", maxBuffer: Infinity, stdio: ["ignore", "pipe", "pipe"] });
+      if (previous.error) throw previous.error;
+      if (previous.status === 0) previousContent = previous.stdout;
+    }
+    const errors = validateMemoryFileFrontmatter({ path, content, previousContent, format });
+    for (const error of errors) console.log("  " + error);
   }
-  const errors = validateMemoryFileFrontmatter({ path, content, previousContent, format });
-  for (const error of errors) console.log("  " + error);
 } catch {
   console.error("Memory validation could not read Git contents. No files were committed.");
   process.exit(1);
@@ -119,8 +123,9 @@ if [ "$use_v2_validation" = "true" ]; then
           ;;
       esac
     fi
-    [ "$projected" = "true" ] && validate_memory_file "$file" "memfs-v2"
+    [ "$projected" = "true" ] && memory_files+=("$file")
   done < <(git ls-files '*.md')
+  validate_memory_files "memfs-v2"
 
   if [ -n "$errors" ]; then
     echo "Memory validation failed:"
@@ -140,8 +145,9 @@ done
 # Match .md files under system/ or reference/ (with optional memory/ prefix).
 # Skip skill SKILL.md files — they use a different frontmatter format.
 for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memory/)?(system|reference)/.*\\.md$'); do
-  validate_memory_file "$file" "legacy"
+  memory_files+=("$file")
 done
+validate_memory_files "legacy"
 
 if [ -n "$errors" ]; then
   echo "Frontmatter validation failed:"

@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -265,3 +271,69 @@ test("Node bundle exports the validator and installs a self-contained hook", asy
     "missing required field 'name'",
   );
 });
+
+test("one Node process validates a hundred projected files and reports both ends of the batch", () => {
+  root = mkdtempSync(join(tmpdir(), "memfs-frontmatter-batch-"));
+  const env = {
+    PATH: process.env.PATH,
+    HOME: root,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  };
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: root, env, stdio: "pipe" });
+  git("init", "--quiet");
+  for (let index = 0; index < 100; index++) {
+    writeFileSync(join(root, `notes-${String(index).padStart(3, "0")}.md`), v2);
+  }
+  git("add", "--", "*.md");
+  git("-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "accepted");
+  writeFileSync(
+    join(root, ".git/letta-memory-layout-policy"),
+    "shared-memory\n",
+  );
+  writeFileSync(join(root, ".git/hooks/pre-commit"), PRE_COMMIT_HOOK_SCRIPT, {
+    mode: 0o755,
+  });
+
+  // Observe launches, then execute the real Node binary and the real hook.
+  const node = execFileSync("node", ["-p", "process.execPath"], {
+    encoding: "utf8",
+  }).trim();
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  const launches = join(root, "node-launches");
+  writeFileSync(
+    join(bin, "node"),
+    `#!/usr/bin/env bash\nprintf 'node\\n' >> ${JSON.stringify(launches)}\nexec ${JSON.stringify(node)} "$@"\n`,
+    { mode: 0o755 },
+  );
+  const observedEnv = { ...env, PATH: `${bin}:${env.PATH}` };
+  const commit = () =>
+    spawnSync(
+      "git",
+      ["commit", "--allow-empty", "--quiet", "-m", "candidate"],
+      { cwd: root, env: observedEnv, encoding: "utf8", timeout: 15_000 },
+    );
+  const accepted = commit();
+  expect(accepted.status).toBe(0);
+  expect(readFileSync(launches, "utf8").trim().split("\n")).toHaveLength(1);
+
+  writeFileSync(launches, "");
+  writeFileSync(join(root, "notes-000.md"), legacy);
+  writeFileSync(join(root, "notes-099.md"), legacy);
+  git("add", "--", "*.md");
+  const rejected = commit();
+  expect(rejected.status).not.toBe(0);
+  expect(rejected.stdout + rejected.stderr).toContain(
+    "notes-000.md: missing required field 'name'",
+  );
+  expect(rejected.stdout + rejected.stderr).toContain(
+    "notes-099.md: missing required field 'name'",
+  );
+  expect(readFileSync(launches, "utf8").trim().split("\n")).toHaveLength(1);
+}, 30_000);
