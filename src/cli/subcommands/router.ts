@@ -52,6 +52,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "messages":
     case "mcp":
     case "model":
+    case "models":
     case "mods":
     case "remote":
     case "sandbox":
@@ -85,6 +86,7 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
     case "agents":
       return runAgentsSubcommand(rest);
     case "model":
+    case "models": // alias
       return runModelSubcommand(rest);
     case "app-server":
       console.error(

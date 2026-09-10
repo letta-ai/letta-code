@@ -49,38 +49,9 @@ If a broken model or prompt prevents the agent from completing a turn, recover o
 
 Local settings, server state, and the current process are different sources of truth. Inspect the layer you intend to change before writing it.
 
-Start with the authenticated, backend-aware active configuration report:
-
-```bash
-letta model get
-letta model get --default
-```
-
-With no arguments it uses `AGENT_ID` and `CONVERSATION_ID` from the current session. To inspect an explicit scope:
-
-```bash
-letta model get --agent "$AGENT_ID"
-letta model get --conversation "$CONVERSATION_ID"
-```
-
-`model get` returns only the effective `model`, `context_window_limit`, and
-secret-redacted `model_settings`. Use `--default` to read the inferred agent's
-defaults instead; the same flag on `model set` changes those defaults. Do not
-combine `--default` with `--conversation`. Use `letta agents config` when you
-need the full agent/conversation comparison. These commands use the active API
-or local backend; do not read auth files, call REST directly, or decode local
-persistence paths. A router handle such as `letta/auto` does not identify the
-underlying model selected for one inference.
-
-For model changes, use `letta model set <model-handle-or-catalog-id> --reasoning high`
-with the same inferred or explicit target flags as `model get`. The positional
-handle or ID is required even when changing only reasoning; `--reasoning` is optional.
-Choose the model and supported reasoning levels from `letta model list` (JSON rows
-with `id`, `handle`, `label`, `context_window_limit`, and `reasoning_levels`), not
-from guessed enums. Use `high` only if advertised by that model.
-`letta agents config` remains compatible and `letta agents list` is unchanged. Load `letta-guide` for
-scope and verification rules; use the server-setting helpers below for other
-configuration fields, not as a replacement for this backend-aware command.
+- `letta model list [--byok | --hosted]` lists available models.
+- `letta model set [model_handle] [--reasoning <reasoning-option>] [--default]` overrides the current conversation's model or reasoning; `--default` overrides the agent's default instead.
+- `letta model get [--default]` gets the current model configuration; `--default` gets the agent's default configuration.
 
 Use the secret-safe local/runtime report for harness settings, permissions, and backend diagnostics:
 

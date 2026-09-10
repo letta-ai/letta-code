@@ -77,6 +77,27 @@ async function verifyCloudModelCli(verifyInference: boolean) {
       JSON.parse(changed.stdout).conversation.context_window_limit,
     ).toBeGreaterThan(0);
 
+    await client.conversations.update(conversationId, {
+      context_window_limit: 64000,
+      model_settings: {
+        ...saved.model_settings,
+        temperature: 0.23,
+        max_output_tokens: 8192,
+        parallel_tool_calls: false,
+      },
+    } as Parameters<typeof client.conversations.update>[1]);
+    const effortOnly = await cli(["set", "--reasoning", "low"]);
+    expect(effortOnly.code, effortOnly.stderr).toBe(0);
+    const preserved = JSON.parse(effortOnly.stdout).effective;
+    expect(preserved.model).toBe(model);
+    expect(preserved.context_window_limit).toBe(64000);
+    expect(preserved.model_settings).toMatchObject({
+      temperature: 0.23,
+      max_output_tokens: 8192,
+      parallel_tool_calls: false,
+      reasoning: { reasoning_effort: "low" },
+    });
+
     const changedDefault = await cli([
       "set",
       model,
@@ -154,4 +175,68 @@ test.skipIf(!process.env.LETTA_API_KEY)(
   "CLI model changes select the model used for Cloud inference",
   () => verifyCloudModelCli(true),
   180000,
+);
+
+test.skipIf(!process.env.LETTA_API_KEY)(
+  "CLI filters Cloud models by provider category",
+  async () => {
+    const client = new Letta({
+      apiKey: process.env.LETTA_API_KEY,
+      baseURL: process.env.LETTA_BASE_URL || "https://api.letta.com",
+    });
+    const inventory = await client.models.list();
+    const expectedByok = new Set(
+      inventory
+        .filter(
+          (entry) =>
+            (entry as unknown as { provider_category?: string })
+              .provider_category === "byok",
+        )
+        .map((entry) => entry.handle)
+        .filter((handle): handle is string => typeof handle === "string"),
+    );
+    const listings: Array<Array<{ id: string; handle: string }>> = [];
+    for (const flags of [[], ["--byok"], ["--hosted"]]) {
+      console.info(`Checking Cloud model list ${flags.join(" ") || "(all)"}`);
+      const child = Bun.spawn(
+        [
+          process.execPath,
+          "src/index.ts",
+          "--backend",
+          "cloud",
+          "models",
+          "list",
+          ...flags,
+        ],
+        {
+          cwd: resolve(import.meta.dir, "../.."),
+          env: { ...process.env, LETTA_DEBUG: "0" },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+      expect(code, stderr).toBe(0);
+      listings.push(JSON.parse(stdout));
+    }
+    const [all = [], byok = [], hosted = []] = listings;
+    // Keep account-specific provider handles out of failure output.
+    expect(new Set(byok.map((entry) => entry.handle)).size).toBe(
+      expectedByok.size,
+    );
+    expect(byok.every((entry) => expectedByok.has(entry.handle))).toBe(true);
+    expect(hosted.some((entry) => entry.handle === "openai/gpt-5.6-luna")).toBe(
+      true,
+    );
+    expect(hosted.every((entry) => !expectedByok.has(entry.handle))).toBe(true);
+    const allIds = new Set(all.map((entry) => entry.id));
+    const filteredIds = new Set([...byok, ...hosted].map((entry) => entry.id));
+    expect(allIds.size).toBe(filteredIds.size);
+    expect([...allIds].every((id) => filteredIds.has(id))).toBe(true);
+  },
+  60000,
 );

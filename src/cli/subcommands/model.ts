@@ -12,6 +12,7 @@ import {
   resolveModel,
 } from "@/agent/model-catalog";
 import {
+  buildModelSettings,
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "@/agent/modify";
@@ -23,8 +24,8 @@ import { isRecord } from "@/utils/type-guards";
 function printUsage(): void {
   console.log(`Usage:
   letta model get [--default] [--agent <id> | --conversation <id>]
-  letta model list
-  letta model set <handle> [--reasoning <level>] [--default] [--agent <id> | --conversation <id>]
+  letta model list [--byok | --hosted]
+  letta model set [handle] [--reasoning <level>] [--default] [--agent <id> | --conversation <id>]
 
   get   Show the effective model, context limit, and full redacted model_settings.
   list  List the active backend's models, catalog IDs, and reasoning levels.
@@ -35,13 +36,26 @@ Options:
   --agent <id>          Agent defaults; ignore the session conversation
   --conversation <id>   One conversation's model override (--conv is an alias)
   --reasoning <level>   Use a level advertised by model list for this model
+  --byok               List only BYOK/user-configured models
+  --hosted             List only hosted (non-BYOK) models
   --help, -h           Show this help
 
 Without target flags, infer AGENT_ID and CONVERSATION_ID from the session.
 A persisted conversation gets an override; absent/default conversation means
 agent scope. Agent-default changes do not remove conversation overrides.
-set uses the selected model's settings and context defaults. It does not
+Selecting a model applies its settings/context defaults; reasoning-only updates
+keep the model and other settings. The command does not
 interrupt or restart an in-flight inference. All output is JSON.`);
+}
+
+async function printJson(value: unknown): Promise<void> {
+  // Subcommands call process.exit immediately afterward. Wait for pipe writes
+  // to finish so large catalogs cannot be truncated at the stdout buffer limit.
+  await new Promise<void>((resolve, reject) => {
+    process.stdout.write(`${JSON.stringify(value, null, 2)}\n`, (error) =>
+      error ? reject(error) : resolve(),
+    );
+  });
 }
 
 export async function runModelSubcommand(argv: string[]): Promise<number> {
@@ -55,6 +69,8 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
         conv: { type: "string" },
         reasoning: { type: "string" },
         default: { type: "boolean" },
+        byok: { type: "boolean" },
+        hosted: { type: "boolean" },
       },
       strict: true,
       allowPositionals: true,
@@ -67,15 +83,22 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
     if (!["get", "list", "set"].includes(action))
       throw new Error(`Unknown model action: ${action}`);
     if (
-      positionals.length !== (action === "set" ? 2 : 1) ||
-      (action === "set" && !model?.trim())
+      action === "set"
+        ? positionals.length > 2 ||
+          (model !== undefined && !model.trim()) ||
+          (!model && values.reasoning === undefined)
+        : positionals.length !== 1
     ) {
       throw new Error(
-        "Usage: letta model get|list|set <handle> (set requires a model)",
+        "Usage: letta model get | list | set [handle] [--reasoning <level>] (set requires a model or --reasoning)",
       );
     }
     if (action !== "set" && values.reasoning !== undefined)
       throw new Error("--reasoning is only supported by model set");
+    if (values.byok && values.hosted)
+      throw new Error("Use either --byok or --hosted, not both");
+    if (action !== "list" && (values.byok || values.hosted))
+      throw new Error("--byok and --hosted are only supported by model list");
     if (action === "list") {
       if (
         values.agent !== undefined ||
@@ -88,20 +111,39 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
         );
       }
       await settingsManager.initialize();
+      const local = getBackend().capabilities.localModelCatalog;
       await initializeModelCatalog();
-      const catalog = [...models];
+      let catalog = [...models];
+      // The local runtime inventory is entirely user-configured, not hosted.
+      if (local && values.hosted) catalog = [];
       // Cloud hosted rows only come from /models/catalog. /models adds BYOK
       // rows, never replacement/fallback hosted rows. Local/custom catalogs
       // are already projected from their runtime inventory by initialization.
-      if (!getBackend().capabilities.localModelCatalog) {
+      if (!local) {
         const known = new Set(catalog.map((entry) => entry.handle));
         try {
           const available = await getAvailableModelHandles();
+          // BYOK handles can also have catalog presets (e.g. coding plans).
+          // Use only BYOK metadata here, never the inventory's hosted/base rows.
+          if (values.byok || values.hosted) {
+            const byokHandles = new Set(
+              available.models
+                .filter((entry) => entry.providerCategory === "byok")
+                .map((entry) => entry.handle),
+            );
+            catalog = catalog.filter((entry) =>
+              values.byok
+                ? byokHandles.has(entry.handle)
+                : !byokHandles.has(entry.handle),
+            );
+          }
           catalog.push(
             ...available.models
               .filter(
                 (entry) =>
-                  entry.providerCategory === "byok" && !known.has(entry.handle),
+                  !values.hosted &&
+                  entry.providerCategory === "byok" &&
+                  !known.has(entry.handle),
               )
               .map((entry) => ({
                 // Keep BYOK IDs selectable without colliding with hosted aliases.
@@ -113,33 +155,31 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
               })),
           );
         } catch (error) {
+          // Never present a failed category lookup as an empty filtered result.
+          if (values.byok || values.hosted) throw error;
           console.error(
             `Warning: BYOK catalog unavailable: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
       }
-      console.log(
-        JSON.stringify(
-          catalog.map((entry) => ({
-            id: entry.id,
-            handle: entry.handle,
-            label: entry.label,
-            context_window_limit: entry.updateArgs?.context_window ?? null,
-            reasoning_levels: reasoningLevels(
-              entry.handle,
-              entry.updateArgs?.context_window,
-            ),
-          })),
-          null,
-          2,
-        ),
+      await printJson(
+        catalog.map((entry) => ({
+          id: entry.id,
+          handle: entry.handle,
+          label: entry.label,
+          context_window_limit: entry.updateArgs?.context_window ?? null,
+          reasoning_levels: reasoningLevels(
+            entry.handle,
+            entry.updateArgs?.context_window,
+          ),
+        })),
       );
       return 0;
     }
     return runModelConfigAction(
       values,
       action === "set"
-        ? { model: model?.trim() as string, reasoning: values.reasoning }
+        ? { model: model?.trim(), reasoning: values.reasoning }
         : undefined,
       action === "get" ? "config" : "report",
     );
@@ -329,7 +369,7 @@ export async function runModelConfigAction(
     conv?: string;
     default?: boolean;
   },
-  update?: { model: string; reasoning?: string },
+  update?: { model?: string; reasoning?: string },
   output: "config" | "report" = "report",
 ): Promise<number> {
   try {
@@ -375,11 +415,57 @@ export async function runModelConfigAction(
       );
     let agent = await backend.retrieveAgent(agentId);
     if (update) {
+      const current = buildAgentConfigReport(agent, conversation).effective;
+      const selected = update.model ?? current.model;
+      if (typeof selected !== "string" || !selected)
+        throw new Error("Current model could not be resolved");
       const { handle, updateArgs } = await resolveSelection(
-        update.model,
+        selected,
         update.reasoning,
       );
-      if (conversation) {
+      if (!update.model) {
+        // Keep the configured model, limits, and unrelated settings. Only
+        // replace provider-specific reasoning fields from the selected tier.
+        const rawSettings = isRecord(conversation?.model_settings)
+          ? conversation.model_settings
+          : agent.model_settings;
+        const settings = isRecord(rawSettings) ? { ...rawSettings } : {};
+        const reasoningSettings = buildModelSettings(
+          handle,
+          {
+            ...updateArgs,
+            ...(typeof settings.provider_type === "string" && {
+              provider_type: settings.provider_type,
+            }),
+          },
+          backend.capabilities.localModelCatalog,
+        );
+        for (const key of [
+          "reasoning",
+          "reasoning_effort",
+          "effort",
+          "thinking",
+          "thinking_config",
+        ]) {
+          if (key in reasoningSettings) {
+            const value = (reasoningSettings as Record<string, unknown>)[key];
+            settings[key] =
+              isRecord(settings[key]) && isRecord(value)
+                ? { ...settings[key], ...value }
+                : value;
+          }
+        }
+        if (conversation)
+          await backend.updateConversation(conversation.id, {
+            model_settings: settings,
+          } as Parameters<typeof backend.updateConversation>[1]);
+        else
+          await backend.updateAgent(agentId, {
+            model_settings: settings,
+          } as Parameters<typeof backend.updateAgent>[1]);
+        if (conversation)
+          conversation = await backend.retrieveConversation(conversation.id);
+      } else if (conversation) {
         await updateConversationLLMConfig(conversation.id, handle, updateArgs);
         conversation = await backend.retrieveConversation(conversation.id);
       } else {
@@ -389,14 +475,10 @@ export async function runModelConfigAction(
     }
     const report = buildAgentConfigReport(agent, conversation);
     const { model, context_window_limit, model_settings } = report.effective;
-    console.log(
-      JSON.stringify(
-        output === "config"
-          ? { model, context_window_limit, model_settings }
-          : report,
-        null,
-        2,
-      ),
+    await printJson(
+      output === "config"
+        ? { model, context_window_limit, model_settings }
+        : report,
     );
     return 0;
   } catch (error) {

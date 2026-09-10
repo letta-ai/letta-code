@@ -146,6 +146,29 @@ describe("model CLI", () => {
     }
   }, 30000);
 
+  test("filters the local inventory as BYOK, with no hosted models", async () => {
+    const byok = await cli(["list", "--byok"]);
+    expect(byok.code, byok.stderr).toBe(0);
+    expect(JSON.parse(byok.stdout)).toEqual(models);
+    const hosted = await cli(["list", "--hosted"]);
+    expect(hosted.code, hosted.stderr).toBe(0);
+    expect(JSON.parse(hosted.stdout)).toEqual([]);
+    const alias = await cli(["list", "--byok"], {}, "models");
+    expect(alias.code, alias.stderr).toBe(0);
+    expect(JSON.parse(alias.stdout)).toEqual(models);
+  }, 30000);
+
+  test("rejects conflicting and misplaced model category filters", async () => {
+    for (const args of [
+      ["list", "--byok", "--hosted"],
+      ["get", "--byok"],
+      ["set", nextModel, "--hosted"],
+    ]) {
+      const result = await cli(args);
+      expect(result.code, result.stderr).toBe(1);
+    }
+  }, 30000);
+
   test("infers current conversation and agent, persists across CLI processes", async () => {
     const result = await cli(["set", nextModel]);
     expect(result.code, result.stderr).toBe(0);
@@ -355,6 +378,82 @@ describe("model CLI", () => {
     }
   }, 30000);
 
+  test.each(["conversation", "agent", "inherited"])(
+    "reasoning-only set preserves other settings (%s)",
+    async (scope) => {
+      const model = models.find(
+        (entry) =>
+          entry.handle.startsWith("openai/") &&
+          entry.reasoning_levels?.includes("high") &&
+          entry.reasoning_levels.includes("low"),
+      );
+      if (!model) throw new Error("Missing runtime reasoning model");
+      const target = scope === "agent" ? ["--default"] : [];
+      const setup = await cli([
+        "set",
+        model.handle,
+        "--reasoning",
+        "high",
+        ...(scope === "inherited" ? ["--default"] : target),
+      ]);
+      expect(setup.code, setup.stderr).toBe(0);
+      const customized = await run([
+        "-e",
+        `
+      import { configureBackendMode, getBackend } from "./src/backend/backend";
+      configureBackendMode("local");
+      const backend = getBackend();
+      const agent = ${JSON.stringify(scope)} !== "conversation";
+      const id = agent ? process.env.AGENT_ID : process.env.CONVERSATION_ID;
+      const entity = agent ? await backend.retrieveAgent(id) : await backend.retrieveConversation(id);
+      const patch = { context_window_limit: 64000, model_settings: {
+        ...entity.model_settings, context_window_limit: 64000,
+        max_tokens: 1234, temperature: 0.23, parallel_tool_calls: false,
+        api_key: "config-test-only",
+      }};
+      if (agent) await backend.updateAgent(id, patch); else await backend.updateConversation(id, patch);
+      if (${JSON.stringify(scope)} === "inherited") await backend.updateConversation(process.env.CONVERSATION_ID, {
+        model: null, model_settings: null, context_window_limit: null,
+      });
+    `,
+      ]);
+      expect(customized.code, customized.stderr).toBe(0);
+      const reportTarget = scope === "agent" ? ["--agent", agentId] : [];
+      const before = await config(reportTarget);
+      const result = await cli(["set", "--reasoning", "low", ...target]);
+      expect(result.code, result.stderr).toBe(0);
+      const after = await config(reportTarget);
+      expect(after.effective.model).toBe(before.effective.model);
+      expect(after.effective.context_window_limit).toBe(
+        before.effective.context_window_limit,
+      );
+      expect(after.effective.model_settings).toEqual({
+        ...before.effective.model_settings,
+        reasoning: {
+          ...before.effective.model_settings.reasoning,
+          reasoning_effort: "low",
+        },
+        reasoning_effort: "low",
+      });
+      if (scope !== "agent") expect(after.agent).toEqual(before.agent);
+      if (scope === "inherited") expect(after.conversation.model).toBeNull();
+      const secretPreserved = await run([
+        "-e",
+        `
+      import { configureBackendMode, getBackend } from "./src/backend/backend";
+      configureBackendMode("local");
+      const entity = ${JSON.stringify(scope)} === "agent"
+        ? await getBackend().retrieveAgent(process.env.AGENT_ID)
+        : await getBackend().retrieveConversation(process.env.CONVERSATION_ID);
+      console.log(entity.model_settings.api_key === "config-test-only");
+    `,
+      ]);
+      expect(secretPreserved.code, secretPreserved.stderr).toBe(0);
+      expect(secretPreserved.stdout.trim()).toBe("true");
+    },
+    30000,
+  );
+
   test("refuses inconsistent inferred ownership before writing", async () => {
     const before = await config();
     const result = await cli(["set", nextModel], { AGENT_ID: otherAgentId });
@@ -373,7 +472,6 @@ describe("model CLI", () => {
     ["model", "--agent", "a", "--conversation", "c"],
     ["model", "--conversation", "c", "--conv", "d"],
     ["model", "--model", "ignored"],
-    ["--reasoning", "high"],
     ["model", "--reasoning"],
   ])(
     "rejects invalid input without changing configuration: %j",

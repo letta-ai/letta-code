@@ -38,7 +38,7 @@ function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
  * Builds model_settings from updateArgs based on provider type.
  * Always ensures parallel_tool_calls is enabled.
  */
-function buildModelSettings(
+export function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
   localModelCatalog = false,
