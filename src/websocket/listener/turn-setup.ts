@@ -290,6 +290,7 @@ export async function prepareListenerTurn(params: {
     environmentDeviceId,
     agentId,
     conversationId,
+    actingUserId: msg.actingUserId,
     clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
     // Headless clients (SDK sessions, automation) opt out of tools that

@@ -9,6 +9,7 @@
 
 import { spawn } from "node:child_process";
 import { platform } from "node:os";
+import { resolveActingUserId } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
@@ -370,6 +371,7 @@ async function executeSubagent(
   memoryScope?: SubagentMemoryScope,
   systemPromptOverride?: string,
   environment?: string,
+  actingUserIdOverride?: string,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
@@ -469,6 +471,7 @@ async function executeSubagent(
       memoryScope,
       inheritedApiKey,
       inheritedBaseUrl,
+      actingUserId: actingUserIdOverride,
       transcriptPath,
     });
 
@@ -613,6 +616,7 @@ async function executeSubagent(
             undefined, // memoryScope
             undefined, // systemPromptOverride
             environment,
+            actingUserIdOverride,
           );
         }
       }
@@ -641,6 +645,7 @@ async function executeSubagent(
           memoryScope,
           systemPromptOverride,
           environment,
+          actingUserIdOverride,
         );
       }
 
@@ -738,6 +743,7 @@ async function executeSubagent(
           memoryScope,
           systemPromptOverride,
           environment,
+          actingUserIdOverride,
         );
       }
     }
@@ -848,7 +854,9 @@ export async function spawnSubagent(
   memoryScope?: SubagentMemoryScope,
   systemPromptOverride?: string,
   environment?: string,
+  actingUserId?: string,
 ): Promise<SubagentResult> {
+  const launchActingUserId = resolveActingUserId(actingUserId);
   const allConfigs = await getAllSubagentConfigs();
   let config = allConfigs[type];
 
@@ -982,6 +990,7 @@ export async function spawnSubagent(
     memoryScope,
     effectiveSystemPromptOverride,
     environment,
+    launchActingUserId,
   );
 
   return result;

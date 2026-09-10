@@ -307,10 +307,19 @@ export class QueueRuntime {
     const batch: QueueItem[] = [];
     const first = this.store.find((item) => !item.paused);
     if (first && isCoalescable(first.kind)) {
+      let batchActingUserId = first.actingUserId;
       for (const item of this.store) {
         if (item.paused) continue;
         if (!isCoalescable(item.kind) || !hasSameScope(first, item)) break;
+        if (
+          batchActingUserId &&
+          item.actingUserId &&
+          batchActingUserId !== item.actingUserId
+        ) {
+          break;
+        }
         batch.push(item);
+        batchActingUserId ??= item.actingUserId;
       }
     } else if (first) {
       // First ready item is a barrier: dequeue it alone

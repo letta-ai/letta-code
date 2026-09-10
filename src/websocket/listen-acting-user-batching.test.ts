@@ -27,10 +27,9 @@ describe("pickBatchActingUserId", () => {
     expect(pickBatchActingUserId(items)).toBe("user-1");
   });
 
-  test("returns the LAST enqueued sender when the batch coalesces multiple users", () => {
-    // Multi-user sandbox: user A and user B both sent messages that
-    // coalesced into one turn. Cloud-api will be told the spend is on
-    // user B (most recent), matching "whoever just pressed send pays".
+  test("defensively returns the last sender for a pre-partitioned batch", () => {
+    // QueueRuntime now partitions these inputs before this helper is called.
+    // Keep deterministic behavior for direct and legacy callers.
     const items: QueueItem[] = [
       makeItem({ id: "a", actingUserId: "user-A" }),
       makeItem({ id: "b", actingUserId: "user-B" }),

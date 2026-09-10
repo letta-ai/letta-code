@@ -10,8 +10,10 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
+import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "@/agent/acting-user";
 import type { SkillSource } from "@/agent/skill-sources";
 import { type Backend, getBackend } from "@/backend";
+import { getRuntimeContext } from "@/runtime-context";
 import {
   type ClientTool,
   getExecutionContextById,
@@ -512,6 +514,11 @@ export async function sendMessageStreamWithBackend(
     }
   }
 
+  const actingUserId =
+    opts.actingUserId ??
+    executionRuntimeContext?.actingUserId ??
+    getRuntimeContext()?.actingUserId ??
+    process.env[ACTING_USER_ID_ENV];
   const extraHeaders: Record<string, string> = {};
   if (previousResponseId) {
     extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader({
@@ -534,8 +541,8 @@ export async function sendMessageStreamWithBackend(
   // Echo the cloud user id back to cloud-api so it can re-attribute
   // credits + rate limits on multi-user sandboxes. See
   // SendMessageStreamOptions.actingUserId for full context.
-  if (opts.actingUserId) {
-    extraHeaders["X-Letta-Acting-User-Id"] = opts.actingUserId;
+  if (actingUserId) {
+    extraHeaders[ACTING_USER_ID_HEADER] = actingUserId;
   }
 
   const messageSummary = normalizedMessages
@@ -650,7 +657,7 @@ export async function sendMessageStreamWithBackend(
     conversationId,
     resolvedConversationId,
     agentId: opts.agentId ?? null,
-    ...(opts.actingUserId ? { actingUserId: opts.actingUserId } : {}),
+    ...(actingUserId ? { actingUserId } : {}),
     requestStartedAtMs,
     otid: firstOtid,
   });
