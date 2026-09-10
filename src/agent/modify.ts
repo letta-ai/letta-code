@@ -238,14 +238,15 @@ function buildModelSettings(
     }
     settings = bedrockSettings;
   } else {
-    // Unknown/BYOK providers (e.g. openai-proxy) — assume OpenAI-compatible
-    const openaiProxySettings: OpenAIModelSettings = {
-      provider_type: "openai",
+    // Preserve runtime provider identity for organization-specific BYOK names.
+    // Only untyped custom handles retain the OpenAI-compatible fallback.
+    const openaiProxySettings = {
+      provider_type: explicitProviderType ?? "openai",
       parallel_tool_calls:
         typeof updateArgs?.parallel_tool_calls === "boolean"
           ? updateArgs.parallel_tool_calls
           : true,
-    };
+    } as OpenAIModelSettings;
     if (updateArgs && "reasoning_effort" in updateArgs) {
       (openaiProxySettings as Record<string, unknown>).reasoning =
         updateArgs.reasoning_effort === null

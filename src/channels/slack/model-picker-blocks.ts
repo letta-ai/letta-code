@@ -8,8 +8,9 @@ import type { ChannelModelPickerData } from "@/channels/types";
 import { asRecord, firstNonEmptyString, getSlackActionRecord } from "./utils";
 
 const SLACK_MODEL_PICKER_OPTION_LIMIT = 100;
+const SLACK_MODEL_PICKER_GROUP_LIMIT = 100;
 const SLACK_MODEL_OPTION_TEXT_LIMIT = 75;
-const SLACK_MODEL_OPTION_VALUE_LIMIT = 75;
+const SLACK_MODEL_OPTION_VALUE_LIMIT = 150;
 
 export const SLACK_MODEL_SELECT_ACTION_ID = "letta_channel_model_select";
 
@@ -122,7 +123,10 @@ export function buildSlackModelPickerBlocks(
     }
     seenValues.add(option.value);
     options.push(option);
-    if (options.length >= SLACK_MODEL_PICKER_OPTION_LIMIT) {
+    if (
+      options.length >=
+      SLACK_MODEL_PICKER_OPTION_LIMIT * SLACK_MODEL_PICKER_GROUP_LIMIT
+    ) {
       break;
     }
   }
@@ -173,7 +177,33 @@ export function buildSlackModelPickerBlocks(
             text: "Select a model",
             emoji: true,
           },
-          options,
+          // A flat select stops at 100 models, which can hide every BYOK
+          // option after hosted rows. Slack permits 100 groups of 100 options.
+          ...(options.length <= SLACK_MODEL_PICKER_OPTION_LIMIT
+            ? { options }
+            : {
+                option_groups: Array.from(
+                  {
+                    length: Math.ceil(
+                      options.length / SLACK_MODEL_PICKER_OPTION_LIMIT,
+                    ),
+                  },
+                  (_, index) => {
+                    const start = index * SLACK_MODEL_PICKER_OPTION_LIMIT;
+                    const end = Math.min(
+                      start + SLACK_MODEL_PICKER_OPTION_LIMIT,
+                      options.length,
+                    );
+                    return {
+                      label: {
+                        type: "plain_text",
+                        text: `Models ${start + 1}–${end}`,
+                      },
+                      options: options.slice(start, end),
+                    };
+                  },
+                ),
+              }),
           ...(initialOption ? { initial_option: initialOption } : {}),
         },
       ],
