@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { once } from "node:events";
+import { WebSocketServer } from "ws";
 import type { AgentRuntimeStatusSnapshot } from "@/backend/api/agents";
 import type { EnvironmentConnection } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
 import {
   buildEnvironmentCreateMessageBody,
+  environmentStatusMessageToStreamJsonWire,
   resolveEnvironmentMaxWaitMs,
+  startEnvironmentStatusStream,
   waitForEnvironmentAssistantMessage,
 } from "@/headless-environment-response";
 import { toolFilter } from "@/tools/filter";
@@ -160,6 +164,7 @@ describe("headless environment-routed responses", () => {
     expect(result).toEqual({
       text: "Here's my concrete execution environment.",
       stopReason: "end_turn",
+      runId: "run-continuation",
     });
     expect(messageCalls).toBe(3);
     expect(retrievedRunIds).toEqual(["run-requested", "run-continuation"]);
@@ -219,8 +224,147 @@ describe("headless environment-routed responses", () => {
     expect(result).toEqual({
       text: "The background task completed successfully.",
       stopReason: "end_turn",
+      runId: "run-final",
     });
     expect(retrievedRunIds).toEqual(["run-final"]);
+  });
+
+  test("maps destination deltas according to include-partial-messages", () => {
+    const message = {
+      type: "stream_delta",
+      delta: {
+        type: "message",
+        id: "msg-delta",
+        message_type: "assistant_message",
+        content: [{ type: "text", text: "partial" }],
+      },
+    };
+
+    expect(
+      environmentStatusMessageToStreamJsonWire({
+        message,
+        sessionId: "session-1",
+        includePartialMessages: false,
+      }),
+    ).toMatchObject({
+      type: "message",
+      uuid: "msg-delta",
+      message_type: "assistant_message",
+    });
+    expect(
+      environmentStatusMessageToStreamJsonWire({
+        message,
+        sessionId: "session-1",
+        includePartialMessages: true,
+      }),
+    ).toMatchObject({
+      type: "stream_event",
+      uuid: "msg-delta",
+      event: { message_type: "assistant_message" },
+    });
+  });
+
+  test("streams destination deltas before the terminal environment result", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const address = wss.address();
+    if (!address || typeof address === "string") {
+      throw new Error("test websocket did not bind to a TCP port");
+    }
+    const order: string[] = [];
+    let resolveDelta!: () => void;
+    const deltaSeen = new Promise<void>((resolve) => {
+      resolveDelta = resolve;
+    });
+
+    wss.on("connection", (socket) => {
+      socket.send(
+        JSON.stringify({
+          type: "stream_delta",
+          runtime: { agent_id: "agent-env", conversation_id: "conv-env" },
+          delta: {
+            type: "message",
+            id: "msg-delta",
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "partial" }],
+            run_id: "run-env",
+          },
+        }),
+      );
+      socket.send(
+        JSON.stringify({
+          type: "update_loop_status",
+          runtime: { agent_id: "agent-env", conversation_id: "conv-env" },
+          loop_status: {
+            status: "WAITING_FOR_API_RESPONSE",
+            active_run_ids: ["run-env"],
+            client_message_ids_by_run_id: { "run-env": ["cm-requested"] },
+            executing_tool_call_ids: [],
+          },
+        }),
+      );
+    });
+
+    const stream = await startEnvironmentStatusStream({
+      connectionId: "conn-env",
+      agentId: "agent-env",
+      conversationId: "conv-env",
+      clientMessageId: "cm-requested",
+      onMessage: (message) => {
+        if (message.type === "stream_delta") {
+          order.push("delta");
+          resolveDelta();
+        }
+      },
+      deps: {
+        getApiRequestConfig: async () => ({
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          apiKey: "test-key",
+        }),
+      },
+    });
+
+    try {
+      await stream.ready;
+      await deltaSeen;
+
+      const backend = {
+        async retrieveRun(runId: string) {
+          return { id: runId, status: "completed", stop_reason: "end_turn" };
+        },
+        async listConversationMessages() {
+          return [
+            assistantMessage("msg-final", "final", "run-env", 12),
+            userMessage("msg-user", "otid-requested", "run-env", 11),
+          ];
+        },
+        async listAgentMessages() {
+          throw new Error("default conversation path should not be used");
+        },
+      };
+
+      const result = await waitForEnvironmentAssistantMessage({
+        backend: backend as never,
+        agentId: "agent-env",
+        conversationId: "conv-env",
+        otid: "otid-requested",
+        pollIntervalMs: 0,
+        maxWaitMs: 1_000,
+        deps: { getAgentRuntimeStatus: runtimeStatusUnavailable },
+      });
+      order.push("result");
+
+      expect(order).toEqual(["delta", "result"]);
+      expect(stream.getRunIds()).toEqual(["run-env"]);
+      expect(result).toEqual({
+        text: "final",
+        stopReason: "end_turn",
+        runId: "run-env",
+      });
+    } finally {
+      stream.close();
+      wss.close();
+      await once(wss, "close");
+    }
   });
 });
 
@@ -237,6 +381,7 @@ describe("buildEnvironmentCreateMessageBody", () => {
       conversationId: "conv-1",
       content: [{ type: "text", text: "hello" }],
       otid: "otid-1",
+      clientMessageId: "cm-1",
     });
 
     expect(body.client_tool_allowlist).toEqual(["Read", "Grep"]);
@@ -244,6 +389,7 @@ describe("buildEnvironmentCreateMessageBody", () => {
     expect(body.conversationId).toBe("conv-1");
     expect(body.messages).toHaveLength(1);
     expect(body.messages[0]?.otid).toBe("otid-1");
+    expect(body.messages[0]?.client_message_id).toBe("cm-1");
   });
 
   test("sends an empty allowlist when the filter allows no tools", () => {
@@ -254,6 +400,7 @@ describe("buildEnvironmentCreateMessageBody", () => {
       conversationId: "conv-1",
       content: [{ type: "text", text: "hello" }],
       otid: "otid-1",
+      clientMessageId: "cm-1",
     });
 
     expect(body.client_tool_allowlist).toEqual([]);
@@ -265,6 +412,7 @@ describe("buildEnvironmentCreateMessageBody", () => {
       conversationId: "conv-1",
       content: [{ type: "text", text: "hello" }],
       otid: "otid-1",
+      clientMessageId: "cm-1",
     });
 
     expect("client_tool_allowlist" in body).toBe(false);
