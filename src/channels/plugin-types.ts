@@ -1,3 +1,4 @@
+import type { ChannelSendBindingInfo } from "./message-channel-bindings";
 import type {
   ChannelAccount,
   ChannelAdapter,
@@ -223,6 +224,12 @@ export interface ChannelAccountConfigAdapter<TAccount extends ChannelAccount> {
 
 export type ChannelMessageActionName = string;
 
+export interface ChannelMessageActionResult {
+  messageId: string;
+  /** Optional persisted inbound binding, read independently by the host. */
+  bindingInfo?: ChannelSendBindingInfo;
+}
+
 export interface ChannelMessageToolSchemaContribution {
   properties: Record<string, unknown>;
   visibility?: "all-configured";
@@ -268,8 +275,12 @@ export interface ChannelResolvedMessageTarget {
 /** Minimal outbound surface consumed by channel-owned MessageChannel actions. */
 export type ChannelMessageActionTransport = Pick<
   ChannelAdapter,
-  "sendMessage" | "downloadAttachment" | "listCustomEmojis"
->;
+  "downloadAttachment" | "listCustomEmojis"
+> & {
+  sendMessage(
+    message: OutboundChannelMessage,
+  ): Promise<ChannelMessageActionResult>;
+};
 
 /** Route identity required by MessageChannel action implementations. */
 export type ChannelMessageActionRoute = Pick<
