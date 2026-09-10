@@ -32,7 +32,10 @@ import {
   type ApprovalNormalizationOptions,
   normalizeOutgoingApprovalMessages,
 } from "./approval-result-normalization";
-import { buildClientSkillsPayload } from "./client-skills";
+import {
+  buildClientSkillsPayload,
+  buildClientSkillsUpdateReminder,
+} from "./client-skills";
 import { getSkillSources } from "./context";
 import { parseRetryAfterHeaderMs } from "./turn-recovery-policy";
 
@@ -43,6 +46,12 @@ const RESPONSE_STATE_CACHE_SCOPE = "approval_boundary";
 const CLOUD_API_SHUTDOWN_MAX_RETRIES = 3;
 const CLOUD_API_SHUTDOWN_DEFAULT_RETRY_DELAY_MS = 1000;
 const responseStateIdsByScope = new Map<string, string>();
+// Backend identity and agent/default-conversation scope must not share a
+// notification baseline. Discovery cache invalidation must not clear it either.
+const sentClientSkillsByBackend = new WeakMap<
+  Backend,
+  Map<string, NonNullable<ConversationMessageCreateParams["client_skills"]>>
+>();
 
 type APIErrorLike = {
   status?: unknown;
@@ -426,19 +435,48 @@ export async function sendMessageStreamWithBackend(
     resolvedConversationId,
     opts.agentId ?? null,
   );
+  const skillScope = buildResponseStateScope(
+    resolvedConversationId,
+    conversationId === "default" ? opts.agentId : null,
+  );
+  let sentClientSkills = sentClientSkillsByBackend.get(backend);
+  if (!sentClientSkills) {
+    sentClientSkills = new Map();
+    sentClientSkillsByBackend.set(backend, sentClientSkills);
+  }
+  const skillReminder = buildClientSkillsUpdateReminder(
+    sentClientSkills.get(skillScope),
+    clientSkills,
+  );
+  // Deliver at the next model boundary (including tool continuations), not by
+  // launching an unsolicited run from a filesystem watcher. Keep approvals and
+  // the original input/otid in place, then append the runtime reminder.
+  const requestMessages = skillReminder
+    ? [
+        ...normalizedMessages,
+        {
+          type: "message" as const,
+          role: "user" as const,
+          content: skillReminder,
+        },
+      ]
+    : normalizedMessages;
   const isApprovalContinuation =
     isApprovalContinuationRequest(normalizedMessages);
   // Only reuse cached response state when the approval continuation was fully
   // auto-handled by the client. If a human reviewed any approval, the pause can
   // allow visible agent/conversation state to change, so use the full server path.
+  // A changed skill catalog also needs that path, rather than a cached prompt.
   const canUsePreviousResponseState =
-    isApprovalContinuation && opts.allowResponseStateReuse === true;
+    isApprovalContinuation &&
+    opts.allowResponseStateReuse === true &&
+    !skillReminder;
   const previousResponseId = canUsePreviousResponseState
     ? responseStateIdsByScope.get(responseStateScope)
     : undefined;
   const requestBody = buildRequestBodyFromPreparedMessages(
     conversationId,
-    normalizedMessages,
+    requestMessages,
     opts,
     clientTools,
     clientSkills,
@@ -547,6 +585,8 @@ export async function sendMessageStreamWithBackend(
           },
         },
       );
+      // A rejected request must not consume the notification; retries need it.
+      sentClientSkills.set(skillScope, clientSkills);
       stream = attachResponseStateTracking(stream, {
         scope: responseStateScope,
         conversationId: resolvedConversationId,
