@@ -2495,6 +2495,8 @@ Block domains for outbound traffic from sandboxed commands, using the same wildc
 
 Claude Code merges this list from every settings source the session loads even when `allowManagedDomainsOnly` is set, so a developer can always tighten the deny list. For IPv6 literals, see [IPv6 addresses in domain lists](/docs/en/sandboxing#ipv6-addresses-in-domain-lists).
 
+An entry written with the trailing dot that marks a fully qualified domain name, such as `example.com.`, blocks the same connections as `example.com`.
+
 ### `sandbox.network.strictAllowlist`
 
 Deny sandboxed commands access to hosts outside the allowlist instead of prompting for approval. The allowlist is [`allowedDomains`](#sandbox-network-alloweddomains) plus domains from `WebFetch(domain:...)` allow rules, or only the managed settings entries when [`allowManagedDomainsOnly`](#sandbox-network-allowmanageddomainsonly) is set. Requires Claude Code v2.1.219 or later.
@@ -5690,7 +5692,9 @@ Run an executable you deploy that computes managed settings at startup, so you c
 * **Type**: object with `path`, `timeoutMs`, and `refreshIntervalMs`
 * **Default**: unset, so no helper runs
 
-When server-managed settings deliver the policy at launch, they take precedence over the helper's source and the helper doesn't run. If a later settings fetch reports the server-managed settings removed, Claude Code runs the helper at that point rather than waiting for the next launch. Its output governs the rest of the session, and a run that fails ends the session with the same message as a [failed startup run](#helper-failures).
+When server-managed settings deliver the policy at launch, they take precedence over the helper's source and the helper doesn't run.
+
+If a later settings fetch reports the server-managed settings removed, Claude Code runs the helper at that point rather than waiting for the next launch. Its output governs the rest of the session, and a run that fails ends the session with the same message as a [failed startup run](#helper-failures).
 
 This example runs the helper with a 5-second timeout and re-runs it every five minutes:
 
@@ -5720,7 +5724,7 @@ Put the settings under a `managedSettings` key. A bare settings object with no `
 
 When the helper emits `managedSettings`, that object becomes the only managed settings source for the run: Claude Code ignores the MDM, file, and HKCU sources, reads the [cross-source keys](/docs/en/managed-settings#keys-read-from-every-admin-source) from the helper's output alone, and never merges [parent settings](/docs/en/managed-settings#parent-settings-from-embedding-hosts).
 
-The startup `forceRemoteSettingsRefresh` check runs before the helper and reads any admin source. A helper that exits 0 with an envelope that omits `managedSettings` contributes no managed settings, and the other sources apply as usual.
+The startup `forceRemoteSettingsRefresh` check runs before the helper and reads any admin source. A helper that exits `0` with an envelope that omits `managedSettings` contributes no managed settings, and the other sources apply as usual.
 
 #### Helper failures
 

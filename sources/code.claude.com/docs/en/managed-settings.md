@@ -92,7 +92,7 @@ A deployed policy reaches the developer's sessions as follows:
   The [surface coverage](/docs/en/model-config#surface-coverage) table compares Cowork with the other surfaces.
 * **Running sessions**: most changes reach a running session on the schedule in the [delivery mechanism table](#choose-a-delivery-mechanism), without a restart.
   * Changes to [`forceRemoteSettingsRefresh`](/docs/en/settings-reference#forceremotesettingsrefresh), [`requiredMinimumVersion`](/docs/en/settings-reference#requiredminimumversion), and [some user-editable keys](/docs/en/settings#when-edits-take-effect) take effect at the next session start.
-  * A new or changed [`policyHelper`](/docs/en/settings-reference#policyhelper) entry takes effect at the next launch, except that a helper shadowed at launch by server-managed settings runs as soon as a fetch reports those settings removed.
+  * A new or changed [`policyHelper`](/docs/en/settings-reference#policyhelper) entry takes effect at the next launch. If server-managed settings shadow the helper at that launch, the helper runs as soon as a fetch reports those settings removed.
 * **Changes that need approval**: apart from the [updates that wait for the next launch](/docs/en/server-managed-settings#fetch-and-caching-behavior), a server-managed change to a setting that [needs approval](/docs/en/server-managed-settings#security-approval-dialogs), such as a hook or an `env` variable, waits for the developer to accept the dialog in an interactive session, and applies for the current run in a session an IDE extension or the Agent SDK hosts. Other server-managed changes apply on the next poll.
 * **Long-lived sessions**: a session left open for weeks can still lag a rollout. [`requiredMinimumVersion`](/docs/en/settings-reference#requiredminimumversion) blocks an outdated binary from starting and doesn't end a session that's already running.
 
@@ -178,7 +178,7 @@ To have Claude Code apply every admin source your organization delivers, set [`m
 
 Under `"merge"`, Claude Code adds a lower source's list entries, such as `permissions.allow` rules and hooks, to the policy, so turn it on only when every source ranked below your highest one is under an administrator's control.
 
-This table shows how Claude Code combines each kind of key under `"merge"`. The [`managedSourcesBehavior` entry](/docs/en/settings-reference#managedsourcesbehavior) names every key in the restriction allowlist, values-taken-whole, and highest-source-only rows.
+This table shows how Claude Code combines each kind of key under `"merge"`. The [`managedSourcesBehavior` entry](/docs/en/settings-reference#managedsourcesbehavior) names every key in three of the rows: restriction allowlists, values taken whole, and keys read from the highest-ranked source only.
 
 | Kind of key                                   | How Claude Code combines it                                                                                                                         | Examples                                                                                                                    |
 | :-------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------- |
