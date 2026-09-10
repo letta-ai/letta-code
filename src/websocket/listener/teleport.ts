@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import { resolveBackendMode } from "@/backend/backend-mode";
 import type {
   TeleportContinuation,
   TeleportFailedCommand,
@@ -216,7 +217,7 @@ export function handleTeleportProbe(
       type: "teleport_probe_response",
       request_id: command.request_id,
       runtime: command.runtime,
-      supported: true,
+      supported: resolveBackendMode() === "api",
       drains_accepted_inputs: true,
       idempotent_continuation: true,
     },

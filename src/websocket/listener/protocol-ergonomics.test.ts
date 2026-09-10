@@ -3,6 +3,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type WebSocket from "ws";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { createListenerMessageHandler } from "@/websocket/listener/message-router";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
@@ -131,32 +135,44 @@ describe("listener protocol ergonomics", () => {
     });
   });
 
-  test("teleport probe advertises listener support", async () => {
-    const runtime = __listenClientTestUtils.createListenerRuntime();
-    const sent: unknown[] = [];
+  test.each([
+    { backend: "api", supported: true },
+    { backend: "local", supported: false },
+  ] as const)(
+    "teleport probe on $backend backend",
+    async ({ backend, supported }) => {
+      const previousBackend = resolveBackendMode();
+      setConfiguredBackendMode(backend);
+      try {
+        const runtime = __listenClientTestUtils.createListenerRuntime();
+        const sent: unknown[] = [];
 
-    await makeHandler(
-      runtime,
-      sent,
-    )(
-      Buffer.from(
-        JSON.stringify({
-          type: "teleport_probe",
+        await makeHandler(
+          runtime,
+          sent,
+        )(
+          Buffer.from(
+            JSON.stringify({
+              type: "teleport_probe",
+              request_id: "probe-1",
+              runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+            }),
+          ),
+        );
+
+        expect(sent).toContainEqual({
+          type: "teleport_probe_response",
           request_id: "probe-1",
           runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
-        }),
-      ),
-    );
-
-    expect(sent).toContainEqual({
-      type: "teleport_probe_response",
-      request_id: "probe-1",
-      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
-      supported: true,
-      drains_accepted_inputs: true,
-      idempotent_continuation: true,
-    });
-  });
+          supported,
+          drains_accepted_inputs: true,
+          idempotent_continuation: true,
+        });
+      } finally {
+        setConfiguredBackendMode(previousBackend);
+      }
+    },
+  );
 
   test("teleport continuation resumes with tool results and hidden destination context", async () => {
     const runtime = __listenClientTestUtils.createListenerRuntime();
