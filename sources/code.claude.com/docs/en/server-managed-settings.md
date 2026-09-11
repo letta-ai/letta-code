@@ -256,6 +256,8 @@ Claude Code records your approval in your configuration directory, `~/.claude` u
   Claude Code saves no approval for a loopback development gateway reached over plain HTTP, so the dialog appears again after each sign-in.
 * **Any other credential**, such as an API key or `CLAUDE_CODE_OAUTH_TOKEN`: one approval for the delivered settings, kept with the cached copy of the settings in that configuration directory. Claude Code shows the dialog again when the settings that require approval change, and after you run `/logout` or `claude auth logout`, either of which deletes the cached copy.
 
+An approval for `sandbox.credentials` or `sandbox.network.tlsTerminate` also covers the [`sandbox.network.allowedDomains`](/docs/en/settings-reference#sandbox-network-alloweddomains) entries in those same delivered settings, because both settings act on that allowlist. The dialog appears again when your administrator adds or removes one of those entries, even though `sandbox.network.allowedDomains` doesn't require approval on its own.
+
 With a saved claude.ai login:
 
 * If you sign out and back in, or switch to another organization and later return, Claude Code doesn't show the dialog again while those settings are unchanged, unless another account approved them for that organization in the same configuration directory in between.

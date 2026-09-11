@@ -514,7 +514,6 @@ With fetching off, you can't:
 * Get the [PowerShell tool](/docs/en/tools-reference#powershell-tool) by default for claude.ai and Console accounts on Windows with Git Bash installed; Claude Code routes shell commands through Git Bash unless you set `CLAUDE_CODE_USE_POWERSHELL_TOOL=1`. On Windows without Git Bash, the tool stays on
 * Get [Claude-drafted feedback](/docs/en/tools-reference#sendfeedback-tool-behavior), which Claude Code turns on through a fetched flag
 * Have Claude Code [exclude MCP tools whose input schema the API would reject](/docs/en/mcp#tools-with-invalid-input-schemas); it sends the schema anyway, and a request that includes it fails with [a 400 error naming the tool by its position](/docs/en/errors#tool-input-schema-is-invalid)
-* Have a resumed conversation [keep its recorded system prompt](/docs/en/cli-reference#system-prompt-flags-in-resumed-conversations); Claude Code rebuilds the prompt on every request and `--system-prompt-snapshot` has no effect
 
 ### First session after an install or upgrade
 
