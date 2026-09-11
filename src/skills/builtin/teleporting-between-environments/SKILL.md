@@ -1,6 +1,6 @@
 ---
 name: teleporting-between-environments
-description: Moves the current agent conversation to Cloud, Desktop Local, or another connected computer while coordinating machine-local files and setup. Use when the user says "let's continue this task on cloud", asks to continue or move work on another connected computer, wants to teleport between computers, or needs to upload or download artifacts before a handoff.
+description: Moves the current conversation between computers or transfers files from a connected computer into a Cloud conversation's sandbox without moving the parent. Use for teleporting, continuing work on another computer, or copying local files to Cloud through a remote subagent.
 ---
 
 # Teleporting Between Computers
@@ -10,7 +10,7 @@ Teleport the current agent and conversation without losing conversational memory
 ## Mental model
 
 - **Memory follows the agent; filesystem access does not.** Files, working directories, credentials, running processes, and local services belong to the computer currently executing the conversation.
-- Upload and download paths are relative to the current computer. Cloud cannot read a laptop path until the conversation teleports to that laptop.
+- Local file paths belong to the executing computer. To access a laptop file from Cloud, either delegate to an agent on that laptop or teleport there.
 - The conversation’s managed Cloud sandbox remains alive while the conversation runs elsewhere.
 - Filesystem paths and cwd do not transfer between computers. Re-establish the destination’s repository, working directory, dependencies, credentials, and services after arrival.
 
@@ -58,6 +58,18 @@ The CLI intentionally returns after the server accepts the handoff. Once the Bas
 If the command reports an offline, stale, unsupported, same-source, or startup error, the conversation remains on the source. Surface the concrete error, correct it if possible, and retry only after the target is available.
 
 ## Common workflows
+
+### Copy files from another computer while staying here
+
+Run an `Agent` on the source `computer` and give it the destination conversation ID explicitly. Have it upload the file using:
+
+```bash
+letta sandbox upload <local-path> --conversation <parent-conversation-id>
+# For an agent's main/default conversation:
+letta sandbox upload <local-path> --conversation default --agent <parent-agent-id>
+```
+
+The command reads the source computer's file and uploads to the specified Cloud sandbox without moving either conversation. It uses the source computer's Letta credentials, which must authorize access to the destination. Return the uploaded path and destination IDs, not base64 or file contents through model messages. Download supports the same target flags. Without flags, both commands keep using the executing conversation.
 
 ### Continue local work in Cloud
 
