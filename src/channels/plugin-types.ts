@@ -8,6 +8,8 @@ import type {
   ChannelRoute,
   DiscordChannelMode,
   DmPolicy,
+  FeishuDomain,
+  FeishuGroupMode,
   OutboundChannelMessage,
   SignalGroupMode,
   SlackChannelMode,
@@ -159,8 +161,15 @@ export interface ChannelPluginAccountPatch {
   token?: string;
   botToken?: string;
   appToken?: string;
+  appId?: string;
+  appSecret?: string;
+  domain?: FeishuDomain;
   mode?: SlackChannelMode;
-  groupMode?: TelegramGroupMode | WhatsAppGroupMode | SignalGroupMode;
+  groupMode?:
+    | TelegramGroupMode
+    | WhatsAppGroupMode
+    | SignalGroupMode
+    | FeishuGroupMode;
   agentId?: string | null;
   baseUrl?: string;
   account?: string;

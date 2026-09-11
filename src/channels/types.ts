@@ -76,6 +76,7 @@ export const FIRST_PARTY_CHANNEL_IDS = [
   "custom",
   "whatsapp",
   "signal",
+  "feishu",
 ] as const;
 export type FirstPartyChannelId = (typeof FIRST_PARTY_CHANNEL_IDS)[number];
 /**
@@ -488,6 +489,8 @@ export type DiscordAllowBotsMode = ChannelAllowBotsMode;
 export type TelegramGroupMode = "open" | "mention-only";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
 export type SignalGroupMode = "disabled" | "mention" | "open";
+export type FeishuDomain = "feishu" | "lark";
+export type FeishuGroupMode = "open" | "mention-only";
 
 export interface ChannelAccountBinding {
   agentId: string | null;
@@ -840,6 +843,15 @@ export interface WhatsAppChannelAccount
   waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
+export interface FeishuChannelAccount extends ChannelAccountBase {
+  channel: "feishu";
+  appId: string;
+  appSecret: string;
+  domain: FeishuDomain;
+  groupMode: FeishuGroupMode;
+  agentId: string | null;
+}
+
 export interface SignalChannelAccount extends ChannelAccountBase {
   channel: "signal";
   /** Base URL for a Signal JSON-RPC/SSE bridge, e.g. http://127.0.0.1:8080. */
@@ -874,6 +886,7 @@ export type ChannelAccount =
   | DiscordChannelAccount
   | WhatsAppChannelAccount
   | SignalChannelAccount
+  | FeishuChannelAccount
   | CustomChannelAccount;
 
 export function isFirstPartyChannelId(
@@ -918,6 +931,14 @@ export function isSignalChannelAccount(
   return account.channel === "signal" && "baseUrl" in account;
 }
 
+export function isFeishuChannelAccount(
+  account: ChannelAccount,
+): account is FeishuChannelAccount {
+  return (
+    account.channel === "feishu" && "appId" in account && "appSecret" in account
+  );
+}
+
 export function isCustomChannelAccount(
   account: ChannelAccount,
 ): account is CustomChannelAccount {
@@ -929,39 +950,9 @@ export function isCustomChannelAccount(
   return !isFirstPartyChannelId(account.channel) && "config" in account;
 }
 
-// ── Pairing ───────────────────────────────────────────────────────
-
-export interface PendingPairing {
-  accountId?: string;
-  code: string;
-  senderId: string;
-  senderName?: string;
-  chatId: string;
-  createdAt: string;
-  expiresAt: string;
-}
-
-export interface ApprovedUser {
-  accountId?: string;
-  senderId: string;
-  senderName?: string;
-  approvedAt: string;
-}
-
-export interface PairingStore {
-  pending: PendingPairing[];
-  approved: ApprovedUser[];
-}
-
-// ── Discovered bind targets ───────────────────────────────────────
-
-export interface ChannelBindableTarget {
-  accountId?: string;
-  targetId: string;
-  targetType: "channel";
-  chatId: string;
-  label: string;
-  discoveredAt: string;
-  lastSeenAt: string;
-  lastMessageId?: string;
-}
+export type {
+  ApprovedUser,
+  ChannelBindableTarget,
+  PairingStore,
+  PendingPairing,
+} from "./pairing-types";

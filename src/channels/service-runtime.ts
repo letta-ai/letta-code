@@ -25,6 +25,7 @@ import {
 import type { ChannelConfigSnapshot, ChannelSummary } from "./service-types";
 import {
   isDiscordChannelAccount,
+  isFeishuChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
 } from "./types";
@@ -48,6 +49,9 @@ export async function setChannelConfigLive(
       token: normalizedPatch.token,
       botToken: normalizedPatch.botToken,
       appToken: normalizedPatch.appToken,
+      appId: normalizedPatch.appId,
+      appSecret: normalizedPatch.appSecret,
+      domain: normalizedPatch.domain,
       mode: normalizedPatch.mode,
       defaultPermissionMode: normalizedPatch.defaultPermissionMode,
       dmPolicy: normalizedPatch.dmPolicy,
@@ -91,6 +95,9 @@ export async function setChannelConfigLive(
         token: normalizedPatch.token,
         botToken: normalizedPatch.botToken,
         appToken: normalizedPatch.appToken,
+        appId: normalizedPatch.appId,
+        appSecret: normalizedPatch.appSecret,
+        domain: normalizedPatch.domain,
         mode: normalizedPatch.mode,
         defaultPermissionMode: normalizedPatch.defaultPermissionMode,
         dmPolicy: normalizedPatch.dmPolicy,
@@ -187,6 +194,11 @@ export async function startChannelLive(
         'Channel "discord" is missing a token. Configure it first.',
       );
     }
+    if (isFeishuChannelAccount(existing)) {
+      throw new Error(
+        'Channel "feishu" is missing an App ID or App Secret. Configure it first.',
+      );
+    }
     if (!isSlackChannelAccount(existing)) {
       throw new Error(
         `Channel "${channelId}" account is not configured. Configure it first.`,
@@ -210,7 +222,10 @@ export async function startChannelLive(
     existing.accountId,
   );
   await refreshChannelAccountDisplayNameLive(channelId, existing.accountId, {
-    force: channelId === "slack" || channelId === "discord",
+    force:
+      channelId === "slack" ||
+      channelId === "discord" ||
+      channelId === "feishu",
   });
 
   const summary = listChannelSummaries().find(

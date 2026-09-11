@@ -1,5 +1,6 @@
 import { customAccountConfigAdapter } from "./custom/account-config";
 import { discordAccountConfigAdapter } from "./discord/account-config";
+import { feishuAccountConfigAdapter } from "./feishu/account-config";
 import type {
   ChannelAccountConfigAdapter,
   ChannelAccountPatch,
@@ -30,6 +31,8 @@ const CHANNEL_ACCOUNT_CONFIG_ADAPTERS: Record<
     whatsappAccountConfigAdapter as ChannelAccountConfigAdapter<ChannelAccount>,
   signal:
     signalAccountConfigAdapter as ChannelAccountConfigAdapter<ChannelAccount>,
+  feishu:
+    feishuAccountConfigAdapter as ChannelAccountConfigAdapter<ChannelAccount>,
 };
 
 /**
