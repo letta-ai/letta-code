@@ -2,13 +2,10 @@
 // working directory it runs in, and the environment it inherits (including the
 // memory-subagent MEMORY_DIR wiring).
 //
-// Extracted from `manager.ts`. Launch preparation and resolution depend only on
+// Extracted from `manager.ts`. Pure resolution helpers — they depend only on
 // lower-level backend/runtime/shell helpers and shared subagent types, never
 // back on the subagent manager, so the graph stays acyclic.
 
-import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { type BackendMode, getLocalBackendStorageDir } from "@/backend";
 import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
@@ -230,24 +227,6 @@ export function composeSubagentChildEnv(
     }
   }
 
-  return childEnv;
-}
-
-/** Prepare filesystem prerequisites before the child enters its sandbox. */
-export function prepareSubagentChildEnv(
-  options: ComposeSubagentChildEnvOptions,
-): NodeJS.ProcessEnv {
-  const childEnv = composeSubagentChildEnv(options);
-  if (options.launchProfile === "memory-subagent") {
-    // The harness allocates shell output files before executing Bash. Setting
-    // TMPDIR inside a tool command is too late, and /tmp is read-only under
-    // this profile. The existing ~/.letta write carve also covers this root.
-    const tempDir = join(homedir(), ".letta", "tmp");
-    mkdirSync(tempDir, { recursive: true, mode: 0o700 });
-    childEnv.TMPDIR = tempDir;
-    childEnv.TMP = tempDir;
-    childEnv.TEMP = tempDir;
-  }
   return childEnv;
 }
 

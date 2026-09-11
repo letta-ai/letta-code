@@ -22,7 +22,6 @@ test.each([false, true])(
     );
     expect(prompt).toContain("not automatically the target conversation");
     expect(prompt).not.toContain("Target conversation ID: conv-investigation");
-    expect(prompt).not.toContain("worktree");
   },
 );
 

@@ -152,27 +152,26 @@ describe("Skill tool memory filesystem lookup", () => {
     mkdirSync(memoryDir, { recursive: true });
     writeFileSync(join(memoryDir, "MEMORY.md"), "# Memory\n");
 
-    for (const skillId of ["initializing-memory"]) {
-      const bundledSkillPath = join(
-        import.meta.dir,
-        "..",
-        "skills",
-        "builtin",
-        skillId,
-        "SKILL.md",
-      );
-      const selectedPath = resolveBundledSkillContentPath({
-        skillId,
-        bundledSkillPath,
-        memoryDir,
-        localMemfs: false,
-      });
+    const skillId = "initializing-memory";
+    const bundledSkillPath = join(
+      import.meta.dir,
+      "..",
+      "skills",
+      "builtin",
+      skillId,
+      "SKILL.md",
+    );
+    const selectedPath = resolveBundledSkillContentPath({
+      skillId,
+      bundledSkillPath,
+      memoryDir,
+      localMemfs: false,
+    });
 
-      expect(selectedPath).toEndWith(join(skillId, "ROOT_MEMORY.md"));
-      expect(
-        SYSTEM_DIRECTORY_PATH.test(readFileSync(selectedPath, "utf8")),
-      ).toBe(false);
-    }
+    expect(selectedPath).toEndWith(join(skillId, "ROOT_MEMORY.md"));
+    expect(SYSTEM_DIRECTORY_PATH.test(readFileSync(selectedPath, "utf8"))).toBe(
+      false,
+    );
   });
 
   test("doctor uses the same investigation skill for both memory formats", () => {

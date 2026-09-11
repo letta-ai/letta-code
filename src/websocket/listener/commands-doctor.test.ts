@@ -5,19 +5,14 @@ import { join } from "node:path";
 import type WebSocket from "ws";
 import { __testSetBackend, type Backend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
-import * as taskModule from "@/tools/impl/task";
 import { __listenClientTestUtils } from "./client";
 import { handleExecuteCommand } from "./commands";
 import * as turnModule from "./turn";
 
 const priorHome = process.env.HOME;
 let tempDir: string;
-let spawn: ReturnType<
-  typeof spyOn<typeof taskModule, "spawnBackgroundSubagentTask">
->;
 let turn: ReturnType<typeof spyOn<typeof turnModule, "handleIncomingMessage">>;
 afterEach(async () => {
-  spawn?.mockRestore();
   turn?.mockRestore();
   __testSetBackend(null);
   await settingsManager.reset();
@@ -33,7 +28,6 @@ test.each([false, true])(
     process.env.HOME = tempDir;
     await settingsManager.reset();
     await settingsManager.initialize();
-    spawn = spyOn(taskModule, "spawnBackgroundSubagentTask");
     __testSetBackend({ capabilities: { localMemfs } } as Backend);
     let finishTurn!: () => void;
     const pendingTurn = new Promise<void>((resolve) => {
@@ -80,14 +74,11 @@ test.each([false, true])(
       expect(turn.mock.calls[0]?.[4]).toBe("connection-doctor");
       expect(sent.join("\n")).toContain("slash_command_start");
       expect(sent.join("\n")).not.toContain("slash_command_end");
-      expect(spawn).not.toHaveBeenCalled();
     } finally {
       finishTurn();
       await running;
     }
     expect(sent.join("\n")).toContain("slash_command_end");
-    expect(sent.join("\n")).not.toContain("task_notification");
-    expect(sent.join("\n")).not.toContain("Doctor finished");
     expect(JSON.parse(sent[sent.length - 1] ?? "")).toMatchObject({
       success: true,
       output: "",

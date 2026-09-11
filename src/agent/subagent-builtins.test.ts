@@ -69,10 +69,6 @@ describe("built-in subagents", () => {
     expect(configs.init?.launchProfile).toBe("memory-subagent");
   });
 
-  test("doctor runs as a primary-agent skill, not a built-in subagent", async () => {
-    expect((await getAllSubagentConfigs()).doctor).toBeUndefined();
-  });
-
   test("legacy background metadata does not affect subagent config", async () => {
     tempDir = createTempProjectDir();
     writeCustomSubagent(

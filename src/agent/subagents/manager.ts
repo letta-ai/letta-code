@@ -50,7 +50,7 @@ import {
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
 } from "./context-budget";
 import {
-  prepareSubagentChildEnv,
+  composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
   resolveSubagentLauncher,
   resolveSubagentWorkingDirectory,
@@ -293,7 +293,8 @@ export function buildSubagentArgs(
       args.push("--no-skills");
     }
 
-    // Memory investigators use CLI evidence instead of server-side base tools.
+    // Skip server-side base tools (web_search, fetch_webpage) for subagents
+    // that operate purely on local memory/git state.
     if (NO_BASE_TOOL_SUBAGENT_TYPES.has(type)) {
       args.push("--base-tools", "none");
     }
@@ -456,7 +457,7 @@ async function executeSubagent(
         memoryScope,
       },
     );
-    const childEnv = prepareSubagentChildEnv({
+    const childEnv = composeSubagentChildEnv({
       parentProcessEnv: {
         ...process.env,
         USER_CWD: subagentWorkingDirectory,
