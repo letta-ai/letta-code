@@ -102,7 +102,7 @@ letta -p --from-agent $LETTA_AGENT_ID \
   "What do you know about the authentication system?"
 ```
 
-**Response (JSON format with `--output json`):**
+**Response (JSON format with `--output-format json`):**
 ```json
 {
   "type": "result",
@@ -170,7 +170,7 @@ letta -p --from-agent $LETTA_AGENT_ID \
 - Text-mode scripts return only the **final assistant message** (not tool calls, reasoning, or metadata)
 - JSON and stream-json responses include `agent_id`, `conversation_id`, and `environment.source` so you can continue the same conversation/runtime. Environment-routed turns also include `environment.id`, `connection_id`, `device_id`, and `name`.
 - The target agent may use tools, think, and reason - but you only see their final response
-- To see the full conversation transcript (including tool calls), use `letta messages list --agent <id>` targeting the other agent
+- To see the full conversation transcript (including tool calls), use `letta messages transcript --conversation <id>` (or `letta messages list --agent <id>`) targeting the other agent
 
 ## How It Works
 
