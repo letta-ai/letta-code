@@ -64,12 +64,36 @@ repeating commands with an inline environment assignment cannot fix host setup.
 Replace the example IDs below with the **target** IDs identified for the incident:
 
 ```bash
-letta messages list --agent agent-TARGET --conversation conv-TARGET --limit 30 --include-errors
-letta messages search --agent agent-TARGET --query "distinctive correction" --limit 5
-letta messages list --agent agent-TARGET --conversation conv-TARGET --before message-ID --limit 10 --include-errors
-letta messages list --agent agent-TARGET --conversation conv-TARGET --after message-ID --order asc --limit 10 --include-errors
-letta messages transcript --agent agent-TARGET --conversation conv-TARGET --max-pages 3 --include-errors
+scratch=$(mktemp -d)
+letta messages list --agent agent-TARGET --conversation conv-TARGET --limit 30 --include-errors > "$scratch/messages.json"
+jq -r '.[] | [.date, .id, .message_type, .step_id] | @tsv' "$scratch/messages.json"
 ```
+
+Start with a compact inventory, then inspect the messages relevant to the
+hypothesis. Include timestamps, canonical IDs, types, tool names, and short text
+previews as needed. Message content may be a string or an array of typed parts:
+extract text parts explicitly before applying string operations. A message may
+also contain multiple tool calls or returns; inspect the relevant entry rather
+than assuming the first one is the whole step. Keep base64 images, signatures,
+and unrelated skill bodies out of inventories; inspect those artifacts only if
+the hypothesis requires them.
+
+Use a supplied message reference or a scoped search to reach an older incident
+directly. Choose the next bounded read to test the hypothesis, for example:
+
+```bash
+letta messages search --agent agent-TARGET --conversation conv-TARGET --query "distinctive correction" --limit 5 > "$scratch/search.json"
+letta messages list --agent agent-TARGET --conversation conv-TARGET --before message-ID --limit 10 --include-errors > "$scratch/before.json"
+letta messages list --agent agent-TARGET --conversation conv-TARGET --after message-ID --order asc --limit 10 --include-errors > "$scratch/after.json"
+```
+
+Project these saved results into a compact view, then read selected full text or
+tool fields. Avoid dumping raw JSON into the model context or fetching a large
+list and a transcript export of the same span together. If output is clipped,
+filter the saved result instead of increasing the output limit or refetching it.
+Use `letta messages transcript` when a longer sequence is needed; save its output
+to scratch and select the relevant span. Stop collecting when the causal chain
+and its remaining uncertainty are clear.
 
 A default conversation uses `--conversation default --agent agent-TARGET`.
 Search can be scoped with `--conversation`, `--start-date`, and `--end-date`.
@@ -102,6 +126,17 @@ Use existing captured requests, compiled prompts, and memory revisions when
 available. Otherwise label historical prompt claims as uncertain. Tokens from
 `letta memory tokens --memory-dir <path> --format json --quiet` are estimates of
 core memory, not the full historical provider input.
+
+Prompt and cached-token counts establish size and cache usage, not which messages
+or instructions were present. Shared conversation history can support an
+inference about context reuse; it does not prove the exact input to a historical
+step. Preserve that qualification in the finding and impact summary, even after
+other evidence establishes the routing or storage behavior.
+
+Current source can explain a plausible mechanism. Establish the incident's
+deployed version and runtime path before claiming that implementation caused it.
+A proposed routing policy or other product change remains a candidate fix until
+its behavior is reproduced and verified; identify policy choices separately.
 
 ### Worked examples
 
@@ -161,17 +196,17 @@ replay external sends, purchases, destructive operations, or other live side
 effects as a diagnostic test. Do not launch paid evaluations automatically.
 An offline structural check does not prove a model's behavior improved.
 
-Answer directly in this conversation. Lead with the supported finding, or explain
-what prevented a conclusion. Returning an answer is not itself proof that the
-investigation succeeded. No special status prefix or completion notification is
-needed. The user can follow up here using the evidence already gathered.
+Answer directly in this conversation. Aim for 200–400 words unless the user asks
+for a full postmortem or the finding needs more explanation. Lead with the cause
+and user-visible impact, or what prevented a conclusion. Then give:
+- Two to four decisive evidence points with message/step IDs or file paths.
+- Material limits, including sampling, missing traces, and unverified inferences.
+- The next action or actual repair, what was verified, and any open product choice.
 
-Return a concise report covering:
-- Scope reviewed and missing evidence, including sampling/truncation limits.
-- Findings with source message/step IDs or file paths; separate observations,
-  hypotheses, and unresolved questions.
-- The responsible component and minimal proposed or committed fix.
-- Verification performed and what remains unverified.
+Keep long timelines, inventories, and supporting excerpts in scratch artifacts
+for follow-up. Avoid repeating the same causal chain under finding, evidence,
+component, and impact headings. Returning an answer is not proof of a successful
+diagnosis; a proposed fix is not an applied or verified fix.
 
 For a harness/integration bug, provide a small reproduction and the evidence
 needed by its owner. Do not claim a fix was applied because you recommended it.
