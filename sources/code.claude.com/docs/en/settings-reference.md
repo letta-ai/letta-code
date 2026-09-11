@@ -1560,7 +1560,7 @@ Set the [permission mode](/docs/en/permission-modes) new sessions start in. When
   * `"acceptEdits"`: Claude Code also runs file edits and common filesystem commands such as `mkdir` and `mv` without asking
   * `"plan"`: Claude Code reads and plans but blocks edits until you approve a plan
   * `"auto"`: Claude Code runs everything, with background safety checks
-  * `"dontAsk"`: Claude Code runs only pre-approved tools and auto-denies every call that would otherwise prompt
+  * `"dontAsk"`: Claude Code auto-denies every call that would otherwise prompt; reads, other actions that need no approval, and pre-approved tools still run
   * `"bypassPermissions"`: Claude Code runs everything without asking
   * `"manual"`: an alias for `"default"`, in Claude Code v2.1.200 or later
 * **Default**: unset
@@ -5740,7 +5740,7 @@ A helper run fails when:
 * The helper writes more than 1 MiB to stdout or to stderr.
 * stdout isn't a single JSON object, or its `managedSettings` has a [schema violation Claude Code can't repair](/docs/en/managed-settings#find-entries-claude-code-dropped).
 
-When the startup run fails, Claude Code prints the reason and refuses to start. After a non-zero exit or a timeout, the message includes the helper's stderr. The refusal covers interactive sessions, `claude -p`, Agent SDK sessions, [background sessions](/docs/en/agent-view), and most subcommands.
+When the startup run fails, Claude Code prints the reason and refuses to start. After a non-zero exit, the reason includes the helper's stderr, or its stdout when stderr is empty. After a timeout, the reason names the `timeoutMs` limit and includes none of the helper's output. The refusal covers interactive sessions, `claude -p`, Agent SDK sessions, [background sessions](/docs/en/agent-view), and most subcommands.
 
 The refusal is deliberate, so a helper that needs outage resilience should serve from its own cache and exit `0`.
 
