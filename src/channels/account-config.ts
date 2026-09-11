@@ -39,6 +39,11 @@ const CHANNEL_ACCOUNT_CONFIG_ADAPTERS: Record<
  * `customAccountConfigAdapter` (which uses `bot_token` / `auth`).
  */
 const KNOWN_SECRET_KEYS = new Set(["bot_token", "auth"]);
+const XCHAT_SECRET_KEYS = new Set([
+  ...KNOWN_SECRET_KEYS,
+  "pin",
+  "activity_token",
+]);
 
 /**
  * Build a client-safe snapshot of a user-plugin account config when no
@@ -49,10 +54,11 @@ const KNOWN_SECRET_KEYS = new Set(["bot_token", "auth"]);
  */
 function redactSchemalessConfig(
   storedConfig: Record<string, unknown>,
+  secretKeys = KNOWN_SECRET_KEYS,
 ): ChannelProtocolConfig {
   const result: ChannelProtocolConfig = {};
   for (const [key, value] of Object.entries(storedConfig)) {
-    if (KNOWN_SECRET_KEYS.has(key)) {
+    if (secretKeys.has(key)) {
       result[`has_${key}`] =
         typeof value === "string" && value.trim().length > 0;
       continue;
@@ -75,7 +81,10 @@ const customChannelAccountConfigAdapter: ChannelAccountConfigAdapter<ChannelAcco
         return {};
       }
       return {
-        ...redactSchemalessConfig(account.config),
+        ...redactSchemalessConfig(
+          account.config,
+          account.channel === "xchat" ? XCHAT_SECRET_KEYS : KNOWN_SECRET_KEYS,
+        ),
         configured: Object.keys(account.config).length > 0,
       };
     },
@@ -84,7 +93,10 @@ const customChannelAccountConfigAdapter: ChannelAccountConfigAdapter<ChannelAcco
         return {};
       }
       return {
-        ...redactSchemalessConfig(account.config),
+        ...redactSchemalessConfig(
+          account.config,
+          account.channel === "xchat" ? XCHAT_SECRET_KEYS : KNOWN_SECRET_KEYS,
+        ),
         configured: Object.keys(account.config).length > 0,
       };
     },

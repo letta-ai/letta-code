@@ -8,7 +8,7 @@ Letta Code can be used interactively, or to power always-on agents that work pro
 * A local [**CLI**](https://docs.letta.com/letta-code/cli)
 * The [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for macOS, Windows, and Linux
 * Your browser, including [mobile](https://docs.letta.com/letta-code/remote-mobile), at [chat.letta.com](https://chat.letta.com)
-* Messaging integrations, including [Telegram](https://docs.letta.com/letta-code/channels#telegram-cli), [Slack](https://docs.letta.com/letta-code/channels#slack-cli), [Discord](https://docs.letta.com/letta-code/channels#discord-cli), and [custom channels](https://github.com/letta-ai/letta-code/blob/main/src/channels/README.md)
+* Messaging integrations, including [Telegram](https://docs.letta.com/letta-code/channels#telegram-cli), [Slack](https://docs.letta.com/letta-code/channels#slack-cli), [Discord](https://docs.letta.com/letta-code/channels#discord-cli), [X Chat](https://github.com/letta-ai/letta-code/blob/main/src/channels/README.md#x-chat), and [custom channels](https://github.com/letta-ai/letta-code/blob/main/src/channels/README.md)
 
 ![](https://github.com/letta-ai/letta-code/blob/main/assets/letta-code-demo.gif)
 

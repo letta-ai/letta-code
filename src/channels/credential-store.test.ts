@@ -27,6 +27,7 @@ import {
   getActiveChannelCredentialsStoreMode,
 } from "@/channels/credential-store";
 import type {
+  CustomChannelAccount,
   SlackChannelAccount,
   TelegramChannelAccount,
 } from "@/channels/types";
@@ -49,6 +50,24 @@ function makeSlackAccount(): SlackChannelAccount {
     defaultPermissionMode: "acceptEdits",
     dmPolicy: "pairing",
     allowedUsers: [],
+    createdAt: "2026-05-26T00:00:00.000Z",
+    updatedAt: "2026-05-26T00:00:00.000Z",
+  };
+}
+
+function makeXChatAccount(): CustomChannelAccount {
+  return {
+    channel: "xchat",
+    accountId: "xchat-account",
+    enabled: true,
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    config: {
+      bot_token: "xcbot-secret",
+      pin: "pin-secret",
+      activity_token: "bearer-secret",
+      poll_interval_ms: 4_000,
+    },
     createdAt: "2026-05-26T00:00:00.000Z",
     updatedAt: "2026-05-26T00:00:00.000Z",
   };
@@ -139,6 +158,57 @@ describe("channel credential storage", () => {
 
     expect(hydrated?.botToken).toBe("xoxb-secret");
     expect(hydrated?.appToken).toBe("xapp-secret");
+  });
+
+  test("keyring mode stores X Chat token and PIN outside accounts.json", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+
+    await upsertChannelAccountWithSecrets("xchat", makeXChatAccount());
+    await flushPendingChannelSecretWrites();
+
+    expect(
+      secrets.get(
+        buildChannelSecretName("xchat", "xchat-account", "config.bot_token"),
+      ),
+    ).toBe("xcbot-secret");
+    expect(
+      secrets.get(
+        buildChannelSecretName("xchat", "xchat-account", "config.pin"),
+      ),
+    ).toBe("pin-secret");
+    expect(
+      secrets.get(
+        buildChannelSecretName(
+          "xchat",
+          "xchat-account",
+          "config.activity_token",
+        ),
+      ),
+    ).toBe("bearer-secret");
+
+    const persisted = readAccountsFile(channelsRoot, "xchat") as {
+      accounts: Array<Record<string, unknown>>;
+    };
+    expect(JSON.stringify(persisted)).not.toContain("xcbot-secret");
+    expect(JSON.stringify(persisted)).not.toContain("pin-secret");
+    expect(JSON.stringify(persisted)).not.toContain("bearer-secret");
+    expect(persisted.accounts[0]).toMatchObject({
+      config: { poll_interval_ms: 4_000 },
+      __letta_secret_refs: {
+        "config.bot_token": true,
+        "config.pin": true,
+        "config.activity_token": true,
+      },
+    });
+
+    clearChannelAccountStores();
+    const hydrated = (await getChannelAccountWithSecrets(
+      "xchat",
+      "xchat-account",
+    )) as CustomChannelAccount | null;
+    expect(hydrated?.config.bot_token).toBe("xcbot-secret");
+    expect(hydrated?.config.pin).toBe("pin-secret");
+    expect(hydrated?.config.activity_token).toBe("bearer-secret");
   });
 
   test("Slack account reads isolate mention-only channel lists", async () => {

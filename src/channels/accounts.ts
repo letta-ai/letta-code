@@ -111,6 +111,9 @@ function getSecretFieldPaths(account: ChannelAccount): string[] {
   if (isTelegramChannelAccount(account) || isDiscordChannelAccount(account)) {
     return ["token"];
   }
+  if (account.channel === "xchat") {
+    return ["config.bot_token", "config.pin", "config.activity_token"];
+  }
   if (
     isCustomChannelAccount(account) ||
     !isFirstPartyChannelId(account.channel)
