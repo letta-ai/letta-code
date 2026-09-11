@@ -25,6 +25,7 @@ User-editable preference keys:
 - `remoteEnvName`: environment name shown in the Letta Cloud environment picker for the cloud listener.
 - `localBackendDirectory`: directory containing local backend agents, conversations, and memory.
 - `allowLocalAgentsWhenSignedIn`: boolean for whether signed-in Desktop sessions can see local/offline agents.
+- `zoomLevel`: number for the Desktop window zoom level (Chromium zoom), normally set through Desktop's View menu zoom controls.
 
 System-managed keys (do not edit directly):
 - `artifactsByAgent`: per-agent artifacts panel state, written by Desktop UI.
