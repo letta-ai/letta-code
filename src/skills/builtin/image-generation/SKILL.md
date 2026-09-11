@@ -73,7 +73,8 @@ embed each on its own line. Also tell the user the `credits_charged`.
 | `prompt` | string | Required, 1–32000 chars. |
 | `model` | string | Optional; defaults per provider (below). |
 | `n` | int 1–4 | Optional, default 1. Request variations in one call. |
-| `size` | string | Optional, e.g. `"1024x1024"` (OpenAI). |
+| `size` | string | Optional, e.g. `"1024x1024"` (OpenAI and Flux). |
+| `aspect_ratio` | string | Optional (Gemini). |
 | `quality` | `low`\|`medium`\|`high`\|`auto` | Optional (OpenAI; higher = more credits). |
 | `output_format` | `png`\|`jpeg`\|`webp` | Optional (OpenAI). |
 | `input_images` | string[] (max 14) | Optional. Base64 **data URLs** for edit/remix. |
@@ -119,6 +120,7 @@ DATA_URL="data:image/png;base64,$(base64 < input.png | tr -d '\n')"
 
 - **Billing**: every success charges credits; don't loop needlessly, and report
   `credits_charged`.
-- **Errors**: `402` = insufficient credits (`credits_required` in body); `400`/`500`
-  return `{ "message": "..." }` — surface it to the user.
+- **Errors**: `402` = insufficient credits (`credits_required` in body); `400`
+  validation errors return `{ "issues": [...], "name": "ZodError" }`; `500`
+  errors return `{ "message": "..." }`. Surface any error to the user.
 - Only `flux`, `gemini`, and `openai` are supported here.
