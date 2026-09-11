@@ -160,6 +160,21 @@ afterEach(() => {
   }
 });
 
+describe("cron add help text", () => {
+  test("help documents the required --name and --description options", async () => {
+    const logs: string[] = [];
+    console.log = mock((line: string) => {
+      logs.push(String(line));
+    });
+
+    expect(await runCronSubcommand(["add", "--help"])).toBe(0);
+
+    const help = logs.join("");
+    expect(help).toContain("--name <name>");
+    expect(help).toContain("--description <desc>");
+  });
+});
+
 describe("cron add execution targeting", () => {
   test("Cloud schedules default to a new conversation per fire and ignore ambient conversation state", async () => {
     process.env.LETTA_CONVERSATION_ID = "ambient-conversation";
