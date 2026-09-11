@@ -68,7 +68,6 @@ interface PrimaryStartupFlagOptions {
   specifiedAgentName: string | null | undefined;
   forceNewAgent: boolean | null | undefined;
   forceNewConversation: boolean | null | undefined;
-  importFile: string | null | undefined;
   shouldResume?: boolean | null;
   stateless: boolean | null | undefined;
   ephemeral?: boolean | null;
@@ -105,8 +104,8 @@ export function validatePrimaryStartupFlagConflicts(
           "--ephemeral cannot be used with --stateless, --memfs, or --memfs-startup",
       },
       {
-        when: options.importFile || options.shouldResume,
-        message: "--ephemeral cannot be used with --import or --resume",
+        when: options.shouldResume,
+        message: "--ephemeral cannot be used with --resume",
       },
     ],
   });
@@ -141,10 +140,6 @@ export function validatePrimaryStartupFlagConflicts(
         message: "--conversation cannot be used with --new-agent",
       },
       {
-        when: options.importFile,
-        message: "--conversation cannot be used with --import",
-      },
-      {
         when: options.shouldResume,
         message: "--conversation cannot be used with --resume",
       },
@@ -164,12 +159,4 @@ export function validatePrimaryStartupFlagConflicts(
       },
     ],
   });
-}
-
-export function validateRegistryHandleOrThrow(handle: string): void {
-  const normalized = handle.startsWith("@") ? handle.slice(1) : handle;
-  const parts = normalized.split("/");
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    throw new Error(`Invalid registry handle "${handle}"`);
-  }
 }

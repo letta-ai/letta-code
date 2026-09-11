@@ -1,4 +1,5 @@
 import type { ExternalToolCallResult } from "@/types/app-server-protocol";
+import type { MessageChannelBindingOperations } from "./message-channel-bindings";
 import { formatOutboundChannelMessage } from "./message-channel-formatting";
 import {
   MessageChannelDuplicateActionError,
@@ -41,6 +42,7 @@ export interface MessageChannelExecutionResolver {
     channel: SupportedChannelId;
     chatId: string;
     accountId?: string;
+    threadId?: string | null;
     scope: MessageChannelExecutionScope;
   }):
     | Promise<ResolvedMessageChannelContext | string | null>
@@ -63,6 +65,8 @@ export interface ExecuteMessageChannelOptions {
   resolver: MessageChannelExecutionResolver;
   channelTurnSources?: ChannelTurnSource[];
   idempotencyScope?: MessageChannelIdempotencyScope | null;
+  /** Available only when this host implements persisted binding operations. */
+  bindings?: MessageChannelBindingOperations;
 }
 
 export function createMessageChannelExternalToolResult(
@@ -375,6 +379,54 @@ export async function executeMessageChannel(
   const normalized = normalizeMessageChannelInput(input, options.resolver);
   if (typeof normalized === "string") return normalized;
   if (
+    normalized.action === "get-binding" ||
+    normalized.action === "update-binding"
+  ) {
+    if (normalized.channel !== "slack" || !options.bindings) {
+      return "Error: Binding operations are not supported by this channel host.";
+    }
+    if (!normalized.chatId || normalized.target) {
+      return "Error: Binding operations require chat_id; target is for outbound sends.";
+    }
+    if (
+      input.threadId !== null &&
+      (typeof input.threadId !== "string" || !/^\d+\.\d+$/.test(input.threadId))
+    ) {
+      return "Error: Binding operations require an exact threadId timestamp, or explicit null for an unthreaded DM.";
+    }
+    const selection = {
+      channel: normalized.channel,
+      accountId: normalized.accountId,
+      chatId: normalized.chatId,
+      threadId: input.threadId,
+    };
+    try {
+      if (normalized.action === "get-binding") {
+        return JSON.stringify(
+          await options.bindings.get(selection, options.scope),
+        );
+      }
+      const conversationId = firstNonEmptyString(input.conversationId);
+      const expectedConversationId = firstNonEmptyString(
+        input.expectedConversationId,
+      );
+      if (!conversationId || !expectedConversationId) {
+        return "Error: update-binding requires conversationId and expectedConversationId.";
+      }
+      const result = await options.bindings.update(
+        { ...selection, conversationId, expectedConversationId },
+        options.scope,
+      );
+      const prefix =
+        result.status === "conflict" || result.status === "not-found"
+          ? "Error: "
+          : "";
+      return `${prefix}${JSON.stringify(result)}`;
+    } catch (error) {
+      return `Error: Binding operation failed: ${error instanceof Error ? error.message : "unknown error"}`;
+    }
+  }
+  if (
     normalized.channel === "slack" &&
     normalized.action === "download-file" &&
     normalized.target
@@ -395,6 +447,9 @@ export async function executeMessageChannel(
         channel: normalized.channel,
         chatId: normalized.chatId,
         accountId,
+        ...(normalized.threadId !== null
+          ? { threadId: normalized.threadId }
+          : {}),
         scope: options.scope,
       });
       if (typeof context === "string") return context;

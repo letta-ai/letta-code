@@ -3,6 +3,7 @@ import { basename, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { isLocalAgentId } from "@/agent/agent-id";
 import { isLettaCloud } from "@/agent/memory-filesystem";
+import { getClient } from "@/backend/api/client";
 import {
   downloadFileFromSandbox,
   ensureConversationSandbox,
@@ -16,6 +17,7 @@ interface SandboxSubcommandDeps {
   getLastSession?: () => SessionRef | null;
   initializeSettings?: () => Promise<void>;
   isCloud?: () => Promise<boolean>;
+  retrieveConversation?: (id: string) => Promise<{ agent_id: string | null }>;
   readLocalFile?: (path: string) => Promise<Buffer>;
   statLocalPath?: (path: string) => Promise<{ isFile(): boolean }>;
   uploadFile?: typeof uploadFileToSandbox;
@@ -25,6 +27,8 @@ interface SandboxSubcommandDeps {
 const SANDBOX_OPTIONS = {
   help: { type: "boolean", short: "h" },
   to: { type: "string" },
+  conversation: { type: "string" },
+  agent: { type: "string" },
 } as const;
 
 function printUsage(): void {
@@ -34,8 +38,16 @@ Usage:
   letta sandbox upload <local-path>
   letta sandbox download <sandbox-path> [--to <local-path>]
 
+Target another conversation (upload or download):
+  letta sandbox upload <local-path> --conversation <conv-id>
+  letta sandbox upload <local-path> --conversation default --agent <agent-id>
+
 Notes:
-  - Requires an active conversation for a Letta Cloud agent.
+  - Without target flags, uses the active Letta Cloud conversation.
+  - --conversation resolves the owning agent; --agent, if given, must match.
+  - default selects the agent's main sandbox and requires explicit --agent.
+  - Target flags override shell/session context without changing it.
+  - Run upload on the computer containing the local file, including a remote subagent.
   - Uploads are stored under /root/downloads in the conversation sandbox.
   - Downloads are limited to files under /root/downloads.
   - Output is JSON only.
@@ -89,6 +101,45 @@ export function resolveSandboxSession(
   return session;
 }
 
+export async function resolveSandboxTarget(
+  target: { agent?: string; conversation?: string },
+  getCurrentSession: () => SessionRef,
+  retrieveConversation: (id: string) => Promise<{ agent_id: string | null }>,
+): Promise<SessionRef> {
+  if (target.agent === undefined && target.conversation === undefined) {
+    return getCurrentSession();
+  }
+  const agentId = target.agent?.trim();
+  const conversationId = target.conversation?.trim();
+  if (target.agent !== undefined && !agentId) {
+    throw new Error("--agent must not be empty");
+  }
+  if (!conversationId || conversationId === "new") {
+    throw new Error(
+      "Specify --conversation <conv-id> or --conversation default",
+    );
+  }
+  if (agentId && isLocalAgentId(agentId)) {
+    throw new Error("Sandbox file transfer requires a Letta Cloud agent");
+  }
+  if (conversationId === "default") {
+    if (!agentId) throw new Error("--conversation default requires --agent");
+    return { agentId, conversationId };
+  }
+  const conversation = await retrieveConversation(conversationId);
+  if (!conversation.agent_id || isLocalAgentId(conversation.agent_id)) {
+    throw new Error(
+      "The target conversation must belong to a Letta Cloud agent",
+    );
+  }
+  if (agentId && agentId !== conversation.agent_id) {
+    throw new Error(
+      `Conversation ${conversationId} does not belong to ${agentId}`,
+    );
+  }
+  return { agentId: conversation.agent_id, conversationId };
+}
+
 async function initializeSandboxSettings(): Promise<void> {
   await settingsManager.initialize();
   await settingsManager.loadLocalProjectSettings();
@@ -123,35 +174,52 @@ export async function runSandboxSubcommand(
     if (!(await (deps.isCloud ?? isLettaCloud)())) {
       throw new Error("Sandbox file transfer is only available on Letta Cloud");
     }
-    const session = resolveSandboxSession(
-      process.env,
-      (
-        deps.getLastSession ?? (() => settingsManager.getEffectiveLastSession())
-      )(),
+    const session = await resolveSandboxTarget(
+      parsed.values,
+      () =>
+        resolveSandboxSession(
+          process.env,
+          (
+            deps.getLastSession ??
+            (() => settingsManager.getEffectiveLastSession())
+          )(),
+        ),
+      deps.retrieveConversation ??
+        (async (id) => (await getClient()).conversations.retrieve(id)),
     );
-    const ensureSandbox = deps.ensureSandbox ?? ensureConversationSandbox;
+    const explicitTarget = parsed.values.conversation !== undefined;
+    const ensureSandbox = async () => {
+      const sandbox = await (deps.ensureSandbox ?? ensureConversationSandbox)(
+        session.agentId,
+        session.conversationId,
+      );
+      if (
+        explicitTarget &&
+        (sandbox.conversationId ?? "default") !== session.conversationId
+      ) {
+        throw new Error(
+          "The server returned a sandbox for a different conversation; no files transferred",
+        );
+      }
+      return sandbox;
+    };
+    const targetOutput = explicitTarget ? session : {};
 
     if (action === "upload") {
       const localPath = resolve(path);
       const fileStat = await (deps.statLocalPath ?? stat)(localPath);
       if (!fileStat.isFile()) throw new Error(`${localPath} is not a file`);
       const data = await (deps.readLocalFile ?? readFile)(localPath);
-      const sandbox = await ensureSandbox(
-        session.agentId,
-        session.conversationId,
-      );
+      const sandbox = await ensureSandbox();
       const result = await (deps.uploadFile ?? uploadFileToSandbox)(
         sandbox.sandboxId,
         { blob: new Blob([data]), name: basename(localPath) },
       );
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify({ ...result, ...targetOutput }, null, 2));
       return 0;
     }
 
-    const sandbox = await ensureSandbox(
-      session.agentId,
-      session.conversationId,
-    );
+    const sandbox = await ensureSandbox();
     const data = await (deps.downloadFile ?? downloadFileFromSandbox)(
       sandbox.sandboxId,
       path,
@@ -160,7 +228,12 @@ export async function runSandboxSubcommand(
     await (deps.writeLocalFile ?? writeFile)(localPath, data);
     console.log(
       JSON.stringify(
-        { path: localPath, sandboxPath: path, size: data.byteLength },
+        {
+          path: localPath,
+          sandboxPath: path,
+          size: data.byteLength,
+          ...targetOutput,
+        },
         null,
         2,
       ),

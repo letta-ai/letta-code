@@ -7,6 +7,7 @@ import {
   resolveBackendMode,
   setConfiguredBackendMode,
 } from "@/backend/backend-mode";
+import { TOOLSET_OPTIONS } from "@/tools/toolset-options";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { createListenerMessageHandler } from "@/websocket/listener/message-router";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
@@ -499,6 +500,21 @@ describe("listener protocol ergonomics", () => {
     expect(status.boot_working_directory).toBe(runtime.bootWorkingDirectory);
     expect(status.current_working_directory).toBe(runtime.bootWorkingDirectory);
     expect(runtime.workingDirectoryRevision).toBe(1);
+  });
+
+  test("advertises the toolsets supported by this listener", () => {
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    const status = __listenClientTestUtils.buildDeviceStatus(runtime);
+
+    expect(status.available_toolsets).toEqual([...TOOLSET_OPTIONS]);
+    expect(status.available_toolsets).toContainEqual({
+      id: "letta",
+      display_name: "Letta",
+      label: "Letta toolset",
+      description: "Experimental unified toolset for every model",
+      is_featured: true,
+    });
   });
 
   test("reports the skills prepared for the active conversation", () => {

@@ -240,14 +240,6 @@ describe("Startup Flow - Invalid Inputs", () => {
     },
     { timeout: 70000 },
   );
-
-  test("--import with nonexistent file shows error", async () => {
-    const result = await runCli(
-      ["--import", "/nonexistent/path/agent.af", "-p", "test"],
-      { expectExit: 1 },
-    );
-    expect(result.stderr).toContain("not found");
-  });
 });
 
 // ============================================================================

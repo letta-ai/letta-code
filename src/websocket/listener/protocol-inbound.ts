@@ -163,9 +163,9 @@ const TOOLSET_PREFERENCES = new Set([
   "default",
   "gemini",
   "gemini_snake",
+  "letta",
   "none",
 ]);
-
 function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
   if (!isObjectRecord(value)) return false;
   return (

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import "@/utils/startup-log-boundary";
 import { hostname } from "node:os";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
@@ -52,7 +53,6 @@ import { ConversationSelector } from "./cli/components/ConversationSelector";
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
-  resolveImportFlagAlias,
 } from "./cli/flag-utils";
 import { LETTA_CHAT_API_KEYS_URL } from "./cli/helpers/app-urls";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
@@ -68,9 +68,7 @@ import {
 } from "./cli/startup-backend-mode";
 import {
   validateConversationDefaultRequiresAgent,
-  validateFlagConflicts,
   validatePrimaryStartupFlagConflicts,
-  validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
 import { isHeadlessStartup } from "./cli/startup-mode";
 import {
@@ -86,7 +84,10 @@ import {
   shouldPersistSessionState,
 } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
-import { loadTools } from "./tools/manager";
+import {
+  loadStartupTools,
+  type StartupToolsetPreference,
+} from "./tools/letta-toolset";
 import { clearPersistedClientToolRules } from "./tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
 import { startOrphanDetection } from "./utils/orphan-detection";
@@ -95,7 +96,6 @@ import { markMilestone } from "./utils/timing";
 // Stable fallbacks avoid creating new arrays that retrigger effects on every render.
 const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
 const EMPTY_MESSAGE_ARRAY: Message[] = [];
-
 function normalizeUpdateCommandAliases(args: string[]): string[] {
   const [command, ...rest] = args;
 
@@ -340,29 +340,6 @@ async function printInfo() {
   } else {
     console.log("Pinned agents: (none)");
   }
-}
-
-/**
- * Helper to determine which model identifier to pass to loadTools()
- * based on user's model and/or toolset preferences.
- */
-function getModelForToolLoading(
-  specifiedModel?: string,
-  specifiedToolset?: "auto" | "codex" | "default" | "gemini",
-): string | undefined {
-  // If toolset is explicitly specified, use a dummy model from that provider
-  // to trigger the correct toolset loading logic
-  if (specifiedToolset === "codex") {
-    return "openai/gpt-4";
-  }
-  if (specifiedToolset === "gemini") {
-    return "google_ai/gemini-3.1-pro-preview";
-  }
-  if (specifiedToolset === "default") {
-    return "anthropic/claude-sonnet-4";
-  }
-  // Otherwise, use the specified model (or undefined for auto-detection)
-  return specifiedModel;
 }
 
 function getStartupTargetLookupOrderForCredentials({
@@ -825,10 +802,6 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   })();
-  const fromAfFile = resolveImportFlagAlias({
-    importFlagValue: values.import,
-    fromAfFlagValue: values["from-af"],
-  });
   const isHeadless = isHeadlessStartup(values, process.stdin.isTTY, command);
   const terminalThemePromise = !isHeadless
     ? initTerminalTheme().catch(() => undefined)
@@ -979,10 +952,11 @@ async function main(): Promise<void> {
     specifiedToolset !== "codex" &&
     specifiedToolset !== "default" &&
     specifiedToolset !== "gemini" &&
+    specifiedToolset !== "letta" &&
     specifiedToolset !== "auto"
   ) {
     console.error(
-      `Error: Invalid toolset "${specifiedToolset}". Must be "auto", "codex", "default", or "gemini".`,
+      `Error: Invalid toolset "${specifiedToolset}". Must be "auto", "letta", "codex", "default", or "gemini".`,
     );
     process.exit(1);
   }
@@ -1028,7 +1002,6 @@ async function main(): Promise<void> {
       specifiedAgentName,
       forceNewAgent: forceNew,
       forceNewConversation,
-      importFile: fromAfFile,
       shouldResume,
       stateless: values.stateless,
       isHeadless,
@@ -1040,64 +1013,6 @@ async function main(): Promise<void> {
       error instanceof Error ? `Error: ${error.message}` : String(error),
     );
     process.exit(1);
-  }
-
-  // Validate --import flag (also accepts legacy --from-af)
-  // Detect if it's a registry handle (e.g., @author/name) or a local file path
-  let isRegistryImport = false;
-  if (fromAfFile) {
-    try {
-      validateFlagConflicts({
-        guard: fromAfFile,
-        checks: [
-          {
-            when: specifiedAgentId,
-            message: "--import cannot be used with --agent",
-          },
-          {
-            when: specifiedAgentName,
-            message: "--import cannot be used with --name",
-          },
-          {
-            when: shouldResume,
-            message: "--import cannot be used with --resume",
-          },
-          {
-            when: forceNew,
-            message: "--import cannot be used with --new-agent",
-          },
-        ],
-      });
-    } catch (error) {
-      console.error(
-        error instanceof Error ? `Error: ${error.message}` : String(error),
-      );
-      process.exit(1);
-    }
-
-    // Check if this looks like a registry handle (@author/name)
-    if (fromAfFile.startsWith("@")) {
-      // Definitely a registry handle
-      isRegistryImport = true;
-      // Validate handle format
-      try {
-        validateRegistryHandleOrThrow(fromAfFile);
-      } catch {
-        console.error(
-          `Error: Invalid registry handle "${fromAfFile}". Use format: letta --import @author/agentname`,
-        );
-        process.exit(1);
-      }
-    } else {
-      // Local file - verify it exists
-      const { resolve } = await import("node:path");
-      const { existsSync } = await import("node:fs");
-      const resolvedPath = resolve(fromAfFile);
-      if (!existsSync(resolvedPath)) {
-        console.error(`Error: AgentFile not found: ${resolvedPath}`);
-        process.exit(1);
-      }
-    }
   }
 
   // Validate --name flag
@@ -1393,12 +1308,11 @@ async function main(): Promise<void> {
   if (isHeadless) {
     markMilestone("HEADLESS_MODE_START");
     // For headless mode, load tools synchronously (respecting model/toolset when provided)
-    const modelForTools = getModelForToolLoading(
-      specifiedModel,
-      specifiedToolset as "auto" | "codex" | "default" | "gemini" | undefined,
-    );
-    // Exclude interactive-only tools that can't function without a live user session
-    await loadTools(modelForTools, { exclude: ["AskUserQuestion"] });
+    await loadStartupTools({
+      modelIdentifier: specifiedModel,
+      toolset: specifiedToolset as StartupToolsetPreference | undefined,
+      exclude: ["AskUserQuestion"],
+    });
     markMilestone("TOOLS_LOADED");
 
     // Keep headless startup in sync with interactive name resolution.
@@ -1444,8 +1358,6 @@ async function main(): Promise<void> {
     systemPromptPreset,
     toolset,
     skillsDirectory,
-    fromAfFile,
-    isRegistryImport,
   }: {
     forceNew: boolean;
     baseTools?: string[];
@@ -1453,10 +1365,8 @@ async function main(): Promise<void> {
     preResolvedAgent?: AgentState | null;
     model?: string;
     systemPromptPreset?: string;
-    toolset?: "auto" | "codex" | "default" | "gemini";
+    toolset?: StartupToolsetPreference;
     skillsDirectory?: string;
-    fromAfFile?: string;
-    isRegistryImport?: boolean;
   }) {
     const [showKeybindingSetup, setShowKeybindingSetup] = useState<
       boolean | null
@@ -1466,7 +1376,6 @@ async function main(): Promise<void> {
       | "selecting_global"
       | "selecting_conversation"
       | "assembling"
-      | "importing"
       | "initializing"
       | "checking"
       | "ready"
@@ -1791,10 +1700,10 @@ async function main(): Promise<void> {
         // =====================================================================
 
         // Short-circuit: flags handled by init() skip resolution entirely
-        if (forceNew || agentIdArg || fromAfFile) {
+        if (forceNew || agentIdArg) {
           // For --agent/--name: restore conversation from local session if the
           // agent matches, so we don't clobber a real conv ID with "default".
-          if (agentIdArg && !forceNew && !fromAfFile && !forceNewConversation) {
+          if (agentIdArg && !forceNew && !forceNewConversation) {
             // loadLocalProjectSettings is cached if already loaded (e.g. --name)
             await settingsManager.loadLocalProjectSettings(process.cwd());
             const localSession = settingsManager.getLocalLastSession(
@@ -1949,13 +1858,7 @@ async function main(): Promise<void> {
         setLoadingState("assembling");
       }
       checkAndStart();
-    }, [
-      forceNew,
-      agentIdArg,
-      fromAfFile,
-      shouldResume,
-      specifiedConversationId,
-    ]);
+    }, [forceNew, agentIdArg, shouldResume, specifiedConversationId]);
 
     // Main initialization effect - runs after profile selection
     const initStartedRef = React.useRef(false);
@@ -2071,64 +1974,13 @@ async function main(): Promise<void> {
 
         // Load an initial toolset for startup (explicit --toolset or model-derived).
         // App.tsx will reconcile persisted per-agent toolset preference after agent metadata loads.
-        const modelForTools = getModelForToolLoading(
-          model,
-          toolset as "auto" | "codex" | "default" | "gemini" | undefined,
-        );
-        await loadTools(modelForTools);
+        await loadStartupTools({ modelIdentifier: model, toolset });
 
         setLoadingState("initializing");
         const { createAgent } = await import("@/agent/create");
 
         let agent: AgentState | null = null;
         let autoEnableMemfsForFreshAgent = false;
-
-        // Priority 1: Import from AgentFile template (local file or registry)
-        if (fromAfFile) {
-          setLoadingState("importing");
-          let result: { agent: AgentState; skills?: string[] };
-
-          if (isRegistryImport) {
-            // Import from letta-ai/agent-file registry
-            const { importAgentFromRegistry } = await import("@/agent/import");
-            result = await importAgentFromRegistry({
-              handle: fromAfFile,
-              modelOverride: model,
-              stripMessages: true,
-              stripSkills: false,
-            });
-          } else {
-            // Import from local file
-            const { importAgentFromFile } = await import("@/agent/import");
-            result = await importAgentFromFile({
-              filePath: fromAfFile,
-              modelOverride: model,
-              stripMessages: true,
-              stripSkills: false,
-            });
-          }
-
-          agent = result.agent;
-          setAgentProvenance({
-            isNew: true,
-            blocks: [],
-          });
-
-          // Mark imported agents as "custom" to prevent legacy auto-migration
-          // from overwriting their system prompt on resume.
-          if (settingsManager.isReady) {
-            settingsManager.setSystemPromptCustom(agent.id);
-          }
-
-          // Display extracted skills summary
-          if (result.skills && result.skills.length > 0) {
-            const { getAgentSkillsDir } = await import("@/agent/skills");
-            const skillsDir = getAgentSkillsDir(agent.id);
-            console.log(
-              `\n📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to ${skillsDir}: ${result.skills.join(", ")}\n`,
-            );
-          }
-        }
 
         // Priority 2: Try to use --agent specified ID
         if (!agent && agentIdArg) {
@@ -2331,8 +2183,7 @@ async function main(): Promise<void> {
         // 2. We're reusing a project agent (detected early as resumingAgentId)
         // 3. We retrieved an agent from LRU (detected by checking if agent already existed)
         const isResumingProject = !shouldCreateNew && !!resumingAgentId;
-        const isReusingExistingAgent =
-          !shouldCreateNew && !fromAfFile && agent && agent.id;
+        const isReusingExistingAgent = !shouldCreateNew && agent && agent.id;
         const resuming = !!(
           agentIdArg ||
           isResumingProject ||
@@ -2605,7 +2456,6 @@ async function main(): Promise<void> {
       agentIdArg,
       model,
       systemPromptPreset,
-      fromAfFile,
       loadingState,
       selectedGlobalAgentId,
       validatedAgent,
@@ -2753,15 +2603,8 @@ async function main(): Promise<void> {
       preResolvedAgent: nameResolvedAgent,
       model: specifiedModel,
       systemPromptPreset: systemPromptPreset,
-      toolset: specifiedToolset as
-        | "auto"
-        | "codex"
-        | "default"
-        | "gemini"
-        | undefined,
+      toolset: specifiedToolset as StartupToolsetPreference | undefined,
       skillsDirectory: skillsDirectory,
-      fromAfFile: fromAfFile,
-      isRegistryImport: isRegistryImport,
     }),
     {
       exitOnCtrlC: false, // We handle CTRL-C manually with double-press guard

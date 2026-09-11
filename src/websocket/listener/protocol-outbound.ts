@@ -8,7 +8,6 @@ import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
-import { settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   DeviceStatus,
@@ -43,6 +42,7 @@ import {
   recordDeviceStatus,
   shouldEmitDeviceStatus,
 } from "./device-status-cache";
+import { buildDeviceToolsetStatus } from "./device-toolset-status";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 import { listListenerModCommands } from "./mod-command-registry";
 import { enqueueOutboundFrame } from "./outbound-wire";
@@ -189,8 +189,7 @@ export function buildDeviceStatus(
       current_working_directory: fallbackCwd,
       git_context: deviceGitContextCache.read(fallbackCwd),
       letta_code_version: process.env.npm_package_version || null,
-      current_toolset: null,
-      current_toolset_preference: "auto",
+      ...buildDeviceToolsetStatus(null, null),
       current_loaded_tools: [],
       current_available_skills: [],
       background_processes: buildBackgroundProcessSnapshot(),
@@ -212,16 +211,6 @@ export function buildDeviceStatus(
     agentId,
     conversationId,
   );
-  const toolsetPreference = (() => {
-    if (!agentId) {
-      return "auto" as const;
-    }
-    try {
-      return settingsManager.getToolsetPreference(agentId, conversationId);
-    } catch {
-      return "auto" as const;
-    }
-  })();
   const conversationPermissionModeState = getConversationPermissionModeState(
     listener,
     agentId,
@@ -254,13 +243,7 @@ export function buildDeviceStatus(
     current_working_directory: resolvedCwd,
     git_context: deviceGitContextCache.read(resolvedCwd),
     letta_code_version: process.env.npm_package_version || null,
-    current_toolset:
-      conversationRuntime?.currentToolset ??
-      (toolsetPreference === "auto" ? null : toolsetPreference),
-    current_toolset_preference:
-      conversationRuntime?.currentToolset === null
-        ? toolsetPreference
-        : (conversationRuntime?.currentToolsetPreference ?? toolsetPreference),
+    ...buildDeviceToolsetStatus(agentId, conversationId, conversationRuntime),
     current_loaded_tools: conversationRuntime?.currentLoadedTools ?? [],
     current_available_skills: conversationRuntime?.currentAvailableSkills ?? [],
     background_processes: buildBackgroundProcessSnapshot(

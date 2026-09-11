@@ -110,7 +110,7 @@ export const CLI_FLAG_CATALOG = {
     help: {
       argLabel: "<name>",
       description:
-        'Toolset mode: "auto", "codex", "default", or "gemini" (manual values override model-based auto-selection)',
+        'Toolset mode: "auto", "letta", "codex", "default", or "gemini" (manual values override model-based auto-selection)',
     },
   },
   prompt: {
@@ -213,17 +213,6 @@ export const CLI_FLAG_CATALOG = {
     },
   },
   "pre-load-skills": { parser: { type: "string" }, mode: "headless" },
-  // Legacy alias retained for backward compatibility; use --import in docs/errors.
-  "from-af": { parser: { type: "string" }, mode: "both" },
-  import: {
-    parser: { type: "string" },
-    mode: "both",
-    help: {
-      argLabel: "<path>",
-      description: "Create agent from an AgentFile (.af) template",
-      continuationLines: ["Use @author/name to import from the agent registry"],
-    },
-  },
   // Internal headless metadata tag assignment (not part of primary user help).
   tags: { parser: { type: "string" }, mode: "headless" },
   memfs: {

@@ -129,7 +129,7 @@ function getPrimaryQueueMessageItem(items: QueueItem[]): QueueItem | null {
 
 /**
  * Picks an acting cloud user id to attribute the outbound
- * createMessage to. QueueRuntime keeps different non-empty acting users in
+ * createMessage to. Queue consumers keep different non-empty acting users in
  * separate batches; scanning from the end tolerates unattributed items around
  * the attributed work. Returns undefined when no item in the batch carries an
  * actingUserId (self-hosted / pre-channel-split flow).
@@ -297,6 +297,7 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasCronPrompt = false;
   let hasModContinue = false;
   let batchConnectionId: string | undefined;
+  let batchActingUserId = firstQueuedItem.actingUserId;
   let batchImageFailureMode: "strict" | "drop" | null = null;
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
     candidate.kind === "message" && candidate.noCoalesce === true;
@@ -310,6 +311,13 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     // noCoalesce items run as single-item batches: one never joins an
     // existing batch, and nothing joins a batch it started.
     if (queueLen > 0 && (isNoCoalesce(item) || isNoCoalesce(firstQueuedItem))) {
+      break;
+    }
+    if (
+      batchActingUserId &&
+      item.actingUserId &&
+      batchActingUserId !== item.actingUserId
+    ) {
       break;
     }
 
@@ -337,6 +345,7 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
       batchImageFailureMode = itemImageFailureMode;
     }
 
+    batchActingUserId ??= item.actingUserId;
     queueLen += 1;
     if (item.kind === "message") {
       hasMessage = true;

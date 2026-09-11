@@ -82,7 +82,6 @@ import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
   parsePositiveIntFlag,
-  resolveImportFlagAlias,
 } from "./cli/flag-utils";
 import {
   createBuffers,
@@ -111,9 +110,7 @@ import {
 import { installLocalBackendModEventHooks } from "./cli/mods/local-backend-mod-events";
 import {
   validateConversationDefaultRequiresAgent,
-  validateFlagConflicts,
   validatePrimaryStartupFlagConflicts,
-  validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import {
@@ -897,10 +894,6 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
   const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !isStatelessSession;
-  const fromAfFile = resolveImportFlagAlias({
-    importFlagValue: values.import,
-    fromAfFlagValue: values["from-af"],
-  });
   const preLoadSkillsRaw = values["pre-load-skills"];
   const systemInfoReminderEnabled =
     systemInfoReminderEnabledOverride ?? !values["no-system-info-reminder"];
@@ -992,7 +985,6 @@ export async function handleHeadlessCommand(
     !specifiedAgentName &&
     !specifiedConversationId &&
     !forceNew &&
-    !fromAfFile &&
     !fromAgentId
   ) {
     specifiedAgentId = ambientAgentId;
@@ -1044,7 +1036,6 @@ export async function handleHeadlessCommand(
       specifiedAgentName,
       forceNewAgent: forceNew,
       forceNewConversation,
-      importFile: fromAfFile,
       stateless: statelessFlag,
       ephemeral: ephemeralFlag,
       isHeadless: true,
@@ -1065,52 +1056,6 @@ export async function handleHeadlessCommand(
       "--ephemeral supports direct one-shot headless prompts only",
       "headless_startup_flag_conflicts",
     );
-  }
-
-  // Validate --import flag (also accepts legacy --from-af)
-  // Detect if it's a registry handle (e.g., @author/name) or a local file path
-  let isRegistryImport = false;
-  if (fromAfFile) {
-    try {
-      validateFlagConflicts({
-        guard: fromAfFile,
-        checks: [
-          {
-            when: specifiedAgentId,
-            message: "--import cannot be used with --agent",
-          },
-          {
-            when: specifiedAgentName,
-            message: "--import cannot be used with --name",
-          },
-          {
-            when: forceNew,
-            message: "--import cannot be used with --new-agent",
-          },
-        ],
-      });
-    } catch (error) {
-      return reportAndExitHeadless(
-        "headless_import_flag_validation_failed",
-        error,
-        "headless_startup_import_flag_validation",
-      );
-    }
-
-    // Check if this looks like a registry handle (@author/name)
-    if (fromAfFile.startsWith("@")) {
-      // Definitely a registry handle
-      isRegistryImport = true;
-      // Validate handle format
-      try {
-        validateRegistryHandleOrThrow(fromAfFile);
-      } catch {
-        console.error(
-          `Error: Invalid registry handle "${fromAfFile}". Use format: letta --import @author/agentname`,
-        );
-        process.exit(1);
-      }
-    }
   }
 
   // Validate --name flag
@@ -1179,48 +1124,6 @@ export async function handleHeadlessCommand(
       );
       console.error(`Conversation ${specifiedConversationId} not found`);
       process.exit(1);
-    }
-  }
-
-  // Priority 1: Import from AgentFile template (local file or registry)
-  if (!agent && fromAfFile) {
-    let result: { agent: AgentState; skills?: string[] };
-
-    if (isRegistryImport) {
-      // Import from letta-ai/agent-file registry
-      const { importAgentFromRegistry } = await import("@/agent/import");
-      result = await importAgentFromRegistry({
-        handle: fromAfFile,
-        modelOverride: model,
-        stripMessages: true,
-        stripSkills: false,
-      });
-    } else {
-      // Import from local file
-      const { importAgentFromFile } = await import("@/agent/import");
-      result = await importAgentFromFile({
-        filePath: fromAfFile,
-        modelOverride: model,
-        stripMessages: true,
-        stripSkills: false,
-      });
-    }
-
-    agent = result.agent;
-
-    // Mark imported agents as "custom" to prevent legacy auto-migration
-    // from overwriting their system prompt on resume.
-    if (settingsManager.isReady) {
-      settingsManager.setSystemPromptCustom(agent.id);
-    }
-
-    // Display extracted skills summary
-    if (result.skills && result.skills.length > 0) {
-      const { getAgentSkillsDir } = await import("@/agent/skills");
-      const skillsDir = getAgentSkillsDir(agent.id);
-      console.log(
-        `📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to ${skillsDir}: ${result.skills.join(", ")}`,
-      );
     }
   }
 
@@ -1397,8 +1300,7 @@ export async function handleHeadlessCommand(
   markMilestone("HEADLESS_AGENT_RESOLVED");
   const publicAgentId = ephemeralFlag ? null : agent.id;
   telemetry.setCurrentAgent(publicAgentId, agent.tags);
-  const isResumingAgent =
-    !ephemeralFlag && !!(specifiedAgentId || (!forceNew && !fromAfFile));
+  const isResumingAgent = !ephemeralFlag && !!(specifiedAgentId || !forceNew);
   // Refresh presets before applying optional model/system-prompt overrides.
 
   if (isResumingAgent) {

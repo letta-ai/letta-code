@@ -12,6 +12,7 @@ import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { loadTools } from "@/tools/manager";
 import type { RuntimeScope } from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
+import { sealStartupLogs } from "@/utils/startup-log-boundary";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import {
   rejectPendingApprovalResolvers,
@@ -389,11 +390,10 @@ export async function startConnectedListenerRuntime(
   } = {},
 ): Promise<void> {
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) return;
+  sealStartupLogs();
   installExternalToolBridge(runtime);
-  // LETTA_DISABLE_CRON_SCHEDULER=1 lets users opt out entirely. Useful when
-  // running multiple letta-code instances against the same agent dir, since
-  // only one process can hold the lease and the others would otherwise log
-  // "scheduler lease held by PID ..." on every connect.
+  // Opt out when another process already holds the cron scheduler lease.
+  // LETTA_DISABLE_CRON_SCHEDULER=1 suppresses recurring lease-held messages.
   const shouldStartCronScheduler =
     options.startCronScheduler !== false &&
     process.env.LETTA_DISABLE_CRON_SCHEDULER !== "1";

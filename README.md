@@ -90,6 +90,12 @@ See our guides for using [Railway](https://docs.letta.com/letta-code/remote#rail
 The previous `environments`/`envs`, `--environment`/`--env`, and `--env-name`
 spellings remain available for backwards compatibility.
 
+## AgentFile deprecation
+
+AgentFile (`.af`) export and import are deprecated and have been removed from Letta Code. The `/export` and `/download` slash commands and the `--import` and `--from-af` CLI flags are no longer supported, including imports from the agent registry.
+
+This does not affect memory import/export or conversation transcript export.
+
 ## Installing external skills
 
 Install skills into a specific agent's memory with `letta skills install <skill>`: 

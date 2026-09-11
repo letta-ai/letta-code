@@ -1,7 +1,7 @@
 // src/cli/app/useSubmitHandler.ts
 
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -2592,75 +2592,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           cmd.finish(output, true);
-          return { submitted: true };
-        }
-
-        // Special handling for /export command (also accepts legacy /download)
-        if (msg.trim() === "/export" || msg.trim() === "/download") {
-          const cmd = commandRunner.start(
-            msg.trim(),
-            "Exporting agent file...",
-          );
-
-          if (!getBackend().capabilities.agentFileImportExport) {
-            cmd.fail(
-              "AgentFile export is not supported by the local backend yet.",
-            );
-            return { submitted: true };
-          }
-
-          setCommandRunning(true);
-
-          try {
-            const client = await getClient();
-
-            // Build export parameters (include conversation_id if in specific conversation)
-            const exportParams: { conversation_id?: string } = {};
-            if (conversationId !== "default" && conversationId !== agentId) {
-              exportParams.conversation_id = conversationId;
-            }
-
-            // Package skills from agent/project/global directories
-            const { packageSkills } = await import("@/agent/export");
-            const skills = await packageSkills(agentId);
-
-            // Export agent via SDK (GET endpoint), then embed skills client-side
-            const baseContent = await client.agents.exportFile(
-              agentId,
-              exportParams,
-            );
-
-            // Parse if returned as a string, otherwise use as-is
-            const fileContent: Record<string, unknown> =
-              typeof baseContent === "string"
-                ? JSON.parse(baseContent)
-                : (baseContent as Record<string, unknown>);
-
-            // Embed skills into the .af JSON (client-side, no server support needed)
-            if (skills.length > 0) {
-              fileContent.skills = skills;
-            }
-
-            // Generate filename
-            const fileName = exportParams.conversation_id
-              ? `${exportParams.conversation_id}.af`
-              : `${agentId}.af`;
-
-            writeFileSync(fileName, JSON.stringify(fileContent, null, 2));
-
-            // Build success message
-            let summary = `AgentFile exported to ${fileName}`;
-            if (skills.length > 0) {
-              summary += `\n📦 Included ${skills.length} skill(s): ${skills.map((s) => s.name).join(", ")}`;
-            }
-
-            cmd.finish(summary, true);
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed: ${errorDetails}`);
-          } finally {
-            setCommandRunning(false);
-          }
           return { submitted: true };
         }
 
