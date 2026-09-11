@@ -68,6 +68,8 @@ export function clearRuntimeTimers(runtime: ListenerRuntime): void {
  */
 export const WORKTREE_WATCHER_IDLE_STOP_MS = 30 * 60 * 1000;
 
+const MAX_ACCEPTED_INPUT_DISPOSITION_SCOPES = 256;
+
 type WatcherIdleStop = {
   timer: ReturnType<typeof setTimeout>;
   /** Structural view of WorktreeWatcherState; a type import would cycle. */
@@ -232,6 +234,40 @@ export function getConversationRuntimeKey(
   return `agent:${normalizedAgentId ?? "__unknown__"}::conversation:${normalizedConversationId}`;
 }
 
+function getOrCreateAcceptedInputDispositions(
+  listener: ListenerRuntime,
+  runtimeKey: string,
+): Map<string, "started" | "queued"> {
+  if (!listener.acceptedInputDispositionsByConversation) {
+    listener.acceptedInputDispositionsByConversation = new Map();
+  }
+  const dispositionsByConversation =
+    listener.acceptedInputDispositionsByConversation;
+  const existing = dispositionsByConversation.get(runtimeKey);
+  if (existing) {
+    dispositionsByConversation.delete(runtimeKey);
+    dispositionsByConversation.set(runtimeKey, existing);
+    return existing;
+  }
+
+  const dispositions = new Map<string, "started" | "queued">();
+  dispositionsByConversation.set(runtimeKey, dispositions);
+  while (
+    dispositionsByConversation.size > MAX_ACCEPTED_INPUT_DISPOSITION_SCOPES
+  ) {
+    let oldestEvictedRuntimeKey: string | undefined;
+    for (const key of dispositionsByConversation.keys()) {
+      if (key !== runtimeKey && !listener.conversationRuntimes.has(key)) {
+        oldestEvictedRuntimeKey = key;
+        break;
+      }
+    }
+    if (!oldestEvictedRuntimeKey) break;
+    dispositionsByConversation.delete(oldestEvictedRuntimeKey);
+  }
+  return dispositions;
+}
+
 export function createConversationRuntime(
   listener: ListenerRuntime,
   agentId?: string | null,
@@ -259,7 +295,10 @@ export function createConversationRuntime(
     activeConnectionId: null,
     turnLifecycle,
     messageQueue: Promise.resolve(),
-    acceptedInputDispositions: new Map(),
+    acceptedInputDispositions: getOrCreateAcceptedInputDispositions(
+      listener,
+      runtimeKey,
+    ),
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
     get lastStopReason() {

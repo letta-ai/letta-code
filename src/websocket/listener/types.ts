@@ -376,6 +376,11 @@ export type ListenerRuntime = {
   connectionId: string | null;
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
+  /** Recently accepted ingress IDs survive idle conversation runtime eviction. */
+  acceptedInputDispositionsByConversation?: Map<
+    string,
+    Map<string, "started" | "queued">
+  >;
   /** Recent run-to-send snapshots survive idle conversation runtime eviction. */
   clientMessageIdsByRunIdByConversation?: Map<string, Map<string, string[]>>;
   /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */
