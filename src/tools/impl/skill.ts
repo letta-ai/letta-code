@@ -103,8 +103,6 @@ interface SkillResources {
   truncated: boolean;
 }
 
-const ROOT_MEMORY_SKILLS = new Set(["initializing-memory"]);
-
 export function resolveBundledSkillContentPath(input: {
   skillId: string;
   bundledSkillPath: string;
@@ -114,7 +112,7 @@ export function resolveBundledSkillContentPath(input: {
   if (
     !input.localMemfs &&
     input.memoryDir &&
-    ROOT_MEMORY_SKILLS.has(input.skillId) &&
+    input.skillId === "initializing-memory" &&
     detectMemoryFormat(input.memoryDir, false) === "memfs-v2"
   ) {
     return join(dirname(input.bundledSkillPath), "ROOT_MEMORY.md");

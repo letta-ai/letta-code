@@ -25,11 +25,7 @@ Current agent memory format: ${memoryDir ? detectMemoryFormat(memoryDir, local) 
 ${memoryDir ? `Current agent memory directory: ${memoryDir}` : "The current agent has no memory filesystem."}
 Host-local client transcript root: ${getTranscriptRoot()}
 
-## Investigation scope
-
-Follow the skill's workflow for an incident investigation, memory audit, or general health check according to the user's request.
-The investigation conversation above is not automatically the target conversation; the user may have opened it just to run doctor. Unless the user identifies another agent, investigate the current agent.
 ${SYSTEM_REMINDER_CLOSE}
 
-User symptom: ${symptom?.trim() || "Perform a bounded memory health check and review recent history across conversations for recurring corrections, failures, and context problems."}`;
+User request: ${symptom?.trim() || "/doctor"}`;
 }

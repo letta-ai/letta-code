@@ -470,13 +470,7 @@ export async function runMessagesSubcommand(
         });
       }
 
-      const sorted = [...filtered].sort((a, b) => {
-        const aDate = "date" in a && a.date ? new Date(a.date).getTime() : 0;
-        const bDate = "date" in b && b.date ? new Date(b.date).getTime() : 0;
-        return aDate - bDate;
-      });
-
-      console.log(JSON.stringify(sorted, null, 2));
+      console.log(JSON.stringify(sortChronological(filtered), null, 2));
       return 0;
     }
 
@@ -506,6 +500,9 @@ export async function runMessagesSubcommand(
       const pageLimit = Math.max(1, parseLimit(parsed.values.limit, 100));
       const maxPages = Math.max(1, parseLimit(parsed.values["max-pages"], 200));
       const outputPathRaw = parsed.values.out || parsed.values.output;
+      const outputPath = outputPathRaw
+        ? resolve(process.cwd(), outputPathRaw)
+        : undefined;
 
       const { messages, truncated } = await fetchConversationMessages(
         conversationId,
@@ -519,23 +516,8 @@ export async function runMessagesSubcommand(
         .join("\n\n")
         .trim();
 
-      if (outputPathRaw && typeof outputPathRaw === "string") {
-        const outputPath = resolve(process.cwd(), outputPathRaw);
+      if (outputPath) {
         await writeFile(outputPath, `${transcript}\n`, "utf-8");
-        console.log(
-          JSON.stringify(
-            {
-              conversation_id: conversationId,
-              agent_id: agentId || null,
-              message_count: messages.length,
-              truncated,
-              output_path: outputPath,
-            },
-            null,
-            2,
-          ),
-        );
-        return 0;
       }
 
       console.log(
@@ -545,7 +527,7 @@ export async function runMessagesSubcommand(
             agent_id: agentId || null,
             message_count: messages.length,
             truncated,
-            transcript,
+            ...(outputPath ? { output_path: outputPath } : { transcript }),
           },
           null,
           2,

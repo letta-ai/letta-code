@@ -18,10 +18,8 @@ test.each([false, true])(
     );
     expect(prompt).toContain(`Backend: ${local ? "local" : "api"}`);
     expect(prompt).toContain(
-      "User symptom: Inspect conv-incident for the lunch thread leak",
+      "User request: Inspect conv-incident for the lunch thread leak",
     );
-    expect(prompt).toContain("not automatically the target conversation");
-    expect(prompt).not.toContain("Target conversation ID: conv-investigation");
   },
 );
 
@@ -33,5 +31,5 @@ test("a fresh conversation needs no existing transcript or memory to start docto
   });
   expect(prompt).toContain("Investigation conversation ID: (new conversation)");
   expect(prompt).toContain("Current agent memory format: none");
-  expect(prompt).toContain("recent history across conversations");
+  expect(prompt).toEndWith("User request: /doctor");
 });
