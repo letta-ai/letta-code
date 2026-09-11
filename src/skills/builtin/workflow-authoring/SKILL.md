@@ -51,6 +51,42 @@ as in phase() calls — titles are matched exactly.
 Workflow subagents currently require the API backend; the local store does not
 support agent-free conversations.
 
+## Existing computers and sandboxes
+
+Execution is local by default. Set the Workflow tool's `computer` input to an
+existing connected computer name, `{name: 'worker-a'}`, `{deviceId: '...'}`,
+`{id: '...'}`, or `{connectionId: '...'}`. Prefer stable device IDs. Each
+`agent()` can override `computer`; `computer: 'local'` explicitly runs on the
+orchestrator's computer. To select a remote computer literally named local,
+use `{name: 'local'}`. Malformed selectors fail rather than falling back locally.
+Child workflows inherit the same default. Effective placement participates in
+resume cache identity; changing the default reruns affected calls, not calls
+with unchanged explicit overrides. Cache replay does not recheck remote files;
+change the prompt/input or omit resume when those files have changed.
+
+`maxConcurrent` is a positive integer tool input (default 16) shared across
+all computers and stages, independent of the orchestrator's CPU count. Select
+existing workers again in later stages to reuse them. Workflows close their
+query sessions and SDK transports, but never terminate borrowed computers.
+
+Remote calls do not inherit the orchestrator's working directory. `opts.cwd`
+is an explicit path already present on the selected computer; local paths are
+not copied. Pass bounded data in `args` and include it in prompts when workers
+do not share a filesystem. Agent-free queries do **not** support fresh managed
+sandbox creation or automatic repository resource attachment yet; do not pass
+`sandbox` or `resources`. Only use files the selected computer already has.
+
+For example, invoke with `computer: {name: 'worker-a'}`, `maxConcurrent: 4`,
+and `args: {items: ['bounded input A', 'bounded input B']}`:
+
+    export const meta = { name: 'compare-inputs', description: 'Compare bounded inputs on existing workers' }
+    const results = await pipeline(args.items,
+      item => agent(`Summarize: ${item}`, {allowedTools: []}),
+      summary => summary && agent(`Verify this summary: ${summary}`, {
+        computer: {name: 'worker-b'}, allowedTools: []
+      }))
+    return results
+
 ## Script body hooks
 
 - `agent(prompt, opts?)` → Promise. Spawn one subagent. Without `schema`,
@@ -62,11 +98,11 @@ support agent-free conversations.
   global phase() state), `schema`, `model` (default to omitting it — the
   subagent inherits the invoking conversation's model),
   `effort` (reasoning tier; use 'low' for cheap mechanical stages, higher for
-  the hardest verify/judge stages — a call that sets `model` or `effort`
-  runs on a fresh regular conversation of the ephemeral worker instead of a
-  stateless session, still isolated per call), `allowedTools` (defaults to read-only:
+  the hardest verify/judge stages; each call remains an agent-free ephemeral
+  conversation with its own model settings), `allowedTools` (defaults to read-only:
   Read, Grep, Glob — widen per call for stages that must write), `systemPrompt`
-  (extra system prompt for this subagent), `cwd`, `timeoutMs`.
+  (extra system prompt for this subagent), `computer` (overrides the workflow's
+  default existing computer), `cwd` (path on that computer), `timeoutMs`.
 - `pipeline(items, stage1, stage2, ...)` → run each item through all stages
   independently, NO barrier between stages. Item A can be in stage 3 while
   item B is still in stage 1. This is the DEFAULT for multi-stage work.
@@ -88,9 +124,12 @@ support agent-free conversations.
   stringified list reaches the script as one string, so `args.filter` /
   `args.map` throw).
 - `budget` — `{totalUsd, spentUsd(), remainingUsd()}` from the tool's
-  `budgetUsd` input. The ceiling is HARD, not advisory: once `spentUsd()`
-  reaches `totalUsd`, further agent() calls throw. `remainingUsd()` returns
-  Infinity when no budget was set — guard loops on `budget.totalUsd`.
+  `budgetUsd` input. This is advisory, not a hard spending guarantee: known
+  completed costs gate further calls, but in-flight or unreported spend cannot
+  be capped. If any live call has unknown cost (including early structured-output
+  capture), `spentUsd()`, `remainingUsd()`, and result `totalCostUsd` become null,
+  not zero/free. `remainingUsd()` is Infinity with no budget and no missing cost.
+  Guard loops on `budget.totalUsd` and stop on null.
 - `workflow(scriptPath, args?)` — run another workflow script inline as a
   sub-step and return whatever it returns. The child shares this run's
   concurrency cap, budget, abort signal, and journal. Nesting is one level
@@ -156,10 +195,11 @@ budget.totalUsd: with no budget set, remainingUsd() is Infinity and the loop
 would run straight to the 1000-agent cap.
 
     const bugs = []
-    while (budget.totalUsd && budget.remainingUsd() > 0.25) {
+    while (budget.totalUsd && budget.remainingUsd() !== null && budget.remainingUsd() > 0.25) {
       const result = await agent("Find bugs in this codebase.", {schema: BUGS_SCHEMA})
       bugs.push(...result.bugs)
-      log(`${bugs.length} found, $${budget.remainingUsd().toFixed(2)} remaining`)
+      const remaining = budget.remainingUsd()
+      log(`${bugs.length} found, ${remaining === null ? 'cost unknown' : '$' + remaining.toFixed(2) + ' remaining'}`)
     }
 
 Composing patterns — exhaustive review (find → dedup vs seen → diverse-lens

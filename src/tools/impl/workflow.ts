@@ -32,10 +32,16 @@ import {
 } from "@/tools/workflow/format-stats";
 import { defaultExecutionsDir, newExecutionId } from "@/tools/workflow/journal";
 import { parseWorkflowMeta } from "@/tools/workflow/meta";
+import {
+  normalizeWorkflowComputer,
+  rejectUnsupportedPlacement,
+  workflowMaxConcurrent,
+} from "@/tools/workflow/placement";
 import { loadAgentSdk } from "@/tools/workflow/sdk-loader";
 import { SdkSubagentPool } from "@/tools/workflow/sdk-spawner";
 import type {
   SubagentSpawner,
+  WorkflowComputer,
   WorkflowExecutionResult,
   WorkflowMeta,
   WorkflowProgressEvent,
@@ -63,6 +69,8 @@ interface WorkflowArgs {
   scriptPath?: string;
   args?: unknown;
   budgetUsd?: number;
+  computer?: WorkflowComputer;
+  maxConcurrent?: number;
   resumeFromExecutionId?: string;
   model?: string;
   allowedTools?: string[];
@@ -101,6 +109,7 @@ async function createSdkSpawner(
   const client = sdk.createClient("local");
   const pool = new SdkSubagentPool(client, {
     cwd: process.cwd(),
+    createCloudClient: (computer) => sdk.createClient("cloud", computer),
     ...(parentModel ? { model: parentModel } : {}),
     ...(Array.isArray(args.allowedTools) && args.allowedTools.length > 0
       ? { allowedTools: args.allowedTools }
@@ -208,7 +217,8 @@ function formatCompletionResult(run: WorkflowExecutionResult): string {
       result: jsonSafe(run.result),
       agentsSpawned: run.agentsSpawned,
       cacheHits: run.cacheHits,
-      totalCostUsd: Number(run.totalCostUsd.toFixed(4)),
+      totalCostUsd:
+        run.totalCostUsd === null ? null : Number(run.totalCostUsd.toFixed(4)),
       totalTokens: run.totalTokens,
     },
     null,
@@ -301,6 +311,9 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   // instead of as a failed background task.
   let meta: WorkflowMeta;
   try {
+    rejectUnsupportedPlacement(args);
+    normalizeWorkflowComputer(args.computer);
+    workflowMaxConcurrent(args.maxConcurrent);
     meta = parseWorkflowMeta(script);
   } catch (error) {
     return {
@@ -404,6 +417,8 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     args: normalizeWorkflowArgs(args.args),
     executionId,
     executionsDir,
+    computer: args.computer,
+    maxConcurrent: args.maxConcurrent,
     budgetUsd: typeof args.budgetUsd === "number" ? args.budgetUsd : undefined,
     resumeFromExecutionId:
       typeof args.resumeFromExecutionId === "string" &&

@@ -31,6 +31,34 @@ afterEach(() => {
 });
 
 describe("workflow execution registry", () => {
+  test("unknown live cost stays unknown after later known costs; cached calls add no cost", () => {
+    register();
+    recordWorkflowProgress("workflow_1", {
+      kind: "agent",
+      callIndex: 0,
+      label: "cached",
+      phase: null,
+      status: "cached",
+    });
+    expect(getWorkflowExecution("workflow_1")?.totalCostUsd).toBe(0);
+    recordWorkflowProgress("workflow_1", {
+      kind: "agent",
+      callIndex: 1,
+      label: "unknown",
+      phase: null,
+      status: "done",
+    });
+    recordWorkflowProgress("workflow_1", {
+      kind: "agent",
+      callIndex: 2,
+      label: "known",
+      phase: null,
+      status: "done",
+      costUsd: 0.02,
+    });
+    expect(getWorkflowExecution("workflow_1")?.totalCostUsd).toBeNull();
+  });
+
   test("registers a running execution with the declared phases", () => {
     register();
     const snapshot = getWorkflowExecution("workflow_1");

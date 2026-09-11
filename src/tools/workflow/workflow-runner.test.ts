@@ -22,6 +22,164 @@ const echoSpawner: SubagentSpawner = async (request) => ({
 });
 
 describe("runWorkflow", () => {
+  test("effective computer defaults and overrides participate in resume identity", async () => {
+    const executionsDir = tempRunsDir();
+    const spawner: SubagentSpawner = async (request) => ({
+      value: request.options.computer ?? "local",
+      failed: false,
+    });
+    const script = withMeta(`return await parallel([
+      () => agent('inherited'),
+      () => agent('pinned', {computer: {deviceId: 'fixed'}}),
+      () => agent('local', {computer: 'local'})
+    ])`);
+    const first = await runWorkflow(spawner, {
+      script,
+      executionsDir,
+      computer: "worker-a",
+    });
+    expect(first.result).toEqual([
+      { name: "worker-a" },
+      { deviceId: "fixed" },
+      "local",
+    ]);
+    const equivalent = await runWorkflow(spawner, {
+      script,
+      executionsDir,
+      computer: { name: "worker-a" },
+      resumeFromExecutionId: first.executionId,
+    });
+    expect(equivalent.cacheHits).toBe(3);
+    const changed = await runWorkflow(spawner, {
+      script,
+      executionsDir,
+      computer: { deviceId: "worker-b" },
+      resumeFromExecutionId: first.executionId,
+    });
+    expect(changed.cacheHits).toBe(2);
+    expect(changed.agentsSpawned).toBe(1);
+    expect(changed.result).toEqual([
+      { deviceId: "worker-b" },
+      { deviceId: "fixed" },
+      "local",
+    ]);
+  });
+
+  test("default concurrency allows independent queries even on small orchestrators", async () => {
+    let running = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const spawner: SubagentSpawner = async () => {
+      running++;
+      if (running === 3) release();
+      await gate;
+      return { value: "done", failed: false };
+    };
+    const run = await runWorkflow(spawner, {
+      script: withMeta(
+        `return await parallel([1,2,3].map(i => () => agent(String(i))))`,
+      ),
+      executionsDir: tempRunsDir(),
+    });
+    expect(run.result).toEqual(["done", "done", "done"]);
+  });
+
+  test("one concurrency cap spans local and remote placements", async () => {
+    const releases: Array<() => void> = [];
+    let active = 0,
+      peak = 0;
+    let twoStarted!: () => void, thirdStarted!: () => void;
+    const firstBatch = new Promise<void>((resolve) => {
+      twoStarted = resolve;
+    });
+    const third = new Promise<void>((resolve) => {
+      thirdStarted = resolve;
+    });
+    const spawner: SubagentSpawner = async () => {
+      active++;
+      peak = Math.max(peak, active);
+      const gate = new Promise<void>((resolve) => {
+        releases.push(resolve);
+      });
+      if (releases.length === 2) twoStarted();
+      if (releases.length === 3) thirdStarted();
+      await gate;
+      active--;
+      return { value: "done", failed: false };
+    };
+    const pending = runWorkflow(spawner, {
+      script: withMeta(
+        `return await parallel(['local','worker-a','worker-b'].map(computer => () => agent('work', {computer})))`,
+      ),
+      executionsDir: tempRunsDir(),
+      maxConcurrent: 2,
+    });
+    await firstBatch;
+    expect(releases).toHaveLength(2);
+    releases[0]?.();
+    await third;
+    releases.forEach((release) => {
+      release();
+    });
+    expect((await pending).agentsSpawned).toBe(3);
+    expect(peak).toBe(2);
+  });
+
+  test("malformed placement and concurrency never reach the spawner", async () => {
+    let spawns = 0;
+    const spawner: SubagentSpawner = async () => {
+      spawns++;
+      return { value: "bad", failed: false };
+    };
+    await expect(
+      runWorkflow(spawner, {
+        script: withMeta(`return await agent('x', {computer: null})`),
+        executionsDir: tempRunsDir(),
+      }),
+    ).rejects.toThrow("computer must be");
+    await expect(
+      runWorkflow(spawner, {
+        script: withMeta(`return await agent('x', {resources: []})`),
+        executionsDir: tempRunsDir(),
+      }),
+    ).rejects.toThrow("does not support resources");
+    await expect(
+      runWorkflow(spawner, {
+        script: withMeta(`return await agent('x')`),
+        executionsDir: tempRunsDir(),
+        maxConcurrent: 0,
+      }),
+    ).rejects.toThrow("maxConcurrent");
+    expect(spawns).toBe(0);
+  });
+
+  test("missing cost remains unknown in script accounting and result; replay adds no spend", async () => {
+    const executionsDir = tempRunsDir();
+    const spawner: SubagentSpawner = async () => ({
+      value: "done",
+      failed: false,
+    });
+    const script = withMeta(
+      `await agent('x'); return [budget.spentUsd(), budget.remainingUsd()]`,
+    );
+    const first = await runWorkflow(spawner, {
+      script,
+      executionsDir,
+      budgetUsd: 5,
+    });
+    expect(first.totalCostUsd).toBeNull();
+    expect(first.result).toEqual([null, null]);
+    const replay = await runWorkflow(spawner, {
+      script,
+      executionsDir,
+      budgetUsd: 5,
+      resumeFromExecutionId: first.executionId,
+    });
+    expect(replay.totalCostUsd).toBe(0);
+    expect(replay.result).toEqual([0, 5]);
+  });
   test("agent() returns the subagent's text", async () => {
     const run = await runWorkflow(echoSpawner, {
       script: withMeta(`return await agent('hello')`),

@@ -13,6 +13,10 @@
  * called.
  */
 
+import {
+  rejectUnsupportedPlacement,
+  workflowQueryPlacement,
+} from "./placement.ts";
 import { validateAgainstSchema } from "./schema-validate.ts";
 import type {
   SdkClient,
@@ -21,6 +25,7 @@ import type {
   SubagentOutcome,
   SubagentRequest,
   SubagentSpawner,
+  WorkflowComputer,
 } from "./types.ts";
 
 export interface SdkSpawnerConfig {
@@ -32,6 +37,8 @@ export interface SdkSpawnerConfig {
   cwd?: string;
   /** Extra system prompt appended to every subagent. */
   systemPromptAppend?: string;
+  /** Lazy per-computer clients; reused across stages and disposed on cleanup. */
+  createCloudClient?: (computer: WorkflowComputer) => SdkClient;
 }
 
 const DEFAULT_ALLOWED_TOOLS = ["Read", "Grep", "Glob"];
@@ -247,6 +254,8 @@ function sumOptional(a?: number, b?: number): number | undefined {
 }
 
 export class SdkSubagentPool {
+  private readonly cloudClients = new Map<string, SdkClient>();
+
   constructor(
     private readonly client: SdkClient,
     private readonly config: SdkSpawnerConfig = {},
@@ -262,6 +271,27 @@ export class SdkSubagentPool {
     signal: AbortSignal,
   ): Promise<SubagentOutcome> {
     const { prompt, options } = request;
+    rejectUnsupportedPlacement(options);
+    const placement = workflowQueryPlacement(
+      options.computer,
+      options.cwd,
+      this.config.cwd,
+    );
+    let client = this.client;
+    if (placement.backend === "cloud") {
+      // SDK 0.8.x ignores per-query computer in agent-free session routing.
+      // Pin a client to each selector instead; never mutate a shared default.
+      const computer = placement.options.computer as WorkflowComputer;
+      const key = JSON.stringify(computer);
+      let remote = this.cloudClients.get(key);
+      if (!remote) {
+        if (!this.config.createCloudClient)
+          throw new Error("Cloud workflow routing is unavailable.");
+        remote = this.config.createCloudClient(computer);
+        this.cloudClients.set(key, remote);
+      }
+      client = remote;
+    }
     const model = options.model ?? this.config.model;
     if (!model) {
       return {
@@ -302,9 +332,7 @@ export class SdkSubagentPool {
       ...(options.effort
         ? { modelSettings: { reasoning_effort: options.effort } }
         : {}),
-      ...((options.cwd ?? this.config.cwd)
-        ? { cwd: options.cwd ?? this.config.cwd }
-        : {}),
+      ...placement.options,
       ...(options.schema
         ? {
             tools: [
@@ -319,6 +347,8 @@ export class SdkSubagentPool {
     // Some models keep re-calling StructuredOutput after a success (each call
     // is another cloud run), so the first valid capture ends the query: the
     // value is what the script wanted, and the rest of the turn is waste.
+    // An early stop may miss the SDK result's cost. Keep it unknown; the
+    // workflow must not report a partial or missing bill as zero/free.
     let onCaptured: (() => void) | null = null;
     let onRunaway: ((reason: string) => void) | null = null;
     let currentQuery: SdkQuery | null = null;
@@ -344,7 +374,7 @@ export class SdkSubagentPool {
     );
 
     const runQuery = async (queryPrompt: string): Promise<DrainedTurn> => {
-      const query = this.client.query({
+      const query = client.query({
         prompt: queryPrompt,
         options: queryOptions,
       });
@@ -398,7 +428,10 @@ export class SdkSubagentPool {
         );
         turn = {
           ...nudged,
-          costUsd: sumOptional(turn.costUsd, nudged.costUsd),
+          costUsd:
+            turn.costUsd === undefined || nudged.costUsd === undefined
+              ? undefined
+              : turn.costUsd + nudged.costUsd,
           durationMs: sumOptional(turn.durationMs, nudged.durationMs),
           totalTokens: sumOptional(turn.totalTokens, nudged.totalTokens),
         };
@@ -445,6 +478,10 @@ export class SdkSubagentPool {
 
   /** Release SDK-owned App Server and transport resources. */
   async cleanup(): Promise<void> {
-    await this.client[Symbol.asyncDispose]?.().catch(() => undefined);
+    await Promise.all(
+      [this.client, ...this.cloudClients.values()].map((client) =>
+        client?.[Symbol.asyncDispose]?.().catch(() => undefined),
+      ),
+    );
   }
 }

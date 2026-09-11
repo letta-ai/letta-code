@@ -44,7 +44,7 @@ describe("SdkSubagentPool", () => {
     };
     const pool = new SdkSubagentPool(client, {
       cwd: "/repo",
-      model: "openai/gpt-5.6-luna",
+      model: "openai/gpt-4.1-mini",
     });
 
     const outcome = await pool.spawner(
@@ -57,7 +57,7 @@ describe("SdkSubagentPool", () => {
     expect(calls[0]).toMatchObject({
       prompt: "inspect the repository",
       options: {
-        model: "openai/gpt-5.6-luna",
+        model: "openai/gpt-4.1-mini",
         modelSettings: { reasoning_effort: "high" },
         cwd: "/repo",
         permissionMode: "unrestricted",
@@ -93,7 +93,7 @@ describe("SdkSubagentPool", () => {
       },
     };
     const pool = new SdkSubagentPool(client, {
-      model: "openai/gpt-5.6-luna",
+      model: "openai/gpt-4.1-mini",
     });
 
     const outcome = await pool.spawner(request(), new AbortController().signal);
@@ -123,7 +123,7 @@ describe("SdkSubagentPool", () => {
       },
     };
     const pool = new SdkSubagentPool(client, {
-      model: "openai/gpt-5.6-luna",
+      model: "openai/gpt-4.1-mini",
     });
 
     const outcome = await pool.spawner(
@@ -165,7 +165,7 @@ describe("SdkSubagentPool", () => {
       },
     };
     const pool = new SdkSubagentPool(client, {
-      model: "openai/gpt-5.6-luna",
+      model: "openai/gpt-4.1-mini",
     });
 
     const outcome = await pool.spawner(
@@ -234,7 +234,7 @@ describe("SdkSubagentPool structured output loop guard", () => {
         };
       },
     };
-    const pool = new SdkSubagentPool(client, { model: "openai/gpt-5.6-luna" });
+    const pool = new SdkSubagentPool(client, { model: "openai/gpt-4.1-mini" });
     const outcome = await pool.spawner(
       request({
         schema: {
@@ -306,7 +306,7 @@ describe("SdkSubagentPool runaway guards", () => {
         toolCall(id, "Grep", { pattern: "import" }),
       ),
     );
-    const pool = new SdkSubagentPool(client, { model: "openai/gpt-5.6-luna" });
+    const pool = new SdkSubagentPool(client, { model: "openai/gpt-4.1-mini" });
     const outcome = await pool.spawner(request(), new AbortController().signal);
     expect(outcome.failed).toBe(true);
     expect(outcome.error).toContain("identical Grep call 3 times");
@@ -319,7 +319,7 @@ describe("SdkSubagentPool runaway guards", () => {
         toolCall(`call-${i}`, "Read", { file_path: `f${i}` }),
       ).flat(),
     );
-    const pool = new SdkSubagentPool(client, { model: "openai/gpt-5.6-luna" });
+    const pool = new SdkSubagentPool(client, { model: "openai/gpt-4.1-mini" });
     const outcome = await pool.spawner(request(), new AbortController().signal);
     expect(outcome.failed).toBe(true);
     expect(outcome.error).toContain(
@@ -338,7 +338,7 @@ describe("SdkSubagentPool runaway guards", () => {
         ]);
       },
     };
-    const pool = new SdkSubagentPool(client, { model: "openai/gpt-5.6-luna" });
+    const pool = new SdkSubagentPool(client, { model: "openai/gpt-4.1-mini" });
     const outcome = await pool.spawner(request(), new AbortController().signal);
     expect(outcome).toMatchObject({ value: "done", failed: false });
   });
@@ -362,7 +362,7 @@ describe("SdkSubagentPool runaway guards", () => {
         ]);
       },
     };
-    const pool = new SdkSubagentPool(client, { model: "openai/gpt-5.6-luna" });
+    const pool = new SdkSubagentPool(client, { model: "openai/gpt-4.1-mini" });
     const outcome = await pool.spawner(request(), new AbortController().signal);
     expect(outcome).toMatchObject({ value: "done", failed: false });
   });

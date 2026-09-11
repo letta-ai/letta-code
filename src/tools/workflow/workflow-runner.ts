@@ -10,7 +10,6 @@
  */
 
 import { readFileSync } from "node:fs";
-import { cpus } from "node:os";
 import vm from "node:vm";
 import {
   defaultExecutionsDir,
@@ -18,6 +17,11 @@ import {
   newExecutionId,
 } from "./journal.ts";
 import { parseWorkflowMeta, stripMetaExport } from "./meta.ts";
+import {
+  normalizeWorkflowComputer,
+  rejectUnsupportedPlacement,
+  workflowMaxConcurrent,
+} from "./placement.ts";
 import { agentCallCacheKey, Semaphore } from "./scheduling.ts";
 import type {
   AgentCallOptions,
@@ -61,6 +65,9 @@ export async function runWorkflow(
   spawner: SubagentSpawner,
   options: RunWorkflowOptions,
 ): Promise<WorkflowExecutionResult> {
+  rejectUnsupportedPlacement(options);
+  const computer = normalizeWorkflowComputer(options.computer);
+  const maxConcurrent = workflowMaxConcurrent(options.maxConcurrent);
   const meta = parseWorkflowMeta(options.script);
   const executionId = options.executionId ?? newExecutionId();
   const executionsDir = options.executionsDir ?? defaultExecutionsDir();
@@ -84,8 +91,6 @@ export async function runWorkflow(
   }
   const signal = abortController.signal;
 
-  const maxConcurrent =
-    options.maxConcurrent ?? Math.min(16, Math.max(1, cpus().length - 2));
   const maxTotalAgents = options.maxTotalAgents ?? 1000;
   const semaphore = new Semaphore(maxConcurrent);
 
@@ -94,16 +99,19 @@ export async function runWorkflow(
   let agentsSpawned = 0;
   let cacheHits = 0;
   let spentUsd = 0;
+  let costUnknown = false;
   let totalTokens = 0;
   const occurrences = new Map<string, number>();
 
   const budget: WorkflowBudget = {
     totalUsd: options.budgetUsd ?? null,
-    spentUsd: () => spentUsd,
+    spentUsd: () => (costUnknown ? null : spentUsd),
     remainingUsd: () =>
-      options.budgetUsd == null
-        ? Infinity
-        : Math.max(0, options.budgetUsd - spentUsd),
+      costUnknown
+        ? null
+        : options.budgetUsd == null
+          ? Infinity
+          : Math.max(0, options.budgetUsd - spentUsd),
   };
 
   async function agent(
@@ -122,10 +130,22 @@ export async function runWorkflow(
         `Budget of $${options.budgetUsd} exhausted ($${spentUsd.toFixed(4)} spent).`,
       );
     }
-    const opts: AgentCallOptions =
-      callOptions && typeof callOptions === "object"
-        ? ({ ...callOptions } as AgentCallOptions)
-        : {};
+    if (
+      callOptions !== undefined &&
+      (!callOptions ||
+        typeof callOptions !== "object" ||
+        Array.isArray(callOptions))
+    ) {
+      throw new Error("agent() options must be an object.");
+    }
+    const opts: AgentCallOptions = { ...(callOptions as AgentCallOptions) };
+    rejectUnsupportedPlacement(opts);
+    const selected = normalizeWorkflowComputer(
+      opts.computer === undefined ? computer : opts.computer,
+    );
+    // Preserve old local cache keys while including effective remote defaults.
+    if (selected === "local") delete opts.computer;
+    else opts.computer = selected;
     const callIndex = callCounter++;
     const label = opts.label ?? defaultLabel(prompt);
     const phase = opts.phase ?? currentPhase;
@@ -152,13 +172,22 @@ export async function runWorkflow(
     await semaphore.acquire();
     try {
       if (signal.aborted) throw new Error("Workflow aborted.");
+      if (options.budgetUsd != null && spentUsd >= options.budgetUsd) {
+        throw new Error(
+          `Budget of $${options.budgetUsd} exhausted while queued.`,
+        );
+      }
       emit({ kind: "agent", callIndex, label, phase, status: "running" });
       agentsSpawned++;
       const outcome = await spawner(
         { prompt, options: opts, cacheKey, occurrence, callIndex },
         signal,
       );
-      spentUsd += outcome.costUsd ?? 0;
+      if (outcome.costUsd === undefined || !Number.isFinite(outcome.costUsd)) {
+        costUnknown = true;
+      } else {
+        spentUsd += outcome.costUsd;
+      }
       totalTokens += outcome.totalTokens ?? 0;
       journal.record({
         kind: "agent",
@@ -349,7 +378,7 @@ export async function runWorkflow(
     executionDir: journal.executionDir,
     agentsSpawned,
     cacheHits,
-    totalCostUsd: spentUsd,
+    totalCostUsd: costUnknown ? null : spentUsd,
     totalTokens,
   };
 }

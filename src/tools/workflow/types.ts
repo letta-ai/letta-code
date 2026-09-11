@@ -25,6 +25,14 @@ export interface WorkflowMeta {
   phases?: WorkflowPhaseMeta[];
 }
 
+/** Existing SDK computer selectors. "local" explicitly selects this process's computer. */
+export type WorkflowComputer =
+  | string
+  | { name: string }
+  | { deviceId: string }
+  | { id: string }
+  | { connectionId: string };
+
 /** Options accepted by the in-script agent() hook. */
 export interface AgentCallOptions {
   /** Display label for progress output (defaults to a prompt excerpt). */
@@ -44,7 +52,9 @@ export interface AgentCallOptions {
   allowedTools?: string[];
   /** Extra system prompt appended for this subagent. */
   systemPrompt?: string;
-  /** Working directory override for this subagent session. */
+  /** Existing computer override; inherits the workflow default when omitted. */
+  computer?: WorkflowComputer;
+  /** Working directory on the selected computer (never copied to remote). */
   cwd?: string;
   /** Per-call timeout in milliseconds. */
   timeoutMs?: number;
@@ -105,8 +115,9 @@ export type WorkflowProgressEvent =
 /** Budget accounting exposed to scripts as `budget` (USD, not tokens). */
 export interface WorkflowBudget {
   totalUsd: number | null;
-  spentUsd(): number;
-  remainingUsd(): number;
+  /** Null once any live call's cost is unknown. */
+  spentUsd(): number | null;
+  remainingUsd(): number | null;
 }
 
 export interface RunWorkflowOptions {
@@ -114,9 +125,11 @@ export interface RunWorkflowOptions {
   script: string;
   /** Value exposed to the script as the `args` global. */
   args?: unknown;
-  /** Hard USD ceiling for the run; agent() throws once exceeded. */
+  /** Advisory USD limit; completed reported costs gate new calls, not in-flight spend. */
   budgetUsd?: number;
-  /** Max concurrently running subagents. Default min(16, cpus - 2). */
+  /** Default existing computer for all calls. Omit for local execution. */
+  computer?: WorkflowComputer;
+  /** Max concurrently running queries across all computers. Default 16, independent of CPUs. */
   maxConcurrent?: number;
   /** Lifetime subagent cap (runaway-loop backstop). Default 1000. */
   maxTotalAgents?: number;
@@ -141,7 +154,8 @@ export interface WorkflowExecutionResult {
   executionDir: string;
   agentsSpawned: number;
   cacheHits: number;
-  totalCostUsd: number;
+  /** Null if any live call did not report a complete cost. Cached calls add zero. */
+  totalCostUsd: number | null;
   /** Sum of subagent token usage (live runs only; cached replays add 0). */
   totalTokens: number;
 }

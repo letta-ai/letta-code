@@ -16,13 +16,13 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { SdkClient } from "./types.ts";
+import type { SdkClient, WorkflowComputer } from "./types.ts";
 
 // Computed so bundlers treat the import as fully dynamic.
 const SDK_PACKAGE = ["@letta-ai", "letta-agent-sdk"].join("/");
 
 export interface LoadedSdk {
-  createClient(backend: string): SdkClient;
+  createClient(backend: string, computer?: WorkflowComputer): SdkClient;
 }
 
 /**
@@ -74,6 +74,7 @@ export async function loadAgentSdk(): Promise<LoadedSdk> {
       const sdk = (await import(specifier)) as {
         LettaAgentClient: new (options: {
           backend: string;
+          computer?: WorkflowComputer;
           appServer?: { harnessBackend: "api" | "local" };
         }) => SdkClient;
       };
@@ -82,9 +83,10 @@ export async function loadAgentSdk(): Promise<LoadedSdk> {
         continue;
       }
       return {
-        createClient: (backend) =>
+        createClient: (backend, computer) =>
           new sdk.LettaAgentClient({
             backend,
+            ...(computer === undefined ? {} : { computer }),
             ...(backend === "local"
               ? { appServer: { harnessBackend: "api" as const } }
               : {}),

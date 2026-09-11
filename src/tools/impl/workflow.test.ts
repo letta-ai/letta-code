@@ -141,6 +141,49 @@ describe("Workflow tool (background launch)", () => {
     rmSync(scratchpad, { recursive: true, force: true });
   });
 
+  test("rejects invalid placement and concurrency before creating a backend", async () => {
+    let factories = 0;
+    __setWorkflowSpawnerFactoryForTests(async () => {
+      factories++;
+      return { spawner: gatedSpawner(), cleanup: async () => {} };
+    });
+    for (const input of [
+      { computer: null },
+      { computer: { deviceId: "a", name: "b" } },
+      { maxConcurrent: 0 },
+      { resources: [] },
+      { sandbox: {} },
+    ]) {
+      const result = await workflow({ script: SCRIPT, ...input } as Parameters<
+        typeof workflow
+      >[0]);
+      expect(result.status).toBe("error");
+    }
+    expect(factories).toBe(0);
+    expect(backgroundProcesses.size).toBe(0);
+  });
+
+  test("forwards the default computer and reports missing cost as null in completion", async () => {
+    const selected: unknown[] = [];
+    installSpawner(async (request) => {
+      selected.push(request.options.computer);
+      return { value: "done", failed: false };
+    });
+    const result = await workflow({
+      script: SCRIPT,
+      computer: { deviceId: "worker-a" },
+      maxConcurrent: 1,
+    });
+    expect(result.status).toBe("success");
+    await waitFor(() => queuedMessages.length > 0);
+    expect(selected).toEqual([
+      { deviceId: "worker-a" },
+      { deviceId: "worker-a" },
+    ]);
+    expect(queuedMessages[0]?.text).toContain('"totalCostUsd": null');
+    expect(cleanupCalls).toBe(1);
+  });
+
   test("rejects an invalid script before launching anything", async () => {
     installSpawner(gatedSpawner());
     const result = await workflow({ script: "return 1" });

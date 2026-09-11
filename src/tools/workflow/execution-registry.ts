@@ -47,7 +47,7 @@ export interface WorkflowExecutionRecord {
   agents: Map<number, WorkflowAgentRecord>;
   logs: string[];
   totalTokens: number;
-  totalCostUsd: number;
+  totalCostUsd: number | null;
   cacheHits: number;
 }
 
@@ -71,7 +71,7 @@ export interface WorkflowExecutionSnapshot {
   agentsRunning: number;
   cacheHits: number;
   totalTokens: number;
-  totalCostUsd: number;
+  totalCostUsd: number | null;
   phases: Array<{
     title: string;
     agents: WorkflowAgentRecord[];
@@ -178,7 +178,12 @@ export function recordWorkflowProgress(
       if (event.status === "cached") record.cacheHits += 1;
       if (event.status === "done" || event.status === "error") {
         record.totalTokens += event.totalTokens ?? 0;
-        record.totalCostUsd += event.costUsd ?? 0;
+        record.totalCostUsd =
+          record.totalCostUsd === null ||
+          event.costUsd === undefined ||
+          !Number.isFinite(event.costUsd)
+            ? null
+            : record.totalCostUsd + event.costUsd;
       }
       break;
     }
