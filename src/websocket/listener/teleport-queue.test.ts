@@ -1,6 +1,6 @@
 import { afterEach, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
-import { openListenerConnection } from "./connection";
+import { closeListenerConnection, openListenerConnection } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import { createRuntime } from "./lifecycle";
@@ -12,6 +12,8 @@ import {
   finishTeleport,
   handleTeleportRequest,
   isRuntimeTeleportPending,
+  pruneRecoveredTeleports,
+  TELEPORT_RECOVERY_TTL_MS,
 } from "./teleport";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
@@ -44,23 +46,28 @@ function makeOptions(): StartListenerOptions {
 function openSource(
   listener: ReturnType<typeof createRuntime>,
   socket: MockSocket,
+  connectionId = "source",
 ): void {
   openListenerConnection({
     runtime: listener,
-    connectionId: "source",
+    connectionId,
     writer: socket as never,
     options: makeOptions(),
   });
 }
 
-function requestTeleport(listener: ReturnType<typeof createRuntime>): void {
+function requestTeleport(
+  listener: ReturnType<typeof createRuntime>,
+  connectionId = "source",
+  teleportId = "teleport-1",
+): void {
   handleTeleportRequest({
     listener,
-    connectionId: "source",
+    connectionId,
     command: {
       type: "teleport_request",
-      request_id: "teleport-1",
-      teleport_id: "teleport-1",
+      request_id: teleportId,
+      teleport_id: teleportId,
       runtime: { agent_id: "agent-1", conversation_id: "conversation-1" },
       target: {
         connection_id: "target",
@@ -272,6 +279,105 @@ test("accepted queue drains before teleport readiness", () => {
       success: true,
     }),
   );
+});
+
+test("closed source transport leaves readiness retryable", () => {
+  const listener = createRuntime();
+  const socket = new MockSocket();
+  openSource(listener, socket);
+  socket.readyState = WebSocket.CLOSED;
+
+  requestTeleport(listener);
+  const pending = listener.pendingTeleports?.get("teleport-1");
+
+  expect(pending?.readyAt).toEqual(expect.any(Number));
+  expect(socket.sent).toEqual([]);
+  expect(isRuntimeTeleportPending(listener, "agent-1", "conversation-1")).toBe(
+    true,
+  );
+});
+
+test("same teleport id retries readiness after reconnect", () => {
+  const listener = createRuntime();
+  const socket = new MockSocket();
+  openSource(listener, socket);
+  socket.readyState = WebSocket.CLOSED;
+
+  requestTeleport(listener);
+  closeListenerConnection(listener, "source");
+  const retrySocket = new MockSocket();
+  openSource(listener, retrySocket, "source-reconnect");
+  requestTeleport(listener, "source-reconnect");
+
+  expect(retrySocket.sent).toContainEqual(
+    expect.objectContaining({
+      type: "teleport_ready",
+      teleport_id: "teleport-1",
+      success: true,
+    }),
+  );
+  expect(listener.pendingTeleports?.get("teleport-1")?.connectionId).toBe(
+    "source-reconnect",
+  );
+});
+
+test("same teleport id retries delayed boundary readiness after reconnect", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const socket = new MockSocket();
+  openSource(listener, socket);
+  setActiveRuntime(listener);
+  const lease = runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: process.cwd(),
+  });
+
+  requestTeleport(listener);
+  const pending = listener.pendingTeleports?.get("teleport-1");
+  expect(pending?.readyAt).toBeUndefined();
+  closeListenerConnection(listener, "source");
+  runtime.turnLifecycle.finish(lease, "end_turn");
+  finishPendingTeleport(runtime);
+  expect(pending?.readyAt).toBeUndefined();
+
+  const retrySocket = new MockSocket();
+  openSource(listener, retrySocket, "source-reconnect");
+  requestTeleport(listener, "source-reconnect");
+
+  expect(retrySocket.sent).toContainEqual(
+    expect.objectContaining({
+      type: "teleport_ready",
+      teleport_id: "teleport-1",
+      active_turn: false,
+      success: true,
+    }),
+  );
+  expect(pending?.readyAt).toEqual(expect.any(Number));
+});
+
+test("undelivered ready teleport is pruned after recovery ttl", () => {
+  const listener = createRuntime();
+  const socket = new MockSocket();
+  openSource(listener, socket);
+  socket.readyState = WebSocket.CLOSED;
+
+  requestTeleport(listener);
+  const pending = listener.pendingTeleports?.get("teleport-1");
+  expect(pending?.readyAt).toEqual(expect.any(Number));
+  if (!pending?.readyAt) throw new Error("Teleport was not marked ready");
+
+  pruneRecoveredTeleports(
+    listener,
+    pending.readyAt + TELEPORT_RECOVERY_TTL_MS - 1,
+  );
+  expect(listener.pendingTeleports?.has("teleport-1")).toBe(true);
+
+  pruneRecoveredTeleports(listener, pending.readyAt + TELEPORT_RECOVERY_TTL_MS);
+  expect(listener.pendingTeleports?.has("teleport-1")).toBe(false);
 });
 
 test("reverse teleport clears the returning destination's old marker", async () => {
