@@ -1,22 +1,22 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.268:docs:a7cde18287e104687ff1530f5eb21d1bd9a79cda267de0f080aee0679f29a8c1:runtime:393a563e1d5411fbb44704cde06b6a6fda5500921081d1af5ad2fd3b7cbe9e51",
-  "package_version": "2.1.268",
-  "npm_integrity": "sha512-DSRUVAbRRH7WaHm99OErT4FJQDkbhIUb8mIaevcFrXtKCZwA9UmKY5+SOFWmgyeEUj2Uh1pFw0Rk/gYffmUEUw==",
-  "npm_published_at": "2026-09-10T18:41:11.770Z",
-  "release_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.268",
-  "release_notes_md": "## What's changed\n\n- Added to the Claude apps gateway: with `pricing:` set in `gateway.yaml`, signed-in Claude Code clients receive the same rates through managed settings, so `/cost` and telemetry match the spend meter\n- Added a startup warning for gateways when `access_control.allow_cidrs` is empty, and a one-time warning the first time a request arrives from a public address\n- Added the `gatewayInternalNetworks` managed setting, letting administrators allow `/login` to a Claude apps gateway on their organization's own public IPv4 block\n- Added `claude self-hosted-runner --remove-session-state` (default off): delete each session's per-session directories under `<base-dir>/_sessions/` when the session ends\n- Added `configDirectory` to the output of `claude auth status --json`\n- Added `--json` to `claude plugin install`, `uninstall`, `update`, `enable` and `disable`, and `errorDetails`/`noteDetails` to each row of `claude plugin list --json`\n- Added browser-tab icons for published artifacts, chosen by Claude to match each page\n- Fixed every turn failing with HTTP 400 on third-party Anthropic-compatible endpoints (`ANTHROPIC_BASE_URL`) since 2.1.265: a regex in the Artifact tool's input schema that those endpoints reject\n- Fixed WebFetch hanging indefinitely on a server that keeps the response open without finishing; a fetch now fails after 300 seconds. Set `CLAUDE_CODE_WEBFETCH_DEADLINE_MS` to override the deadline (0 turns it off)\n- Fixed a respawned in-process teammate picking up tools or a system prompt from a same-named agent file in a folder you have not trusted\n- Fixed sustained high CPU usage: a busy loop in long-running idle sessions no longer pins a CPU core, and rapid terminal focus reports during a session recap no longer keep the CPU high\n- Fixed Claude sometimes replying \"your message came through empty\" after an MCP tool call\n- Fixed deny and ask permission rules on symlinked directories (`/etc`, `/tmp`, `/var` on macOS; `/bin` on Linux) not applying when a path was given by its real location, and Bash commands ignoring deny rules written on a symlinked path spelling\n- Fixed a case where a Read or Edit deny rule did not apply when an `env -C`, `eval` or similar command the permission checker cannot analyze was on the same line\n- Fixed plugin and marketplace errors showing a token or password from a git source URL\n- Fixed `/mcp` and `/plugin` server details, `claude mcp list`/`get`, and MCP login errors showing secrets resolved from `${VAR}` placeholders in MCP configs\n- Fixed prompt caching and extended thinking breaking mid-session for SDK sessions using `excludeDynamicSections`: the first message is no longer re-rendered each request\n- Fixed entitled users being told a model is restricted after restart or in the Desktop Code tab when a cached model-access denial was stale\n- Fixed a running session silently switching to the organization's default model when another Claude Code process refreshed a stale model-access entry\n- Fixed long-context 429s on Fable models showing the usage-credits consent prompt instead of the 1M-context message on Pro and Team plans\n- Fixed workload identity federation via a profile (as claude-code-action configures it): processes sharing the profile could fail mid-run with `401 … jti reused`\n- Fixed MCP server OAuth sign-in failing with \"No available ports for OAuth redirect\" when the local callback port range can't be bound\n- Fixed the conversation summary produced by `/compact` and auto-compact mangling text that contained `$` sequences\n- Fixed resuming a conversation that ended with `/compact`: its restored-file notes now load in the same order on every resume\n- Fixed SDK prompt suggestions, side questions and `/rename` sending the conversation from before a compaction\n- Fixed `@` file and `/` command suggestions not appearing after recalling a previous prompt with the up arrow and editing it\n- Fixed `claude agents`: pressing ← again at a natural pace to go back to the agent list no longer gets ignored until you pause for over a second\n- Fixed `claude agents` session delete getting stuck when a worktree can't be removed: the message names the cause and next step, and for a git worktree ctrl+x again deletes the directory anyway\n- Fixed background agent and workflow rows in the agents panel expanding to many lines when their text contained line breaks\n- Fixed Claude in Slack sessions losing their Slack tools when org managed settings set an MCP allowlist\n- Fixed Claude in Chrome asking to allow the host \"https\" when a navigation URL had a scheme but a host that could not be parsed\n- Fixed the spinner wrapping onto several lines when the current task's label is long; the label and the \"Next:\" task line now stay within one terminal row\n- Fixed the `/bug` and `/feedback` description field showing no cursor when the terminal's native cursor is enabled\n- Fixed Remote Control sessions served by `claude remote-control` showing a generated name instead of their session title in `ListAgents`\n- Fixed `claude plugin validate` rejecting plugin paths whose directory name begins with two dots, which the plugin loader accepts\n- Fixed plugins silently skipping a default monitors file or root SKILL.md that could not be checked\n- Fixed WebFetch's error for localhost and other dotless hostnames to explain why the URL is refused and suggest curl\n- Fixed PermissionRequest hooks not firing in `--print` mode\n- Fixed policy-helper warnings not printing on headless (`-p`) runs\n- Fixed `/resume` listing a `/fork` background session under its parent's name instead of its own `⑂` fork name\n- Fixed `/remote-control` and other claude.ai-gated commands to suggest `/login` when signed out instead of showing a Claude for Enterprise migration message\n- Fixed `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` not extending SessionEnd hooks that have no per-hook `timeout` (they were still cancelled after 1.5 seconds)\n- Fixed `/autofix-pr` and other cloud-session commands saying to retry or install the Claude GitHub App when no GitHub account is connected; they now point to `/web-setup` or the web connect page\n- Fixed cloud-session commands such as `/teleport` and `/remote-env` to explain when an organization policy turns them off, instead of answering \"Unknown command\"\n- Fixed Bash sandbox instructions over-stating confinement: no unenforced path lists when filesystem isolation is off, and strict mode no longer claims commands can never run unsandboxed\n- Improved fullscreen mode: adding or removing a prompt line (Shift+Enter) now repaints as fast as typing a character instead of re-rendering the visible transcript\n- Improved `--continue` / `--resume`: the conversation appears immediately instead of waiting for SessionStart hooks, and the first message no longer re-reads the whole transcript\n- Improved responsiveness during tool-heavy turns by no longer redrawing the transcript for a hidden per-tool-batch reminder\n- Improved startup time in projects with `.claude/workflows/` scripts: listing them no longer parses each script\n- Improved auto mode denials: the message Claude receives now names the rule that blocked the action and asks Claude to try a safer method and finish unrelated work before stopping to ask you\n- Improved Claude in Chrome: long page reads now stay inline instead of being saved to a file and read back\n- Improved the MEMORY.md truncation warning to say how many lines were cut and where the cut starts\n- Improved the terminal permission prompt for artifacts: it now leads with the ask's question\n- Improved the prompt footer: an editor or `/diff` selection now shows inside the prompt input, and fullscreen mode shows Remote Control status in the header instead of the footer\n- Improved the \"Usage credits required for 1M context\" message to say that usage credits turned on mid-session take effect after restarting Claude Code\n- Improved `/plugin`: installing, enabling or disabling a plugin now takes effect when you close the menu; `/reload-plugins` is no longer needed afterwards\n- Changed the system prompt on Bedrock, Vertex and Foundry to deliver environment, model and settings details as attachments, matching first-party sessions\n- Changed Bedrock, Vertex and Foundry sessions to keep the tool list byte-stable across a conversation (late-connecting tools load deferred instead of rewriting it), matching first-party sessions\n- Changed the task-tracking tools (TaskCreate/Get/Update/List, TodoWrite) to be offered only on Claude 3.x, Opus 4.0–4.7, Sonnet 4.0–4.6, Haiku 4.5; set `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` elsewhere\n- Changed the artifact data-edit permission prompt in the terminal to a card that shows the document count and who can open the artifact\n- Changed local Cowork sessions set to skip all approvals: the Artifact tool now refuses a local file outside the session's folders, or behind a symlink, instead of reading it without asking\n- Changed plain `WebFetch` deny and ask rules to no longer apply to Artifact tool reads and updates; use an `Artifact` rule (or `WebFetch(domain:claude.ai)`) to block or gate them\n- Changed the \"N MCP servers need authentication\" startup notice to announce each server once instead of at every launch\n- [VSCode] Fixed the session list, settings toggles, and chat tabs when `CLAUDE_CONFIG_DIR` is set in a settings file or the `environmentVariables` setting\n- [VSCode] Fixed the model pill, model picker and command menu going blank in open tabs for a few seconds after a login, logout or account switch\n- [VSCode] Fixed Auto disappearing from the mode picker in new-tab or just-reloaded conversations when a project or local setting overrides the model named in `~/.claude/settings.json`\n- [VSCode] Fixed session names reverting to the last prompt after a window reload when a SessionStart hook is configured\n- [VSCode] Fixed the footer's model pill and Remote Control pill waiting for the new tab's Claude process to start when another tab in the window is already up\n- [VSCode] Fixed a second Claude process running through its full startup when a session tab's launch arrived more than half a second after its config read\n- [VSCode] Fixed resuming a session from the session list ignoring `claudeCode.preferredLocation: \"sidebar\"` (it always opened a panel), and programmatic opens resetting that setting to \"panel\"\n- [VSCode] Fixed Windows issues: the WSL install prompt no longer appears on machines without WSL installed, and IDE diagnostics are now returned correctly for Windows files when WSL is installed\n- [VSCode] Fixed the custom style builder saving a User level style in a folder the CLI does not read when `CLAUDE_CONFIG_DIR` is set through settings\n- [VSCode] Added Left and Right arrow keys to change where an always-allow permission rule is saved, for keyboard and screen reader users\n- [VSCode] Added a \"Claude Code: Focus last message\" command that moves keyboard focus to the newest message in the conversation, for keyboard and screen reader users\n- [VSCode] Changed the Manage plugins dialog to apply installs, enables, disables and uninstalls to open sessions without a restart\n- [VSCode] Changed some artifact permission prompts to omit the \"don't ask again\" choice, matching the terminal\n- [Claude Code on the web] Fixed cloud sessions running longer than about six hours silently losing files saved to persisted session folders; saves now persist for up to a day\n- [Claude Code on the web] Fixed \"Invalid effort level\" errors when a routine resumes a session, or a session starts with no set effort, in orgs where an admin caps a model's effort\n- [Claude Code on the web] Improved routine creation from a conversation: when the new routine has no connectors, Claude now says so and how to add them instead of only confirming it\n- [Claude Tag] Fixed the admin settings page hanging on a loading skeleton or going blank after a transient load failure; a section that fails to load now shows a Retry button\n- [Claude Tag] Added a link from a Slack channel's configure page back to the organization's Claude in Slack admin settings\n- [Claude Tag] Fixed a Slack Enterprise Grid channel losing its Claude settings (repository, environment, access) after a Slack admin moved it to another workspace\n- [Claude Tag] Improved how Claude explains a blocked action: it now says whether a permission check, its own decision to confirm first, or missing access stopped it\n- [Claude Tag] Improved reply speed: Claude now runs several read-only lookups (searching Slack, reading a thread, finding people) at once instead of one after another\n- [Claude Tag] Improved formatting of comparisons: sentence-length comparisons now come as lists instead of wide tables that scroll sideways, and long table cells wrap\n- [Claude Tag] Fixed `@Claude !restart` in a thread with its own session sometimes also posting a contradictory \"this thread is handled by the channel session\" notice\n- [Claude Tag] Improved the message shown when your Claude account is in a different organization than the Slack workspace: it now explains how to connect the workspace to your org\n- [Claude Tag] Fixed Markdown links whose URL is wrapped in angle brackets showing as literal bracket text in Slack instead of a clickable link\n- [Claude Tag] Fixed a workspace guest's top-level @mention in a channel where guests may use Claude sometimes getting a \"your Slack account isn't connected\" reply instead of an answer\n- [Claude Tag] Fixed a channel's long-running session being replaced with a fresh one mid-conversation; the scheduled refresh now waits until the channel and its threads are quiet\n- [Claude Tag] Fixed channel-settings cards clicked more than once telling the proposing session the change was refused after it had already applied; the outcome is now sent once\n- [Claude Tag] Changed memory in public channels: each channel now keeps its own notes, and Claude no longer recalls notes it saved in other public channels; workspace notes stay shared\n- [Code Review] Added a note under the still-open findings list in follow-up reviews: resolving a finding's thread, not just replying to it, stops later reviews from counting it as open\n- [Code Review] Fixed reviews sometimes ending as incomplete when one of the agents verifying a finding failed midway; the review now replaces that agent and reaches a verdict\n- [Code Review] Fixed a push-triggered review that was queued behind a running review still posting after the pull request had been converted to draft\n- [Code Review] Fixed reviews ignoring a directory's CLAUDE.md conventions when the PR edited a root file (e.g. README.md) that only shares a name with a file that CLAUDE.md lists\n",
-  "release_published_at": "2026-09-10T20:30:54Z",
+  "candidate_id": "claude@2.1.269:docs:e8e6022f2c447b3dfe12171ef4d2860d118f042b9dd244c1a1210ef6ed0f81bd:runtime:030a2d37f664bac1bd7d0e8db0b1014f801eb35b79d88341fb4a80d4ce168a7f",
+  "package_version": "2.1.269",
+  "npm_integrity": "sha512-osSbRU1KjlAfhVSgso7g+KxCr5DLNlfm7xeRPpm/c9s+7HGqQLHbkUYvjepbe6TiHJa9iSeirW/t7vW4sZhTIQ==",
+  "npm_published_at": "2026-09-11T18:12:49.253Z",
+  "release_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.269",
+  "release_notes_md": "## What's changed\n\n- Added `claude plugin eval`: run a plugin's eval suite against Claude Code and get scored, reproducible results (JSON + HTML report); see `claude plugin eval --help`\n- Added `/output-style [name]` to list and switch output styles, including over Remote Control and in cloud and other headless sessions\n- Added a diff of the files a Bash command changed to the Bash tool result when the Bash tool handles file edits (setting `bashEditDiffEnabled`)\n- Added `OTEL_METRICS_INCLUDE_REPOSITORY` to tag OpenTelemetry metrics and events with `vcs.*` repository attributes; commit events get `vcs.ref.head.*` with `OTEL_LOG_TOOL_DETAILS`\n- Added `CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY_TIMEOUT_MS` to extend the LLM gateway `/v1/models` discovery timeout (default 3s)\n- Added a spinner tip suggesting `/focus` for a view with just your prompt, a one-line work summary, and the response\n- Added `CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS` (1–256) to raise the Workflow tool's per-run concurrent agent limit for inference-bound fan-outs\n- Fixed the prompt cache being partially invalidated on the turn after a response was cut off at the output-token limit and automatically resumed\n- Fixed a case where resuming a session after interrupting Claude mid-thought could change how earlier context was re-sent, hurting prompt-cache reuse\n- Fixed F1/F2/F4 not working in kitty-protocol terminals and Delete in st, Alt+arrows acting as Escape in rxvt-unicode, and Shift+punctuation typing the unshifted key in WezTerm (regression in 2.1.247)\n- Fixed remote and headless sessions reporting \"waiting for your input\" while background agents were still running (set `CLAUDE_CODE_BG_TASKS_REPORT_RUNNING=0` to restore the old behavior)\n- Fixed the terminal's replies to capability queries (`^[[?1;2c`) appearing as stray text at startup in some terminals\n- Fixed rows at the top or bottom of the transcript going blank in fullscreen after resizing the terminal\n- Fixed a deny or ask permission rule starting with `!` applying beyond the settings source that wrote it; such a rule now applies only within its own source, and a bare `!` negation is ignored\n- Fixed the git status Claude is told after a compaction: it is now the current status, not the one from the start of the session\n- Fixed synced plugin MCP servers not connecting when a remote session resumes\n- Fixed resumed headless sessions losing a turn's replies when the model was switched or a request was retried mid-turn\n- Fixed terminal escape codes, line breaks and oversized text from a background task's on-disk record reaching the task list and task notifications when work is resumed\n- Fixed CMYK JPEG images failing to attach with \"cannot decode\"; they are now converted and resized like other JPEGs\n- Fixed the managed settings approval dialog not naming the collector for a gRPC telemetry endpoint set without a scheme\n- Fixed plugin `headersHelper` consent prompts showing a URL path that could be misread as a different host\n- Fixed plugin errors showing `[redacted URL]` in place of a relative Windows path with a folder name that starts with `@`\n- Fixed missing cursor in the permission-rule, auto-mode-rule, add-directory, session-rename and feedback-review text fields when the terminal's native cursor is enabled\n- Fixed repeated clicks on a `/fork` receipt, each under a second apart, never backgrounding the session right away while it waited for the current tool to finish\n- Fixed plugin LSP servers that reject `shutdown` params (e.g. rust-analyzer) being left running at session end; `exit` is now sent even if `shutdown` fails\n- Fixed the attribution reminder overriding a CLAUDE.md or memory rule against commit and pull request attribution; lines set by managed settings still apply\n- Fixed prompt suggestions being dropped for text in Japanese, Chinese, Thai and other languages written without spaces between words\n- Fixed synchronized output being assumed from the terminal's name in GNOME Terminal and Konsole versions that do not support it\n- Fixed `permission_denials` in `--output-format stream-json` results omitting Read, Edit and Write calls blocked by a path-scoped deny rule\n- Fixed sessions run through the SDK or the desktop app showing an unknown status in other sessions' agent list\n- Fixed `/insights` failing on Bedrock, Vertex, Foundry, and gateway deployments whose account can't reach the default Opus model by using the session model there instead\n- Fixed organization policy limits not loading for the session when another Claude Code process refreshed the login at the same moment\n- Fixed Claude Desktop sessions using Bedrock, Vertex, or a gateway not getting the contextual \"what Claude needs\" turn-end notification text\n- Fixed MCP servers reconnecting when an updated config only changed the order of the server URL's query parameters\n- Fixed the prompt box's top border splitting into extra lines when viewing a background agent whose name or description has line breaks or is wider than the terminal\n- Fixed sessions getting permanently stuck on \"Prompt is too long\" when auto-compaction had no complete earlier exchange to summarize (mostly Agent SDK sessions with very large prompts)\n- Fixed `/goal` runs silently stalling after API errors, network drops, or token limits: the goal now retries with backoff, or pauses and says why, including until a usage limit resets\n- Fixed prompt cache misses in cloud sessions by waiting briefly for server configuration before the first request\n- Fixed `/btw` answers that contained made-up tool calls and output: the side question is now told not to write them, and any that appear are flagged as not executed\n- Fixed `CLAUDE_CODE_RESUME_INTERRUPTED_TURN` re-running a turn that had failed with an API error over 6 hours earlier, or longer ago than `CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS` when set\n- Fixed organization plugins enabled through managed settings not loading in headless sessions and on Claude Desktop (once Desktop bundles this CLI version); they load from the next session\n- Fixed plugin archives extracted for a session being readable by other local users, extracted files keeping world-writable bits from the archive, and stale files surviving re-extraction\n- Fixed `Edit()` deny rules and the write-path check not applying to the file a Bash `tee` command writes; a `Bash(tee:*)` allow rule no longer covers destinations outside the working directories\n- Fixed stray characters like `22c`, or a terminal's color or version reply, being typed into the prompt at startup over slow connections (ssh, browser terminals)\n- Fixed the terminal's block cursor showing under the interface in rxvt-unicode after leaving or re-entering fullscreen\n- Fixed the cursor block staying visible after returning from an external editor in fullscreen mode on rxvt-unicode\n- Fixed the interface being drawn twice after returning from an external editor (Ctrl+G) outside fullscreen mode\n- Fixed the interface being drawn twice in Konsole after returning from an external editor\n- Windows: Fixed PowerShell tool commands sent to the background stopping when Claude Code exits\n- Improved the `/diff` panel to open fully rendered in one step instead of showing a loading state first\n- Improved prompt suggestion filtering for Japanese, Chinese and Korean text: mixed-script and single-word suggestions are kept, and meta or evaluative text is dropped as it is for English\n- Improved the Skill tool's \"Unknown skill\" error to name the plugin skill's full name when a bare name matches exactly one plugin skill\n- Improved keyboard support over SSH and in unrecognized terminals: terminals that answer the kitty keyboard query (such as foot and Alacritty 0.16+) now get Shift+Enter and Ctrl+Shift shortcuts\n- Improved responsiveness in long sessions: transcript updates no longer re-process the whole conversation to build the collapsed tool-use summaries\n- Improved first-party sessions with telemetry disabled: an `alwaysLoad` MCP server that finishes connecting mid-conversation is usable on the next turn without a tool-search round trip\n- Changed `/ultrareview --post` to post the PR comment directly when the findings arrive and print the comment link, instead of starting a second cloud session to post it\n- Changed artifact database reads that save into the session scratchpad so they no longer stop for working-folder approval\n- Changed skills synced from claude.ai in cloud sessions to be named `anthropic-skills:<name>`, matching Claude Desktop; the bare name still works when nothing else uses it\n- [VSCode] Added an agent map: an \"N agents\" footer pill opens a map of the session's sub-agents with per-agent cards, Stop agent, and read-only transcripts\n- [VSCode] Added a Hooks dialog to the command menu for viewing hooks and adding, editing, or removing them in user, project, and local settings; managed, plugin, and session hooks stay read-only\n- [VSCode] Added live progress rows for running subagents under the tool-call groups in Focus view\n- [VSCode] Added a Permission rules dialog that lists permission rules and adds or removes them in user, project, and local settings; startup-option, session-only, and managed rules stay read-only\n- [VSCode] Added a Cancel button to the Switch account screen that returns to your session as the current account\n- [VSCode] Fixed Focus view showing a turn started by a delivered plain-text prompt, such as a scheduled task's, as part of the previous turn\n- [VSCode] Fixed the footer's prompt cache clock hiding its minutes when the panel is narrow\n- [VSCode] Fixed the session list keeping sessions from the default folder when `CLAUDE_CONFIG_DIR` is set in a settings file or the `environmentVariables` setting\n- [VSCode] Fixed a plan preview that finished loading late sometimes hiding its comment box or showing an older plan\n- [VSCode] Fixed a plan preview accepting comments that went nowhere after its Claude tab closed\n- [VSCode] Fixed the prompt cache clock and reopen notice for a session compacted after its last reply and then closed, which now reads as cold when reopened\n- [VSCode] Fixed a session renamed in the extension while Remote Control is on keeping its old name on claude.ai/code\n- [VSCode] Fixed the \"Enable Remote Control for all sessions\" toggle keeping its last position after the setting was reset to default from a terminal\n- [VSCode] Fixed restored Claude tabs not counting as open in the session list after a window reload until clicked, and their row opening a second tab\n- [VSCode] Fixed Switch account making a tab forget its dismissed usage-limit warnings when you sign back in as the same account\n- [VSCode] Fixed a session rename being replaced by the generated name after a window reload when the session was renamed during a long turn\n- [VSCode] Fixed the sidebar usage meter keeping a stale per-model weekly limit row after the account loses that limit\n- [VSCode] Fixed a rare case where an @-mention sent with the keyboard shortcut while a new chat view was still starting could be inserted into the input long after the keystroke\n- [VSCode] Fixed the session list jumping down when the Account & usage header appeared a moment after opening the Claude side bar\n- [VSCode] Improved documents and messages written for someone other than the user: Claude now writes them for that audience and names it at the top of its reply\n- [VSCode] Improved screen reader and keyboard accessibility in the slash-command menu, @-mention menu, output-style picker, Send/Stop button, permission and question cards, and onboarding checklist\n- [VSCode] Changed the current-file chip in the message box: an X now removes it, replacing the Hide toggle\n- [VSCode] Removed the Claude Code items from a session tab's right-click menu and the editor title bar's \"...\" menu; they could not act on the tab the menu was opened on\n- [Claude Code on the web] Added taking back a queued message in a cloud session before Claude reads it: remove it from the queue, or press Esc or Up, and the text returns to the message box\n- [Claude Code on the web] Fixed `/model default` in a cloud session leaving every later message failing in organizations that restrict which models Claude Code can use\n- [Claude Code on the web] Fixed one-off scheduled routines occasionally running a second time after a transient server error\n- [Claude Code on the web] Fixed routine runs that use subagents sometimes being treated as finished too early, which could skip the retry after a real failure or start a duplicate run\n- [Claude Code on the web] Fixed file links in cloud session transcripts opening a GitHub 404 when Claude was working from a subfolder of the repository\n- [Claude Code on the web] Changed the Cloud environments admin page to list every environment instead of capping each table at five rows behind a Show more control that could be unreachable\n- [Claude Code on the web] Changed claude.ai/code for Free-plan users to open the plans page with a path to upgrade, instead of a \"Disabled by org admin\" page with no way forward\n- [Claude Tag] Added a confirmation dialog before Connect all or Disconnect on a GitHub installation in admin settings, to guard against accidental organization-wide changes\n- [Claude Tag] Fixed threads occasionally going silent after a failed turn because the failure notice was dropped when Slack briefly rate-limited it; the notice is now retried\n- [Claude Tag] Fixed Claude accepting a switch to a model your organization hasn't enabled and then quietly answering with a fallback model; it now declines and says an admin can enable it\n- [Claude Tag] Fixed a table posting as raw pipe text when Claude attached files to the same message; the table now posts as a normal reply and the files follow with a plain caption\n- [Claude Tag] Fixed `@Claude !restart` at the top level of a channel where Claude isn't active starting an unrelated conversation; it now privately says there is nothing to restart\n- [Claude Tag] Fixed plugin rows in Slack access settings showing an unlabeled raw ID with no way to turn the plugin off; they now show its name and link to the bundle that manages it\n- [Claude Tag] Fixed the shared-session banner and Share dialog on sessions started from Slack claiming the whole organization could open the link; they now name the Slack channel's audience\n- [Claude Tag] Improved load time of the admin settings page and its Slack channel picker, most noticeably for organizations with many channels or several connected workspaces\n- [Claude Tag] Improved scheduled routines in Slack channels: a routine run can now reply in an existing thread instead of always posting a new top-level channel message\n- [Claude Tag] Improved the timestamp on Claude's live progress checklists to show each reader's local time and how long ago it was updated, instead of a fixed UTC time\n",
+  "release_published_at": "2026-09-11T19:17:55Z",
   "dist_tags": {
-    "latest": "2.1.268",
+    "latest": "2.1.269",
     "stable": "2.1.236",
-    "next": "2.1.268"
+    "next": "2.1.269"
   },
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
-    "index_hash": "f475ee9acc9c8ab46f14ce7ccae18fa5a9dca2327fb3a9c8bd4896513b2457ec",
-    "full_scan": false,
-    "scanned_at": "2026-09-10T22:21:53.878Z",
+    "index_hash": "8a3640b631f922794c6d41c1a1d58eef1cbb3e4181cbb74fa296de8d0dbf7de5",
+    "full_scan": true,
+    "scanned_at": "2026-09-11T20:25:11.880Z",
     "pages": {
       "https://code.claude.com/docs/_llms/cn.md": {
         "url": "https://code.claude.com/docs/_llms/cn.md",
@@ -296,7 +296,7 @@
       },
       "https://code.claude.com/docs/en/agent-view.md": {
         "url": "https://code.claude.com/docs/en/agent-view.md",
-        "hash": "3867379da06226c4f1337dfcb980da342a841c30d0f9e419afe7b77d9fdefbe5",
+        "hash": "b77a9b549bf450a86bfbd7947ccc8bdd95b574bc0e043fa6fd281fc792690b1f",
         "watched": false,
         "source_path": null
       },
@@ -332,13 +332,13 @@
       },
       "https://code.claude.com/docs/en/auto-mode-config.md": {
         "url": "https://code.claude.com/docs/en/auto-mode-config.md",
-        "hash": "8cf836f14171b07eb4c9a26c47e65ca41a27f4053c939898252a172210081192",
+        "hash": "cdd23ee3d702b09961ab52150dde9365767e86e712bdbff5de98118dda012f49",
         "watched": false,
         "source_path": null
       },
       "https://code.claude.com/docs/en/best-practices.md": {
         "url": "https://code.claude.com/docs/en/best-practices.md",
-        "hash": "43682a0568aae99707d7ff5bc29e9fba6bb5e1bd62168e17b7bcc53fd2f361e4",
+        "hash": "5d5e2a49130b07334f26493483998657bdf8310c18a49c52cde3d7e35996d7a4",
         "watched": false,
         "source_path": null
       },
@@ -350,7 +350,7 @@
       },
       "https://code.claude.com/docs/en/changelog.md": {
         "url": "https://code.claude.com/docs/en/changelog.md",
-        "hash": "5a0bc468c379b40d251d44116fc1a7af2c3ca7b16591708856908445a2215c60",
+        "hash": "af9a73e6cbc157da074a3e52036b669c1816d06451166c445ed9474d1e050012",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/changelog.md"
       },
@@ -368,7 +368,7 @@
       },
       "https://code.claude.com/docs/en/checkpointing.md": {
         "url": "https://code.claude.com/docs/en/checkpointing.md",
-        "hash": "800b186125a039986b885b8d3bdde95a0185a6eb1451723fcc2ff8657c463ef6",
+        "hash": "9373dbaf0a3fc3f2522001d0d71772c009a0028f51adcba1676e74811c90ae51",
         "watched": false,
         "source_path": null
       },
@@ -380,7 +380,7 @@
       },
       "https://code.claude.com/docs/en/claude-apps-gateway-config.md": {
         "url": "https://code.claude.com/docs/en/claude-apps-gateway-config.md",
-        "hash": "66c77b621750507c1ac41b33717cd472b69722f4d7bc612ebbe44d14cc77fc04",
+        "hash": "3257bfe37d57f4673a2bd0a0cd20daf9780ff3a718ac81280970d97368c04245",
         "watched": false,
         "source_path": null
       },
@@ -410,13 +410,13 @@
       },
       "https://code.claude.com/docs/en/claude-apps-gateway.md": {
         "url": "https://code.claude.com/docs/en/claude-apps-gateway.md",
-        "hash": "cf543b3425f0475697dd3c14cfc372d4bf70b46d745f02a37947746b03c75a62",
+        "hash": "b3e39235c003500ab848b80474e3568bc4e5d3180f4a2b6e15345d58e05d5cef",
         "watched": false,
         "source_path": null
       },
       "https://code.claude.com/docs/en/claude-code-on-the-web.md": {
         "url": "https://code.claude.com/docs/en/claude-code-on-the-web.md",
-        "hash": "45891d4a8de6a48a925c31908887ed5ecd6fd85e439f410be3de52165a78c18f",
+        "hash": "a51de91e78ed6d49a9214d750fbd239bd1f67ac382305215adcd1ef5bbb04ebb",
         "watched": false,
         "source_path": null
       },
@@ -584,7 +584,7 @@
       },
       "https://code.claude.com/docs/en/errors.md": {
         "url": "https://code.claude.com/docs/en/errors.md",
-        "hash": "b8944f28bfea74456c2960ba67f375c1d39afd34fb474e956bea3d64744e6604",
+        "hash": "ab2cc57f7e4529db6091bd2bcb1184152c4ad12ab3656527c9716ad2ab130a5c",
         "watched": false,
         "source_path": null
       },
@@ -596,7 +596,7 @@
       },
       "https://code.claude.com/docs/en/feature-availability.md": {
         "url": "https://code.claude.com/docs/en/feature-availability.md",
-        "hash": "b44ff22bcd559ff34523504ef538b64ca758b6bade6c5d1274ca84d1e48ee78c",
+        "hash": "ced8614b92f3c6ef59f6030e32f77253a36b6478ec1585218273cb31d12e2e32",
         "watched": false,
         "source_path": null
       },
@@ -608,7 +608,7 @@
       },
       "https://code.claude.com/docs/en/fullscreen.md": {
         "url": "https://code.claude.com/docs/en/fullscreen.md",
-        "hash": "80e06152d72cdacbe94feca2ead9f36f846da3183bb2e3c2a0b1dd1cc9119f9b",
+        "hash": "8dfb74516690335d5525e227853c73fe4c110024e544b732160d5ee481c34346",
         "watched": false,
         "source_path": null
       },
@@ -644,7 +644,7 @@
       },
       "https://code.claude.com/docs/en/glossary.md": {
         "url": "https://code.claude.com/docs/en/glossary.md",
-        "hash": "8dc3e3e2f1b5d37a54dd2d622ec5d95fc5f9509ec6553351cd3ec837e3af582d",
+        "hash": "55685afdb741474c99b1ff0f86d1e48ebc035290a5834e76289acf6857211c5e",
         "watched": false,
         "source_path": null
       },
@@ -716,7 +716,7 @@
       },
       "https://code.claude.com/docs/en/llm-gateway-connect.md": {
         "url": "https://code.claude.com/docs/en/llm-gateway-connect.md",
-        "hash": "0878d79128adc92c1fbd31981cb9cc54ab15f513945cddee3a0cd5e59ea631d4",
+        "hash": "0cafc66560349ebf8837d5dcbe5175ca626418f41718389be93cec2d67e89225",
         "watched": false,
         "source_path": null
       },
@@ -758,7 +758,7 @@
       },
       "https://code.claude.com/docs/en/mcp.md": {
         "url": "https://code.claude.com/docs/en/mcp.md",
-        "hash": "10c37e3b840932b59cb7c7ab34e81595c598b0213bd2f1bb15c8effa1d7bc22b",
+        "hash": "152e6a2faa4e78c7df25d46df2592949fcf20509bd24f5e6ba494f037a203c38",
         "watched": false,
         "source_path": null
       },
@@ -788,7 +788,7 @@
       },
       "https://code.claude.com/docs/en/monitoring-usage.md": {
         "url": "https://code.claude.com/docs/en/monitoring-usage.md",
-        "hash": "85703528e4de5432950951e0ff1d44d191bee607096ec4370353aa6b15a70b70",
+        "hash": "aa18479bc44e56d87c86f87833e1d941342213decbb346b7e4d16fd25aa5e4dd",
         "watched": false,
         "source_path": null
       },
@@ -812,7 +812,7 @@
       },
       "https://code.claude.com/docs/en/permission-modes.md": {
         "url": "https://code.claude.com/docs/en/permission-modes.md",
-        "hash": "72ecdef3d08bf2164052cc57fd5db8021a5a2b54f26a650a19724d8213f1b9f3",
+        "hash": "4eaad2ea0ee5993354d53804f5d4091727bf8655e8aa13ab23141aa65855353b",
         "watched": false,
         "source_path": null
       },
@@ -834,6 +834,12 @@
         "watched": false,
         "source_path": null
       },
+      "https://code.claude.com/docs/en/plugin-evals.md": {
+        "url": "https://code.claude.com/docs/en/plugin-evals.md",
+        "hash": "deb713205878e566af85c45fa9903a092f4a69f3614bf081926b932dc632f7f9",
+        "watched": false,
+        "source_path": null
+      },
       "https://code.claude.com/docs/en/plugin-hints.md": {
         "url": "https://code.claude.com/docs/en/plugin-hints.md",
         "hash": "e4eec32c94725f49b9194827b8bf8276d54273f6262f231fd4a32cdc26bd5f66",
@@ -842,7 +848,7 @@
       },
       "https://code.claude.com/docs/en/plugin-marketplaces.md": {
         "url": "https://code.claude.com/docs/en/plugin-marketplaces.md",
-        "hash": "7912af9270337aa00dd39e74120a5aad65065f90b4a15c54eed99cec6ff6d960",
+        "hash": "a3e583bb947febc3c586b49138af534d3915ba29e1bbbb5d66b95b1d1a4fa39c",
         "watched": false,
         "source_path": null
       },
@@ -854,19 +860,19 @@
       },
       "https://code.claude.com/docs/en/plugins-reference.md": {
         "url": "https://code.claude.com/docs/en/plugins-reference.md",
-        "hash": "c75119ccd8973aad659373d726d412bbe3f5184e6d0ca0d2064512cad255f0a3",
+        "hash": "662f5dae085ac8a78da3746b6f3461f9e9a0a8604cfa939b0c7f1c5ddfbe9834",
         "watched": false,
         "source_path": null
       },
       "https://code.claude.com/docs/en/plugins.md": {
         "url": "https://code.claude.com/docs/en/plugins.md",
-        "hash": "8070daef044b8dcd7f744f4ccbba8189e106ee72e31d34d1ce5dcca5aac3e742",
+        "hash": "6f9f15a184ff8008208afd690e12488c45941d16844c2fc7b3f455ce0825daca",
         "watched": false,
         "source_path": null
       },
       "https://code.claude.com/docs/en/prompt-caching.md": {
         "url": "https://code.claude.com/docs/en/prompt-caching.md",
-        "hash": "acda98adabaef7475a54483f48902f52cc671b99e4ab1c52048154ef39f4049c",
+        "hash": "e71c2b52900c4e5b65bc535768bebc77d485c1f5b4f182b6a24e83eba692294f",
         "watched": false,
         "source_path": null
       },
@@ -896,13 +902,13 @@
       },
       "https://code.claude.com/docs/en/sandbox-environments.md": {
         "url": "https://code.claude.com/docs/en/sandbox-environments.md",
-        "hash": "a863dc49f631afb71a1979e17d7ea8bfd8a67415242281d43384f3c8605562a7",
+        "hash": "9922b8427c20e589dc3f0d482d3c227f32306c09f034e5f214a88474243e2d84",
         "watched": false,
         "source_path": null
       },
       "https://code.claude.com/docs/en/sandboxing.md": {
         "url": "https://code.claude.com/docs/en/sandboxing.md",
-        "hash": "9173fa7bfc40900080b167be86897899912ce55ff61ad1072f71a5eab69e80ce",
+        "hash": "a4cad3efa21a0f1ae7d18d1b8a74aff7fe8ffa78a0feb6d04bcaf55faa7f382b",
         "watched": false,
         "source_path": null
       },
@@ -1004,7 +1010,7 @@
       },
       "https://code.claude.com/docs/en/skills.md": {
         "url": "https://code.claude.com/docs/en/skills.md",
-        "hash": "6cb66d6c1ab6b06eda6dd6854f4133901c8daef8fc447f59fe65ac4038ec8043",
+        "hash": "8552fefb7d225fcdc1c4098f6a33616d6a55e63206b9d84f0522c7411d0c4c41",
         "watched": false,
         "source_path": null
       },
@@ -1028,7 +1034,7 @@
       },
       "https://code.claude.com/docs/en/terminal-config.md": {
         "url": "https://code.claude.com/docs/en/terminal-config.md",
-        "hash": "1e5f700df62e014ebb0e7cd1524ab61151744128cdb843eefd6ce39af714204e",
+        "hash": "855b92da7b17adc7a042435755ba1f76d327b389c4386f529423af2fa5dfa82d",
         "watched": false,
         "source_path": null
       },
@@ -1052,7 +1058,7 @@
       },
       "https://code.claude.com/docs/en/troubleshooting.md": {
         "url": "https://code.claude.com/docs/en/troubleshooting.md",
-        "hash": "8c42670f513efbb5b1f402ac1873a4b94462aa16e58dad79866ee88ab6792d1a",
+        "hash": "aeb3473f0f5a5ce66b4fd02ead6678ec19fe0ea7a4b6a716e9d63b797525e47b",
         "watched": false,
         "source_path": null
       },
@@ -1070,13 +1076,13 @@
       },
       "https://code.claude.com/docs/en/vs-code.md": {
         "url": "https://code.claude.com/docs/en/vs-code.md",
-        "hash": "6c14f8a02079b0d1ee1142ff770bcda731b181565c57a600c9377c899fbc9801",
+        "hash": "a52876fd37f42f774ac2759fefb5f5bd430969fd43794d37db1f935f2cb90841",
         "watched": false,
         "source_path": null
       },
       "https://code.claude.com/docs/en/web-quickstart.md": {
         "url": "https://code.claude.com/docs/en/web-quickstart.md",
-        "hash": "54fca3b95788fb68bcb5692798c9b347415b513919d1c4513d64baf804178fe7",
+        "hash": "78b3f53f8e16c3d5e50eb8dd28e46a7026ff2764f6844a44e904c9a1bf34af5b",
         "watched": false,
         "source_path": null
       },
@@ -1232,17 +1238,17 @@
       },
       "https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md": {
         "url": "https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md",
-        "hash": "88286c76021276e4eda9455297075e6a85786330beddd5e94e0cc210835c5265",
+        "hash": "ea7767d6ebd41bf2f15ed5c42ca375ecd1c8e0546ab616a1c2b045bc3259bcee",
         "watched": true,
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "a7cde18287e104687ff1530f5eb21d1bd9a79cda267de0f080aee0679f29a8c1"
+    "digest": "e8e6022f2c447b3dfe12171ef4d2860d118f042b9dd244c1a1210ef6ed0f81bd"
   },
   "runtime": {
     "probe_contract_version": 2,
-    "version": "2.1.268",
-    "version_output": "2.1.268 (Claude Code)",
+    "version": "2.1.269",
+    "version_output": "2.1.269 (Claude Code)",
     "help_text": "Usage: claude [options] [command] [prompt]\n\nClaude Code - starts an interactive session by default, use -p/--print for\nnon-interactive output\n\nArguments:\n  prompt                                Your prompt\n\nOptions:\n  --add-dir <directories...>            Additional directories to allow tool\n                                        access to\n  --agent <agent>                       Agent for the current session. Overrides\n                                        the 'agent' setting.\n  --agents <json>                       JSON object defining custom agents (e.g.\n                                        '{\"reviewer\": {\"description\": \"Reviews\n                                        code\", \"prompt\": \"You are a code\n                                        reviewer\"}}')\n  --allow-dangerously-skip-permissions  Enable bypassing all permission checks\n                                        as an option, without it being enabled\n                                        by default. Recommended only for\n                                        sandboxes with no internet access.\n  --allowedTools, --allowed-tools <tools...>\n      Comma or space-separated list of tool names to allow (e.g. \"Bash(git *)\n      Edit\")\n  --append-system-prompt <prompt>       Append a system prompt to the default\n                                        system prompt\n  --autocompact <auto|tokens>           Auto-compact window size (auto, or\n                                        100k–1M tokens)\n  --ax-screen-reader                    Render screen-reader friendly output\n                                        (flat text, no decorative borders or\n                                        animations).\n  --bg, --background                    Start the session in the background and\n                                        return immediately. Prints the id that\n                                        `claude attach`, `logs`, `stop` and `rm`\n                                        take; `claude agents` lists them. With\n                                        --resume <session-id>, continues that\n                                        session in the background under the same\n                                        ID, or starts a copy and says so when\n                                        the session is already running\n  --bare                                Minimal mode: skip hooks, LSP, plugin\n                                        sync, attribution, auto-memory,\n                                        background prefetches, keychain reads,\n                                        and CLAUDE.md auto-discovery. Sets\n                                        CLAUDE_CODE_SIMPLE=1. Anthropic auth is\n                                        strictly ANTHROPIC_API_KEY or\n                                        apiKeyHelper via --settings (OAuth and\n                                        keychain are never read). 3P providers\n                                        (Bedrock/Vertex/Foundry) use their own\n                                        credentials. Skills still resolve via\n                                        /skill-name. Explicitly provide context\n                                        via: --system-prompt[-file],\n                                        --append-system-prompt[-file], --add-dir\n                                        (CLAUDE.md dirs), --mcp-config,\n                                        --settings, --agents, --plugin-dir.\n  --betas <betas...>                    Beta headers to include in API requests\n                                        (API key users only)\n  --brief                               Enable SendUserMessage tool for\n                                        agent-to-user communication\n  --chrome                              Enable Claude in Chrome integration\n  --cloud [description|session_id|url]  Create a cloud session with the given\n                                        description, or attach to an existing\n                                        one by session ID or claude.ai/code URL\n  -c, --continue                        Continue the most recent conversation in\n                                        the current directory\n  --dangerously-skip-permissions        Bypass all permission checks.\n                                        Recommended only for sandboxes with no\n                                        internet access.\n  -d, --debug [filter]                  Enable debug mode with optional category\n                                        filtering (e.g., \"api,hooks\" or\n                                        \"!1p,!file\")\n  --debug-file <path>                   Write debug logs to a specific file path\n                                        (implicitly enables debug mode)\n  --disable-slash-commands              Disable all skills\n  --disallowedTools, --disallowed-tools <tools...>\n      Comma or space-separated list of tool names to deny (e.g. \"Bash(git *)\n      Edit\")\n  --effort <level>                      Effort level for the current session\n                                        (low, medium, high, xhigh, max)\n  --environment <environment_id>        Create a new cloud session that runs on\n                                        the given self-hosted environment\n                                        (ccpool_...).\n  --exclude-dynamic-system-prompt-sections\n      Move per-machine sections (cwd, env info, memory paths, git status) from\n      the system prompt into the first user message. Improves cross-user\n      prompt-cache reuse. Only applies with the default system prompt (ignored\n      with --system-prompt). (default: false)\n  --fallback-model <model>              Enable automatic fallback to specified\n                                        model(s) when the default model is\n                                        overloaded or not available. Accepts a\n                                        comma-separated list to try each in\n                                        order. Re-tries the primary at the start\n                                        of each user turn.\n  --file <specs...>                     File resources to download at startup.\n                                        Format: file_id:relative_path (e.g.,\n                                        --file file_abc:doc.txt\n                                        file_def:img.png)\n  --fork-session                        When resuming, create a new session ID\n                                        instead of reusing the original (use\n                                        with --resume or --continue)\n  --forward-subagent-text               Forward subagent text and thinking\n                                        blocks as assistant/user messages with\n                                        parent_tool_use_id set (only works with\n                                        --print and --output-format=stream-json)\n  --from-pr [value]                     Resume a session linked to a PR by PR\n                                        number/URL, or open interactive picker\n                                        with optional search term\n  -h, --help                            Display help for command\n  --ide                                 Automatically connect to IDE on startup\n                                        if exactly one valid IDE is available\n  --include-hook-events                 Include all hook lifecycle events in the\n                                        output stream (only works with\n                                        --output-format=stream-json)\n  --include-partial-messages            Include partial message chunks as they\n                                        arrive (only works with --print and\n                                        --output-format=stream-json)\n  --input-format <format>               Input format (only works with --print):\n                                        \"text\" (default), or \"stream-json\"\n                                        (realtime streaming input) (choices:\n                                        \"text\", \"stream-json\")\n  --json-schema <schema>                JSON Schema for structured output\n                                        validation. Example:\n                                        {\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}\n  --max-budget-usd <amount>             Maximum dollar amount to spend on API\n                                        calls (only works with --print)\n  --mcp-config <configs...>             Load MCP servers from JSON files or\n                                        strings (space-separated)\n  --model <model>                       Model for the current session. Provide\n                                        an alias for the latest model (e.g.\n                                        'fable', 'opus', or 'sonnet') or a\n                                        model's full name (e.g.\n                                        'claude-fable-5').\n  -n, --name <name>                     Set a display name for this session\n                                        (shown in the prompt box, /resume\n                                        picker, and terminal title)\n  --no-chrome                           Disable Claude in Chrome integration\n  --no-session-persistence              Disable session persistence - sessions\n                                        will not be saved to disk and cannot be\n                                        resumed (only works with --print)\n  --output-format <format>              Output format (only works with --print):\n                                        \"text\" (default), \"json\" (single\n                                        result), or \"stream-json\" (realtime\n                                        streaming) (choices: \"text\", \"json\",\n                                        \"stream-json\")\n  --permission-mode <mode>              Permission mode to use for the session\n                                        (choices: \"acceptEdits\", \"auto\",\n                                        \"bypassPermissions\", \"manual\",\n                                        \"dontAsk\", \"plan\")\n  --permission-prompts <target>         Who answers permission prompts with\n                                        --print: \"host\" (the SDK host or\n                                        --permission-prompt-tool) or \"none\"\n                                        (nobody: anything that would prompt is\n                                        denied automatically; the permission\n                                        mode still decides everything else)\n                                        (choices: \"host\", \"none\", default:\n                                        \"host\")\n  --plugin-dir <path>                   Load a plugin from a directory or .zip\n                                        for this session only; a folder of\n                                        plugins loads each child (repeatable:\n                                        --plugin-dir A --plugin-dir B.zip)\n                                        (default: [])\n  --plugin-url <url>                    Fetch a plugin .zip from a URL for this\n                                        session only (repeatable: --plugin-url A\n                                        --plugin-url B) (default: [])\n  -p, --print                           Print response and exit (useful for\n                                        pipes). Note: The workspace trust dialog\n                                        is skipped when Claude is run in\n                                        non-interactive mode (via -p, or when\n                                        stdout is not a TTY, e.g. piped or\n                                        redirected output). Only use this in\n                                        directories you trust. Settings files\n                                        that fail validation are silently\n                                        ignored in this mode (no error dialog is\n                                        shown).\n  --prompt-suggestions [value]          Enable prompt suggestions. In print/SDK\n                                        mode, emits a prompt_suggestion message\n                                        after each turn with a predicted next\n                                        user prompt (choices: \"true\", \"false\",\n                                        \"1\", \"0\", \"yes\", \"no\", \"on\", \"off\",\n                                        preset: \"true\")\n  --remote-control [name]               Start an interactive session with Remote\n                                        Control enabled (optionally named)\n  --remote-control-session-name-prefix <prefix>\n      Prefix for auto-generated Remote Control session names (default: hostname)\n  --replay-user-messages                Re-emit user messages from stdin back on\n                                        stdout for acknowledgment (only works\n                                        with --input-format=stream-json and\n                                        --output-format=stream-json)\n  --restricted                          Restricted mode: removes the built-in\n                                        tools that run commands or code (Bash,\n                                        PowerShell, REPL and the other\n                                        code-running tools) and WebFetch unless\n                                        --tools names them, and ignores user,\n                                        project and local settings files\n                                        (managed settings and --settings still\n                                        apply; add --strict-mcp-config to skip\n                                        MCP servers too). Also confines the file\n                                        tools to the working directories\n                                        (--add-dir included), refuses\n                                        bypassPermissions, and lets only a\n                                        person or the configured permission\n                                        handler approve writes to settings, git\n                                        and tool-configuration files.\n  -r, --resume [value]                  Resume a conversation by session ID, or\n                                        open interactive picker with optional\n                                        search term\n  --safe-mode                           Start with all customizations\n                                        (CLAUDE.md, skills, plugins, hooks, MCP\n                                        servers, custom commands and agents,\n                                        output styles, workflows, custom themes,\n                                        keybindings, and more) disabled — useful\n                                        for troubleshooting a broken\n                                        configuration. Admin-managed (policy)\n                                        settings still apply. Auth, model\n                                        selection, built-in tools, and\n                                        permissions work normally. Sets\n                                        CLAUDE_CODE_SAFE_MODE=1.\n  --session-id <uuid>                   Use a specific session ID for the\n                                        conversation (must be a valid UUID)\n  --setting-sources <sources>           Comma-separated list of setting sources\n                                        to load (user, project, local).\n  --settings <file-or-json>             Path to a settings JSON file or a JSON\n                                        string to load additional settings from\n  --strict-mcp-config                   Only use MCP servers from --mcp-config,\n                                        ignoring all other MCP configurations\n  --system-prompt <prompt>              System prompt to use for the session\n  --system-prompt-snapshot <on|off>     Record the system prompt once per\n                                        conversation and reuse it verbatim on\n                                        every request and resume. on (the\n                                        default): the prompt is rendered on the\n                                        conversation's first request — a\n                                        --system-prompt or\n                                        --append-system-prompt included — sent,\n                                        and recorded; every later request and\n                                        resume sends the record as-is, even when\n                                        a later launch passes different text,\n                                        until the conversation is compacted.\n                                        off: never record; the prompt is\n                                        rendered fresh every request (for\n                                        iterating on prompt text). No effect\n                                        where system-prompt recording is not yet\n                                        enabled. (choices: \"on\", \"off\")\n  --teleport [session]                  Resume a teleport session, optionally\n                                        specify session ID\n  --tmux                                Create a tmux session for the worktree\n                                        (requires --worktree). Uses iTerm2\n                                        native panes when available; use\n                                        --tmux=classic for traditional tmux.\n  --tools <tools...>                    Specify the list of available tools from\n                                        the built-in set. Use \"\" to disable all\n                                        tools, \"default\" to use all tools, or\n                                        specify tool names (e.g.\n                                        \"Bash,Edit,Read\").\n  --verbose                             Override verbose mode setting from\n                                        config\n  -v, --version                         Output the version number\n  -w, --worktree [name]                 Create a new git worktree for this\n                                        session (optionally specify a name)\n\nCommands:\n  agents [options]                      Manage background agents\n  attach <id>                           Open a background session in this\n                                        terminal. <id> is the short id that\n                                        `claude --bg` prints and `claude agents`\n                                        lists\n  auth                                  Manage authentication\n  auto-mode                             Inspect or reset auto mode classifier\n                                        configuration\n  doctor                                Check the health of your Claude Code\n                                        installation. Reads settings files in\n                                        the current directory without a trust\n                                        prompt. For a full checkup that can also\n                                        fix issues, run /doctor in a session.\n  gateway [options]                     Run the enterprise auth/telemetry\n                                        gateway\n  import [options] [source]             Import config from another AI coding\n                                        agent into Claude Code\n  install [options] [target]            Install Claude Code native build. Use\n                                        [target] to specify version (stable,\n                                        latest, or specific version)\n  logs <id>                             Print a background session's recent\n                                        terminal output\n  mcp                                   Configure and manage MCP servers\n  plugin|plugins                        Manage Claude Code plugins\n  project                               Manage Claude Code project state\n  respawn [options] [id]                Restart a background session, or all of\n                                        them with --all, so it runs the current\n                                        Claude Code version\n  rm <id>                               Delete a background session, and its\n                                        worktree when that is safe. Works on\n                                        sessions that have already exited\n  setup-token                           Set up a long-lived authentication token\n                                        (requires Claude subscription)\n  stop|kill <id>                        Stop a background session. Its\n                                        conversation is kept: `claude attach\n                                        <id>` opens it again, `claude --resume`\n                                        works once it is stopped\n  ultrareview [options] [target]        Run a cloud-hosted multi-agent code\n                                        review of the current branch (or a PR\n                                        number / base branch) and print the\n                                        findings\n  update|upgrade                        Check for updates and install if\n                                        available",
     "help_hash": "03063f8f8e84ee6b5c816a54c80dab1dc921f85cb6d7c7e7e9eb256f0c797b33",
     "doctor": {
@@ -1403,7 +1409,7 @@
         "msg_lifecycle_v1"
       ],
       "stable_fields": {
-        "claude_code_version": "2.1.268",
+        "claude_code_version": "2.1.269",
         "fast_mode_state": "off",
         "output_style": "default",
         "permissionMode": "dontAsk"
@@ -1457,7 +1463,7 @@
             "name": "TaskCreate",
             "input": {
               "activeForm": "Probing task tools",
-              "description": "Probe task used to exercise the task tool lifecycle (create, metadata update, get, delete).",
+              "description": "Probe task for exercising task tool metadata handling.",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1508,7 +1514,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task used to exercise the task tool lifecycle (create, metadata update, get, delete).",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tool metadata handling.",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1517,10 +1523,10 @@
         "error": null
       }
     ],
-    "digest": "393a563e1d5411fbb44704cde06b6a6fda5500921081d1af5ad2fd3b7cbe9e51"
+    "digest": "030a2d37f664bac1bd7d0e8db0b1014f801eb35b79d88341fb4a80d4ce168a7f"
   },
-  "fetched_at": "2026-09-11T16:28:06.927Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/34622020793",
-  "state_commit_parent": "06bc874b1b474c839e0c94f9e30152fb9fea4c59",
-  "analysis_parent_sha": "06bc874b1b474c839e0c94f9e30152fb9fea4c59"
+  "fetched_at": "2026-09-11T20:26:33.654Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/34644065395",
+  "state_commit_parent": "d94e7087adf67b62f8f76f95c3a7ba22e96f7c37",
+  "analysis_parent_sha": "d94e7087adf67b62f8f76f95c3a7ba22e96f7c37"
 }
