@@ -28,6 +28,7 @@ import {
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
 import { isRuntimeStartCommand } from "@/websocket/listener/protocol-inbound";
+import { getConversationRuntimeKey } from "@/websocket/listener/runtime";
 import { assertRuntimeWorkspaceSandboxChangeAllowed } from "@/websocket/listener/runtime-workspace-sandbox";
 import type {
   ConversationRuntime,
@@ -65,6 +66,59 @@ type CreatedResources = {
   agent: boolean;
   conversation: boolean;
 };
+
+const runtimeStartQueuesByListener = new WeakMap<
+  ListenerRuntime,
+  Map<string, Promise<void>>
+>();
+
+function getRuntimeStartQueues(
+  runtime: ListenerRuntime,
+): Map<string, Promise<void>> {
+  let queues = runtimeStartQueuesByListener.get(runtime);
+  if (!queues) {
+    queues = new Map();
+    runtimeStartQueuesByListener.set(runtime, queues);
+  }
+  return queues;
+}
+
+function getRuntimeStartSerializationKey(
+  parsed: RuntimeStartCommand,
+): string | null {
+  if (hasString(parsed.conversation_id)) {
+    if (parsed.conversation_id !== "default") {
+      return `conversation:${parsed.conversation_id}`;
+    }
+    if (hasString(parsed.agent_id)) {
+      return getConversationRuntimeKey(parsed.agent_id, "default");
+    }
+  }
+
+  if (hasString(parsed.agent_id) && parsed.create_conversation === undefined) {
+    return getConversationRuntimeKey(parsed.agent_id, "default");
+  }
+
+  return null;
+}
+
+async function enqueueRuntimeStartForScope(
+  runtime: ListenerRuntime,
+  key: string,
+  task: () => Promise<void>,
+): Promise<void> {
+  const queues = getRuntimeStartQueues(runtime);
+  const previous = queues.get(key) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(task);
+  queues.set(key, next);
+  try {
+    await next;
+  } finally {
+    if (queues.get(key) === next) {
+      queues.delete(key);
+    }
+  }
+}
 
 function buildDefaultConversation(agent: AgentState): Conversation {
   const now = new Date().toISOString();
@@ -401,6 +455,36 @@ export async function handleRuntimeStartCommand(
   parsed: RuntimeStartCommand,
   context: RuntimeStartCommandContext,
 ): Promise<boolean> {
+  try {
+    validateRuntimeStartShape(parsed);
+  } catch (error) {
+    sendRuntimeStartResponse(context, parsed, {
+      success: false,
+      runtime: null,
+      agent: null,
+      conversation: null,
+      created: { agent: false, conversation: false },
+      error: getErrorMessage(error, "Failed to start runtime"),
+    });
+    return true;
+  }
+
+  const serializationKey = getRuntimeStartSerializationKey(parsed);
+  const run = async () => {
+    await runRuntimeStartCommand(parsed, context);
+  };
+  if (serializationKey) {
+    await enqueueRuntimeStartForScope(context.runtime, serializationKey, run);
+  } else {
+    await run();
+  }
+  return true;
+}
+
+async function runRuntimeStartCommand(
+  parsed: RuntimeStartCommand,
+  context: RuntimeStartCommandContext,
+): Promise<void> {
   const created = { agent: false, conversation: false };
   let agent: AgentState | null = null;
   let conversation: Conversation | null = null;
@@ -408,7 +492,6 @@ export async function handleRuntimeStartCommand(
   let shouldReplayState = false;
 
   try {
-    validateRuntimeStartShape(parsed);
     agent = await resolveRuntimeStartAgent(parsed, created);
     conversation = await resolveRuntimeStartConversation(
       parsed,
@@ -418,12 +501,12 @@ export async function handleRuntimeStartCommand(
       context.retrieveConversation ??
         ((id) => getBackend().retrieveConversation(id)),
     );
+    runtimeScope = buildRuntimeScope(agent, conversation);
+    const { connectionId } = context;
     conversation = await applyRuntimeStartConversationSourceTags(
       parsed,
       conversation,
     );
-    runtimeScope = buildRuntimeScope(agent, conversation);
-    const { connectionId } = context;
     const assertConnectionOpen = () => {
       if (
         context.runtime.connections.size > 0 &&
@@ -491,8 +574,6 @@ export async function handleRuntimeStartCommand(
       },
     );
   }
-
-  return true;
 }
 
 export function handleRuntimeStartProtocolCommand(
