@@ -32,7 +32,7 @@ describe("Background bash completion notifications", () => {
     const script = join(fixtureDir, "command.cjs");
     writeFileSync(script, source);
     // Preserve the explicit shell exit status used by the old Unix fixtures.
-    return `node "${script}"${isWindows ? "; exit $LASTEXITCODE" : ""}`;
+    return `"${process.execPath}" "${script}"${isWindows ? "; exit $LASTEXITCODE" : ""}`;
   }
 
   const startBackground = async (args: {
@@ -148,6 +148,8 @@ describe("Background bash completion notifications", () => {
         "setTimeout(() => { console.error('automatic failure'); process.exitCode = 9; }, 100)",
       ),
       description: "Run failing automatic command",
+      // An otherwise empty PATH must not require a separate Node installation.
+      secretEnv: isWindows ? { PATH: fixtureDir } : undefined,
     });
 
     const notification = await waitForNotification(bashId);

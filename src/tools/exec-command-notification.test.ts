@@ -24,7 +24,7 @@ describe("Exec command completion notifications", () => {
     const script = join(fixtureDir, "command.cjs");
     fs.writeFileSync(script, source);
     // Test notification routing, not PowerShell's default native-exit mapping.
-    return `node "${script}"${isWindows ? "; exit $LASTEXITCODE" : ""}`;
+    return `"${process.execPath}" "${script}"${isWindows ? "; exit $LASTEXITCODE" : ""}`;
   }
 
   function notificationsFor(sessionId: string): QueuedMessage[] {
@@ -116,6 +116,8 @@ describe("Exec command completion notifications", () => {
       ),
       description: "Run failing check",
       yield_time_ms: 250,
+      // An otherwise empty PATH must not require a separate Node installation.
+      secretEnv: isWindows ? { PATH: fixtureDir } : undefined,
     });
     const sessionId = sessionIdFrom(first.output);
     const notification = await waitForNotification(sessionId);
