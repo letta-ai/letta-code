@@ -24,29 +24,35 @@ For remote subagents, pass source paths and any destination conversation ID expl
 
 ## Move this conversation
 
+### Local → Cloud
+
+Upload any files needed in Cloud:
+
 ```bash
-letta teleport cloud       # Create or resume this conversation's Cloud sandbox
-letta teleport local       # Move to the one online Desktop computer
-letta teleport <computer>  # Move to a specific listed computer
+letta sandbox upload <local-path>
 ```
 
-For `local`, Desktop must be open with Remote Access enabled. If several Desktop computers are online, list them and select one explicitly. The conversation's managed Cloud sandbox remains alive while the conversation runs elsewhere.
+Keep the returned paths, repository/branch, and next action in context, then create or resume this conversation's Cloud sandbox:
 
-### Prepare, then teleport
+```bash
+letta teleport cloud
+```
 
-1. Identify files, repository state, credentials, services, and setup needed at the destination.
-2. Finish source-only work. Verify and transfer required files before moving.
-3. Retain destination paths, repository/branch/revision, setup requirements, and the next action.
-4. Run the teleport command **alone as the final shell tool call**. Do not chain commands, poll it, or run more source-side tools after success.
-5. At the destination, re-establish the working directory and verify files, dependencies, credentials, and services before continuing.
+### Cloud → local or another computer
 
-For local → Cloud, upload needed local files, retain their returned paths, then run `letta teleport cloud`. For Cloud → local, arrange required downloads on the local computer before handing off.
+Have a remote subagent download any needed files first. With Desktop open and Remote Access enabled:
 
-Teleport returns when the server accepts the handoff. After the tool result is persisted, the source yields and the destination resumes the same conversation without another user message.
+```bash
+letta teleport local
+```
 
-If teleport reports an offline, stale, unsupported, same-source, or startup error, the conversation remains on the source. Address the specific error before retrying.
+If several computers are available, choose one from `letta teleport list`:
 
-Do not invent `letta teleport back`, `push`, `pull`, or remote file-listing commands. Use `local` or a listed computer to return, and `sandbox upload/download` for files.
+```bash
+letta teleport <computer>
+```
+
+**Run teleport alone as the final tool call.** After success, do not poll or run more source-side tools; the same conversation resumes at the destination automatically. Set the working directory and check required setup there. If teleport fails, stay on the source and resolve the error before retrying. The Cloud sandbox remains available while you work elsewhere.
 
 ## Discover computers
 
