@@ -71,7 +71,6 @@ For the most part, Claude decides when to use these tools and you don't need to 
 * in [`permissions.allow`](/docs/en/settings-reference#permissions-allow) and [`permissions.deny`](/docs/en/settings-reference#permissions-deny) in settings, and the `/permissions` interface
 * in the `--allowedTools` and `--disallowedTools` [CLI flags](/docs/en/cli-reference)
 * in the Agent SDK's [`allowedTools` and `disallowedTools`](/docs/en/agent-sdk/permissions#allow-and-deny-rules) options
-* in a [subagent's `tools` or `disallowedTools`](/docs/en/sub-agents#supported-frontmatter-fields) frontmatter
 * in a [skill's `allowed-tools`](/docs/en/skills#frontmatter-reference) frontmatter
 * in a hook's [`if` condition](/docs/en/hooks-guide#filter-by-tool-name-and-arguments-with-the-if-field)
 
