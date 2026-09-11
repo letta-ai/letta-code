@@ -13,16 +13,18 @@ description: Guides work across Cloud, local, and other available computers, inc
 
 | Intent | Mechanism |
 |---|---|
-| Run work elsewhere while staying here | `Agent(..., computer: ...)` |
-| Bring a remote file into a Cloud conversation | Remote agent runs `letta sandbox upload --conversation ...` |
-| Put a Cloud file onto another computer | Remote agent runs `letta sandbox download --conversation ... --to ...` |
-| Continue this conversation elsewhere | `letta teleport ...` |
+| Run work elsewhere while staying here | `Agent` |
+| Bring a remote file into a Cloud conversation | Remote agent: `sandbox upload` |
+| Put a Cloud file onto another computer | Remote agent: `sandbox download` |
+| Continue this conversation elsewhere | `teleport` |
 
 Conversation history and agent memory follow the conversation. Files, working directories, installed tools, credentials, and running services belong to each computer; teleporting does not copy the workspace.
 
-For remote subagents, pass source paths and any destination conversation ID explicitly. The remote computer may have different credentials and installed tools. Use the `Agent` tool definition for invocation and resume options.
+For remote subagents, set `computer` and pass source paths and destination conversation IDs explicitly. Use the `Agent` tool definition for invocation and resume options.
 
 ## Move this conversation
+
+**Run the teleport handoff alone as the final tool call.** After success, do not poll or run more source-side tools; the same conversation resumes at the destination automatically. Set the working directory and check required setup there. If teleport fails, stay on the source and resolve the error before retrying. The Cloud sandbox remains available while you work elsewhere.
 
 ### Local → Cloud
 
@@ -40,25 +42,23 @@ letta teleport cloud
 
 ### Cloud → other computers
 
-Have a remote subagent download any needed files first. With Desktop open and Remote Access enabled:
-
-```bash
-letta teleport local
-```
-
-To choose a specific computer, list what's available:
+List available computers:
 
 ```bash
 letta teleport list
 ```
 
-Use a returned computer name, device ID, or connection ID:
+Have a remote subagent download any needed files and verify completion before moving. Use a returned computer name, device ID, or connection ID:
 
 ```bash
 letta teleport <computer>
 ```
 
-**Run teleport alone as the final tool call.** After success, do not poll or run more source-side tools; the same conversation resumes at the destination automatically. Set the working directory and check required setup there. If teleport fails, stay on the source and resolve the error before retrying. The Cloud sandbox remains available while you work elsewhere.
+With exactly one online Desktop, open with Remote Access enabled, you can use the shortcut:
+
+```bash
+letta teleport local
+```
 
 ## Transfer files to or from Cloud
 
@@ -80,11 +80,9 @@ letta sandbox download <sandbox-path> --agent <agent-id> --to <local-path>
 ```
 
 - `--agent` alone selects that agent's main/default conversation. Concrete `--conversation` IDs resolve their owning agent.
-- `--conversation default` is also supported, but requires explicit `--agent`; the agent ID is never inferred from the executing session.
 - Target flags override the executing session without changing its identity. Do not replace the subagent's identity environment variables with the parent's.
 - The executing computer's credentials must authorize access to the target.
-- Commands return JSON. Upload returns the stored `/root/downloads/...` path; downloads are limited to that directory. Without `--to`, download saves under the remote file's basename.
+- Commands return JSON. Use the exact upload path returned; never reconstruct it from the filename.
+- Download sources must be under `/root/downloads`; `--to` selects the destination path on the receiving computer. Without `--to`, download saves under the source file's basename.
 - Transfer files directly, not as base64 or file contents through model messages. Return the path and destination IDs; verify received contents or checksums.
 - These commands transfer files to/from Cloud sandboxes, not arbitrary remote filesystems. No sandbox ID or separate wake command is needed.
-
-For example, to get a laptop file while staying in Cloud, send an Agent to the laptop with instructions to upload using the parent's conversation ID. Read the returned path in the parent's sandbox.
