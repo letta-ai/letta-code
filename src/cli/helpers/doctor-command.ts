@@ -75,7 +75,7 @@ export async function launchDoctor(
     ]
       .filter(Boolean)
       .join("\n\n");
-    let completion = "Doctor finished. See the investigation report.";
+    let completion = "Doctor report ready.";
     const args: SpawnBackgroundSubagentTaskArgs = {
       subagentType: "doctor",
       description: "Investigating agent behavior",
@@ -88,7 +88,7 @@ export async function launchDoctor(
       completionSummary: () => completion,
       onComplete: async (result) => {
         completion = result.success
-          ? "Doctor finished; no memory changes applied."
+          ? `${doctorReportHeadline(result.report)} No memory changes applied.`
           : `Doctor failed: ${result.error ?? "Unknown error"}`;
         if (!worktree) return;
         try {
@@ -111,6 +111,20 @@ export async function launchDoctor(
       await finalizeReflectionMemoryWorktree(worktree, { shouldMerge: false });
     throw error;
   }
+}
+
+function doctorReportHeadline(report: string | undefined): string {
+  const firstLine = report?.trim().split(/\r?\n/, 1)[0]?.trim();
+  // The skill supplies the diagnosis, including whether evidence was blocked.
+  // Process success only means it returned a report; never infer a diagnosis
+  // from that flag or classify arbitrary report prose in the harness.
+  if (
+    firstLine &&
+    /^Doctor (diagnosis|inconclusive|blocked):\s+\S/.test(firstLine)
+  ) {
+    return firstLine.slice(0, 300);
+  }
+  return "Doctor report ready.";
 }
 
 async function finishDoctor(

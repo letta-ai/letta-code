@@ -72,8 +72,8 @@ function repair(commit = true) {
   return dir;
 }
 
-async function complete(success = true, error?: string) {
-  await task.onComplete?.({ success, error });
+async function complete(success = true, error?: string, report?: string) {
+  await task.onComplete?.({ success, error, report });
   return typeof task.completionSummary === "function"
     ? await task.completionSummary({ success, error })
     : task.completionSummary;
@@ -159,7 +159,7 @@ test("diagnosis without memory launches without creating a memory scope", async 
   );
   expect(task.memoryScope).toBeUndefined();
   expect(task.prompt).toContain("Diagnosis only");
-  expect(await complete()).toContain("no memory changes applied");
+  expect(await complete()).toContain("No memory changes applied");
   expect(syncMemory).not.toHaveBeenCalled();
   expect(recompile).not.toHaveBeenCalled();
 });
@@ -167,7 +167,7 @@ test("diagnosis without memory launches without creating a memory scope", async 
 test("no changes and failed tasks clean up without claiming a repair", async () => {
   await launchDoctor(options(), { spawn, syncMemory, isLocal: () => true });
   const noChangesDir = task.memoryScope?.primaryRoot ?? "";
-  expect(await complete()).toContain("no memory changes applied");
+  expect(await complete()).toContain("No memory changes applied");
   expect(existsSync(noChangesDir)).toBe(false);
   await launchDoctor(options(), { spawn, syncMemory, isLocal: () => true });
   const failedDir = repair();
@@ -246,4 +246,37 @@ test("launch errors remove the prepared worktree", async () => {
   expect(
     git(memoryDir, "worktree", "list", "--porcelain").match(/^worktree /gm),
   ).toHaveLength(1);
+});
+
+test.each([
+  "Doctor blocked: Shell setup failed before history could be retrieved.",
+  "Doctor inconclusive: The provider request for the failed step is unavailable.",
+  "Doctor diagnosis: Both Slack threads were routed into one conversation.",
+])(
+  "shows the investigator's outcome independently of process success: %s",
+  async (headline) => {
+    await launchDoctor(
+      { ...options(), memoryDir: undefined },
+      { spawn, syncMemory, isLocal: () => false },
+    );
+    const summary = await complete(
+      true,
+      undefined,
+      `${headline}\n\nEvidence and next steps.`,
+    );
+    expect(summary).toBe(`${headline} No memory changes applied.`);
+    expect(summary).not.toContain("Doctor finished");
+  },
+);
+
+test("an unstructured or empty report cannot imply a successful diagnosis", async () => {
+  await launchDoctor(options(), { spawn, syncMemory, isLocal: () => false });
+  expect(
+    await complete(
+      true,
+      undefined,
+      "## Context Doctor report\n\nEvidence unavailable: EROFS in shell setup.",
+    ),
+  ).toBe("Doctor report ready. No memory changes applied.");
+  expect(recompile).not.toHaveBeenCalled();
 });

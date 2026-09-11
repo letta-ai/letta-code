@@ -50,6 +50,10 @@ Use existing commands, bounded file reads, and small ad hoc scripts. Commands
 output JSON and use CLI authentication; do not inspect credential files, print
 secrets, or attempt to access production ClickHouse.
 
+Use `$TMPDIR` for temporary exports and scripts. The harness prepares this
+writable directory before launch; `/tmp` and the project may be read-only.
+Keep diagnostic artifacts out of memory and out of memory commits.
+
 Replace the example IDs below with the **target** IDs from the launch message:
 
 ```bash
@@ -145,6 +149,16 @@ where possible. Use existing fixtures, pure scripts, or stubbed tools. Never
 replay external sends, purchases, destructive operations, or other live side
 effects as a diagnostic test. Do not launch paid evaluations automatically.
 An offline structural check does not prove a model's behavior improved.
+
+Start your final report with one plain-text line (at most 300 characters):
+
+- `Doctor diagnosis: <the supported finding>` when evidence supports a conclusion.
+- `Doctor inconclusive: <the missing evidence>` when the cause remains uncertain.
+- `Doctor blocked: <the failed prerequisite>` when the environment prevented investigation.
+
+This line is shown in the completion notification. Returning a report is not
+itself proof that the investigation succeeded. Explain any blocker prominently
+instead of presenting a completed diagnosis or repeating the same failed setup.
 
 Return a concise report covering:
 - Scope reviewed and missing evidence, including sampling/truncation limits.

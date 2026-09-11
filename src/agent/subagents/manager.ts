@@ -50,7 +50,7 @@ import {
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
 } from "./context-budget";
 import {
-  composeSubagentChildEnv,
+  prepareSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
   resolveSubagentLauncher,
   resolveSubagentWorkingDirectory,
@@ -457,7 +457,7 @@ async function executeSubagent(
         memoryScope,
       },
     );
-    const childEnv = composeSubagentChildEnv({
+    const childEnv = prepareSubagentChildEnv({
       parentProcessEnv: {
         ...process.env,
         USER_CWD: subagentWorkingDirectory,
