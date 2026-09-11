@@ -27,6 +27,7 @@ import type {
   OutboundChannelRichMessageDraft,
   TelegramChannelAccount,
 } from "@/channels/types";
+import { resolveTelegramBotConfig } from "./bot-config";
 import { normalizeTelegramChatId } from "./chat-id";
 import {
   buildTelegramDebounceKey,
@@ -49,6 +50,7 @@ import {
   getTelegramSenderName,
   resolveTelegramInboundAttachments,
   TELEGRAM_MEDIA_GROUP_FLUSH_MS,
+  type TelegramFileFetch,
   type TelegramLikeMessage,
 } from "./media";
 import { loadGrammyModule } from "./runtime";
@@ -87,8 +89,13 @@ import {
   TELEGRAM_REPORT_CALLBACK_PREFIX,
 } from "./utils";
 
+export type TelegramAdapterOptions = {
+  fileFetch?: TelegramFileFetch;
+};
+
 export function createTelegramAdapter(
   config: TelegramChannelAccount,
+  options: TelegramAdapterOptions = {},
 ): ChannelAdapter {
   let bot: TelegramBot | null = null;
   let botModule: GrammYModule | null = null;
@@ -219,6 +226,7 @@ export function createTelegramAdapter(
       bot: telegramBot,
       messages,
       transcribeVoice: config.transcribeVoice,
+      fileFetch: options.fileFetch,
     });
 
     if (text.length === 0 && attachments.length === 0) {
@@ -287,7 +295,7 @@ export function createTelegramAdapter(
       options,
       `constructing bot for account ${config.accountId}`,
     );
-    const instance = new Bot(config.token);
+    const instance = new Bot(config.token, resolveTelegramBotConfig());
 
     instance.catch((error) => {
       const updateId = error.ctx?.update?.update_id;

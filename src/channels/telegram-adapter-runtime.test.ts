@@ -19,6 +19,62 @@ import {
 
 installTelegramAdapterTestHooks();
 
+test("telegram channel configures grammY with an environment-aware proxy agent", async () => {
+  const previousHttpsProxy = process.env.HTTPS_PROXY;
+  const previousLowercaseHttpsProxy = process.env.https_proxy;
+  const previousNoProxy = process.env.NO_PROXY;
+  const previousLowercaseNoProxy = process.env.no_proxy;
+  process.env.HTTPS_PROXY = "http://proxy.example:8080";
+  process.env.https_proxy = "http://proxy.example:8080";
+  delete process.env.NO_PROXY;
+  delete process.env.no_proxy;
+
+  try {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Telegram Proxy Bot",
+        enabled: false,
+        token: "test-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "telegram-proxy" },
+    );
+
+    await startChannelAccountLive("telegram", "telegram-proxy");
+
+    const botConfig = FakeBot.instances[0]?.config as
+      | {
+          client?: {
+            baseFetchConfig?: { agent?: unknown };
+          };
+        }
+      | undefined;
+    expect(botConfig?.client?.baseFetchConfig?.agent).toBeDefined();
+  } finally {
+    if (previousHttpsProxy === undefined) {
+      delete process.env.HTTPS_PROXY;
+    } else {
+      process.env.HTTPS_PROXY = previousHttpsProxy;
+    }
+    if (previousLowercaseHttpsProxy === undefined) {
+      delete process.env.https_proxy;
+    } else {
+      process.env.https_proxy = previousLowercaseHttpsProxy;
+    }
+    if (previousNoProxy === undefined) {
+      delete process.env.NO_PROXY;
+    } else {
+      process.env.NO_PROXY = previousNoProxy;
+    }
+    if (previousLowercaseNoProxy === undefined) {
+      delete process.env.no_proxy;
+    } else {
+      process.env.no_proxy = previousLowercaseNoProxy;
+    }
+  }
+});
+
 test("telegram channel starts through service and routes inbound topic messages end-to-end", async () => {
   createChannelAccountLive(
     "telegram",
