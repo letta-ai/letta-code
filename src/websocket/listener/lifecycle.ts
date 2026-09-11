@@ -60,6 +60,7 @@ import {
   reloadListenerModAdapter,
 } from "./mod-adapter";
 import { loadPersistedPermissionModeMap } from "./permission-mode";
+import { handleTerminalPolicyClose } from "./policy-close";
 import {
   clearProcessServices,
   installProcessEventRouting,
@@ -984,14 +985,7 @@ async function connectWithRetry(
       stopRuntime(runtime, true);
 
       if (code === 1008) {
-        if (isDebugEnabled()) {
-          console.log("[Listen] Environment not found, re-registering...");
-        }
-        if (opts.onNeedsReregister) {
-          opts.onNeedsReregister();
-        } else {
-          opts.onDisconnected();
-        }
+        handleTerminalPolicyClose(reasonText, opts);
         return;
       }
 
