@@ -235,7 +235,7 @@ The goal is to extract user personality, preferences, coding patterns, and proje
 #### Prerequisites
 
 - `letta.js` must be built (`bun run build`) — subagents spawn via this binary
-- Use `subagent_type: "history-analyzer"` — cheaper model (sonnet), has `bypassPermissions`, creates its own worktree
+- Use `subagent_type: "history-analyzer"` — model: auto, runs with `--permission-mode unrestricted`, creates its own worktree
 - The `history-analyzer` subagent has the normalized trajectory format docs inlined — workers never need to know any harness's native format
 
 #### Steps
@@ -564,7 +564,6 @@ Launch exploration subagents in a **single message** so they run concurrently.
 Agent({
   subagent_type: "general-purpose",
   description: "Explore API layer",
-  run_in_background: true,
   prompt: `Read the implementation in src/api/.
 
 Return:
@@ -577,7 +576,6 @@ Return:
 Agent({
   subagent_type: "general-purpose",
   description: "Explore frontend layer",
-  run_in_background: true,
   prompt: `Read the implementation in src/ui/.
 
 Return:
@@ -590,7 +588,6 @@ Return:
 Agent({
   subagent_type: "general-purpose",
   description: "Explore shared systems",
-  run_in_background: true,
   prompt: `Read the implementation in src/shared/.
 
 Return:
