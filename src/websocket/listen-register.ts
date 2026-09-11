@@ -263,13 +263,18 @@ export async function registerWithCloudRetry(
         jitterWindow > 0
           ? Math.floor((callbacks?.random ?? Math.random)() * jitterWindow)
           : 0;
-      const retryDelay = delay + jitter;
+      const remainingDurationMs = maxDurationMs - elapsed;
+      const retryDelay = Math.min(delay + jitter, remainingDurationMs);
 
       if (error instanceof Error) {
         callbacks?.onRetry?.(attempt, retryDelay, error);
       }
 
       await sleep(retryDelay);
+
+      if (Date.now() - startTime >= maxDurationMs) {
+        throw error;
+      }
     }
   }
 }
