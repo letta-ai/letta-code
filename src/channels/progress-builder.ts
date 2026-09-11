@@ -11,7 +11,7 @@ import {
   type ToolCallSummary,
   type ToolReturnSummary,
 } from "./progress-formatting";
-import type { ChannelTurnProgressUpdate } from "./types";
+import type { ChannelTurnProgressUpdate } from "./progress-types";
 
 function getMessageType(delta: Record<string, unknown>): string | null {
   return firstNonEmptyString(delta.message_type, delta.messageType) ?? null;
@@ -105,6 +105,47 @@ export function createChannelTurnProgressBuilder(
   // the whole builder is dropped with the turn.
   const argumentsByToolCallId = new Map<string, string>();
   const namesByToolCallId = new Map<string, string>();
+  // A model step can stream its parallel calls separately, with different
+  // message ids for server tools and approval requests. Keep one title across
+  // those calls and their later client start/end events (which omit step_id).
+  // Like the builder itself, these maps live only for the current turn.
+  const batchesByStep = new Map<string, { title: string | null }>();
+  const batchesByToolCallId = new Map<string, { title: string | null }>();
+
+  function addToolBatchTitles(
+    delta: unknown,
+    updates: ChannelTurnProgressUpdate[],
+  ): ChannelTurnProgressUpdate[] {
+    const record = asRecord(delta);
+    if (!record) return updates;
+    const messageType = getMessageType(record);
+    const isToolRequest =
+      messageType === "tool_call_message" ||
+      messageType === "approval_request_message";
+    // Older streams may lack step_id but still group calls in one message.
+    const stepKey = isToolRequest
+      ? firstNonEmptyString(record.step_id, record.id)
+      : undefined;
+    let requestBatch = stepKey ? batchesByStep.get(stepKey) : undefined;
+    if (stepKey && !requestBatch) {
+      requestBatch = { title: null };
+      batchesByStep.set(stepKey, requestBatch);
+    }
+    return updates.map((update) => {
+      if (update.kind !== "tool") return update;
+      const batch =
+        (update.toolCallId
+          ? batchesByToolCallId.get(update.toolCallId)
+          : undefined) ?? requestBatch;
+      if (!batch) return update;
+      if (update.toolCallId) batchesByToolCallId.set(update.toolCallId, batch);
+      if (batch.title === null && update.state === "started") {
+        batch.title =
+          firstNonEmptyString(update.toolTitle, update.toolDetails) ?? null;
+      }
+      return { ...update, toolBatchTitle: batch.title };
+    });
+  }
 
   // Wire shapes (see ToolCall / ToolCallDelta in @letta-ai/letta-client and
   // the local backend projections): flat `tool_call_id` / `name` /
@@ -578,5 +619,7 @@ export function createChannelTurnProgressBuilder(
     }
   }
 
-  return { buildUpdates };
+  return {
+    buildUpdates: (delta) => addToolBatchTitles(delta, buildUpdates(delta)),
+  };
 }
