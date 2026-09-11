@@ -25,12 +25,11 @@ Current agent memory format: ${memoryDir ? detectMemoryFormat(memoryDir, local) 
 ${memoryDir ? `Current agent memory directory: ${memoryDir}` : "The current agent has no memory filesystem."}
 Host-local client transcript root: ${getTranscriptRoot()}
 
-## Locate the incident
+## Investigation scope
 
-Use the agent, conversation, message, or time reference in the user's symptom to identify the incident. The investigation conversation above is not automatically the target conversation; the user may have opened it just to run doctor.
-Unless the user identifies another agent, investigate the current agent. Use explicit target IDs in evidence commands once the incident is located.
-With no symptom, review a bounded sample of the current agent's recent history across conversations. Ask for a reference only if you cannot identify a useful investigation scope.
+Follow the skill's workflow for an incident investigation, memory audit, or general health check according to the user's request.
+The investigation conversation above is not automatically the target conversation; the user may have opened it just to run doctor. Unless the user identifies another agent, investigate the current agent.
 ${SYSTEM_REMINDER_CLOSE}
 
-User symptom: ${symptom?.trim() || "Review recent behavior for recurring corrections, failures, and context problems."}`;
+User symptom: ${symptom?.trim() || "Perform a bounded memory health check and review recent history across conversations for recurring corrections, failures, and context problems."}`;
 }
