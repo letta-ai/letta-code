@@ -12,7 +12,7 @@ import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
 import { refreshCustomCommands } from "@/cli/commands/custom";
-import { launchDoctor } from "@/cli/helpers/doctor-command";
+import { buildDoctorMessage } from "@/cli/helpers/doctor-command";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildInitMessage,
@@ -128,18 +128,33 @@ export async function handleExecuteCommand(
       case "doctor": {
         const agentId = conversationRuntime.agentId;
         if (!agentId) throw new Error("Doctor requires an active agent.");
-        output = await launchDoctor({
+        const doctorMessage = buildDoctorMessage({
           agentId,
           conversationId: conversationRuntime.conversationId,
           memoryDir: getActiveMemoryDirectory(agentId),
+          local: getBackend().capabilities.localMemfs,
           symptom: trimmedArgs,
-          actingUserId: command.runtime.acting_user_id,
-          recompileByConversation:
-            conversationRuntime.listener.systemPromptRecompileByConversation,
-          recompileQueuedByConversation:
-            conversationRuntime.listener
-              .queuedSystemPromptRecompileByConversation,
         });
+        await handleIncomingMessage(
+          {
+            type: "message",
+            agentId,
+            conversationId: conversationRuntime.conversationId,
+            actingUserId: command.runtime.acting_user_id,
+            messages: [
+              {
+                type: "message",
+                role: "user",
+                content: [{ type: "text", text: doctorMessage }],
+              },
+            ],
+          },
+          socket,
+          conversationRuntime,
+          opts.onStatusChange,
+          opts.connectionId,
+        );
+        output = "";
         break;
       }
 

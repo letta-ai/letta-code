@@ -7,7 +7,6 @@ import {
   getAllSubagentConfigs,
   resolveSubagentConfigForMemoryFormat,
 } from "@/agent/subagents";
-import { buildSubagentArgs } from "@/agent/subagents/manager";
 import { __testSetBackend, type Backend } from "@/backend";
 
 let tempDir: string | null = null;
@@ -70,34 +69,9 @@ describe("built-in subagents", () => {
     expect(configs.init?.launchProfile).toBe("memory-subagent");
   });
 
-  test.each([false, true])(
-    "doctor preloads its skill into a fresh agent (local=%s)",
-    async (localMemfs) => {
-      __testSetBackend({ capabilities: { localMemfs } } as unknown as Backend);
-      const config = (await getAllSubagentConfigs()).doctor;
-      if (!config) throw new Error("Missing doctor builtin");
-      expect(config.launchProfile).toBe("memory-subagent");
-      expect(config.skills).toEqual(["context-doctor"]);
-      expect(config.recommendedModel).toBe("inherit");
-      const args = buildSubagentArgs(
-        "doctor",
-        config,
-        null,
-        "Investigate target",
-        undefined,
-        undefined,
-        undefined,
-        { backendMode: localMemfs ? "local" : "api" },
-      );
-      expect(args).toContain("--new-agent");
-      expect(args[args.indexOf("--system") + 1]).toBe("doctor");
-      expect(args[args.indexOf("--pre-load-skills") + 1]).toBe(
-        "context-doctor",
-      );
-      expect(args[args.indexOf("--base-tools") + 1]).toBe("none");
-      expect(args[args.indexOf("--tools") + 1]).toBe("Bash,Read,Edit");
-    },
-  );
+  test("doctor runs as a primary-agent skill, not a built-in subagent", async () => {
+    expect((await getAllSubagentConfigs()).doctor).toBeUndefined();
+  });
 
   test("legacy background metadata does not affect subagent config", async () => {
     tempDir = createTempProjectDir();

@@ -81,7 +81,6 @@ import {
  * never trigger fresh agent creation, so base tools are out of scope.
  */
 const NO_BASE_TOOL_SUBAGENT_TYPES = new Set([
-  "doctor",
   "reflection",
   "memory",
   "history-analyzer",

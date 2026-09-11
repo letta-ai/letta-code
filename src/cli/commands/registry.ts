@@ -53,12 +53,12 @@ export const commands: Record<string, Command> = {
     },
   },
   "/doctor": {
-    desc: "Investigate agent behavior and repair memory or skills",
+    desc: "Investigate an agent issue in this conversation",
     order: 12.1,
     args: "[symptom]",
     handler: () => {
-      // Handled by the doctor subagent launcher
-      return "Running memory doctor...";
+      // Handled by the primary-agent turn in the TUI and listener.
+      return "Starting doctor...";
     },
   },
   "/remember": {

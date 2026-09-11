@@ -18,7 +18,6 @@ import {
   parseFrontmatter,
 } from "@/utils/frontmatter";
 // Built-in subagent definitions (embedded at build time)
-import doctorAgentMd from "./builtin/doctor.md";
 import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
 import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
@@ -32,7 +31,6 @@ import reflectionAgentMd from "./builtin/reflection.md";
 import reflectionV2AgentMd from "./builtin/reflection-v2.md";
 
 const STANDARD_BUILTIN_SOURCES = [
-  doctorAgentMd,
   forkAgentMd,
   generalPurposeAgentMd,
   historyAnalyzerAgentMd,
@@ -43,7 +41,6 @@ const STANDARD_BUILTIN_SOURCES = [
 ];
 
 const LOCAL_MEMFS_BUILTIN_SOURCES = [
-  doctorAgentMd,
   forkAgentMd,
   generalPurposeAgentMd,
   historyAnalyzerAgentMd,

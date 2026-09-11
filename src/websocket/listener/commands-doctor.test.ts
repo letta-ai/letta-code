@@ -8,14 +8,17 @@ import { settingsManager } from "@/settings-manager";
 import * as taskModule from "@/tools/impl/task";
 import { __listenClientTestUtils } from "./client";
 import { handleExecuteCommand } from "./commands";
+import * as turnModule from "./turn";
 
 const priorHome = process.env.HOME;
 let tempDir: string;
 let spawn: ReturnType<
   typeof spyOn<typeof taskModule, "spawnBackgroundSubagentTask">
 >;
+let turn: ReturnType<typeof spyOn<typeof turnModule, "handleIncomingMessage">>;
 afterEach(async () => {
   spawn?.mockRestore();
+  turn?.mockRestore();
   __testSetBackend(null);
   await settingsManager.reset();
   if (priorHome === undefined) delete process.env.HOME;
@@ -23,53 +26,71 @@ afterEach(async () => {
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("listener doctor launches a scoped background investigation and returns without a foreground turn", async () => {
-  tempDir = mkdtempSync(join(tmpdir(), "listener-doctor-"));
-  process.env.HOME = tempDir;
-  await settingsManager.reset();
-  await settingsManager.initialize();
-  spawn = spyOn(taskModule, "spawnBackgroundSubagentTask");
-  __testSetBackend({ capabilities: { localMemfs: false } } as Backend);
-  spawn.mockReturnValue({
-    taskId: "doctor-listener-task",
-    subagentId: "investigator",
-    outputFile: "/tmp/doctor-listener-report",
-  });
-  const listener = __listenClientTestUtils.createListenerRuntime();
-  const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
-    listener,
-    "agent-doctor-listener",
-    "conv-doctor-listener",
-  );
-  const sent: string[] = [];
-  const socket = { readyState: 1, send: (value: string) => sent.push(value) };
-  await handleExecuteCommand(
-    {
-      type: "execute_command",
-      command_id: "doctor",
-      args: "Repeated tool failures",
-      request_id: "doctor-1",
-      runtime: {
-        agent_id: "agent-doctor-listener",
-        conversation_id: "conv-doctor-listener",
-        acting_user_id: "user-requester",
+test.each([false, true])(
+  "listener doctor awaits a primary turn in the investigation conversation (local=%s)",
+  async (localMemfs) => {
+    tempDir = mkdtempSync(join(tmpdir(), "listener-doctor-"));
+    process.env.HOME = tempDir;
+    await settingsManager.reset();
+    await settingsManager.initialize();
+    spawn = spyOn(taskModule, "spawnBackgroundSubagentTask");
+    __testSetBackend({ capabilities: { localMemfs } } as Backend);
+    let finishTurn!: () => void;
+    const pendingTurn = new Promise<void>((resolve) => {
+      finishTurn = resolve;
+    });
+    turn = spyOn(turnModule, "handleIncomingMessage").mockReturnValue(
+      pendingTurn,
+    );
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-doctor-listener",
+      "conv-doctor-listener",
+    );
+    const sent: string[] = [];
+    const socket = { readyState: 1, send: (value: string) => sent.push(value) };
+    const running = handleExecuteCommand(
+      {
+        type: "execute_command",
+        command_id: "doctor",
+        args: "Investigate repeated tool failures in conv-incident",
+        request_id: "doctor-1",
+        runtime: {
+          agent_id: "agent-doctor-listener",
+          conversation_id: "conv-doctor-listener",
+          acting_user_id: "user-requester",
+        },
       },
-    },
-    socket as unknown as WebSocket,
-    runtime,
-    {},
-  );
-  expect(sent.join("\n")).toContain("doctor-listener-task");
-  expect(spawn).toHaveBeenCalledTimes(1);
-  const args = spawn.mock.calls[0]?.[0];
-  expect(args?.parentScope).toEqual({
-    agentId: "agent-doctor-listener",
-    conversationId: "conv-doctor-listener",
-  });
-  expect(args?.actingUserId).toBe("user-requester");
-  expect(args?.prompt).toContain("Repeated tool failures");
-  expect(args?.existingAgentId).toBeUndefined();
-  expect(runtime.isProcessing).toBe(false);
-  expect(sent.join("\n")).toContain("doctor-listener-task");
-  expect(sent.join("\n")).toContain("slash_command_end");
-});
+      socket as unknown as WebSocket,
+      runtime,
+      { connectionId: "connection-doctor" },
+    );
+    try {
+      expect(turn).toHaveBeenCalledTimes(1);
+      const incoming = turn.mock.calls[0]?.[0];
+      expect(incoming).toMatchObject({
+        agentId: "agent-doctor-listener",
+        conversationId: "conv-doctor-listener",
+        actingUserId: "user-requester",
+      });
+      expect(JSON.stringify(incoming?.messages)).toContain("conv-incident");
+      expect(JSON.stringify(incoming?.messages)).toContain("context-doctor");
+      expect(turn.mock.calls[0]?.[2]).toBe(runtime);
+      expect(turn.mock.calls[0]?.[4]).toBe("connection-doctor");
+      expect(sent.join("\n")).toContain("slash_command_start");
+      expect(sent.join("\n")).not.toContain("slash_command_end");
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      finishTurn();
+      await running;
+    }
+    expect(sent.join("\n")).toContain("slash_command_end");
+    expect(sent.join("\n")).not.toContain("task_notification");
+    expect(sent.join("\n")).not.toContain("Doctor finished");
+    expect(JSON.parse(sent[sent.length - 1] ?? "")).toMatchObject({
+      success: true,
+      output: "",
+    });
+  },
+);

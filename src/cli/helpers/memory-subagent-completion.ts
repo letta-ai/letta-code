@@ -6,7 +6,7 @@ import {
   setSystemPromptDoctorState,
 } from "./system-prompt-warning";
 
-export type MemorySubagentType = "init" | "reflection" | "doctor";
+export type MemorySubagentType = "init" | "reflection";
 
 export type MemorySubagentSuccessMessageOverride =
   | string
@@ -109,9 +109,7 @@ export async function handleMemorySubagentCompletion(
       return `Tried to reflect, but got lost in the palace${detail}`;
     }
     const normalizedError = error || "Unknown error";
-    return subagentType === "doctor"
-      ? `Doctor failed: ${normalizedError}`
-      : `Memory initialization failed: ${normalizedError}`;
+    return `Memory initialization failed: ${normalizedError}`;
   }
 
   const action =
@@ -119,15 +117,11 @@ export async function handleMemorySubagentCompletion(
       ? subagentLink
       : subagentType === "reflection"
         ? "Dreamed"
-        : subagentType === "doctor"
-          ? "Repaired"
-          : "Built";
+        : "Built";
   const defaultMessage =
     subagentType === "reflection"
       ? `${action} and made some memories.`
-      : subagentType === "doctor"
-        ? "Doctor applied memory changes."
-        : "Built a memory palace of you. Visit it with /palace.";
+      : "Built a memory palace of you. Visit it with /palace.";
   const baseMessage =
     typeof args.successMessageOverride === "function"
       ? args.successMessageOverride({ action, defaultMessage })

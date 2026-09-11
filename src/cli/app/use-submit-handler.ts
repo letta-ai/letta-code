@@ -56,7 +56,7 @@ import {
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { resetContextHistory } from "@/cli/helpers/context-tracker";
 import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switch-alert";
-import { launchDoctor } from "@/cli/helpers/doctor-command";
+import { buildDoctorMessage } from "@/cli/helpers/doctor-command";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildInitMessage,
@@ -3559,7 +3559,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         }
 
         if (trimmed === "/doctor" || trimmed.startsWith("/doctor ")) {
-          const targetConversationId = conversationIdRef.current;
           const cmd = commandRunner.start(msg, "Starting doctor...");
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
@@ -3570,23 +3569,24 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
           setCommandRunning(true);
           try {
-            cmd.finish(
-              await launchDoctor({
-                agentId,
-                conversationId: targetConversationId,
-                memoryDir: getActiveMemoryDirectory(agentId),
-                symptom: trimmed.slice("/doctor".length).trim(),
-                recompileByConversation:
-                  systemPromptRecompileByConversationRef.current,
-                recompileQueuedByConversation:
-                  queuedSystemPromptRecompileByConversationRef.current,
-              }),
-              true,
-            );
+            const doctorMessage = buildDoctorMessage({
+              agentId,
+              conversationId: conversationIdRef.current,
+              memoryDir: getActiveMemoryDirectory(agentId),
+              local: getBackend().capabilities.localMemfs,
+              symptom: trimmed.slice("/doctor".length).trim(),
+            });
+            cmd.finish("", true);
+            await processConversationWithQueuedApprovals([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(doctorMessage),
+                otid: randomUUID(),
+              },
+            ]);
           } catch (error) {
-            cmd.fail(
-              `Failed to start doctor: ${formatErrorDetails(error, agentId)}`,
-            );
+            cmd.fail(`Doctor failed: ${formatErrorDetails(error, agentId)}`);
           } finally {
             setCommandRunning(false);
           }
