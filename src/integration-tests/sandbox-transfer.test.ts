@@ -99,21 +99,23 @@ test.skipIf(!process.env.LETTA_API_KEY)(
       conversationId = (await sdk.conversations.create({ agent_id: agentId }))
         .id;
       const localPath = join(home, "payload.bin");
-      const scenarios = [conversationId, "default"].map((target, i) => ({
-        target,
+      const scenarios = [
+        { target: conversationId, flags: ["--conversation", conversationId] },
+        {
+          target: "default",
+          flags: ["--conversation", "default", "--agent", agentId],
+        },
+        { target: "default", flags: ["--agent", agentId] },
+      ].map((scenario, i) => ({
+        ...scenario,
+        localPath: i === 0 ? localPath : join(home, `payload-${i}.bin`),
         payload: Buffer.from([0, 255, 128, 13, 10, i, 0, 254]),
         remotePath: "",
       }));
       for (const scenario of scenarios) {
-        const { target, payload } = scenario;
-        await writeFile(localPath, payload);
-        const upload = await cli([
-          "upload",
-          localPath,
-          "--conversation",
-          target,
-          ...(target === "default" ? ["--agent", agentId] : []),
-        ]);
+        const { target, payload, localPath: uploadPath, flags } = scenario;
+        await writeFile(uploadPath, payload);
+        const upload = await cli(["upload", uploadPath, ...flags]);
         expect(upload.code, upload.stderr).toBe(0);
         const output = JSON.parse(upload.stdout);
         expect(output).toMatchObject({ agentId, conversationId: target });
@@ -131,17 +133,15 @@ test.skipIf(!process.env.LETTA_API_KEY)(
       expect(concrete?.sandboxId).toBeTruthy();
       expect(defaultSandbox?.sandboxId).toBeTruthy();
       expect(concrete?.sandboxId).not.toBe(defaultSandbox?.sandboxId);
-      // Download from each scope after both uploads and verify the binary contents.
-      for (const { target, payload, remotePath } of scenarios) {
+      // Both default-target forms must reuse the same sandbox and preserve each file.
+      for (const { target, payload, remotePath, flags } of scenarios) {
         const destination = join(home, `download-${target}.bin`);
         const download = await cli([
           "download",
           remotePath,
           "--to",
           destination,
-          "--conversation",
-          target,
-          ...(target === "default" ? ["--agent", agentId] : []),
+          ...flags,
         ]);
         expect(download.code, download.stderr).toBe(0);
         expect(JSON.parse(download.stdout)).toMatchObject({
@@ -168,6 +168,10 @@ test.skipIf(!process.env.LETTA_API_KEY)(
             `agent-${randomUUID()}`,
           ],
           ["--conversation", `conv-${randomUUID()}`],
+          ["--agent", `agent-${randomUUID()}`],
+          ["--conversation", "default"],
+          ["--agent", " "],
+          ["--agent", agentId, "--conversation", ""],
         ]) {
           const failed = await cli(
             [action, action === "upload" ? localPath : ambientPath, ...flags],

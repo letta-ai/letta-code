@@ -75,12 +75,12 @@ letta sandbox download <sandbox-path> \
   --conversation <source-conversation-id> --to <local-path>
 
 # An agent's main/default conversation
-letta sandbox upload <local-path> --conversation default --agent <agent-id>
-letta sandbox download <sandbox-path> \
-  --conversation default --agent <agent-id> --to <local-path>
+letta sandbox upload <local-path> --agent <agent-id>
+letta sandbox download <sandbox-path> --agent <agent-id> --to <local-path>
 ```
 
-- Concrete conversation IDs resolve their owning agent. `default` requires explicit `--agent`.
+- `--agent` alone selects that agent's main/default conversation. Concrete `--conversation` IDs resolve their owning agent.
+- `--conversation default` is also supported, but requires explicit `--agent`; the agent ID is never inferred from the executing session.
 - Target flags override the executing session without changing its identity. Do not replace the subagent's identity environment variables with the parent's.
 - The executing computer's credentials must authorize access to the target.
 - Commands return JSON. Upload returns the stored `/root/downloads/...` path; downloads are limited to that directory. Without `--to`, download saves under the remote file's basename.

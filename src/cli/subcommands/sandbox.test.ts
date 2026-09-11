@@ -64,19 +64,25 @@ describe("sandbox subcommand", () => {
     ).toEqual({ agentId: "agent-parent", conversationId: "conv-parent" });
   });
 
-  test("selects the explicit agent's main sandbox without looking up default", async () => {
-    expect(
-      await resolveSandboxTarget(
-        { conversation: "default", agent: "agent-parent" },
-        noCurrentSession,
-        noLookup,
-      ),
-    ).toEqual({ agentId: "agent-parent", conversationId: "default" });
-  });
+  test.each([
+    { conversation: "default", agent: "agent-parent" },
+    { agent: " agent-parent " },
+  ])(
+    "selects the explicit agent's main sandbox for %j without ambient context",
+    async (target) => {
+      expect(
+        await resolveSandboxTarget(target, noCurrentSession, noLookup),
+      ).toEqual({ agentId: "agent-parent", conversationId: "default" });
+    },
+  );
 
   test.each([
     [{ conversation: "default" }, "requires --agent"],
-    [{ agent: "agent-parent" }, "Specify --conversation"],
+    [{ agent: " " }, "must not be empty"],
+    [{ agent: "agent-local-1" }, "requires a Letta Cloud agent"],
+    [{ agent: "agent-parent", conversation: "" }, "Specify --conversation"],
+    [{ agent: "agent-parent", conversation: " " }, "Specify --conversation"],
+    [{ agent: "agent-parent", conversation: "new" }, "Specify --conversation"],
     [{ conversation: "" }, "Specify --conversation"],
     [{ conversation: "new" }, "Specify --conversation"],
     [{ conversation: "default", agent: " " }, "must not be empty"],
@@ -125,12 +131,16 @@ describe("sandbox subcommand", () => {
     ).rejects.toThrow("Not found or unauthorized");
   });
 
-  test.each([undefined, "conv-other"])(
-    "does not transfer when the server returns scope %j",
-    async (conversationId) => {
+  test.each([
+    { flags: ["--conversation", "conv-parent"], conversationId: undefined },
+    { flags: ["--conversation", "conv-parent"], conversationId: "conv-other" },
+    { flags: ["--agent", "agent-parent"], conversationId: "conv-other" },
+  ])(
+    "does not transfer when the server returns the wrong scope: %j",
+    async ({ flags, conversationId }) => {
       let transferred = false;
       const code = await runSandboxSubcommand(
-        ["upload", "note.txt", "--conversation", "conv-parent"],
+        ["upload", "note.txt", ...flags],
         {
           initializeSettings: async () => {},
           isCloud: async () => true,
