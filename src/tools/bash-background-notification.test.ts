@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { bash } from "@/tools/impl/bash";
 import { kill_bash } from "@/tools/impl/kill-bash";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
@@ -21,8 +24,16 @@ const isWindows = process.platform === "win32";
  * process registry and the queue bridge are module-level singletons, and a
  * shell torn down by a previous test can deliver its exit event here.
  */
-describe.skipIf(isWindows)("Background bash completion notifications", () => {
+describe("Background bash completion notifications", () => {
   let queued: QueuedMessage[] = [];
+  let fixtureDir: string;
+
+  function command(source: string): string {
+    const script = join(fixtureDir, "command.cjs");
+    writeFileSync(script, source);
+    // Preserve the explicit shell exit status used by the old Unix fixtures.
+    return `node "${script}"${isWindows ? "; exit $LASTEXITCODE" : ""}`;
+  }
 
   const startBackground = async (args: {
     command: string;
@@ -71,6 +82,7 @@ describe.skipIf(isWindows)("Background bash completion notifications", () => {
   };
 
   beforeEach(() => {
+    fixtureDir = mkdtempSync(join(tmpdir(), "bash notification-"));
     queued = [];
     clearPendingMessages();
     setMessageQueueAdder((message) => {
@@ -89,6 +101,7 @@ describe.skipIf(isWindows)("Background bash completion notifications", () => {
       }
     }
     backgroundProcesses.clear();
+    rmSync(fixtureDir, { recursive: true, force: true });
   });
 
   test("queues a task notification when a background command succeeds", async () => {
@@ -113,7 +126,9 @@ describe.skipIf(isWindows)("Background bash completion notifications", () => {
 
   test("routes one completion notification after an ordinary command yields", async () => {
     const bashId = await startAutomaticBackground({
-      command: "sleep 0.1; echo 'automatic finish'",
+      command: command(
+        "setTimeout(() => console.log('automatic finish'), 100)",
+      ),
       description: "Run automatic background command",
       parentScope: { agentId: "agent-auto", conversationId: "conv-auto" },
     });
@@ -129,7 +144,9 @@ describe.skipIf(isWindows)("Background bash completion notifications", () => {
 
   test("reports failure after an ordinary command yields", async () => {
     const bashId = await startAutomaticBackground({
-      command: "sleep 0.1; echo 'automatic failure' >&2; exit 9",
+      command: command(
+        "setTimeout(() => { console.error('automatic failure'); process.exitCode = 9; }, 100)",
+      ),
       description: "Run failing automatic command",
     });
 
@@ -142,8 +159,9 @@ describe.skipIf(isWindows)("Background bash completion notifications", () => {
   test("scrubs and bounds automatic completion output", async () => {
     const secret = "automatic-notification-secret";
     const bashId = await startAutomaticBackground({
-      command:
-        "sleep 0.1; node -e \"process.stdout.write('x'.repeat(50000) + (process.env.PASSWORD ?? ''))\"",
+      command: command(
+        "setTimeout(() => process.stdout.write('x'.repeat(50000) + (process.env.PASSWORD ?? '')), 100)",
+      ),
       description: "Print automatic output",
       secretEnv: { PASSWORD: secret },
     });
@@ -156,7 +174,7 @@ describe.skipIf(isWindows)("Background bash completion notifications", () => {
 
   test("reports a failing background command as failed with its exit code", async () => {
     const bashId = await startBackground({
-      command: "echo 'boom' >&2; exit 3",
+      command: command("console.error('boom'); process.exitCode = 3"),
       description: "Failing job",
     });
 
@@ -179,7 +197,7 @@ describe.skipIf(isWindows)("Background bash completion notifications", () => {
 
   test("notifies exactly once when a shell times out", async () => {
     const bashId = await startBackground({
-      command: "sleep 5",
+      command: isWindows ? "Start-Sleep -Seconds 5" : "sleep 5",
       description: "Slow job",
       timeout: 150,
     });
@@ -196,7 +214,7 @@ describe.skipIf(isWindows)("Background bash completion notifications", () => {
 
   test("stays silent when the agent deliberately kills the shell", async () => {
     const bashId = await startBackground({
-      command: "sleep 5",
+      command: isWindows ? "Start-Sleep -Seconds 5" : "sleep 5",
       description: "Cancelled job",
     });
 
@@ -208,7 +226,7 @@ describe.skipIf(isWindows)("Background bash completion notifications", () => {
 
   test("stays silent when an automatically yielded shell is stopped", async () => {
     const bashId = await startAutomaticBackground({
-      command: "sleep 5",
+      command: isWindows ? "Start-Sleep -Seconds 5" : "sleep 5",
       description: "Cancel automatic command",
     });
 

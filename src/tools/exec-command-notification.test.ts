@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   __clearExecSessionsForTests,
   exec_command,
@@ -14,8 +16,16 @@ import {
 
 const isWindows = process.platform === "win32";
 
-describe.skipIf(isWindows)("Exec command completion notifications", () => {
+describe("Exec command completion notifications", () => {
   let queued: QueuedMessage[] = [];
+  let fixtureDir: string;
+
+  function command(source: string): string {
+    const script = join(fixtureDir, "command.cjs");
+    fs.writeFileSync(script, source);
+    // Test notification routing, not PowerShell's default native-exit mapping.
+    return `node "${script}"${isWindows ? "; exit $LASTEXITCODE" : ""}`;
+  }
 
   function notificationsFor(sessionId: string): QueuedMessage[] {
     return queued.filter((message) =>
@@ -45,6 +55,7 @@ describe.skipIf(isWindows)("Exec command completion notifications", () => {
   }
 
   beforeEach(() => {
+    fixtureDir = fs.mkdtempSync(join(tmpdir(), "exec-notification-"));
     queued = [];
     clearPendingMessages();
     setMessageQueueAdder((message) => queued.push(message));
@@ -65,11 +76,14 @@ describe.skipIf(isWindows)("Exec command completion notifications", () => {
     }
     backgroundProcesses.clear();
     __clearExecSessionsForTests();
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
   });
 
   test("notifies once when a yielded command succeeds", async () => {
     const first = await exec_command({
-      cmd: "printf start; sleep 0.4; printf done",
+      cmd: command(
+        "process.stdout.write('start'); setTimeout(() => process.stdout.write('done'), 400)",
+      ),
       description: "Run slow check",
       yield_time_ms: 250,
       parentScope: { agentId: "agent-1", conversationId: "conv-1" },
@@ -97,7 +111,9 @@ describe.skipIf(isWindows)("Exec command completion notifications", () => {
 
   test("notifies when a yielded command fails", async () => {
     const first = await exec_command({
-      cmd: "sleep 0.3; printf boom >&2; exit 7",
+      cmd: command(
+        "setTimeout(() => { process.stderr.write('boom'); process.exitCode = 7; }, 400)",
+      ),
       description: "Run failing check",
       yield_time_ms: 250,
     });
@@ -111,9 +127,11 @@ describe.skipIf(isWindows)("Exec command completion notifications", () => {
 
   test("does not notify for a command that finishes before yielding", async () => {
     const result = await exec_command({
-      cmd: "printf done",
+      cmd: command("process.stdout.write('done')"),
       description: "Run quick check",
-      yield_time_ms: 250,
+      // Windows PowerShell startup itself can exceed 250ms. This case tests
+      // completion before the chosen yield deadline, not shell startup speed.
+      yield_time_ms: isWindows ? 10_000 : 250,
     });
 
     expect(result.output).toContain("Process exited with code 0");
@@ -123,7 +141,7 @@ describe.skipIf(isWindows)("Exec command completion notifications", () => {
 
   test("write_stdin completion replaces the notification", async () => {
     const first = await exec_command({
-      cmd: "sleep 0.4; printf done",
+      cmd: command("setTimeout(() => process.stdout.write('done'), 400)"),
       description: "Wait for check",
       yield_time_ms: 250,
     });
@@ -132,7 +150,7 @@ describe.skipIf(isWindows)("Exec command completion notifications", () => {
     const result = await write_stdin({
       session_id: sessionId,
       chars: "",
-      yield_time_ms: 1_000,
+      yield_time_ms: isWindows ? 10_000 : 1_000,
     });
     expect(result.output).toContain("Process exited with code 0");
     expect(result.output).toContain("done");
@@ -144,7 +162,9 @@ describe.skipIf(isWindows)("Exec command completion notifications", () => {
   test("scrubs secrets and bounds notification output", async () => {
     const secret = "notification-secret";
     const first = await exec_command({
-      cmd: "sleep 0.3; node -e \"process.stdout.write((process.env.PASSWORD ?? '') + 'x'.repeat(50000))\"",
+      cmd: command(
+        "setTimeout(() => process.stdout.write((process.env.PASSWORD ?? '') + 'x'.repeat(50000)), 400)",
+      ),
       description: "Print bounded output",
       yield_time_ms: 250,
       secretEnv: { PASSWORD: secret },
