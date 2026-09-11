@@ -69,7 +69,7 @@ Run upload where the local file exists; run download where the local copy should
 letta sandbox upload <local-path>
 letta sandbox download <sandbox-path> --to <local-path>
 
-# Explicit Cloud conversation
+# Explicit Cloud conversation (sandboxes are per-conversation)
 letta sandbox upload <local-path> --conversation <destination-conversation-id>
 letta sandbox download <sandbox-path> \
   --conversation <source-conversation-id> --to <local-path>
