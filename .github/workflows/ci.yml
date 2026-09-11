@@ -443,6 +443,15 @@ jobs:
         run: |
           bun run src/test-utils/headless-scenario.ts --backend local --model "ollama/letta-ci-smoke" --output text --parallel on --smoke
 
+  ollama-tailscale:
+    needs: [classify, check]
+    if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    uses: ./.github/workflows/ollama-e2e.yml
+    secrets:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      TAILSCALE_ACCESS_TOKEN: ${{ secrets.TAILSCALE_ACCESS_TOKEN }}
+
   reflection-headless:
     needs: [classify, check]
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
