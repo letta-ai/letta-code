@@ -84,7 +84,10 @@ import {
   shouldPersistSessionState,
 } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
-import { loadTools } from "./tools/manager";
+import {
+  loadStartupTools,
+  type StartupToolsetPreference,
+} from "./tools/letta-toolset";
 import { clearPersistedClientToolRules } from "./tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
 import { startOrphanDetection } from "./utils/orphan-detection";
@@ -337,29 +340,6 @@ async function printInfo() {
   } else {
     console.log("Pinned agents: (none)");
   }
-}
-
-/**
- * Helper to determine which model identifier to pass to loadTools()
- * based on user's model and/or toolset preferences.
- */
-function getModelForToolLoading(
-  specifiedModel?: string,
-  specifiedToolset?: "auto" | "codex" | "default" | "gemini",
-): string | undefined {
-  // If toolset is explicitly specified, use a dummy model from that provider
-  // to trigger the correct toolset loading logic
-  if (specifiedToolset === "codex") {
-    return "openai/gpt-4";
-  }
-  if (specifiedToolset === "gemini") {
-    return "google_ai/gemini-3.1-pro-preview";
-  }
-  if (specifiedToolset === "default") {
-    return "anthropic/claude-sonnet-4";
-  }
-  // Otherwise, use the specified model (or undefined for auto-detection)
-  return specifiedModel;
 }
 
 function getStartupTargetLookupOrderForCredentials({
@@ -972,10 +952,11 @@ async function main(): Promise<void> {
     specifiedToolset !== "codex" &&
     specifiedToolset !== "default" &&
     specifiedToolset !== "gemini" &&
+    specifiedToolset !== "letta" &&
     specifiedToolset !== "auto"
   ) {
     console.error(
-      `Error: Invalid toolset "${specifiedToolset}". Must be "auto", "codex", "default", or "gemini".`,
+      `Error: Invalid toolset "${specifiedToolset}". Must be "auto", "letta", "codex", "default", or "gemini".`,
     );
     process.exit(1);
   }
@@ -1327,12 +1308,11 @@ async function main(): Promise<void> {
   if (isHeadless) {
     markMilestone("HEADLESS_MODE_START");
     // For headless mode, load tools synchronously (respecting model/toolset when provided)
-    const modelForTools = getModelForToolLoading(
-      specifiedModel,
-      specifiedToolset as "auto" | "codex" | "default" | "gemini" | undefined,
-    );
-    // Exclude interactive-only tools that can't function without a live user session
-    await loadTools(modelForTools, { exclude: ["AskUserQuestion"] });
+    await loadStartupTools({
+      modelIdentifier: specifiedModel,
+      toolset: specifiedToolset as StartupToolsetPreference | undefined,
+      exclude: ["AskUserQuestion"],
+    });
     markMilestone("TOOLS_LOADED");
 
     // Keep headless startup in sync with interactive name resolution.
@@ -1385,7 +1365,7 @@ async function main(): Promise<void> {
     preResolvedAgent?: AgentState | null;
     model?: string;
     systemPromptPreset?: string;
-    toolset?: "auto" | "codex" | "default" | "gemini";
+    toolset?: StartupToolsetPreference;
     skillsDirectory?: string;
   }) {
     const [showKeybindingSetup, setShowKeybindingSetup] = useState<
@@ -1994,11 +1974,7 @@ async function main(): Promise<void> {
 
         // Load an initial toolset for startup (explicit --toolset or model-derived).
         // App.tsx will reconcile persisted per-agent toolset preference after agent metadata loads.
-        const modelForTools = getModelForToolLoading(
-          model,
-          toolset as "auto" | "codex" | "default" | "gemini" | undefined,
-        );
-        await loadTools(modelForTools);
+        await loadStartupTools({ modelIdentifier: model, toolset });
 
         setLoadingState("initializing");
         const { createAgent } = await import("@/agent/create");
@@ -2627,12 +2603,7 @@ async function main(): Promise<void> {
       preResolvedAgent: nameResolvedAgent,
       model: specifiedModel,
       systemPromptPreset: systemPromptPreset,
-      toolset: specifiedToolset as
-        | "auto"
-        | "codex"
-        | "default"
-        | "gemini"
-        | undefined,
+      toolset: specifiedToolset as StartupToolsetPreference | undefined,
       skillsDirectory: skillsDirectory,
     }),
     {

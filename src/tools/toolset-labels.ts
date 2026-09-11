@@ -1,16 +1,12 @@
+import { TOOLSET_OPTIONS } from "./toolset-options";
+
 /**
  * Human-readable display names for toolset IDs.
  * Kept in a separate file to avoid pulling UI formatting logic into the heavy toolset.ts module.
  */
-export const TOOLSET_DISPLAY_NAMES: Record<string, string> = {
-  default: "Claude",
-  codex: "Codex",
-  codex_snake: "Codex (snake_case)",
-  gemini: "Gemini",
-  gemini_snake: "Gemini (snake_case)",
-  none: "None",
-  auto: "Auto",
-};
+export const TOOLSET_DISPLAY_NAMES: Record<string, string> = Object.fromEntries(
+  TOOLSET_OPTIONS.map((option) => [option.id, option.display_name]),
+);
 
 /**
  * Returns the human-readable display name for a toolset ID.

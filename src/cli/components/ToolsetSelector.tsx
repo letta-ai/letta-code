@@ -4,61 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import { formatToolsetName } from "@/tools/toolset-labels";
+import { TOOLSET_OPTIONS } from "@/tools/toolset-options";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
 // Horizontal line character (matches approval dialogs)
 const SOLID_LINE = "─";
-
-interface ToolsetOption {
-  id: ToolsetPreference;
-  label: string;
-  description: string;
-  isFeatured?: boolean;
-}
-
-const toolsets: ToolsetOption[] = [
-  {
-    id: "auto",
-    label: "Auto",
-    description: "Auto-select based on the model",
-    isFeatured: true,
-  },
-  {
-    id: "none",
-    label: "None",
-    description: "Remove all Letta Code tools from your agent",
-    isFeatured: true,
-  },
-  {
-    id: "default",
-    label: "Claude toolset",
-    description: "Optimized for Anthropic models",
-    isFeatured: true,
-  },
-  {
-    id: "codex",
-    label: "Codex toolset",
-    description: "Optimized for GPT/Codex models",
-    isFeatured: true,
-  },
-  {
-    id: "gemini",
-    label: "Gemini toolset",
-    description: "Optimized for Google Gemini models",
-    isFeatured: true,
-  },
-  {
-    id: "codex_snake",
-    label: "Codex toolset (snake_case)",
-    description: "Optimized for GPT/Codex models (snake_case)",
-  },
-  {
-    id: "gemini_snake",
-    label: "Gemini toolset (snake_case)",
-    description: "Optimized for Google Gemini models (snake_case)",
-  },
-];
 
 interface ToolsetSelectorProps {
   currentToolset?: ToolsetName;
@@ -79,17 +30,17 @@ export function ToolsetSelector({
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   const featuredToolsets = useMemo(
-    () => toolsets.filter((toolset) => toolset.isFeatured),
+    () => TOOLSET_OPTIONS.filter((toolset) => toolset.is_featured),
     [],
   );
 
   const visibleToolsets = useMemo(() => {
-    if (showAll) return toolsets;
+    if (showAll) return TOOLSET_OPTIONS;
     if (featuredToolsets.length > 0) return featuredToolsets;
-    return toolsets;
+    return TOOLSET_OPTIONS;
   }, [featuredToolsets, showAll]);
 
-  const canToggleShowAll = featuredToolsets.length < toolsets.length;
+  const canToggleShowAll = featuredToolsets.length < TOOLSET_OPTIONS.length;
 
   useEffect(() => {
     if (selectedIndex >= visibleToolsets.length) {
