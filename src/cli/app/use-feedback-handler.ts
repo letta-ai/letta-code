@@ -3,6 +3,7 @@
 import { type MutableRefObject, useCallback } from "react";
 import type { SessionStats } from "@/agent/stats";
 import {
+  feedbackResultMessage,
   getFeedbackClientType,
   submitFeedbackMetadata,
 } from "@/backend/api/metadata";
@@ -75,7 +76,7 @@ export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
             ...safeSettings
           } = settings;
 
-          await submitFeedbackMetadata(
+          const result = await submitFeedbackMetadata(
             apiKey,
             settingsManager.getOrCreateDeviceId(),
             {
@@ -125,8 +126,11 @@ export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
           );
 
           cmd.finish(
-            "Feedback submitted! To chat with the Letta dev team live, join our Discord (https://discord.gg/letta).",
-            true,
+            result.message ??
+              (result.success
+                ? "Feedback submitted! To chat with the Letta dev team live, join our Discord (https://discord.gg/letta)."
+                : feedbackResultMessage(result)),
+            result.success,
           );
         } catch (error) {
           const errorDetails = formatErrorDetails(error, agentId);
