@@ -38,7 +38,7 @@ Keep the returned paths, repository/branch, and next action in context, then cre
 letta teleport cloud
 ```
 
-### Cloud → local or another computer
+### Cloud → other computers
 
 Have a remote subagent download any needed files first. With Desktop open and Remote Access enabled:
 
@@ -46,21 +46,19 @@ Have a remote subagent download any needed files first. With Desktop open and Re
 letta teleport local
 ```
 
-If several computers are available, choose one from `letta teleport list`:
+To choose a specific computer, list what's available:
+
+```bash
+letta teleport list
+```
+
+Use a returned computer name, device ID, or connection ID:
 
 ```bash
 letta teleport <computer>
 ```
 
 **Run teleport alone as the final tool call.** After success, do not poll or run more source-side tools; the same conversation resumes at the destination automatically. Set the working directory and check required setup there. If teleport fails, stay on the source and resolve the error before retrying. The Cloud sandbox remains available while you work elsewhere.
-
-## Discover computers
-
-```bash
-letta teleport list
-```
-
-This lists accessible online Cloud-registered computers. Use a returned computer name, device ID, or connection ID rather than guessing.
 
 ## Transfer files to or from Cloud
 
