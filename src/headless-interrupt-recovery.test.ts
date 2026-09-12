@@ -23,7 +23,7 @@ let turns = 0;
 const backend = new FakeHeadlessBackend("agent-headless-interrupt", {
   async execute(input) {
     turns++;
-    console.log(JSON.stringify({ type: "fixture_input", turn: turns, body: input.body }));
+    console.log(JSON.stringify({ type: "fixture_input", turn: turns, body: { messages: input.body.messages } }));
     if (turns === 1) {
       await monitor({ description: "Watch headless interrupt events", persistent: true,
         ws: { url: process.env.MONITOR_TEST_URL },
@@ -50,17 +50,34 @@ await handleHeadlessCommand(parseCliArgs([
 
 test("headless interrupt stops a real Monitor, preserves its queued event, and sends recovery on the next turn", async () => {
   const home = mkdtempSync(join(tmpdir(), "letta-headless-monitor-interrupt-"));
-  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  let onHandshake!: (accept: (verified: boolean) => void) => void;
+  const handshakeRequested = new Promise<(verified: boolean) => void>(
+    (resolve) => {
+      onHandshake = resolve;
+    },
+  );
+  const server = new WebSocketServer({
+    host: "127.0.0.1",
+    port: 0,
+    verifyClient: (_info, done) => {
+      // Hold the handshake until the first turn is idle. This forces the
+      // ordering that used to let the test send before a socket existed.
+      onHandshake(done);
+    },
+  });
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const address = server.address();
   if (!address || typeof address === "string")
     throw new Error("Missing socket address");
-  let socket: WebSocket | undefined;
+  let socket: WebSocket;
   let closed = false;
-  server.on("connection", (client) => {
-    socket = client;
-    client.once("close", () => {
-      closed = true;
+  const connected = new Promise<void>((resolve) => {
+    server.once("connection", (client) => {
+      socket = client;
+      client.once("close", () => {
+        closed = true;
+      });
+      resolve();
     });
   });
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -141,25 +158,39 @@ test("headless interrupt stops a real Monitor, preserves its queued event, and s
           if (event.type === "result") {
             results++;
             if (results === 1) {
-              // Result is emitted before the turn's finally block. Wait for
-              // that epilogue before testing an actually idle interrupt.
-              setTimeout(() => {
-                survivedCompletion = socket?.readyState === 1 && !closed;
-                interrupt("idle-interrupt");
-              }, 200);
+              // Unlike interrupt, initialize is handled by the main loop,
+              // after the turn's finally block has finished.
+              send({
+                type: "control_request",
+                request_id: "after-first-turn",
+                request: { subtype: "initialize" },
+              });
             } else if (results === 3) finish();
+          }
+          if (
+            event.type === "control_response" &&
+            (event.response as { request_id?: string })?.request_id ===
+              "after-first-turn"
+          ) {
+            void (async () => {
+              const accept = await handshakeRequested;
+              accept(true);
+              await connected;
+              survivedCompletion = socket.readyState === 1 && !closed;
+              interrupt("idle-interrupt");
+            })().catch(finish);
           }
           if (
             event.type === "control_response" &&
             (event.response as { request_id?: string })?.request_id ===
               "idle-interrupt"
           ) {
-            survivedIdleInterrupt = socket?.readyState === 1 && !closed;
+            survivedIdleInterrupt = socket.readyState === 1 && !closed;
             user("wait until interrupted");
           }
           if (event.type === "fixture_waiting") {
             waiting = true;
-            socket?.send("queued real Monitor event before interrupt");
+            socket.send("queued real Monitor event before interrupt");
           }
           if (waiting && !interrupted && event.type === "queue_blocked") {
             interrupted = true;
