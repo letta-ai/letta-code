@@ -56,6 +56,13 @@ Common provider prefixes:
 - `google_ai/` - Gemini models
 - `google_vertex/` - Vertex AI
 - `openrouter/` - Various providers
+- `opencode/` - OpenCode Zen
+- `opencode-go/` - OpenCode Go
+
+Both OpenCode variants authenticate with `OPENCODE_API_KEY`. OpenCode Go
+(`opencode-go/*`) additionally requires an `x-opencode-session` header on every
+request, including the compaction path; omitting it returns HTTP 400
+`MissingSessionID`. OpenCode Zen (`opencode/*`) does not use that header.
 
 ### Step 2: Update the Owning Catalog
 
