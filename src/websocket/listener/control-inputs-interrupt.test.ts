@@ -1,13 +1,33 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { type WebSocket, WebSocketServer } from "ws";
+import { bash } from "@/tools/impl/bash";
+import { monitor } from "@/tools/impl/monitor";
+import { MONITOR_EVENT_BATCH_MS } from "@/tools/impl/monitor-event-stream";
+import {
+  backgroundProcesses,
+  clearBackgroundProcessCleanup,
+} from "@/tools/impl/process_manager";
 import { handleAbortMessageInput } from "./control-inputs";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
+import {
+  clearProcessServices,
+  installProcessEventRouting,
+} from "./process-services";
 import { scheduleQueuePump } from "./queue";
 import { setActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import { finishListenerTurn } from "./turn-terminal";
 import type { IncomingMessage, StartListenerOptions } from "./types";
+
+function requireFixture<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("Missing interrupt test fixture");
+  return value;
+}
 
 function createOpenTransport(): ListenerTransport {
   return {
@@ -29,8 +49,12 @@ function createDeferred(): {
   return { promise, resolve };
 }
 
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 100,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     if (predicate()) {
       return;
     }
@@ -41,6 +65,198 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 
 describe("listener interrupt queue handoff", () => {
   afterEach(() => setActiveRuntime(null));
+
+  test("abort stops earlier-turn monitor sources only in the exact runtime scope", async () => {
+    const listener = createRuntime();
+    const socket = createOpenTransport();
+    const options = {} as StartListenerOptions;
+    const scopes = [
+      { agentId: "agent-monitor-a", conversationId: "shared" },
+      { agentId: "agent-monitor-a", conversationId: "other" },
+      { agentId: "agent-monitor-b", conversationId: "shared" },
+    ];
+    const runtimes = scopes.map((scope) =>
+      getOrCreateScopedRuntime(listener, scope.agentId, scope.conversationId),
+    );
+    const target = requireFixture(runtimes[0]);
+    const scratchpad = mkdtempSync(join(tmpdir(), "interrupt-monitors-"));
+    const previousScratchpad = process.env.LETTA_SCRATCHPAD;
+    process.env.LETTA_SCRATCHPAD = scratchpad;
+    const taskIds: string[] = [];
+    const peers: WebSocket[] = [];
+    const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+    server.on("connection", (peer) => peers.push(peer));
+    const processQueuedTurn = mock(async (_incoming: IncomingMessage) => {});
+    setActiveRuntime(listener);
+    installProcessEventRouting({
+      runtime: listener,
+      processTransport: socket,
+      opts: options,
+      processQueuedTurn,
+    });
+    try {
+      await new Promise<void>((resolve) => server.once("listening", resolve));
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("No WS port");
+      // Start all sources in an earlier turn, not under the lease being aborted.
+      const earlier = target.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+      });
+      const script = join(scratchpad, "source.js");
+      writeFileSync(
+        script,
+        "console.log(process.pid); setInterval(() => {}, 1000);",
+      );
+      const command = await monitor({
+        command: `${JSON.stringify(process.execPath)} ${JSON.stringify(script)}`,
+        description: "target command",
+        persistent: true,
+        parentScope: scopes[0],
+      });
+      taskIds.push(command.taskId);
+      for (const scope of scopes) {
+        const result = await monitor({
+          ws: { url: `ws://127.0.0.1:${address.port}` },
+          description: `socket ${scope.agentId}/${scope.conversationId}`,
+          persistent: true,
+          parentScope: scope,
+        });
+        taskIds.push(result.taskId);
+        await waitFor(() => peers.length === taskIds.length - 1, 4000);
+      }
+      const beforeBash = new Set(backgroundProcesses.keys());
+      await bash({
+        command: `${JSON.stringify(process.execPath)} ${JSON.stringify(script)}`,
+        description: "ordinary background task survives monitor cancellation",
+        run_in_background: true,
+        parentScope: scopes[0],
+      });
+      const bashId = requireFixture(
+        [...backgroundProcesses.keys()].find((id) => !beforeBash.has(id)),
+      );
+      taskIds.push(bashId);
+      const bashState = requireFixture(backgroundProcesses.get(bashId));
+      await waitFor(() => (bashState.totalStdoutLines ?? 0) > 0, 4000);
+      const bashPid = Number(
+        readFileSync(requireFixture(bashState.outputFile), "utf8").trim(),
+      );
+      expect(bashPid).toBeGreaterThan(0);
+      const commandState = requireFixture(
+        backgroundProcesses.get(command.taskId),
+      );
+      await waitFor(() => (commandState.totalStdoutLines ?? 0) > 0, 4000);
+      const pid = Number(
+        readFileSync(requireFixture(commandState.outputFile), "utf8").trim(),
+      );
+      expect(pid).toBeGreaterThan(0);
+      process.kill(pid, 0);
+      await waitFor(() => target.queueRuntime.length > 0, 4000);
+      finishListenerTurn(target, earlier, {
+        stopReason: "end_turn",
+        socket,
+        agentId: requireFixture(scopes[0]).agentId,
+        conversationId: requireFixture(scopes[0]).conversationId,
+      });
+      const later = target.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+      });
+      target.turnLifecycle.setRunId(later, "run-later");
+      // Keep the control scopes busy so their real routed notifications remain inspectable.
+      for (const runtime of runtimes.slice(1)) {
+        runtime.turnLifecycle.begin({
+          origin: "message",
+          workingDirectory: process.cwd(),
+        });
+      }
+      const baseline = target.queueRuntime.peek().map((item) => item.id);
+      requireFixture(peers[0]).send("buffered-before-cancel");
+      const wsState = requireFixture(
+        backgroundProcesses.get(requireFixture(taskIds[1])),
+      );
+      await waitFor(() => (wsState.totalStdoutLines ?? 0) > 0, 4000);
+      // The frame reached the actual source but has not reached its batch timer.
+      expect(target.queueRuntime.peek().map((item) => item.id)).toEqual(
+        baseline,
+      );
+      const cancellation = createDeferred();
+      expect(
+        await handleAbortMessageInput(
+          listener,
+          {
+            command: {
+              type: "abort_message",
+              runtime: {
+                agent_id: requireFixture(scopes[0]).agentId,
+                conversation_id: requireFixture(scopes[0]).conversationId,
+              },
+              run_id: "run-later",
+            },
+            socket,
+            opts: options,
+            processQueuedTurn,
+          },
+          {
+            cancelRun: async () => cancellation.promise,
+            cancelConversation: async () => {},
+          },
+        ),
+      ).toBe(true);
+      // Cancellation must stop local sources without waiting for the backend.
+      expect(commandState.status).not.toBe("running");
+      expect(wsState.status).not.toBe("running");
+      await waitFor(() => requireFixture(peers[0]).readyState === 3, 4000);
+      await waitFor(() => {
+        try {
+          process.kill(pid, 0);
+          return false;
+        } catch {
+          return true;
+        }
+      }, 4000);
+      for (const peer of peers.slice(1))
+        peer.send("still-delivering-after-cancel");
+      await waitFor(
+        () =>
+          runtimes.slice(1).every((runtime) => runtime.queueRuntime.length > 0),
+        4000,
+      );
+      await Bun.sleep(MONITOR_EVENT_BATCH_MS * 2);
+      expect(target.queueRuntime.peek().map((item) => item.id)).toEqual(
+        baseline,
+      );
+      for (const id of taskIds.slice(2))
+        expect(backgroundProcesses.get(id)?.status).toBe("running");
+      for (const runtime of runtimes.slice(1)) {
+        expect(JSON.stringify(runtime.queueRuntime.peek())).toContain(
+          "still-delivering-after-cancel",
+        );
+      }
+      expect(bashState.status).toBe("running");
+      process.kill(bashPid, 0);
+      expect(processQueuedTurn).not.toHaveBeenCalled();
+      cancellation.resolve();
+    } finally {
+      for (const id of taskIds) {
+        const state = backgroundProcesses.get(id);
+        if (state) {
+          state.completionNotificationSuppressed = true;
+          state.status = "failed";
+          state.process.kill("SIGKILL");
+          clearBackgroundProcessCleanup(id);
+          backgroundProcesses.delete(id);
+        }
+      }
+      for (const peer of peers) peer.terminate();
+      server.close();
+      clearProcessServices(listener);
+      if (previousScratchpad === undefined) delete process.env.LETTA_SCRATCHPAD;
+      else process.env.LETTA_SCRATCHPAD = previousScratchpad;
+      rmSync(scratchpad, { recursive: true, force: true });
+    }
+  }, 15000);
 
   test("does not release the next turn before cancellation fallback settles", async () => {
     const listener = createRuntime();

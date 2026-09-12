@@ -10,11 +10,15 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocketServer } from "ws";
+import { runWithRuntimeContext } from "@/runtime-context";
 import {
   ANTHROPIC_DEFAULT_TOOLS,
+  executeTool,
   GEMINI_DEFAULT_TOOLS,
   OPENAI_DEFAULT_TOOLS,
   OPENAI_PASCAL_TOOLS,
+  prepareToolExecutionContextForSpecificTools,
+  releaseToolExecutionContext,
 } from "@/tools/manager";
 import MonitorSchema from "@/tools/schemas/Monitor.json";
 import {
@@ -174,6 +178,105 @@ describe("Monitor", () => {
         command: "printf 'ok'\rprintf 'hidden'",
       }),
     ).rejects.toThrow("control characters");
+  });
+
+  test("does not start either source after its tool execution was interrupted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const size = backgroundProcesses.size;
+    for (const source of [
+      { command: nodeCommand("setInterval(() => {}, 1000)") },
+      { ws: { url: "ws://127.0.0.1:1" } },
+    ]) {
+      await expect(
+        monitor({
+          ...source,
+          description: "Interrupted before startup",
+          persistent: true,
+          signal: controller.signal,
+        }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+    }
+    expect(backgroundProcesses.size).toBe(size);
+    expect(queuedMessages).toEqual([]);
+  });
+
+  test("a pending tool-start handler cannot launch a monitor after interruption", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Monitor"],
+      {
+        modEvents: {
+          async emit(name) {
+            if (name === "tool_start") {
+              entered.resolve();
+              await release.promise;
+            }
+            return { diagnostics: [], handlerCount: 1, name, results: [] };
+          },
+        },
+      },
+    );
+    const size = backgroundProcesses.size;
+    try {
+      const execution = executeTool(
+        "Monitor",
+        {
+          description: "Delayed startup",
+          command: nodeCommand("setInterval(() => {}, 1000)"),
+          persistent: true,
+        },
+        { toolContextId: prepared.contextId, signal: controller.signal },
+      );
+      await entered.promise;
+      controller.abort();
+      release.resolve();
+      expect((await execution).status).toBe("error");
+      expect(backgroundProcesses.size).toBe(size);
+      expect(queuedMessages).toEqual([]);
+    } finally {
+      release.resolve();
+      releaseToolExecutionContext(prepared.contextId);
+    }
+  });
+
+  test("manager-created monitors keep the captured conversation scope", async () => {
+    const scope = {
+      agentId: "agent-captured",
+      conversationId: "conv-captured",
+    };
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Monitor"],
+      { runtimeContext: scope },
+    );
+    try {
+      const result = await runWithRuntimeContext(
+        { agentId: "agent-other", conversationId: "conv-other" },
+        () =>
+          executeTool(
+            "Monitor",
+            {
+              description: "Captured owner",
+              command: nodeCommand('console.log("captured event")'),
+              timeout_ms: 5000,
+            },
+            { toolContextId: prepared.contextId },
+          ),
+      );
+      expect(result.status).toBe("success");
+      await waitFor(() => queuedMessages.length > 0);
+      expect(
+        queuedMessages.every(
+          (message) =>
+            message.agentId === scope.agentId &&
+            message.conversationId === scope.conversationId,
+        ),
+      ).toBe(true);
+    } finally {
+      releaseToolExecutionContext(prepared.contextId);
+    }
   });
 
   test("accepts an empty ws placeholder and uses the reference defaults", async () => {

@@ -18,6 +18,7 @@ import { Readable, Writable } from "node:stream";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { type Instance, render } from "ink";
+import { WebSocketServer } from "ws";
 import { __testSetBackend } from "@/backend";
 import {
   type BackendMode,
@@ -32,6 +33,11 @@ import {
 } from "@/backend/dev/headless-turn-executor";
 import { App } from "@/cli/App";
 import { settingsManager } from "@/settings-manager";
+import { monitor } from "@/tools/impl/monitor";
+import {
+  backgroundProcesses,
+  clearBackgroundProcessCleanup,
+} from "@/tools/impl/process_manager";
 import {
   addToMessageQueue,
   clearPendingMessages,
@@ -138,6 +144,39 @@ class DelayedInterruptExecutor implements HeadlessTurnExecutor {
   }
 }
 
+const monitorSources = new Set<WebSocketServer>();
+const monitorIds = new Set<string>();
+
+async function startMonitor(scope: {
+  agentId: string;
+  conversationId: string;
+}) {
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  monitorSources.add(server);
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new Error("Missing socket address");
+  const connected = new Promise<import("ws").WebSocket>((resolve) =>
+    server.once("connection", resolve),
+  );
+  const result = await monitor({
+    description: "Watch interrupt fixture events",
+    ws: { url: `ws://127.0.0.1:${address.port}` },
+    persistent: true,
+    parentScope: scope,
+  });
+  monitorIds.add(result.taskId);
+  const socket = await connected;
+  const state = backgroundProcesses.get(result.taskId);
+  if (!state) throw new Error("Monitor was not registered");
+  let closed = false;
+  socket.once("close", () => {
+    closed = true;
+  });
+  return { socket, state, isClosed: () => closed };
+}
+
 const renderedInstances = new Set<Instance>();
 let previousBackendMode: BackendMode;
 let previousHome: string | undefined;
@@ -160,6 +199,21 @@ afterEach(async () => {
     instance.cleanup();
   }
   renderedInstances.clear();
+  for (const id of monitorIds) {
+    const state = backgroundProcesses.get(id);
+    if (state) {
+      state.completionNotificationSuppressed = true;
+      state.process.kill();
+    }
+    clearBackgroundProcessCleanup(id);
+    backgroundProcesses.delete(id);
+  }
+  monitorIds.clear();
+  for (const server of monitorSources) {
+    for (const socket of server.clients) socket.terminate();
+    server.close();
+  }
+  monitorSources.clear();
   setMessageQueueAdder(null);
   clearPendingMessages();
   __testSetBackend(null);
@@ -214,6 +268,38 @@ async function typePrompt(stdin: NodeJS.ReadStream, text: string) {
 }
 
 describe("TUI interrupt queue lifecycle", () => {
+  test("a real Monitor survives normal completion and idle Esc", async () => {
+    const inputs: HeadlessTurnExecutorInput[] = [];
+    const { stdin } = await renderTestApp({
+      async execute(input) {
+        inputs.push(input);
+        return createAssistantMessageStream();
+      },
+    });
+    await typePrompt(stdin, "complete normally");
+    await waitFor(() => inputs.length === 1, "the normal turn");
+    const input = inputs[0];
+    if (!input) throw new Error("Missing first turn");
+    const source = await startMonitor(input);
+    // An event drives another complete turn while the source stays connected.
+    source.socket.send("normal monitor event");
+    await waitFor(() => inputs.length === 2, "the Monitor notification turn");
+    await sleep(300);
+    expect(source.state.status).toBe("running");
+    stdin.push("\u001b");
+    await sleep(100);
+    expect(source.isClosed()).toBe(false);
+    source.socket.send("still watching after idle Esc");
+    await waitFor(() => inputs.length === 3, "the event after idle Esc");
+    expect(JSON.stringify(inputs[2]?.body)).toContain(
+      "still watching after idle Esc",
+    );
+    expect(JSON.stringify(inputs[2]?.body)).not.toContain(
+      "Any pending monitors",
+    );
+    expect(source.state.status).toBe("running");
+  }, 15_000);
+
   test("an idle Monitor notification starts an agent turn without user input", async () => {
     const executor = new DelayedInterruptExecutor();
     await renderTestApp(executor);
@@ -237,12 +323,20 @@ describe("TUI interrupt queue lifecycle", () => {
     await typePrompt(stdin, "start turn");
     await waitFor(() => executor.inputs.length === 1, "the typed initial turn");
 
-    addToMessageQueue({
-      kind: "task_notification",
-      text: monitorNotification("queued before Esc"),
-    });
+    const input = executor.inputs[0];
+    if (!input) throw new Error("Missing first turn");
+    const source = await startMonitor(input);
+    source.socket.send("queued before Esc");
+    await waitFor(
+      () => source.state.stdout.join("\n").includes("queued before Esc"),
+      "the real Monitor event to be received",
+    );
+    // Monitor batches events for 200ms before handing them to the TUI queue.
+    await sleep(300);
     stdin.push("\u001b");
     await executor.abortObserved;
+    await waitFor(source.isClosed, "the Monitor socket to close on Esc");
+    expect(source.state.status).not.toBe("running");
 
     // Cancellation has not settled yet: nothing may start a replacement turn.
     await sleep(100);
@@ -253,9 +347,12 @@ describe("TUI interrupt queue lifecycle", () => {
       () => executor.inputs.length === 2,
       "the queued notification turn after cancellation settled",
     );
-    expect(JSON.stringify(executor.inputs[1]?.body)).toContain(
-      "queued before Esc",
+    const nextTurn = JSON.stringify(executor.inputs[1]?.body);
+    expect(nextTurn).toContain("queued before Esc");
+    expect(nextTurn).toContain(
+      "Any pending monitors in this conversation were also cancelled",
     );
+    expect(nextTurn).toContain("Do not restart them unless the user asks.");
   }, 15_000);
 
   test("typed prompt, Esc, then a notification that arrives after cancellation settled", async () => {
