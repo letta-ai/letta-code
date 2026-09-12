@@ -33,12 +33,12 @@ message identifies the current agent's backend; verify it for a different target
 Keep the target's configured local storage or API endpoint. Where the investigator
 runs does not determine which backend holds the incident.
 
-Replace the example IDs below with the **target** IDs identified for the incident.
-Save command output to the chosen scratch location using the host's available
-capabilities, then parse the JSON into a compact inventory:
+Replace the example IDs below with the **target** IDs identified for the incident,
+and each `*_PATH` placeholder with a file path in the chosen writable scratch
+location. Save the JSON output, then parse it into a compact inventory:
 
 ```text
-letta --backend BACKEND messages list --agent agent-TARGET --conversation conv-TARGET --limit 30 --include-errors
+letta --backend BACKEND messages list --agent agent-TARGET --conversation conv-TARGET --limit 30 --include-errors > "MESSAGES_PATH"
 ```
 
 Start with a compact inventory, then inspect the messages relevant to the
@@ -54,9 +54,9 @@ Use a supplied message reference or a scoped search to reach an older incident
 directly. Choose the next bounded read to test the hypothesis, for example:
 
 ```text
-letta --backend BACKEND messages search --agent agent-TARGET --conversation conv-TARGET --query "distinctive correction" --limit 5
-letta --backend BACKEND messages list --agent agent-TARGET --conversation conv-TARGET --before message-ID --limit 10 --include-errors
-letta --backend BACKEND messages list --agent agent-TARGET --conversation conv-TARGET --after message-ID --order asc --limit 10 --include-errors
+letta --backend BACKEND messages search --agent agent-TARGET --conversation conv-TARGET --query "distinctive correction" --limit 5 > "SEARCH_PATH"
+letta --backend BACKEND messages list --agent agent-TARGET --conversation conv-TARGET --before message-ID --limit 10 --include-errors > "BEFORE_PATH"
+letta --backend BACKEND messages list --agent agent-TARGET --conversation conv-TARGET --after message-ID --order asc --limit 10 --include-errors > "AFTER_PATH"
 ```
 
 Project these saved results into a compact view, then read selected full text or
