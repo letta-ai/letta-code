@@ -156,13 +156,14 @@ export async function resolveDesktopEnvironmentConnectionId(
 
 export async function resolveEnvironmentConnectionId(
   selector: string,
+  list: typeof listEnvironments = listEnvironments,
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
   const trimmed = selector.trim();
   if (!trimmed) {
     throw new Error("Computer selector must not be empty");
   }
 
-  const response = await listEnvironments({ limit: 100 });
+  const response = await list({ limit: 100 });
   const matches = response.connections.filter((environment) => {
     return (
       environment.connectionId === trimmed ||
@@ -185,12 +186,21 @@ export async function resolveEnvironmentConnectionId(
     );
   }
 
-  if (onlineMatches.length > 1) {
+  if (
+    new Set(onlineMatches.map((environment) => environment.deviceId)).size > 1
+  ) {
     throw new Error(
       `Computer "${trimmed}" is ambiguous. Matched: ${onlineMatches.map(describeEnvironment).join(", ")}`,
     );
   }
 
+  // Multiple listeners for one device are not multiple computers. Match the
+  // picker by preferring the online listener with the most recent activity.
+  onlineMatches.sort(
+    (a, b) =>
+      Math.max(b.lastHeartbeat ?? 0, b.lastSeenAt) -
+      Math.max(a.lastHeartbeat ?? 0, a.lastSeenAt),
+  );
   const environment = onlineMatches[0];
   if (!environment) {
     throw new Error(`Computer "${trimmed}" is offline`);
