@@ -1,5 +1,18 @@
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { actingUserRequestOptions } from "@/agent/acting-user";
 import type { Backend } from "@/backend";
+
+export function buildAgentSendContent(
+  sender: { agentId?: string; conversationId?: string },
+  noWait: boolean,
+  message: string,
+): MessageCreate["content"] {
+  const reminder = buildAgentSendReminder(sender, noWait);
+  return [
+    ...(reminder ? [{ type: "text" as const, text: reminder }] : []),
+    { type: "text", text: message },
+  ];
+}
 
 export function buildAgentSendReminder(
   sender: { agentId?: string; conversationId?: string },

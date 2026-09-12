@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Backend, getBackend } from "@/backend";
 import {
-  buildAgentSendReminder,
+  buildAgentSendContent,
   resolveAgentMessageDestination,
   validateAddress,
 } from "@/backend/api/agent-message";
@@ -77,7 +77,7 @@ export async function send_agent_message(
       {
         ...destination,
         clientMessageId,
-        content: `${buildAgentSendReminder(sender, true)}${args.message}`,
+        content: buildAgentSendContent(sender, true, args.message),
         computer:
           computer &&
           ["cloud", "cloud-sandbox"].includes(computer.trim().toLowerCase())

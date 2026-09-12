@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Backend } from "@/backend";
 import {
-  buildAgentSendReminder,
+  buildAgentSendContent,
   resolveAgentMessageDestination,
   validateAddress,
 } from "@/backend/api/agent-message";
@@ -234,7 +234,7 @@ export async function tryCloudHeadlessSend(
         agentId,
         conversationId,
         clientMessageId,
-        content: `${buildAgentSendReminder(sender, noWait)}${prompt}`,
+        content: buildAgentSendContent(sender, noWait, prompt),
         computer: isCloudEnvironmentSelector(
           values.computer ?? values.environment ?? values.env,
         )

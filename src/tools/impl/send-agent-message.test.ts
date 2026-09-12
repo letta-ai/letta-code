@@ -61,13 +61,16 @@ test("returns acceptance and an explicit return address, with no task or answer"
   expect(receipt.status_command).toContain("--conversation conv-target");
   expect(f.submissions).toHaveLength(1);
   expect(f.submissions[0]).toMatchObject({ actingUserId: "user-caller" });
-  expect(f.submissions[0]?.content).toContain(
-    "agent-caller, conversation conv-caller",
-  );
-  expect(f.submissions[0]?.content).toContain(
+  expect(f.submissions[0]?.content).toEqual([
+    {
+      type: "text",
+      text: expect.stringContaining("agent-caller, conversation conv-caller"),
+    },
+    { type: "text", text: message.message },
+  ]);
+  expect(JSON.stringify(f.submissions[0]?.content)).toContain(
     "Ordinary assistant output is not forwarded",
   );
-  expect(f.submissions[0]?.content).toContain(message.message);
 });
 
 test("does not return queued until the server accepts", async () => {
@@ -127,11 +130,11 @@ test("overlapping senders keep their own conversation, acting user, and message 
   release();
   await first;
   expect(f.submissions[0]).toMatchObject({ actingUserId: "user-second" });
-  expect(f.submissions[0]?.content).toContain(
+  expect(JSON.stringify(f.submissions[0]?.content)).toContain(
     "agent-second, conversation conv-second",
   );
   expect(f.submissions[1]).toMatchObject({ actingUserId: "user-caller" });
-  expect(f.submissions[1]?.content).toContain(
+  expect(JSON.stringify(f.submissions[1]?.content)).toContain(
     "agent-caller, conversation conv-caller",
   );
   expect(f.submissions[0]?.clientMessageId).not.toBe(

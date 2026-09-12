@@ -116,8 +116,20 @@ test("registered dispatch preserves two captured senders through the HTTP enqueu
         agent_id: "agent-recipient",
         computer: "desktop",
       });
-      expect(request?.body.messages).toMatchObject([
-        { role: "user", client_message_id: request?.body.client_message_id },
+      expect(request?.body.messages).toEqual([
+        {
+          role: "user",
+          client_message_id: request?.body.client_message_id,
+          content: [
+            {
+              type: "text",
+              text: expect.stringContaining(
+                `agent-${id}, conversation conv-${id}`,
+              ),
+            },
+            { type: "text", text: `Message ${id === "first" ? 0 : 1}` },
+          ],
+        },
       ]);
       expect(JSON.stringify(request?.body.messages)).toContain(
         `agent-${id}, conversation conv-${id}`,

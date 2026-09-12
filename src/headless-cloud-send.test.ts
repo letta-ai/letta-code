@@ -89,13 +89,17 @@ test.each(["text", "json", "stream-json"])(
     });
     expect(receipt.status_command).toContain("letta messages status");
     expect(receipt).not.toHaveProperty("run_id");
-    expect(f.submissions[0]?.content).toContain(
-      "agent-parent, conversation conv-parent",
-    );
-    expect(f.submissions[0]?.content).toContain(
+    expect(f.submissions[0]?.content).toEqual([
+      {
+        type: "text",
+        text: expect.stringContaining("agent-parent, conversation conv-parent"),
+      },
+      { type: "text", text: "hello" },
+    ]);
+    expect(JSON.stringify(f.submissions[0]?.content)).toContain(
       "use SendAgentMessage if available",
     );
-    expect(f.submissions[0]?.content).toContain(
+    expect(JSON.stringify(f.submissions[0]?.content)).toContain(
       "Ordinary assistant output is not forwarded",
     );
     expect(f.deps.env.CONVERSATION_ID).toBe("conv-parent");
@@ -253,9 +257,13 @@ test("explicit sender keeps its identity but cannot borrow another sender's retu
     false,
     f.deps,
   );
-  expect(f.submissions[0]?.content).toContain("agent-other");
-  expect(f.submissions[0]?.content).not.toContain("conv-parent");
-  expect(f.submissions[0]?.content).toContain("No return conversation");
+  expect(JSON.stringify(f.submissions[0]?.content)).toContain("agent-other");
+  expect(JSON.stringify(f.submissions[0]?.content)).not.toContain(
+    "conv-parent",
+  );
+  expect(JSON.stringify(f.submissions[0]?.content)).toContain(
+    "No return conversation",
+  );
 });
 
 test("missing sender context adds no fabricated return address", () => {
@@ -269,6 +277,21 @@ test("missing sender context adds no fabricated return address", () => {
       false,
     ),
   ).toContain("only see the final message");
+});
+
+test("a send without a caller uses one text part and preserves the message verbatim", async () => {
+  const f = fixture();
+  const prompt = "  hello\n\n";
+  expect(
+    await tryCloudHeadlessSend(
+      flags("--conversation", "conv-target", "--no-wait"),
+      prompt,
+      f.backend,
+      false,
+      { ...f.deps, env: {} },
+    ),
+  ).toBe(0);
+  expect(f.submissions[0]?.content).toEqual([{ type: "text", text: prompt }]);
 });
 
 test("unsafe IDs cannot enter a reply command", async () => {
@@ -305,8 +328,8 @@ test("two concurrent callers retain independent return addresses and message IDs
       ),
     ),
   );
-  expect(a.submissions[0]?.content).toContain("conv-parent");
-  expect(b.submissions[0]?.content).toContain("conv-second");
+  expect(JSON.stringify(a.submissions[0]?.content)).toContain("conv-parent");
+  expect(JSON.stringify(b.submissions[0]?.content)).toContain("conv-second");
   expect(a.submissions[0]?.clientMessageId).not.toBe(
     b.submissions[0]?.clientMessageId,
   );
@@ -439,6 +462,12 @@ test.each(["text", "json", "stream-json"])(
       expect(events.at(-1).result).toBe("done");
     }
     expect(f.stderr.join("")).toContain('"status":"queued"');
-    expect(submitted?.content).toContain("only see the final message");
+    expect(submitted?.content).toEqual([
+      {
+        type: "text",
+        text: expect.stringContaining("only see the final message"),
+      },
+      { type: "text", text: "hi" },
+    ]);
   },
 );
