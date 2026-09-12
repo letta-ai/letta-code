@@ -639,13 +639,14 @@ export async function handleApprovalStop(params: {
     },
   ]);
   let continuationBatchId = dequeuedBatchId;
-  let continuationActingUserId: string | undefined;
-  const consumedQueuedTurn = consumeQueuedTurn(runtime);
+  const sendOptions = buildSendOptions() ?? {};
+  const consumedQueuedTurn = consumeQueuedTurn(runtime, {
+    actingUserId: sendOptions.actingUserId,
+  });
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
     turnCorrelation?.appendDequeuedBatch(dequeuedBatch.batchId);
     continuationBatchId = dequeuedBatch.batchId;
-    continuationActingUserId = queuedTurn.actingUserId;
     nextTurnInput = appendQueuedTurnToInput(nextTurnInput, queuedTurn);
     emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
   }
@@ -669,7 +670,6 @@ export async function handleApprovalStop(params: {
   });
   let sendResult: ApprovalContinuationSendResult;
   try {
-    const sendOptions = buildSendOptions() ?? {};
     const imageFailureModesByMessageOtid = mergeImageFailureModesByMessageOtid(
       sendOptions.imageFailureModesByMessageOtid,
       nextTurnInput.imageFailureModesByMessageOtid,
@@ -679,9 +679,6 @@ export async function handleApprovalStop(params: {
       nextInputWithSkillContent,
       {
         ...sendOptions,
-        ...(continuationActingUserId
-          ? { actingUserId: continuationActingUserId }
-          : {}),
         ...(imageFailureModesByMessageOtid
           ? { imageFailureModesByMessageOtid }
           : {}),

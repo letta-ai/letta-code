@@ -1,16 +1,27 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { Letta } from "@letta-ai/letta-client";
+import { ACTING_USER_ID_HEADER } from "@/agent/acting-user";
 import {
   getConversationId,
   getCurrentAgentId,
   setConversationId,
   setCurrentAgentId,
 } from "@/agent/context";
+import { sendMessageStreamWithBackend } from "@/agent/message";
+import { APIBackend } from "@/backend";
+import {
+  prepareToolExecutionContextForSpecificTools,
+  releaseToolExecutionContext,
+} from "@/tools/manager";
 import { openListenerConnection } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
-import { shouldProcessInboundMessageDirectly } from "./queue";
+import {
+  consumeQueuedTurn,
+  shouldProcessInboundMessageDirectly,
+} from "./queue";
 import { finalizeHandledRecoveryTurn } from "./recovery";
 import { clearConversationRuntimeState } from "./runtime";
 import { finishPendingTeleport, handleTeleportRequest } from "./teleport";
@@ -279,77 +290,167 @@ describe("listener turn lifecycle integration", () => {
     expect(executeApprovalBatch).toHaveBeenCalledTimes(1);
   });
 
-  test("a queued user's identity replaces the turn owner on an approval continuation", async () => {
-    const runtime = getOrCreateScopedRuntime(
-      createRuntime(),
-      "agent-1",
-      "conv-1",
-    );
-    const turnLease = runtime.turnLifecycle.begin({
-      origin: "message",
-      workingDirectory: process.cwd(),
-      initialStatus: "PROCESSING_API_RESPONSE",
-    });
-    enqueueInboundUserMessage(
-      runtime,
-      {
-        type: "message",
-        agentId: "agent-1",
-        conversationId: "conv-1",
-        messages: [{ role: "user", content: "message from Charles" }],
-      },
-      "cloud-user-charles",
-    );
-    const approval = {
-      toolCallId: "call-monitor",
-      toolName: "Bash",
-      toolArgs: '{"command":"pwd"}',
-    };
-    let sentActingUserId: string | undefined;
-
-    const result = await startQuestionApproval(runtime, turnLease, {
-      approvals: [approval],
-      processOwnedTurn: true,
-      buildSendOptions: () =>
-        ({
+  test.each([
+    ["user-a", "user-b"],
+    [undefined, "user-b"],
+    ["user-a", undefined],
+    ["user-a", "user-a"],
+    [undefined, undefined],
+  ])(
+    "continuation keeps actor %s with queued actor %s",
+    async (activeUser, queuedUser) => {
+      const runtime = getOrCreateScopedRuntime(
+        createRuntime(),
+        "agent-1",
+        "conv-1",
+      );
+      const turnLease = runtime.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+        initialStatus: "PROCESSING_API_RESPONSE",
+      });
+      enqueueInboundUserMessage(
+        runtime,
+        {
+          type: "message",
           agentId: "agent-1",
-          streamTokens: true,
-          background: true,
-          workingDirectory: process.cwd(),
-          actingUserId: "cloud-user-monitor-owner",
-        }) as never,
-      dependencies: {
-        classifyApprovals: async () => ({
-          autoAllowed: [{ approval, parsedArgs: {}, context: null }],
-          autoDenied: [],
-          needsUserInput: [],
-        }),
-        executeApprovalBatch: async () => [
-          {
-            type: "tool" as const,
-            tool_call_id: approval.toolCallId,
-            status: "success" as const,
-            tool_return: "/workspace",
-          },
-        ],
-        ensureSecretsHydrated: async () => {},
-        sendApprovalContinuation: async (
-          _conversationId: string,
-          _messages: unknown[],
-          options: { actingUserId?: string },
-        ) => {
-          sentActingUserId = options.actingUserId;
-          return {
-            kind: "terminal" as const,
-            drainResult: { stopReason: "end_turn" as const, apiDurationMs: 0 },
-          };
+          conversationId: "conv-1",
+          messages: [{ role: "user", content: "queued input" }],
         },
-      } as never,
-    });
+        queuedUser,
+      );
+      const approval = {
+        toolCallId: "call-monitor",
+        toolName: "Bash",
+        toolArgs: '{"command":"pwd"}',
+      };
+      const requests: Array<{ actor: string | undefined; body: unknown }> = [];
+      const server = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          const actor = request.headers.get(ACTING_USER_ID_HEADER) ?? undefined;
+          requests.push({ actor, body: await request.json() });
+          if (actor !== activeUser) {
+            return Response.json(
+              { message: "Conversation not found" },
+              { status: 404 },
+            );
+          }
+          return new Response(
+            'data: {"message_type":"stop_reason","stop_reason":"end_turn"}\n\n',
+            {
+              headers: { "Content-Type": "text/event-stream" },
+            },
+          );
+        },
+      });
+      const client = new Letta({
+        apiKey: "test-key",
+        baseURL: server.url.toString(),
+        maxRetries: 0,
+      });
+      const backend = new APIBackend({ getClient: async () => client });
+      const preparedToolContext =
+        await prepareToolExecutionContextForSpecificTools([]);
 
-    expect(result.kind).toBe("terminal");
-    expect(sentActingUserId).toBe("cloud-user-charles");
-  });
+      try {
+        const result = await startQuestionApproval(runtime, turnLease, {
+          approvals: [approval],
+          processOwnedTurn: true,
+          buildSendOptions: () =>
+            ({
+              agentId: "agent-1",
+              streamTokens: true,
+              background: true,
+              workingDirectory: process.cwd(),
+              actingUserId: activeUser,
+            }) as never,
+          dependencies: {
+            classifyApprovals: async () => ({
+              autoAllowed: [{ approval, parsedArgs: {}, context: null }],
+              autoDenied: [],
+              needsUserInput: [],
+            }),
+            executeApprovalBatch: async () => [
+              {
+                type: "tool" as const,
+                tool_call_id: approval.toolCallId,
+                status: "success" as const,
+                tool_return: "/workspace",
+              },
+            ],
+            ensureSecretsHydrated: async () => {},
+            sendApprovalContinuation: async (
+              conversationId: string,
+              messages: Parameters<typeof sendMessageStreamWithBackend>[2],
+              options: Parameters<typeof sendMessageStreamWithBackend>[3],
+            ) => {
+              const stream = await sendMessageStreamWithBackend(
+                backend,
+                conversationId,
+                messages,
+                {
+                  ...options,
+                  preparedToolContext,
+                  skillSources: [],
+                },
+              );
+              for await (const _event of stream) {
+                /* Drain the real SDK stream. */
+              }
+              return {
+                kind: "terminal" as const,
+                drainResult: {
+                  stopReason: "end_turn" as const,
+                  apiDurationMs: 0,
+                },
+              };
+            },
+          } as never,
+        });
+
+        expect(result.kind).toBe("terminal");
+        expect(requests).toHaveLength(1);
+        expect(requests[0]?.actor).toBe(activeUser);
+        expect(JSON.stringify(requests[0]?.body)).toContain("call-monitor");
+        const sameUser = activeUser === queuedUser;
+        expect(JSON.stringify(requests[0]?.body).includes("queued input")).toBe(
+          sameUser,
+        );
+        expect(runtime.queueRuntime.length).toBe(sameUser ? 0 : 1);
+        runtime.turnLifecycle.finish(turnLease, "end_turn");
+        if (!sameUser) {
+          const next = consumeQueuedTurn(runtime);
+          if (!next) throw new Error("Deferred input was lost");
+          expect(next?.queuedTurn.actingUserId).toBe(queuedUser);
+          expect(JSON.stringify(next?.queuedTurn.messages)).toContain(
+            "queued input",
+          );
+          expect(runtime.queueRuntime.length).toBe(0);
+          await expect(
+            sendMessageStreamWithBackend(
+              backend,
+              "conv-1",
+              next.queuedTurn.messages,
+              {
+                actingUserId: next.queuedTurn.actingUserId,
+                preparedToolContext,
+                skillSources: [],
+              },
+            ),
+          ).rejects.toThrow("Conversation not found");
+          expect(requests).toHaveLength(2);
+          expect(requests[1]?.actor).toBe(queuedUser);
+          expect(JSON.stringify(requests[1]?.body)).not.toContain(
+            "call-monitor",
+          );
+        }
+      } finally {
+        server.stop(true);
+        releaseToolExecutionContext(preparedToolContext.contextId);
+      }
+    },
+  );
 
   test("teleport yields after persisting the current tool result", async () => {
     const listener = createRuntime();

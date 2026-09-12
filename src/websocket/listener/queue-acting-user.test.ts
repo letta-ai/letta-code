@@ -35,6 +35,35 @@ function enqueueNotification(
 }
 
 describe("listener queue acting-user attribution", () => {
+  test.each([
+    ["cloud-user-a", "cloud-user-b"],
+    [undefined, "cloud-user-b"],
+    ["cloud-user-a", undefined],
+  ])(
+    "continuation stops before a different sender after a matching prefix",
+    (activeUser, otherUser) => {
+      const runtime = getOrCreateScopedRuntime(
+        createRuntime(),
+        "agent-parent",
+        "conv-parent",
+      );
+      enqueueNotification(runtime, "same sender", activeUser);
+      enqueueNotification(runtime, "different sender", otherUser);
+      enqueueNotification(runtime, "later same sender", activeUser);
+
+      const current = consumeQueuedTurn(runtime, { actingUserId: activeUser });
+      expect(current?.dequeuedBatch.items).toHaveLength(1);
+      expect(current?.queuedTurn.actingUserId).toBe(activeUser);
+      expect(runtime.queueRuntime.length).toBe(2);
+      expect(
+        consumeQueuedTurn(runtime, { actingUserId: activeUser }),
+      ).toBeNull();
+      expect(
+        runtime.queueRuntime.peekReady().map((item) => item.actingUserId),
+      ).toEqual([otherUser, activeUser]);
+    },
+  );
+
   test("delayed completions drain into separate requests for their initiating users", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(
