@@ -156,6 +156,17 @@ export const CLI_FLAG_CATALOG = {
       continuationLines: ["Default: text"],
     },
   },
+  "no-wait": {
+    parser: { type: "boolean" },
+    mode: "headless",
+    help: {
+      description:
+        "Submit a Cloud message and return its acceptance receipt without waiting for an answer",
+      continuationLines: [
+        "Use --conversation or --agent to select the destination.",
+      ],
+    },
+  },
   "input-format": {
     parser: { type: "string" },
     mode: "headless",

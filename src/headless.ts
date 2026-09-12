@@ -22,6 +22,7 @@ import {
 } from "@/utils/message-queue-bridge";
 import { detectShellContext } from "@/utils/shell-context";
 import { createSigintAbortSignal } from "@/utils/sigint-abort";
+import { consumeSubagentLaunch } from "@/utils/subagent-launch-marker";
 import { reportSubagentStdoutLoss } from "@/utils/subagent-stdout-failure";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
@@ -113,8 +114,11 @@ import {
   validatePrimaryStartupFlagConflicts,
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
+import { tryCloudHeadlessSend } from "./headless-cloud-send";
 import {
   buildEnvironmentCreateMessageBody,
+  getEnvironmentRoutedMessagingUnsupportedReason,
+  isCloudEnvironmentSelector,
   waitForEnvironmentAssistantMessage,
 } from "./headless-environment-response";
 import {
@@ -687,25 +691,6 @@ function formatAgentReplyMetadata(params: {
   });
 }
 
-function isCloudEnvironmentSelector(
-  selector: string | boolean | undefined,
-): boolean {
-  if (typeof selector !== "string") return false;
-  const normalized = selector.trim().toLowerCase();
-  return normalized === "cloud" || normalized === "cloud-sandbox";
-}
-
-function getEnvironmentRoutedMessagingUnsupportedReason(
-  environment: EnvironmentConnection,
-): string | null {
-  if (environment.metadata?.environmentMessageProtocol === "v2-input") {
-    return null;
-  }
-  return `Computer ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
-    environment.metadata?.lettaCodeVersion ?? "unknown"
-  } and does not advertise computer-routed headless messaging support. Update that runtime or omit --computer to use same-computer messaging.`;
-}
-
 export async function handleHeadlessCommand(
   parsedArgs: ParsedCliArgs,
   model?: string,
@@ -715,6 +700,7 @@ export async function handleHeadlessCommand(
   startupOptions: { requestedBackendMode?: BackendMode } = {},
 ) {
   const { values, positionals } = parsedArgs;
+  const isAgentLaunch = consumeSubagentLaunch(process.env);
   telemetry.setSurface(getTerminalTelemetrySurface(true));
   const modsDisabled = shouldDisableMods({
     cliFlag: values["no-mods"],
@@ -806,6 +792,16 @@ export async function handleHeadlessCommand(
   prepareHeadlessEphemeralBackend(Boolean(values.ephemeral));
   const backend = getBackend();
   markMilestone("HEADLESS_CLIENT_READY");
+  const sendExitCode = await tryCloudHeadlessSend(
+    values,
+    prompt,
+    backend,
+    isAgentLaunch,
+    {
+      writeStdout: writeFinalHeadlessStdout,
+    },
+  );
+  if (sendExitCode !== undefined) return flushAndExit(sendExitCode);
   // Check for --resume flag (interactive only)
   if (values.resume) {
     trackHeadlessBoundaryError(

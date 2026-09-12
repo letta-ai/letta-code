@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import { getBackend } from "@/backend";
 import { searchMessagesForBackend } from "@/backend/message-search";
 import { settingsManager } from "@/settings-manager";
+import { readMessageStatus } from "./message-status";
 
 type SearchMode = "vector" | "fts" | "hybrid";
 type ListOrder = "asc" | "desc";
@@ -12,6 +13,7 @@ type MessagesSubcommandDeps = {
   initializeSettings?: () => Promise<void>;
   getBackend?: typeof getBackend;
   searchMessagesForBackend?: typeof searchMessagesForBackend;
+  readMessageStatus?: typeof readMessageStatus;
 };
 
 type TranscriptMessage = {
@@ -49,6 +51,7 @@ Usage:
   letta messages search --query <text> [options]
   letta messages list [options]
   letta messages transcript --conversation <id> [options]
+  letta messages status --conversation <id> [--agent <id>]
 
 Search options:
   --query <text>        Search query (required)
@@ -186,6 +189,24 @@ export async function runMessagesSubcommand(
   try {
     await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
     const backend = (deps.getBackend ?? getBackend)();
+    if (action === "status") {
+      const conversationId =
+        parsed.values.conversation || parsed.values["conversation-id"];
+      if (!conversationId)
+        throw new Error("Pass --conversation <id> to inspect message status.");
+      console.log(
+        JSON.stringify(
+          await (deps.readMessageStatus ?? readMessageStatus)(
+            conversationId,
+            parsed.values.agent || parsed.values["agent-id"],
+            backend,
+          ),
+          null,
+          2,
+        ),
+      );
+      return 0;
+    }
     const searchMessages =
       deps.searchMessagesForBackend ?? searchMessagesForBackend;
 

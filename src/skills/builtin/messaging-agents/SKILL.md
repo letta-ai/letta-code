@@ -60,14 +60,43 @@ Results include `agent_id` for each matching message.
 
 ## CLI Usage (agent-to-agent)
 
+### Send without waiting for the answer (Cloud)
+
+```bash
+letta -p --conversation <target-conversation-id> --no-wait --output-format json "message text"
+```
+
+Keep the returned receipt. `queued` confirms Cloud accepted the message, not that
+the recipient has read it or finished. The CLI uses your `AGENT_ID` and
+`CONVERSATION_ID` as the return address. Reply explicitly to the supplied address;
+ordinary assistant output is not forwarded for a non-waiting send.
+
+To inspect progress without a local task ID, use the receipt's `status_command`
+or `messages_command`:
+
+```bash
+letta messages status --agent <target-agent-id> --conversation <target-conversation-id>
+letta messages list --agent <target-agent-id> --conversation <target-conversation-id>
+```
+
+Compare `latest_super_run.id` with the receipt's `super_run_id`. A different ID
+belongs to another send; an idle conversation alone does not prove completion.
+If waiting fails or times out, inspect before resending. The CLI does not cancel
+remote work when it stops waiting.
+
+Omit `--no-wait` to wait for the final answer instead. Configure execution tools
+and permissions on the recipient; Cloud sends do not accept local execution
+flags such as `--tools` or `--permission-mode`.
+
 ### Starting a New Conversation
 
 ```bash
 letta -p --from-agent $LETTA_AGENT_ID --agent <id> "message text"
 ```
 
-When no `--computer` is specified, the target agent will run on the same
-computer as the caller agent.
+For Cloud agents, omitting `--computer` lets Cloud select the conversation's
+active or saved computer, or start a Cloud sandbox when needed. Local/App Server
+execution and Agent-launched child processes keep their existing behavior.
 
 To route the target agent turn through a specific remote/local computer:
 
@@ -91,7 +120,7 @@ letta -p --from-agent $LETTA_AGENT_ID \
 | Arg | Required | Description |
 |-----|----------|-------------|
 | `--agent <id>` | Yes | Target agent ID to message |
-| `--from-agent <id>` | Yes | Sender agent ID (injects agent-to-agent system reminder) |
+| `--from-agent <id>` | Yes, unless using `--no-wait` | Select agent-to-agent delivery when starting a conversation |
 | `--computer <selector>` | No | Route through `cloud` (target agent's cloud sandbox) or an online computer by connection name, device ID, or connection ID |
 | `"message text"` | Yes | Message body (positional after flags) |
 
@@ -102,7 +131,7 @@ letta -p --from-agent $LETTA_AGENT_ID \
   "What do you know about the authentication system?"
 ```
 
-**Response (JSON format with `--output json`):**
+**Response (JSON format with `--output-format json`, relevant fields):**
 ```json
 {
   "type": "result",
@@ -110,9 +139,9 @@ letta -p --from-agent $LETTA_AGENT_ID \
   "is_error": false,
   "result": "The authentication system uses JWT tokens...",
   "agent_id": "agent-abc123",
-  "conversation_id": "conversation-xyz789",
-  "environment": { "source": "same-environment" },
-  "usage": { "prompt_tokens": 120, "completion_tokens": 80, "total_tokens": 200, "step_count": 1 }
+  "conversation_id": "conv-xyz789",
+  "status": "completed",
+  "usage": null
 }
 ```
 
@@ -148,14 +177,15 @@ letta -p --from-agent $LETTA_AGENT_ID \
   "Run on my same computer."
 ```
 
-Omit `--computer` when you want the target agent to run on the same computer as
-the caller agent.
+Use `--computer` only when that computer is needed. If the conversation is active
+on another computer, Cloud returns 409 rather than silently moving it. An offline
+computer returns 503. Inspect the error; do not bypass enqueue with a direct send.
 
 **Arguments:**
 | Arg | Required | Description |
 |-----|----------|-------------|
 | `--conversation <id>` | Yes | Existing conversation ID |
-| `--from-agent <id>` | Yes | Sender agent ID (injects agent-to-agent system reminder) |
+| `--from-agent <id>` | No | Override the sender agent ID; otherwise use the calling agent's environment |
 | `"message text"` | Yes | Follow-up message (positional after flags) |
 
 **Example:**
@@ -168,7 +198,7 @@ letta -p --from-agent $LETTA_AGENT_ID \
 ## Understanding the Response
 
 - Text-mode scripts return only the **final assistant message** (not tool calls, reasoning, or metadata)
-- JSON and stream-json responses include `agent_id`, `conversation_id`, and `environment.source` so you can continue the same conversation/runtime. Environment-routed turns also include `environment.id`, `connection_id`, `device_id`, and `name`.
+- Cloud enqueue receipts include `agent_id`, `conversation_id`, `client_message_id`, `workflow_id`, and `super_run_id`. Waiting JSON results retain these IDs and add the answer and associated `run_ids`.
 - The target agent may use tools, think, and reason - but you only see their final response
 - To see the full conversation transcript (including tool calls), use `letta messages list --agent <id>` targeting the other agent
 
@@ -177,9 +207,8 @@ letta -p --from-agent $LETTA_AGENT_ID \
 When you send a message, the target agent receives it with a system reminder:
 ```
 <system-reminder>
-This message is from "YourAgentName" (agent ID: agent-xxx), an agent currently running inside the Letta Code CLI (docs.letta.com/letta-code).
-The sender will only see the final message you generate (not tool calls or reasoning).
-If you need to share detailed information, include it in your response text.
+This message is from agent agent-xxx, conversation conv-xxx.
+The sender will only see the final message you generate (not tool calls or reasoning). Include your answer in your final response.
 </system-reminder>
 ```
 

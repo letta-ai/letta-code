@@ -51,6 +51,7 @@ describe("composeSubagentChildEnv", () => {
 
     expect(env[LETTA_DISABLE_MODS_ENV]).toBeUndefined();
     expect(env[LETTA_MOD_CAPABILITY_PROFILE_ENV]).toBeUndefined();
+    expect(env.LETTA_SUBAGENT_LAUNCH).toBe("1");
   });
 
   test("normal subagent records parent identity without overriding memory dir", () => {
