@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import WebSocket from "ws";
@@ -112,6 +113,7 @@ export async function launchListenerConversation(
     latestSuperRun?: typeof getLatestConversationSuperRun;
     listRunMessages?: typeof listEnqueuedRunMessages;
     pollMs?: number;
+    waitDeadline?: AbortSignal;
   } = {},
 ): Promise<{
   text: string;
@@ -132,8 +134,13 @@ export async function launchListenerConversation(
   const finishedByRunId = new Map<string, TurnFinishedMessage>();
   let completedWithoutText: { runId: string; at: number } | undefined;
   let cancellationStarted: number | undefined;
+  const interruptReads = new AbortController();
+  const waitDeadline =
+    deps.waitDeadline ?? AbortSignal.timeout(resolveEnvironmentMaxWaitMs());
+  const waitSignal = AbortSignal.any([interruptReads.signal, waitDeadline]);
   const onSignal = () => {
     interrupted = true;
+    interruptReads.abort();
   };
   process.once("SIGTERM", onSignal);
   process.once("SIGINT", onSignal);
@@ -186,7 +193,23 @@ export async function launchListenerConversation(
   const detachDisconnect = client.onDisconnect(() => {
     disconnected = true;
   });
-  const started = Date.now();
+  async function read<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    const signal = AbortSignal.any([waitSignal, AbortSignal.timeout(30_000)]);
+    signal.throwIfAborted();
+    try {
+      const value = await operation(signal);
+      signal.throwIfAborted();
+      return value;
+    } catch (error) {
+      if (signal.aborted && !waitSignal.aborted)
+        throw new Error(
+          "Listener read timed out; execution may still be running. Do not resend automatically.",
+        );
+      throw error;
+    }
+  }
   try {
     await client.connect();
     const runtime = await client.runtimeStart({
@@ -243,72 +266,87 @@ export async function launchListenerConversation(
           throw new Error(
             "Could not confirm listener cancellation; execution may still be running",
           );
+        // Cancellation has its own deadline and requests. Never feed it the
+        // already-aborted signal used to interrupt status/result reads.
+        await delay(deps.pollMs ?? 1000);
+        continue;
       }
-      const runId = [...runIds].at(-1);
-      const ownFinished = runId ? finishedByRunId.get(runId) : undefined;
-      if (ownFinished && ownFinished.stop_reason !== "end_turn")
-        throw new Error(
-          ownFinished.error ??
-            `Listener turn stopped (${ownFinished.stop_reason})`,
-        );
-      if (!runId && params.scope.conversation_id !== "default") {
-        const latest = await (
-          deps.latestSuperRun ?? getLatestConversationSuperRun
-        )(params.scope.conversation_id, AbortSignal.timeout(30_000));
-        if (
-          latest.id === accepted.super_run_id &&
-          (latest.errored_at || latest.cancelled_at)
-        )
+      try {
+        waitSignal.throwIfAborted();
+        const runId = [...runIds].at(-1);
+        const ownFinished = runId ? finishedByRunId.get(runId) : undefined;
+        if (ownFinished && ownFinished.stop_reason !== "end_turn")
           throw new Error(
-            `Accepted send ${latest.id} ${latest.errored_at ? "failed" : "was cancelled"} before a run was observed`,
+            ownFinished.error ??
+              `Listener turn stopped (${ownFinished.stop_reason})`,
           );
-      }
-      if (runId) {
-        const run = await params.backend.retrieveRun(runId);
-        if (run.status === "failed" || run.status === "cancelled")
-          throw new Error(
-            `Listener run ${run.status} (${run.stop_reason ?? "unknown reason"})`,
+        if (!runId && params.scope.conversation_id !== "default") {
+          const latest = await read((signal) =>
+            (deps.latestSuperRun ?? getLatestConversationSuperRun)(
+              params.scope.conversation_id,
+              signal,
+            ),
           );
-        if (
-          run.status === "completed" &&
-          run.stop_reason !== "requires_approval" &&
-          ownFinished
-        ) {
-          const messages = await (
-            deps.listRunMessages ?? listEnqueuedRunMessages
-          )(runId);
-          const last = messages
-            .filter((message) => message.message_type === "assistant_message")
-            .sort((a, b) => (b.seq_id ?? 0) - (a.seq_id ?? 0))[0];
-          if (last?.message_type === "assistant_message") {
-            const text =
-              typeof last.content === "string"
-                ? last.content
-                : last.content
-                    .filter((part) => part.type === "text")
-                    .map((part) => part.text)
-                    .join("\n");
-            if (text.trim())
-              return {
-                text,
-                stopReason: run.stop_reason ?? null,
-                runIds: [...runIds],
-                usage: ownFinished.usage ?? {},
-              };
-          }
-          if (completedWithoutText?.runId !== runId)
-            completedWithoutText = { runId, at: Date.now() };
-          if (Date.now() - completedWithoutText.at >= 15_000)
+          if (
+            latest.id === accepted.super_run_id &&
+            (latest.errored_at || latest.cancelled_at)
+          )
             throw new Error(
-              `Listener run completed without an assistant reply (${run.stop_reason ?? "unknown reason"})`,
+              `Accepted send ${latest.id} ${latest.errored_at ? "failed" : "was cancelled"} before a run was observed`,
             );
         }
+        if (runId) {
+          const run = await read((signal) =>
+            params.backend.retrieveRun(runId, { signal }),
+          );
+          if (run.status === "failed" || run.status === "cancelled")
+            throw new Error(
+              `Listener run ${run.status} (${run.stop_reason ?? "unknown reason"})`,
+            );
+          if (
+            run.status === "completed" &&
+            run.stop_reason !== "requires_approval" &&
+            ownFinished
+          ) {
+            const messages = await read((signal) =>
+              (deps.listRunMessages ?? listEnqueuedRunMessages)(runId, signal),
+            );
+            const last = messages
+              .filter((message) => message.message_type === "assistant_message")
+              .sort((a, b) => (b.seq_id ?? 0) - (a.seq_id ?? 0))[0];
+            if (last?.message_type === "assistant_message") {
+              const text =
+                typeof last.content === "string"
+                  ? last.content
+                  : last.content
+                      .filter((part) => part.type === "text")
+                      .map((part) => part.text)
+                      .join("\n");
+              if (text.trim())
+                return {
+                  text,
+                  stopReason: run.stop_reason ?? null,
+                  runIds: [...runIds],
+                  usage: ownFinished.usage ?? {},
+                };
+            }
+            if (completedWithoutText?.runId !== runId)
+              completedWithoutText = { runId, at: Date.now() };
+            if (Date.now() - completedWithoutText.at >= 15_000)
+              throw new Error(
+                `Listener run completed without an assistant reply (${run.stop_reason ?? "unknown reason"})`,
+              );
+          }
+        }
+        await delay(deps.pollMs ?? 1000, undefined, { signal: waitSignal });
+      } catch (error) {
+        if (interrupted) continue;
+        if (waitDeadline.aborted)
+          throw new Error(
+            "Stopped waiting for the listener; execution may still be running. Do not resend automatically.",
+          );
+        throw error;
       }
-      if (Date.now() - started > resolveEnvironmentMaxWaitMs())
-        throw new Error(
-          "Stopped waiting for the listener; execution may still be running",
-        );
-      await new Promise((resolve) => setTimeout(resolve, deps.pollMs ?? 1000));
     }
   } finally {
     process.removeListener("SIGTERM", onSignal);

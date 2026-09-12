@@ -345,3 +345,180 @@ test("a completed backend run cannot hide the listener's max-turn stop", async (
     ),
   ).rejects.toThrow("max_steps");
 });
+
+function pendingRead() {
+  let started!: () => void;
+  let reject!: (reason?: unknown) => void;
+  let aborted = false;
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  return {
+    entered,
+    get aborted() {
+      return aborted;
+    },
+    async read<T>(signal?: AbortSignal | null): Promise<T> {
+      return new Promise<T>((_resolve, fail) => {
+        reject = fail;
+        signal?.addEventListener(
+          "abort",
+          () => {
+            aborted = true;
+            fail(signal.reason);
+          },
+          { once: true },
+        );
+        started();
+      });
+    },
+    release() {
+      reject(new Error("fixture cleanup"));
+    },
+  };
+}
+
+test.each(["run", "messages", "super-run"] as const)(
+  "cancel interrupts a pending %s read without aborting cancellation requests",
+  async (stage) => {
+    const wire = transport();
+    const stop = new AbortController();
+    const pending = pendingRead();
+    const dequeue = mock(
+      async (input: { clientMessageId: string }, signal?: AbortSignal) => {
+        expect(signal?.aborted).toBe(false);
+        expect(signal).not.toBe(stop.signal);
+        // A final answer is already complete when its message read stalls. Prove
+        // cancellation reaches the server, even if that request itself fails.
+        if (stage === "messages") throw new Error("cancel request reached");
+        return {
+          client_message_id: input.clientMessageId,
+          status:
+            stage === "run" ? ("too_late" as const) : ("dequeued" as const),
+        };
+      },
+    );
+    const launch = launchListenerConversation(
+      {
+        connectionId: "conn-target",
+        scope,
+        content: "hello",
+        settings,
+        mode: "standard",
+        signal: stop.signal,
+        backend: {
+          retrieveRun: (id, options) =>
+            stage === "run"
+              ? pending.read<Run>(options?.signal)
+              : backend.retrieveRun(id),
+        },
+      },
+      {
+        client: wire.client,
+        dequeue,
+        enqueue: async (input) => {
+          if (stage !== "super-run")
+            wire.emit({
+              type: "update_loop_status",
+              runtime: scope,
+              loop_status: loop(input.clientMessageId, stage === "run"),
+            });
+          if (stage === "messages")
+            wire.emit({
+              type: "turn_finished",
+              runtime: scope,
+              turn_id: "turn-own",
+              run_id: "run-own",
+              stop_reason: "end_turn",
+            });
+          return receipt(input.clientMessageId);
+        },
+        latestSuperRun: (_id, signal) => pending.read(signal),
+        listRunMessages: (_id, signal) => pending.read(signal),
+      },
+    );
+    try {
+      await pending.entered;
+      stop.abort();
+      expect(pending.aborted).toBe(true);
+      await expect(launch).rejects.toThrow(
+        stage === "messages" ? "cancel request reached" : "execution cancelled",
+      );
+      expect(dequeue).toHaveBeenCalledTimes(1);
+      expect(wire.commands.some((c) => c.type === "abort_message")).toBe(
+        stage === "run",
+      );
+      expect(wire.commands.some((c) => c.type === "input")).toBe(false);
+    } finally {
+      pending.release();
+      await launch.catch(() => {});
+    }
+  },
+);
+
+test.each(["run", "messages", "super-run"] as const)(
+  "the overall wait deadline interrupts a pending %s read without cancelling remote work",
+  async (stage) => {
+    const wire = transport();
+    const deadline = new AbortController();
+    const pending = pendingRead();
+    const dequeue = mock(async () => ({
+      client_message_id: "own",
+      status: "dequeued" as const,
+    }));
+    const launch = launchListenerConversation(
+      {
+        connectionId: "conn-target",
+        scope,
+        content: "hello",
+        settings,
+        mode: "standard",
+        backend: {
+          retrieveRun: (id, options) =>
+            stage === "run"
+              ? pending.read<Run>(options?.signal)
+              : backend.retrieveRun(id),
+        },
+      },
+      {
+        client: wire.client,
+        dequeue,
+        waitDeadline: deadline.signal,
+        enqueue: async (input) => {
+          if (stage !== "super-run")
+            wire.emit({
+              type: "update_loop_status",
+              runtime: scope,
+              loop_status: loop(input.clientMessageId, stage === "run"),
+            });
+          if (stage === "messages")
+            wire.emit({
+              type: "turn_finished",
+              runtime: scope,
+              turn_id: "turn-own",
+              run_id: "run-own",
+              stop_reason: "end_turn",
+            });
+          return receipt(input.clientMessageId);
+        },
+        latestSuperRun: (_id, signal) => pending.read(signal),
+        listRunMessages: (_id, signal) => pending.read(signal),
+      },
+    );
+    try {
+      await pending.entered;
+      deadline.abort(new Error("wait deadline"));
+      expect(pending.aborted).toBe(true);
+      await expect(launch).rejects.toThrow("execution may still be running");
+      expect(dequeue).not.toHaveBeenCalled();
+      expect(
+        wire.commands.some(
+          (c) => c.type === "abort_message" || c.type === "input",
+        ),
+      ).toBe(false);
+    } finally {
+      pending.release();
+      await launch.catch(() => {});
+    }
+  },
+);
