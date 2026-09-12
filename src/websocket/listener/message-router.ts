@@ -34,7 +34,10 @@ import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
-import { subscribeListenerConnection } from "./connection";
+import {
+  getOrCreateProcessTransport,
+  subscribeListenerConnection,
+} from "./connection";
 import { getBootWorkingDirectory } from "./cwd";
 import {
   handleExternalToolCallResponseCommand,
@@ -497,7 +500,7 @@ export function createListenerMessageHandler(
                   approvals,
                 }),
               },
-              socket,
+              getOrCreateProcessTransport(runtime),
               scopedRuntime,
               opts.onStatusChange,
               connectionId,

@@ -1,16 +1,31 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import WebSocket from "ws";
+import { once } from "node:events";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import WebSocket, { WebSocketServer } from "ws";
 import {
   clearExternalTools,
   prepareToolExecutionContextForModel,
+  prepareToolExecutionContextForSpecificTools,
+  releaseToolExecutionContext,
 } from "@/tools/manager";
 import { CHANNEL_SERVICE_COMMAND_TYPES } from "@/types/service-protocol";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+  subscribeListenerConnection,
+  suspendListenerConnection,
+} from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
-import { createRuntime } from "./lifecycle";
+import { createRuntime, safeSocketSend } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
 import { scheduleQueuePump } from "./queue";
 import { setActiveRuntime } from "./runtime";
+import { handleApprovalStop } from "./turn-approval";
+import { createTurnInputState } from "./turn-input-state";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
 class MockSocket {
@@ -49,6 +64,293 @@ describe("listener message router ownership handoff", () => {
     clearExternalTools();
     setActiveRuntime(null);
   });
+
+  for (const reconnectBeforeApproval of [true, false]) {
+    test(`teleport_continue executes once after socket replacement (${reconnectBeforeApproval ? "before approval" : "while approval waits"})`, async () => {
+      const listener = createRuntime();
+      const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+      const opts = makeListenerOptions();
+      const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+      const directory = await mkdtemp(join(tmpdir(), "teleport-reconnect-"));
+      const executionFile = join(directory, "executions");
+      const permissionModeState = { mode: "unrestricted" as const };
+      const context = await prepareToolExecutionContextForSpecificTools(
+        ["Bash"],
+        { workingDirectory: directory, permissionModeState },
+      );
+      const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+      await once(server, "listening");
+      const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const sockets: WebSocket[] = [];
+      const tasks: Promise<void>[] = [];
+      const errors: unknown[] = [];
+      let releaseModelResponse!: () => void;
+      const modelResponse = new Promise<void>((resolve) => {
+        releaseModelResponse = resolve;
+      });
+      let turnStarts = 0;
+      let approvalStarted = false;
+      let continuationSends = 0;
+      let secretsHydrations = 0;
+      let finished = false;
+      const toolCallId = "call-after-teleport";
+      const wireInput = (requestId: string) =>
+        JSON.stringify({
+          type: "input",
+          request_id: requestId,
+          runtime: scope,
+          payload: {
+            kind: "teleport_continue",
+            teleport_id: "teleport-reconnect",
+            source: { device_id: "source", connection_name: "Source" },
+            continuation: {
+              approvals: [
+                {
+                  type: "tool",
+                  tool_call_id: "call-on-source",
+                  status: "success",
+                  tool_return: "source finished",
+                },
+              ],
+            },
+          },
+        });
+      type Frame = {
+        type: string;
+        request_id?: string;
+        accepted?: boolean;
+        delta?: {
+          id?: string;
+          message_type?: string;
+          tool_call_id?: string;
+          tool_returns?: Array<{ tool_call_id?: string; status?: string }>;
+        };
+      };
+      const connect = async () => {
+        const accepted = once(server, "connection");
+        const socket = new WebSocket(url);
+        sockets.push(socket);
+        await once(socket, "open");
+        const [peer] = (await accepted) as [WebSocket];
+        sockets.push(peer);
+        const frames: Frame[] = [];
+        peer.on("message", (data) => frames.push(JSON.parse(data.toString())));
+        openListenerConnection({
+          runtime: listener,
+          connectionId: opts.connectionId,
+          writer: socket,
+          options: opts,
+        });
+        markListenerConnectionInitialized(listener, opts.connectionId);
+        subscribeListenerConnection(listener, opts.connectionId, scope);
+        const handler = createListenerMessageHandler({
+          runtime: listener,
+          socket,
+          opts,
+          processQueuedTurn: async () => {},
+          fileCommandSession: { handle: () => false },
+          getParsedRuntimeScope: () => null,
+          replaySyncStateForRuntime: async () => {},
+          getOrCreateScopedRuntime,
+          handleApprovalResponseInput: async () => false,
+          handleChangeDeviceStateInput: async () => false,
+          handleAbortMessageInput: async () => false,
+          stampInboundUserMessageOtids: (incoming) => incoming,
+          safeSocketSend,
+          runDetachedListenerTask: (_label, task) => {
+            tasks.push(
+              task().catch((error) => {
+                errors.push(error);
+              }),
+            );
+          },
+          trackListenerError: (error) => {
+            errors.push(error);
+          },
+          // Model-boundary adapter: preserve the router-supplied transport and
+          // pause the resumed model response until the original socket closes.
+          // Classification, reconnect polling, tool execution and wire emission
+          // below are production implementations, not substituted dependencies.
+          processIncomingMessage: async (incoming, transport, conversation) => {
+            turnStarts += 1;
+            expect(incoming.messages).toEqual([
+              expect.objectContaining({ type: "approval" }),
+              expect.objectContaining({ role: "system" }),
+            ]);
+            expect(conversation).toBe(runtime);
+            const lease = runtime.turnLifecycle.begin({
+              origin: "message",
+              workingDirectory: directory,
+              initialStatus: "PROCESSING_API_RESPONSE",
+            });
+            try {
+              await modelResponse;
+              approvalStarted = true;
+              const result = await handleApprovalStop({
+                approvals: [
+                  {
+                    toolCallId,
+                    toolName: "Bash",
+                    toolArgs: JSON.stringify({
+                      description:
+                        "Record one harmless regression tool execution",
+                      command:
+                        "printf 'executed\\n' >> executions; printf 'teleport-tool-output'",
+                    }),
+                  },
+                ],
+                runtime,
+                socket: transport,
+                agentId: "agent-1",
+                conversationId: "conv-1",
+                turnWorkingDirectory: directory,
+                turnPermissionModeState: permissionModeState,
+                dequeuedBatchId: "teleport-batch",
+                runId: "teleport-run",
+                msgRunIds: ["teleport-run"],
+                turnInput: createTurnInputState([]),
+                pendingNormalizationInterruptedToolCallIds: [],
+                turnToolContextId: context.contextId,
+                turnLease: lease,
+                buildSendOptions: () => ({ streamTokens: true }),
+                dependencies: {
+                  // Storage/API boundary only: this local tool needs no secrets.
+                  ensureSecretsHydrated: async () => {
+                    secretsHydrations += 1;
+                  },
+                  // Model continuation boundary: inspect the actual tool return.
+                  sendApprovalContinuation: async (_id, messages) => {
+                    continuationSends += 1;
+                    expect(messages).toEqual([
+                      expect.objectContaining({
+                        type: "approval",
+                        approvals: [
+                          expect.objectContaining({
+                            tool_call_id: toolCallId,
+                            status: "success",
+                            tool_return: [
+                              { type: "text", text: "teleport-tool-output" },
+                            ],
+                          }),
+                        ],
+                      }),
+                    ]);
+                    return {
+                      kind: "terminal",
+                      drainResult: { stopReason: "end_turn", apiDurationMs: 0 },
+                    };
+                  },
+                },
+              });
+              expect(result.kind).toBe("terminal");
+              finished = true;
+            } finally {
+              runtime.turnLifecycle.finish(lease, "end_turn");
+            }
+          },
+        });
+        socket.on("message", (data) => {
+          tasks.push(
+            handler(data).catch((error) => {
+              errors.push(error);
+            }),
+          );
+        });
+        return { socket, peer, frames };
+      };
+      const countToolFrames = (frames: Frame[], kind: string) =>
+        frames.filter(
+          (frame) =>
+            frame.type === "stream_delta" &&
+            !frame.delta?.id?.startsWith("synthetic-tool-return-stream-") &&
+            frame.delta?.message_type === kind &&
+            (frame.delta.tool_call_id === toolCallId ||
+              frame.delta.tool_returns?.some(
+                (result) => result.tool_call_id === toolCallId,
+              )),
+        ).length;
+      try {
+        setActiveRuntime(listener);
+        const original = await connect();
+        original.peer.send(wireInput("teleport-initial"));
+        await waitFor(() => turnStarts === 1);
+        expect(errors).toEqual([]);
+        await waitFor(() =>
+          original.frames.some(
+            (frame) => frame.request_id === "teleport-initial",
+          ),
+        );
+        const closed = once(original.socket, "close");
+        original.socket.terminate();
+        await closed;
+        suspendListenerConnection(listener, opts.connectionId);
+        expect(original.socket.readyState).toBe(WebSocket.CLOSED);
+        expect(runtime.isProcessing).toBe(true);
+        if (!reconnectBeforeApproval) {
+          releaseModelResponse();
+          await waitFor(() => approvalStarted);
+          // Longer than two real reconnect-gate polls; no replacement exists.
+          await Bun.sleep(150);
+          expect(secretsHydrations).toBe(0);
+          expect(continuationSends).toBe(0);
+          expect(await Bun.file(executionFile).exists()).toBe(false);
+          expect(runtime.loopStatus).toBe("PROCESSING_API_RESPONSE");
+          expect(finished).toBe(false);
+        }
+        const replacement = await connect();
+        // Replay on the new wire must be acknowledged, not start a second turn.
+        replacement.peer.send(wireInput("teleport-retry"));
+        await waitFor(() =>
+          replacement.frames.some(
+            (frame) => frame.request_id === "teleport-retry" && frame.accepted,
+          ),
+        );
+        releaseModelResponse();
+        // A raw closed WebSocket can never reopen, even though a replacement is
+        // registered. On the buggy producer this deadline fails, not a mock call.
+        for (
+          let attempt = 0;
+          attempt < 200 && !finished && errors.length === 0;
+          attempt += 1
+        ) {
+          await Bun.sleep(10);
+        }
+        expect(errors).toEqual([]);
+        expect(finished).toBe(true);
+        await waitFor(
+          () =>
+            countToolFrames(replacement.frames, "tool_return_message") === 1,
+        );
+        replacement.peer.send(wireInput("teleport-retry-finished"));
+        await waitFor(() =>
+          replacement.frames.some(
+            (frame) =>
+              frame.request_id === "teleport-retry-finished" && frame.accepted,
+          ),
+        );
+        expect(turnStarts).toBe(1);
+        expect(secretsHydrations).toBe(1);
+        expect(continuationSends).toBe(1);
+        expect(await readFile(executionFile, "utf8")).toBe("executed\n");
+        for (const kind of [
+          "client_tool_start",
+          "client_tool_end",
+          "tool_return_message",
+        ]) {
+          expect(countToolFrames(original.frames, kind)).toBe(0);
+          expect(countToolFrames(replacement.frames, kind)).toBe(1);
+        }
+      } finally {
+        releaseModelResponse();
+        runtime.turnLifecycle.requestCancellation();
+        await Promise.all(tasks);
+        for (const socket of sockets) socket.terminate();
+        server.close();
+        releaseToolExecutionContext(context.contextId);
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+  }
 
   test("acknowledges batched external-tool registration without runtime startup", async () => {
     const listener = createRuntime();
