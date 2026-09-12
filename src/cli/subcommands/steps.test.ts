@@ -122,10 +122,10 @@ test("help works without initializing authentication", async () => {
 test("trace retrieval is classified as read only without allowing arbitrary steps commands", () => {
   expect(
     isReadOnlyShellCommand(
-      "letta steps trace --agent agent-target --step step-1",
+      "letta --backend api steps trace --agent agent-target --step step-1",
     ),
   ).toBe(true);
-  expect(isReadOnlyShellCommand("letta steps delete --step step-1")).toBe(
-    false,
-  );
+  expect(
+    isReadOnlyShellCommand("letta --backend api steps delete --step step-1"),
+  ).toBe(false);
 });
