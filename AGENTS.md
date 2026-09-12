@@ -897,6 +897,8 @@ and create draft parity PRs when warranted.
   `needs:` gates with `if: always()` treat skipped as non-success, causing false
   failures. Fix: check `needs.draft-gate.result == 'success' || needs.draft-gate.result
   == 'skipped'`.
+- Release-time secrets belong in the `npm-publish` GitHub environment used by `release.yml`, not at repository or organization scope.
+- GitHub App credentials cannot manage Actions/environment secrets; a human must add them through repository settings.
 - **Action ref caching:** GitHub Actions resolves branch refs to SHAs at trigger
   time and caches. Pushing new commits to the action branch doesn't update
   already-triggered runs. Pin to a specific SHA instead of `@main`.
