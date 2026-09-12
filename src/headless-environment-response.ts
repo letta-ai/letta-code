@@ -17,6 +17,24 @@ import {
 import { ApiRequestError } from "@/backend/api/request";
 import { toolFilter } from "@/tools/filter";
 
+export function isCloudEnvironmentSelector(
+  selector: string | boolean | undefined,
+): boolean {
+  if (typeof selector !== "string") return false;
+  const normalized = selector.trim().toLowerCase();
+  return normalized === "cloud" || normalized === "cloud-sandbox";
+}
+
+export function getEnvironmentRoutedMessagingUnsupportedReason(
+  environment: EnvironmentConnection,
+): string | null {
+  if (environment.metadata?.environmentMessageProtocol === "v2-input")
+    return null;
+  return `Computer ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
+    environment.metadata?.lettaCodeVersion ?? "unknown"
+  } and does not advertise computer-routed headless messaging support. Update that runtime or omit --computer to use same-computer messaging.`;
+}
+
 /**
  * Build the POST body for an environment-routed turn.
  *

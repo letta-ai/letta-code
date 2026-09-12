@@ -18,6 +18,7 @@ import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
 } from "@/tools/impl/shell-env";
+import { SUBAGENT_LAUNCH_ENV } from "@/utils/subagent-launch-marker";
 import type { SubagentLaunchProfile, SubagentMemoryScope } from ".";
 
 interface ResolveSubagentLauncherOptions {
@@ -197,6 +198,7 @@ export function composeSubagentChildEnv(
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     ...(actingUserId && { [ACTING_USER_ID_ENV]: actingUserId }),
     LETTA_CODE_AGENT_ROLE: "subagent",
+    [SUBAGENT_LAUNCH_ENV]: "1",
     ...(subagentType === "reflection" && {
       [LETTA_MOD_CAPABILITY_PROFILE_ENV]: PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
     }),
