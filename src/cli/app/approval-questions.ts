@@ -1,18 +1,15 @@
-import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
+import {
+  type AskUserQuestion,
+  parseAskUserQuestions,
+} from "@/cli/helpers/ask-user-questions";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 
-// Extract questions from AskUserQuestion tool args
-export function getQuestionsFromApproval(approval: ApprovalRequest) {
-  const parsed = safeJsonParseOr<Record<string, unknown>>(
-    approval.toolArgs,
-    {},
-  );
-  return (
-    (parsed.questions as Array<{
-      question: string;
-      header: string;
-      options: Array<{ label: string; description: string }>;
-      multiSelect: boolean;
-    }>) || []
-  );
+// Extract questions from an AskUserQuestion tool call's args. Delegates to the
+// shared parseAskUserQuestions validator (single source of truth shared with
+// the ApprovalSwitch render path) so malformed shapes are rejected rather than
+// reaching the submit handler. Returns [] for anything malformed.
+export function getQuestionsFromApproval(
+  approval: ApprovalRequest,
+): AskUserQuestion[] {
+  return parseAskUserQuestions(approval);
 }
