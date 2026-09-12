@@ -315,8 +315,7 @@ function queueMonitorEvent(params: {
       description,
       event: sanitizedEvent,
     }),
-    agentId: scope?.agentId,
-    conversationId: scope?.conversationId,
+    ...scope,
   });
 }
 
@@ -358,8 +357,7 @@ function queueCommandCompletion(params: {
       outputFile,
       usage: durationMs === undefined ? undefined : { durationMs },
     }),
-    agentId: scope?.agentId,
-    conversationId: scope?.conversationId,
+    ...scope,
   });
 }
 

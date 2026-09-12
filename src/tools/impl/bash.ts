@@ -281,8 +281,7 @@ function notifyBackgroundCompletion(params: {
       outputFile,
       usage: durationMs === undefined ? undefined : { durationMs },
     }),
-    agentId: scope?.agentId,
-    conversationId: scope?.conversationId,
+    ...scope,
   });
 }
 
