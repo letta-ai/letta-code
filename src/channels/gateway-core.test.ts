@@ -285,6 +285,7 @@ test("removed queued input emits cancellation while another turn is active", asy
     type: "finished",
     batchId: "channel-cm-queued",
     sources: [queuedSource],
+    remainingSources: [activeSource],
     outcome: "cancelled",
     stopReason: "cancelled",
   });

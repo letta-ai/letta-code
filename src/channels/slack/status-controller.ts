@@ -1,7 +1,9 @@
 import type {
+  ChannelTurnLifecycleEvent,
   ChannelTurnSource,
   OutboundChannelMessage,
 } from "@/channels/types";
+import { SLACK_ASSISTANT_STARTUP_STATUS } from "./progress";
 import {
   firstNonEmptyString,
   isNonEmptyString,
@@ -32,6 +34,7 @@ export type AgentConvSlackState = {
 };
 
 export type SlackStatusController = {
+  handleLifecycle: (event: ChannelTurnLifecycleEvent) => Promise<void>;
   getUniqueSources: (sources: ChannelTurnSource[]) => ChannelTurnSource[];
   getLifecycleErrorReplyKey: (source: ChannelTurnSource) => string | null;
   activate: (
@@ -146,6 +149,13 @@ export function createSlackStatusController(params: {
     const previous =
       writePromiseByConversation.get(stateKey) ?? Promise.resolve();
     const operation = previous.then(async () => {
+      // A reply or completion may have cleared activity while this write waited.
+      if (footerText && !stateByConversation.get(stateKey)?.isThinkingActive) {
+        if (signatureByConversation.get(stateKey) === signature) {
+          signatureByConversation.delete(stateKey);
+        }
+        return false;
+      }
       try {
         await setStatus.call(slackClient.assistant?.threads, {
           channel_id: source.chatId,
@@ -153,6 +163,18 @@ export function createSlackStatusController(params: {
           status: footerText,
           ...(footerText ? { loading_messages: [loadingText] } : {}),
         });
+        // The request may have applied after a reply auto-cleared Slack. Keep
+        // this correction in the same write queue, ahead of any new activity.
+        const state = stateByConversation.get(stateKey);
+        if (footerText && state && !state.isThinkingActive) {
+          await setStatus.call(slackClient.assistant?.threads, {
+            channel_id: source.chatId,
+            thread_ts: threadTs,
+            status: "",
+          });
+          clearedStaleReplyKeys.add(replyKey);
+          return true;
+        }
         if (footerText) clearedStaleReplyKeys.delete(replyKey);
         else clearedStaleReplyKeys.add(replyKey);
         return true;
@@ -261,7 +283,50 @@ export function createSlackStatusController(params: {
     signatureByConversation.delete(key);
   }
 
+  async function refresh(source: ChannelTurnSource): Promise<boolean> {
+    const key = getConversationKey(source);
+    const state = key ? stateByConversation.get(key) : undefined;
+    if (!key || !state?.isThinkingActive) return false;
+    await writeStatus(source, state.typingFooterText, state.thinkingText, {
+      force: true,
+    });
+    if (stateByConversation.get(key) === state && state.isThinkingActive) {
+      scheduleKeepalive(key);
+    }
+    return true;
+  }
+
+  async function handleLifecycle(
+    event: ChannelTurnLifecycleEvent,
+  ): Promise<void> {
+    if (event.type === "queued") {
+      if (await refresh(event.source)) return;
+      if (event.source.showStartupStatus) {
+        await activate(
+          event.source,
+          SLACK_ASSISTANT_STARTUP_STATUS,
+          SLACK_ASSISTANT_STARTUP_STATUS,
+        );
+      }
+      return;
+    }
+    for (const source of getUniqueSources(event.sources)) {
+      if (event.type === "processing") {
+        await clearStale(source);
+      } else if (event.stopReason !== "requires_approval") {
+        const remaining = event.remainingSources?.some(
+          (other) =>
+            other.accountId === source.accountId &&
+            getConversationKey(other) === getConversationKey(source) &&
+            getLifecycleReplyKey(other) === getLifecycleReplyKey(source),
+        );
+        if (!remaining) await deactivate(source);
+      }
+    }
+  }
+
   return {
+    handleLifecycle,
     getUniqueSources,
     getLifecycleErrorReplyKey,
     activate,
