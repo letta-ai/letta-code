@@ -10,6 +10,7 @@ import {
   backgroundProcesses,
   clearBackgroundProcessCleanup,
 } from "@/tools/impl/process_manager";
+import { addToMessageQueue } from "@/utils/message-queue-bridge";
 import { handleAbortMessageInput } from "./control-inputs";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
@@ -88,6 +89,13 @@ describe("listener interrupt queue handoff", () => {
     server.on("connection", (peer) => peers.push(peer));
     const processQueuedTurn = mock(async (_incoming: IncomingMessage) => {});
     setActiveRuntime(listener);
+    // Another test's background task can finish before this listener mounts.
+    addToMessageQueue({
+      kind: "task_notification",
+      text: "Unrelated background task completed",
+      agentId: "agent-unrelated-completion",
+      conversationId: "unrelated-completion",
+    });
     installProcessEventRouting({
       runtime: listener,
       processTransport: socket,
@@ -236,7 +244,15 @@ describe("listener interrupt queue handoff", () => {
       }
       expect(bashState.status).toBe("running");
       process.kill(bashPid, 0);
-      expect(processQueuedTurn).not.toHaveBeenCalled();
+      expect(
+        processQueuedTurn.mock.calls.filter(([incoming]) =>
+          scopes.some(
+            (scope) =>
+              incoming.agentId === scope.agentId &&
+              incoming.conversationId === scope.conversationId,
+          ),
+        ),
+      ).toEqual([]);
       cancellation.resolve();
     } finally {
       for (const id of taskIds) {
