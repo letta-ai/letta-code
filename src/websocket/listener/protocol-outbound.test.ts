@@ -471,6 +471,24 @@ describe("emitProtocolV2Message connection routing", () => {
 });
 
 describe("emitDequeuedUserMessage", () => {
+  test("does not echo a system-only kickoff as user input", () => {
+    const { runtime, socket } = createRuntime();
+    const incoming = {
+      type: "message",
+      agentId: "agent-1",
+      conversationId: "default",
+      messages: [{ role: "system", content: "Send your opening message now." }],
+    } as IncomingMessage;
+    const batch = {
+      batchId: "onboarding:agent-1:default",
+      items: [],
+      mergedCount: 1,
+      queueLenAfter: 0,
+    } satisfies DequeuedBatch;
+    emitDequeuedUserMessage(socket as never, runtime, incoming, batch);
+    expect(socket.sentPayloads).toHaveLength(0);
+  });
+
   test("includes the acting user for live observers", () => {
     const { runtime, socket } = createRuntime();
     const incoming = {
