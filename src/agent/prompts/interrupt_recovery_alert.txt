@@ -1,1 +1,1 @@
-<system-reminder>The user interrupted the active stream.</system-reminder>
+<system-reminder>The user interrupted the active stream. Any pending monitors in this conversation were also cancelled because of the interruption. Do not restart them unless the user asks.</system-reminder>

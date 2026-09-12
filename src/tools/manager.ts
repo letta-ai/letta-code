@@ -2562,19 +2562,16 @@ async function executeToolInner(
     if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
 
     try {
-      // Inject options for tools that support them without altering schemas
       let enhancedArgs = args;
       let invocationSecrets: Record<string, string> = {};
 
-      // Every built-in may opt into turn cancellation without adding another
-      // manager-side allowlist entry. The signal remains outside tool schemas.
+      // Cancellation is internal, not part of model-facing tool schemas.
       if (options?.signal) {
         enhancedArgs = { ...enhancedArgs, signal: options.signal };
       }
 
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
-        // Keep secret values out of shell interpolation and only redact values
-        // that this invocation can access.
+        // Redact only this invocation's secrets.
         const command = enhancedArgs.command ?? enhancedArgs.cmd;
         invocationSecrets =
           typeof command === "string" ||
@@ -2596,12 +2593,19 @@ async function executeToolInner(
         if (Object.keys(invocationSecrets).length > 0) {
           enhancedArgs = { ...enhancedArgs, secretEnv: invocationSecrets };
         }
-        if (options?.parentScope) {
-          enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
+        const parentScope =
+          options?.parentScope ??
+          (internalName === "Monitor" && scopedAgentId
+            ? {
+                agentId: scopedAgentId,
+                conversationId: executionScope.conversationId ?? "default",
+              }
+            : undefined);
+        if (parentScope) {
+          enhancedArgs = { ...enhancedArgs, parentScope };
         }
       }
 
-      // Inject toolCallId, abort signal, and parent scope for Task tool
       if (internalName === "Task") {
         if (options?.toolCallId) {
           enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
@@ -2611,9 +2615,7 @@ async function executeToolInner(
         }
       }
 
-      // Inject scoped metadata for Skill tool.
-      // In listener/desktop mode, relying on global agent context is unsafe
-      // because multiple agent/conversation scopes can overlap in one process.
+      // Skill metadata must not use process-global scope in listener mode.
       if (internalName === "Skill" && options?.toolCallId) {
         enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
       }
@@ -2621,8 +2623,6 @@ async function executeToolInner(
         enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
       }
 
-      // Inject worktree-only execution state and cancellation without exposing
-      // either internal field in the model-facing schema.
       if (WORKTREE_TOOL_NAMES.has(internalName as ToolName)) {
         enhancedArgs = {
           ...enhancedArgs,

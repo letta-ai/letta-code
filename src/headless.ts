@@ -62,7 +62,10 @@ import {
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
 import { resolvePersonalityId } from "./agent/personality-presets";
-import type { MemoryPromptMode } from "./agent/prompt-assets";
+import {
+  INTERRUPT_RECOVERY_ALERT,
+  type MemoryPromptMode,
+} from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
@@ -170,6 +173,7 @@ import {
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
+import { stopMonitorsForScope } from "./tools/impl/stop-monitor";
 import {
   INTERACTIVE_USER_INPUT_TOOL_NAMES,
   isInteractiveApprovalTool,
@@ -2244,6 +2248,11 @@ ${SYSTEM_REMINDER_CLOSE}
 
   // One-shot mode has no input loop, so wire SIGINT directly into the turn.
   const sigintSignal = createSigintAbortSignal();
+  sigintSignal.addEventListener(
+    "abort",
+    () => stopMonitorsForScope({ agentId: agent.id, conversationId }),
+    { once: true },
+  );
   const exitInterrupted = async (): Promise<never> => {
     if (outputFormat === "stream-json") {
       const errorMsg: ErrorMessage = {
@@ -3695,10 +3704,7 @@ async function runBidirectionalMode(
   // Feed lines into queue or resolver
   rl.on("line", (line) => {
     maybeNotifyBlocked(line);
-    // Fast path: handle control_request:interrupt synchronously so we can
-    // abort an in-flight drain without waiting for the main loop to dequeue.
-    // Without this, a runaway thinking turn never sees the interrupt because
-    // `getNextLine()` isn't called until the current drain returns.
+    // Interrupt before dequeue so an in-flight drain can unwind.
     let parsedLine: {
       type?: string;
       request?: { subtype?: string };
@@ -3720,10 +3726,7 @@ async function runBidirectionalMode(
         turnStarting,
       });
       if (action === "abort-active") {
-        // Abort the in-flight turn. Do NOT null the controller here — the
-        // turn's epilogue (line ~4275) reads currentAbortController?.signal.aborted
-        // to classify the result as "interrupted" vs "error". The `finally`
-        // block at the bottom of the user-message branch is what owns nulling.
+        // Preserve the controller until finally so the turn records interruption.
         (currentAbortController as AbortController).abort();
         if (lineResolver) {
           // If the turn is blocked waiting for a permission/external-tool
@@ -3734,10 +3737,7 @@ async function runBidirectionalMode(
           resolve(null);
         }
       } else if (action === "latch") {
-        // Narrow pre-controller race: a user message was just dispatched but
-        // its AbortController isn't created yet. Latch so the imminent turn
-        // aborts. An idle interrupt ("noop") must NOT latch — that would
-        // poison the next user turn.
+        // Latch only for the imminent turn, never for an idle interrupt.
         pendingInterrupt = true;
       }
       const interruptResponse: ControlResponse = {
@@ -3992,11 +3992,7 @@ async function runBidirectionalMode(
         };
         writeWireMessage(initResponse);
       } else if (subtype === "interrupt") {
-        // Abort current operation if any. Do NOT null the controller — the
-        // turn's epilogue (line ~4415) reads currentAbortController?.signal.aborted
-        // to classify the result as "interrupted" vs "error", and the
-        // user-message branch's `finally` is what owns nulling. Mirrors the
-        // fast path in rl.on("line", ...).
+        // Preserve the controller until finally so the turn records interruption.
         if (
           currentAbortController !== null &&
           decideInterruptAction({
@@ -4269,18 +4265,19 @@ async function runBidirectionalMode(
         continue;
       }
 
-      // Create abort controller for this operation.  Drain any latched
-      // interrupt that arrived before the controller existed (race between
-      // the readline 'line' event and the microtask that creates the
-      // controller — see rl.on("line", ...) above).
+      // Drain pre-controller interrupts after installing scoped monitor cleanup.
       currentAbortController = new AbortController();
+      currentAbortController.signal.addEventListener(
+        "abort",
+        () => stopMonitorsForScope({ agentId: agent.id, conversationId }),
+        { once: true },
+      );
       if (pendingInterrupt) {
         pendingInterrupt = false;
         currentAbortController.abort();
       }
       // Controller now exists — close the pre-controller race window.
       turnStarting = false;
-
       turnInProgress = true;
       try {
         const buffers = createBuffers(agent.id);
@@ -4350,14 +4347,14 @@ async function runBidirectionalMode(
         }
         currentInput = turnStartEmission.input;
 
-        // If the previous turn was interrupted mid-tool-call, the agent may be
-        // left in `requires_approval` with a dangling approval. Sending this
-        // fresh turn against that stale state makes the run error (a silent
-        // "refusal" downstream). Clear it first, reusing the same recovery the
-        // resume path uses. Best-effort: a recovery failure must not abort the
-        // new turn. (PR #2631 — handle interrupts.)
+        // Clear dangling approvals before sending fresh input after an interrupt.
         if (priorTurnInterrupted) {
           priorTurnInterrupted = false;
+          currentInput.unshift({
+            role: "user",
+            content: INTERRUPT_RECOVERY_ALERT,
+            otid: randomUUID(),
+          });
           try {
             await resolveAllPendingApprovals();
           } catch (recoveryError) {
@@ -4685,7 +4682,10 @@ async function runBidirectionalMode(
             const executedResults = await executeApprovalBatch(
               decisions,
               undefined,
-              { toolContextId: turnToolContextId ?? undefined },
+              {
+                toolContextId: turnToolContextId ?? undefined,
+                abortSignal: currentAbortController.signal,
+              },
             );
 
             emitLocalToolReturns(executedResults, sessionId);
