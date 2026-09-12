@@ -281,7 +281,10 @@ export function shouldProcessInboundMessageDirectly(
   );
 }
 
-export function consumeQueuedTurn(runtime: ConversationRuntime): {
+export function consumeQueuedTurn(
+  runtime: ConversationRuntime,
+  continuation?: { actingUserId: string | undefined },
+): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;
 } | null {
@@ -302,6 +305,12 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
     candidate.kind === "message" && candidate.noCoalesce === true;
   for (const item of queuedItems) {
+    // Tool results belong to the active request's sender. Leave a different
+    // sender's input queued for its own turn, including attributed/anonymous
+    // transitions. Idle queue drains do not have an active sender to preserve.
+    if (continuation && item.actingUserId !== continuation.actingUserId) {
+      break;
+    }
     if (
       !isCoalescable(item.kind) ||
       !hasSameQueueScope(firstQueuedItem, item)
