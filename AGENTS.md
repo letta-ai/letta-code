@@ -374,6 +374,8 @@ layer differs. Features added to one tool may be missing from others.
 
 - **Review signal:** any shell tool change, check ALL variants have parity.
 
+- **Path-tool review signal:** resolve relative inputs against `getCurrentWorkingDirectory()` and pass absolute paths through unchanged; never use `process.cwd()` as the conversation CWD.
+
 ### Interrupt Lock / State Cleanup
 
 `EAGER_CANCEL` path and non-EAGER fallback BOTH need to clear ALL state flags
