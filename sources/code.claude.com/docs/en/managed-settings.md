@@ -131,7 +131,7 @@ When two files set the same key, Claude Code combines them by these rules:
 
 When your organization delivers more than one managed source to the same machine, the [`managedSourcesBehavior`](/docs/en/settings-reference#managedsourcesbehavior) key decides what Claude Code does with the others:
 
-* **`"first-wins"`, the default**: Claude Code uses the highest-ranked source that delivers at least one policy key and ignores the rest rather than merging them, apart from the few keys in [Keys read from every admin source](#keys-read-from-every-admin-source). Claude Code shows no warning for the sources it skips; `/status` [names the source it used and the ones it skipped](#read-the-source-in-/status).
+* **`"first-wins"`, the default**: Claude Code uses the highest-ranked source that delivers at least one policy key and ignores the rest rather than merging them, apart from the keys in [Keys read from every admin source](#keys-read-from-every-admin-source). Claude Code shows no warning for the sources it skips; `/status` [names the source it used and the ones it skipped](#read-the-source-in-/status).
 * **`"merge"`**: Claude Code applies every admin source that delivers a policy key and combines them by kind of key: on most keys the higher-ranked source's value applies, lists union, and locks take the strictest value. [Compose every managed source](#compose-every-managed-source) says where to set the key and how each kind of key combines. Requires Claude Code v2.1.242 or later.
 
 Both settings rank the sources the same way. Two terms recur in this section:
@@ -171,6 +171,8 @@ The cross-source keys include:
 * A commit-trailer opt-out in `attribution`, or in the deprecated `includeCoAuthoredBy`, from any tier
 * [`forceRemoteSettingsRefresh`](/docs/en/server-managed-settings)
 * `env`, merged per variable across the admin sources: each variable comes from the highest-priority source that defines it, so lower sources fill in variables the higher ones leave unset. A few variables follow their own rules; [Per-key exceptions across managed sources](/docs/en/server-managed-settings#per-key-exceptions-across-managed-sources) names each one. Requires Claude Code v2.1.223 or later. Before v2.1.223, Claude Code applied the selected source's whole `env` block only
+
+The [gateway login keys](#choose-a-delivery-mechanism), [`forceLoginGatewayUrl`](/docs/en/settings-reference#forcelogingatewayurl) and the `"gateway"` value of [`forceLoginMethod`](/docs/en/settings-reference#forceloginmethod), follow a separate rule. Claude Code never reads them from server-managed settings, so while server-managed settings are the selected source, the highest-ranked admin source on the machine that carries a policy key still supplies them. A value in an admin source ranked below that one, or in the HKCU registry, is ignored.
 
 ### Compose every managed source
 

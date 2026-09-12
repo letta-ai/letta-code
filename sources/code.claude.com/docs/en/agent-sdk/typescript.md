@@ -5034,7 +5034,7 @@ When `errorCode` is `"credits_required"`, the rejection is from a claude.ai subs
 
 ### `SDKLocalCommandOutputMessage`
 
-Output from a local command such as `/voice` or `/usage`. Displayed as assistant-style text in the transcript.
+Claude Code doesn't emit this message type. When you send a command such as `/context` or `/usage` as a prompt, its output arrives as an [`SDKAssistantMessage`](#sdkassistantmessage).
 
 ```typescript theme={null}
 type SDKLocalCommandOutputMessage = {
