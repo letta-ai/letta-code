@@ -40,12 +40,13 @@ Usage:
 
 Target another conversation (upload or download):
   letta sandbox upload <local-path> --conversation <conv-id>
-  letta sandbox upload <local-path> --conversation default --agent <agent-id>
+  letta sandbox upload <local-path> --agent <agent-id>
 
 Notes:
   - Without target flags, uses the active Letta Cloud conversation.
   - --conversation resolves the owning agent; --agent, if given, must match.
-  - default selects the agent's main sandbox and requires explicit --agent.
+  - --agent alone selects that agent's main/default sandbox.
+  - --conversation default is also supported and requires explicit --agent.
   - Target flags override shell/session context without changing it.
   - Run upload on the computer containing the local file, including a remote subagent.
   - Uploads are stored under /root/downloads in the conversation sandbox.
@@ -110,7 +111,10 @@ export async function resolveSandboxTarget(
     return getCurrentSession();
   }
   const agentId = target.agent?.trim();
-  const conversationId = target.conversation?.trim();
+  const conversationId =
+    target.conversation === undefined && agentId
+      ? "default"
+      : target.conversation?.trim();
   if (target.agent !== undefined && !agentId) {
     throw new Error("--agent must not be empty");
   }
@@ -187,7 +191,9 @@ export async function runSandboxSubcommand(
       deps.retrieveConversation ??
         (async (id) => (await getClient()).conversations.retrieve(id)),
     );
-    const explicitTarget = parsed.values.conversation !== undefined;
+    const explicitTarget =
+      parsed.values.conversation !== undefined ||
+      parsed.values.agent !== undefined;
     const ensureSandbox = async () => {
       const sandbox = await (deps.ensureSandbox ?? ensureConversationSandbox)(
         session.agentId,
