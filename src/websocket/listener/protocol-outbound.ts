@@ -658,7 +658,7 @@ export function emitDequeuedUserMessage(
 
   const firstUserPayload = incoming.messages.find(
     (payload): payload is MessageCreate & { client_message_id?: string } =>
-      "content" in payload,
+      "role" in payload && payload.role === "user" && "content" in payload,
   );
   if (!firstUserPayload) return;
 

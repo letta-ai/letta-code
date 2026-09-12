@@ -39,6 +39,7 @@ import {
   type TurnInputState,
 } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
+import { getListenerReminderTarget } from "./turn-reminders";
 import {
   buildInboundUserTranscriptLines,
   trackListenerUserInput,
@@ -149,7 +150,10 @@ export async function prepareListenerTurn(params: {
     "approvals" in firstMessage;
   let cachedAgent: AgentState | null = null;
 
-  if (!isApprovalMessage && agentId) {
+  // Reminder providers consume one-shot state while building, so only build
+  // when there is an eligible message to carry the resulting context.
+  const reminderTarget = getListenerReminderTarget(messagesToSend);
+  if (!isApprovalMessage && agentId && reminderTarget) {
     try {
       try {
         cachedAgent = (await getBackend().retrieveAgent(agentId, {
@@ -208,21 +212,10 @@ export async function prepareListenerTurn(params: {
         return { kind: "interrupted" };
       }
 
-      if (reminderParts.length > 0) {
-        for (const message of messagesToSend) {
-          if (
-            "role" in message &&
-            message.role === "user" &&
-            "content" in message
-          ) {
-            message.content = prependReminderPartsToContent(
-              message.content,
-              reminderParts,
-            );
-            break;
-          }
-        }
-      }
+      reminderTarget.content = prependReminderPartsToContent(
+        reminderTarget.content,
+        reminderParts,
+      );
     } catch (error) {
       trackBoundaryError({
         errorType: "listener_reminder_build_failed",
