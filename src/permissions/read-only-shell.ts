@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { getAllowedMemoryPrefixes } from "./agent-memory-prefixes";
 
 import { isPathWithinRoots, normalizeMemoryPath } from "./memory-paths";
 import { isReadOnlyLettaCommand } from "./read-only-letta";
@@ -1282,28 +1283,6 @@ function parseGitInvocation(
   }
 
   return { subcommand: null, subcommandIndex: -1, isSafePath: true };
-}
-
-function getAllowedMemoryPrefixes(agentId: string): string[] {
-  const home = homedir();
-  const prefixes: string[] = [
-    normalizeSeparators(resolve(home, ".letta", "agents", agentId, "memory")),
-    normalizeSeparators(
-      resolve(home, ".letta", "agents", agentId, "memory-worktrees"),
-    ),
-  ];
-  const parentId = process.env.LETTA_PARENT_AGENT_ID;
-  if (parentId && parentId !== agentId) {
-    prefixes.push(
-      normalizeSeparators(
-        resolve(home, ".letta", "agents", parentId, "memory"),
-      ),
-      normalizeSeparators(
-        resolve(home, ".letta", "agents", parentId, "memory-worktrees"),
-      ),
-    );
-  }
-  return prefixes;
 }
 
 function normalizeSeparators(p: string): string {

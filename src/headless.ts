@@ -9,6 +9,9 @@ import type {
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import { resolveActingUserId } from "@/agent/acting-user";
+import { loadPreloadedSkills } from "@/agent/preloaded-skills";
+import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import {
   trackBoundaryError,
@@ -22,7 +25,11 @@ import {
 } from "@/utils/message-queue-bridge";
 import { detectShellContext } from "@/utils/shell-context";
 import { createSigintAbortSignal } from "@/utils/sigint-abort";
-import { consumeSubagentLaunch } from "@/utils/subagent-launch-marker";
+import {
+  consumeSubagentLaunch,
+  LISTENER_CONNECTION_ENV,
+  SUBAGENT_LAUNCH_PROFILE_ENV,
+} from "@/utils/subagent-launch-marker";
 import { reportSubagentStdoutLoss } from "@/utils/subagent-stdout-failure";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
@@ -47,7 +54,6 @@ import {
   formatPlanRotationNotice,
   rotateChatGPTPlanOnQuotaLimit,
 } from "./agent/chatgpt-plan-rotation";
-import { buildClientSkillsPayload } from "./agent/client-skills";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/list-messages-handler";
@@ -79,7 +85,6 @@ import {
   type EnvironmentConnection,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
-  sendEnvironmentMessage,
 } from "./backend/api/environments";
 import type { ParsedCliArgs } from "./cli/args";
 import {
@@ -118,17 +123,13 @@ import {
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import { tryCloudHeadlessSend } from "./headless-cloud-send";
-import {
-  buildEnvironmentCreateMessageBody,
-  getEnvironmentRoutedMessagingUnsupportedReason,
-  isCloudEnvironmentSelector,
-  waitForEnvironmentAssistantMessage,
-} from "./headless-environment-response";
+import { isCloudEnvironmentSelector } from "./headless-environment-response";
 import {
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
   prepareHeadlessEphemeralBackend,
 } from "./headless-ephemeral-startup";
+import { launchListenerConversation } from "./headless-listener-launch";
 import { resolveHeadlessMemfsPolicy } from "./headless-memfs-policy";
 import {
   createHeadlessModAdapter,
@@ -683,18 +684,6 @@ function buildEnvironmentResponseMetadata(params: {
   };
 }
 
-function formatAgentReplyMetadata(params: {
-  agentId: string;
-  conversationId: string;
-  environment?: ReplyEnvironmentMetadata;
-}): string {
-  return JSON.stringify({
-    agent_id: params.agentId,
-    conversation_id: params.conversationId,
-    ...(params.environment ? { environment: params.environment } : {}),
-  });
-}
-
 export async function handleHeadlessCommand(
   parsedArgs: ParsedCliArgs,
   model?: string,
@@ -705,6 +694,10 @@ export async function handleHeadlessCommand(
 ) {
   const { values, positionals } = parsedArgs;
   const isAgentLaunch = consumeSubagentLaunch(process.env);
+  const launchProfile = isAgentLaunch
+    ? process.env[SUBAGENT_LAUNCH_PROFILE_ENV]
+    : undefined;
+  delete process.env[SUBAGENT_LAUNCH_PROFILE_ENV];
   telemetry.setSurface(getTerminalTelemetrySurface(true));
   const modsDisabled = shouldDisableMods({
     cliFlag: values["no-mods"],
@@ -826,9 +819,14 @@ export async function handleHeadlessCommand(
   const fromAgentId = values["from-agent"];
   const explicitEnvironmentSelector =
     values.computer ?? values.environment ?? values.env;
-  const usesRemoteEnvironment =
-    typeof explicitEnvironmentSelector === "string" &&
-    explicitEnvironmentSelector.trim().length > 0;
+  const inheritedListenerConnectionId = process.env[LISTENER_CONNECTION_ENV];
+  const usesRemoteEnvironment = shouldLaunchThroughListener({
+    launchProfile,
+    cloudBackend: backend.capabilities.environmentRouting,
+    connectionId: inheritedListenerConnectionId,
+    computer: explicitEnvironmentSelector,
+    ephemeral: values.ephemeral,
+  });
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -1155,6 +1153,9 @@ export async function handleHeadlessCommand(
       process.exit(1);
     }
   }
+
+  if (usesRemoteEnvironment && !backend.capabilities.environmentRouting)
+    throw new Error("Computer routing requires the Cloud backend");
 
   if (!agent && ephemeralFlag) {
     try {
@@ -1658,7 +1659,7 @@ export async function handleHeadlessCommand(
     permissionMode: headlessPermissionMode,
     reflectionSettings: effectiveReflectionSettings,
     sessionStats,
-    disabled: modsDisabled,
+    disabled: modsDisabled || usesRemoteEnvironment,
   });
   const initialHeadlessModContext = createHeadlessModContext({
     agent,
@@ -1984,36 +1985,23 @@ ${SYSTEM_REMINDER_CLOSE}
   // Pre-load specific skills' full content (used by subagents with skills: field).
   // Remote computer turns inject their own local context and skills.
   if (preLoadSkillsRaw && !usesRemoteEnvironment) {
-    const { readFile: readFileAsync } = await import("node:fs/promises");
-    const { skillPathById } = await buildClientSkillsPayload({
-      agentId: agent.id,
-      skillSources: resolvedSkillSources,
-      logger: (message) => {
-        if (isDebugEnabled()) {
-          console.warn(`[DEBUG] ${message}`);
-        }
-      },
-    });
-    const skillIds = preLoadSkillsRaw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const loadedContents: string[] = [];
-    for (const skillId of skillIds) {
-      const skillPath = skillPathById[skillId];
-      if (!skillPath) continue;
-      try {
-        const content = await readFileAsync(skillPath, "utf-8");
-        loadedContents.push(`<${skillId}>\n${content}\n</${skillId}>`);
-      } catch {
-        // Skill file not readable, skip
-      }
-    }
-    if (loadedContents.length > 0) {
-      pushPart(
-        `<loaded_skills>\n${loadedContents.join("\n\n")}\n</loaded_skills>`,
-      );
-    }
+    pushPart(
+      await loadPreloadedSkills(
+        preLoadSkillsRaw
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean),
+        {
+          agentId: agent.id,
+          skillSources: resolvedSkillSources,
+          logger: (message) => {
+            if (isDebugEnabled()) {
+              console.warn(`[DEBUG] ${message}`);
+            }
+          },
+        },
+      ),
+    );
   }
 
   // Add user prompt
@@ -2026,93 +2014,82 @@ ${SYSTEM_REMINDER_CLOSE}
   );
 
   if (usesRemoteEnvironment) {
-    const environmentSelector = String(explicitEnvironmentSelector);
+    const environmentSelector = explicitEnvironmentSelector ?? "";
     const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
-    const environmentRouting = useCloudSandbox
-      ? await resolveAgentSandboxConnectionId(agent.id, { conversationId })
-      : await resolveEnvironmentConnectionId(environmentSelector);
-    const { connectionId, environment } = environmentRouting;
-    const responseEnvironment = buildEnvironmentResponseMetadata({
-      source: useCloudSandbox ? "cloud-sandbox" : "explicit",
-      input: environmentSelector,
+    const environmentRouting = environmentSelector
+      ? useCloudSandbox
+        ? await resolveAgentSandboxConnectionId(agent.id, { conversationId })
+        : await resolveEnvironmentConnectionId(environmentSelector)
+      : null;
+    const connectionId =
+      environmentRouting?.connectionId ?? inheritedListenerConnectionId;
+    if (!connectionId)
+      throw new Error("No listener connection was resolved for this launch");
+    const responseEnvironment: ReplyEnvironmentMetadata = environmentRouting
+      ? buildEnvironmentResponseMetadata({
+          source: useCloudSandbox ? "cloud-sandbox" : "explicit",
+          input: environmentSelector,
+          connectionId,
+          environment: environmentRouting.environment,
+        })
+      : { source: "same-environment" };
+    const environmentResult = await launchListenerConversation({
       connectionId,
-      environment,
-    });
-    const unsupportedReason =
-      getEnvironmentRoutedMessagingUnsupportedReason(environment);
-    if (unsupportedReason) {
-      if (outputFormat === "json") {
-        await writeFinalHeadlessStdout(
-          `${JSON.stringify(
-            {
-              type: "result",
-              subtype: "error",
-              is_error: true,
-              duration_ms: Math.round(sessionStats.getSnapshot().totalWallMs),
-              duration_api_ms: Math.round(
-                sessionStats.getSnapshot().totalApiMs,
-              ),
-              num_turns: 0,
-              result: unsupportedReason,
-              agent_id: publicAgentId,
-              conversation_id: conversationId,
-              environment: responseEnvironment,
-              usage: null,
-              stop_reason: "error",
-            },
-            null,
-            2,
-          )}\n`,
-        );
-      } else if (outputFormat === "stream-json") {
-        const resultEvent: ResultMessage & {
-          environment: ReplyEnvironmentMetadata;
-        } = {
-          type: "result",
-          subtype: "error",
-          session_id: sessionId,
-          duration_ms: Math.round(sessionStats.getSnapshot().totalWallMs),
-          duration_api_ms: Math.round(sessionStats.getSnapshot().totalApiMs),
-          num_turns: 0,
-          result: unsupportedReason,
-          agent_id: publicAgentId,
-          conversation_id: conversationId,
-          environment: responseEnvironment,
-          run_ids: [],
-          usage: null,
-          uuid: `result-${agent.id}-${Date.now()}`,
-          stop_reason: "error",
-        };
-        writeWireMessage(resultEvent);
-      } else {
-        console.error(`Error: ${unsupportedReason}`);
-        await writeFinalHeadlessStdout(
-          `${formatAgentReplyMetadata({
-            agentId: agent.id,
-            conversationId,
-            environment: responseEnvironment,
-          })}\n`,
-        );
-      }
-      await exitHeadless(1, "headless_environment_unsupported");
-    }
-    const otid = randomUUID();
-    await sendEnvironmentMessage(
-      connectionId,
-      buildEnvironmentCreateMessageBody({
-        agentId: agent.id,
-        conversationId,
-        content: contentParts,
-        otid,
-      }),
-    );
-
-    const environmentResult = await waitForEnvironmentAssistantMessage({
+      scope: {
+        agent_id: agent.id,
+        conversation_id: conversationId,
+        acting_user_id: resolveActingUserId(),
+      },
+      content: contentParts,
       backend,
-      agentId: agent.id,
-      conversationId,
-      otid,
-      deviceId: environment.deviceId,
+      onMessage:
+        outputFormat === "stream-json"
+          ? (message) => {
+              const uuid =
+                Reflect.get(message, "otid") ??
+                Reflect.get(message, "id") ??
+                randomUUID();
+              writeWireMessage(
+                includePartialMessages
+                  ? {
+                      type: "stream_event",
+                      event: message,
+                      session_id: sessionId,
+                      uuid,
+                    }
+                  : { ...message, session_id: sessionId, uuid },
+              );
+            }
+          : undefined,
+      cwd: environmentSelector ? undefined : getCurrentWorkingDirectory(),
+      mode: headlessPermissionMode,
+      skillSources: resolvedSkillSources,
+      settings: {
+        ...(values.tools !== undefined
+          ? {
+              tools: values.tools
+                .split(",")
+                .map((tool) => tool.trim())
+                .filter(Boolean),
+            }
+          : {}),
+        allowed_tools: cliPermissions.getAllowedTools(),
+        disallowed_tools: cliPermissions.getDisallowedTools(),
+        disable_memory_guard: cliPermissions.isMemoryGuardDisabled(),
+        max_turns: maxTurns,
+        preload_skills: parseCsvListFlag(preLoadSkillsRaw),
+        parent_agent_id: process.env.LETTA_PARENT_AGENT_ID,
+        ...(process.env.LETTA_CODE_AGENT_ROLE === "subagent"
+          ? { agent_role: "subagent" as const }
+          : {}),
+        ...(!environmentSelector
+          ? {
+              transcript_path: process.env.TRANSCRIPT_PATH,
+              memory_directory:
+                process.env.MEMORY_DIR ?? process.env.LETTA_MEMORY_DIR,
+            }
+          : {}),
+      },
     });
     const stats = sessionStats.getSnapshot();
 
@@ -2125,12 +2102,14 @@ ${SYSTEM_REMINDER_CLOSE}
             is_error: false,
             duration_ms: Math.round(stats.totalWallMs),
             duration_api_ms: Math.round(stats.totalApiMs),
-            num_turns: 1,
+            num_turns:
+              environmentResult.usage.step_count ??
+              environmentResult.runIds.length,
             result: environmentResult.text,
             agent_id: publicAgentId,
             conversation_id: conversationId,
             environment: responseEnvironment,
-            usage: null,
+            usage: environmentResult.usage,
             ...(environmentResult.stopReason &&
             environmentResult.stopReason !== "end_turn"
               ? { stop_reason: environmentResult.stopReason }
@@ -2149,13 +2128,14 @@ ${SYSTEM_REMINDER_CLOSE}
         session_id: sessionId,
         duration_ms: Math.round(stats.totalWallMs),
         duration_api_ms: Math.round(stats.totalApiMs),
-        num_turns: 1,
+        num_turns:
+          environmentResult.usage.step_count ?? environmentResult.runIds.length,
         result: environmentResult.text,
         agent_id: publicAgentId,
         conversation_id: conversationId,
         environment: responseEnvironment,
-        run_ids: [],
-        usage: null,
+        run_ids: environmentResult.runIds,
+        usage: environmentResult.usage,
         uuid: `result-${agent.id}-${Date.now()}`,
         ...(environmentResult.stopReason &&
         environmentResult.stopReason !== "end_turn"

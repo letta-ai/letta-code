@@ -13,7 +13,10 @@ type MessagesSubcommandDeps = {
   initializeSettings?: () => Promise<void>;
   getBackend?: () => Pick<
     ReturnType<typeof getBackend>,
-    "listAgentMessages" | "listConversationMessages"
+    | "listAgentMessages"
+    | "listConversationMessages"
+    | "capabilities"
+    | "retrieveConversation"
   >;
   searchMessagesForBackend?: typeof searchMessagesForBackend;
   readMessageStatus?: typeof readMessageStatus;

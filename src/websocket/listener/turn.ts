@@ -8,10 +8,7 @@ import {
   rotateChatGPTPlanOnQuotaLimit,
 } from "@/agent/chatgpt-plan-rotation";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
-import {
-  getStreamToolContextId,
-  type sendMessageStream,
-} from "@/agent/message";
+import { getStreamToolContextId } from "@/agent/message";
 import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
@@ -88,10 +85,10 @@ import {
 } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { notifyTurnFinished, notifyTurnStarted } from "./turn-observers";
-import { createTurnInputSender } from "./turn-send";
+import { startTurnInput } from "./turn-send";
 import { prepareListenerTurn } from "./turn-setup";
 import { setTurnLoopStatus } from "./turn-status";
-import { finishListenerTurn } from "./turn-terminal";
+import { buildTurnUsage, finishListenerTurn } from "./turn-terminal";
 import { seedInboundUserTranscriptLines } from "./turn-transcript";
 import type { ConversationRuntime, IncomingMessage } from "./types";
 
@@ -179,6 +176,7 @@ async function handleIncomingMessageInner(
     throw new Error("Cannot continue a turn with a stale lifecycle lease");
   const turnAbortSignal = turnLease.signal;
   let finalizedByThisInvocation = false;
+  const buffers = createBuffers(agentId ?? undefined);
   const noteFinalization = (
     transition: ReturnType<typeof finishListenerTurn>,
   ) => {
@@ -191,6 +189,9 @@ async function handleIncomingMessageInner(
         ...options,
         socket: options.socket ?? socket,
         turnId: activeDequeuedBatchId,
+        ...(runtime.executionSettings
+          ? { usage: buildTurnUsage(buffers.usage) }
+          : {}),
       }),
     );
   const finishIfInterrupted = (runId?: string | null): boolean => {
@@ -274,56 +275,29 @@ async function handleIncomingMessageInner(
     let pendingNormalizationInterruptedToolCallIds =
       setup.pendingNormalizationInterruptedToolCallIds;
     const preparedToolContext = setup.preparedToolContext;
-    const buildSendOptions = (): Parameters<typeof sendMessageStream>[2] => ({
-      ...(agentId ? { agentId } : {}),
-      streamTokens: true,
-      background: true,
-      workingDirectory: turnWorkingDirectory,
-      permissionModeState: turnPermissionModeState,
-      ...(runtime.skillSources !== undefined
-        ? { skillSources: runtime.skillSources }
-        : {}),
-      preparedToolContext: preparedToolContext.preparedToolContext,
-      ...(turnInput.imageFailureModesByMessageOtid
-        ? {
-            imageFailureModesByMessageOtid:
-              turnInput.imageFailureModesByMessageOtid,
-          }
-        : {}),
-      ...(overrideModel ? { overrideModel } : {}),
-      ...(msg.actingUserId ? { actingUserId: msg.actingUserId } : {}),
-      ...(pendingNormalizationInterruptedToolCallIds.length > 0
-        ? {
-            approvalNormalization: {
-              interruptedToolCallIds:
-                pendingNormalizationInterruptedToolCallIds,
-            },
-          }
-        : {}),
-    });
-
-    const turnInputSender = createTurnInputSender({
+    const initial = await startTurnInput({
       conversationId,
       agentId,
       socket,
       runtime,
       turnLease,
-      buildSendOptions,
+      workingDirectory: turnWorkingDirectory,
+      permissionModeState: turnPermissionModeState,
+      preparedToolContext: preparedToolContext.preparedToolContext,
+      overrideModel,
+      actingUserId: msg.actingUserId,
+      getInput: () => turnInput,
+      getInterruptedToolCallIds: () =>
+        pendingNormalizationInterruptedToolCallIds,
       onTerminal: noteFinalization,
       getTurnId: () => activeDequeuedBatchId,
     });
-    const currentInputWithSkillContent = injectQueuedSkillContent(
-      turnInput.messages,
-      { socket, runtime, agentId, conversationId },
-    );
-    const initialSendResult = await turnInputSender.send(
-      currentInputWithSkillContent,
-    );
-    turnInput = updateTurnInputMessagesPreservingOtids(
-      turnInput,
-      currentInputWithSkillContent,
-    );
-    const initialStream = turnInputSender.accept(initialSendResult);
+    const {
+      sender: turnInputSender,
+      stream: initialStream,
+      buildSendOptions,
+    } = initial;
+    turnInput = initial.input;
     if (!initialStream) {
       return;
     }
@@ -344,7 +318,6 @@ async function handleIncomingMessageInner(
     );
     let runIdSent = false;
     let runId: string | undefined;
-    const buffers = createBuffers(agentId ?? undefined);
     seedInboundUserTranscriptLines(buffers, inboundUserTranscriptLines);
     while (true) {
       runIdSent = false;
@@ -440,6 +413,29 @@ async function handleIncomingMessageInner(
         break;
       }
       lastApprovalContinuationAccepted = false;
+      const maxTurns = runtime.executionSettings?.max_turns;
+      if (
+        maxTurns !== undefined &&
+        buffers.usage.stepCount >= maxTurns &&
+        stopReason !== "requires_approval" &&
+        !(stopReason === "error" && fallbackError)
+      ) {
+        emitLoopErrorNotice(socket, runtime, {
+          message: `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
+          stopReason: "max_steps",
+          isTerminal: true,
+          runId: runId || runtime.activeRunId,
+          agentId,
+          conversationId,
+        });
+        finishTurn({
+          stopReason: "max_steps",
+          socket,
+          agentId,
+          conversationId,
+        });
+        break;
+      }
       if (stopReason === "end_turn") {
         const transcriptLines = toLines(buffers);
         const completion = await completeSuccessfulListenerTurn({

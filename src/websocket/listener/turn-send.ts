@@ -12,9 +12,72 @@ import {
   sendApprovalContinuationWithRetry,
   sendMessageStreamWithRetry,
 } from "./send";
+import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
+import {
+  type TurnInputState,
+  updateTurnInputMessagesPreservingOtids,
+} from "./turn-input-state";
 import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
 import type { ConversationRuntime } from "./types";
+
+type SendOptions = NonNullable<Parameters<typeof sendMessageStream>[2]>;
+
+/** Build request options and perform the first send; later continuations read current input state. */
+export async function startTurnInput(
+  params: Omit<
+    Parameters<typeof createTurnInputSender>[0],
+    "buildSendOptions"
+  > & {
+    workingDirectory: string;
+    permissionModeState: SendOptions["permissionModeState"];
+    preparedToolContext: SendOptions["preparedToolContext"];
+    overrideModel: SendOptions["overrideModel"];
+    actingUserId?: string;
+    getInput: () => TurnInputState;
+    getInterruptedToolCallIds: () => string[];
+  },
+) {
+  const sendParams = {
+    ...params,
+    buildSendOptions: () => ({
+      ...(params.agentId ? { agentId: params.agentId } : {}),
+      streamTokens: true,
+      background: true,
+      workingDirectory: params.workingDirectory,
+      permissionModeState: params.permissionModeState,
+      ...(params.runtime.skillSources !== undefined
+        ? { skillSources: params.runtime.skillSources }
+        : {}),
+      preparedToolContext: params.preparedToolContext,
+      ...(params.getInput().imageFailureModesByMessageOtid
+        ? {
+            imageFailureModesByMessageOtid:
+              params.getInput().imageFailureModesByMessageOtid,
+          }
+        : {}),
+      ...(params.overrideModel ? { overrideModel: params.overrideModel } : {}),
+      ...(params.actingUserId ? { actingUserId: params.actingUserId } : {}),
+      ...(params.getInterruptedToolCallIds().length > 0
+        ? {
+            approvalNormalization: {
+              interruptedToolCallIds: params.getInterruptedToolCallIds(),
+            },
+          }
+        : {}),
+    }),
+  };
+  const sender = createTurnInputSender(sendParams);
+  const input = params.getInput();
+  const withSkills = injectQueuedSkillContent(input.messages, params);
+  const result = await sender.send(withSkills);
+  return {
+    sender,
+    buildSendOptions: sendParams.buildSendOptions,
+    input: updateTurnInputMessagesPreservingOtids(input, withSkills),
+    stream: sender.accept(result),
+  };
+}
 
 export function createTurnInputSender(params: {
   conversationId: string;

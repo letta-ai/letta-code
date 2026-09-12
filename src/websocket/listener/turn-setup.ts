@@ -9,6 +9,7 @@ import {
   setCurrentAgentId,
   setCurrentAgentName,
 } from "@/agent/context";
+import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { INTERRUPT_RECOVERY_ALERT } from "@/agent/prompt-assets";
 import { getBackend } from "@/backend";
 import type { Line } from "@/cli/helpers/accumulator";
@@ -272,7 +273,7 @@ export async function prepareListenerTurn(params: {
   }
 
   const currentInput = ensureTurnInputMessageOtids(turnStartEmission.input);
-  const turnInput = createTurnInputState(
+  let turnInput = createTurnInputState(
     currentInput,
     getInboundImageFailureModes({
       imageFailureMode: msg.imageFailureMode,
@@ -308,7 +309,7 @@ export async function prepareListenerTurn(params: {
     clientToolAllowlist: msg.clientToolAllowlist,
     // Headless clients (SDK sessions, automation) opt out of tools that
     // prompt the human mid-turn; the interactive set is owned by the harness.
-    ...(msg.excludeInteractiveTools
+    ...(msg.excludeInteractiveTools || runtime.executionSettings !== undefined
       ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
       : {}),
     externalToolScopeIds: msg.externalToolScopeIds,
@@ -317,6 +318,7 @@ export async function prepareListenerTurn(params: {
     skillsDirectory: listenerOptions?.skillsDirectory,
     skillSources: runtime.skillSources,
     workspaceSandbox: runtime.workspaceSandbox,
+    executionSettings: runtime.executionSettings,
     cachedAgent,
     ...(agentId ? { modContext: createListenerAgentModContext(agentId) } : {}),
     modAdapters,
@@ -343,6 +345,40 @@ export async function prepareListenerTurn(params: {
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
   runtime.currentAvailableSkills = availableSkills;
+  const preloaded = await loadPreloadedSkills(
+    runtime.executionSettings?.preload_skills ?? [],
+    {
+      ...(agentId ? { agentId } : {}),
+      workingDirectory,
+      skillsDirectory: listenerOptions?.skillsDirectory,
+      skillSources: runtime.skillSources,
+    },
+  );
+  if (isInterrupted()) return { kind: "interrupted" };
+  if (preloaded) {
+    const index = turnInput.messages.findLastIndex(
+      (message) => "role" in message && message.role === "user",
+    );
+    turnInput = {
+      ...turnInput,
+      messages: turnInput.messages.map((message, i) =>
+        i === index && "content" in message
+          ? {
+              ...message,
+              content: [
+                { type: "text" as const, text: preloaded },
+                ...(typeof message.content === "string"
+                  ? [{ type: "text" as const, text: message.content }]
+                  : message.content),
+              ],
+            }
+          : message,
+      ),
+    };
+    inboundUserTranscriptLines = buildInboundUserTranscriptLines(
+      turnInput.messages,
+    );
+  }
   return {
     kind: "ready",
     getCachedAgent: () => cachedAgent,

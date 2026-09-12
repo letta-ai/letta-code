@@ -475,6 +475,15 @@ export async function handleAbortMessageInput(
   );
   const hasActiveTurn = scopedRuntime.turnLifecycle.kind === "active";
 
+  // A CLI waiter may observe completion just before its abort arrives. Never
+  // apply an old run's cancellation to the replacement conversation turn.
+  if (
+    params.command.run_id &&
+    params.command.run_id !== scopedRuntime.activeRunId
+  ) {
+    return false;
+  }
+
   if (!hasActiveTurn && !hasPendingApprovals) {
     return false;
   }

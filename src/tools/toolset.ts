@@ -273,7 +273,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     toolsetPreference,
     clientToolset,
     exclude,
-    clientToolAllowlist,
+    clientToolAllowlist: inputToolAllowlist,
     externalToolScopeIds,
     workingDirectory,
     permissionModeState,
@@ -283,6 +283,18 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     runtimeContext,
     agent,
   } = params;
+  const launchTools = runtimeContext?.executionSettings?.tools;
+  const clientToolAllowlist =
+    launchTools === undefined
+      ? inputToolAllowlist
+      : inputToolAllowlist === undefined
+        ? launchTools
+        : launchTools.filter((name) =>
+            inputToolAllowlist.some(
+              (allowed) =>
+                getInternalToolName(allowed) === getInternalToolName(name),
+            ),
+          );
   const effectiveModel =
     modelIdentifier && modelIdentifier.length > 0
       ? (resolveModel(modelIdentifier) ?? modelIdentifier)
@@ -400,6 +412,7 @@ export async function prepareToolExecutionContextForScope(params: {
   skillsDirectory?: string;
   skillSources?: SkillSource[];
   workspaceSandbox?: RuntimeContextSnapshot["workspaceSandbox"];
+  executionSettings?: RuntimeContextSnapshot["executionSettings"];
   cachedAgent?: AgentState | null;
   modContext?: ModContext;
   modEvents?: ModEvents;
@@ -423,6 +436,7 @@ export async function prepareToolExecutionContextForScope(params: {
     skillsDirectory,
     skillSources,
     workspaceSandbox,
+    executionSettings,
     cachedAgent,
     modContext,
     modEvents,
@@ -517,6 +531,7 @@ export async function prepareToolExecutionContextForScope(params: {
       ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
       ...(skillSources !== undefined ? { skillSources } : {}),
       ...(workspaceSandbox !== undefined ? { workspaceSandbox } : {}),
+      executionSettings,
     },
   });
   return { ...result, agent: agent as AgentState | null };
