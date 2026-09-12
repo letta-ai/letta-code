@@ -159,6 +159,8 @@ export interface ChannelTurnSource {
   senderId?: string;
   /** Platform team/workspace for the triggering user, when known. */
   senderTeamId?: string;
+  /** The host already showed startup activity before delivering this input. */
+  showStartupStatus?: boolean;
   messageId?: string;
   threadId?: string | null;
   agentId: string;
@@ -217,6 +219,8 @@ export type ChannelTurnLifecycleEvent =
       sources: ChannelTurnSource[];
       outcome: ChannelTurnOutcome;
       stopReason: StopReasonType;
+      /** Other inputs still queued or running when this delivery finishes. */
+      remainingSources?: ChannelTurnSource[];
       error?: string;
       runId?: string;
     };
