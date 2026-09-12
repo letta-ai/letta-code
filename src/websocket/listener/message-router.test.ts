@@ -1,16 +1,25 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import WebSocket from "ws";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
+import WebSocket, { WebSocketServer } from "ws";
 import {
   clearExternalTools,
   prepareToolExecutionContextForModel,
 } from "@/tools/manager";
 import { CHANNEL_SERVICE_COMMAND_TYPES } from "@/types/service-protocol";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+  subscribeListenerConnection,
+  suspendListenerConnection,
+} from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
-import { createRuntime } from "./lifecycle";
+import { createRuntime, safeSocketSend } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
 import { scheduleQueuePump } from "./queue";
 import { setActiveRuntime } from "./runtime";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
 class MockSocket {
@@ -48,6 +57,118 @@ describe("listener message router ownership handoff", () => {
   afterEach(() => {
     clearExternalTools();
     setActiveRuntime(null);
+  });
+
+  test("teleport_continue transport follows a replacement WebSocket", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const opts = makeListenerOptions();
+    const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await once(server, "listening");
+    const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const sockets: WebSocket[] = [];
+    const tasks: Promise<void>[] = [];
+    const transports: ListenerTransport[] = [];
+    let finishTurn!: () => void;
+    const turnFinished = new Promise<void>((resolve) => {
+      finishTurn = resolve;
+    });
+    const connect = async () => {
+      const accepted = once(server, "connection");
+      const socket = new WebSocket(url);
+      sockets.push(socket);
+      await once(socket, "open");
+      const [peer] = (await accepted) as [WebSocket];
+      sockets.push(peer);
+      openListenerConnection({
+        runtime: listener,
+        connectionId: opts.connectionId,
+        writer: socket,
+        options: opts,
+      });
+      markListenerConnectionInitialized(listener, opts.connectionId);
+      subscribeListenerConnection(listener, opts.connectionId, scope);
+      return { socket, peer };
+    };
+    try {
+      setActiveRuntime(listener);
+      const original = await connect();
+      const handleMessage = createListenerMessageHandler({
+        runtime: listener,
+        socket: original.socket,
+        opts,
+        processQueuedTurn: async () => {},
+        fileCommandSession: { handle: () => false },
+        getParsedRuntimeScope: () => null,
+        replaySyncStateForRuntime: async () => {},
+        getOrCreateScopedRuntime,
+        handleApprovalResponseInput: async () => false,
+        handleChangeDeviceStateInput: async () => false,
+        handleAbortMessageInput: async () => false,
+        stampInboundUserMessageOtids: (incoming) => incoming,
+        safeSocketSend,
+        runDetachedListenerTask: (_label, task) => {
+          tasks.push(task());
+        },
+        trackListenerError: (error) => {
+          throw error;
+        },
+        processIncomingMessage: async (incoming, transport, conversation) => {
+          expect(incoming.messages).toEqual([
+            expect.objectContaining({ type: "approval" }),
+            expect.objectContaining({ role: "system" }),
+          ]);
+          expect(conversation).toBe(runtime);
+          transports.push(transport);
+          await turnFinished;
+        },
+      });
+      await handleMessage(
+        Buffer.from(
+          JSON.stringify({
+            type: "input",
+            request_id: "teleport-initial",
+            runtime: scope,
+            payload: {
+              kind: "teleport_continue",
+              teleport_id: "teleport-reconnect",
+              source: { device_id: "source", connection_name: "Source" },
+              continuation: {
+                approvals: [
+                  {
+                    type: "tool",
+                    tool_call_id: "call-on-source",
+                    status: "success",
+                    tool_return: "source finished",
+                  },
+                ],
+              },
+            },
+          }),
+        ),
+      );
+      await waitFor(() => transports.length === 1);
+      const transport = transports[0];
+      if (!transport) throw new Error("Teleport turn did not start");
+      expect(isListenerTransportOpen(transport)).toBe(true);
+      const closed = once(original.socket, "close");
+      original.socket.terminate();
+      await closed;
+      suspendListenerConnection(listener, opts.connectionId);
+      expect(isListenerTransportOpen(transport)).toBe(false);
+
+      await connect();
+      expect(original.socket.readyState).toBe(WebSocket.CLOSED);
+      // This is the predicate used by the approval reconnect gate. A captured
+      // raw socket stays closed; the turn's transport must follow the replacement.
+      expect(isListenerTransportOpen(transport)).toBe(true);
+    } finally {
+      finishTurn();
+      await Promise.all(tasks);
+      for (const socket of sockets) socket.terminate();
+      server.close();
+    }
   });
 
   test("acknowledges batched external-tool registration without runtime startup", async () => {
