@@ -754,6 +754,8 @@ Harness manages the worktree lifecycle (not the reflection agent):
   `pending_integration(reason)` (merge failed, branch preserved).
 - Reflection agent NEVER semantically resolves conflicts.
 - Transcript marked consumed only when memory lands on main.
+- Remote memory-Git operations must use the authenticated `runGit` path in `src/agent/memory-git.ts`; the worktree-local wrapper bypasses Desktop's transient Git proxy.
+- Persistent integration failures back off before reflection becomes eligible again; manual retries may bypass the delay.
 - Reflection settings are per-agent; trigger counter is per-conversation.
 - Counter increments on completed assistant steps (not user messages, not tool
   calls, not interrupted turns).
