@@ -18,6 +18,7 @@ import { asLegacyAppServerCommand, runServerSubcommand } from "./server";
 import { runSetupSubcommand } from "./setup";
 import { runSharedMemorySubcommand } from "./shared-memory";
 import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
+import { runStepsSubcommand } from "./steps";
 import { runTeleportSubcommand } from "./teleport";
 import { runTrajectoriesSubcommand } from "./trajectories";
 
@@ -50,6 +51,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "memfs":
     case "memory":
     case "messages":
+    case "steps":
     case "mcp":
     case "model":
     case "models":
@@ -95,6 +97,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runServerSubcommand(asLegacyAppServerCommand(rest));
     case "messages":
       return runMessagesSubcommand(rest);
+    case "steps":
+      return runStepsSubcommand(rest);
     case "mcp":
       return runMcpSubcommand(rest);
     case "computers":

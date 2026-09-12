@@ -53,12 +53,12 @@ export const commands: Record<string, Command> = {
     },
   },
   "/doctor": {
-    desc: "Audit and refine your memory structure",
+    desc: "Investigate an agent issue in this conversation",
     order: 12.1,
-    noArgs: true,
+    args: "[symptom]",
     handler: () => {
-      // Handled specially in App.tsx to send doctor prompt
-      return "Running memory doctor...";
+      // Handled by the primary-agent turn in the TUI and listener.
+      return "Starting doctor...";
     },
   },
   "/remember": {

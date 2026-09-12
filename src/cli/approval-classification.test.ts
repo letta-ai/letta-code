@@ -82,6 +82,38 @@ describe("classifyApprovals", () => {
     }
   });
 
+  test.each([false, true])(
+    "auto-allows doctor evidence with treatAskAsDeny=%s",
+    async (treatAskAsDeny) => {
+      await loadTools();
+      permissionMode.setMode("standard");
+      const projectDir = await mkdtemp(
+        join(tmpdir(), "letta-doctor-approval-"),
+      );
+      tempDirs.push(projectDir);
+      const approvals = ["local", "api", "cloud"].map((backend) => ({
+        toolCallId: `call_evidence_${backend}`,
+        toolName: "Bash",
+        toolArgs: JSON.stringify({
+          command: `letta --backend ${backend} messages list --agent agent-target --conversation conv-target --limit 30 --include-errors`,
+          description: "Retrieve conversation evidence",
+        }),
+      }));
+
+      const result = await classifyApprovals(approvals, {
+        requireArgsForAutoApprove: true,
+        treatAskAsDeny,
+        workingDirectory: projectDir,
+      });
+
+      expect(result.autoAllowed.map((entry) => entry.approval)).toEqual(
+        approvals,
+      );
+      expect(result.needsUserInput).toEqual([]);
+      expect(result.autoDenied).toEqual([]);
+    },
+  );
+
   test("reports missing Bash command as validation error before auto-allow", async () => {
     await loadTools();
     permissionMode.setMode("unrestricted");
