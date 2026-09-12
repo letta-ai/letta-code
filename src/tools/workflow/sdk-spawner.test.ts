@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { MAX_SUBAGENT_TOOL_CALLS, SdkSubagentPool } from "./sdk-spawner.ts";
+import {
+  MAX_SUBAGENT_TOOL_CALLS,
+  parseStructuredText,
+  SdkSubagentPool,
+} from "./sdk-spawner.ts";
 import type {
   SdkClient,
   SdkQuery,
@@ -26,6 +30,45 @@ function completedQuery(messages: SdkStreamMessage[]): SdkQuery {
     close() {},
   };
 }
+
+describe("remote structured text", () => {
+  const schema = {
+    type: "object",
+    properties: { answer: { type: "number" } },
+    required: ["answer"],
+    additionalProperties: false,
+  };
+
+  test("parses and validates a complete remote answer", () => {
+    expect(parseStructuredText(' {"answer":42}\n', schema)).toEqual({
+      value: { answer: 42 },
+      failed: false,
+    });
+    expect(parseStructuredText("null", { type: "null" })).toEqual({
+      value: null,
+      failed: false,
+    });
+  });
+
+  test("rejects malformed text, fragments, and schema violations", () => {
+    for (const text of [
+      "ALPHA",
+      'Here is the result: {"answer":42}',
+      '```json\n{"answer":42}\n```',
+      '{"answer":42} trailing',
+      '{"answer":"42"}',
+      "{}",
+      '{"answer":42,"extra":true}',
+      "null",
+    ]) {
+      expect(parseStructuredText(text, schema)).toMatchObject({
+        value: null,
+        failed: true,
+        error: expect.any(String),
+      });
+    }
+  });
+});
 
 describe("SdkSubagentPool", () => {
   test("runs each call as an agent-free query with isolated model settings", async () => {

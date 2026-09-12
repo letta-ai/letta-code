@@ -76,6 +76,14 @@ do not share a filesystem. Agent-free queries do **not** support fresh managed
 sandbox creation or automatic repository resource attachment yet; do not pass
 `sandbox` or `resources`. Only use files the selected computer already has.
 
+With `schema`, local calls capture the `StructuredOutput` tool; remote calls
+return JSON text validated against the same schema. This avoids depending on
+query-scoped external tool delivery on existing remote listeners. Invalid JSON
+or a schema violation gets one fresh attempt, then resolves to `null` with a
+validation error in the journal. Do not ask remote workers to call
+`StructuredOutput` explicitly; request the result and let `schema` choose its
+delivery format.
+
 For example, invoke with `computer: {name: 'worker-a'}`, `maxConcurrent: 4`,
 and `args: {items: ['bounded input A', 'bounded input B']}`:
 

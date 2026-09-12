@@ -5,12 +5,10 @@
  * model and provider settings are installed atomically when that conversation
  * is created, so concurrent calls cannot mutate a shared worker agent.
  *
- * Structured output: when a call passes a schema, the session gets a custom
- * StructuredOutput SDK tool whose parameters ARE that schema. The subagent is
- * instructed to deliver its result by calling it; arguments are validated in
- * the tool's execute() and invalid calls return a model-visible error so the
- * model corrects itself. One fresh query is retried if the tool was never
- * called.
+ * Structured output: local sessions get a custom StructuredOutput SDK tool;
+ * remote sessions return JSON text because existing Cloud listeners may omit
+ * query-scoped external tools. Both paths use the same schema validator. One
+ * fresh query is retried when the tool was never called or the JSON is invalid.
  */
 
 import {
@@ -61,6 +59,31 @@ const STRUCTURED_PREAMBLE = `You are a subagent inside a deterministic workflow.
 Deliver your final result by calling the StructuredOutput tool exactly once with \
 arguments matching its schema. Text you write outside that tool call is discarded. \
 After the tool call succeeds, stop.`;
+
+/** Validate the whole remote answer, never extract a plausible JSON fragment. */
+export function parseStructuredText(
+  text: string,
+  schema: Record<string, unknown>,
+): SubagentOutcome {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return {
+      value: null,
+      failed: true,
+      error: "Subagent returned invalid JSON",
+    };
+  }
+  const issues = validateAgainstSchema(value, schema);
+  return issues.length
+    ? {
+        value: null,
+        failed: true,
+        error: `Invalid structured output: ${issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`,
+      }
+    : { value, failed: false };
+}
 
 function wrapSchema(schema: Record<string, unknown>): {
   parameters: Record<string, unknown>;
@@ -309,7 +332,18 @@ export class SdkSubagentPool {
       };
     }
     const captured: unknown[] = [];
-    const preamble = options.schema ? STRUCTURED_PREAMBLE : SUBAGENT_PREAMBLE;
+    // Existing Cloud listeners can execute built-in tools while omitting
+    // query-scoped external tools from the model's tool list. Remote schema
+    // results therefore use validated JSON text, not a callback that might
+    // never be exposed. Local queries retain the StructuredOutput tool path.
+    const textSchema =
+      placement.backend === "cloud" ? options.schema : undefined;
+    const toolSchema = textSchema ? undefined : options.schema;
+    const preamble = textSchema
+      ? `${SUBAGENT_PREAMBLE}\nReturn only a JSON value matching this JSON Schema, without Markdown or commentary:\n${JSON.stringify(textSchema)}`
+      : toolSchema
+        ? STRUCTURED_PREAMBLE
+        : SUBAGENT_PREAMBLE;
     const appendParts = [
       preamble,
       this.config.systemPromptAppend,
@@ -320,7 +354,7 @@ export class SdkSubagentPool {
       ...(options.allowedTools ??
         this.config.allowedTools ??
         DEFAULT_ALLOWED_TOOLS),
-      ...(options.schema ? ["StructuredOutput"] : []),
+      ...(toolSchema ? ["StructuredOutput"] : []),
     ];
 
     const queryOptions: Record<string, unknown> = {
@@ -333,10 +367,10 @@ export class SdkSubagentPool {
         ? { modelSettings: { reasoning_effort: options.effort } }
         : {}),
       ...placement.options,
-      ...(options.schema
+      ...(toolSchema
         ? {
             tools: [
-              buildStructuredOutputTool(options.schema, captured, () =>
+              buildStructuredOutputTool(toolSchema, captured, () =>
                 onCaptured?.(),
               ),
             ],
@@ -412,8 +446,17 @@ export class SdkSubagentPool {
       }
     };
 
+    let structuredError: string | undefined;
+    const captureText = (turn: DrainedTurn) => {
+      if (!textSchema || !turn.success) return;
+      const parsed = parseStructuredText(turn.finalText, textSchema);
+      if (parsed.failed) structuredError = parsed.error;
+      else captured.push(parsed.value);
+    };
+
     try {
       let turn = await runQuery(prompt);
+      captureText(turn);
 
       if (
         options.schema &&
@@ -424,8 +467,11 @@ export class SdkSubagentPool {
         // Retry once in a fresh agent-free conversation. query() is one-shot,
         // so there is no persistent session to nudge.
         const nudged = await runQuery(
-          `${prompt}\n\nYour previous attempt did not call StructuredOutput. Call it exactly once now with the final result matching the schema.`,
+          textSchema
+            ? `${prompt}\n\nYour previous answer failed validation: ${structuredError}. Return only valid JSON matching the schema in your system prompt.`
+            : `${prompt}\n\nYour previous attempt did not call StructuredOutput. Call it exactly once now with the final result matching the schema.`,
         );
+        captureText(nudged);
         turn = {
           ...nudged,
           costUsd:
@@ -448,7 +494,10 @@ export class SdkSubagentPool {
           return {
             value: null,
             failed: true,
-            error: turn.error ?? "subagent never produced structured output",
+            error:
+              turn.error ??
+              structuredError ??
+              "subagent never produced structured output",
             ...usage,
           };
         }
