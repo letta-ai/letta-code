@@ -35,7 +35,7 @@ export interface BackgroundProcess {
   totalStderrLines?: number;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
-  kind?: "monitor";
+  kind?: "monitor" | "workflow";
   description?: string;
   monitorSource?: "command" | "websocket";
   persistent?: boolean;
@@ -96,6 +96,11 @@ export function getNextBashId() {
 
 export function getNextMonitorId() {
   return `monitor_${crypto.randomUUID()}`;
+}
+
+let workflowIdCounter = 1;
+export function getNextWorkflowId() {
+  return `workflow_${workflowIdCounter++}`;
 }
 
 let execSessionIdCounter = 1;

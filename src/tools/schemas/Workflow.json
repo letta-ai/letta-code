@@ -1,0 +1,59 @@
+{
+  "type": "object",
+  "properties": {
+    "script": {
+      "type": "string",
+      "description": "Self-contained workflow script (plain JavaScript, not TypeScript) starting with `export const meta = {...}`."
+    },
+    "scriptPath": {
+      "type": "string",
+      "description": "Path to a workflow script file on disk. To iterate on a workflow, edit the file and re-invoke with the same scriptPath instead of re-sending the full script. Takes precedence over `script`."
+    },
+    "args": {
+      "description": "Optional input value exposed to the script as the global `args`, verbatim. Pass arrays/objects as actual JSON values, NOT as a JSON-encoded string."
+    },
+    "budgetUsd": {
+      "type": "number",
+      "description": "Advisory USD limit based on completed reported costs. Stops new calls when known spending reaches it, but cannot cap in-flight or unreported costs. Unknown costs are reported as null."
+    },
+    "computer": {
+      "description": "Default existing connected computer or sandbox. Omit or use local for this computer. Strings select a computer name; objects select exactly one SDK name, deviceId, id, or connectionId. Per-agent computer overrides this. Does not create sandboxes or attach repositories.",
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "deviceId": { "type": "string", "minLength": 1 },
+            "id": { "type": "string", "minLength": 1 },
+            "connectionId": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "maxConcurrent": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "description": "Maximum in-flight agent queries across all selected computers; defaults to 16, independent of the orchestrator CPU count. Existing computers are borrowed, never terminated."
+    },
+    "resumeFromExecutionId": {
+      "type": "string",
+      "description": "Execution ID of a prior Workflow invocation to resume from. Completed agent() calls with unchanged (prompt, opts) return their cached results instantly; only edited or new calls re-run."
+    },
+    "model": {
+      "type": "string",
+      "description": "Default model for subagents. Omit to inherit the invoking conversation's model; per-call opts.model overrides this."
+    },
+    "allowedTools": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Default tool allowlist for subagents (per-call opts.allowedTools overrides). Defaults to read-only: Read, Grep, Glob. Widen deliberately for workflows that must write."
+    }
+  },
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

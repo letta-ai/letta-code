@@ -19,7 +19,10 @@
       }
     }
   },
-  "files": { "experimentalScannerIgnores": ["vendor/**"] },
+  "files": {
+    "experimentalScannerIgnores": ["vendor/**", "**/*.workflow.js"],
+    "includes": ["**", "!**/*.workflow.js"]
+  },
   "overrides": [
     {
       "includes": ["vendor/**"],

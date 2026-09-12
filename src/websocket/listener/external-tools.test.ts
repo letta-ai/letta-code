@@ -216,6 +216,58 @@ describe("listener runtime_start external tool bridge", () => {
     });
   });
 
+  test("keeps tools visible and executable for agent-free runtimes", async () => {
+    const { runtime, sent } = createMockRuntime();
+    installExternalToolBridge(runtime);
+    registerRuntimeExternalTools(
+      runtime,
+      "client-1",
+      { agent_id: null, conversation_id: "conv-ephemeral" },
+      [
+        {
+          tools: [
+            {
+              name: "StructuredOutput",
+              description: "Return a structured result",
+              parameters: {
+                type: "object",
+                properties: { answer: { type: "integer" } },
+                required: ["answer"],
+              },
+            },
+          ],
+        },
+      ],
+    );
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "openai/gpt-5.6-luna",
+      {
+        clientToolAllowlist: ["StructuredOutput"],
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: null,
+          conversationId: "conv-ephemeral",
+        },
+      },
+    );
+
+    expect(prepared.clientTools).toEqual([
+      expect.objectContaining({ name: "StructuredOutput" }),
+    ]);
+    const result = await executeTool(
+      "StructuredOutput",
+      { id: "42" },
+      { toolContextId: prepared.contextId, toolCallId: "call-ephemeral" },
+    );
+
+    expect(result.status).toBe("success");
+    expect(sent[0]).toMatchObject({
+      runtime: { agent_id: null, conversation_id: "conv-ephemeral" },
+      tool_name: "StructuredOutput",
+    });
+  });
+
   test("keeps same tool name and scope id isolated across runtimes", async () => {
     const { runtime } = createMockRuntime();
     registerRuntimeExternalTools(

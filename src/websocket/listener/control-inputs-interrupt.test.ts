@@ -57,7 +57,8 @@ describe("listener interrupt queue handoff", () => {
       throw new Error("run-scoped cancellation unavailable");
     });
     const cancelConversation = mock(
-      async (_agentId: string, _conversationId: string) => cancellation.promise,
+      async (_agentId: string | null, _conversationId: string) =>
+        cancellation.promise,
     );
     const processedTurns: IncomingMessage[] = [];
     const processQueuedTurn = mock(async (incoming: IncomingMessage) => {
@@ -130,5 +131,45 @@ describe("listener interrupt queue handoff", () => {
     expect(cancelRun).toHaveBeenCalledTimes(1);
     expect(cancelConversation).toHaveBeenCalledTimes(1);
     expect(processQueuedTurn).toHaveBeenCalledTimes(1);
+  });
+
+  test("cancels an active agent-free conversation", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, null, "conv-ephemeral");
+    const socket = createOpenTransport();
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    runtime.turnLifecycle.setRunId(lease, "run-ephemeral");
+    const cancelConversation = mock(
+      async (_agentId: string | null, _conversationId: string) => {},
+    );
+    const cancelRun = mock(async (_agentId: string, _runId: string) => {});
+    setActiveRuntime(listener);
+
+    expect(
+      await handleAbortMessageInput(
+        listener,
+        {
+          command: {
+            type: "abort_message",
+            runtime: {
+              agent_id: null,
+              conversation_id: "conv-ephemeral",
+            },
+            run_id: "run-ephemeral",
+          },
+          socket,
+          opts: {},
+          processQueuedTurn: async () => {},
+        },
+        { cancelRun, cancelConversation },
+      ),
+    ).toBe(true);
+
+    await waitFor(() => cancelConversation.mock.calls.length === 1);
+    expect(cancelConversation).toHaveBeenCalledWith(null, "conv-ephemeral");
+    expect(cancelRun).not.toHaveBeenCalled();
   });
 });

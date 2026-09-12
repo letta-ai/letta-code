@@ -28,6 +28,7 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
 const NON_STATE_COMMANDS = new Set([
   "/ade",
   "/bg",
+  "/workflows", // read-only view of background workflow executions
   "/btw",
   "/usage",
   "/help",

@@ -1,6 +1,7 @@
 import stringWidth from "string-width";
 import { BRAILLE_SPINNER_FRAMES } from "@/cli/components/BlinkingSpinner";
 import { colors } from "@/cli/components/colors";
+import { formatWaitingForWorkflows } from "@/cli/helpers/workflow-display";
 import type { ModPanel } from "@/cli/mods/types";
 import { DEFAULT_PRODUCT_STATUS_ORDER } from "./order";
 
@@ -17,6 +18,10 @@ export interface DefaultProductStatusPanelOptions {
   spinnerDimmed?: boolean;
   spinnerFrame?: string;
   agentUrl?: string | null;
+  /** Background Workflow executions still running. */
+  runningWorkflowCount?: number;
+  /** True when the model has ended its turn and is waiting on background work. */
+  modelIdle?: boolean;
 }
 
 function paddedSpinnerFrame(frame: string, width: number): string {
@@ -46,7 +51,20 @@ export function createDefaultProductStatusPanel(
         ACTIVE_BACKGROUND_AGENT_STATUSES.has(agent.status),
       );
 
-      if (!backgroundAgent) return "";
+      if (!backgroundAgent) {
+        // The turn is over but a Workflow is still running: say so, the way
+        // the transcript would if the model were still waiting on it.
+        const running = options.runningWorkflowCount ?? 0;
+        if (running > 0 && options.modelIdle) {
+          const marker = ctx.chalk.hex(colors.bgSubagent.spinner)("✻ ");
+          return ctx.row(
+            "",
+            `${marker}${ctx.chalk.dim(formatWaitingForWorkflows(running))}`,
+            ctx.width,
+          );
+        }
+        return "";
+      }
 
       const elapsedSeconds = Math.round(backgroundAgent.durationMs / 1000);
       const spinnerText = paddedSpinnerFrame(
