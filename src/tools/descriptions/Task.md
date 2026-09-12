@@ -8,7 +8,7 @@ When using the Agent tool, you must specify a subagent_type parameter to select 
 
 ## When NOT to use the Agent tool:
 
-- To send input to an agent that is already working, use SendAgentMessage when available. It sends to the existing conversation without waiting for an answer or creating another local task.
+- To send input to a Cloud agent that is already working, use SendAgentMessage when available. It sends to the existing conversation without waiting for an answer or creating another local task. For local CLI messaging, use the messaging-agents skill.
 - If you want to read a specific file path, use the Read or Glob tool instead of the Agent tool, to find the match more quickly
 - If you are searching for a specific class definition like "class Foo", use the Glob tool instead, to find the match more quickly
 - If you are searching for code within a specific file or set of 2-3 files, use the Read tool instead of the Agent tool, to find the match more quickly

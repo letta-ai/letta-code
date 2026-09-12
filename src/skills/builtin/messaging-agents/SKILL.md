@@ -5,13 +5,15 @@ description: Send messages to other agents on your server. Use when you need to 
 
 # Messaging Agents
 
-Prefer SendAgentMessage for routine coordination: send the message, continue
-working, and receive the reply as another message. Use the CLI for additional
-options, inspection, or troubleshooting; it remains available alongside the tool.
+Use this skill to contact another agent or continue an existing conversation.
 
 An agent has a persistent identity and shared memory. It can have multiple
 conversations, each with its own message history. Use a conversation ID to address
 an existing thread, or an agent ID to start a new thread with that agent.
+
+For Cloud sends, prefer SendAgentMessage to keep working while the recipient
+responds. For local agents, use the local CLI examples below. SendAgentMessage
+and `--no-wait` currently require Cloud, even if the tool appears in your tool list.
 
 ## When to Use This Skill
 
@@ -20,7 +22,7 @@ an existing thread, or an agent ID to start a new thread with that agent.
 - You need information that another agent has in their memory
 - You want to coordinate with another agent on a task
 
-## Where the Recipient Runs
+## Where the Recipient Runs (Cloud)
 
 Send to the recipient's conversation using its existing tools and permissions.
 Omit `computer` to use its active or saved computer, or a Cloud sandbox when needed.
@@ -54,9 +56,40 @@ letta messages search --query "topic" --all-agents
 ```
 Results include `agent_id` for each matching message.
 
-## SendAgentMessage (Cloud)
+## Local CLI
 
-Use SendAgentMessage when available to send input without waiting for an answer:
+Start a new conversation with an existing local agent:
+
+```bash
+letta --backend local -p --from-agent $LETTA_AGENT_ID \
+  --agent <target-agent-id> --output-format json "message text"
+```
+
+Continue that conversation using the returned `conversation_id`:
+
+```bash
+letta --backend local -p --from-agent $LETTA_AGENT_ID \
+  --conversation <target-conversation-id> --output-format json "follow-up"
+```
+
+Use local agent IDs, including the sender's ID, and the local store containing
+those agents. `--backend local` selects the backend for this command without
+changing the saved default.
+
+These commands run the recipient's turn in the CLI process, with its working
+directory and execution flags. They wait for the answer and print it in the JSON
+`result` field. Run the command as a background shell task and collect its output
+to keep working meanwhile, or use Agent for a managed child task with completion
+notifications. Backgrounding the process does not change the reply into a message
+to your conversation.
+
+Do not add `--no-wait` or `--computer` here; both require Cloud. Read local message
+history with `letta --backend local messages list --conversation <id>` rather than
+the Cloud-only `letta messages status` command.
+
+## SendAgentMessage (Cloud only)
+
+For Cloud agents, use SendAgentMessage to send input without waiting for an answer:
 
 ```typescript
 SendAgentMessage({
@@ -80,7 +113,7 @@ be confirmed, check the recipient's messages before resending to avoid duplicate
 The result includes commands for checking activity and reading messages when needed.
 Use Agent to launch or resume a managed child task with completion notifications.
 
-## CLI Usage (agent-to-agent)
+## CLI Sends Without Waiting (Cloud only)
 
 Use `--no-wait` for routine Cloud coordination through the CLI. The additional
 options below remain available when you need different behavior or diagnostics.
@@ -122,9 +155,8 @@ accept local execution flags such as `--tools` or `--permission-mode`.
 letta -p --from-agent $LETTA_AGENT_ID --agent <id> --no-wait "message text"
 ```
 
-For Cloud agents, omitting `--computer` lets Cloud select the conversation's
-active or saved computer, or start a Cloud sandbox when needed. Local/App Server
-execution and Agent-launched child processes keep their existing behavior.
+Omitting `--computer` lets Cloud select the conversation's active or saved computer,
+or start a Cloud sandbox when needed.
 
 To route the target agent turn through a specific remote/local computer:
 
@@ -223,9 +255,9 @@ letta -p --from-agent $LETTA_AGENT_ID \
 
 ## Understanding the Response
 
-- Non-waiting sends return an acceptance receipt. The recipient replies explicitly to your return conversation.
+- SendAgentMessage and CLI `--no-wait` sends return an acceptance receipt. The recipient replies explicitly to your return conversation. These sends currently require Cloud.
 - Cloud enqueue receipts include `agent_id`, `conversation_id`, `client_message_id`, `workflow_id`, and `super_run_id`. Waiting JSON results retain these IDs and add the answer and associated `run_ids`.
-- Blocking CLI sends return the final assistant message; tool calls and reasoning are not included in that answer.
+- CLI sends without `--no-wait` return the final assistant message through process output, on both Cloud and local backends. Tool calls and reasoning are not included in that answer.
 - To see the full conversation transcript (including tool calls), use `letta messages list --agent <id>` targeting the other agent
 
 ## How It Works
@@ -248,14 +280,15 @@ your task. For a deliberate synchronous send, such as testing how a script consu
 an answer, omit `--no-wait`:
 
 ```bash
-letta -p --conversation <target-conversation-id> --output-format json "message text"
+letta -p --from-agent $LETTA_AGENT_ID --conversation <target-conversation-id> --output-format json "message text"
 ```
 
-This waits for the final answer and returns it in `result`, with `status: "completed"`.
+This waits for the final answer and returns it in `result` on both Cloud and local backends.
 The recipient is told to answer in its final response instead of sending a separate
-reply. Interruption or timeout stops your wait, not the recipient's work; inspect
-the conversation before deciding whether to resend. Prefer non-waiting sends for
-routine coordination so you can keep working while the recipient responds.
+reply. On Cloud, interruption or timeout stops your wait, not the recipient's work;
+inspect the conversation before deciding whether to resend. Prefer non-waiting sends
+for routine Cloud coordination, or background the local CLI process, so you can keep
+working while the recipient responds.
 
 ## Hidden Conversations
 
@@ -271,3 +304,4 @@ Continuing a hidden conversation with `--conversation <id>` keeps it hidden — 
 ## Related Skills
 
 - **finding-agents**: Find agents by name, tags, or fuzzy search
+- **dispatching-coding-agents**: Drive Claude Code or Codex through their CLIs, including background execution and collecting results
