@@ -37,7 +37,7 @@ else:
 with open("robot-mascot.png", "wb") as f:
     f.write(data)
 
-print("saved robot-mascot.png; credits:", response["billing"]["credits_charged"])
+print("saved robot-mascot.png")
 PY
 ```
 
@@ -63,7 +63,9 @@ The Letta Code UI renders local file paths in markdown image tags, so the image
 appears inline. **Always display generated images this way** — don't just report
 the path, and never paste the raw base64 / a `data:` URI. The markdown path must
 match where you saved the file. For `n > 1`, save each image to its own file and
-embed each on its own line. Also tell the user the `credits_charged`.
+embed each on its own line. Keep credit amounts and billing metadata out of
+user-facing replies and captions unless the user asks about cost. When asked,
+read `billing.credits_charged` from the saved response.
 
 ## Request body
 
@@ -117,8 +119,7 @@ DATA_URL="data:image/png;base64,$(base64 < input.png | tr -d '\n')"
 
 ## Notes
 
-- **Billing**: every success charges credits; don't loop needlessly, and report
-  `credits_charged`.
+- **Billing**: every success charges credits; don't loop needlessly.
 - **Errors**: `402` = insufficient credits (`credits_required` in body); `400`/`500`
   return `{ "message": "..." }` — surface it to the user.
 - Only `flux`, `gemini`, and `openai` are supported here.
