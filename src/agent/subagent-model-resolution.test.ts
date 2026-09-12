@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import * as path from "node:path";
 import type { SubagentConfig } from "@/agent/subagents";
 import {
+  buildSubagentPrompt,
   estimateStartupContextTokens,
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
 } from "@/agent/subagents/context-budget";
 import {
   buildSubagentArgs,
-  buildSubagentPrompt,
   recallPromptForBackend,
   shouldPrependDeploySystemReminder,
 } from "@/agent/subagents/manager";

@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { homedir, tmpdir } from "node:os";
 import type { SkillSource } from "./agent/skills";
 import { isUsableDirectory } from "./helpers/usable-directory";
+import type { RuntimeExecutionSettings } from "./runtime-execution-settings";
 
 export type RuntimePermissionMode =
   | "standard"
@@ -38,6 +39,7 @@ export interface RuntimeContextSnapshot {
   toolContextId?: string | null;
   permissionMode?: RuntimePermissionMode;
   workspaceSandbox?: RuntimeWorkspaceSandbox;
+  executionSettings?: RuntimeExecutionSettings;
 }
 
 const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();

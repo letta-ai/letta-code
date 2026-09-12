@@ -169,7 +169,8 @@ export function evictConversationRuntimeIfIdle(
     (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
     runtime.queuedMessagesByItemId.size > 0 ||
     runtime.queueRuntime?.length > 0 ||
-    (runtime.workspaceSandbox !== undefined &&
+    ((runtime.workspaceSandbox !== undefined ||
+      runtime.executionSettings !== undefined) &&
       runtime.listener.connectionIdsByRuntimeKey.has(runtime.key))
   ) {
     return false;

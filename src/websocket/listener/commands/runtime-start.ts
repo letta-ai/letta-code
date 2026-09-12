@@ -27,7 +27,7 @@ import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
-import { isRuntimeStartCommand } from "@/websocket/listener/protocol-inbound";
+import { isRuntimeStartCommand } from "@/websocket/listener/runtime-start-validation";
 import { assertRuntimeWorkspaceSandboxChangeAllowed } from "@/websocket/listener/runtime-workspace-sandbox";
 import type {
   ConversationRuntime,
@@ -117,6 +117,9 @@ function sendRuntimeStartResponse(
       type: "runtime_start_response",
       request_id: parsed.request_id,
       ...response,
+      ...(response.success && parsed.execution_settings !== undefined
+        ? { execution_settings: parsed.execution_settings }
+        : {}),
     },
     "listener_runtime_start_send_failed",
     "listener_runtime_start",
@@ -328,6 +331,21 @@ async function applyRuntimeStartState(
   scope: RuntimeStartScope,
   scopedRuntime: ConversationRuntime,
 ): Promise<void> {
+  if (parsed.execution_settings !== undefined) {
+    if (
+      (scopedRuntime.turnLifecycle.kind !== "idle" ||
+        scopedRuntime.queueRuntime.length > 0) &&
+      JSON.stringify(scopedRuntime.executionSettings) !==
+        JSON.stringify(parsed.execution_settings)
+    ) {
+      throw new Error(
+        "Cannot change execution settings while the conversation has active or queued work",
+      );
+    }
+    scopedRuntime.executionSettings = structuredClone(
+      parsed.execution_settings,
+    );
+  }
   const workspaceSandbox = parsed.workspace_sandbox
     ? resolveWorkspaceSandbox({
         root: parsed.workspace_sandbox.root,

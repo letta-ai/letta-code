@@ -18,6 +18,7 @@ import type {
 } from "@/queue/queue-runtime";
 import type { SharedReminderState } from "@/reminders/state";
 import type { RuntimeWorkspaceSandbox } from "@/runtime-context";
+import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
@@ -209,6 +210,7 @@ export type ConversationRuntime = {
   skillSources: SkillSource[] | undefined;
   /** Explicit runtime filesystem boundary for shared app-server sessions. */
   workspaceSandbox: RuntimeWorkspaceSandbox | undefined;
+  executionSettings?: RuntimeExecutionSettings;
   /** Connection currently executing this conversation's turn, if client-owned. */
   activeConnectionId: ListenerConnectionId | null;
   turnLifecycle: TurnLifecycle;

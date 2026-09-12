@@ -33,6 +33,7 @@ test("finishListenerTurn emits exactly one correlated terminal event", () => {
       runId: "run-1",
       agentId: "agent-1",
       conversationId: "conv-1",
+      usage: { total_tokens: 42, step_count: 2 },
     }).finished,
   ).toBe(true);
   expect(
@@ -56,6 +57,7 @@ test("finishListenerTurn emits exactly one correlated terminal event", () => {
       turn_id: "turn-1",
       run_id: "run-1",
       stop_reason: "end_turn",
+      usage: { total_tokens: 42, step_count: 2 },
     }),
   ]);
 });

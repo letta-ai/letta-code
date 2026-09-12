@@ -30,6 +30,8 @@
 // already kernel-confined as whole processes.
 
 import { homedir } from "node:os";
+import { getRuntimeContext } from "@/runtime-context";
+import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 import {
   getLocalBackendCrossAgentTreeRoot,
@@ -63,7 +65,9 @@ function deriveParentAgentId(env: NodeJS.ProcessEnv): string | null {
 export function isMemoryGuardDisabled(
   options: CrossAgentGuardOptions = {},
 ): boolean {
-  const env = options.env ?? process.env;
+  const env =
+    options.env ??
+    getRuntimeExecutionEnv(process.env, getRuntimeContext()?.executionSettings);
   if (isSubagentProcess(env)) return false;
   return options.disableMemoryGuard ?? cliPermissions.isMemoryGuardDisabled();
 }
@@ -75,7 +79,9 @@ export function isMemoryGuardDisabled(
 export function resolveAllowedAgents(
   options: CrossAgentGuardOptions = {},
 ): Set<string> {
-  const env = options.env ?? process.env;
+  const env =
+    options.env ??
+    getRuntimeExecutionEnv(process.env, getRuntimeContext()?.executionSettings);
 
   const self = deriveAgentId(env, options.currentAgentId);
   const parent = deriveParentAgentId(env);

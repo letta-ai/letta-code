@@ -1,6 +1,7 @@
 import { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import { actingUserRequestOptions } from "@/agent/acting-user";
 import { getClient } from "./client";
 import { ApiRequestError, apiFetch, apiRequest } from "./request";
 
@@ -19,6 +20,7 @@ export interface EnqueueConversationInput {
   clientMessageId: string;
   content: MessageCreate["content"];
   computer?: string;
+  actingUserId?: string;
 }
 
 /** Cloud owns delivery after this request returns 202. Never retry by executing locally. */
@@ -44,7 +46,7 @@ export async function enqueueConversationMessage(
         },
       ],
     },
-    { signal },
+    { signal, ...actingUserRequestOptions(input.actingUserId) },
   );
   if (
     accepted.client_message_id !== input.clientMessageId ||
@@ -61,6 +63,31 @@ export async function enqueueConversationMessage(
     agent_id: input.agentId,
     conversation_id: input.conversationId,
   };
+}
+
+/** Remove this input from either the Cloud delivery queue or listener queue. */
+export async function dequeueConversationMessage(
+  input: Pick<
+    EnqueueConversationInput,
+    "agentId" | "conversationId" | "clientMessageId"
+  >,
+  signal?: AbortSignal,
+  request = apiRequest,
+): Promise<{
+  client_message_id: string;
+  status: "dequeued" | "already_dequeued" | "too_late" | "not_found";
+}> {
+  return request(
+    "DELETE",
+    `/v1/conversations/${encodeURIComponent(input.conversationId)}/messages/enqueue/${encodeURIComponent(input.clientMessageId)}`,
+    undefined,
+    {
+      signal,
+      ...(input.conversationId === "default"
+        ? { query: { agent_id: input.agentId } }
+        : {}),
+    },
+  );
 }
 
 /** Relevant fields from the existing Cloud conversation Super Run feed. */

@@ -1,6 +1,70 @@
 import { expect, test } from "bun:test";
-import { enqueueConversationMessage } from "./conversation-enqueue";
+import {
+  dequeueConversationMessage,
+  enqueueConversationMessage,
+} from "./conversation-enqueue";
 import { ApiRequestError, type apiRequest } from "./request";
+
+test("enqueue carries the existing trusted acting-user HTTP header", async () => {
+  const request: typeof apiRequest = async <T>(
+    _method: string,
+    _path: string,
+    _body?: Record<string, unknown>,
+    options = {},
+  ) => {
+    expect(options).toMatchObject({
+      headers: { "X-Letta-Acting-User-Id": "user-parent" },
+    });
+    return {
+      client_message_id: "cm",
+      workflow_id: "wf",
+      super_run_id: "sr",
+    } as T;
+  };
+  await enqueueConversationMessage(
+    {
+      agentId: "agent",
+      conversationId: "conv",
+      clientMessageId: "cm",
+      content: "hello",
+      actingUserId: "user-parent",
+    },
+    undefined,
+    request,
+  );
+});
+
+test.each(["default", "conv-1"])(
+  "dequeue addresses the original accepted message: %s",
+  async (conversationId) => {
+    const request: typeof apiRequest = async <T>(
+      method: string,
+      path: string,
+      body?: Record<string, unknown>,
+      options = {},
+    ) => {
+      expect(method).toBe("DELETE");
+      expect(path).toBe(
+        `/v1/conversations/${conversationId}/messages/enqueue/cm-1`,
+      );
+      expect(body).toBeUndefined();
+      expect(options).toEqual({
+        signal: undefined,
+        ...(conversationId === "default"
+          ? { query: { agent_id: "agent-1" } }
+          : {}),
+      });
+      return { client_message_id: "cm-1", status: "dequeued" } as T;
+    };
+    expect(
+      await dequeueConversationMessage(
+        { agentId: "agent-1", conversationId, clientMessageId: "cm-1" },
+        undefined,
+        request,
+      ),
+    ).toMatchObject({ status: "dequeued" });
+  },
+);
 
 test.each([undefined, "My laptop", "cloud"])(
   "enqueue passes the selector and stable message ID: %s",
