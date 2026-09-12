@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "properties": {
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The message to send."
+    },
+    "agent_id": {
+      "type": "string",
+      "description": "Recipient agent. Without conversation_id, starts a new hidden conversation. Required when conversation_id is default."
+    },
+    "conversation_id": {
+      "type": "string",
+      "description": "Existing recipient conversation. A conv-... ID identifies its agent; default also requires agent_id."
+    },
+    "computer": {
+      "type": "string",
+      "description": "Optional execution computer: cloud, an online computer name, device ID, or connection ID. Omit to keep the conversation's active or saved computer, with Cloud sandbox fallback."
+    }
+  },
+  "required": ["message"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

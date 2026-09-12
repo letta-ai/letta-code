@@ -5,16 +5,18 @@ import path from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { set_working_directory } from "@/tools/impl/set-working-directory";
 import {
-  ANTHROPIC_DEFAULT_TOOLS,
   clearToolsWithLock,
   executeTool,
-  GEMINI_DEFAULT_TOOLS,
-  GEMINI_PASCAL_TOOLS,
   loadSpecificTools,
-  OPENAI_PASCAL_TOOLS,
   prepareCurrentToolExecutionContext,
   releaseToolExecutionContext,
 } from "@/tools/manager";
+import {
+  ANTHROPIC_DEFAULT_TOOLS,
+  GEMINI_DEFAULT_TOOLS,
+  GEMINI_PASCAL_TOOLS,
+  OPENAI_PASCAL_TOOLS,
+} from "@/tools/toolset-defaults";
 import { getConversationWorkingDirectory } from "@/websocket/listener/cwd";
 import { createRuntime } from "@/websocket/listener/lifecycle";
 import {

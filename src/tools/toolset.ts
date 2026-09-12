@@ -18,29 +18,29 @@ import { isRecord } from "@/utils/type-guards";
 import { toolFilter } from "./filter";
 import { LETTA_TOOLS } from "./letta-toolset";
 import {
-  ANTHROPIC_DEFAULT_TOOLS,
   clearToolsWithLock,
   filterBuiltInToolNamesByClientAllowlist,
-  GEMINI_DEFAULT_TOOLS,
-  GEMINI_PASCAL_TOOLS,
   getInternalToolName,
   getToolNames,
   isOpenAIModel,
   loadSpecificTools,
   loadTools,
-  OPENAI_DEFAULT_TOOLS,
-  OPENAI_PASCAL_TOOLS,
   type PreparedToolExecutionContext,
   prepareToolExecutionContextForModel,
   prepareToolExecutionContextForSpecificTools,
 } from "./manager";
 import type { PermissionModeState } from "./permission-mode-state";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
+import {
+  ANTHROPIC_DEFAULT_TOOLS,
+  GEMINI_DEFAULT_TOOLS,
+  GEMINI_PASCAL_TOOLS,
+  OPENAI_DEFAULT_TOOLS,
+  OPENAI_PASCAL_TOOLS,
+} from "./toolset-defaults";
 import type { ToolsetName, ToolsetPreference } from "./toolset-types";
 
 export type { ToolsetName, ToolsetPreference } from "./toolset-types";
-
-// Toolset definitions from manager.ts (single source of truth)
 
 const ARTIFACT_TOOL_NAMES: ToolName[] = [
   "read_artifact_file",

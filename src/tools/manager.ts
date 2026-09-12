@@ -199,10 +199,6 @@ export function filterBuiltInToolNamesByClientAllowlist(
   );
 }
 
-const WORKTREE_TOOL_NAMES = new Set<ToolName>([
-  "EnterWorktree",
-  "ExitWorktree",
-]);
 const ARTIFACT_TOOL_NAMES: ToolName[] = [
   "read_artifact_file",
   "write_artifact_file",
@@ -340,95 +336,11 @@ function filterModToolsByClientAllowlist(
   );
 }
 
-export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
-  "AskUserQuestion",
-  "Bash",
-  "Monitor",
-  "TaskOutput",
-  ...WORKTREE_TOOL_NAMES,
-  "SetWorkingDirectory",
-  "Edit",
-  "TaskStop",
-  // "MultiEdit",
-  // "LS",
-  "memory",
-  "Read",
-  "Skill",
-  "Task",
-  "TaskCreate",
-  "TaskGet",
-  "TaskList",
-  "TaskUpdate",
-  "Write",
-];
-
-export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
-  "exec_command",
-  "write_stdin",
-  // TODO(codex-parity): add once request_user_input tool exists in raw codex path.
-  // "request_user_input",
-  "apply_patch",
-  "memory_apply_patch",
-  "update_plan",
-  "view_image",
-];
-
-export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
-  "run_shell_command",
-  "read_file_gemini",
-  "list_directory",
-  "glob_gemini",
-  "search_file_content",
-  "memory",
-  ...WORKTREE_TOOL_NAMES,
-  "SetWorkingDirectory",
-  "replace",
-  "write_file_gemini",
-  "write_todos",
-  "read_many_files",
-  "Skill",
-  "Task",
-];
-
-// PascalCase toolsets (codex-2 and gemini-2) for consistency with Skill tool naming
-export const OPENAI_PASCAL_TOOLS: ToolName[] = [
-  // Additional Letta Code tools
-  "AskUserQuestion",
-  ...WORKTREE_TOOL_NAMES,
-  "SetWorkingDirectory",
-  "memory_apply_patch",
-  "Task",
-  "Monitor",
-  "TaskOutput",
-  "TaskStop",
-  "Skill",
-  // Standard Codex tools
-  "exec_command",
-  "write_stdin",
-  "ViewImage",
-  "ApplyPatch",
-  "UpdatePlan",
-];
-
-export const GEMINI_PASCAL_TOOLS: ToolName[] = [
-  // Additional Letta Code tools
-  "AskUserQuestion",
-  ...WORKTREE_TOOL_NAMES,
-  "SetWorkingDirectory",
-  "memory",
-  "Skill",
-  "Task",
-  // Standard Gemini tools
-  "RunShellCommand",
-  "ReadFileGemini",
-  "ListDirectory",
-  "GlobGemini",
-  "SearchFileContent",
-  "Replace",
-  "WriteFileGemini",
-  "WriteTodos",
-  "ReadManyFiles",
-];
+import {
+  ANTHROPIC_DEFAULT_TOOLS,
+  OPENAI_PASCAL_TOOLS,
+  WORKTREE_TOOL_NAMES,
+} from "./toolset-defaults";
 
 type ToolArgs = Record<string, unknown>;
 

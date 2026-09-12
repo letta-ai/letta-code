@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Backend } from "@/backend";
+import { buildAgentSendReminder } from "@/backend/api/agent-message";
 import type {
   ConversationStatusEvent,
   EnqueueConversationInput,
@@ -7,7 +8,6 @@ import type {
 import { ApiRequestError } from "@/backend/api/request";
 import { parseCliArgs } from "@/cli/args";
 import {
-  buildAgentSendReminder,
   shouldEnqueueCloudSend,
   tryCloudHeadlessSend,
 } from "./headless-cloud-send";

@@ -14,21 +14,11 @@ This skill enables you to send messages to other agents on the same Letta server
 - You need information that another agent has in their memory
 - You want to coordinate with another agent on a task
 
-## What the Target Agent Can and Cannot Do
+## Where the Recipient Runs
 
-**The target agent CANNOT:**
-- Access your local environment (read/write files in your codebase)
-- Execute shell commands on your machine
-- Use your tools (Bash, Read, Write, Edit, etc.)
-
-**The target agent CAN:**
-- Use their own tools (whatever they have configured)
-- Access their own memory blocks
-- Make API calls if they have web/API tools
-- Search the web if they have web search tools
-- Respond with information from their knowledge/memory
-
-**Important:** This skill is for *communication* with other agents, not *delegation* of local work. The target agent runs in their own environment and cannot interact with your codebase.
+Send to the recipient's conversation using its existing tools and permissions.
+Omit `computer` to use its active or saved computer, or a Cloud sandbox when needed.
+The recipient can access files on that computer, which may differ from yours.
 
 **Need local access?** If you need the target agent to access your local environment (read/write files, run commands), use the Agent tool instead to deploy them as a subagent:
 ```typescript
@@ -58,7 +48,33 @@ letta messages search --query "topic" --all-agents
 ```
 Results include `agent_id` for each matching message.
 
+## SendAgentMessage (Cloud)
+
+Use SendAgentMessage when available to send input without waiting for an answer:
+
+```typescript
+SendAgentMessage({
+  conversation_id: "conv-target",
+  message: "The API change is ready. Please run your integration test.",
+})
+```
+
+Use `agent_id` alone to start a new hidden conversation. For `conversation_id: "default"`,
+also supply `agent_id`. You can message any conversation you are authorized to
+access, including an Agent child that is already working.
+
+Your agent and conversation IDs are attached automatically. To reply, call
+SendAgentMessage with the supplied return conversation (and agent ID for `default`).
+Ordinary assistant output is not forwarded to the sender.
+
+Keep the enqueue receipt. `queued` means accepted, not answered. This tool creates
+no local task ID; use the receipt's `status_command` or `messages_command` to inspect
+progress. If acceptance is unknown, inspect before resending. Use Agent to launch
+or resume a managed child task with completion notifications.
+
 ## CLI Usage (agent-to-agent)
+
+Use the CLI when SendAgentMessage is unavailable or you need to wait for an answer.
 
 ### Send without waiting for the answer (Cloud)
 
