@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { type TelemetryEvent, telemetry } from "@/telemetry";
 
 import {
   clearExternalTools,
@@ -83,6 +84,57 @@ describe("external tool execution", () => {
 });
 
 describe("MessageChannel architecture", () => {
+  test("tracks gateway channel results once, including errors, without message content", async () => {
+    const state = telemetry as unknown as {
+      events: TelemetryEvent[];
+      toolCallCount: number;
+    };
+    const originalEvents = state.events;
+    const originalToolCallCount = state.toolCallCount;
+    const originalSetting = process.env.LETTA_CODE_TELEM;
+    state.events = [];
+    process.env.LETTA_CODE_TELEM = "1";
+    try {
+      for (const outcome of ["success", "error", "throw"] as const) {
+        const result = await executeExternalTool(
+          `call-${outcome}`,
+          "MessageChannel",
+          {
+            channel: "slack",
+            action: "send",
+            message: "private body",
+            chat_id: "private-id",
+          },
+          async () => {
+            if (outcome === "throw") throw new Error("transport failed");
+            return {
+              content: [{ type: "text", text: outcome }],
+              isError: outcome === "error",
+            };
+          },
+        );
+        expect(result.status).toBe(outcome === "success" ? "success" : "error");
+      }
+      expect(state.events).toHaveLength(3);
+      expect(state.events.map((event) => event.data.success)).toEqual([
+        true,
+        false,
+        false,
+      ]);
+      for (const event of state.events) {
+        expect(event.type).toBe("tool_usage");
+        expect(event.data.channel).toBe("slack");
+        expect(event.data.channel_action).toBe("send");
+      }
+      expect(JSON.stringify(state.events)).not.toContain("private");
+    } finally {
+      state.events = originalEvents;
+      state.toolCallCount = originalToolCallCount;
+      if (originalSetting === undefined) delete process.env.LETTA_CODE_TELEM;
+      else process.env.LETTA_CODE_TELEM = originalSetting;
+    }
+  });
+
   test("does not register any channel delivery tool as a built-in", () => {
     const toolNames = new Set(getAllLettaToolNames());
 

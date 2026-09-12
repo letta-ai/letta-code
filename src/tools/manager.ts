@@ -57,6 +57,7 @@ import {
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
+import { messageChannelTelemetry } from "@/telemetry/channel";
 import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
@@ -855,6 +856,8 @@ export async function executeExternalTool(
     };
   }
 
+  const startedAt = Date.now();
+  let success = false;
   try {
     const tool = toolDefinition ?? getExternalToolDefinition(toolName);
     const result = await executor(
@@ -863,6 +866,7 @@ export async function executeExternalTool(
       input,
       tool ? { tool } : undefined,
     );
+    success = !result.isError;
 
     return {
       toolReturn: clampToolReturnContent(
@@ -877,6 +881,18 @@ export async function executeExternalTool(
       toolReturn: `External tool execution error: ${errorMessage}`,
       status: "error",
     };
+  } finally {
+    if (toolName === "MessageChannel" || toolName === "message_channel") {
+      telemetry.trackToolUsage(
+        toolName,
+        success,
+        Date.now() - startedAt,
+        undefined,
+        success ? undefined : "tool_error",
+        undefined,
+        messageChannelTelemetry(input),
+      );
+    }
   }
 }
 

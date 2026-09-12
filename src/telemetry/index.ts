@@ -12,6 +12,7 @@ import {
   resolveTelemetryAgentOrigin,
   type TelemetryAgentOrigin,
 } from "./agent-origin";
+import { extractInputChannel } from "./channel";
 import { installFatalErrorHandlers } from "./fatal-error-handler";
 
 export type TelemetrySurface =
@@ -73,6 +74,8 @@ export interface SessionEndData {
 
 export interface ToolUsageData {
   tool_name: string;
+  channel?: string;
+  channel_action?: string;
   success: boolean;
   duration: number;
   response_length?: number;
@@ -99,6 +102,7 @@ export interface ErrorData {
 
 export interface UserInputData {
   input_length: number;
+  channel?: string;
   is_command: boolean;
   command_name?: string;
   message_type: string;
@@ -698,6 +702,7 @@ class TelemetryManager {
     responseLength?: number,
     errorType?: string,
     stderr?: string,
+    channelMetadata?: Pick<ToolUsageData, "channel" | "channel_action">,
   ) {
     this.toolCallCount++;
     const data: ToolUsageData = {
@@ -707,6 +712,7 @@ class TelemetryManager {
       response_length: responseLength,
       error_type: errorType,
       stderr,
+      ...channelMetadata,
     };
     this.track("tool_usage", data);
   }
@@ -774,6 +780,7 @@ class TelemetryManager {
       command_name: commandName,
       message_type: messageType,
       model_id: modelId,
+      channel: extractInputChannel(input),
     };
     this.track("user_input", data);
   }
