@@ -820,18 +820,13 @@ export async function handleHeadlessCommand(
   const explicitEnvironmentSelector =
     values.computer ?? values.environment ?? values.env;
   const inheritedListenerConnectionId = process.env[LISTENER_CONNECTION_ENV];
-  if (values.ephemeral && explicitEnvironmentSelector)
-    throw new Error(
-      "Ephemeral conversations cannot be routed to a Cloud computer",
-    );
-  const usesRemoteEnvironment =
-    !values.ephemeral &&
-    shouldLaunchThroughListener({
-      launchProfile,
-      cloudBackend: backend.capabilities.environmentRouting,
-      connectionId: inheritedListenerConnectionId,
-      computer: explicitEnvironmentSelector,
-    });
+  const usesRemoteEnvironment = shouldLaunchThroughListener({
+    launchProfile,
+    cloudBackend: backend.capabilities.environmentRouting,
+    connectionId: inheritedListenerConnectionId,
+    computer: explicitEnvironmentSelector,
+    ephemeral: values.ephemeral,
+  });
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -1158,6 +1153,9 @@ export async function handleHeadlessCommand(
       process.exit(1);
     }
   }
+
+  if (usesRemoteEnvironment && !backend.capabilities.environmentRouting)
+    throw new Error("Computer routing requires the Cloud backend");
 
   if (!agent && ephemeralFlag) {
     try {

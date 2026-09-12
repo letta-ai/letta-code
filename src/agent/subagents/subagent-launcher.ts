@@ -247,7 +247,15 @@ export function shouldLaunchThroughListener(options: {
   cloudBackend: boolean;
   connectionId?: string;
   computer?: string;
+  ephemeral?: boolean;
 }): boolean {
+  if (options.ephemeral) {
+    if (options.computer)
+      throw new Error(
+        "Ephemeral conversations cannot be routed to a Cloud computer",
+      );
+    return false;
+  }
   // Memory workers need whole-process confinement for Edit/Write as well as
   // Bash. A listener can execute ordinary children, but cannot host that boundary.
   // They remain one-shot workers, not resumable or addressable listener sessions.
@@ -258,10 +266,11 @@ export function shouldLaunchThroughListener(options: {
       );
     return false;
   }
-  if (options.computer && !options.cloudBackend)
-    throw new Error("Computer routing requires the Cloud backend");
+  // Select explicit routes before agent lookup; validate backend compatibility
+  // after lookup so an unavailable ambient agent cannot silently be replaced.
   return (
-    options.cloudBackend && Boolean(options.connectionId || options.computer)
+    Boolean(options.computer) ||
+    (options.cloudBackend && Boolean(options.connectionId))
   );
 }
 

@@ -159,6 +159,9 @@ describe("headless backend switches", () => {
       // from before ambient inference existed.
       expect(result.stdout).not.toContain("should-not-run");
       expect(result.stderr).not.toContain("inferred from the AGENT_ID");
+      expect(result.stderr).toContain(
+        "Computer routing requires the Cloud backend",
+      );
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
