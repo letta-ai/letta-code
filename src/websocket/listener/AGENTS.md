@@ -118,5 +118,7 @@ When logs show contradictory state:
 - `listener-queue-adapter.test.ts`: queue decisions from valid snapshots.
 - `channel-turn-session.test.ts`: channel progress lifecycle fan-out.
 
+In approval tests, call the direct pending-approval resolver instead of racing an `approval_response` through a real test WebSocket.
+
 Keep new tests next to their owner and below 1,000 lines. Do not grow the legacy
 protocol/concurrency test monoliths; move focused coverage here instead.

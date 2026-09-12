@@ -438,6 +438,9 @@ silently affect `bar.test.ts` if they share a worker.
 - **Review signal:** any test using `mock.module()` without `afterAll`
   restoration, especially if the mocked module is consumed by other test files.
 
+- Prefer injected config over mutating `process.env` in tests; if mutation is unavoidable, restore it in `finally`.
+- Poll detached-process output for a completion marker, and give each real process its own realistic timeout budget.
+
 ### Don't Rename Existing Test Fixtures
 
 When adding a feature that uses a different provider/entity name, ADD new
