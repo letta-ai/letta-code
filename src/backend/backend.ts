@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { APIConnectionError } from "@letta-ai/letta-client/core/error";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import {
   type ChatGPTUsageSnapshot,
@@ -555,7 +556,21 @@ export class APIBackend implements Backend {
     options?: ConversationMessageCreateOptions,
   ) {
     const client = await this.getClient();
-    return client.conversations.messages.create(conversationId, body, options);
+    const { data: stream, response } = await client.conversations.messages
+      .create(conversationId, body, options)
+      .withResponse();
+    const contentType = response.headers.get("content-type") ?? "";
+    if (
+      contentType.split(";")[0]?.trim().toLowerCase() !== "text/event-stream"
+    ) {
+      // A gateway can return HTTP 200 HTML while the API is down. Reject it
+      // before callers try to resume a run that never accepted this request.
+      stream.controller.abort();
+      throw new APIConnectionError({
+        message: `Connection error: expected text/event-stream, received ${contentType || "no content type"} (HTTP ${response.status}).`,
+      });
+    }
+    return stream;
   }
 
   async streamConversationMessages(
