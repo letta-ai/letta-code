@@ -31,10 +31,7 @@ import {
   closeListenerRuntimeConnections,
   createConnectionTurnProcessor,
 } from "./connection-lifecycle";
-import {
-  emitInitialConnectionState as emitInitialState,
-  replaySubscribedConnectionState,
-} from "./connection-state-sync";
+import { emitInitialConnectionState as emitInitialState } from "./connection-state-sync";
 import {
   INITIAL_RETRY_DELAY_MS,
   LISTENER_PONG_TIMEOUT_MS,
@@ -67,7 +64,6 @@ import {
   waitForProcessServicesSlot,
 } from "./process-services";
 import { scheduleQueuePump } from "./queue";
-import { recoverApprovalStateForSync } from "./recovery-sync";
 import {
   clearConversationRuntimeState,
   clearRuntimeTimers,
@@ -87,6 +83,7 @@ import {
   shouldHandleControlSocketClose,
 } from "./split-stream-lifecycle";
 import { notifyStreamObserversRuntimeStopped } from "./stream-observers";
+import { replaySyncStateForRuntime } from "./sync-replay";
 import {
   getListenerTransportKind,
   isListenerTransportOpen,
@@ -94,16 +91,12 @@ import {
   LocalListenerTransport,
 } from "./transport";
 import type {
-  ConversationRuntime,
   IncomingMessage,
   ListenerRuntime,
   ProcessQueuedTurn,
   StartListenerOptions,
 } from "./types";
-import {
-  clearListenerWarmState,
-  scheduleListenerWarmupsAfterSync,
-} from "./warmup";
+import { clearListenerWarmState } from "./warmup";
 import { stopAllWorktreeWatchers } from "./worktree-watcher";
 
 function trackListenerError(
@@ -179,57 +172,6 @@ export function runDetachedListenerTask(
     if (isDebugEnabled())
       console.error(`[Listen] ${commandName} failed:`, error);
   });
-}
-export async function replaySyncStateForRuntime(
-  listenerRuntime: ListenerRuntime,
-  socket: WebSocket,
-  scope: RuntimeScope<string | null>,
-  opts?: {
-    recoverApprovals?: boolean;
-    recoverApprovalStateForSync?: (
-      runtime: ConversationRuntime,
-      scope: RuntimeScope<string | null>,
-    ) => Promise<void>;
-    scheduleWarmupsAfterSync?: (
-      runtime: ListenerRuntime,
-      scope: RuntimeScope<string | null>,
-    ) => void;
-    forceDeviceStatus?: boolean;
-  },
-): Promise<void> {
-  const syncScopedRuntime = getOrCreateScopedRuntime(
-    listenerRuntime,
-    scope.agent_id,
-    scope.conversation_id,
-  );
-  const recoverFn =
-    opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
-  if (opts?.recoverApprovals ?? true) {
-    try {
-      await recoverFn(syncScopedRuntime, scope);
-    } catch (error) {
-      trackListenerError(
-        "listener_sync_recovery_failed",
-        error,
-        "listener_sync_recovery",
-      );
-      if (isDebugEnabled()) {
-        console.warn("[Listen] Sync approval recovery failed:", error);
-      }
-    }
-  }
-
-  await replaySubscribedConnectionState(
-    listenerRuntime,
-    socket,
-    syncScopedRuntime,
-    scope,
-    opts,
-  );
-  (opts?.scheduleWarmupsAfterSync ?? scheduleListenerWarmupsAfterSync)(
-    listenerRuntime,
-    scope,
-  );
 }
 function getParsedRuntimeScope(
   parsed: unknown,
