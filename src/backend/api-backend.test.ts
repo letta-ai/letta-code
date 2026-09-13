@@ -61,8 +61,13 @@ const listModelsMock = mock(async (_options?: unknown) => [
   { handle: "model-1" },
 ]);
 const createMessageStreamMock = mock(
-  async (_conversationId: string, _body: unknown, _options?: unknown) => ({
-    kind: "create-stream",
+  (_conversationId: string, _body: unknown, _options?: unknown) => ({
+    withResponse: async () => ({
+      data: { kind: "create-stream" },
+      response: new Response(null, {
+        headers: { "content-type": "text/event-stream" },
+      }),
+    }),
   }),
 );
 const streamConversationMessagesMock = mock(
