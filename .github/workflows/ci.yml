@@ -8,6 +8,12 @@ on:
     branches:
       - main
 
+# Superseded PR heads should not occupy runners needed by the current head.
+# Pushes to main remain independent so every merged revision is checked.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   classify:
     name: Classify change
@@ -98,7 +104,6 @@ jobs:
         run: bun run check
 
   update-chain-smoke:
-    needs: check
     name: Update Chain Smoke
     runs-on: ubuntu-24.04
     permissions:
@@ -128,12 +133,96 @@ jobs:
       - name: Manual update-chain smoke test
         run: bun run test:update-chain:manual
 
-  build:
-    needs: [classify, check]
+  unit:
+    needs: classify
     if: needs.classify.outputs.run_heavy_ci == 'true'
-    name: ${{ matrix.name }}
+    name: Unit / ${{ matrix.runner }} / ${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-latest]
+        shard: [1, 2, 3, 4]
+        # Windows subprocess-heavy tests need more runners, not concurrent
+        # tests sharing cwd, environment, module mocks, or the same CPU.
+        include:
+          - runner: windows-latest
+            shard: 5
+          - runner: windows-latest
+            shard: 6
+          - runner: windows-latest
+            shard: 7
+          - runner: windows-latest
+            shard: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - uses: ./.github/actions/setup-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Unlock GNOME Keyring
+        if: runner.os == 'Linux'
+        uses: t1m0thyj/unlock-keyring@v1
+
+      - name: Run unit tests
+        shell: bash
+        run: node scripts/run-unit-tests.cjs --shard ${{ matrix.shard }}/${{ runner.os == 'Windows' && 8 || 4 }}
+
+  integration:
+    needs: classify
+    # Keep API credentials out of fork and Dependabot jobs. Unit and package
+    # verification still run for those contributors on every platform.
+    if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    name: API / ${{ matrix.runner }} / ${{ matrix.shard }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-latest]
+        shard: [1, 2, 3, 4]
+        # Four Windows shards put the input-format, model CLI, and teleport
+        # files together (244 seconds before setup). Split that group again.
+        include:
+          - runner: windows-latest
+            shard: 5
+          - runner: windows-latest
+            shard: 6
+          - runner: windows-latest
+            shard: 7
+          - runner: windows-latest
+            shard: 8
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Unlock GNOME Keyring
+        if: runner.os == 'Linux'
+        uses: t1m0thyj/unlock-keyring@v1
+
+      - name: Run integration tests (API)
+        shell: bash
+        env:
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+        run: bun test src/integration-tests --timeout 15000 --shard=${{ matrix.shard }}/${{ runner.os == 'Windows' && 8 || 4 }}
+
+  build:
+    needs: classify
+    if: needs.classify.outputs.run_heavy_ci == 'true'
+    name: Package / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -154,24 +243,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          # PR checkouts use a merge commit. Depth 2 includes its base and head.
-          fetch-depth: 2
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - uses: ./.github/actions/setup-ci
         with:
-          bun-version: 1.3.14
-
-      - name: Install dependencies
+          npm-cache: 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun install --frozen-lockfile
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: '22.19'
 
       - name: Verify native binaries
         run: |
@@ -189,20 +266,6 @@ jobs:
       - name: Unlock GNOME Keyring
         if: runner.os == 'Linux'
         uses: t1m0thyj/unlock-keyring@v1
-
-      - name: Run tests (extended timeout)
-        timeout-minutes: 15
-        # Unit tests must pass for fork PRs (no secrets). Keep API-dependent tests
-        # in a separate gated step.
-        run: node scripts/run-unit-tests.cjs
-
-      - name: Run integration tests (API)
-        # Only run on push to main or non-Dependabot PRs from the same repo
-        # (fork and Dependabot PRs cannot access secrets).
-        if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository) }}
-        env:
-          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: bun test src/integration-tests --timeout 15000
 
       - name: Build bundle
         run: bun run build
@@ -236,7 +299,7 @@ jobs:
         shell: pwsh
         run: |
           npm pack
-          npm install -g (Get-Item letta-ai-letta-code-*.tgz).FullName
+          npm install -g (Get-Item letta-ai-letta-code-*.tgz).FullName --timing --loglevel=verbose
           letta --help
 
       - name: Test npm install flow (Unix)
@@ -274,7 +337,7 @@ jobs:
         run: bun pm pack
 
   node18-smoke:
-    needs: [classify, check]
+    needs: classify
     if: needs.classify.outputs.run_heavy_ci == 'true'
     name: Node 18 Smoke Test
     runs-on: ubuntu-24.04
@@ -309,7 +372,7 @@ jobs:
         run: node ./letta.js --help
 
   headless:
-    needs: [classify, check]
+    needs: classify
     if: needs.classify.outputs.run_heavy_ci == 'true'
     name: Headless / ${{ matrix.model }}
     runs-on: ubuntu-latest
@@ -343,7 +406,7 @@ jobs:
           bun run src/test-utils/headless-scenario.ts --model "${{ matrix.model }}" --output stream-json --parallel on
 
   headless-local:
-    needs: [classify, check]
+    needs: classify
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: Headless Local / ${{ matrix.model }}
     runs-on: ubuntu-latest
@@ -377,7 +440,7 @@ jobs:
           bun run src/test-utils/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output stream-json --parallel on
 
   ollama-smoke:
-    needs: [classify, check]
+    needs: classify
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: Ollama Smoke / ${{ matrix.model }}
     runs-on: ubuntu-latest
@@ -444,7 +507,7 @@ jobs:
           bun run src/test-utils/headless-scenario.ts --backend local --model "ollama/letta-ci-smoke" --output text --parallel on --smoke
 
   reflection-headless:
-    needs: [classify, check]
+    needs: classify
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: Reflection / Headless
     runs-on: ubuntu-latest

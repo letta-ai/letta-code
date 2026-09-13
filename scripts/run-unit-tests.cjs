@@ -2,6 +2,7 @@
 const { execFileSync } = require("node:child_process");
 const { readFileSync, readdirSync } = require("node:fs");
 const path = require("node:path");
+const { shardTestFiles } = require("./test-sharding.cjs");
 const {
   buildFamilyImpactIndex,
   getGitChangedFiles,
@@ -77,6 +78,7 @@ const allTestFiles = [
   ...findTestFiles("scripts/codex-watch"),
   ...findTestFiles("scripts/claude-watch"),
   "scripts/unit-test-impact.test.cjs",
+  "scripts/test-sharding.test.cjs",
 ].sort();
 const discoveredPaths = new Set(allTestFiles);
 
@@ -192,7 +194,15 @@ function selectTestFiles() {
 }
 
 let exitCode = 0;
-const selectedTestFiles = selectTestFiles();
+const shardIndex = process.argv.indexOf("--shard");
+const shard = shardIndex === -1 ? undefined : (process.argv[shardIndex + 1] ?? "");
+// Validate outside selection's full-suite fallback: an invalid shard must fail,
+// not make several jobs duplicate the entire suite or silently run nothing.
+shardTestFiles([], shard);
+const selectedTestFiles = shardTestFiles(selectTestFiles(), shard);
+if (shard) {
+  console.log(`unit-test shard ${shard}: ${selectedTestFiles.length} files`);
+}
 const selectedTestPaths = new Set(selectedTestFiles);
 
 // Bun module mocks and process-global state are shared within one test process.
