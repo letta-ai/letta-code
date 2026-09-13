@@ -34,13 +34,21 @@ This is the recommended flow:
    ```
 
 2. **Copy the files you want into your own memfs**
-   - `system/` = attached blocks (always loaded)
-   - root = detached blocks
+   The memory layout depends on the source agent's format:
+   - **v1 (legacy):** `system/` = attached blocks (always loaded), root = detached blocks
+   - **v2 (root layout):** root-level `.md` files = core memory (always loaded), directories with `MEMORY.md` indexes = projected memory (loaded on demand)
+   - Check for `MEMORY.md` at the export root to identify v2; if absent, the export uses v1
 
-   Example:
+   Example (v1):
    ```bash
    cp -r /tmp/letta-memory-agent-abc123/system/project ~/.letta/agents/$LETTA_AGENT_ID/memory/system/
    cp /tmp/letta-memory-agent-abc123/notes.md ~/.letta/agents/$LETTA_AGENT_ID/memory/
+   ```
+
+   Example (v2):
+   ```bash
+   cp /tmp/letta-memory-agent-abc123/human.md ~/.letta/agents/$LETTA_AGENT_ID/memory/
+   cp -r /tmp/letta-memory-agent-abc123/projects ~/.letta/agents/$LETTA_AGENT_ID/memory/
    ```
 
 3. **Commit and push the memory repo**
@@ -87,6 +95,10 @@ Scenario: You're a new agent and want to inherit memory from an existing agent "
 3. **Copy the relevant files into your memfs:**
    ```bash
    cp -r /tmp/letta-memory-agent-abc123/system/project ~/.letta/agents/$LETTA_AGENT_ID/memory/system/
+   ```
+   For v2 (root layout) agents, copy root-level `.md` files and directories instead:
+   ```bash
+   cp /tmp/letta-memory-agent-abc123/project.md ~/.letta/agents/$LETTA_AGENT_ID/memory/
    ```
 
 4. **Commit and push:**
