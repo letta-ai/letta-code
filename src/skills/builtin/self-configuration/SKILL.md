@@ -15,8 +15,8 @@ The important part is choosing the right layer. Do not smear a preference into d
 | Layer | Use it for | How to change it |
 | --- | --- | --- |
 | Memory and identity | Facts worth retaining, style preferences, persona changes, project knowledge, reusable skills | Edit `$MEMORY_DIR` files and sync the memory repo |
-| Server agent fields | Default model, model settings, context limit, system prompt, compaction, agent name, description | Patch `/v1/agents/{agent_id}` |
-| Server conversation fields | Temporary model/context experiments for one conversation | Patch `/v1/conversations/{conversation_id}` |
+| Server agent fields | Agent default model (only on explicit request), context limit, system prompt, compaction, agent name, description | Patch `/v1/agents/{agent_id}` |
+| Server conversation fields | Model/context changes for the current conversation (the normal target) | Patch `/v1/conversations/{conversation_id}` |
 | Local settings | Permissions, environment variables, UI/runtime preferences, pinned agents, toolset overrides, reflection cadence | Edit `~/.letta/settings.json`, `./.letta/settings.json`, or `./.letta/settings.local.json` |
 | Mods | New deterministic tools, slash commands, providers, statusline behavior, or lightweight UI | Load `creating-mods`, `customizing-commands`, or `customizing-statusline` |
 | Skills | Reusable procedural knowledge or bundled scripts | Load `creating-skills` or `acquiring-skills` |
@@ -28,7 +28,7 @@ Decision rule: if the model should remember and reason about it, use memory. If 
 
 ## Safe workflow
 
-1. Identify scope: current conversation, current agent, project, or global user config.
+1. Identify scope: current conversation, current agent, project, or global user config. Model changes target the current conversation unless the user asks about the agent default.
 2. Inspect current state first and save the relevant safe fields as a rollback patch. Do not copy secrets or full compiled prompts into backups.
 3. Prefer a dry run for API patches and scripts.
 4. Apply the smallest change that satisfies the request.
@@ -50,7 +50,7 @@ If a broken model or prompt prevents the agent from completing a turn, recover o
 Local settings, server state, and the current process are different sources of truth. Inspect the layer you intend to change before writing it.
 
 - `letta model list [--byok | --hosted]` lists available models.
-- `letta model set [model_handle] [--reasoning <reasoning-option>] [--default]` overrides the current conversation's model or reasoning; `--default` overrides the agent's default instead.
+- `letta model set [model_handle] [--reasoning <reasoning-option>] [--default]` changes the current conversation's model or reasoning; add `--default` only when the user asks for the agent default.
 - `letta model get [--default]` gets the current model configuration; `--default` gets the agent's default configuration.
 
 Use the secret-safe local/runtime report for harness settings, permissions, and backend diagnostics:
@@ -103,7 +103,7 @@ Do not use API system-prompt replacement for ordinary learning. That can clobber
 
 ## Server-side agent and conversation settings
 
-Server fields control model execution and agent metadata. Use the agent endpoint for persistent defaults. Use the conversation endpoint for scoped experiments.
+Server fields control model execution and agent metadata. Use the conversation endpoint for model changes. Use the agent endpoint only when the user asks for the agent default.
 
 Required environment for live API writes:
 
@@ -122,7 +122,7 @@ The scripts in this skill default to `AGENT_ID`, `CONVERSATION_ID`, and `LETTA_B
 npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts --help
 ```
 
-Patch the current conversation first when testing a risky model/settings change:
+Patch the current conversation for a model/settings change:
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
@@ -133,7 +133,7 @@ npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
   --dry-run
 ```
 
-Patch the agent default after the user confirms the change should persist:
+Patch the agent default only when the user asks for it:
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
