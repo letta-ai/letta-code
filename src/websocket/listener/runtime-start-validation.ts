@@ -46,6 +46,7 @@ export function isRuntimeStartCommand(
       typeof c.force_device_status === "boolean") &&
     (c.wait_for_replay === undefined ||
       typeof c.wait_for_replay === "boolean") &&
+    (c.teleport_id === undefined || typeof c.teleport_id === "string") &&
     (c.external_tools === undefined ||
       (Array.isArray(c.external_tools) &&
         c.external_tools.every(isRuntimeStartExternalToolsGroup)))

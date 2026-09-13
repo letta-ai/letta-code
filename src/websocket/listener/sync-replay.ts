@@ -10,6 +10,7 @@ import {
   startRecoveredApprovalContinuation,
 } from "./recovery";
 import { recoverApprovalStateForSync } from "./recovery-sync";
+import { isInboundTeleportExpected } from "./teleport";
 import { handleIncomingMessage } from "./turn";
 import type {
   ConversationRuntime,
@@ -79,7 +80,15 @@ export async function replaySyncStateForRuntime(
   // Recovery found only replay-unsafe pending approvals: nothing waits on a
   // human, so finish the interrupted turn now. The continuation takes the
   // turn lease synchronously, so the status replay below already reports it.
+  //
+  // Not when this scope is a teleport destination: the pending approvals are
+  // the source's yielded tool calls, and the cloud's `teleport_continue`
+  // delivers their results as the next turn. Starting a stale-denial turn here
+  // would both misreport tools that ran and make the destination reject that
+  // continuation as "already processing". The continuation turn clears the
+  // recovered state when it starts.
   if (
+    !isInboundTeleportExpected(syncScopedRuntime) &&
     syncScopedRuntime.recoveredApprovalState &&
     syncScopedRuntime.recoveredApprovalState.pendingRequestIds.size === 0 &&
     (syncScopedRuntime.recoveredApprovalState.autoDecisions?.length ?? 0) > 0

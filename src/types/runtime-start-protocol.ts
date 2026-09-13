@@ -48,6 +48,13 @@ export interface RuntimeStartCommand {
   force_device_status?: boolean;
   /** Resolve runtime_start only after its initial state replay has been emitted. */
   wait_for_replay?: boolean;
+  /**
+   * Set when this start prepares the destination of a conversation teleport.
+   * A `teleport_continue` input with this ID follows and carries the source's
+   * tool results, so sync recovery must not finish the source's pending
+   * approvals as a turn of its own.
+   */
+  teleport_id?: string;
   /** Controller-owned tools registered atomically with the resolved runtime. */
   external_tools?: readonly RuntimeStartExternalToolsGroup[];
 }

@@ -289,7 +289,7 @@ describe("recoverApprovalStateForSync restart recovery", () => {
       .map((payload) => JSON.parse(payload))
       .filter((frame) => frame.type === "update_loop_status");
     expect(statusFrames.length).toBeGreaterThan(0);
-    expect(statusFrames[0]?.status).not.toBe("WAITING_ON_INPUT");
+    expect(statusFrames[0]?.loop_status.status).not.toBe("WAITING_ON_INPUT");
 
     await waitFor(() => processed.length === 1);
     const [turn] = processed;
