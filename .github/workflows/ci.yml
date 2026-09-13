@@ -189,6 +189,17 @@ jobs:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-latest]
         shard: [1, 2, 3, 4]
+        # Four Windows shards put the input-format, model CLI, and teleport
+        # files together (244 seconds before setup). Split that group again.
+        include:
+          - runner: windows-latest
+            shard: 5
+          - runner: windows-latest
+            shard: 6
+          - runner: windows-latest
+            shard: 7
+          - runner: windows-latest
+            shard: 8
     steps:
       - uses: actions/checkout@v6
 
@@ -204,7 +215,7 @@ jobs:
         shell: bash
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: bun test src/integration-tests --timeout 15000 --shard=${{ matrix.shard }}/4
+        run: bun test src/integration-tests --timeout 15000 --shard=${{ matrix.shard }}/${{ runner.os == 'Windows' && 8 || 4 }}
 
   build:
     needs: classify
