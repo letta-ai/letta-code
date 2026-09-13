@@ -63,33 +63,57 @@ describe("mcp servers info reminder", () => {
     expect(state.hasSentMcpServersInfo).toBe(false);
   });
 
-  test("re-emits when the server list changes after the refresh interval", async () => {
+  test("reports attachments and detachments on the next turn without waiting", async () => {
     const state = createSharedReminderState();
-    let servers = [{ name: "exa", toolCount: 2 }];
+    let servers: Array<{ name: string; toolCount: number }> = [];
     const deps: McpServersReminderDependencies = {
       getLocalServerNames: () => [],
       listServerSideServers: async () => [...servers],
     };
 
     expect(await buildReminder(state, deps)).toContain(
-      "MCP servers with available tools: exa (2 tools)",
+      "MCP servers with available tools: None",
     );
 
     servers = [
       { name: "exa", toolCount: 2 },
       { name: "betterstack", toolCount: 111 },
     ];
-    // Within the refresh interval nothing is re-fetched or emitted.
-    expect(await buildReminder(state, deps)).toBeNull();
-
-    // Force the refresh window to elapse.
-    state.lastMcpServersFetchedAtMs = 0;
     expect(await buildReminder(state, deps)).toContain(
       "MCP servers with available tools: exa (2 tools), betterstack (111 tools)",
     );
 
-    // Unchanged list after another elapsed window stays silent.
-    state.lastMcpServersFetchedAtMs = 0;
+    // Unchanged lists do not add duplicate reminders.
     expect(await buildReminder(state, deps)).toBeNull();
+
+    servers = [];
+    expect(await buildReminder(state, deps)).toContain(
+      "MCP servers with available tools: None",
+    );
+  });
+
+  test("retries discovery next turn after failure without losing the last sent list", async () => {
+    const state = createSharedReminderState();
+    const deps: McpServersReminderDependencies = {
+      getLocalServerNames: () => [],
+      listServerSideServers: async () => [{ name: "exa", toolCount: 2 }],
+    };
+    await buildReminder(state, deps);
+    const lastSent = state.lastSentMcpServerNamesKey;
+    expect(
+      await buildReminder(state, {
+        ...deps,
+        listServerSideServers: async () => {
+          throw new Error("api down");
+        },
+      }),
+    ).toBeNull();
+    expect(state.lastSentMcpServerNamesKey).toBe(lastSent);
+    expect(
+      await buildReminder(state, {
+        ...deps,
+        listServerSideServers: async () => [],
+      }),
+    ).toContain("MCP servers with available tools: None");
   });
 });
