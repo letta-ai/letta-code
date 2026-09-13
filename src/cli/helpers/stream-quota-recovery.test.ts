@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { fetchRunErrorInfo } from "@/agent/approval-recovery";
@@ -70,6 +70,10 @@ function installBackend(overrides: Partial<Backend> = {}) {
   } as unknown as Backend);
   return { conversation, updateConversation };
 }
+
+// Another suite may have populated the process-wide model cache before the
+// first case. Its rows must not override this suite's backend fixture.
+beforeEach(clearAvailableModelsCache);
 
 afterEach(() => {
   clearAvailableModelsCache();
