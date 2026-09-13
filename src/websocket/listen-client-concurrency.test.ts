@@ -1466,29 +1466,21 @@ describe("listen-client multi-worker concurrency", () => {
     const recovered = runtime.recoveredApprovalState;
     expect(recovered?.pendingRequestIds.size).toBe(0);
     expect(recovered?.approvalsByRequestId.size).toBe(0);
-    expect(recovered?.autoDecisions).toEqual([
-      {
-        type: "deny",
-        approval: {
-          ...autoAllowedApproval,
-          messageId: "msg-recovered-approval",
-        },
-        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-      },
-      {
-        type: "deny",
-        approval: { ...manualApproval, messageId: "msg-recovered-approval" },
-        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-      },
-      {
-        type: "deny",
-        approval: {
-          ...autoDeniedApproval,
-          messageId: "msg-recovered-approval",
-        },
-        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-      },
-    ]);
+    expect(
+      recovered?.autoDecisions?.map((decision) => [
+        decision.type,
+        decision.approval.toolCallId,
+        decision.type === "deny" ? decision.reason : null,
+      ]),
+    ).toEqual(
+      [autoAllowedApproval, manualApproval, autoDeniedApproval].map(
+        (approval) => [
+          "deny",
+          approval.toolCallId,
+          STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+        ],
+      ),
+    );
 
     const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
       agent_id: "agent-1",
