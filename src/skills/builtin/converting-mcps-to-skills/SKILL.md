@@ -5,7 +5,7 @@ description: Connect to MCP (Model Context Protocol) servers and create skills f
 
 # Converting MCP Servers to Skills
 
-Letta Code is not itself an MCP client, but as a general computer-use agent, you can easily connect to any MCP server using the scripts in this skill.
+Letta Code has a built-in MCP client (`/mcp add`) for persistent server connections, but the scripts in this skill are useful for ad-hoc exploration, testing, and creating dedicated skills from MCP servers.
 
 ## What is MCP?
 
@@ -147,7 +147,6 @@ Actions:
 Options:
   --env "KEY=VALUE"       Set environment variable (repeatable)
   --cwd <path>            Set working directory
-  --timeout <ms>          Request timeout (default: 30000)
 ```
 
 **Examples:**
