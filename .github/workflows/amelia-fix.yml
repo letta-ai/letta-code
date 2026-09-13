@@ -1,0 +1,37 @@
+name: Amelia
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  fix:
+    if: |
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '@amelia-letta') &&
+      (github.event.comment.author_association == 'OWNER' || github.event.comment.author_association == 'MEMBER' || github.event.comment.author_association == 'COLLABORATOR')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Letta Code CLI
+        run: npm install -g @letta-ai/letta-code@latest
+
+      - run: npm install @letta-ai/letta-agent-sdk tsx
+
+      - name: Run Amelia
+        env:
+          LETTA_API_KEY: ${{ secrets.AMELIA_LETTA_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+          # Extract the prompt from the comment (everything after @amelia-letta)
+          USER_PROMPT: ${{ github.event.comment.body }}
+        run: npx tsx scripts/amelia-fix.ts
