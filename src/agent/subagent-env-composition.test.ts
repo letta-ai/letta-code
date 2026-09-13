@@ -10,11 +10,30 @@ import {
   PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
 } from "@/mods/capabilities";
 import { LETTA_DISABLE_MODS_ENV } from "@/mods/disable";
+import { SUBAGENT_NAME_ENV } from "@/utils/subagent-launch-marker";
 
 const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
 const PARENT_MEMORY_DIR = `/Users/someone/.letta/agents/${PARENT_ID}/memory`;
 
 describe("composeSubagentChildEnv", () => {
+  test("forwards a reserved name to a fresh child without leaking a parent's name", () => {
+    const parentProcessEnv = { [SUBAGENT_NAME_ENV]: "Deckard (subagent)" };
+    const options = {
+      parentProcessEnv,
+      parentAgentId: PARENT_ID,
+      launchProfile: "default" as const,
+      inheritedPrimaryRoot: null,
+    };
+    expect(
+      composeSubagentChildEnv({ ...options, subagentName: "Joi (subagent)" })[
+        SUBAGENT_NAME_ENV
+      ],
+    ).toBe("Joi (subagent)");
+    // Forks and existing-agent launches have no reservation.
+    expect(composeSubagentChildEnv(options)[SUBAGENT_NAME_ENV]).toBeUndefined();
+    expect(parentProcessEnv[SUBAGENT_NAME_ENV]).toBe("Deckard (subagent)");
+  });
+
   test("reflection subagents load only mod providers in the child process", () => {
     const parentProcessEnv: NodeJS.ProcessEnv = {
       HOME: "/home/user",

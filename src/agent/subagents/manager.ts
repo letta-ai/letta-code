@@ -50,6 +50,7 @@ import {
   type SubagentResult,
 } from ".";
 import { buildSubagentPrompt } from "./context-budget";
+import { allocateSubagentName } from "./names";
 import {
   composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
@@ -389,6 +390,10 @@ async function executeSubagent(
       inheritedBaseUrl,
       actingUserId: actingUserIdOverride,
       transcriptPath,
+      subagentName:
+        existingAgentId || existingConversationId
+          ? undefined
+          : allocateSubagentName(),
     });
 
     // Optionally confine subagents with the memory-subagent profile to an OS filesystem sandbox.
