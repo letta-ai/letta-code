@@ -22,6 +22,7 @@ import {
   LISTENER_CONNECTION_ENV,
   SUBAGENT_LAUNCH_ENV,
   SUBAGENT_LAUNCH_PROFILE_ENV,
+  SUBAGENT_NAME_ENV,
 } from "@/utils/subagent-launch-marker";
 import type { SubagentLaunchProfile, SubagentMemoryScope } from ".";
 
@@ -160,6 +161,8 @@ export interface ComposeSubagentChildEnvOptions {
    * can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead of
    * interpolating the absolute path. Unset → no TRANSCRIPT_PATH in child. */
   transcriptPath?: string | null;
+  /** Name reserved in the parent process, only for a newly created agent. */
+  subagentName?: string;
 }
 
 /**
@@ -212,6 +215,10 @@ export function composeSubagentChildEnv(
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
   };
+
+  // A nested launch must never reuse its parent's assigned creation name.
+  delete childEnv[SUBAGENT_NAME_ENV];
+  if (options.subagentName) childEnv[SUBAGENT_NAME_ENV] = options.subagentName;
 
   if (backendMode === "local") {
     childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
