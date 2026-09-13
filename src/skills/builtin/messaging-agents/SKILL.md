@@ -52,25 +52,31 @@ any headless run does. `SendAgentMessage` is Cloud delivery as a tool call.
 On the local backend every send runs the recipient's turn in the launched
 process.
 
-`--no-wait` decides only whether the CLI waits for the recipient's final
-message. It does not change how the message is delivered.
+`--no-wait` is one of the flags that selects Cloud delivery. Once a command is
+on that path, it decides only whether the CLI waits for the recipient's final
+message: a waiting `--conversation` or `--from-agent` send is delivered to the
+existing harness the same way.
 
 The recipient learns who is asking only when the send identifies a sender:
 `--from-agent`, or on the Cloud delivery path the `LETTA_AGENT_ID` and
 `LETTA_CONVERSATION_ID` of the agent running the command. `SendAgentMessage`
-always identifies you. An identified send attaches a system reminder telling
-the recipient how to get its answer back to you. A plain `letta -p` with
-neither attaches nothing; the recipient sees only your text, as from any user.
+always identifies you and your conversation. An identified send attaches a
+system reminder telling the recipient how to get its answer back to you. A
+`letta -p` with neither carries no sender or reply instructions; the recipient
+receives your text as user input, plus whatever context its harness normally
+adds.
 
 ## Waiting or not
 
 - **Waiting send** (`letta -p` without `--no-wait`). The process returns the
-  recipient's final message in `result`. An identified recipient is told to
-  put its answer in that message. Works on either backend.
+  recipient's final message in `result`. When a sender is identified, the
+  recipient is told to put its answer in that message. Works on either
+  backend.
 - **Non-waiting send** (`SendAgentMessage`, or `letta -p --no-wait`). Returns
-  a receipt once Cloud accepts the message. The recipient gets your agent and
-  conversation IDs as a return address and must reply with a send of its own;
-  the reply arrives as a new message in your conversation. Cloud backend only.
+  a receipt once Cloud accepts the message. The recipient is told that its
+  ordinary output will not reach you and, when your conversation ID is known,
+  is given your agent and conversation IDs as a return address; its reply then
+  arrives as a new message in your conversation. Cloud backend only.
 
 A waiting send occupies the CLI process, not necessarily you. Run it in the
 background (your shell tool may already do this for long-running commands) and
@@ -94,7 +100,8 @@ recipient has read it. Keep working; the reply arrives in your conversation.
 Omit `computer`: the conversation continues wherever it is active, and asking
 for a different computer is rejected rather than moving it.
 
-The CLI form behaves the same; use it from scripts or when the tool is absent:
+The CLI form behaves the same when run from your agent's environment, which
+supplies the return address; use it from scripts or when the tool is absent:
 
 ```bash
 letta -p --conversation <conversation-id> --no-wait --output-format json "message"
@@ -125,7 +132,7 @@ that turn.
 ## Replying to another agent
 
 When another agent identifies itself, its message arrives with a system
-reminder naming its agent and conversation IDs.
+reminder naming its agent ID and, when it had one, its conversation ID.
 
 - If the reminder says the sender will only see your final message: answer in
   your response. Nothing more is needed.
@@ -133,8 +140,11 @@ reminder naming its agent and conversation IDs.
   `SendAgentMessage({ agent_id, conversation_id, message })`, or
   `letta -p --agent <sender-agent-id> --conversation <sender-conversation-id> --no-wait "reply"`.
   Your ordinary output is not forwarded to the sender.
+- If it says no return conversation was supplied: your output is not forwarded
+  and there is no thread to reply into. Answer as you normally would.
 
-A message with no reminder is an ordinary user message; answer it normally.
+A message without such a reminder carries no sender or reply instructions;
+respond to it as you would to any input.
 
 ## Checking on a conversation
 
@@ -146,8 +156,10 @@ letta messages list --conversation <conversation-id> --limit 10
 ```
 
 `letta messages status --conversation <id>` (Cloud only) reports whether the
-conversation is currently running and its latest run, so you can tell an idle
-thread from one still working on your message. Non-waiting receipts include
+conversation is currently running and identifies its latest run. That is the
+thread's state, not confirmation about your particular message; compare the
+run ID with the `super_run_id` on your receipt, and read the messages to see
+what was processed. Non-waiting receipts include
 ready-to-run `status_command` and `messages_command` values for the thread
 they went to. `letta messages transcript --conversation <id>` exports a whole
 thread. `letta messages --help` lists the options.
