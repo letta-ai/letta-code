@@ -12,15 +12,17 @@ import { join } from "node:path";
 import { WebSocketServer } from "ws";
 import { runWithRuntimeContext } from "@/runtime-context";
 import {
-  ANTHROPIC_DEFAULT_TOOLS,
   executeTool,
-  GEMINI_DEFAULT_TOOLS,
-  OPENAI_DEFAULT_TOOLS,
-  OPENAI_PASCAL_TOOLS,
   prepareToolExecutionContextForSpecificTools,
   releaseToolExecutionContext,
 } from "@/tools/manager";
 import MonitorSchema from "@/tools/schemas/Monitor.json";
+import {
+  ANTHROPIC_DEFAULT_TOOLS,
+  GEMINI_DEFAULT_TOOLS,
+  OPENAI_DEFAULT_TOOLS,
+  OPENAI_PASCAL_TOOLS,
+} from "@/tools/toolset-defaults";
 import {
   clearPendingMessages,
   type QueuedMessage,

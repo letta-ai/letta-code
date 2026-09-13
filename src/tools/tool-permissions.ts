@@ -28,6 +28,7 @@ export const TOOL_PERMISSIONS: Record<
   ViewImage: { requiresApproval: false },
   ReadLSP: { requiresApproval: false },
   SetWorkingDirectory: { requiresApproval: false },
+  SendAgentMessage: { requiresApproval: true },
   Skill: { requiresApproval: false },
   Task: { requiresApproval: true },
   TaskCreate: { requiresApproval: false },

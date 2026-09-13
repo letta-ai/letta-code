@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { Backend } from "@/backend";
 import {
+  buildAgentSendContent,
+  resolveAgentMessageDestination,
+  validateAddress,
+} from "@/backend/api/agent-message";
+import {
   type EnqueueReceipt,
   enqueueConversationMessage,
   getLatestConversationSuperRun,
@@ -41,35 +46,6 @@ export function shouldEnqueueCloudSend(
       values.environment !== undefined ||
       values.env !== undefined,
   );
-}
-
-export function buildAgentSendReminder(
-  sender: { agentId?: string; conversationId?: string },
-  noWait: boolean,
-): string {
-  if (!sender.agentId) return "";
-  const address = sender.conversationId
-    ? `, conversation ${sender.conversationId}`
-    : "";
-  const instruction = !noWait
-    ? "The sender will only see the final message you generate (not tool calls or reasoning). Include your answer in your final response."
-    : sender.conversationId
-      ? `To reply to agent ${sender.agentId}${address}, use SendAgentMessage if available. Otherwise run letta -p --agent ${sender.agentId} --conversation ${sender.conversationId} --no-wait "your reply". Ordinary assistant output is not forwarded to the sender.`
-      : "Ordinary assistant output is not forwarded to the sender. No return conversation was supplied.";
-  return `<system-reminder>\nThis message is from agent ${sender.agentId}${address}.\n${instruction}\n</system-reminder>\n\n`;
-}
-
-function validateAddress(
-  value: string | undefined,
-  kind: "agent" | "conversation",
-): string | undefined {
-  if (!value) return undefined;
-  if (kind === "conversation" && value === "default") return value;
-  const prefix = kind === "agent" ? "agent" : "conv";
-  if (!new RegExp(`^${prefix}-[a-zA-Z0-9-]+$`).test(value)) {
-    throw new Error(`Invalid ${kind} ID: ${JSON.stringify(value)}`);
-  }
-  return value;
 }
 
 function validateSendOptions(values: SendValues): void {
@@ -228,24 +204,11 @@ export async function tryCloudHeadlessSend(
       throw new Error(
         "Choose a destination with --agent or --conversation. Ambient AGENT_ID identifies the sender.",
       );
-    if (conversationId && conversationId !== "default") {
-      const conversation = await backend.retrieveConversation(conversationId, {
-        signal: controller.signal,
-      });
-      if (agentId && agentId !== conversation.agent_id)
-        throw new Error(
-          "The conversation does not belong to the requested agent.",
-        );
-      agentId = conversation.agent_id ?? undefined;
-    }
-    if (!agentId) throw new Error("--conversation default requires --agent.");
-    if (!conversationId) {
-      const conversation = await backend.createConversation(
-        { agent_id: agentId, ...(sender.agentId ? { hidden: true } : {}) },
-        { signal: controller.signal },
-      );
-      conversationId = conversation.id;
-    }
+    ({ agentId, conversationId } = await resolveAgentMessageDestination(
+      { agentId, conversationId, senderAgentId: sender.agentId },
+      backend,
+      controller.signal,
+    ));
     const recovery = {
       status_command: `letta messages status --agent ${agentId} --conversation ${conversationId}`,
       messages_command: `letta messages list --agent ${agentId} --conversation ${conversationId}`,
@@ -271,7 +234,7 @@ export async function tryCloudHeadlessSend(
         agentId,
         conversationId,
         clientMessageId,
-        content: `${buildAgentSendReminder(sender, noWait)}${prompt}`,
+        content: buildAgentSendContent(sender, noWait, prompt),
         computer: isCloudEnvironmentSelector(
           values.computer ?? values.environment ?? values.env,
         )

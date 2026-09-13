@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import ShellDescription from "@/tools/descriptions/Shell.md";
-import { OPENAI_DEFAULT_TOOLS, OPENAI_PASCAL_TOOLS } from "@/tools/manager";
 import ExecCommandSchema from "@/tools/schemas/ExecCommand.json";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
+import {
+  OPENAI_DEFAULT_TOOLS,
+  OPENAI_PASCAL_TOOLS,
+} from "@/tools/toolset-defaults";
 
 function extractCommitGuidance(description: string): string {
   const start = description.indexOf("# Committing changes with git");

@@ -16,6 +16,7 @@ export const LETTA_TOOLS: ToolName[] = [
   "SetWorkingDirectory",
   "memory",
   "Task",
+  "SendAgentMessage",
   "Monitor",
   "TaskOutput",
   "TaskStop",
