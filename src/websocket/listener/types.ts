@@ -227,6 +227,13 @@ export type ConversationRuntime = {
    * previous process left mid-approval without waiting for an ADE sync.
    */
   syncApprovalRecoveryCompleted: boolean;
+  /**
+   * Teleport whose `teleport_continue` this scope is waiting for, set by the
+   * cloud's destination `runtime_start`. While it is set (and not expired),
+   * sync recovery leaves the source's pending approvals to the continuation.
+   */
+  expectedTeleportId: string | null;
+  expectedTeleportExpiresAt: number | null;
   readonly lastStopReason: StopReasonType | null;
   lastTerminalLoopErrorMessage: string | null;
   lastTerminalLoopErrorRunId: string | null;

@@ -8,9 +8,11 @@ import { createListenerMessageHandler } from "./message-router";
 import { setActiveRuntime } from "./runtime";
 import {
   claimPendingTeleportAtBoundary,
+  expectInboundTeleport,
   finishPendingTeleport,
   finishTeleport,
   handleTeleportRequest,
+  isInboundTeleportExpected,
   isRuntimeTeleportPending,
 } from "./teleport";
 import type { IncomingMessage, StartListenerOptions } from "./types";
@@ -285,6 +287,8 @@ test("reverse teleport clears the returning destination's old marker", async () 
   const sent: unknown[] = [];
   openSource(listener, socket);
   setActiveRuntime(listener);
+  // The destination's runtime_start announced this continuation.
+  expectInboundTeleport(runtime, "teleport-return");
   listener.pendingTeleports = new Map([
     [
       "teleport-outbound",
@@ -340,6 +344,7 @@ test("reverse teleport clears the returning destination's old marker", async () 
   expect(isRuntimeTeleportPending(listener, "agent-1", "conversation-1")).toBe(
     false,
   );
+  expect(isInboundTeleportExpected(runtime)).toBe(false);
   expect(sent).toContainEqual(
     expect.objectContaining({
       type: "input_accepted",

@@ -69,6 +69,7 @@ import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import { parseListenerReadyMessage } from "./split-stream-lifecycle";
 import {
   buildTeleportContinuationMessages,
+  clearExpectedInboundTeleport,
   clearPriorReadyTeleports,
   handleTeleportFailure,
   handleTeleportProbe,
@@ -474,6 +475,9 @@ export function createListenerMessageHandler(
             parsed.runtime.agent_id,
             parsed.runtime.conversation_id,
           );
+          // The continuation this scope's runtime_start announced has arrived;
+          // sync recovery may act on its own again from here.
+          clearExpectedInboundTeleport(scopedRuntime);
           const acceptedKey = `teleport:${teleportId}`;
           const previousDisposition =
             scopedRuntime.acceptedInputDispositions.get(acceptedKey);

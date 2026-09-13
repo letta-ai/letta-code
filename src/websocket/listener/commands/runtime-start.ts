@@ -29,6 +29,7 @@ import {
 } from "@/websocket/listener/permission-mode";
 import { isRuntimeStartCommand } from "@/websocket/listener/runtime-start-validation";
 import { assertRuntimeWorkspaceSandboxChangeAllowed } from "@/websocket/listener/runtime-workspace-sandbox";
+import { expectInboundTeleport } from "@/websocket/listener/teleport";
 import type {
   ConversationRuntime,
   ListenerConnectionId,
@@ -463,6 +464,9 @@ export async function handleRuntimeStartCommand(
       runtimeScope.conversation_id,
     );
     await applyRuntimeStartState(parsed, context, runtimeScope, scopedRuntime);
+    if (parsed.teleport_id) {
+      expectInboundTeleport(scopedRuntime, parsed.teleport_id);
+    }
     assertConnectionOpen();
     subscribeListenerConnection(context.runtime, connectionId, runtimeScope);
     registerRuntimeExternalTools(

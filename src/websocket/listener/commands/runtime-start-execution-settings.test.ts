@@ -12,6 +12,7 @@ import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runt
 import { createRuntime } from "@/websocket/listener/lifecycle";
 import { evictConversationRuntimeIfIdle } from "@/websocket/listener/runtime";
 import { isRuntimeStartCommand } from "@/websocket/listener/runtime-start-validation";
+import { isInboundTeleportExpected } from "@/websocket/listener/teleport";
 import type { StartListenerOptions } from "@/websocket/listener/types";
 import { handleRuntimeStartCommand } from "./runtime-start";
 
@@ -110,6 +111,68 @@ test("secondary runtime_start preserves launch settings and an idle attached chi
     expect(responses.at(-1)).toMatchObject({ success: false });
     expect(runtime.executionSettings).toEqual(settings);
     runtime.turnLifecycle.finish(lease, "end_turn");
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
+test("a teleport destination runtime_start expects the continuation before its state replay", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "runtime-teleport-"));
+  try {
+    const backend = new LocalBackend({
+      storageDir,
+      executionMode: "deterministic",
+    });
+    __testSetBackend(backend);
+    const agent = await backend.createAgent({
+      name: "Destination",
+      model: "anthropic/claude-sonnet-4-6",
+    } as AgentCreateBody);
+    const listener = createRuntime();
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "test",
+      writer: {
+        kind: "local",
+        bufferedAmount: 0,
+        isOpen: () => true,
+        send: () => {},
+      },
+      options: {} as StartListenerOptions,
+    });
+    const expectedDuringReplay: boolean[] = [];
+    const context: Parameters<typeof handleRuntimeStartCommand>[1] = {
+      socket: {} as WebSocket,
+      connectionId: "test",
+      runtime: listener,
+      safeSocketSend: () => true,
+      runDetachedListenerTask: () => {},
+      getOrCreateScopedRuntime,
+      replaySyncStateForRuntime: async (_listener, _socket, scope) => {
+        expectedDuringReplay.push(
+          isInboundTeleportExpected(
+            getOrCreateScopedRuntime(
+              listener,
+              scope.agent_id,
+              scope.conversation_id,
+            ),
+          ),
+        );
+      },
+    };
+    const command: RuntimeStartCommand = {
+      type: "runtime_start",
+      request_id: "start",
+      agent_id: agent.id,
+      conversation_id: "default",
+      teleport_id: "teleport-1",
+    };
+    expect(isRuntimeStartCommand(command)).toBe(true);
+    expect(isRuntimeStartCommand({ ...command, teleport_id: 7 })).toBe(false);
+    await handleRuntimeStartCommand(command, context);
+    expect(expectedDuringReplay).toEqual([true]);
+    const runtime = getOrCreateScopedRuntime(listener, agent.id, "default");
+    expect(runtime.expectedTeleportId).toBe("teleport-1");
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }

@@ -264,6 +264,8 @@ export function createConversationRuntime(
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
     syncApprovalRecoveryCompleted: false,
+    expectedTeleportId: null,
+    expectedTeleportExpiresAt: null,
     get lastStopReason() {
       return turnLifecycle.lastStopReason;
     },
@@ -369,6 +371,8 @@ export function clearConversationRuntimeState(
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
+  runtime.expectedTeleportId = null;
+  runtime.expectedTeleportExpiresAt = null;
   runtime.dequeuedClientMessageIdsByBatchId.clear();
   runtime.continuationEpoch += 1;
   runtime.pendingTurns = 0;

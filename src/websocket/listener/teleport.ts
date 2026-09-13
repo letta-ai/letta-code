@@ -35,6 +35,49 @@ type SafeSocketSend = (
 ) => boolean;
 
 const TELEPORT_RECOVERY_TTL_MS = 5 * 60_000;
+/**
+ * How long a destination waits for the `teleport_continue` announced by its
+ * `runtime_start` before sync recovery may again finish stale approvals on its
+ * own. The cloud holds its per-conversation teleport lock for 60 seconds.
+ */
+const INBOUND_TELEPORT_CONTINUE_TTL_MS = 60_000;
+
+/**
+ * Record that the cloud is about to send `teleport_continue` for this scope.
+ * The source's yielded turn left pending approvals on the backend; the
+ * continuation carries their results, so sync recovery must not deny them as
+ * stale and start a competing turn (the destination would then reject the
+ * continuation with "already processing").
+ */
+export function expectInboundTeleport(
+  runtime: ConversationRuntime,
+  teleportId: string,
+): void {
+  runtime.expectedTeleportId = teleportId;
+  runtime.expectedTeleportExpiresAt =
+    Date.now() + INBOUND_TELEPORT_CONTINUE_TTL_MS;
+}
+
+export function isInboundTeleportExpected(
+  runtime: ConversationRuntime,
+): boolean {
+  if (runtime.expectedTeleportId === null) return false;
+  if (
+    runtime.expectedTeleportExpiresAt !== null &&
+    runtime.expectedTeleportExpiresAt <= Date.now()
+  ) {
+    clearExpectedInboundTeleport(runtime);
+    return false;
+  }
+  return true;
+}
+
+export function clearExpectedInboundTeleport(
+  runtime: ConversationRuntime,
+): void {
+  runtime.expectedTeleportId = null;
+  runtime.expectedTeleportExpiresAt = null;
+}
 
 export function buildTeleportContinuationMessages(params: {
   teleportId: string;
