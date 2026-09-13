@@ -28,7 +28,7 @@ User-editable preference keys:
 
 System-managed keys (do not edit directly):
 - `artifactsByAgent`: per-agent artifacts panel state, written by Desktop UI.
-- `debugPanelEnabled`: developer debug panel, controlled via app menus.
+- `debugPanelEnabled`: developer debug panel, enables listener debug output to stderr.
 - `remoteAppServerEnabled`: Remote App Server toggle, applied at startup.
 - `remoteAppServerUrl`: Remote App Server URL, configured via preferences UI.
 
