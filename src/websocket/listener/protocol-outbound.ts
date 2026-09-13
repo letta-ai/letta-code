@@ -43,6 +43,7 @@ import {
   shouldEmitDeviceStatus,
 } from "./device-status-cache";
 import { buildDeviceToolsetStatus } from "./device-toolset-status";
+import { getVisibleQueuedItems } from "./inbound-queue";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 import { listListenerModCommands } from "./mod-command-registry";
 import { enqueueOutboundFrame } from "./outbound-wire";
@@ -341,16 +342,15 @@ export function buildQueueSnapshot(
   },
 ): QueueMessage[] {
   const listener = getListenerRuntime(runtime);
-  if (!listener) {
-    return [];
-  }
+  if (!listener) return [];
+
   const scope = getScopeForRuntime(runtime, params);
   const conversationRuntime = getConversationRuntime(
     listener,
     resolveScopedAgentId(listener, scope),
     resolveScopedConversationId(listener, scope),
   );
-  return (conversationRuntime?.queueRuntime.items ?? []).map((item) => ({
+  return getVisibleQueuedItems(conversationRuntime).map((item) => ({
     id: item.id,
     client_message_id: item.clientMessageId ?? `cm-${item.id}`,
     kind: item.kind,

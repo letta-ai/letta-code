@@ -1,5 +1,44 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type { QueueItem } from "@/queue/queue-runtime";
+import { SYSTEM_REMINDER_RE } from "./constants";
 import type { ConversationRuntime, IncomingMessage } from "./types";
+
+/** Display-only copies: the saved batch remains the lossless delivery input. */
+export function getVisibleQueuedItems(
+  runtime: ConversationRuntime | null | undefined,
+): QueueItem[] {
+  return (runtime?.queueRuntime.items ?? []).flatMap((item): QueueItem[] => {
+    // Notifications and cron prompts have their own display semantics.
+    if (item.kind !== "message") return [item];
+    const incoming = runtime?.queuedMessagesByItemId.get(item.id);
+    const contents = incoming
+      ? incoming.messages.flatMap((message) =>
+          "content" in message && message.role !== "system"
+            ? [message.content]
+            : [],
+        )
+      : [item.content];
+    const visible = contents.flatMap((content) => {
+      if (typeof content === "string") {
+        const text = content.replace(SYSTEM_REMINDER_RE, "").trim();
+        return text ? [{ type: "text" as const, text }] : [];
+      }
+      return content.flatMap((part) => {
+        if (part.type !== "text") return [part];
+        const text = part.text.replace(SYSTEM_REMINDER_RE, "").trim();
+        return text ? [{ ...part, text }] : [];
+      });
+    });
+    if (visible.length === 0) return [];
+    const content =
+      contents.length === 1 && typeof contents[0] === "string"
+        ? visible
+            .map((part) => (part.type === "text" ? part.text : ""))
+            .join("")
+        : visible;
+    return [{ ...item, content }];
+  });
+}
 
 export function getInboundClientMessageId(
   incoming: IncomingMessage,
