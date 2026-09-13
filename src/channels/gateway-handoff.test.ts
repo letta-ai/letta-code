@@ -100,6 +100,7 @@ test("adopts an active delivery without submitting its input again", async () =>
   );
 
   expect(client.startedRuntimes).toHaveLength(1);
+  expect(client.startedRuntimes[0]).toMatchObject({ recover_approvals: false });
   expect(client.submittedInputs).toHaveLength(0);
   expect(collector.lifecycleEvents).toEqual([
     {

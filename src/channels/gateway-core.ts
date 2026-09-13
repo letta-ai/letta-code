@@ -428,10 +428,13 @@ export class ChannelGateway {
       ]);
       this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
       try {
-        await this.performRuntimeRegistration(state, {
-          ...delivery,
-          content: "",
-        });
+        // The source already owns the turn and will supply its tool results
+        // in teleport_continue. Recovery here would start a competing turn.
+        await this.performRuntimeRegistration(
+          state,
+          { ...delivery, content: "" },
+          false,
+        );
         if (state.active !== active) return;
         active.richDraft =
           this.hooks.createRichDraft?.({
@@ -679,6 +682,7 @@ export class ChannelGateway {
   private async performRuntimeRegistration(
     state: GatewayRuntimeState,
     delivery: ChannelGatewayDelivery,
+    recoverApprovals = true,
   ): Promise<void> {
     const tool = await this.hooks.buildExternalTool(
       delivery.runtime,
@@ -689,6 +693,7 @@ export class ChannelGateway {
       mode: delivery.defaultPermissionMode ?? null,
       tool,
       conversationTags,
+      recoverApprovals,
     });
     if (state.registrationSignature === signature && state.registration) {
       return state.registration;
@@ -704,7 +709,7 @@ export class ChannelGateway {
         ...(delivery.defaultPermissionMode
           ? { mode: delivery.defaultPermissionMode }
           : {}),
-        recover_approvals: true,
+        recover_approvals: recoverApprovals,
         force_device_status: false,
         wait_for_replay: true,
         preserve_skill_sources: true,
