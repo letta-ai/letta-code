@@ -18,11 +18,11 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 // Simple zip implementation using Node.js built-in zlib
 // For a proper zip file, we'll create the structure manually
-import { deflateSync } from "node:zlib";
+import { deflateRawSync } from "node:zlib";
 import { validateSkill } from "./validate-skill";
 
 interface ZipEntry {
@@ -43,7 +43,7 @@ function createZip(entries: ZipEntry[]): Buffer {
     const pathBuffer = Buffer.from(entry.path, "utf8");
     const compressedData = entry.isDirectory
       ? Buffer.alloc(0)
-      : deflateSync(entry.data);
+      : deflateRawSync(entry.data);
     const uncompressedSize = entry.isDirectory ? 0 : entry.data.length;
     const compressedSize = compressedData.length;
 
@@ -145,7 +145,7 @@ function getAllFiles(dir: string, baseDir: string): ZipEntry[] {
 
   for (const item of items) {
     const fullPath = join(dir, item.name);
-    const relativePath = relative(baseDir, fullPath);
+    const relativePath = relative(baseDir, fullPath).split(sep).join("/");
 
     if (item.isDirectory()) {
       entries.push({
