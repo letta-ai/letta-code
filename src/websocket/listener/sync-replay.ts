@@ -30,8 +30,6 @@ export async function replaySyncStateForRuntime(
   scope: RuntimeScope<string | null>,
   opts?: {
     recoverApprovals?: boolean;
-    /** Only the sync command performs automatic process-start recovery. */
-    recoverOnFirstSync?: boolean;
     recoverApprovalStateForSync?: (
       runtime: ConversationRuntime,
       scope: RuntimeScope<string | null>,
@@ -55,12 +53,13 @@ export async function replaySyncStateForRuntime(
   );
   const recoverFn =
     opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
-  // The sync command decides whether startup recovery is needed. Other
-  // callers, including teleport's runtime_start, can explicitly skip it.
+  // The first sync for a scope in this process always recovers: cloud-api's
+  // readiness probes and activity claims send recover_approvals=false, and a
+  // relaunched sandbox listener may never see a true from an ADE. Later syncs
+  // honor the flag as the cheap idle-ping path it was meant for.
   if (
     (opts?.recoverApprovals ?? true) ||
-    (opts?.recoverOnFirstSync &&
-      !syncScopedRuntime.syncApprovalRecoveryCompleted)
+    !syncScopedRuntime.syncApprovalRecoveryCompleted
   ) {
     try {
       await recoverFn(syncScopedRuntime, scope);
