@@ -38,8 +38,8 @@ export interface SharedReminderState {
   lastSentSecretNamesKey: string | null;
   hasSentMcpServersInfo: boolean;
   lastSentMcpServerNamesKey: string | null;
-  /** Counts may be cached, but attachment discovery must run every turn. */
-  mcpToolCounts: Map<string, { toolCount: number | null; fetchedAtMs: number }>;
+  /** Last legacy MCP discovery attempt; included relationships bypass polling. */
+  lastMcpServersFetchedAtMs: number | null;
   lastNotifiedPermissionMode: PermissionMode | null;
   turnCount: number;
   pendingReflectionTrigger: boolean;
@@ -61,7 +61,7 @@ export function createSharedReminderState(): SharedReminderState {
     lastSentSecretNamesKey: null,
     hasSentMcpServersInfo: false,
     lastSentMcpServerNamesKey: null,
-    mcpToolCounts: new Map(),
+    lastMcpServersFetchedAtMs: null,
     lastNotifiedPermissionMode: null,
     turnCount: 0,
     pendingReflectionTrigger: false,
@@ -87,7 +87,7 @@ export function markPostCompactionContextRemindersPending(
   state.pendingSessionContextReason ??= "post_compaction";
   state.hasSentSecretsInfo = false;
   state.hasSentMcpServersInfo = false;
-  state.mcpToolCounts.clear();
+  state.lastMcpServersFetchedAtMs = null;
   state.lastNotifiedPermissionMode = null;
 }
 

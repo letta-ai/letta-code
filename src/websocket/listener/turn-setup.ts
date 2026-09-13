@@ -14,6 +14,7 @@ import { INTERRUPT_RECOVERY_ALERT } from "@/agent/prompt-assets";
 import { getBackend } from "@/backend";
 import type { Line } from "@/cli/helpers/accumulator";
 import {
+  type AgentReminderContext,
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "@/reminders/engine";
@@ -149,13 +150,18 @@ export async function prepareListenerTurn(params: {
     firstMessage.type === "approval" &&
     "approvals" in firstMessage;
   let cachedAgent: AgentState | null = null;
+  let mcpServers: AgentReminderContext["mcpServers"];
 
   if (!isApprovalMessage && agentId) {
     try {
       try {
-        cachedAgent = (await getBackend().retrieveAgent(agentId, {
-          include: ["agent.tags"],
-        })) as AgentState;
+        const retrievedAgent = await getBackend().retrieveAgent(agentId, {
+          include: ["agent.tags", "agent.mcp_servers"],
+        });
+        cachedAgent = retrievedAgent;
+        // Keep the relationship from this turn's GET even if a metadata update
+        // returns an agent response without requested relationships.
+        mcpServers = retrievedAgent.mcp_servers;
         const {
           ensureLettaCodeOriginTag,
           getMemoryPromptModeForAgent,
@@ -200,6 +206,7 @@ export async function prepareListenerTurn(params: {
           agentName: listenAgentMetadata?.name ?? null,
           agentDescription: listenAgentMetadata?.description ?? null,
           agentLastRunAt: listenAgentMetadata?.lastRunAt ?? null,
+          mcpServers,
           state: runtime.reminderState,
           workingDirectory,
           shellContext: detectShellContext(),

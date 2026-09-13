@@ -54,7 +54,25 @@ export type RunRetrieveParams = Parameters<APIClient["runs"]["retrieve"]>;
 export type RunRetrieveOptions = RunRetrieveParams[1];
 
 export type AgentRetrieveParams = Parameters<APIClient["agents"]["retrieve"]>;
-export type AgentRetrieveOptions = AgentRetrieveParams[1];
+// Extend the SDK until its generated agent include/response types catch up.
+export type AgentRetrieveOptions = Omit<
+  NonNullable<AgentRetrieveParams[1]>,
+  "include"
+> & {
+  include?: Array<
+    | NonNullable<NonNullable<AgentRetrieveParams[1]>["include"]>[number]
+    | "agent.mcp_servers"
+  >;
+};
+export type AgentRetrieveResult = Awaited<
+  ReturnType<APIClient["agents"]["retrieve"]>
+> & {
+  mcp_servers?: Array<{
+    id: string;
+    server_name: string;
+    mcp_server_type: string;
+  }>;
+};
 
 export type AgentListParams = Parameters<APIClient["agents"]["list"]>;
 export type AgentListBody = AgentListParams[0];
@@ -182,7 +200,7 @@ export interface Backend {
   retrieveAgent(
     agentId: string,
     options?: AgentRetrieveOptions,
-  ): Promise<Awaited<ReturnType<APIClient["agents"]["retrieve"]>>>;
+  ): Promise<AgentRetrieveResult>;
 
   listAgents(
     body?: AgentListBody,
@@ -365,10 +383,14 @@ export class APIBackend implements Backend {
     return resolveClient();
   }
 
-  async retrieveAgent(agentId: string, options?: AgentRetrieveOptions) {
+  async retrieveAgent(
+    agentId: string,
+    options?: AgentRetrieveOptions,
+  ): Promise<AgentRetrieveResult> {
     const client = await this.getClient();
     if (options !== undefined) {
-      return client.agents.retrieve(agentId, options);
+      // SDK serialization passes through additional includes without validation.
+      return client.agents.retrieve(agentId, options as AgentRetrieveParams[1]);
     }
 
     const inflight = this.retrieveAgentInflightByKey.get(agentId);
