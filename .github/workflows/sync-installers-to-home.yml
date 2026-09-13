@@ -1,0 +1,22 @@
+name: Sync installers to letta.com
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "install.sh"
+      - "install.ps1"
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Request installer refresh
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+        run: >-
+          gh api --method POST repos/letta-ai/letta-home-site/dispatches
+          --raw-field event_type=installers-updated

@@ -4,7 +4,7 @@ import {
 } from "node:child_process";
 import { accessSync, constants, realpathSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { getVersion } from "@/version";
@@ -35,6 +35,7 @@ const DEFAULT_UPDATE_REGISTRY_BASE_URL = "https://registry.npmjs.org";
 const UPDATE_PACKAGE_NAME_ENV = "LETTA_UPDATE_PACKAGE_NAME";
 const UPDATE_REGISTRY_BASE_URL_ENV = "LETTA_UPDATE_REGISTRY_BASE_URL";
 const UPDATE_INSTALL_REGISTRY_URL_ENV = "LETTA_UPDATE_INSTALL_REGISTRY_URL";
+const UPDATE_INSTALL_PREFIX_ENV = "LETTA_UPDATE_INSTALL_PREFIX";
 const DESKTOP_MANAGED_ENV = "LETTA_CODE_DESKTOP_MANAGED";
 
 const INSTALL_ARG_PREFIX: Record<PackageManager, string[]> = {
@@ -107,6 +108,19 @@ export function resolveUpdateInstallRegistryUrl(
   return normalizeRegistryUrl(env[UPDATE_INSTALL_REGISTRY_URL_ENV]);
 }
 
+export function resolveUpdateInstallPrefix(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const value = env[UPDATE_INSTALL_PREFIX_ENV]?.trim();
+  if (!value || !isAbsolute(value)) {
+    return null;
+  }
+  if (/["'`;|&$%!?<>^\r\n]/.test(value)) {
+    return null;
+  }
+  return value;
+}
+
 export function buildLatestVersionUrl(
   packageName: string,
   registryBaseUrl: string,
@@ -114,11 +128,16 @@ export function buildLatestVersionUrl(
   return `${registryBaseUrl.replace(/\/+$/, "")}/${packageName}/latest`;
 }
 
+function formatCommandArg(arg: string): string {
+  return /\s/.test(arg) ? JSON.stringify(arg) : arg;
+}
+
 export function buildInstallCommand(
   pm: PackageManager,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return `${pm} ${buildInstallArgs(pm, env).join(" ")}`;
+  const args = buildInstallArgs(pm, env).map(formatCommandArg);
+  return `${pm} ${args.join(" ")}`;
 }
 
 export function buildUpdateExecOptions(
@@ -134,12 +153,26 @@ export function buildUpdateExecOptions(
   };
 }
 
+export function buildUpdateExecArgs(
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  if (platform !== "win32") {
+    return args;
+  }
+  return args.map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg));
+}
+
 async function runUpdateCommand(
   command: string,
   args: string[],
   timeout: number,
 ): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync(command, args, buildUpdateExecOptions(timeout));
+  return execFileAsync(
+    command,
+    buildUpdateExecArgs(args),
+    buildUpdateExecOptions(timeout),
+  );
 }
 
 function getResolvedEntrypoint(): string {
@@ -222,9 +255,13 @@ export function buildInstallArgs(
 ): string[] {
   const packageName = resolveUpdatePackageName(env);
   const installRegistry = resolveUpdateInstallRegistryUrl(env);
+  const installPrefix = pm === "npm" ? resolveUpdateInstallPrefix(env) : null;
   const args = [...INSTALL_ARG_PREFIX[pm], `${packageName}@latest`];
   if (installRegistry) {
     args.push("--registry", installRegistry);
+  }
+  if (installPrefix) {
+    args.push("--prefix", installPrefix);
   }
   return args;
 }
@@ -341,6 +378,11 @@ export async function checkForUpdate(
  * Get the npm global prefix path (e.g., /Users/name/.npm-global or ~/.nvm/versions/node/v20/lib)
  */
 async function getNpmGlobalPath(): Promise<string | null> {
+  const installPrefix = resolveUpdateInstallPrefix();
+  if (installPrefix) {
+    return installPrefix;
+  }
+
   try {
     const { stdout } = await runUpdateCommand(
       "npm",
@@ -353,12 +395,23 @@ async function getNpmGlobalPath(): Promise<string | null> {
   }
 }
 
+export function buildNpmPackageScopePath(
+  globalPath: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const modulesPath =
+    platform === "win32"
+      ? join(globalPath, "node_modules")
+      : join(globalPath, "lib/node_modules");
+  return join(modulesPath, "@letta-ai");
+}
+
 /**
  * Clean up orphaned temp directories left by interrupted npm installs.
  * These look like: .letta-code-lnWEqMep (npm's temp rename targets)
  */
 async function cleanupOrphanedDirs(globalPath: string): Promise<void> {
-  const lettaAiDir = join(globalPath, "lib/node_modules/@letta-ai");
+  const lettaAiDir = buildNpmPackageScopePath(globalPath);
   try {
     const entries = await readdir(lettaAiDir);
     for (const entry of entries) {

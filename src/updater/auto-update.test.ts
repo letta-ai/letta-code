@@ -5,10 +5,13 @@ import * as path from "node:path";
 import {
   buildInstallCommand,
   buildLatestVersionUrl,
+  buildNpmPackageScopePath,
+  buildUpdateExecArgs,
   buildUpdateExecOptions,
   checkForUpdate,
   detectPackageManager,
   getSelfUpdateStatus,
+  resolveUpdateInstallPrefix,
   resolveUpdateInstallRegistryUrl,
   resolveUpdatePackageName,
   resolveUpdateRegistryBaseUrl,
@@ -123,26 +126,18 @@ npm error ENOTEMPTY: directory not empty`;
   });
 
   describe("npm global path detection", () => {
-    test("path structure for cleanup is correct", () => {
-      // Test that the path we construct is valid
+    test("uses the Unix global package layout", () => {
       const globalPrefix = "/Users/test/.npm-global";
-      const lettaAiDir = path.join(globalPrefix, "lib/node_modules/@letta-ai");
-
-      // path.join normalizes separators for the current platform
-      expect(lettaAiDir).toContain("lib");
-      expect(lettaAiDir).toContain("node_modules");
-      expect(lettaAiDir).toContain("@letta-ai");
+      expect(buildNpmPackageScopePath(globalPrefix, "darwin")).toBe(
+        path.join(globalPrefix, "lib/node_modules/@letta-ai"),
+      );
     });
 
-    test("path structure works on Windows-style paths", () => {
-      // Windows uses different separators but path.join handles it
+    test("uses the Windows global package layout", () => {
       const globalPrefix = "C:\\Users\\test\\AppData\\Roaming\\npm";
-      const lettaAiDir = path.join(globalPrefix, "lib/node_modules/@letta-ai");
-
-      // path.join normalizes separators for the current platform
-      expect(lettaAiDir).toContain("lib");
-      expect(lettaAiDir).toContain("node_modules");
-      expect(lettaAiDir).toContain("@letta-ai");
+      expect(buildNpmPackageScopePath(globalPrefix, "win32")).toBe(
+        path.join(globalPrefix, "node_modules/@letta-ai"),
+      );
     });
   });
 });
@@ -288,6 +283,16 @@ describe("update config resolution", () => {
     });
   });
 
+  test("buildUpdateExecArgs quotes Windows arguments containing spaces", () => {
+    const args = ["install", "--prefix", "C:\\Users\\Test User\\letta"];
+    expect(buildUpdateExecArgs(args, "win32")).toEqual([
+      "install",
+      "--prefix",
+      '"C:\\Users\\Test User\\letta"',
+    ]);
+    expect(buildUpdateExecArgs(args, "linux")).toEqual(args);
+  });
+
   test("resolveUpdatePackageName uses default when unset", () => {
     expect(resolveUpdatePackageName({} as NodeJS.ProcessEnv)).toBe(
       "@letta-ai/letta-code",
@@ -360,6 +365,28 @@ describe("update config resolution", () => {
     ).toBeNull();
   });
 
+  test("resolveUpdateInstallPrefix accepts an absolute path", () => {
+    expect(
+      resolveUpdateInstallPrefix({
+        LETTA_UPDATE_INSTALL_PREFIX:
+          "/Users/test/Library/Application Support/letta/npm",
+      } as NodeJS.ProcessEnv),
+    ).toBe("/Users/test/Library/Application Support/letta/npm");
+  });
+
+  test("resolveUpdateInstallPrefix rejects relative and unsafe paths", () => {
+    expect(
+      resolveUpdateInstallPrefix({
+        LETTA_UPDATE_INSTALL_PREFIX: "relative/npm",
+      } as NodeJS.ProcessEnv),
+    ).toBeNull();
+    expect(
+      resolveUpdateInstallPrefix({
+        LETTA_UPDATE_INSTALL_PREFIX: "/tmp/letta;touch /tmp/bad",
+      } as NodeJS.ProcessEnv),
+    ).toBeNull();
+  });
+
   test("buildLatestVersionUrl constructs expected endpoint", () => {
     expect(
       buildLatestVersionUrl("@letta-ai/letta-code", "http://localhost:4873/"),
@@ -372,6 +399,25 @@ describe("update config resolution", () => {
         LETTA_UPDATE_INSTALL_REGISTRY_URL: "http://localhost:4873",
       } as NodeJS.ProcessEnv),
     ).toContain("--registry http://localhost:4873");
+  });
+
+  test("buildInstallCommand adds an npm install prefix", () => {
+    expect(
+      buildInstallCommand("npm", {
+        LETTA_UPDATE_INSTALL_PREFIX:
+          "/Users/test/Library/Application Support/letta/npm",
+      } as NodeJS.ProcessEnv),
+    ).toBe(
+      'npm install -g @letta-ai/letta-code@latest --prefix "/Users/test/Library/Application Support/letta/npm"',
+    );
+  });
+
+  test("buildInstallCommand does not add an npm prefix to other managers", () => {
+    expect(
+      buildInstallCommand("pnpm", {
+        LETTA_UPDATE_INSTALL_PREFIX: "/tmp/letta/npm",
+      } as NodeJS.ProcessEnv),
+    ).toBe("pnpm add -g @letta-ai/letta-code@latest");
   });
 
   test("buildInstallCommand uses default package and no registry by default", () => {
