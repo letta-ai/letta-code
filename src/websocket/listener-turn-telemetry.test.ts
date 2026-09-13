@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { telemetry } from "@/telemetry";
-import { __listenerTurnTestUtils } from "@/websocket/listener/turn";
+import { __listenerTurnTestUtils } from "@/websocket/listener/turn-transcript";
 
 describe("listener turn telemetry", () => {
   test("tracks only user messages with text content", () => {

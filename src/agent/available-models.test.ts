@@ -1,0 +1,244 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { Backend } from "@/backend";
+import { __testSetBackend } from "@/backend";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
+
+/**
+ * Cache semantics for the listener's model-availability cache (LET-9479).
+ *
+ * Two staleness bugs made "no models after connecting a provider" stick for
+ * the full 5-minute TTL:
+ *  1. `clearAvailableModelsCache()` cleared `cache` but not `inflight`, so a
+ *     fetch that started BEFORE a provider connect could complete afterward
+ *     and commit its pre-connect (empty) handle set as a fresh cache entry.
+ *  2. There was no force path: user-initiated refreshes were always eligible
+ *     to be answered from a stale-but-within-TTL snapshot.
+ *
+ * Note: avoid `mock.module` here. Bun mocks are process-global and can leak
+ * into sibling tests that import the real backend module.
+ */
+
+type FakeModel = {
+  display_name?: string;
+  handle: string;
+  max_context_window?: number;
+  max_tokens?: number;
+  model?: string;
+  model_endpoint?: string;
+  name?: string;
+  provider_category?: "base" | "byok";
+  provider_type?: string;
+};
+
+let listModelsImpl: () => Promise<FakeModel[]> = async () => [];
+
+class AvailableModelsTestBackend extends FakeHeadlessBackend {
+  override async listModels(): ReturnType<Backend["listModels"]> {
+    return listModelsImpl() as ReturnType<Backend["listModels"]>;
+  }
+}
+
+const {
+  clearAvailableModelsCache,
+  getAvailableModelHandles,
+  getCachedAvailableModels,
+  getCachedModelHandles,
+  getCachedOpenAICompatibleProxyHandles,
+  getModelProviderType,
+} = await import("@/agent/available-models");
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+describe("available-models cache semantics", () => {
+  beforeEach(() => {
+    clearAvailableModelsCache();
+    listModelsImpl = async () => [];
+    __testSetBackend(new AvailableModelsTestBackend());
+  });
+
+  afterEach(() => {
+    clearAvailableModelsCache();
+    __testSetBackend(null);
+  });
+
+  test("a fetch that started before a cache clear cannot commit stale results", async () => {
+    const preConnect = deferred<FakeModel[]>();
+    listModelsImpl = () => preConnect.promise;
+
+    // Fetch A starts (e.g. boot-time list_models before any provider exists).
+    const fetchA = getAvailableModelHandles();
+
+    // Provider connect clears the cache while A is still in flight.
+    clearAvailableModelsCache();
+
+    // Fetch B starts post-connect and sees the new provider's models.
+    const postConnect = deferred<FakeModel[]>();
+    listModelsImpl = () => postConnect.promise;
+    const fetchB = getAvailableModelHandles();
+
+    // A resolves late with the pre-connect (empty) snapshot.
+    preConnect.resolve([]);
+    await fetchA;
+
+    // The stale result must not have been committed to the cache.
+    expect(getCachedModelHandles()).toBeNull();
+
+    postConnect.resolve([{ handle: "openai/gpt-4o" }]);
+    const resultB = await fetchB;
+    expect([...resultB.handles]).toEqual(["openai/gpt-4o"]);
+
+    // B's result is the cached truth — and A's late `.finally` must not have
+    // nulled out B's inflight slot mid-fetch either.
+    expect([...(getCachedModelHandles() ?? [])]).toEqual(["openai/gpt-4o"]);
+
+    // Subsequent calls serve B's committed cache entry.
+    listModelsImpl = async () => {
+      throw new Error("must be served from cache");
+    };
+    const cached = await getAvailableModelHandles();
+    expect(cached.source).toBe("cache");
+    expect([...cached.handles]).toEqual(["openai/gpt-4o"]);
+  });
+
+  test("forceRefresh bypasses a fresh cache entry", async () => {
+    listModelsImpl = async () => [{ handle: "openai/gpt-4o" }];
+    const first = await getAvailableModelHandles();
+    expect([...first.handles]).toEqual(["openai/gpt-4o"]);
+
+    // Cache is fresh: a normal call must serve it.
+    listModelsImpl = async () => [
+      { handle: "openai/gpt-4o" },
+      { handle: "zai/glm-4.6" },
+    ];
+    const cached = await getAvailableModelHandles();
+    expect(cached.source).toBe("cache");
+    expect([...cached.handles]).toEqual(["openai/gpt-4o"]);
+
+    // Force refresh must hit the network despite the fresh cache.
+    const forced = await getAvailableModelHandles({ forceRefresh: true });
+    expect(forced.source).toBe("network");
+    expect([...forced.handles]).toEqual(["openai/gpt-4o", "zai/glm-4.6"]);
+  });
+
+  test("provider lookup refreshes stale catalog data", async () => {
+    const realDateNow = Date.now;
+    let now = 1_000_000;
+    Date.now = () => now;
+    try {
+      listModelsImpl = async () => [
+        { handle: "custom/model", provider_type: "anthropic" },
+      ];
+      expect(await getModelProviderType("custom/model")).toBe("anthropic");
+
+      now += 5 * 60 * 1000 + 1;
+      listModelsImpl = async () => [
+        { handle: "custom/model", provider_type: "chatgpt_oauth" },
+      ];
+      expect(await getModelProviderType("custom/model")).toBe("chatgpt_oauth");
+    } finally {
+      Date.now = realDateNow;
+    }
+  });
+
+  test("carries backend model descriptors for catalog rendering", async () => {
+    listModelsImpl = async () => [
+      {
+        handle: "opencode/deepseek-v4-flash-free",
+        display_name: "DeepSeek V4 Flash Free",
+        model_id: "deepseek-v4-flash-free",
+        max_context_window: 200000,
+        max_tokens: 32000,
+        provider_type: "opencode",
+        reasoning_levels: ["off", "medium", "high"],
+      },
+    ];
+
+    const result = await getAvailableModelHandles();
+
+    expect(result.models).toEqual([
+      {
+        handle: "opencode/deepseek-v4-flash-free",
+        label: "DeepSeek V4 Flash Free",
+        modelId: "deepseek-v4-flash-free",
+        maxContextWindow: 200000,
+        maxOutputTokens: 32000,
+        providerType: "opencode",
+        reasoningLevels: ["off", "medium", "high"],
+      },
+    ]);
+    expect(getCachedAvailableModels()).toEqual(result.models);
+  });
+
+  test("classifies custom OpenAI endpoints without classifying the official API", async () => {
+    listModelsImpl = async () => [
+      {
+        handle: "proxy/claude-opus-4-6",
+        provider_category: "byok",
+        provider_type: "openai",
+        model_endpoint: "https://proxy.example.com/openai/v1",
+      },
+      {
+        handle: "lc-openai/gpt-5.4",
+        provider_category: "byok",
+        provider_type: "openai",
+        model_endpoint: "https://api.openai.com/v1",
+      },
+      {
+        handle: "hosted/internal-openai-model",
+        provider_category: "base",
+        provider_type: "openai",
+        model_endpoint: "https://internal.example.com/v1",
+      },
+    ];
+
+    const result = await getAvailableModelHandles();
+
+    expect([...result.openAICompatibleProxyHandles]).toEqual([
+      "proxy/claude-opus-4-6",
+    ]);
+    expect([...(getCachedOpenAICompatibleProxyHandles() ?? [])]).toEqual([
+      "proxy/claude-opus-4-6",
+    ]);
+    expect(result.models).toContainEqual({
+      handle: "proxy/claude-opus-4-6",
+      label: "proxy/claude-opus-4-6",
+      providerType: "openai",
+      providerCategory: "byok",
+      modelEndpoint: "https://proxy.example.com/openai/v1",
+      openAICompatibleProxy: true,
+    });
+    expect(
+      result.models.find((model) => model.handle === "lc-openai/gpt-5.4"),
+    ).not.toHaveProperty("openAICompatibleProxy");
+    expect(
+      result.models.find(
+        (model) => model.handle === "hosted/internal-openai-model",
+      ),
+    ).not.toHaveProperty("openAICompatibleProxy");
+  });
+
+  test("clearAvailableModelsCache drops the inflight fetch so the next call refetches", async () => {
+    const wedged = deferred<FakeModel[]>();
+    listModelsImpl = () => wedged.promise;
+    const fetchA = getAvailableModelHandles();
+
+    clearAvailableModelsCache();
+
+    // Next caller must start a fresh fetch instead of piggybacking on A.
+    listModelsImpl = async () => [{ handle: "anthropic/claude-sonnet-4-5" }];
+    const resultB = await getAvailableModelHandles();
+    expect([...resultB.handles]).toEqual(["anthropic/claude-sonnet-4-5"]);
+
+    wedged.resolve([]);
+    await fetchA;
+    expect([...(getCachedModelHandles() ?? [])]).toEqual([
+      "anthropic/claude-sonnet-4-5",
+    ]);
+  });
+});

@@ -1,13 +1,19 @@
-import type WebSocket from "ws";
+import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { updateRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
+import { getOrCreateProcessTransport } from "./connection";
 import {
+  getConversationWorkingDirectory,
   getWorkingDirectoryScopeKey,
   setConversationWorkingDirectory,
 } from "./cwd";
-import { emitDeviceStatusUpdate } from "./protocol-outbound";
+import {
+  emitDeviceStatusUpdate,
+  refreshDeviceGitContext,
+} from "./protocol-outbound";
 import { getConversationRuntime } from "./runtime";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
+import type { ListenerTransport } from "./transport";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
 async function loadSettingsForWorkingDirectory(
@@ -28,6 +34,30 @@ export async function switchCurrentRuntimeWorkingDirectory(
   updateRuntimeContext({ workingDirectory });
 }
 
+/**
+ * Updates a captured tool execution context so tool calls later in the SAME
+ * turn resolve the new working directory. Turns bake their cwd into the
+ * prepared execution context at turn start; without this, an in-flight turn
+ * keeps running tools in the previous directory after a cwd switch.
+ */
+export async function updateToolExecutionContextCwd(
+  executionContextId: string | undefined,
+  workingDirectory: string,
+): Promise<void> {
+  if (!executionContextId) {
+    return;
+  }
+  // Imported lazily so `@/tools/manager` does not become a static dependency
+  // of the listener cwd module.
+  const { updateToolExecutionContextWorkingDirectory } = await import(
+    "@/tools/manager"
+  );
+  updateToolExecutionContextWorkingDirectory(
+    executionContextId,
+    workingDirectory,
+  );
+}
+
 export async function switchConversationWorkingDirectory(params: {
   runtime: ListenerRuntime;
   agentId: string | null;
@@ -35,21 +65,31 @@ export async function switchConversationWorkingDirectory(params: {
   workingDirectory: string;
   emitStatus?: boolean;
   statusRuntime?: ConversationRuntime | ListenerRuntime;
-  statusSocket?: WebSocket;
+  statusSocket?: ListenerTransport;
   updateCurrentRuntimeContext?: boolean;
 }): Promise<void> {
   const { runtime, workingDirectory } = params;
   const agentId = normalizeCwdAgentId(params.agentId);
   const conversationId = normalizeConversationId(params.conversationId);
-
-  await loadSettingsForWorkingDirectory(workingDirectory);
-
-  setConversationWorkingDirectory(
+  const currentWorkingDirectory = getConversationWorkingDirectory(
     runtime,
     agentId,
     conversationId,
-    workingDirectory,
   );
+  const workingDirectoryChanged =
+    canonicalizeRoot(currentWorkingDirectory) !==
+    canonicalizeRoot(workingDirectory);
+
+  await loadSettingsForWorkingDirectory(workingDirectory);
+
+  if (workingDirectoryChanged) {
+    setConversationWorkingDirectory(
+      runtime,
+      agentId,
+      conversationId,
+      workingDirectory,
+    );
+  }
 
   if (params.updateCurrentRuntimeContext !== false) {
     updateRuntimeContext({ workingDirectory });
@@ -65,20 +105,21 @@ export async function switchConversationWorkingDirectory(params: {
   const reminderState =
     conversationRuntime?.reminderState ??
     runtime.reminderStateByConversation.get(scopeKey);
-  if (reminderState) {
+  if (workingDirectoryChanged && reminderState) {
     reminderState.hasSentSessionContext = false;
     reminderState.pendingSessionContextReason = "cwd_changed";
   }
 
-  const statusSocket = params.statusSocket ?? runtime.socket;
-  if (params.emitStatus !== false && statusSocket) {
-    emitDeviceStatusUpdate(
-      statusSocket,
-      params.statusRuntime ?? conversationRuntime ?? runtime,
-      {
-        agent_id: agentId,
-        conversation_id: conversationId,
-      },
-    );
+  if (params.emitStatus !== false) {
+    const statusTransport =
+      params.statusSocket ?? getOrCreateProcessTransport(runtime);
+    const statusRuntime =
+      params.statusRuntime ?? conversationRuntime ?? runtime;
+    const statusScope = {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    };
+    await refreshDeviceGitContext(statusRuntime, statusScope);
+    emitDeviceStatusUpdate(statusTransport, statusRuntime, statusScope);
   }
 }

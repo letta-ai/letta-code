@@ -55,9 +55,9 @@ describe("formatPermissionDenial", () => {
   test("empty reason string falls through to matchedRule", () => {
     const result = formatPermissionDenial({
       reason: "",
-      matchedRule: "memory mode",
+      matchedRule: "acceptEdits mode",
     });
-    expect(result).toBe("Permission denied by rule: memory mode");
+    expect(result).toBe("Permission denied by rule: acceptEdits mode");
   });
 
   test("empty matchedRule falls through to final fallback", () => {
@@ -95,13 +95,5 @@ describe("formatPermissionDenial", () => {
       matchedRule: "Edit(secret.txt) (CLI)",
     });
     expect(result).toBe("Permission denied by rule: Edit(secret.txt) (CLI)");
-  });
-
-  test("memory-mode denial shows fuller reason over short label", () => {
-    const result = formatPermissionDenial({
-      reason: "Permission mode: memory",
-      matchedRule: "memory mode",
-    });
-    expect(result).toBe("Permission denied: Permission mode: memory");
   });
 });

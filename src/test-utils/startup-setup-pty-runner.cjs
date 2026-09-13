@@ -100,18 +100,14 @@ async function main() {
       exited = true;
     });
 
-    await waitForOutput(
-      () => output,
-      (current) =>
-        globalThis.stripAnsi(current).includes("Welcome to Letta Code"),
-      "setup menu",
+    const initialOutput = globalThis.stripAnsi(
+      await waitForOutput(
+        () => output,
+        (current) =>
+          globalThis.stripAnsi(current).includes("> Proceed locally (default)"),
+        "default local setup selection",
+      ),
     );
-    const initialOutput = globalThis.stripAnsi(output);
-    if (!initialOutput.includes("> Proceed locally (default)")) {
-      throw new Error(
-        `Setup menu did not default to local. Output:\n${initialOutput}`,
-      );
-    }
     if (initialOutput.includes("Unsupported local transcript format")) {
       throw new Error(
         `Local transcript error leaked into setup. Output:\n${initialOutput}`,
@@ -129,7 +125,7 @@ async function main() {
     await waitForOutput(
       () => output,
       (current) =>
-        globalThis.stripAnsi(current).includes("> Login to Constellation"),
+        globalThis.stripAnsi(current).includes("> Sign in with Letta"),
       "up-arrow selection change",
     );
 

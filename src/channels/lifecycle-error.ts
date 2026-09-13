@@ -16,6 +16,14 @@ const APPROVAL_PENDING_ERROR_PATTERNS = [
   /approve or deny the pending request/i,
 ];
 
+const DATABASE_LOCK_TIMEOUT_PATTERN =
+  /\bcancel(?:l)?ing statement due to lock timeout\b/i;
+const POSTGRES_LOCK_NOT_AVAILABLE_CODE_PATTERN = /\b55P03\b/i;
+const POSTGRES_LOCK_NOT_AVAILABLE_SQLSTATE_PATTERN =
+  /\b(?:sqlstate|pgcode)\s*[:=]?\s*["']?55P03\b/i;
+const POSTGRES_LOCK_NOT_AVAILABLE_CONTEXT_PATTERN =
+  /\b(?:postgres(?:ql)?|psycopg|sqlalchemy|lock[_ -]?not[_ -]?available|lock timeout)\b/i;
+
 const RUN_ID_PATTERNS = [
   /"run_id"\s*:\s*"([^"\\]+)"/i,
   /\brun[_\s-]?id\b["']?\s*[:=]\s*["']?([A-Za-z0-9_-]+)/i,
@@ -25,10 +33,12 @@ const RUN_ID_PATTERNS = [
 export type ChannelLifecycleErrorKind =
   | "approval_pending"
   | "conversation_busy"
+  | "database_lock_timeout"
   | "generic";
 
 export interface ChannelLifecycleErrorDisplayOptions {
   automaticRetry?: boolean;
+  runId?: string | null;
 }
 
 export interface ChannelLifecycleErrorDisplay {
@@ -49,6 +59,9 @@ export const CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE =
 
 export const CHANNEL_LIFECYCLE_APPROVAL_PENDING_MESSAGE =
   "The agent is still waiting on a tool approval from an earlier turn. Please approve or deny that pending request, then send your message again.";
+
+export const CHANNEL_LIFECYCLE_TRANSIENT_ERROR_MESSAGE =
+  "A temporary error interrupted this turn. Please try again.";
 
 export const CHANNEL_LIFECYCLE_CONVERSATION_BUSY_TITLE =
   CONVERSATION_BUSY_TITLE;
@@ -142,18 +155,37 @@ function truncateLifecycleMessage(text: string, maxLength: number): string {
   return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
+function isDatabaseLockErrorText(errorText: string): boolean {
+  return (
+    DATABASE_LOCK_TIMEOUT_PATTERN.test(errorText) ||
+    POSTGRES_LOCK_NOT_AVAILABLE_SQLSTATE_PATTERN.test(errorText) ||
+    (POSTGRES_LOCK_NOT_AVAILABLE_CODE_PATTERN.test(errorText) &&
+      POSTGRES_LOCK_NOT_AVAILABLE_CONTEXT_PATTERN.test(errorText))
+  );
+}
+
 export function getChannelLifecycleErrorDisplay(
   errorText: string | null | undefined,
   options: ChannelLifecycleErrorDisplayOptions = {},
 ): ChannelLifecycleErrorDisplay {
   const normalized = sanitizeChannelLifecycleErrorText(errorText);
-  const runId = extractChannelLifecycleRunId(errorText);
+  const optionsRunId = options.runId?.trim();
+  const runId = optionsRunId || extractChannelLifecycleRunId(errorText);
 
   if (!normalized || RAW_LOOP_ERROR_PATTERN.test(normalized)) {
     return {
       kind: "generic",
       title: "Turn failed",
       body: CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE,
+      runId,
+    };
+  }
+
+  if (isDatabaseLockErrorText(normalized)) {
+    return {
+      kind: "database_lock_timeout",
+      title: "Turn failed",
+      body: CHANNEL_LIFECYCLE_TRANSIENT_ERROR_MESSAGE,
       runId,
     };
   }
@@ -209,10 +241,26 @@ export function formatChannelLifecycleErrorMessage(
     return lines.join("\n");
   }
 
-  if (options.codeBlock) {
-    const escaped = body.replace(/```/g, "``\u200b`");
-    return `${display.title}:\n\`\`\`\n${escaped}\n\`\`\``;
+  if (display.kind === "database_lock_timeout") {
+    const lines = [`${display.title}:`, body];
+    if (display.runId) {
+      lines.push("", `Run ID: ${display.runId}`);
+    }
+    return lines.join("\n");
   }
 
-  return `${display.title}:\n${body}`;
+  if (options.codeBlock) {
+    const escaped = body.replace(/```/g, "``\u200b`");
+    const lines = [`${display.title}:`, "```", escaped, "```"];
+    if (display.runId) {
+      lines.push("", `Run ID: ${display.runId}`);
+    }
+    return lines.join("\n");
+  }
+
+  const lines = [`${display.title}:`, body];
+  if (display.runId) {
+    lines.push("", `Run ID: ${display.runId}`);
+  }
+  return lines.join("\n");
 }

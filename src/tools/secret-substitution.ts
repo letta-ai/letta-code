@@ -5,10 +5,15 @@
 import { loadSecrets } from "@/utils/secrets-store";
 
 /**
- * Pattern to match $SECRET_NAME where SECRET_NAME is uppercase with underscores.
- * Examples: $API_KEY, $MY_SECRET, $DB_PASSWORD_123
+ * Pattern to match $SECRET_NAME references where SECRET_NAME is uppercase with
+ * underscores, including braced shell forms.
+ * Examples: $API_KEY, ${API_KEY}, ${API_KEY:-}, ${#API_KEY}, ${!API_KEY}
+ *
+ * Braced forms matter: `${NAME}` and the set -u safe `"${NAME:-}"` are
+ * standard shell, and an agent that writes them would otherwise get an empty
+ * value and conclude the secret is unset even though it exists.
  */
-const SECRET_PATTERN = /\$([A-Z_][A-Z0-9_]*)/g;
+const SECRET_PATTERN = /\$(?:\{[#!]?)?([A-Z_][A-Z0-9_]*)/g;
 
 /**
  * Scan a command string or command-argument array for `$SECRET_NAME`
@@ -47,15 +52,14 @@ export function extractSecretEnvFromCommand(
 }
 
 /**
- * Scrub secret values from a string, replacing them with an explicit
- * placeholder that makes it unambiguous to the LLM that the value is hidden.
- * Used to prevent secret values from leaking into agent context via tool output.
+ * Scrub the supplied secret values from a string, replacing them with an
+ * explicit placeholder that makes it unambiguous to the LLM that the value is
+ * hidden. Callers pass only the secrets available to the current tool invocation.
  */
 export function scrubSecretsFromString(
   input: string,
-  agentId?: string,
+  secrets: Readonly<Record<string, string>>,
 ): string {
-  const secrets = loadSecrets(agentId);
   let result = input;
   // Replace longer values first to avoid partial matches
   const entries = Object.entries(secrets).sort(

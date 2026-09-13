@@ -1,6 +1,8 @@
 import { isLocalAgentId as isLocalAgentIdShared } from "@/agent/agent-id";
 
-const APP_BASE = "https://app.letta.com";
+const CHAT_BASE = "https://chat.letta.com";
+
+export const LETTA_CHAT_API_KEYS_URL = `${CHAT_BASE}/preferences/api-keys`;
 
 export function isLocalAgentId(agentId: string): boolean {
   return isLocalAgentIdShared(agentId);
@@ -17,7 +19,7 @@ export function buildChatUrl(
     deviceId?: string;
   },
 ): string {
-  const base = `${APP_BASE}/chat/${agentId}`;
+  const base = `${CHAT_BASE}/chat/${agentId}`;
   const params = new URLSearchParams();
 
   if (options?.view) {
@@ -35,8 +37,8 @@ export function buildChatUrl(
 }
 
 /**
- * Build a user-facing agent reference. API-backed agents can link to the app,
- * but local-backend agents are not available at app.letta.com, so show the ID.
+ * Build a user-facing agent reference. API-backed agents can link to Chat,
+ * but local-backend agents are not available there, so show the ID.
  */
 export function buildAgentReference(
   agentId: string,
@@ -56,18 +58,19 @@ export function buildAgentReference(
 export function buildAgentTerminalLink(
   agentId: string,
   options?: Parameters<typeof buildChatUrl>[1],
+  label: string = agentId,
 ): string {
   if (isLocalAgentId(agentId)) {
     return agentId;
   }
 
   const url = buildChatUrl(agentId, options);
-  return `\x1b]8;;${url}\x1b\\${agentId}\x1b]8;;\x1b\\`;
+  return `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
 }
 
 /**
- * Build a non-agent app URL (e.g. settings pages).
+ * Build a URL for a Chat preference or other non-agent Chat page.
  */
-export function buildAppUrl(path: string): string {
-  return `${APP_BASE}${path}`;
+export function buildChatWebUrl(path: string): string {
+  return `${CHAT_BASE}${path}`;
 }

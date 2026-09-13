@@ -1,43 +1,62 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import { getModelProviderType } from "@/agent/available-models";
 import { resolveModel } from "@/agent/model";
+import { resolveModelHandleFromLlmConfig } from "@/agent/model-handles";
+import type { SkillSource } from "@/agent/skill-sources";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
-import type { MessageChannelToolDiscoveryScope } from "@/channels/message-tool";
-import { getSupportedChannelIds } from "@/channels/plugin-registry";
-import { getChannelRegistry } from "@/channels/registry";
-import { getRoutesForChannel, loadRoutes } from "@/channels/routing";
-import type { ChannelTurnSource, SupportedChannelId } from "@/channels/types";
+import { experimentManager } from "@/experiments/manager";
 import { buildModInvocationContext } from "@/mods/context";
 import type { ModEvents } from "@/mods/event-emitter";
+import type { ModAdapter } from "@/mods/mod-adapter";
+import type { ModPermissionDefinition } from "@/mods/permission-registry";
+import type { ModToolDefinition } from "@/mods/tool-registry";
 import type { ModContext } from "@/mods/types";
-import {
-  type InheritedChannelContextPayload,
-  LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
-  type RuntimeContextSnapshot,
-} from "@/runtime-context";
+import type { RuntimeContextSnapshot } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import { toolFilter } from "./filter";
+import { LETTA_TOOLS } from "./letta-toolset";
 import {
-  ANTHROPIC_DEFAULT_TOOLS,
   clearToolsWithLock,
   filterBuiltInToolNamesByClientAllowlist,
-  GEMINI_DEFAULT_TOOLS,
-  GEMINI_PASCAL_TOOLS,
+  getInternalToolName,
   getToolNames,
   isOpenAIModel,
   loadSpecificTools,
   loadTools,
-  OPENAI_DEFAULT_TOOLS,
-  OPENAI_PASCAL_TOOLS,
-  type PermissionModeState,
   type PreparedToolExecutionContext,
   prepareToolExecutionContextForModel,
   prepareToolExecutionContextForSpecificTools,
 } from "./manager";
-import type { ToolName } from "./tool-definitions";
+import type { PermissionModeState } from "./permission-mode-state";
+import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
+import {
+  ANTHROPIC_DEFAULT_TOOLS,
+  GEMINI_DEFAULT_TOOLS,
+  GEMINI_PASCAL_TOOLS,
+  OPENAI_DEFAULT_TOOLS,
+  OPENAI_PASCAL_TOOLS,
+} from "./toolset-defaults";
+import type { ToolsetName, ToolsetPreference } from "./toolset-types";
 
-// Toolset definitions from manager.ts (single source of truth)
+export type { ToolsetName, ToolsetPreference } from "./toolset-types";
+
+const ARTIFACT_TOOL_NAMES: ToolName[] = [
+  "read_artifact_file",
+  "write_artifact_file",
+];
+
+function appendArtifactToolsIfEnabled(toolNames: ToolName[]): ToolName[] {
+  const artifactToolSet = new Set<ToolName>(ARTIFACT_TOOL_NAMES);
+  const withoutArtifactTools = toolNames.filter(
+    (name) => !artifactToolSet.has(name),
+  );
+  if (!experimentManager.isEnabled("artifacts")) {
+    return withoutArtifactTools;
+  }
+  return [...withoutArtifactTools, ...ARTIFACT_TOOL_NAMES];
+}
 // Keep these as direct references at call-sites (not top-level aliases) to avoid
 // temporal-dead-zone issues under circular import initialization.
 
@@ -51,24 +70,85 @@ export const MEMORY_TOOL_NAMES = new Set([
   "memory_rethink",
 ]);
 
-// Toolset type including snake_case variants
-export type ToolsetName =
-  | "codex"
-  | "codex_snake"
-  | "default"
-  | "gemini"
-  | "gemini_snake"
-  | "none";
-export type ToolsetPreference = ToolsetName | "auto";
+export interface ClientToolsetConfig {
+  /** Request-scoped base toolset. Omitted preserves the runtime preference. */
+  base?: ToolsetPreference;
+  /** Additional bundled client tools to load before applying the allowlist. */
+  include?: string[];
+}
+
+function resolveIncludedToolNames(toolNames: string[] | undefined): ToolName[] {
+  if (!toolNames) return [];
+
+  return toolNames.map((toolName) => {
+    const internalName = getInternalToolName(toolName);
+    if (!Object.hasOwn(TOOL_DEFINITIONS, internalName)) {
+      throw new Error(`Unknown bundled client tool: ${toolName}`);
+    }
+    return internalName as ToolName;
+  });
+}
+
+/**
+ * Bundled client tools named in the allowlist, so that allowlisting a tool
+ * also loads it. Without this an allowlist is only a filter over whatever the
+ * base happens to carry, so a client asking for exactly ["Read", "LS",
+ * "Glob", "Grep"] silently gets just the ones its base already had.
+ *
+ * Unknown names are skipped rather than rejected: unlike `include`, an
+ * allowlist legitimately carries MCP and other external tool names that are
+ * not bundled client tools.
+ */
+function resolveAllowlistedToolNames(
+  allowlist: string[] | undefined,
+): ToolName[] {
+  if (!allowlist) return [];
+
+  const toolNames: ToolName[] = [];
+  for (const allowedName of allowlist) {
+    const internalName = getInternalToolName(allowedName);
+    if (Object.hasOwn(TOOL_DEFINITIONS, internalName)) {
+      toolNames.push(internalName as ToolName);
+    }
+  }
+  return toolNames;
+}
+
+function appendUniqueToolNames(
+  baseToolNames: ToolName[],
+  includedToolNames: ToolName[],
+): ToolName[] {
+  const result = [...baseToolNames];
+  const seen = new Set(result);
+  for (const toolName of includedToolNames) {
+    if (!seen.has(toolName)) {
+      result.push(toolName);
+      seen.add(toolName);
+    }
+  }
+  return result;
+}
 
 export function deriveToolsetFromModel(
   modelIdentifier: string,
+  providerType?: string | null,
 ): "codex" | "default" {
+  if (providerType === "chatgpt_oauth" || providerType === "openai-codex") {
+    return "codex";
+  }
   const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
   return isOpenAIModel(resolvedModel) ? "codex" : "default";
 }
 
-type ScopeModelCarrier = Pick<AgentState, "model" | "llm_config">;
+type ScopeModelCarrier = Partial<
+  Pick<AgentState, "model" | "llm_config" | "model_settings">
+>;
+
+function providerTypeFromModelSettings(modelSettings: unknown): string | null {
+  if (!isRecord(modelSettings)) return null;
+  const providerType = modelSettings.provider_type;
+  return typeof providerType === "string" ? providerType : null;
+}
 
 export type PreparedScopeToolContext = {
   preparedToolContext: PreparedToolExecutionContext;
@@ -78,20 +158,26 @@ export type PreparedScopeToolContext = {
   agent: AgentState | null;
 };
 
-function buildModelHandleFromLlmConfig(
-  llmConfig:
-    | {
-        model?: string | null;
-        model_endpoint_type?: string | null;
-      }
-    | null
-    | undefined,
-): string | null {
-  if (!llmConfig) return null;
-  if (llmConfig.model_endpoint_type && llmConfig.model) {
-    return `${llmConfig.model_endpoint_type}/${llmConfig.model}`;
+function mergeModAdapterCapabilities(
+  adapters: ModAdapter[] | undefined,
+  context: ModContext,
+): {
+  permissions?: Map<string, ModPermissionDefinition>;
+  tools?: Map<string, ModToolDefinition>;
+} {
+  if (!adapters) return {};
+
+  const permissions = new Map<string, ModPermissionDefinition>();
+  const tools = new Map<string, ModToolDefinition>();
+  for (const adapter of adapters) {
+    for (const [id, permission] of adapter.getAvailablePermissions(context)) {
+      permissions.set(id, permission);
+    }
+    for (const [name, tool] of adapter.getAvailableTools(context)) {
+      tools.set(name, tool);
+    }
   }
-  return llmConfig.model ?? null;
+  return { permissions, tools };
 }
 
 function getPreferredAgentModelHandle(
@@ -101,13 +187,40 @@ function getPreferredAgentModelHandle(
   if (typeof agent.model === "string" && agent.model.length > 0) {
     return agent.model;
   }
-  return buildModelHandleFromLlmConfig(agent.llm_config);
+  return resolveModelHandleFromLlmConfig(agent.llm_config);
 }
 
-function getToolNamesForToolset(
-  toolsetName: ToolsetName,
-  channelToolScope?: MessageChannelToolDiscoveryScope | null,
-): ToolName[] {
+type ModelTarget = {
+  model: string | null;
+  providerType: string | null;
+};
+
+function normalizeModelHandle(model: string | null | undefined): string | null {
+  return model && model.length > 0 ? (resolveModel(model) ?? model) : null;
+}
+
+function modelTargetFromCarrier(
+  carrier: ScopeModelCarrier | null | undefined,
+): ModelTarget {
+  return {
+    model: normalizeModelHandle(getPreferredAgentModelHandle(carrier)),
+    providerType: providerTypeFromModelSettings(carrier?.model_settings),
+  };
+}
+
+function providerForMatchingModel(
+  model: string,
+  targets: ModelTarget[],
+): string | null {
+  for (const target of targets) {
+    if (target.model === model && target.providerType) {
+      return target.providerType;
+    }
+  }
+  return null;
+}
+
+function getToolNamesForToolset(toolsetName: ToolsetName): ToolName[] {
   let tools: ToolName[];
   switch (toolsetName) {
     case "codex":
@@ -122,111 +235,79 @@ function getToolNamesForToolset(
     case "gemini_snake":
       tools = [...GEMINI_DEFAULT_TOOLS];
       break;
+    case "letta":
+      tools = [...LETTA_TOOLS];
+      break;
     case "none":
-      return [];
+      tools = [];
+      break;
     default:
       tools = [...ANTHROPIC_DEFAULT_TOOLS];
       break;
   }
 
-  const hasScopedChannelTool =
-    channelToolScope !== undefined
-      ? (channelToolScope?.channels.length ?? 0) > 0
-      : (getChannelRegistry()?.getActiveChannelIds().length ?? 0) > 0;
-
-  // Append channel tool if channels are active (covers ALL pinned toolsets)
-  if (hasScopedChannelTool && !tools.includes("MessageChannel" as ToolName)) {
-    tools.push("MessageChannel" as ToolName);
-  }
-
-  return tools;
-}
-
-export function getGoalToolNamesForToolset(
-  toolsetName: ToolsetName,
-): ToolName[] {
-  switch (toolsetName) {
-    case "codex_snake":
-    case "gemini_snake":
-      return ["get_goal", "create_goal", "update_goal"];
-    case "codex":
-    case "gemini":
-    case "default":
-      return ["GetGoal", "CreateGoal", "UpdateGoal"];
-    case "none":
-      return [];
-  }
-}
-
-function appendUniqueTools(
-  toolNames: ToolName[],
-  additions: ToolName[],
-): ToolName[] {
-  if (additions.length === 0) return toolNames;
-  const result = [...toolNames];
-  const seen = new Set(result);
-  for (const toolName of additions) {
-    if (!seen.has(toolName)) {
-      result.push(toolName);
-      seen.add(toolName);
-    }
-  }
-  return result;
-}
-
-function areGoalToolsEnabledForScope(params: {
-  conversationId?: string | null;
-  workingDirectory?: string;
-}): boolean {
-  if (!params.conversationId) return false;
-  try {
-    return settingsManager.areConversationGoalToolsEnabled(
-      params.conversationId,
-      params.workingDirectory,
-    );
-  } catch {
-    return false;
-  }
+  return appendArtifactToolsIfEnabled(tools);
 }
 
 export async function prepareToolExecutionContextForResolvedTarget(params: {
   modelIdentifier?: string | null;
+  providerType?: string | null;
   conversationId?: string | null;
   toolsetPreference: ToolsetPreference;
+  clientToolset?: ClientToolsetConfig;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
   externalToolScopeIds?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
-  channelToolScope?: MessageChannelToolDiscoveryScope | null;
   modContext?: ModContext;
   modEvents?: ModEvents;
+  modAdapters?: ModAdapter[];
   runtimeContext?: Partial<RuntimeContextSnapshot>;
   agent?: AgentState | null;
 }): Promise<PreparedScopeToolContext> {
   const {
     modelIdentifier,
+    providerType,
     conversationId,
     toolsetPreference,
+    clientToolset,
     exclude,
-    clientToolAllowlist,
+    clientToolAllowlist: inputToolAllowlist,
     externalToolScopeIds,
     workingDirectory,
     permissionModeState,
-    channelToolScope,
     modContext,
     modEvents,
+    modAdapters,
     runtimeContext,
     agent,
   } = params;
+  const launchTools = runtimeContext?.executionSettings?.tools;
+  const clientToolAllowlist =
+    launchTools === undefined
+      ? inputToolAllowlist
+      : inputToolAllowlist === undefined
+        ? launchTools
+        : launchTools.filter((name) =>
+            inputToolAllowlist.some(
+              (allowed) =>
+                getInternalToolName(allowed) === getInternalToolName(name),
+            ),
+          );
   const effectiveModel =
     modelIdentifier && modelIdentifier.length > 0
       ? (resolveModel(modelIdentifier) ?? modelIdentifier)
       : null;
+  const effectiveToolsetPreference = clientToolset?.base ?? toolsetPreference;
+  const includedToolNames = appendUniqueToolNames(
+    resolveIncludedToolNames(clientToolset?.include),
+    resolveAllowlistedToolNames(clientToolAllowlist),
+  );
 
-  if (toolsetPreference === "auto") {
+  if (effectiveToolsetPreference === "auto") {
     const derivedToolset = effectiveModel
-      ? deriveToolsetFromModel(effectiveModel)
+      ? deriveToolsetFromModel(effectiveModel, providerType)
       : "default";
     const scopedModContext = buildModInvocationContext({
       agent,
@@ -238,23 +319,24 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       toolset: derivedToolset,
       workingDirectory,
     });
+    const modCapabilities = mergeModAdapterCapabilities(
+      modAdapters,
+      scopedModContext,
+    );
     const preparedToolContext = await prepareToolExecutionContextForModel(
       effectiveModel ?? undefined,
       {
+        resolvedToolset: derivedToolset,
         exclude,
-        include: areGoalToolsEnabledForScope({
-          conversationId,
-          workingDirectory,
-        })
-          ? getGoalToolNamesForToolset(derivedToolset)
-          : undefined,
+        include: includedToolNames,
         clientToolAllowlist,
         externalToolScopeIds,
         workingDirectory,
         permissionModeState,
-        channelToolScope,
         modContext: scopedModContext,
         modEvents,
+        modPermissions: modCapabilities.permissions,
+        modTools: modCapabilities.tools,
         runtimeContext,
       },
     );
@@ -275,19 +357,19 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     modelIdentifier: effectiveModel,
     permissionMode:
       permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
-    toolset: toolsetPreference,
+    toolset: effectiveToolsetPreference,
     workingDirectory,
   });
+  const modCapabilities = mergeModAdapterCapabilities(
+    modAdapters,
+    scopedModContext,
+  );
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
     filterBuiltInToolNamesByClientAllowlist(
-      appendUniqueTools(
-        getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
-          (toolName) => (exclude ? !exclude.includes(toolName) : true),
-        ),
-        areGoalToolsEnabledForScope({ conversationId, workingDirectory })
-          ? getGoalToolNamesForToolset(toolsetPreference)
-          : [],
-      ),
+      appendUniqueToolNames(
+        getToolNamesForToolset(effectiveToolsetPreference),
+        includedToolNames,
+      ).filter((toolName) => (exclude ? !exclude.includes(toolName) : true)),
       clientToolAllowlist,
     ),
     {
@@ -295,250 +377,140 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       externalToolScopeIds,
       workingDirectory,
       permissionModeState,
-      channelToolScope,
       modContext: scopedModContext,
       modEvents,
+      modPermissions: modCapabilities.permissions,
+      modTools: modCapabilities.tools,
       runtimeContext,
     },
   );
 
   return {
     preparedToolContext,
-    toolset: toolsetPreference,
+    toolset: effectiveToolsetPreference,
     toolsetPreference,
     effectiveModel,
     agent: null,
   };
 }
 
-export function resolveConversationChannelToolScope(
-  agentId: string,
-  conversationId: string,
-): MessageChannelToolDiscoveryScope {
-  const registry = getChannelRegistry();
-  if (!registry) {
-    return { channels: [] };
-  }
-
-  const channels: Array<{
-    channelId: SupportedChannelId;
-    accountId?: string | null;
-  }> = [];
-  const seen = new Set<string>();
-
-  for (const channelId of getSupportedChannelIds()) {
-    loadRoutes(channelId);
-    for (const route of getRoutesForChannel(channelId)) {
-      if (
-        route.agentId !== agentId ||
-        route.conversationId !== conversationId ||
-        !route.enabled
-      ) {
-        continue;
-      }
-
-      const adapter = registry.getAdapter(channelId, route.accountId);
-      if (!adapter?.isRunning()) {
-        continue;
-      }
-
-      const key = `${channelId}:${route.accountId ?? ""}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      channels.push({
-        channelId,
-        accountId: route.accountId ?? null,
-      });
-    }
-  }
-  return { channels };
-}
-
-function parseInheritedChannelToolScope(
-  value: unknown,
-): MessageChannelToolDiscoveryScope | null {
-  if (!isRecord(value) || !Array.isArray(value.channels)) {
-    return null;
-  }
-
-  const supportedChannelIds = new Set<string>(getSupportedChannelIds());
-  const channels: MessageChannelToolDiscoveryScope["channels"] = [];
-  for (const entry of value.channels) {
-    if (!isRecord(entry) || typeof entry.channelId !== "string") {
-      continue;
-    }
-    if (!supportedChannelIds.has(entry.channelId)) {
-      continue;
-    }
-    const accountId = entry.accountId;
-    channels.push({
-      channelId: entry.channelId as SupportedChannelId,
-      ...(typeof accountId === "string" || accountId === null
-        ? { accountId }
-        : {}),
-    });
-  }
-
-  return { channels };
-}
-
-function parseInheritedChannelTurnSources(value: unknown): ChannelTurnSource[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const sources: ChannelTurnSource[] = [];
-  for (const entry of value) {
-    if (
-      !isRecord(entry) ||
-      typeof entry.channel !== "string" ||
-      typeof entry.chatId !== "string" ||
-      typeof entry.agentId !== "string" ||
-      typeof entry.conversationId !== "string"
-    ) {
-      continue;
-    }
-
-    sources.push({
-      channel: entry.channel,
-      chatId: entry.chatId,
-      agentId: entry.agentId,
-      conversationId: entry.conversationId,
-      ...(typeof entry.accountId === "string"
-        ? { accountId: entry.accountId }
-        : {}),
-      ...(entry.chatType === "direct" || entry.chatType === "channel"
-        ? { chatType: entry.chatType }
-        : {}),
-      ...(typeof entry.messageId === "string"
-        ? { messageId: entry.messageId }
-        : {}),
-      ...(typeof entry.threadId === "string" || entry.threadId === null
-        ? { threadId: entry.threadId }
-        : {}),
-    });
-  }
-
-  return sources;
-}
-
-function parseInheritedChannelContextEnv(): InheritedChannelContextPayload | null {
-  const raw = process.env[LETTA_INHERITED_CHANNEL_CONTEXT_ENV];
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed)) {
-      return null;
-    }
-
-    const channelToolScope = parseInheritedChannelToolScope(
-      parsed.channelToolScope,
-    );
-    const channelTurnSources = parseInheritedChannelTurnSources(
-      parsed.channelTurnSources,
-    );
-    if (!channelToolScope?.channels.length && channelTurnSources.length === 0) {
-      return null;
-    }
-
-    return {
-      ...(channelToolScope?.channels.length ? { channelToolScope } : {}),
-      ...(channelTurnSources.length ? { channelTurnSources } : {}),
-    };
-  } catch {
-    return null;
-  }
-}
-
 export async function prepareToolExecutionContextForScope(params: {
-  agentId: string;
+  connectionId?: string;
+  environmentDeviceId?: string;
+  agentId: string | null;
   conversationId?: string | null;
+  actingUserId?: string;
   overrideModel?: string | null;
+  overrideProviderType?: string | null;
   cachedEffectiveModel?: string | null;
   exclude?: ToolName[];
+  clientToolset?: ClientToolsetConfig;
   clientToolAllowlist?: string[];
   externalToolScopeIds?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
+  skillsDirectory?: string;
+  skillSources?: SkillSource[];
+  workspaceSandbox?: RuntimeContextSnapshot["workspaceSandbox"];
+  executionSettings?: RuntimeContextSnapshot["executionSettings"];
   cachedAgent?: AgentState | null;
-  channelTurnSources?: import("@/channels/types").ChannelTurnSource[];
   modContext?: ModContext;
   modEvents?: ModEvents;
+  modAdapters?: ModAdapter[];
 }): Promise<PreparedScopeToolContext> {
   const {
+    connectionId,
+    environmentDeviceId,
     agentId,
     conversationId,
+    actingUserId,
     overrideModel,
+    overrideProviderType,
     cachedEffectiveModel,
     exclude,
+    clientToolset,
     clientToolAllowlist,
     externalToolScopeIds,
     workingDirectory,
     permissionModeState,
+    skillsDirectory,
+    skillSources,
+    workspaceSandbox,
+    executionSettings,
     cachedAgent,
-    channelTurnSources: explicitChannelTurnSources,
     modContext,
     modEvents,
+    modAdapters,
   } = params;
 
   const backend = getBackend();
-  const agent = (cachedAgent ??
-    (await backend.retrieveAgent(agentId))) as ScopeModelCarrier;
-  let effectiveModel =
-    overrideModel && overrideModel.length > 0
-      ? (resolveModel(overrideModel) ?? overrideModel)
-      : null;
+  const agent = agentId
+    ? ((cachedAgent ??
+        (await backend.retrieveAgent(agentId))) as ScopeModelCarrier)
+    : null;
+  const agentTarget = modelTargetFromCarrier(agent);
+  const conversationTarget =
+    conversationId && conversationId !== "default"
+      ? modelTargetFromCarrier(
+          (await backend.retrieveConversation(
+            conversationId,
+          )) as ScopeModelCarrier,
+        )
+      : { model: null, providerType: null };
 
-  if (
-    !effectiveModel &&
-    cachedEffectiveModel &&
-    cachedEffectiveModel.length > 0
-  ) {
-    effectiveModel = resolveModel(cachedEffectiveModel) ?? cachedEffectiveModel;
-  }
-
-  if (!effectiveModel && conversationId && conversationId !== "default") {
-    const conversation = await backend.retrieveConversation(conversationId);
-    const conversationModel = (conversation as { model?: string | null }).model;
-    if (typeof conversationModel === "string" && conversationModel.length > 0) {
-      effectiveModel = resolveModel(conversationModel) ?? conversationModel;
-    }
-  }
-
-  if (!effectiveModel) {
-    effectiveModel = getPreferredAgentModelHandle(agent);
-  }
+  const explicitModel = normalizeModelHandle(overrideModel);
+  const cachedModel = normalizeModelHandle(cachedEffectiveModel);
+  const effectiveModel =
+    explicitModel ??
+    cachedModel ??
+    conversationTarget.model ??
+    agentTarget.model;
+  let effectiveProviderType = explicitModel
+    ? (overrideProviderType ??
+      providerForMatchingModel(explicitModel, [
+        conversationTarget,
+        agentTarget,
+      ]))
+    : cachedModel
+      ? providerForMatchingModel(cachedModel, [conversationTarget, agentTarget])
+      : conversationTarget.model
+        ? conversationTarget.providerType
+        : agentTarget.providerType;
 
   const toolsetPreference = (() => {
     try {
-      return settingsManager.getToolsetPreference(agentId);
+      return settingsManager.getToolsetPreference(
+        agentId ?? conversationId ?? "agent-free",
+        conversationId ?? "default",
+      );
     } catch {
       return "auto" as const;
     }
   })();
+  const effectiveToolsetPreference = clientToolset?.base ?? toolsetPreference;
 
-  const inheritedChannelContext = parseInheritedChannelContextEnv();
-  const inheritedChannelToolScope =
-    inheritedChannelContext?.channelToolScope ?? null;
-  const inheritedChannelTurnSources =
-    explicitChannelTurnSources ??
-    inheritedChannelContext?.channelTurnSources ??
-    [];
+  if (
+    effectiveModel &&
+    !effectiveProviderType &&
+    effectiveToolsetPreference === "auto"
+  ) {
+    try {
+      effectiveProviderType =
+        (await getModelProviderType(effectiveModel)) ?? null;
+    } catch {
+      // Model metadata is best-effort. Handle-based classification remains
+      // available when the provider inventory cannot be fetched.
+    }
+  }
+
   const scopedConversationId = conversationId ?? "default";
-  const channelToolScope =
-    inheritedChannelToolScope && inheritedChannelToolScope.channels.length > 0
-      ? inheritedChannelToolScope
-      : resolveConversationChannelToolScope(agentId, scopedConversationId);
 
   const result = await prepareToolExecutionContextForResolvedTarget({
     modelIdentifier: effectiveModel,
+    providerType: effectiveProviderType,
     conversationId: conversationId ?? undefined,
     toolsetPreference,
+    clientToolset,
     exclude,
     clientToolAllowlist,
     externalToolScopeIds,
@@ -546,19 +518,23 @@ export async function prepareToolExecutionContextForScope(params: {
     permissionModeState,
     modContext,
     modEvents,
-    agent: agent as AgentState,
+    modAdapters,
+    agent: agent as AgentState | null,
     runtimeContext: {
+      connectionId,
+      environmentDeviceId,
       agentId,
+      agentName: (agent as AgentState | null)?.name ?? null,
       conversationId: scopedConversationId,
+      ...(actingUserId ? { actingUserId } : {}),
       workingDirectory,
-      ...(channelToolScope.channels.length > 0 ? { channelToolScope } : {}),
-      ...(inheritedChannelTurnSources.length > 0
-        ? { channelTurnSources: inheritedChannelTurnSources }
-        : {}),
+      ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
+      ...(skillSources !== undefined ? { skillSources } : {}),
+      ...(workspaceSandbox !== undefined ? { workspaceSandbox } : {}),
+      executionSettings,
     },
-    channelToolScope,
   });
-  return { ...result, agent: agent as AgentState };
+  return { ...result, agent: agent as AgentState | null };
 }
 
 /**
@@ -686,56 +662,6 @@ export async function detachMemoryTools(agentId: string): Promise<boolean> {
   }
 }
 
-/**
- * Re-attach the appropriate memory tool to an agent.
- * Used when disabling memfs (filesystem-backed memory).
- * Forces attachment even if agent had no memory tool before.
- *
- * @param agentId - Agent to attach memory tool to
- * @param modelIdentifier - Model handle to determine which memory tool to use
- */
-export async function reattachMemoryTool(
-  agentId: string,
-  modelIdentifier: string,
-): Promise<void> {
-  void resolveModel(modelIdentifier);
-  if (!getBackend().capabilities.serverSideToolManagement) {
-    return;
-  }
-  const client = await getClient();
-
-  try {
-    const agentWithTools = await client.agents.retrieve(agentId, {
-      include: ["agent.tools"],
-    });
-    const currentTools = agentWithTools.tools || [];
-    const mapByName = new Map(currentTools.map((t) => [t.name, t.id]));
-
-    // Determine which memory tool we want
-    const desiredMemoryTool = "memory";
-
-    // Already has the tool?
-    if (mapByName.has(desiredMemoryTool)) {
-      return;
-    }
-
-    // Find the tool on the server
-    const resp = await client.tools.list({ name: desiredMemoryTool });
-    const toolId = resp.items[0]?.id;
-    if (!toolId) {
-      console.warn(`Memory tool "${desiredMemoryTool}" not found on server`);
-      return;
-    }
-
-    // Attach it
-    await client.agents.tools.attach(toolId, { agent_id: agentId });
-  } catch (err) {
-    console.warn(
-      `Warning: Failed to reattach memory tool: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
 type PersistedToolRule = NonNullable<AgentState["tool_rules"]>[number];
 
 interface AgentWithToolsAndRules {
@@ -816,6 +742,9 @@ export async function forceToolsetSwitch(
   } else if (toolsetName === "gemini_snake") {
     await loadTools("google_ai/gemini-3-pro-preview");
     modelForLoading = "google_ai/gemini-3-pro-preview";
+  } else if (toolsetName === "letta") {
+    await loadSpecificTools([...LETTA_TOOLS]);
+    modelForLoading = "anthropic/claude-sonnet-4";
   } else {
     await loadTools("anthropic/claude-sonnet-4");
     modelForLoading = "anthropic/claude-sonnet-4";
@@ -823,7 +752,9 @@ export async function forceToolsetSwitch(
 
   // Ensure base server memory tool is correct for the toolset
   const useMemoryPatch =
-    toolsetName === "codex" || toolsetName === "codex_snake";
+    toolsetName === "codex" ||
+    toolsetName === "codex_snake" ||
+    toolsetName === "letta";
   await ensureCorrectMemoryTool(agentId, modelForLoading, useMemoryPatch);
 }
 
@@ -838,9 +769,17 @@ export async function forceToolsetSwitch(
 export async function switchToolsetForModel(
   modelIdentifier: string,
   agentId: string,
+  providerType?: string | null,
 ): Promise<ToolsetName> {
   // Resolve model ID to handle when possible so provider checks stay consistent
   const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
+  const typedToolsetName = deriveToolsetFromModel(resolvedModel, providerType);
+  const stringOnlyToolsetName = deriveToolsetFromModel(resolvedModel);
+
+  if (typedToolsetName !== stringOnlyToolsetName) {
+    await forceToolsetSwitch(typedToolsetName, agentId);
+    return typedToolsetName;
+  }
 
   // Load the appropriate set for the target model
   // Note: loadTools acquires a switch lock that causes sendMessageStream to wait,
@@ -865,6 +804,5 @@ export async function switchToolsetForModel(
   // Ensure base server memory tool is attached
   await ensureCorrectMemoryTool(agentId, resolvedModel);
 
-  const toolsetName = deriveToolsetFromModel(resolvedModel);
-  return toolsetName;
+  return typedToolsetName;
 }

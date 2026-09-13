@@ -142,4 +142,35 @@ describe("transcribeAudioFile", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("returns an actionable ffmpeg error for unsupported audio formats", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    const originalPath = process.env.PATH;
+    process.env.PATH = "";
+
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "letta-test-voice-aac-"));
+    const path = join(dir, "voice.aac");
+    writeFileSync(path, "fake aac data");
+
+    try {
+      const { transcribeAudioFile } = await import(
+        "@/channels/transcription/index"
+      );
+      const result = await transcribeAudioFile(path);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Unsupported audio format aac");
+      expect(result.error).toContain("install ffmpeg");
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

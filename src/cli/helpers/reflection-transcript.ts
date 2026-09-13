@@ -4,20 +4,26 @@ import {
   mkdir,
   readdir,
   readFile,
+  stat,
   writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { normalizeTranscript } from "@letta-ai/trajectory";
 import { MEMORY_SYSTEM_DIR } from "@/agent/memory-filesystem";
+import type { LocalMemoryFormat } from "@/agent/memory-format";
 import { REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT } from "@/agent/subagents/context-budget";
+import { getBackend } from "@/backend";
+import {
+  type ConversationSearchResult,
+  searchConversationsForBackend,
+} from "@/backend/conversation-search";
 import { getDirectoryLimits } from "@/utils/directory-limits";
 import { withFileLock } from "@/utils/file-lock";
 import { parseFrontmatter } from "@/utils/frontmatter";
+import { getTranscriptRoot } from "@/utils/transcript-paths";
 import type { Line } from "./accumulator";
 import { safeJsonParseOr } from "./safe-json-parse";
 
-const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
-const DEFAULT_TRANSCRIPT_DIR = "transcripts";
 const LEGACY_MESSAGE_ID_STATE_SCHEMA_VERSION = "v2_message_id";
 export const REFLECTION_STATE_SCHEMA_VERSION = "v3_assistant_steps" as const;
 
@@ -78,28 +84,145 @@ export interface AutoReflectionPayload {
   endSnapshotLine: number;
 }
 
-export interface ReflectionPromptInput {
-  memoryDir: string;
-  parentMemory?: string;
+export type ReflectionSliceMode = "unreflected" | "replay";
+
+export interface MultiReflectionTranscriptSlice {
+  conversation_id: string;
+  mode: ReflectionSliceMode;
+  payload_path: string;
+  selection_reason?: string;
+  selection_priority?: ReflectionAutoPriority;
+  start_message_id: string;
+  end_message_id: string;
+  start_line: number;
+  end_line: number;
+  end_snapshot_line: number;
+  completed_turns: number;
+  approx_chars: number;
+  last_updated_at?: string;
 }
 
-export function buildReflectionSubagentPrompt(
-  input: ReflectionPromptInput,
-): string {
-  const lines: string[] = [];
+export interface MultiReflectionManifest {
+  schema_version: 1;
+  type: "multi_transcript_reflection_payload";
+  agent_id: string;
+  created_at: string;
+  user_instruction?: string;
+  selection_policy:
+    | { mode: "recent"; limit: number }
+    | { mode: "explicit-conversations"; conversation_ids: string[] }
+    | {
+        mode: "auto-selected";
+        selected_conversations: ReflectionAutoSelectedConversation[];
+        candidates_path?: string;
+      };
+  transcripts: MultiReflectionTranscriptSlice[];
+}
+
+export interface MultiReflectionPayload {
+  payloadPath: string;
+  manifest: MultiReflectionManifest;
+  startMessageId?: string;
+  endMessageId?: string;
+}
+
+export interface ReflectionTranscriptCandidate {
+  conversationId: string;
+  transcriptPath: string;
+  statePath: string;
+  lastUpdatedAt?: string;
+  totalCompletedTurns: number;
+  reflectedCompletedTurns: number;
+  turnsSinceLastSuccessfulReflection: number;
+}
+
+export type ReflectionAutoPriority = "high" | "medium" | "low";
+
+export interface ReflectionAutoSelectedConversation {
+  conversation_id: string;
+  reason: string;
+  priority?: ReflectionAutoPriority;
+}
+
+export interface ReflectionAutoSearchScore {
+  query: string;
+  rrf_score: number;
+  normalized_score: number;
+}
+
+export interface ReflectionAutoCandidate {
+  conversation_id: string;
+  summary?: string;
+  description?: string;
+  last_updated_at?: string;
+  total_completed_turns: number;
+  reflected_completed_turns: number;
+  turns_since_last_successful_reflection: number;
+  has_unreflected_content: boolean;
+  is_current_conversation: boolean;
+  sources: string[];
+  search_scores: ReflectionAutoSearchScore[];
+  heuristic_score: number;
+}
+
+export interface ReflectionAutoCandidates {
+  schema_version: 1;
+  type: "auto_transcript_reflection_candidates";
+  agent_id: string;
+  current_conversation_id?: string;
+  created_at: string;
+  max_selected: number;
+  user_instruction?: string;
+  instructions: string;
+  candidates: ReflectionAutoCandidate[];
+}
+
+export interface ReflectionAutoSelection {
+  selected_conversations: ReflectionAutoSelectedConversation[];
+}
+
+export interface ReflectionAutoPayload {
+  candidatesPath: string;
+  candidates: ReflectionAutoCandidates;
+}
+
+export {
+  buildReflectionSubagentPrompt,
+  type ReflectionPromptInput,
+} from "./reflection-prompt";
+
+export function buildReflectionSelectorPrompt(options?: {
+  instruction?: string;
+}): string {
+  const lines = [
+    'You are selecting conversation transcripts for memory reflection. The transcript candidates path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `wc -c "$TRANSCRIPT_PATH"`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit file_path is literal and does NOT expand env vars.',
+    "",
+    "The payload is `auto_transcript_reflection_candidates` with compact metadata about candidate conversations. Your job is only to choose which conversations should be opened for a full reflection pass. Do not edit memory files. Do not commit anything.",
+    "",
+  ];
+
+  if (options?.instruction?.trim()) {
+    lines.push(
+      "Additional user-provided reflection instruction:",
+      options.instruction.trim(),
+      "",
+      "Prefer transcript candidates that help satisfy this instruction, while still avoiding transient or low-signal conversations.",
+      "",
+    );
+  }
 
   lines.push(
-    "Review the conversation transcript and update memory files. The current conversation transcript path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit/Read/Write `file_path` is literal and does NOT expand env vars.",
+    "If the candidates payload includes `user_instruction`, use it as the requested focus for selection.",
     "",
-    `The primary agent's memory filesystem is located at: ${input.memoryDir}`,
-    "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below. Modification to files in `system/` will edit the parent agent's system prompt.",
-    "Additional memory files (such as skills and external memory) may also be read and modified.",
+    "Select up to `max_selected` conversations. Prefer candidates likely to contain useful memory updates: explicit user corrections, repeated preferences, coding/review/commit style preferences, repo or workflow gotchas, facts about people/projects that will matter later, contradictions with current memory, or repeated agent failures.",
+    "Avoid one-off debugging, transient task status, duplicated/redundant candidates, and conversations already fully reflected unless they are useful for deduplication or contradiction resolution.",
+    "Treat summaries/descriptions as weak internal metadata, not confirmed facts. The final reflection pass will verify against the actual transcript before writing memory.",
     "",
+    "Return strict JSON as your final response with this shape:",
+    '{"selected_conversations":[{"conversation_id":"conv-...","reason":"reason for selecting this transcript","priority":"high"}]}',
+    'Use priority values `high`, `medium`, or `low`. If nothing looks memory-worthy, write `{"selected_conversations":[]}`.',
   );
 
-  if (input.parentMemory) {
-    lines.push(input.parentMemory);
-  }
   return lines.join("\n");
 }
 
@@ -110,8 +233,9 @@ interface ParentMemoryFile {
 }
 
 interface ParentMemorySnapshotOptions {
-  /** Maximum characters for the full rendered parent-memory preview. */
+  /** Maximum characters for the full rendered parent memory preview. */
   maxChars?: number;
+  memoryFormat?: LocalMemoryFormat;
 }
 
 function isSystemMemoryFile(relativePath: string): boolean {
@@ -361,6 +485,12 @@ export async function buildParentMemorySnapshot(
   memoryDir: string,
   options: ParentMemorySnapshotOptions = {},
 ): Promise<string> {
+  if (options.memoryFormat === "memfs-v2") {
+    const { buildMemfsV2ParentMemorySnapshot } = await import(
+      "./reflection-memory-v2"
+    );
+    return buildMemfsV2ParentMemorySnapshot(memoryDir, options.maxChars);
+  }
   const files = await collectParentMemoryFiles(memoryDir);
   const tree = buildParentMemoryTree(files);
   const systemFiles = files.filter((file) =>
@@ -385,7 +515,7 @@ export async function buildParentMemorySnapshot(
 
     for (const file of systemFiles) {
       const normalizedPath = file.relativePath.replace(/\\/g, "/");
-      const absolutePath = `${memoryDir.replace(/\\/g, "/")}/${normalizedPath}`;
+      const absolutePath = `$MEMORY_DIR/${normalizedPath}`;
       const prefix = ["<memory>", `<path>${absolutePath}</path>`];
       const suffix = ["</memory>"];
       const fullEntry = [...prefix, file.content, ...suffix];
@@ -434,7 +564,7 @@ export async function buildParentMemorySnapshot(
     }
 
     if (omittedSystemFiles > 0) {
-      const notice = `[Memory preview omitted ${omittedSystemFiles.toLocaleString()} additional system file(s) because the reflection startup context budget was exhausted. Read files directly from ${memoryDir} if needed.]`;
+      const notice = `[Memory preview omitted ${omittedSystemFiles.toLocaleString()} additional system file(s) because the reflection startup context budget was exhausted. Read files directly from $MEMORY_DIR if needed.]`;
       if (canAppendWithinBudget(lines, [notice], maxChars)) {
         lines.push(notice);
       }
@@ -448,14 +578,6 @@ export async function buildParentMemorySnapshot(
 function sanitizePathSegment(segment: string): string {
   const sanitized = segment.replace(/[^a-zA-Z0-9._-]/g, "_").trim();
   return sanitized.length > 0 ? sanitized : "unknown";
-}
-
-function getTranscriptRoot(): string {
-  const envRoot = process.env[TRANSCRIPT_ROOT_ENV]?.trim();
-  if (envRoot) {
-    return envRoot;
-  }
-  return join(homedir(), ".letta", DEFAULT_TRANSCRIPT_DIR);
 }
 
 const stateMutexes = new Map<string, Promise<unknown>>();
@@ -498,99 +620,22 @@ function countAssistantRows(entries: TranscriptEntry[]): number {
   return entries.filter((entry) => entry.kind === "assistant").length;
 }
 
-/** Maximum characters to keep for tool-call arguments in the reflection payload. */
-const TOOL_ARGS_TRUNCATE_LIMIT = 300;
-
 /**
- * Truncate text to a character limit, appending a marker when content is cut.
+ * Normalize a selected client-transcript fragment into the shared trajectory
+ * record format consumed by reflection agents.
  */
-function truncateArgs(
-  text: string | undefined,
-  limit: number,
-): string | undefined {
-  if (text === undefined) return undefined;
-  if (text.length <= limit) return text;
-  return `${text.slice(0, limit)}…[truncated]`;
-}
-
-/**
- * Strip inline base64 image data and data-URI image references from text.
- * This is a safety net — the accumulator's `extractTextPart` already drops
- * multimodal image_url parts, but pasted/inline base64 could still appear.
- */
-function stripImagesFromText(text: string): string {
-  // Strip data:image URIs (including surrounding markdown image syntax)
-  return text.replace(
-    /!\[[^\]]*\]\(data:image\/[^)]+\)|data:image\/[^\s"')]+/g,
-    "[image]",
-  );
-}
-
-/**
- * JSON message entry for the reflection payload.
- * Follows the ChatML-style format from the reference transcript spec.
- */
-type ReflectionMessage =
-  | { role: "system" | "user" | "reasoning" | "error"; content: string }
-  | {
-      role: "assistant";
-      content: string;
-    }
-  | {
-      role: "assistant";
-      content: null;
-      tool_calls: Array<{ name: string; args: string }>;
-    };
-
-/**
- * Serialize transcript entries (and optional filtered system prompt) into a
- * JSON message array for the reflection subagent.
- *
- * Output is a flat array of `{ role, content, tool_calls? }` objects.
- */
-function formatTaggedTranscript(
-  entries: TranscriptEntry[],
-  filteredSystemPrompt?: string,
-): string {
-  const messages: ReflectionMessage[] = [];
-
-  if (filteredSystemPrompt) {
-    messages.push({ role: "system", content: filteredSystemPrompt });
-  }
-
-  for (const entry of entries) {
-    switch (entry.kind) {
-      case "user":
-        messages.push({
-          role: "user",
-          content: stripImagesFromText(entry.text),
-        });
-        break;
-      case "assistant":
-        messages.push({
-          role: "assistant",
-          content: stripImagesFromText(entry.text),
-        });
-        break;
-      case "reasoning":
-        messages.push({ role: "reasoning", content: entry.text });
-        break;
-      case "error":
-        messages.push({ role: "error", content: entry.text });
-        break;
-      case "tool_call": {
-        const args =
-          truncateArgs(entry.argsText, TOOL_ARGS_TRUNCATE_LIMIT) ?? "{}";
-        messages.push({
-          role: "assistant",
-          content: null,
-          tool_calls: [{ name: entry.name ?? "unknown", args }],
-        });
-        break;
-      }
-    }
-  }
-  return JSON.stringify(messages, null, 2);
+function normalizeReflectionTranscript(entries: TranscriptEntry[]): string {
+  const transcript = entries.map((entry) => JSON.stringify(entry)).join("\n");
+  const { records } = normalizeTranscript({
+    source: "letta-code",
+    transcript,
+    sourceContext: { partial: true },
+    bounds: {
+      toolArguments: { maxCharacters: null },
+    },
+    filters: { toolResults: "include" },
+  });
+  return JSON.stringify(records, null, 2);
 }
 
 function lineToTranscriptEntry(
@@ -851,9 +896,16 @@ async function writeState(
   );
 }
 
-function buildPayloadPath(rootDir: string, kind: "auto" | "remember"): string {
+function buildPayloadPath(
+  rootDir: string,
+  kind: "auto" | "candidates" | "multi" | "remember" | "slice",
+): string {
   const nonce = Math.random().toString(36).slice(2, 8);
   return join(rootDir, `payload-${kind}-${nonce}.json`);
+}
+
+function getAgentTranscriptRoot(agentId: string): string {
+  return join(getTranscriptRoot(), sanitizePathSegment(agentId));
 }
 
 export function getReflectionTranscriptPaths(
@@ -899,39 +951,105 @@ export async function appendTranscriptDeltaJsonl(
 }
 
 /**
- * Strip dynamic / noisy sections from a system prompt so the reflection agent
- * sees only the core behavioural instructions.
- *
- * Removes:
- * - XML blocks: `<memory>`, `<self>`, `<human>`, `<available_skills>`,
- *   `<system-reminder>`, `<memory_metadata>`
- * - The `# Memory` markdown section (operational memory-filesystem docs)
+ * A transcript entry supplied by an external source adapter (e.g. converted
+ * OpenHands events). Mirrors the on-disk TranscriptEntry shape, but
+ * captured_at may be omitted (stamped at append time).
  */
-export function filterSystemPromptForReflection(raw: string): string {
-  // Remove XML-style blocks that carry dynamic/ephemeral content.
-  // Using [\s\S] instead of . so we cross newlines.
-  const tagsToStrip = [
-    "memory",
-    "self",
-    "human",
-    "available_skills",
-    "system-reminder",
-    "memory_metadata",
-  ];
-  let filtered = raw;
-  for (const tag of tagsToStrip) {
-    filtered = filtered.replace(
-      new RegExp(`<${tag}>[\\s\\S]*?</${tag}>`, "g"),
-      "",
-    );
+export type ExternalTranscriptEntry =
+  | {
+      kind: "user" | "assistant" | "reasoning" | "error";
+      text: string;
+      captured_at?: string;
+      source_message_id?: string;
+    }
+  | {
+      kind: "tool_call";
+      name?: string;
+      argsText?: string;
+      resultText?: string;
+      resultOk?: boolean;
+      captured_at?: string;
+      source_message_id?: string;
+    };
+
+function externalToTranscriptEntry(
+  entry: ExternalTranscriptEntry,
+  fallbackCapturedAt: string,
+): TranscriptEntry | null {
+  const capturedAt = normalizeString(entry.captured_at) ?? fallbackCapturedAt;
+  if (entry.kind === "tool_call") {
+    return {
+      kind: "tool_call",
+      name: entry.name,
+      argsText: entry.argsText,
+      resultText: entry.resultText,
+      resultOk: entry.resultOk,
+      captured_at: capturedAt,
+      source_message_id: entry.source_message_id,
+    };
   }
-  // Strip the "# Memory" markdown section (and everything after it).
-  // This section contains operational memory-filesystem docs that the
-  // reflection agent doesn't need.
-  filtered = filtered.replace(/\n# Memory\n[\s\S]*$/, "");
-  // Collapse runs of 3+ blank lines into 2
-  filtered = filtered.replace(/\n{3,}/g, "\n\n");
-  return filtered.trim();
+  if (typeof entry.text !== "string" || entry.text.length === 0) {
+    return null;
+  }
+  return {
+    kind: entry.kind,
+    text: entry.text,
+    captured_at: capturedAt,
+    source_message_id: entry.source_message_id,
+  };
+}
+
+/**
+ * Append externally-sourced transcript entries (already in transcript shape)
+ * for later processing by a reflection pass. Entries whose source_message_id
+ * already exists in the transcript are skipped, so repeated ingestion of an
+ * overlapping event window is idempotent.
+ */
+export async function appendExternalTranscriptEntries(
+  agentId: string,
+  conversationId: string,
+  entries: ExternalTranscriptEntry[],
+): Promise<{ appended: number; skipped: number }> {
+  return withStateLock(agentId, conversationId, async () => {
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    await ensurePaths(paths);
+    const state = await readState(paths);
+
+    const existingIds = new Set(
+      parseTranscriptRows(await readTranscriptLines(paths))
+        .map((row) => row.entry.source_message_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    );
+
+    const fallbackCapturedAt = new Date().toISOString();
+    const fresh: TranscriptEntry[] = [];
+    let skipped = 0;
+    for (const external of entries) {
+      const entry = externalToTranscriptEntry(external, fallbackCapturedAt);
+      if (!entry) {
+        skipped += 1;
+        continue;
+      }
+      const id = entry.source_message_id;
+      if (id && existingIds.has(id)) {
+        skipped += 1;
+        continue;
+      }
+      if (id) {
+        existingIds.add(id);
+      }
+      fresh.push(entry);
+    }
+    if (fresh.length === 0) {
+      return { appended: 0, skipped };
+    }
+
+    const payload = fresh.map((entry) => JSON.stringify(entry)).join("\n");
+    await appendFile(paths.transcriptPath, `${payload}\n`, "utf-8");
+    state.total_completed_steps += countAssistantRows(fresh);
+    await writeState(paths, state);
+    return { appended: fresh.length, skipped };
+  });
 }
 
 type TranscriptSelection = {
@@ -996,6 +1114,522 @@ function entriesForSelection(
     .map((row) => row.entry);
 }
 
+function selectReplayTranscriptRange(
+  rows: ParsedTranscriptRow[],
+  maxTurns: number,
+): TranscriptSelection | null {
+  if (rows.length === 0 || maxTurns <= 0) {
+    return null;
+  }
+
+  const endRow = rows.findLast((row) => isEligibleCanonicalEntry(row.entry));
+  if (!endRow || !isEligibleCanonicalEntry(endRow.entry)) {
+    return null;
+  }
+
+  let usersSeen = 0;
+  let startLineIndex = 0;
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    if (!row) continue;
+    if (row.lineIndex > endRow.lineIndex) continue;
+    startLineIndex = row.lineIndex;
+    if (row.entry.kind === "user") {
+      usersSeen += 1;
+      if (usersSeen >= maxTurns) {
+        break;
+      }
+    }
+  }
+
+  const startRow = rows.find(
+    (row) =>
+      row.lineIndex >= startLineIndex &&
+      row.lineIndex <= endRow.lineIndex &&
+      isEligibleCanonicalEntry(row.entry),
+  );
+  if (!startRow || !isEligibleCanonicalEntry(startRow.entry)) {
+    return null;
+  }
+
+  return {
+    startLineIndex,
+    endLineIndex: endRow.lineIndex,
+    startMessageId: startRow.entry.source_message_id,
+    endMessageId: endRow.entry.source_message_id,
+  };
+}
+
+async function getTranscriptLastUpdatedAt(
+  paths: ReflectionTranscriptPaths,
+): Promise<string | undefined> {
+  try {
+    const info = await stat(paths.transcriptPath);
+    return info.mtime.toISOString();
+  } catch {
+    return undefined;
+  }
+}
+
+async function ensureAgentPayloadRoot(agentId: string): Promise<string> {
+  const root = join(
+    getAgentTranscriptRoot(agentId),
+    "multi-reflection-payloads",
+  );
+  await mkdir(root, { recursive: true });
+  return root;
+}
+
+const REFLECTION_AUTO_QUERIES = [
+  {
+    id: "user-corrections",
+    query:
+      "user corrections and preferences repeated mistakes recurring feedback",
+  },
+  {
+    id: "coding-style",
+    query: "coding style preferences review commit testing branch conventions",
+  },
+  {
+    id: "collaboration",
+    query:
+      "collaboration communication style team preferences recurring workflow",
+  },
+  {
+    id: "repo-gotchas",
+    query: "repo conventions project gotchas important implementation details",
+  },
+  {
+    id: "long-term-facts",
+    query:
+      "long term facts about people projects workflows memory worthy context",
+  },
+] as const;
+
+const REFLECTION_AUTO_RECENT_LIMIT = 20;
+const REFLECTION_AUTO_UNREFLECTED_LIMIT = 20;
+const REFLECTION_AUTO_SEARCH_LIMIT_PER_QUERY = 10;
+const REFLECTION_AUTO_MAX_CATALOG_CANDIDATES = 30;
+export const REFLECTION_AUTO_MAX_SELECTED_TRANSCRIPTS = 5;
+
+function pageItems<T>(page: unknown): T[] {
+  if (Array.isArray(page)) return page as T[];
+  if (page && typeof page === "object") {
+    const maybePage = page as {
+      getPaginatedItems?: () => T[];
+      items?: T[];
+    };
+    if (typeof maybePage.getPaginatedItems === "function") {
+      return maybePage.getPaginatedItems();
+    }
+    if (Array.isArray(maybePage.items)) {
+      return maybePage.items;
+    }
+  }
+  return [];
+}
+
+function addSource(candidate: ReflectionAutoCandidate, source: string): void {
+  if (!candidate.sources.includes(source)) {
+    candidate.sources.push(source);
+  }
+}
+
+function recencyScore(lastUpdatedAt?: string): number {
+  if (!lastUpdatedAt) return 0;
+  const parsed = Date.parse(lastUpdatedAt);
+  if (!Number.isFinite(parsed)) return 0;
+  const ageMs = Date.now() - parsed;
+  const dayMs = 24 * 60 * 60 * 1000;
+  if (ageMs <= dayMs) return 8;
+  if (ageMs <= 7 * dayMs) return 5;
+  if (ageMs <= 30 * dayMs) return 2;
+  return 0;
+}
+
+function scoreAutoCandidate(candidate: ReflectionAutoCandidate): number {
+  const bestNormalizedSearch = Math.max(
+    0,
+    ...candidate.search_scores.map((score) => score.normalized_score),
+  );
+  const searchScore = 50 * bestNormalizedSearch;
+  const turns = candidate.turns_since_last_successful_reflection;
+  const unreflectedScore = turns > 0 ? 15 + Math.min(turns, 10) : 0;
+  const sourceScore = Math.min(candidate.sources.length, 4);
+  const sizeScore =
+    candidate.total_completed_turns >= 3
+      ? 4
+      : candidate.total_completed_turns >= 1
+        ? 1
+        : 0;
+  const currentConversationScore =
+    candidate.is_current_conversation && turns > 0 ? 8 : 0;
+  const alreadyReflectedPenalty =
+    turns === 0 && candidate.search_scores.length === 0 ? 8 : 0;
+
+  return (
+    searchScore +
+    unreflectedScore +
+    recencyScore(candidate.last_updated_at) +
+    sourceScore +
+    sizeScore +
+    currentConversationScore -
+    alreadyReflectedPenalty
+  );
+}
+
+function hasSearchHit(candidate: ReflectionAutoCandidate): boolean {
+  return candidate.search_scores.length > 0;
+}
+
+function hasSummary(candidate: ReflectionAutoCandidate): boolean {
+  return Boolean(candidate.summary?.trim());
+}
+
+function shouldKeepAutoCandidate(candidate: ReflectionAutoCandidate): boolean {
+  if (candidate.is_current_conversation) {
+    return candidate.has_unreflected_content || hasSearchHit(candidate);
+  }
+
+  if (!candidate.has_unreflected_content && !hasSearchHit(candidate)) {
+    return false;
+  }
+
+  if (
+    candidate.turns_since_last_successful_reflection <= 1 &&
+    candidate.total_completed_turns < 3 &&
+    !hasSearchHit(candidate) &&
+    !hasSummary(candidate)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+export async function buildReflectionAutoPayload(options: {
+  agentId: string;
+  currentConversationId?: string;
+  instruction?: string;
+  maxSelected?: number;
+  maxCatalogCandidates?: number;
+}): Promise<ReflectionAutoPayload | null> {
+  const {
+    agentId,
+    currentConversationId,
+    instruction,
+    maxSelected = REFLECTION_AUTO_MAX_SELECTED_TRANSCRIPTS,
+    maxCatalogCandidates = REFLECTION_AUTO_MAX_CATALOG_CANDIDATES,
+  } = options;
+  const transcriptCandidates =
+    await listReflectionTranscriptCandidates(agentId);
+  if (transcriptCandidates.length === 0) {
+    return null;
+  }
+
+  const candidates = new Map<string, ReflectionAutoCandidate>();
+  const ensureCandidate = (conversationId: string) => {
+    const existing = candidates.get(conversationId);
+    if (existing) return existing;
+    const transcriptCandidate = transcriptCandidates.find(
+      (candidate) => candidate.conversationId === conversationId,
+    );
+    if (!transcriptCandidate) return null;
+    const candidate: ReflectionAutoCandidate = {
+      conversation_id: conversationId,
+      last_updated_at: transcriptCandidate.lastUpdatedAt,
+      total_completed_turns: transcriptCandidate.totalCompletedTurns,
+      reflected_completed_turns: transcriptCandidate.reflectedCompletedTurns,
+      turns_since_last_successful_reflection:
+        transcriptCandidate.turnsSinceLastSuccessfulReflection,
+      has_unreflected_content:
+        transcriptCandidate.turnsSinceLastSuccessfulReflection > 0,
+      is_current_conversation: conversationId === currentConversationId,
+      sources: [],
+      search_scores: [],
+      heuristic_score: 0,
+    };
+    candidates.set(conversationId, candidate);
+    return candidate;
+  };
+
+  for (const candidate of transcriptCandidates.slice(
+    0,
+    REFLECTION_AUTO_RECENT_LIMIT,
+  )) {
+    const autoCandidate = ensureCandidate(candidate.conversationId);
+    if (autoCandidate) addSource(autoCandidate, "recent");
+  }
+
+  for (const candidate of transcriptCandidates
+    .filter((item) => item.turnsSinceLastSuccessfulReflection > 0)
+    .sort(
+      (a, b) =>
+        b.turnsSinceLastSuccessfulReflection -
+          a.turnsSinceLastSuccessfulReflection ||
+        Date.parse(b.lastUpdatedAt ?? "") - Date.parse(a.lastUpdatedAt ?? ""),
+    )
+    .slice(0, REFLECTION_AUTO_UNREFLECTED_LIMIT)) {
+    const autoCandidate = ensureCandidate(candidate.conversationId);
+    if (autoCandidate) addSource(autoCandidate, "unreflected");
+  }
+
+  if (currentConversationId) {
+    const autoCandidate = ensureCandidate(currentConversationId);
+    if (autoCandidate) addSource(autoCandidate, "current");
+  }
+
+  const transcriptConversationIds = new Set(
+    transcriptCandidates.map((candidate) => candidate.conversationId),
+  );
+  const conversationSummaries = new Map<string, string>();
+  try {
+    for (const conversation of pageItems<{
+      id: string;
+      summary?: string | null;
+    }>(
+      await getBackend().listConversations({
+        agent_id: agentId,
+        limit: 100,
+        order: "desc",
+        order_by: "last_message_at",
+      } as never),
+    )) {
+      if (conversation.summary?.trim()) {
+        conversationSummaries.set(conversation.id, conversation.summary.trim());
+      }
+    }
+  } catch {
+    // Summaries are helpful metadata but not required for auto selection.
+  }
+
+  const searchResultsByQuery = await Promise.allSettled(
+    REFLECTION_AUTO_QUERIES.map(async ({ id, query }) => {
+      const results = await searchConversationsForBackend({
+        agent_id: agentId,
+        query,
+        search_mode: "hybrid",
+        search_target: "description",
+        limit: REFLECTION_AUTO_SEARCH_LIMIT_PER_QUERY,
+      });
+      return { id, query, results };
+    }),
+  );
+
+  for (const queryResult of searchResultsByQuery) {
+    if (queryResult.status !== "fulfilled") continue;
+    const { id, query, results } = queryResult.value;
+    const eligibleResults = results.filter((result: ConversationSearchResult) =>
+      transcriptConversationIds.has(result.conversation.id),
+    );
+    const bestRrfScore = Math.max(
+      0,
+      ...eligibleResults.map((result) => result.rrf_score),
+    );
+    for (const result of eligibleResults) {
+      const autoCandidate = ensureCandidate(result.conversation.id);
+      if (!autoCandidate) continue;
+      addSource(autoCandidate, `search:${id}`);
+      const summary = result.conversation.summary?.trim();
+      if (summary) autoCandidate.summary = summary;
+      const description = result.embedded_text.trim();
+      if (description) autoCandidate.description = description;
+      autoCandidate.search_scores.push({
+        query,
+        rrf_score: result.rrf_score,
+        normalized_score:
+          bestRrfScore > 0 ? result.rrf_score / bestRrfScore : 0,
+      });
+    }
+  }
+
+  for (const [conversationId, summary] of conversationSummaries) {
+    const candidate = candidates.get(conversationId);
+    if (candidate && !candidate.summary) {
+      candidate.summary = summary;
+    }
+  }
+
+  const sortedCandidates = Array.from(candidates.values())
+    .filter(shouldKeepAutoCandidate)
+    .map((candidate) => ({
+      ...candidate,
+      sources: [...candidate.sources].sort(),
+      search_scores: [...candidate.search_scores].sort(
+        (a, b) => b.normalized_score - a.normalized_score,
+      ),
+      heuristic_score: scoreAutoCandidate(candidate),
+    }))
+    .sort(
+      (a, b) =>
+        b.heuristic_score - a.heuristic_score ||
+        (b.last_updated_at ? Date.parse(b.last_updated_at) : 0) -
+          (a.last_updated_at ? Date.parse(a.last_updated_at) : 0) ||
+        a.conversation_id.localeCompare(b.conversation_id),
+    )
+    .slice(0, Math.max(1, maxCatalogCandidates));
+
+  if (sortedCandidates.length === 0) {
+    return null;
+  }
+
+  const payloadRoot = await ensureAgentPayloadRoot(agentId);
+  const candidateSet: ReflectionAutoCandidates = {
+    schema_version: 1,
+    type: "auto_transcript_reflection_candidates",
+    agent_id: agentId,
+    current_conversation_id: currentConversationId,
+    created_at: new Date().toISOString(),
+    max_selected: maxSelected,
+    user_instruction: instruction?.trim() || undefined,
+    instructions:
+      "Choose conversations likely to contain useful memory updates. Prefer explicit corrections, repeated preferences, project conventions, and contradictions; avoid one-off debugging and transient task state.",
+    candidates: sortedCandidates,
+  };
+  const candidatesPath = buildPayloadPath(payloadRoot, "candidates");
+  await writeFile(
+    candidatesPath,
+    `${JSON.stringify(candidateSet, null, 2)}\n`,
+    "utf-8",
+  );
+
+  return { candidatesPath, candidates: candidateSet };
+}
+
+function isReflectionAutoPriority(
+  value: unknown,
+): value is ReflectionAutoPriority {
+  return value === "high" || value === "medium" || value === "low";
+}
+
+export async function readReflectionAutoSelection(options: {
+  selectionOutputPath?: string;
+  selectionReport?: string;
+  candidates: ReflectionAutoCandidates;
+}): Promise<ReflectionAutoSelectedConversation[]> {
+  const raw =
+    options.selectionReport ??
+    (options.selectionOutputPath
+      ? await readFile(options.selectionOutputPath, "utf-8")
+      : "");
+  const parsed = parseReflectionAutoSelectionJson(raw);
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Reflection selector did not return valid JSON.");
+  }
+  const selected = (parsed as { selected_conversations?: unknown })
+    .selected_conversations;
+  if (!Array.isArray(selected)) {
+    throw new Error(
+      'Reflection selector JSON must include a "selected_conversations" array.',
+    );
+  }
+
+  const allowedIds = new Set(
+    options.candidates.candidates.map((candidate) => candidate.conversation_id),
+  );
+  const seenIds = new Set<string>();
+  const validated: ReflectionAutoSelectedConversation[] = [];
+  for (const item of selected) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const conversationId =
+      typeof record.conversation_id === "string"
+        ? record.conversation_id.trim()
+        : "";
+    if (!conversationId || seenIds.has(conversationId)) continue;
+    if (!allowedIds.has(conversationId)) {
+      throw new Error(
+        `Reflection selector chose unknown conversation: ${conversationId}`,
+      );
+    }
+    const reason =
+      typeof record.reason === "string" && record.reason.trim()
+        ? record.reason.trim()
+        : "Selected by automatic reflection.";
+    validated.push({
+      conversation_id: conversationId,
+      reason,
+      ...(isReflectionAutoPriority(record.priority)
+        ? { priority: record.priority }
+        : {}),
+    });
+    seenIds.add(conversationId);
+    if (validated.length >= options.candidates.max_selected) {
+      break;
+    }
+  }
+
+  return validated;
+}
+
+function parseReflectionAutoSelectionJson(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const direct = safeJsonParseOr<unknown>(trimmed, null);
+  if (direct) return direct;
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
+  if (fenced) {
+    const parsed = safeJsonParseOr<unknown>(fenced, null);
+    if (parsed) return parsed;
+  }
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return safeJsonParseOr<unknown>(trimmed.slice(start, end + 1), null);
+  }
+
+  return null;
+}
+
+export async function listReflectionTranscriptCandidates(
+  agentId: string,
+): Promise<ReflectionTranscriptCandidate[]> {
+  const agentRoot = getAgentTranscriptRoot(agentId);
+  let entries: Dirent[] = [];
+  try {
+    entries = await readdir(agentRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const candidates: ReflectionTranscriptCandidate[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name === "multi-reflection-payloads") {
+      continue;
+    }
+    const conversationId = entry.name;
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    const lines = await readTranscriptLines(paths);
+    if (lines.length === 0) {
+      continue;
+    }
+    const rows = parseTranscriptRows(lines);
+    if (!rows.some((row) => isEligibleCanonicalEntry(row.entry))) {
+      continue;
+    }
+    const state = await readState(paths);
+    candidates.push({
+      conversationId,
+      transcriptPath: paths.transcriptPath,
+      statePath: paths.statePath,
+      lastUpdatedAt: await getTranscriptLastUpdatedAt(paths),
+      totalCompletedTurns: state.total_completed_steps,
+      reflectedCompletedTurns: state.reflected_completed_steps,
+      turnsSinceLastSuccessfulReflection:
+        state.steps_since_last_successful_reflection,
+    });
+  }
+
+  return candidates.sort((a, b) => {
+    const aTime = a.lastUpdatedAt ? Date.parse(a.lastUpdatedAt) : 0;
+    const bTime = b.lastUpdatedAt ? Date.parse(b.lastUpdatedAt) : 0;
+    return bTime - aTime || a.conversationId.localeCompare(b.conversationId);
+  });
+}
+
 export async function getReflectionTranscriptState(
   agentId: string,
   conversationId: string,
@@ -1010,7 +1644,6 @@ export async function getReflectionTranscriptState(
 export async function buildAutoReflectionPayload(
   agentId: string,
   conversationId: string,
-  systemPrompt?: string,
 ): Promise<AutoReflectionPayload | null> {
   return withStateLock(agentId, conversationId, async () => {
     const paths = getReflectionTranscriptPaths(agentId, conversationId);
@@ -1028,13 +1661,7 @@ export async function buildAutoReflectionPayload(
     }
 
     const entries = entriesForSelection(rows, selection);
-    const filteredSystemPrompt = systemPrompt
-      ? filterSystemPromptForReflection(systemPrompt) || undefined
-      : undefined;
-    const transcript = formatTaggedTranscript(entries, filteredSystemPrompt);
-    if (!transcript || transcript === "[]") {
-      return null;
-    }
+    const transcript = normalizeReflectionTranscript(entries);
 
     const payloadPath = buildPayloadPath(paths.rootDir, "auto");
     await writeFile(payloadPath, transcript, "utf-8");
@@ -1049,6 +1676,195 @@ export async function buildAutoReflectionPayload(
       endSnapshotLine: selection.endLineIndex + 1,
     };
   });
+}
+
+type MultiReflectionSelectionPolicy =
+  | { mode: "recent"; limit: number }
+  | { mode: "explicit-conversations"; conversationIds: string[] }
+  | {
+      mode: "auto-selected";
+      selectedConversations: ReflectionAutoSelectedConversation[];
+      candidatesPath?: string;
+    };
+
+export interface BuildMultiReflectionPayloadOptions {
+  agentId: string;
+  instruction?: string;
+  selectionPolicy: MultiReflectionSelectionPolicy;
+  maxReplayTurnsPerConversation?: number;
+  maxTotalChars?: number;
+}
+
+async function resolveMultiReflectionConversationIds(
+  agentId: string,
+  selectionPolicy: MultiReflectionSelectionPolicy,
+): Promise<string[]> {
+  if (selectionPolicy.mode === "auto-selected") {
+    return Array.from(
+      new Set(
+        selectionPolicy.selectedConversations.map(
+          (selection) => selection.conversation_id,
+        ),
+      ),
+    );
+  }
+
+  if (selectionPolicy.mode === "explicit-conversations") {
+    return Array.from(new Set(selectionPolicy.conversationIds));
+  }
+
+  const candidates = await listReflectionTranscriptCandidates(agentId);
+  return candidates
+    .slice(0, Math.max(0, selectionPolicy.limit))
+    .map((candidate) => candidate.conversationId);
+}
+
+function manifestSelectionPolicy(
+  selectionPolicy: MultiReflectionSelectionPolicy,
+): MultiReflectionManifest["selection_policy"] {
+  if (selectionPolicy.mode === "recent") {
+    return { mode: "recent", limit: selectionPolicy.limit };
+  }
+  if (selectionPolicy.mode === "auto-selected") {
+    return {
+      mode: "auto-selected",
+      selected_conversations: selectionPolicy.selectedConversations,
+      candidates_path: selectionPolicy.candidatesPath,
+    };
+  }
+  return {
+    mode: "explicit-conversations",
+    conversation_ids: selectionPolicy.conversationIds,
+  };
+}
+
+function autoSelectionByConversationId(
+  selectionPolicy: MultiReflectionSelectionPolicy,
+): Map<string, ReflectionAutoSelectedConversation> {
+  if (selectionPolicy.mode !== "auto-selected") {
+    return new Map();
+  }
+
+  return new Map(
+    selectionPolicy.selectedConversations.map((selection) => [
+      selection.conversation_id,
+      selection,
+    ]),
+  );
+}
+
+export async function buildMultiReflectionPayload(
+  options: BuildMultiReflectionPayloadOptions,
+): Promise<MultiReflectionPayload | null> {
+  const {
+    agentId,
+    instruction,
+    selectionPolicy,
+    maxReplayTurnsPerConversation = 50,
+    maxTotalChars = 150_000,
+  } = options;
+  const conversationIds = await resolveMultiReflectionConversationIds(
+    agentId,
+    selectionPolicy,
+  );
+  if (conversationIds.length === 0) {
+    return null;
+  }
+
+  const payloadRoot = await ensureAgentPayloadRoot(agentId);
+  const transcripts: MultiReflectionTranscriptSlice[] = [];
+  let totalChars = 0;
+  let firstMessageId: string | undefined;
+  let lastMessageId: string | undefined;
+  const autoSelections = autoSelectionByConversationId(selectionPolicy);
+
+  for (const conversationId of conversationIds) {
+    const slice = await withStateLock(agentId, conversationId, async () => {
+      const paths = getReflectionTranscriptPaths(agentId, conversationId);
+      await ensurePaths(paths);
+      const lines = await readTranscriptLines(paths);
+      const rows = parseTranscriptRows(lines);
+      const state = await readState(paths);
+      const unreflectedSelection = selectUnreflectedTranscriptRange(
+        rows,
+        state.reflected_through_message_id,
+      );
+      const mode: ReflectionSliceMode = unreflectedSelection
+        ? "unreflected"
+        : "replay";
+      const selection =
+        unreflectedSelection ??
+        selectReplayTranscriptRange(rows, maxReplayTurnsPerConversation);
+      if (!selection) {
+        return null;
+      }
+
+      const entries = entriesForSelection(rows, selection);
+      const transcript = normalizeReflectionTranscript(entries);
+      const approxChars = transcript.length;
+      if (transcripts.length > 0 && totalChars + approxChars > maxTotalChars) {
+        return null;
+      }
+
+      const payloadPath = buildPayloadPath(payloadRoot, "slice");
+      await writeFile(payloadPath, transcript, "utf-8");
+      state.last_reflection_started_at = new Date().toISOString();
+      await writeState(paths, state);
+
+      return {
+        conversation_id: conversationId,
+        mode,
+        payload_path: payloadPath,
+        selection_reason: autoSelections.get(conversationId)?.reason,
+        selection_priority: autoSelections.get(conversationId)?.priority,
+        start_message_id: selection.startMessageId,
+        end_message_id: selection.endMessageId,
+        start_line: selection.startLineIndex,
+        end_line: selection.endLineIndex,
+        end_snapshot_line: selection.endLineIndex + 1,
+        completed_turns: countAssistantRows(entries),
+        approx_chars: approxChars,
+        last_updated_at: await getTranscriptLastUpdatedAt(paths),
+      } satisfies MultiReflectionTranscriptSlice;
+    });
+
+    if (!slice) {
+      continue;
+    }
+    if (!firstMessageId) {
+      firstMessageId = slice.start_message_id;
+    }
+    lastMessageId = slice.end_message_id;
+    totalChars += slice.approx_chars;
+    transcripts.push(slice);
+  }
+
+  if (transcripts.length === 0) {
+    return null;
+  }
+
+  const manifest: MultiReflectionManifest = {
+    schema_version: 1,
+    type: "multi_transcript_reflection_payload",
+    agent_id: agentId,
+    created_at: new Date().toISOString(),
+    user_instruction: instruction?.trim() || undefined,
+    selection_policy: manifestSelectionPolicy(selectionPolicy),
+    transcripts,
+  };
+  const payloadPath = buildPayloadPath(payloadRoot, "multi");
+  await writeFile(
+    payloadPath,
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    "utf-8",
+  );
+
+  return {
+    payloadPath,
+    manifest,
+    startMessageId: firstMessageId,
+    endMessageId: lastMessageId,
+  };
 }
 
 export async function finalizeAutoReflectionPayload(
@@ -1084,4 +1900,27 @@ export async function finalizeAutoReflectionPayload(
     }
     await writeState(paths, state);
   });
+}
+
+export async function finalizeMultiReflectionPayload(
+  agentId: string,
+  manifest: MultiReflectionManifest,
+  success: boolean,
+): Promise<void> {
+  if (!success) {
+    return;
+  }
+
+  for (const slice of manifest.transcripts) {
+    if (slice.mode !== "unreflected") {
+      continue;
+    }
+    await finalizeAutoReflectionPayload(
+      agentId,
+      slice.conversation_id,
+      slice.payload_path,
+      slice.end_snapshot_line,
+      true,
+    );
+  }
 }

@@ -4,6 +4,7 @@
  */
 
 import type { LSPServerInfo } from "@/lsp/types.js";
+import { getPackageManagerProcessFactory } from "@/utils/package-manager-spawn";
 
 /**
  * Python Language Server (Pyright)
@@ -43,13 +44,18 @@ export const PythonServer: LSPServerInfo = {
 
       console.log("[LSP] Installing pyright...");
 
-      const { spawn } = await import("node:child_process");
+      const platform = process.platform;
+      const command = platform === "win32" ? "npm.cmd" : "npm";
+      const spawnPackageManager = getPackageManagerProcessFactory({ platform });
 
       return new Promise((resolve, reject) => {
-        const proc = spawn("npm", ["install", "-g", "pyright"], {
-          stdio: "inherit",
-        });
+        const proc = spawnPackageManager(
+          command,
+          ["install", "-g", "pyright"],
+          { stdio: "inherit" },
+        );
 
+        proc.on("error", reject);
         proc.on("exit", (code) => {
           if (code === 0) {
             console.log("[LSP] Successfully installed pyright");

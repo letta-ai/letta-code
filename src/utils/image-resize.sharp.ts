@@ -1,6 +1,6 @@
 // Image resizing utilities for clipboard paste
 // Follows Codex CLI's approach (codex-rs/utils/image/src/lib.rs)
-import sharp from "sharp";
+import type sharpFactory from "sharp";
 import {
   assertImageHasDimensions,
   assertImageWithinBounds,
@@ -12,6 +12,17 @@ import {
   MAX_IMAGE_WIDTH,
   type ResizeResult,
 } from "./image-resize.shared";
+
+// Electron and Sharp load different GLib copies into one Linux process. Use a
+// patched native build only for that combination; keep standard Sharp for the
+// CLI and for platforms that the patched build does not support.
+const sharp = (
+  process.platform === "linux" &&
+  process.arch === "x64" &&
+  process.versions.electron
+    ? await import("@janhapke/sharp-electron")
+    : await import("sharp")
+).default as typeof sharpFactory;
 
 function createSharpInstance(buffer: Buffer) {
   return sharp(buffer, {

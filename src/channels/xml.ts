@@ -6,7 +6,7 @@
  */
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { getLocalTime } from "@/cli/helpers/session-context";
+import type { ChannelUserMention } from "@/channels/message-references";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import type {
   ChannelMessageAttachment,
@@ -32,80 +32,99 @@ function escapeXmlAttribute(text: string): string {
   return escapeXmlText(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
-/**
- * Format the reminder text that explains channel reply semantics to the agent.
- */
-export function buildChannelReminderText(msg: InboundChannelMessage): string {
-  const localTime = escapeXmlText(getLocalTime());
-  const escapedChannel = escapeXmlText(msg.channel);
-  const escapedChatId = escapeXmlText(msg.chatId);
-  const threadLine =
-    (msg.channel === "slack" || msg.channel === "telegram") &&
-    msg.chatType === "channel" &&
-    (msg.threadId ?? msg.messageId)?.trim()
-      ? `Replies sent with MessageChannel will stay in the same ${msg.channel === "telegram" ? "Telegram topic" : "Slack thread"} automatically.`
-      : null;
-
-  const lines = [
-    SYSTEM_REMINDER_OPEN,
-    `This is an external ${escapedChannel} turn. Plain assistant text is not delivered to the user.`,
-    `If you should reply to the external user, use MessageChannel with action="send", channel="${escapedChannel}", and chat_id="${escapedChatId}". Put the user-visible reply in message.`,
-    "If no user-visible response is appropriate, do not call MessageChannel. Do not send an empty acknowledgement.",
-    'For lightweight acknowledgement, prefer MessageChannel action="react" when supported. If the useful response belongs later, schedule the follow-up instead of sending a placeholder.',
-    "Do not produce a plain text assistant response as the user-visible reply.",
-    "On supported channels, MessageChannel can also send proactively using channel + target (and accountId when needed).",
-    "Only pass replyTo if you intentionally want the platform's quote/reply UI.",
-    `Current local time on this device: ${localTime}`,
-    SYSTEM_REMINDER_CLOSE,
-  ];
-
-  if (threadLine) {
-    lines.splice(lines.length - 2, 0, threadLine);
-  }
-  if (msg.channel === "slack") {
-    lines.splice(
-      lines.length - 2,
-      0,
-      'On Slack, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media.',
-    );
-  }
-  if (msg.channel === "telegram") {
-    lines.splice(
-      lines.length - 2,
-      0,
-      'On Telegram, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media.',
-    );
-  }
-  if (msg.channel === "discord") {
-    lines.splice(
-      lines.length - 2,
-      0,
-      'On Discord, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Discord reactions accept native Unicode emoji and custom emoji syntax like <:name:id>.',
-    );
-  }
-  if (msg.channel === "whatsapp") {
-    lines.splice(
-      lines.length - 2,
-      0,
-      'On WhatsApp, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Voice memo/audio uploads must be Ogg/Opus (.ogg, .oga, or .opus), not MP3/M4A/WAV. Replies are sent as the linked WhatsApp number.',
-    );
-  }
-  if (msg.attachments?.length) {
-    lines.splice(
-      lines.length - 2,
-      0,
-      "If this notification includes attachment local_path values, you may be able to inspect those files using local file or image tools available in your current toolset (for example Read or ViewImage), using the local_path.",
-    );
-  }
-
-  return lines.join("\n");
+function sanitizeMentionDisplayName(mention: ChannelUserMention): string {
+  const name = mention.displayName
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 80)
+    .trim();
+  return name || mention.userId;
 }
 
-function buildAttachmentXml(attachment: ChannelMessageAttachment): string {
-  const attrs = [
-    `kind="${escapeXmlAttribute(attachment.kind)}"`,
-    `local_path="${escapeXmlAttribute(attachment.localPath)}"`,
-  ];
+function buildTextWithUserMentions(
+  text: string,
+  mentions: ChannelUserMention[] | undefined,
+): string {
+  if (!mentions || mentions.length === 0) return escapeXmlText(text);
+  let cursor = 0;
+  const parts: string[] = [];
+  for (const mention of mentions) {
+    if (
+      !Number.isInteger(mention.start) ||
+      !Number.isInteger(mention.end) ||
+      mention.start < cursor ||
+      mention.end <= mention.start ||
+      mention.end > text.length ||
+      !mention.userId.trim()
+    ) {
+      return escapeXmlText(text);
+    }
+    parts.push(escapeXmlText(text.slice(cursor, mention.start)));
+    const displayName = sanitizeMentionDisplayName(mention);
+    parts.push(
+      `<mention id="${escapeXmlAttribute(mention.userId)}">@${escapeXmlText(displayName)}</mention>`,
+    );
+    cursor = mention.end;
+  }
+  parts.push(escapeXmlText(text.slice(cursor)));
+  return parts.join("");
+}
+
+function formatMebibytes(bytes: number): string {
+  const mebibytes = bytes / (1024 * 1024);
+  const rounded =
+    mebibytes >= 100 ? Math.round(mebibytes).toString() : mebibytes.toFixed(1);
+  return `${rounded.replace(/\.0$/, "")} MiB`;
+}
+
+function hasNotificationAttachmentPaths(msg: InboundChannelMessage): boolean {
+  if (msg.attachments?.some((attachment) => attachment.localPath)) {
+    return true;
+  }
+  if (
+    msg.threadContext?.starter?.attachments?.some(
+      (attachment) => attachment.localPath,
+    )
+  ) {
+    return true;
+  }
+  return Boolean(
+    msg.threadContext?.history?.some((entry) =>
+      entry.attachments?.some((attachment) => attachment.localPath),
+    ),
+  );
+}
+
+function buildChannelAttachmentReminderText(
+  msg: InboundChannelMessage,
+): string | undefined {
+  if (!hasNotificationAttachmentPaths(msg)) return undefined;
+  return [
+    SYSTEM_REMINDER_OPEN,
+    "If this notification includes attachment local_path values, you may be able to inspect those files using local file or image tools available in your current toolset (for example Read or ViewImage), using the local_path.",
+    SYSTEM_REMINDER_CLOSE,
+  ].join("\n");
+}
+
+type AttachmentXmlContext = {
+  channel: string;
+  accountId?: string;
+  chatId: string;
+  messageId?: string;
+};
+
+function buildAttachmentXml(
+  attachment: ChannelMessageAttachment,
+  context: AttachmentXmlContext,
+): string {
+  const attrs = [`kind="${escapeXmlAttribute(attachment.kind)}"`];
+
+  if (attachment.localPath) {
+    attrs.push(`local_path="${escapeXmlAttribute(attachment.localPath)}"`);
+  } else {
+    attrs.push('download_status="not_downloaded"');
+  }
 
   if (attachment.id) {
     attrs.push(`attachment_id="${escapeXmlAttribute(attachment.id)}"`);
@@ -119,6 +138,25 @@ function buildAttachmentXml(attachment: ChannelMessageAttachment): string {
   if (typeof attachment.sizeBytes === "number") {
     attrs.push(`size_bytes="${attachment.sizeBytes}"`);
   }
+  const sourceMessageId = attachment.sourceMessageId ?? context.messageId;
+  if (!attachment.localPath && sourceMessageId) {
+    attrs.push(`source_message_id="${escapeXmlAttribute(sourceMessageId)}"`);
+  }
+  if (!attachment.localPath && attachment.sourceThreadId) {
+    attrs.push(
+      `source_thread_id="${escapeXmlAttribute(attachment.sourceThreadId)}"`,
+    );
+  }
+  if (attachment.downloadReason) {
+    attrs.push(
+      `download_reason="${escapeXmlAttribute(attachment.downloadReason)}"`,
+    );
+  }
+  if (typeof attachment.autoDownloadLimitBytes === "number") {
+    attrs.push(
+      `auto_download_limit_bytes="${attachment.autoDownloadLimitBytes}"`,
+    );
+  }
 
   const children: string[] = [];
   if (attachment.transcription) {
@@ -130,6 +168,37 @@ function buildAttachmentXml(attachment: ChannelMessageAttachment): string {
     children.push(
       `<attempted_transcription_error>${escapeXmlText(attachment.transcriptionError)}</attempted_transcription_error>`,
     );
+  }
+  if (
+    !attachment.localPath &&
+    context.channel === "slack" &&
+    attachment.id &&
+    sourceMessageId
+  ) {
+    const accountArg = context.accountId
+      ? `, accountId="${escapeXmlAttribute(context.accountId)}"`
+      : "";
+    const threadArg = attachment.sourceThreadId
+      ? `, threadId="${escapeXmlAttribute(attachment.sourceThreadId)}"`
+      : "";
+    const action = `MessageChannel with action="download-file", channel="slack", chat_id="${escapeXmlAttribute(context.chatId)}"${accountArg}${threadArg}, attachmentId="${escapeXmlAttribute(attachment.id)}", and messageId="${escapeXmlAttribute(sourceMessageId)}"`;
+    if (attachment.downloadReason === "exceeds_auto_download_limit") {
+      const sizeNote =
+        typeof attachment.sizeBytes === "number"
+          ? `This file is ${formatMebibytes(attachment.sizeBytes)}${
+              typeof attachment.autoDownloadLimitBytes === "number"
+                ? `, above the ${formatMebibytes(attachment.autoDownloadLimitBytes)} automatic download limit`
+                : ""
+            }. `
+          : "";
+      children.push(
+        `<download-instruction>${sizeNote}Call ${action}. The tool downloads the file into the same Slack inbound attachment directory and returns its local_path. Large downloads return a task_id instead of blocking; wait for the local_path with TaskOutput (block: true, timeout: 600000). Do not ask the sender to reattach it.</download-instruction>`,
+      );
+    } else {
+      children.push(
+        `<download-retry>Automatic download did not complete. Call ${action} to retry. The action may return a precise error if Slack still cannot provide the file.</download-retry>`,
+      );
+    }
   }
 
   if (children.length > 0) {
@@ -187,7 +256,11 @@ function buildReplyContextXml(msg: InboundChannelMessage): string | null {
 
   const attrString = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
   if (replyContext.text?.trim()) {
-    return `<reply-context${attrString}>\n${escapeXmlText(replyContext.text)}\n</reply-context>`;
+    const text = buildTextWithUserMentions(
+      replyContext.text,
+      replyContext.userMentions,
+    );
+    return `<reply-context${attrString}>\n${text}\n</reply-context>`;
   }
   return `<reply-context${attrString} />`;
 }
@@ -195,6 +268,7 @@ function buildReplyContextXml(msg: InboundChannelMessage): string | null {
 function buildThreadContextEntryXml(
   tagName: string,
   entry: ChannelThreadContextEntry,
+  context: Omit<AttachmentXmlContext, "messageId">,
 ): string {
   const attrs: string[] = [];
   if (entry.senderId) {
@@ -208,7 +282,18 @@ function buildThreadContextEntryXml(
   }
 
   const attrString = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
-  return `<${tagName}${attrString}>\n${escapeXmlText(entry.text)}\n</${tagName}>`;
+  const body = [
+    ...(entry.text
+      ? [buildTextWithUserMentions(entry.text, entry.userMentions)]
+      : []),
+    ...(entry.attachments ?? []).map((attachment) =>
+      buildAttachmentXml(attachment, {
+        ...context,
+        messageId: entry.messageId,
+      }),
+    ),
+  ].join("\n");
+  return `<${tagName}${attrString}>\n${body}\n</${tagName}>`;
 }
 
 function buildThreadContextXml(msg: InboundChannelMessage): string | null {
@@ -220,7 +305,11 @@ function buildThreadContextXml(msg: InboundChannelMessage): string | null {
   const parts: string[] = [];
   if (threadContext.starter) {
     parts.push(
-      buildThreadContextEntryXml("thread-starter", threadContext.starter),
+      buildThreadContextEntryXml("thread-starter", threadContext.starter, {
+        channel: msg.channel,
+        accountId: msg.accountId,
+        chatId: msg.chatId,
+      }),
     );
   }
   const historyEntries = threadContext.history ?? [];
@@ -229,7 +318,11 @@ function buildThreadContextXml(msg: InboundChannelMessage): string | null {
       [
         "<thread-history>",
         ...historyEntries.map((entry) =>
-          buildThreadContextEntryXml("thread-message", entry),
+          buildThreadContextEntryXml("thread-message", entry, {
+            channel: msg.channel,
+            accountId: msg.accountId,
+            chatId: msg.chatId,
+          }),
         ),
         "</thread-history>",
       ].join("\n"),
@@ -280,13 +373,25 @@ export function buildChannelNotificationXml(
   if (msg.threadId) {
     attrs.push(`thread_id="${escapeXmlAttribute(msg.threadId)}"`);
   }
+  if (msg.routedBy) {
+    attrs.push(`routed_by="${escapeXmlAttribute(msg.routedBy)}"`);
+  }
 
   const attrString = attrs.join(" ");
-  const escapedText = msg.text ? escapeXmlText(msg.text) : "";
+  const escapedText = msg.text
+    ? buildTextWithUserMentions(msg.text, msg.userMentions)
+    : "";
   const reactionXml = buildReactionXml(msg);
   const replyContextXml = buildReplyContextXml(msg);
   const threadContextXml = buildThreadContextXml(msg);
-  const attachmentXml = (msg.attachments ?? []).map(buildAttachmentXml);
+  const attachmentXml = (msg.attachments ?? []).map((attachment) =>
+    buildAttachmentXml(attachment, {
+      channel: msg.channel,
+      accountId: msg.accountId,
+      chatId: msg.chatId,
+      messageId: msg.messageId,
+    }),
+  );
   const body = [
     threadContextXml,
     replyContextXml,
@@ -303,15 +408,17 @@ export function buildChannelNotificationXml(
 /**
  * Format an inbound channel message as structured content parts.
  *
- * The reminder and the notification XML are emitted as separate text parts so
- * UIs that already know how to hide pure system-reminder parts can do so
- * without needing to parse concatenated XML blobs.
+ * Attachment guidance is emitted only when this event contains inspectable
+ * local paths. Reply semantics live in the scoped MessageChannel definition.
  */
 export function formatChannelNotification(
   msg: InboundChannelMessage,
 ): MessageCreate["content"] {
+  const attachmentReminder = buildChannelAttachmentReminderText(msg);
   return [
-    { type: "text", text: buildChannelReminderText(msg) },
+    ...(attachmentReminder
+      ? [{ type: "text" as const, text: attachmentReminder }]
+      : []),
     { type: "text", text: buildChannelNotificationXml(msg) },
     ...(msg.attachments ?? []).flatMap((attachment) => {
       if (

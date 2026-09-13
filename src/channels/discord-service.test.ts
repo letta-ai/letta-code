@@ -6,6 +6,7 @@ import {
   listChannelAccounts,
   loadChannelAccounts,
 } from "@/channels/accounts";
+import { __setChannelCredentialsStoreModeForTests } from "@/channels/credential-store";
 import {
   __testOverrideLoadPairingStore,
   __testOverrideSavePairingStore,
@@ -35,6 +36,7 @@ import {
   __testOverrideSaveTargetStore,
   clearTargetStores,
 } from "@/channels/targets";
+import type { DiscordChannelAccount } from "@/channels/types";
 import { isDiscordChannelAccount } from "@/channels/types";
 
 describe("discord channel service", () => {
@@ -52,10 +54,12 @@ describe("discord channel service", () => {
     __testOverrideLoadTargetStore(null);
     __testOverrideSaveTargetStore(null);
     __testOverrideResolveChannelAccountDisplayName(null);
+    __setChannelCredentialsStoreModeForTests(null);
   }
 
   beforeEach(() => {
     resetState();
+    __setChannelCredentialsStoreModeForTests("file");
     __testOverrideLoadChannelAccounts(() => []);
     __testOverrideSaveChannelAccounts(() => {});
     __testOverrideLoadRoutes(() => null);
@@ -585,5 +589,89 @@ describe("discord channel service", () => {
     expect(saved?.thread_policy_by_channel).toEqual({ "channel-gamma": false });
     // Should NOT have threadPolicyByChannel (camelCase)
     expect(saved?.threadPolicyByChannel).toBeUndefined();
+  });
+
+  test("live account helpers preserve bot ingress settings in snapshots", () => {
+    const created = createChannelAccountLive(
+      "discord",
+      {
+        displayName: "Discord Main",
+        enabled: true,
+        dmPolicy: "pairing",
+        config: {
+          token: "discord-token",
+          agent_id: null,
+          allowed_channels: { "channel-open": "open" },
+          allow_bots: "mentions",
+        },
+      },
+      { accountId: "discord-main" },
+    );
+
+    expect(created).toEqual(
+      expect.objectContaining({
+        accountId: "discord-main",
+        allowBots: "mentions",
+        config: expect.objectContaining({
+          allow_bots: "mentions",
+        }),
+      }),
+    );
+
+    const updated = updateChannelAccountLive("discord", "discord-main", {
+      config: {
+        allow_bots: false,
+      },
+    });
+
+    expect(updated).toEqual(
+      expect.objectContaining({
+        accountId: "discord-main",
+        allowBots: false,
+        config: expect.objectContaining({
+          allow_bots: false,
+        }),
+      }),
+    );
+
+    expect(getChannelConfigSnapshot("discord", "discord-main")).toEqual(
+      expect.objectContaining({
+        accountId: "discord-main",
+        allowBots: false,
+        config: expect.objectContaining({
+          allow_bots: false,
+        }),
+      }),
+    );
+  });
+
+  test("loaded accounts normalize persisted allow_bots settings", () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "persisted-discord",
+        displayName: "Persisted Discord",
+        enabled: true,
+        token: "discord-token",
+        agentId: null,
+        defaultPermissionMode: "standard",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        allowedChannels: [],
+        allow_bots: "mentions",
+        createdAt: "2026-07-20T00:00:00.000Z",
+        updatedAt: "2026-07-20T00:00:00.000Z",
+      } as unknown as DiscordChannelAccount,
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+
+    expect(getChannelAccountSnapshot("discord", "persisted-discord")).toEqual(
+      expect.objectContaining({
+        accountId: "persisted-discord",
+        allowBots: "mentions",
+        config: expect.objectContaining({ allow_bots: "mentions" }),
+      }),
+    );
   });
 });

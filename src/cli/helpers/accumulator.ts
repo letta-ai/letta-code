@@ -339,6 +339,10 @@ function extractExecCommandDisplay(
   argsText: string | undefined,
 ): string | null {
   const parsed = parseToolArgsText(argsText);
+  const description = parsed?.description;
+  if (typeof description === "string" && description.trim()) {
+    return description.trim();
+  }
   const cmd = parsed?.cmd;
   return typeof cmd === "string" && cmd.trim() ? cmd : null;
 }
@@ -427,7 +431,11 @@ function formatRetryEventStatusLines(
   ];
 }
 
-function upsertStatusLine(b: Buffers, id: string, lines: string[]): void {
+export function upsertStatusLine(
+  b: Buffers,
+  id: string,
+  lines: string[],
+): void {
   const existing = b.byId.get(id);
   if (existing?.kind === "status") {
     existing.lines = lines;
@@ -904,11 +912,11 @@ function trySplitContent(
   return true;
 }
 
-// OpenAI reasoning summaries can start a new `**Section Title**\n\n` block inside the
-// same otid without a leading separator. Insert the missing blank line so markdown
-// renders the title as a new paragraph instead of gluing it to the previous sentence.
+// Restore missing blank lines between adjacent OpenAI reasoning summary headings.
 function normalizeReasoningSectionBoundaries(text: string): string {
-  return text.replace(/([^\n])(\*\*[^*\n]+\*\*\n\n)/g, "$1\n\n$2");
+  return text
+    .replace(/\*\*\*\*/g, "**\n\n**")
+    .replace(/([^\n])(\*\*[^*\n]+\*\*\n\n)/g, "$1\n\n$2");
 }
 
 // Feed one SDK chunk; mutate buffers in place.
@@ -1036,11 +1044,8 @@ export function onChunk(
       // Handle otid transition (mark previous line as finished)
       handleOtidTransition(b, lineId);
 
-      // Extract text content from the user message
       const rawText = extractTextPart(chunk.content);
       if (!rawText) break;
-
-      // Check if this is a compaction summary message (old format embedded in user_message)
       const compactionSummary = extractCompactionSummary(rawText);
       if (compactionSummary) {
         // Render as a finished compaction event
@@ -1057,24 +1062,19 @@ export function onChunk(
         markCompactionCompleted(ctx);
         break;
       }
+      // User input is rendered optimistically before the request. Only consume
+      // echoed user messages that reconcile one of those existing rows; other
+      // echoes are harness-injected context, not new user-visible input.
+      if (!mappedLineId) break;
 
-      const line = ensure(b, lineId, () => ({
-        kind: "user",
-        id: lineId,
-        text: rawText,
-        messageId,
-        otid,
-      }));
-      if (line.kind === "user") {
-        b.byId.set(lineId, {
+      const line = b.byId.get(mappedLineId);
+      if (line?.kind === "user") {
+        b.byId.set(mappedLineId, {
           ...line,
           text: line.text || rawText,
           messageId: messageId ?? line.messageId,
           otid: otid ?? line.otid,
         });
-      }
-      if (otid) {
-        b.userLineIdByOtid.set(otid, lineId);
       }
       break;
     }
@@ -1502,6 +1502,22 @@ export function toLines(b: Buffers): Line[] {
     if (line) out.push(line);
   }
   return out;
+}
+
+/** Returns the text of the most recent non-empty assistant line, if any. */
+export function findLastAssistantText(lines: Line[]): string | undefined {
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (
+      line?.kind === "assistant" &&
+      "text" in line &&
+      typeof line.text === "string" &&
+      line.text.trim().length > 0
+    ) {
+      return line.text;
+    }
+  }
+  return undefined;
 }
 
 /**

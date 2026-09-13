@@ -22,6 +22,7 @@ For tools that are part of a larger mod with commands, UI, local state, or event
 - Use `ctx.cwd` as the invocation workspace.
 - Use the dynamic context passed to `run(ctx)` (`ctx.agent`, `ctx.model`, `ctx.toolset`, `ctx.permissionMode`) instead of reading global app context.
 - Use `await ctx.conversation.getHistory()` when a tool needs recent conversation context. It returns the most recent messages in chronological order by default.
+- Use `await ctx.conversation.updateTitle(title)` to persist a conversation title and refresh active local UI consumers when the host supports it.
 - Respect `ctx.signal` for long-running work when practical.
 - Tools should return information for the model to use; they should not start hidden model runs.
 

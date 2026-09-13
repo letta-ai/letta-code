@@ -41,6 +41,26 @@ describe("MultiEdit tool", () => {
     expect(result.edits_applied).toBe(2);
   });
 
+  test("expands environment variables in file_path", async () => {
+    testDir = new TestDirectory();
+    const file = testDir.createFile("test.txt", "foo bar");
+    const originalEnv = process.env.LETTA_MULTI_EDIT_TEST_DIR;
+    process.env.LETTA_MULTI_EDIT_TEST_DIR = testDir.path;
+
+    try {
+      await multi_edit({
+        file_path: "$LETTA_MULTI_EDIT_TEST_DIR/test.txt",
+        edits: [{ old_string: "foo", new_string: "FOO" }],
+      });
+    } finally {
+      if (originalEnv === undefined)
+        delete process.env.LETTA_MULTI_EDIT_TEST_DIR;
+      else process.env.LETTA_MULTI_EDIT_TEST_DIR = originalEnv;
+    }
+
+    expect(readFileSync(file, "utf-8")).toBe("FOO bar");
+  });
+
   test("throws error when file_path is missing", async () => {
     await expect(
       multi_edit({

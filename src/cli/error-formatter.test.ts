@@ -96,6 +96,49 @@ describe("formatErrorDetails", () => {
     });
   });
 
+  test.each([
+    {
+      billingTier: "free",
+      expectedMessage:
+        "You've reached the agent limit (3) for the Free Plan. Delete agents at: https://chat.letta.com/agents\n" +
+        "Or upgrade to Pro for unlimited agents at: https://chat.letta.com/preferences/usage",
+    },
+    {
+      billingTier: "pro",
+      expectedMessage:
+        "You've reached your agent limit. Delete agents at: https://chat.letta.com/agents\n" +
+        "Or check your plan at: https://chat.letta.com/preferences/usage",
+    },
+  ])(
+    "links $billingTier agent-limit recovery to Chat",
+    ({ billingTier, expectedMessage }) => {
+      setErrorContext({ billingTier });
+      const error = new APIError(
+        429,
+        { error: "Rate limited", reasons: ["agents-limit-exceeded"] },
+        undefined,
+        new Headers(),
+      );
+
+      expect(formatErrorDetails(error)).toBe(expectedMessage);
+    },
+  );
+
+  test("links resource-limit recovery to Chat while retaining the server explanation", () => {
+    const error = new APIError(
+      402,
+      { error: "You have reached your limit for agents (3)." },
+      undefined,
+      new Headers(),
+    );
+
+    expect(formatErrorDetails(error)).toBe(
+      "You have reached your limit for agents (3).\n" +
+        "Upgrade at: https://chat.letta.com/preferences/usage\n" +
+        "Delete agents at: https://chat.letta.com/agents",
+    );
+  });
+
   test("uses neutral credit exhaustion copy for free tier not-enough-credits", () => {
     setErrorContext({ billingTier: "free", modelDisplayName: "Kimi K2.5" });
 
@@ -526,7 +569,7 @@ describe("formatErrorDetails", () => {
     const message = formatErrorDetails(error, "agent-1", "conv-1");
 
     expect(message).toContain(
-      "\x1b]8;;https://app.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\",
+      "\x1b]8;;https://chat.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\",
     );
   });
 
@@ -566,7 +609,7 @@ describe("formatErrorDetails", () => {
     });
 
     expect(message).toContain(
-      "\x1b]8;;https://app.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\",
+      "\x1b]8;;https://chat.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\",
     );
   });
 

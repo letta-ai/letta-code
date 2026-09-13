@@ -1,56 +1,64 @@
 import type { ListModelsResponseModelEntry } from "@/types/protocol_v2";
+import {
+  buildChannelCommandDeniedMessage,
+  buildChannelWhoamiMessage,
+  type ChannelCommandGate,
+  canonicalizeChannelCommandName,
+  canRunChannelCommand,
+} from "./access-control";
+import {
+  buildChannelCancelAcceptedMessage as buildChannelCancelAcceptedMessageWith,
+  buildChannelCancelNoActiveTurnMessage as buildChannelCancelNoActiveTurnMessageWith,
+  buildChannelCurrentModelMessage as buildChannelCurrentModelMessageWith,
+  buildChannelCurrentModelUnavailableMessage as buildChannelCurrentModelUnavailableMessageWith,
+  buildChannelModelListMessage as buildChannelModelListMessageWith,
+  buildChannelModelListUnavailableMessage as buildChannelModelListUnavailableMessageWith,
+  buildChannelModelUpdatedMessage as buildChannelModelUpdatedMessageWith,
+  buildChannelModelUpdateFailedMessage as buildChannelModelUpdateFailedMessageWith,
+} from "./command-runtime-executor";
+import {
+  buildChannelHelpMessage as buildChannelHelpMessageWith,
+  buildUnsupportedChannelCommandMessage as buildUnsupportedChannelCommandMessageWith,
+  type ChannelSlashCommandHandlerResult,
+  type ChannelSlashCommandHandlers,
+  isSupportedSlackMentionCommand,
+  type ParsedChannelSlashCommand,
+  parseChannelBangCommand,
+  parseChannelSlashCommand,
+} from "./command-surface";
+import { handleChannelFeedbackCommand } from "./feedback";
 import { getChannelDisplayName } from "./plugin-registry";
+import { buildDirectReplyOptions } from "./registry-presentation";
 import type {
   ChannelAdapter,
+  ChannelModelPickerData,
   ChannelRoute,
   InboundChannelMessage,
 } from "./types";
 
-export type ChannelSlashCommandKind = "direct" | "agent-scoped";
+export type { ChannelModelListEntry } from "./command-runtime-executor";
+export {
+  buildChannelModelNotFoundText,
+  buildModelEntriesByHandle,
+  getFallbackModelEntries,
+  resolveModelHandles,
+} from "./command-runtime-executor";
+export type {
+  ChannelSlashCommandDefinition,
+  ChannelSlashCommandHandlerResult,
+  ChannelSlashCommandHandlers,
+  ChannelSlashCommandKind,
+  ParsedChannelSlashCommand,
+} from "./command-surface";
+export {
+  listChannelSlashCommands,
+  parseChannelBangCommand,
+  parseChannelSlashCommand,
+} from "./command-surface";
 
-export type ParsedChannelSlashCommand = {
-  name: string;
-  args: string;
-  raw: string;
-};
-
-export type ChannelSlashCommandDefinition = {
-  name: string;
-  aliases?: string[];
-  kind: ChannelSlashCommandKind;
-  summary: string;
-};
-
-export type ChannelSlashCommandHandlerResult = {
-  handled: boolean;
-  text?: string;
-};
-
-export type ChannelSlashCommandHandlers = {
-  cancel?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  chat?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  model?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  pause?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  reflection?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  resume?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
+type ChannelDirectReplyPayload = {
+  text: string;
+  modelPicker?: ChannelModelPickerData;
 };
 
 export type ChannelStatusContext = {
@@ -63,51 +71,10 @@ export type ChannelStatusContext = {
 export type ChannelSlashCommandOptions = {
   statusContext?: ChannelStatusContext;
   handlers?: ChannelSlashCommandHandlers;
+  enableBangCommands?: boolean;
+  /** Admin/user tier gate for this sender; undefined disables gating. */
+  commandGate?: ChannelCommandGate;
 };
-
-const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
-  {
-    name: "help",
-    kind: "direct",
-    summary: "Show channel usage guidance.",
-  },
-  {
-    name: "status",
-    kind: "direct",
-    summary: "Show this chat's channel connection status.",
-  },
-  {
-    name: "pause",
-    kind: "direct",
-    summary: "Pause agent routing for this chat.",
-  },
-  {
-    name: "resume",
-    kind: "direct",
-    summary: "Resume agent routing for this chat.",
-  },
-  {
-    name: "cancel",
-    kind: "agent-scoped",
-    summary: "Cancel the in-progress agent turn for this chat.",
-  },
-  {
-    name: "chat",
-    kind: "direct",
-    summary: "Show the Letta web chat link for this channel route.",
-  },
-  {
-    name: "model",
-    kind: "agent-scoped",
-    summary: "Show or switch the model for this chat's routed conversation.",
-  },
-  {
-    name: "reflection",
-    aliases: ["reflect"],
-    kind: "agent-scoped",
-    summary: "Start a memory reflection pass for this conversation.",
-  },
-];
 
 function channelDisplayName(channelId: string): string {
   try {
@@ -117,64 +84,39 @@ function channelDisplayName(channelId: string): string {
   }
 }
 
-export function listChannelSlashCommands(): ChannelSlashCommandDefinition[] {
-  return CHANNEL_SLASH_COMMANDS.map((definition) => ({
-    ...definition,
-    aliases: definition.aliases ? [...definition.aliases] : undefined,
-  }));
-}
-
-export function parseChannelSlashCommand(
-  text: string,
-): ParsedChannelSlashCommand | null {
-  const trimmed = text.trim();
-  const match = trimmed.match(
-    /^\/([A-Za-z][\w-]*)(?:@[A-Za-z0-9_]+)?(?:\s+(.*))?$/,
+function isSlackMentionSlashCommand(
+  msg: InboundChannelMessage,
+  command: ParsedChannelSlashCommand,
+): boolean {
+  return (
+    msg.channel === "slack" &&
+    msg.isMention === true &&
+    command.raw.startsWith("/")
   );
-  if (!match) {
-    return null;
-  }
-  const [, name, args] = match;
-  if (!name) {
-    return null;
-  }
-
-  return {
-    name: name.toLowerCase(),
-    args: args?.trim() ?? "",
-    raw: trimmed,
-  };
 }
 
-function supportedCommandsText(): string {
-  return listChannelSlashCommands()
-    .map((definition) => `/${definition.name}`)
-    .join(", ");
+function isSlackMentionControlCommand(
+  msg: InboundChannelMessage,
+  command: ParsedChannelSlashCommand,
+): boolean {
+  return (
+    command.raw.startsWith("!") || isSlackMentionSlashCommand(msg, command)
+  );
 }
 
 export function buildChannelHelpMessage(channelId: string): string {
-  const displayName = channelDisplayName(channelId);
-
-  return [
-    `${displayName} is connected to Letta Code.`,
-    "Send a normal message here and the connected agent will reply in this chat.",
-    "Use MessageChannel-supported actions by asking naturally, for example: send a message, react, or upload a file when available.",
-    `Supported slash commands here: ${supportedCommandsText()}.`,
-    "If this chat is not connected yet, send any non-command message and follow the pairing instructions.",
-  ].join("\n\n");
+  return buildChannelHelpMessageWith(channelId, channelDisplayName);
 }
 
 export function buildUnsupportedChannelCommandMessage(
   channelId: string,
   command: ParsedChannelSlashCommand,
 ): string {
-  const displayName = channelDisplayName(channelId);
-
-  return [
-    `${displayName} received ${command.raw}, but that slash command is not supported in channels yet.`,
-    `Supported slash commands here: ${supportedCommandsText()}.`,
-    "Send normal messages without a leading slash to talk to the connected agent.",
-  ].join("\n\n");
+  return buildUnsupportedChannelCommandMessageWith(
+    channelId,
+    command,
+    channelDisplayName,
+  );
 }
 
 export function buildChannelStatusMessage(
@@ -204,6 +146,13 @@ export function buildChannelStatusMessage(
     lines.push(`Conversation: ${route.conversationId}.`);
     if (route.threadId) {
       lines.push(`Thread: ${route.threadId}.`);
+    }
+    if (route.detached) {
+      lines.push("Slack thread is detached until the app is mentioned again.");
+    } else if (route.outboundEnabled === false) {
+      lines.push(
+        "Outbound replies are disabled until the app is mentioned again.",
+      );
     }
   } else {
     lines.push(
@@ -265,13 +214,14 @@ export function buildChannelCancelUnavailableMessage(
 export function buildChannelCancelNoActiveTurnMessage(
   channelId: string,
 ): string {
-  const displayName = channelDisplayName(channelId);
-  return `${displayName} received /cancel, but there is no in-progress agent turn to cancel for this chat.`;
+  return buildChannelCancelNoActiveTurnMessageWith(
+    channelId,
+    channelDisplayName,
+  );
 }
 
 export function buildChannelCancelAcceptedMessage(channelId: string): string {
-  const displayName = channelDisplayName(channelId);
-  return `${displayName} cancelled the in-progress agent turn for this chat.`;
+  return buildChannelCancelAcceptedMessageWith(channelId, channelDisplayName);
 }
 
 export function buildChannelChatLinkMessage(
@@ -295,109 +245,51 @@ export function buildChannelChatUnavailableMessage(
   return `${displayName} chat UI is not available for local backend agent ${route.agentId}.`;
 }
 
-type ChannelModelListEntry = Pick<
-  ListModelsResponseModelEntry,
-  | "id"
-  | "handle"
-  | "label"
-  | "description"
-  | "isDefault"
-  | "isFeatured"
-  | "updateArgs"
->;
-
-const DEFAULT_CHANNEL_MODEL_LIST_LIMIT = 8;
-
-function getModelEntryRank(entry: ChannelModelListEntry): number {
-  if (entry.isDefault) return 0;
-  if (entry.isFeatured) return 1;
-  const effort = (
-    entry.updateArgs as { reasoning_effort?: unknown } | undefined
-  )?.reasoning_effort;
-  if (effort === "medium") return 2;
-  if (effort === "high") return 3;
-  return 4;
+export function buildChannelDetachUnsupportedMessage(
+  channelId: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} can only detach Slack channel threads.`;
 }
 
-function preferModelEntry(
-  current: ChannelModelListEntry,
-  candidate: ChannelModelListEntry,
-): ChannelModelListEntry {
-  return getModelEntryRank(candidate) < getModelEntryRank(current)
-    ? candidate
-    : current;
+export function buildChannelDetachedMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} detached this thread. I will ignore follow-up replies here until someone mentions the app again.`;
 }
 
-function buildModelEntriesByHandle(
-  entries: ChannelModelListEntry[],
-): Map<string, ChannelModelListEntry> {
-  const byHandle = new Map<string, ChannelModelListEntry>();
-  for (const entry of entries) {
-    const current = byHandle.get(entry.handle);
-    byHandle.set(
-      entry.handle,
-      current ? preferModelEntry(current, entry) : entry,
-    );
-  }
-  return byHandle;
+export function buildChannelAlreadyDetachedMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} is already detached from this thread. Mention the app again to reattach.`;
 }
 
-function makeUnknownModelEntry(handle: string): ChannelModelListEntry {
-  return {
-    id: handle,
-    handle,
-    label: handle,
-    description: "",
-  };
+export function buildChannelNewConversationMessage(
+  channelId: string,
+  route: ChannelRoute,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} started a new conversation for this chat. Conversation: ${route.conversationId}.`;
 }
 
-function resolveModelHandles(params: {
-  handles: string[];
-  byHandle: Map<string, ChannelModelListEntry>;
-  availableHandles?: Set<string> | null;
-}): ChannelModelListEntry[] {
-  const { handles, byHandle, availableHandles } = params;
-  const seen = new Set<string>();
-  const resolved: ChannelModelListEntry[] = [];
-  for (const handle of handles) {
-    if (!handle || seen.has(handle)) continue;
-    seen.add(handle);
-    if (availableHandles && !availableHandles.has(handle)) continue;
-    resolved.push(byHandle.get(handle) ?? makeUnknownModelEntry(handle));
-  }
-  return resolved;
+export function buildChannelNewConversationUnavailableMessage(
+  channelId: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} cannot start a new conversation for this chat because no agent is configured.`;
 }
 
-function getFallbackModelEntries(
-  byHandle: Map<string, ChannelModelListEntry>,
-): ChannelModelListEntry[] {
-  const preferred = Array.from(byHandle.values()).filter(
-    (entry) => entry.isDefault || entry.isFeatured,
+export function buildChannelCurrentModelMessage(
+  channelId: string,
+  params: {
+    modelLabel: string;
+    modelHandle: string | null;
+    scope?: "agent" | "conversation";
+  },
+): string {
+  return buildChannelCurrentModelMessageWith(
+    channelId,
+    params,
+    channelDisplayName,
   );
-  return preferred.length > 0 ? preferred : Array.from(byHandle.values());
-}
-
-function formatChannelModelEntry(entry: ChannelModelListEntry): string {
-  const selector = entry.id || entry.handle;
-  const handleText = entry.handle === entry.label ? "" : ` — ${entry.handle}`;
-  return `• ${entry.label}${handleText} (/model ${selector})`;
-}
-
-function appendModelEntrySection(
-  lines: string[],
-  title: string,
-  entries: ChannelModelListEntry[],
-  limit: number,
-): void {
-  if (entries.length === 0) return;
-  lines.push("", `${title}:`);
-  for (const entry of entries.slice(0, limit)) {
-    lines.push(formatChannelModelEntry(entry));
-  }
-  const remaining = entries.length - limit;
-  if (remaining > 0) {
-    lines.push(`…and ${remaining} more.`);
-  }
 }
 
 export function buildChannelModelListMessage(
@@ -409,59 +301,33 @@ export function buildChannelModelListMessage(
     limit?: number;
   },
 ): string {
-  const displayName = channelDisplayName(channelId);
-  const limit = params.limit ?? DEFAULT_CHANNEL_MODEL_LIST_LIMIT;
-  const entries = params.entries as ChannelModelListEntry[];
-  const byHandle = buildModelEntriesByHandle(entries);
-  const availableHandleList = Array.isArray(params.availableHandles)
-    ? params.availableHandles
-    : null;
-  const availableSet = availableHandleList
-    ? new Set(availableHandleList)
-    : null;
-  const recentEntries = resolveModelHandles({
-    handles: params.recentHandles ?? [],
-    byHandle,
-    availableHandles: availableSet,
-  });
-  const availableEntries = availableHandleList
-    ? resolveModelHandles({ handles: availableHandleList, byHandle })
-    : getFallbackModelEntries(byHandle);
-
-  const lines = [`${displayName} model selector`];
-  if (params.availableHandles === null) {
-    lines.push(
-      "Availability lookup failed; showing built-in recommended models.",
-    );
-  } else if (params.availableHandles === undefined) {
-    lines.push(
-      "Available model data was not returned; showing built-in recommended models.",
-    );
-  }
-
-  appendModelEntrySection(lines, "Recent models", recentEntries, limit);
-  appendModelEntrySection(lines, "Available models", availableEntries, limit);
-
-  if (availableEntries.length === 0) {
-    lines.push(
-      "",
-      "No available models were reported. Use /connect in Letta Code to configure a provider, then try again.",
-    );
-  }
-
-  lines.push(
-    "",
-    "Use /model <handle-or-id> to switch this chat's routed model.",
+  return buildChannelModelListMessageWith(
+    channelId,
+    params,
+    channelDisplayName,
   );
-  return lines.join("\n");
 }
 
 export function buildChannelModelListUnavailableMessage(
   channelId: string,
   error: string,
 ): string {
-  const displayName = channelDisplayName(channelId);
-  return `${displayName} could not load the model list: ${error}`;
+  return buildChannelModelListUnavailableMessageWith(
+    channelId,
+    error,
+    channelDisplayName,
+  );
+}
+
+export function buildChannelCurrentModelUnavailableMessage(
+  channelId: string,
+  error: string,
+): string {
+  return buildChannelCurrentModelUnavailableMessageWith(
+    channelId,
+    error,
+    channelDisplayName,
+  );
 }
 
 export function buildChannelModelUpdatedMessage(
@@ -472,11 +338,11 @@ export function buildChannelModelUpdatedMessage(
     appliedTo?: "agent" | "conversation";
   },
 ): string {
-  const displayName = channelDisplayName(channelId);
-  const scope = params.appliedTo === "agent" ? "agent" : "conversation";
-  const handleText =
-    params.modelHandle === params.modelLabel ? "" : ` (${params.modelHandle})`;
-  return `${displayName} updated this ${scope}'s model to ${params.modelLabel}${handleText}.`;
+  return buildChannelModelUpdatedMessageWith(
+    channelId,
+    params,
+    channelDisplayName,
+  );
 }
 
 export function buildChannelModelUpdateFailedMessage(
@@ -484,8 +350,12 @@ export function buildChannelModelUpdateFailedMessage(
   identifier: string,
   error: string,
 ): string {
-  const displayName = channelDisplayName(channelId);
-  return `${displayName} could not switch this chat's routed model to ${identifier}: ${error}`;
+  return buildChannelModelUpdateFailedMessageWith(
+    channelId,
+    identifier,
+    error,
+    channelDisplayName,
+  );
 }
 
 export function buildChannelModelUnavailableMessage(channelId: string): string {
@@ -500,6 +370,13 @@ export function buildChannelReflectionUnavailableMessage(
   return `${displayName} cannot start reflection for this chat because the listener is not ready yet. Try again in a moment.`;
 }
 
+export function buildChannelReloadUnavailableMessage(
+  channelId: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} cannot reload settings, local mods, and agent secrets for this chat because the listener is not ready yet. Try again in a moment.`;
+}
+
 async function handleScopedCommand(params: {
   msg: InboundChannelMessage;
   command: ParsedChannelSlashCommand;
@@ -510,12 +387,31 @@ async function handleScopedCommand(params: {
       ) => Promise<ChannelSlashCommandHandlerResult>)
     | undefined;
   defaultText?: string;
-}): Promise<string | null> {
+}): Promise<ChannelDirectReplyPayload | null> {
   const result = await params.handler?.(params.command, params.msg);
   if (!result?.handled) {
     return null;
   }
-  return result.text ?? params.defaultText ?? null;
+  const text = result.text ?? params.defaultText;
+  if (!text) {
+    return null;
+  }
+  return {
+    text,
+    ...(result.modelPicker ? { modelPicker: result.modelPicker } : {}),
+  };
+}
+
+function normalizeDirectReplyPayload(
+  value: string | ChannelDirectReplyPayload | null,
+): ChannelDirectReplyPayload | null {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value === "string") {
+    return { text: value };
+  }
+  return value;
 }
 
 export async function tryHandleChannelSlashCommand(
@@ -523,75 +419,145 @@ export async function tryHandleChannelSlashCommand(
   msg: InboundChannelMessage,
   options: ChannelSlashCommandOptions = {},
 ): Promise<boolean> {
-  const command = parseChannelSlashCommand(msg.text);
+  const command =
+    parseChannelSlashCommand(msg.text) ??
+    (options.enableBangCommands ? parseChannelBangCommand(msg.text) : null);
   if (!command) {
     return false;
   }
+  const isBangCommand = command.raw.startsWith("!");
+  const isSlackMentionControl = isSlackMentionControlCommand(msg, command);
 
-  const text = await (async () => {
-    switch (command.name) {
-      case "help":
-        return buildChannelHelpMessage(msg.channel);
-      case "status":
-        return buildChannelStatusMessage(
-          msg,
-          options.statusContext ?? {
-            adapterRunning: adapter.isRunning(),
-            accountConfigured: false,
-            route: null,
-          },
-        );
-      case "pause":
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.pause,
-        });
-      case "resume":
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.resume,
-        });
-      case "cancel":
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.cancel,
-          defaultText: buildChannelCancelAcceptedMessage(msg.channel),
-        });
-      case "chat":
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.chat,
-        });
-      case "model":
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.model,
-        });
-      case "reflect":
-      case "reflection":
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.reflection,
-        });
-      default:
-        return buildUnsupportedChannelCommandMessage(msg.channel, command);
-    }
-  })();
+  if (isBangCommand && !isSupportedSlackMentionCommand(command.name)) {
+    await adapter.sendDirectReply(
+      msg.chatId,
+      buildUnsupportedChannelCommandMessage(msg.channel, command),
+      buildDirectReplyOptions(msg),
+    );
+    return true;
+  }
 
-  if (text === null) {
+  const canonicalName = canonicalizeChannelCommandName(command.name);
+  if (
+    options.commandGate &&
+    !canRunChannelCommand(options.commandGate, canonicalName)
+  ) {
+    await adapter.sendDirectReply(
+      msg.chatId,
+      buildChannelCommandDeniedMessage(
+        msg.channel,
+        canonicalName,
+        options.commandGate,
+      ),
+      buildDirectReplyOptions(msg),
+    );
+    return true;
+  }
+
+  const reply = normalizeDirectReplyPayload(
+    await (async () => {
+      switch (command.name) {
+        case "help":
+          return buildChannelHelpMessage(msg.channel);
+        case "whoami":
+          return buildChannelWhoamiMessage(msg, options.commandGate);
+        case "status":
+          return buildChannelStatusMessage(
+            msg,
+            options.statusContext ?? {
+              adapterRunning: adapter.isRunning(),
+              accountConfigured: false,
+              route: null,
+            },
+          );
+        case "pause":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.pause,
+          });
+        case "resume":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.resume,
+          });
+        case "cancel":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.cancel,
+            defaultText: buildChannelCancelAcceptedMessage(msg.channel),
+          });
+        case "chat":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.chat,
+          });
+        case "feedback":
+          return handleChannelFeedbackCommand({
+            msg,
+            command,
+            route: options.statusContext?.route,
+          });
+        case "detach":
+          if (!isSlackMentionControl) {
+            return buildUnsupportedChannelCommandMessage(msg.channel, command);
+          }
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.detach,
+          });
+        case "model":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.model,
+          });
+        case "new":
+          if (!isSlackMentionControl) {
+            return buildUnsupportedChannelCommandMessage(msg.channel, command);
+          }
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.newConversation,
+          });
+        case "reflect":
+        case "reflection":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.reflection,
+          });
+        case "reload":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.reload,
+          });
+        default:
+          return buildUnsupportedChannelCommandMessage(msg.channel, command);
+      }
+    })(),
+  );
+
+  if (reply === null) {
     return false;
   }
 
   await adapter.sendDirectReply(
     msg.chatId,
-    text,
-    msg.messageId ? { replyToMessageId: msg.messageId } : undefined,
+    reply.text,
+    msg.messageId || msg.threadId || reply.modelPicker
+      ? {
+          replyToMessageId: msg.messageId,
+          threadId: msg.threadId ?? null,
+          ...(reply.modelPicker ? { modelPicker: reply.modelPicker } : {}),
+        }
+      : undefined,
   );
   return true;
 }

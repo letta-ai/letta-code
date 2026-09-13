@@ -1,10 +1,13 @@
+import { updateModelConfig } from "@/agent/modify";
 import type { Backend } from "@/backend";
 import { loadModConversationHistoryFromBackend } from "@/mods/conversation-history";
+import { publishConversationTitleChange } from "@/mods/conversation-title-events";
 import type {
   ModConversationHandle,
   ModConversationMessage,
   ModConversationSendMessageOptions,
   ModConversationSendMessageRequestOptions,
+  ModUpdateLlmConfigOptions,
 } from "@/mods/types";
 
 type SendModConversationMessageStream = (
@@ -52,6 +55,20 @@ export function createModConversationHandle(options: {
         historyOptions,
       );
     },
+    async updateTitle(title) {
+      if (!options.conversationId) {
+        throw new Error(
+          "Mod updateTitle: conversationId is not available for this conversation",
+        );
+      }
+      await requireBackend().updateConversation(options.conversationId, {
+        summary: title,
+      });
+      publishConversationTitleChange({
+        conversationId: options.conversationId,
+        title,
+      });
+    },
     sendMessageStream(messages, sendOptions, requestOptions) {
       return options.sendMessageStream(
         requireBackend(),
@@ -65,6 +82,28 @@ export function createModConversationHandle(options: {
           ...sendOptions,
         },
         requestOptions,
+      );
+    },
+    async updateLlmConfig(update: ModUpdateLlmConfigOptions) {
+      const backend = requireBackend();
+      const { scope, ...config } = update;
+      if (scope === "agent") {
+        if (!options.agentId) {
+          throw new Error(
+            "Mod updateLlmConfig: agentId is not available for an agent-scope update",
+          );
+        }
+        await updateModelConfig(
+          backend,
+          { scope: "agent", agentId: options.agentId },
+          config,
+        );
+        return;
+      }
+      await updateModelConfig(
+        backend,
+        { scope: "conversation", conversationId, agentId: options.agentId },
+        config,
       );
     },
   };

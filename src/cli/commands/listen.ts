@@ -4,12 +4,12 @@
  */
 
 import { hostname } from "node:os";
-import { getServerUrl } from "@/backend/api/client";
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { settingsManager } from "@/settings-manager";
 import { getErrorMessage } from "@/utils/error";
 import { registerWithCloudRetry } from "@/websocket/listen-register";
+import { resolveListenerRegistrationOptions } from "@/websocket/listener/auth";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
@@ -94,7 +94,7 @@ interface ListenOptions {
 
 /**
  * Handle /listen command
- * Usage: /listen [--env-name "work-laptop"]
+ * Usage: /listen [--computer-name "work-laptop"]
  *        /listen off
  */
 export async function handleListen(
@@ -136,20 +136,20 @@ export async function handleListen(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /server [--env-name <name>]\n" +
+      "Usage: /server [--computer-name <name>]\n" +
         "       /server off\n\n" +
-        "Register this letta-code instance to receive messages from Letta Cloud.\n" +
+        "Register this computer to receive messages from Letta Cloud.\n" +
         "Alias: /remote\n\n" +
         "Options:\n" +
-        "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)\n" +
+        "  --computer-name <name>  Friendly name for this computer (uses hostname if not provided)\n" +
         "  off                Stop the active listener connection\n" +
         "  -h, --help         Show this help message\n\n" +
         "Examples:\n" +
         "  /server                         # Start listener with hostname\n" +
-        '  /server --env-name "work-laptop" # Start with custom name\n' +
+        '  /server --computer-name "work-laptop" # Start with custom name\n' +
         "  /server off                     # Stop listening\n\n" +
         "Once connected, this instance will listen for incoming messages from cloud agents.\n" +
-        "Messages will be executed locally using your letta-code environment.",
+        "Messages will be executed locally on this computer.",
       true,
     );
     return;
@@ -214,39 +214,33 @@ export async function handleListen(
       "running",
     );
 
-    // Register with cloud to get connectionId
-    const serverUrl = getServerUrl();
-    const settings = await settingsManager.getSettingsWithSecureTokens();
-    const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-
-    if (!apiKey) {
-      throw new Error("Missing LETTA_API_KEY");
-    }
+    const resolveRegisterOptions = () =>
+      resolveListenerRegistrationOptions(deviceId, connectionName, {
+        allowInteractiveOAuth: false,
+        surface: "listen",
+      });
 
     // Register with cloud, retrying transient failures with a bounded backoff.
-    const { connectionId, wsUrl, supportsSplitStatusChannels } =
-      await registerWithCloudRetry(
-        {
-          serverUrl,
-          apiKey,
-          deviceId,
-          connectionName,
-        },
-        {
-          onRetry: (attempt, delayMs, error) => {
-            updateCommandResult(
-              ctx.buffersRef,
-              ctx.refreshDerived,
-              cmdId,
-              msg,
-              `Registering listener "${connectionName}"...\n` +
-                `Retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
-              true,
-              "running",
-            );
-          },
-        },
-      );
+    const registerOptions = await resolveRegisterOptions();
+    const {
+      connectionId,
+      wsUrl,
+      supportsSplitStatusChannels,
+      supportsPairedListenerGenerations,
+    } = await registerWithCloudRetry(registerOptions, {
+      onRetry: (attempt, delayMs, error) => {
+        updateCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          cmdId,
+          msg,
+          `Registering listener "${connectionName}"...\n` +
+            `Retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+          true,
+          "running",
+        );
+      },
+    });
 
     updateCommandResult(
       ctx.buffersRef,
@@ -255,7 +249,7 @@ export async function handleListen(
       msg,
       `✓ Registered successfully!\n\n` +
         `Connection ID: ${connectionId}\n` +
-        `Environment: "${connectionName}"\n` +
+        `Computer: "${connectionName}"\n` +
         `WebSocket: ${wsUrl}\n\n` +
         `Starting WebSocket connection...`,
       true,
@@ -270,11 +264,14 @@ export async function handleListen(
       connId: string,
       wsUrlValue: string,
       nextSupportsSplitStatusChannels: boolean,
+      nextSupportsPairedListenerGenerations: boolean,
     ): Promise<void> => {
       await startListenerClient({
         connectionId: connId,
         wsUrl: wsUrlValue,
         supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
+        supportsPairedListenerGenerations:
+          nextSupportsPairedListenerGenerations,
         deviceId,
         connectionName,
         onStatusChange: (status, id) => {
@@ -286,28 +283,28 @@ export async function handleListen(
                 : "Awaiting instructions";
 
           const url = buildConnectionUrl(id);
-          const urlText = url ? `\n\nConnect to this environment:\n${url}` : "";
+          const urlText = url ? `\n\nConnect to this computer:\n${url}` : "";
 
           updateCommandResult(
             ctx.buffersRef,
             ctx.refreshDerived,
             cmdId,
             msg,
-            `Environment initialized: ${connectionName}\n${statusText}${urlText}`,
+            `Computer initialized: ${connectionName}\n${statusText}${urlText}`,
             true,
             "finished",
           );
         },
         onRetrying: (attempt, _maxAttempts, nextRetryIn, id) => {
           const url = buildConnectionUrl(id);
-          const urlText = url ? `\n\nConnect to this environment:\n${url}` : "";
+          const urlText = url ? `\n\nConnect to this computer:\n${url}` : "";
 
           updateCommandResult(
             ctx.buffersRef,
             ctx.refreshDerived,
             cmdId,
             msg,
-            `Environment initialized: ${connectionName}\n` +
+            `Computer initialized: ${connectionName}\n` +
               `Reconnecting to Letta Cloud...\n` +
               `Attempt ${attempt}, retrying in ${Math.round(nextRetryIn / 1000)}s${urlText}`,
             true,
@@ -316,14 +313,14 @@ export async function handleListen(
         },
         onConnected: (id) => {
           const url = buildConnectionUrl(id);
-          const urlText = url ? `\n\nConnect to this environment:\n${url}` : "";
+          const urlText = url ? `\n\nConnect to this computer:\n${url}` : "";
 
           updateCommandResult(
             ctx.buffersRef,
             ctx.refreshDerived,
             cmdId,
             msg,
-            `Environment initialized: ${connectionName}\nAwaiting instructions${urlText}`,
+            `Computer initialized: ${connectionName}\nAwaiting instructions${urlText}`,
             true,
             "finished",
           );
@@ -335,14 +332,15 @@ export async function handleListen(
             ctx.refreshDerived,
             cmdId,
             msg,
-            `Environment expired, re-registering "${connectionName}"...`,
+            `Computer connection expired, re-registering "${connectionName}"...`,
             true,
             "running",
           );
 
           try {
+            const nextRegisterOptions = await resolveRegisterOptions();
             const reregisterResult = await registerWithCloudRetry(
-              { serverUrl, apiKey, deviceId, connectionName },
+              nextRegisterOptions,
               {
                 maxDurationMs: Infinity,
                 onRetry: (attempt, delayMs, error) => {
@@ -365,6 +363,7 @@ export async function handleListen(
               reregisterResult.connectionId,
               reregisterResult.wsUrl,
               reregisterResult.supportsSplitStatusChannels,
+              reregisterResult.supportsPairedListenerGenerations,
             );
           } catch (error) {
             updateCommandResult(
@@ -407,7 +406,12 @@ export async function handleListen(
       });
     };
 
-    await startClient(connectionId, wsUrl, supportsSplitStatusChannels);
+    await startClient(
+      connectionId,
+      wsUrl,
+      supportsSplitStatusChannels,
+      supportsPairedListenerGenerations,
+    );
   } catch (error) {
     updateCommandResult(
       ctx.buffersRef,

@@ -1,15 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import {
   buildConversationSelectorHints,
   buildDefaultConversationEntry,
-  findConversationIndexById,
   formatConversationTimestampText,
-  isConversationPinned,
-  isPinShortcut,
-  mergePinnedConversationRecords,
-  normalizeConversationSearchInput,
-  sortPinnedConversations,
 } from "@/cli/components/ConversationSelector";
 
 describe("ConversationSelector timestamps", () => {
@@ -79,86 +72,10 @@ describe("ConversationSelector timestamps", () => {
   });
 });
 
-describe("ConversationSelector pinned conversations", () => {
-  test("treats macOS Option+P glyphs as pin shortcuts", () => {
-    expect(isPinShortcut("π", {})).toBe(true);
-    expect(isPinShortcut("∏", {})).toBe(true);
-    expect(isPinShortcut("p", { meta: true })).toBe(true);
-    expect(isPinShortcut("p", { ctrl: true, meta: true })).toBe(false);
-  });
-
-  test("strips macOS Option+P glyphs from search input", () => {
-    expect(normalizeConversationSearchInput("π")).toBe("");
-    expect(normalizeConversationSearchInput("foo∏bar")).toBe("foobar");
-  });
-
-  test("keeps the toggled conversation selectable after pin sorting", () => {
-    const conversations = [
-      { conversation: { id: "default" }, isPinned: true },
-      { conversation: { id: "conv-a" }, isPinned: false },
-      { conversation: { id: "conv-b" }, isPinned: true },
-      { conversation: { id: "conv-c" }, isPinned: false },
-    ];
-
-    const sorted = sortPinnedConversations(
-      conversations.map((item) =>
-        item.conversation.id === "conv-a" ? { ...item, isPinned: true } : item,
-      ),
+describe("ConversationSelector hints", () => {
+  test("shows navigation hints without pin shortcuts", () => {
+    expect(buildConversationSelectorHints()).toBe(
+      "Enter select · ↑↓ navigate · Esc clear/cancel",
     );
-
-    expect(sorted.map((item) => item.conversation.id)).toEqual([
-      "default",
-      "conv-a",
-      "conv-b",
-      "conv-c",
-    ]);
-    expect(findConversationIndexById(sorted, "conv-a")).toBe(1);
-  });
-
-  test("hides the pin shortcut hint when default conversation is selected", () => {
-    expect(
-      buildConversationSelectorHints({ isSelectedDefaultConversation: true }),
-    ).not.toContain("Alt+P");
-    expect(
-      buildConversationSelectorHints({ isSelectedDefaultConversation: false }),
-    ).toContain("Alt+P pin/unpin");
-  });
-
-  test("treats the default conversation as permanently pinned", () => {
-    expect(
-      isConversationPinned({
-        conversationId: "default",
-        pinnedIds: new Set(),
-      }),
-    ).toBe(true);
-  });
-
-  test("uses stored pin state for non-default conversations", () => {
-    const pinnedIds = new Set(["conv-pinned"]);
-
-    expect(
-      isConversationPinned({ conversationId: "conv-pinned", pinnedIds }),
-    ).toBe(true);
-    expect(
-      isConversationPinned({ conversationId: "conv-unpinned", pinnedIds }),
-    ).toBe(false);
-  });
-
-  test("includes pinned conversations missing from the recent page", () => {
-    const listed = [{ id: "recent-1" }, { id: "recent-2" }] as Conversation[];
-    const pinned = [{ id: "old-pinned" }] as Conversation[];
-
-    expect(
-      mergePinnedConversationRecords(listed, pinned).map((c) => c.id),
-    ).toEqual(["old-pinned", "recent-1", "recent-2"]);
-  });
-
-  test("does not duplicate pinned conversations already in the recent page", () => {
-    const listed = [{ id: "recent-1" }, { id: "old-pinned" }] as Conversation[];
-    const pinned = [{ id: "old-pinned" }] as Conversation[];
-
-    expect(
-      mergePinnedConversationRecords(listed, pinned).map((c) => c.id),
-    ).toEqual(["recent-1", "old-pinned"]);
   });
 });

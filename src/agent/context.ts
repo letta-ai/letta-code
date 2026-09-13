@@ -9,6 +9,7 @@ import type { SkillSource } from "./skills";
 
 interface AgentContext {
   agentId: string | null;
+  agentName: string | null;
   skillsDirectory: string | null;
   skillSources: SkillSource[];
   conversationId: string | null;
@@ -27,6 +28,7 @@ function getContext(): AgentContext {
   if (!global[CONTEXT_KEY]) {
     global[CONTEXT_KEY] = {
       agentId: null,
+      agentName: null,
       skillsDirectory: null,
       skillSources: [...ALL_SKILL_SOURCES],
       conversationId: null,
@@ -42,19 +44,23 @@ const context = getContext();
  * @param agentId - The agent ID
  * @param skillsDirectory - Optional skills directory path
  * @param skillSources - Enabled skill sources for this session
+ * @param agentName - Optional display name for shell/process identity
  */
 export function setAgentContext(
   agentId: string,
   skillsDirectory?: string,
   skillSources?: SkillSource[],
+  agentName?: string | null,
 ): void {
   context.agentId = agentId;
+  context.agentName = normalizeAgentName(agentName);
   context.skillsDirectory = skillsDirectory || null;
   context.skillSources =
     skillSources !== undefined ? [...skillSources] : [...ALL_SKILL_SOURCES];
   if (getRuntimeContext()) {
     updateRuntimeContext({
       agentId,
+      agentName: context.agentName,
       skillsDirectory: skillsDirectory || null,
       skillSources:
         skillSources !== undefined ? [...skillSources] : [...ALL_SKILL_SOURCES],
@@ -66,10 +72,34 @@ export function setAgentContext(
  * Set the current agent ID in context (simplified version for compatibility)
  */
 export function setCurrentAgentId(agentId: string | null): void {
+  const agentChanged = context.agentId !== agentId;
   context.agentId = agentId;
-  if (getRuntimeContext()) {
-    updateRuntimeContext({ agentId });
+  if (agentId === null || agentChanged) {
+    context.agentName = null;
   }
+  if (getRuntimeContext()) {
+    updateRuntimeContext({
+      agentId,
+      ...(agentId === null || agentChanged ? { agentName: null } : {}),
+    });
+  }
+}
+
+/**
+ * Set the current agent name in context when it is available.
+ */
+export function setCurrentAgentName(agentName: string | null): void {
+  context.agentName = normalizeAgentName(agentName);
+  if (getRuntimeContext()) {
+    updateRuntimeContext({ agentName: context.agentName });
+  }
+}
+
+function normalizeAgentName(
+  agentName: string | null | undefined,
+): string | null {
+  const trimmed = typeof agentName === "string" ? agentName.trim() : "";
+  return trimmed || null;
 }
 
 /**
@@ -88,6 +118,18 @@ export function getCurrentAgentId(): string {
     throw new Error("No agent context set. Agent ID is required.");
   }
   return context.agentId;
+}
+
+/**
+ * Get the current agent name if runtime context has it.
+ */
+export function getCurrentAgentName(): string | null {
+  const runtimeContext = getRuntimeContext();
+  if (runtimeContext && "agentName" in runtimeContext) {
+    const trimmed = runtimeContext.agentName?.trim();
+    return trimmed || null;
+  }
+  return context.agentName;
 }
 
 /**

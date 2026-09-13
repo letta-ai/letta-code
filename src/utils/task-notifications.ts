@@ -1,3 +1,7 @@
+import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import { SYSTEM_REMINDER_OPEN } from "@/constants";
+import { getRuntimeContext } from "@/runtime-context";
+
 /**
  * Task Notification Formatting
  *
@@ -8,6 +12,12 @@
 // ============================================================================
 // Types
 // ============================================================================
+
+export interface NotificationScope {
+  agentId: string;
+  conversationId: string;
+  actingUserId?: string;
+}
 
 export interface TaskNotification {
   taskId: string;
@@ -42,6 +52,39 @@ function unescapeXml(str: string): string {
 // ============================================================================
 
 /**
+ * Capture the conversation and initiating sender when background work starts.
+ *
+ * Prefers the scope injected by executeTool, which is the only correct source
+ * in listener/desktop mode where several agent scopes share one process, and
+ * falls back to the process-global agent context for plain CLI sessions.
+ * Returns undefined when neither is available, in which case the caller should
+ * still queue the notification unscoped rather than drop it.
+ * Keep this snapshot until delivery; a later turn may belong to another user.
+ */
+export function resolveNotificationScope(parentScope?: {
+  agentId: string;
+  conversationId: string;
+}): NotificationScope | undefined {
+  if (parentScope?.agentId) {
+    return {
+      agentId: parentScope.agentId,
+      conversationId: parentScope.conversationId || "default",
+      actingUserId: getRuntimeContext()?.actingUserId,
+    };
+  }
+
+  try {
+    return {
+      agentId: getCurrentAgentId(),
+      conversationId: getConversationId() ?? "default",
+      actingUserId: getRuntimeContext()?.actingUserId,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Format a single notification as XML string for queueing.
  */
 export function formatTaskNotification(notification: TaskNotification): string {
@@ -72,6 +115,20 @@ export function formatTaskNotification(notification: TaskNotification): string {
 Full transcript available at: ${notification.outputFile}`;
 }
 
+export function formatMonitorEventNotification(notification: {
+  taskId: string;
+  description: string;
+  event: string;
+}): string {
+  return `<task-notification>
+<task-id>${escapeXml(notification.taskId)}</task-id>
+<summary>${escapeXml(`Monitor event: "${notification.description}"`)}</summary>
+<result>
+<event>${escapeXml(notification.event)}</event>
+</result>
+</task-notification>`;
+}
+
 export function extractTaskNotificationsForDisplay(message: string): {
   notifications: string[];
   cleanedText: string;
@@ -89,6 +146,13 @@ export function extractTaskNotificationsForDisplay(message: string): {
     const xml = match[0];
     const summaryMatch = xml.match(/<summary>([\s\S]*?)<\/summary>/);
     const statusMatch = xml.match(/<status>([\s\S]*?)<\/status>/);
+    const resultMatch = xml.match(/<result>([\s\S]*?)<\/result>/);
+    const result = resultMatch?.[1]?.trim() || "";
+    const isAgentOnlyReminder = result.includes(SYSTEM_REMINDER_OPEN);
+    if (isAgentOnlyReminder) {
+      match = notificationRegex.exec(message);
+      continue;
+    }
     const status = statusMatch?.[1]?.trim();
     let summary = summaryMatch?.[1]?.trim() || "";
     summary = unescapeXml(summary);

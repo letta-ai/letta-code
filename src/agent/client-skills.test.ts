@@ -56,11 +56,11 @@ describe("buildClientSkillsPayload", () => {
       ],
       errors: [],
     });
-
     const result = await buildClientSkillsPayload({
       agentId: "agent-1",
       skillsDirectory: "/tmp/.skills",
       skillSources: ["project", "bundled"],
+      attachedRepositories: [],
       discoverSkillsFn,
     });
 
@@ -282,11 +282,12 @@ describe("buildClientSkillsPayload", () => {
         errors: [],
       };
     };
-
     const result = await buildClientSkillsPayload({
       agentId: "agent-1",
+      workingDirectory: "/tmp",
       skillsDirectory: "/tmp/.skills",
       skillSources: ["project"],
+      attachedRepositories: [],
       discoverSkillsFn,
     });
 
@@ -901,68 +902,6 @@ describe("client skills payload cache", () => {
     }
   });
 
-  test("cache misses when a skill file changes", async () => {
-    const { buildClientSkillsPayload } = await importFresh();
-
-    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-cache-change-"));
-    const originalCwd = process.cwd();
-
-    try {
-      const projectDir = join(tempRoot, "project");
-      const agentsSkillsDir = join(projectDir, ".agents", "skills");
-      const skillDir = join(agentsSkillsDir, "mutable-skill");
-      const skillPath = join(skillDir, "SKILL.md");
-      await mkdir(skillDir, { recursive: true });
-      await writeFile(
-        skillPath,
-        [
-          "---",
-          "id: mutable-skill",
-          "name: mutable-skill",
-          "description: original",
-          "---",
-          "",
-          "Body",
-        ].join("\n"),
-      );
-
-      process.chdir(projectDir);
-      invalidateClientSkillsPayloadCache();
-
-      const result1 = await buildClientSkillsPayload({
-        agentId: "change-agent",
-        skillsDirectory: join(projectDir, ".skills"),
-        skillSources: ["project"],
-      });
-      expect(result1.clientSkills[0]?.description).toBe("original");
-
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      await writeFile(
-        skillPath,
-        [
-          "---",
-          "id: mutable-skill",
-          "name: mutable-skill",
-          "description: updated description",
-          "---",
-          "",
-          "Body changed",
-        ].join("\n"),
-      );
-
-      const result2 = await buildClientSkillsPayload({
-        agentId: "change-agent",
-        skillsDirectory: join(projectDir, ".skills"),
-        skillSources: ["project"],
-      });
-
-      expect(result2.clientSkills[0]?.description).toBe("updated description");
-    } finally {
-      process.chdir(originalCwd);
-      await rm(tempRoot, { recursive: true, force: true });
-    }
-  });
-
   test("invalidateClientSkillsPayloadCache clears all entries", async () => {
     const { buildClientSkillsPayload } = await importFresh();
 
@@ -1108,6 +1047,7 @@ describe("client skills payload cache", () => {
 
     const result1 = await buildClientSkillsPayload({
       agentId: "bypass-agent",
+      workingDirectory: "/tmp",
       skillsDirectory: "/tmp/.skills",
       skillSources: ["project"],
       discoverSkillsFn,
@@ -1115,15 +1055,13 @@ describe("client skills payload cache", () => {
 
     const result2 = await buildClientSkillsPayload({
       agentId: "bypass-agent",
+      workingDirectory: "/tmp",
       skillsDirectory: "/tmp/.skills",
       skillSources: ["project"],
       discoverSkillsFn,
     });
 
-    // discoverSkillsFn should be called each time (no caching).
-    // With skillSources: ["project"] and a non-default skillsDirectory,
-    // there are 2 discovery runs per invocation (legacy + primary),
-    // so 2 invocations × 2 runs = 4 calls.
+    // The injected function runs twice for each uncached payload build.
     expect(callCount).toBe(4);
     // Each invocation produces incrementing ids, so first result has call-1/2, second has call-3/4
     expect(result1.clientSkills.map((s) => s.name).sort()).toEqual([

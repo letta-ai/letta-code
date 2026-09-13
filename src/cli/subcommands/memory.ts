@@ -24,8 +24,8 @@ Usage:
 Notes:
   - Most actions require agent id via --agent or LETTA_AGENT_ID and output JSON.
   - \`tokens\` additionally accepts --memory-dir or $MEMORY_DIR; reports the
-    estimated token size of system/. Policy (whether a size is concerning) is
-    up to the caller.
+    estimated token size of core memory for the detected MemFS layout. Policy
+    (whether a size is concerning) is up to the caller.
   - Memory is git-backed. Use git commands for commit/push.
 
 Examples:
@@ -150,6 +150,7 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
       top: parsed.values.top,
       format: parsed.values.format,
       quiet: Boolean(parsed.values.quiet),
+      localMemfs: isLocalBackendEnvEnabled(),
     });
   }
 

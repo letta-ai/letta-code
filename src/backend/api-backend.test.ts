@@ -16,6 +16,9 @@ import type {
 const retrieveAgentMock = mock(
   async (_agentId: string, _options?: unknown) => ({ id: "agent-1" }),
 );
+const getMock = mock(async (_path: string) => [
+  { key: "API_KEY", value: "secret-value" },
+]);
 const updateAgentMock = mock(
   async (_agentId: string, _body: unknown, _options?: unknown) => ({
     id: "agent-1",
@@ -58,8 +61,13 @@ const listModelsMock = mock(async (_options?: unknown) => [
   { handle: "model-1" },
 ]);
 const createMessageStreamMock = mock(
-  async (_conversationId: string, _body: unknown, _options?: unknown) => ({
-    kind: "create-stream",
+  (_conversationId: string, _body: unknown, _options?: unknown) => ({
+    withResponse: async () => ({
+      data: { kind: "create-stream" },
+      response: new Response(null, {
+        headers: { "content-type": "text/event-stream" },
+      }),
+    }),
   }),
 );
 const streamConversationMessagesMock = mock(
@@ -70,7 +78,12 @@ const streamConversationMessagesMock = mock(
 const cancelConversationMock = mock(async (_conversationId: string) => ({
   status: "cancelled",
 }));
-const retrieveRunMock = mock(async (_runId: string) => ({
+const cancelRunMock = mock(
+  async (_agentId: string, _body: { run_ids: string[] }) => ({
+    "run-1": "cancelled",
+  }),
+);
+const retrieveRunMock = mock(async (_runId: string, _options?: unknown) => ({
   id: "run-1",
   metadata: {},
 }));
@@ -83,12 +96,14 @@ const forkConversationMock = mock(
   async (_conversationId: string, _options?: unknown) => ({ id: "conv-fork" }),
 );
 const getClientMock = mock(async () => ({
+  get: getMock,
   agents: {
     create: createAgentMock,
     retrieve: retrieveAgentMock,
     update: updateAgentMock,
     messages: {
       list: listAgentMessagesMock,
+      cancel: cancelRunMock,
     },
   },
   conversations: {
@@ -129,6 +144,7 @@ describe("APIBackend", () => {
     configureBackendMode("api");
     getClientMock.mockClear();
     createAgentMock.mockClear();
+    getMock.mockClear();
     retrieveAgentMock.mockClear();
     updateAgentMock.mockClear();
     retrieveConversationMock.mockClear();
@@ -142,6 +158,7 @@ describe("APIBackend", () => {
     createMessageStreamMock.mockClear();
     streamConversationMessagesMock.mockClear();
     cancelConversationMock.mockClear();
+    cancelRunMock.mockClear();
     retrieveRunMock.mockClear();
     streamRunMessagesMock.mockClear();
     forkConversationMock.mockClear();
@@ -161,6 +178,134 @@ describe("APIBackend", () => {
     expect(getBackend().capabilities.remoteMemfs).toBe(true);
   });
 
+  test("coalesces concurrent identical agent retrievals", async () => {
+    let resolveAgent: (agent: { id: string; name: string }) => void = () => {
+      throw new Error("retrieveAgent promise was not started");
+    };
+    retrieveAgentMock.mockImplementationOnce(
+      async () =>
+        new Promise((resolve) => {
+          resolveAgent = resolve;
+        }),
+    );
+    const backend = new APIBackend({
+      getClient: getClientMock as unknown as () => Promise<APIClient>,
+      forkConversation: forkConversationMock,
+    });
+
+    const first = backend.retrieveAgent("agent-1");
+    const second = backend.retrieveAgent("agent-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(1);
+
+    resolveAgent({ id: "agent-1", name: "agent" });
+    await expect(first).resolves.toMatchObject({ id: "agent-1" });
+    await expect(second).resolves.toMatchObject({ id: "agent-1" });
+  });
+
+  test("does not store API client construction in the in-flight set", async () => {
+    const client = {
+      agents: { retrieve: retrieveAgentMock },
+    } as unknown as APIClient;
+    const resolveClients: Array<(client: APIClient) => void> = [];
+    const getClient = mock(
+      async () =>
+        new Promise<APIClient>((resolve) => {
+          resolveClients.push(resolve);
+        }),
+    );
+    const backend = new APIBackend({
+      getClient,
+      forkConversation: forkConversationMock,
+    });
+
+    const first = backend.retrieveAgent("agent-1");
+    const second = backend.retrieveAgent("agent-1");
+    await Promise.resolve();
+    expect(getClient).toHaveBeenCalledTimes(2);
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(0);
+
+    for (const resolveClient of resolveClients) resolveClient(client);
+    await Promise.all([first, second]);
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("removes successful agent retrievals from the in-flight set", async () => {
+    let resolveAgent: (agent: { id: string }) => void = () => {
+      throw new Error("retrieveAgent promise was not started");
+    };
+    retrieveAgentMock
+      .mockImplementationOnce(
+        async () =>
+          new Promise((resolve) => {
+            resolveAgent = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({ id: "agent-1" });
+    const backend = new APIBackend({
+      getClient: getClientMock as unknown as () => Promise<APIClient>,
+      forkConversation: forkConversationMock,
+    });
+
+    const first = backend.retrieveAgent("agent-1");
+    const second = backend.retrieveAgent("agent-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(1);
+
+    resolveAgent({ id: "agent-1" });
+    await Promise.all([first, second]);
+    await expect(backend.retrieveAgent("agent-1")).resolves.toMatchObject({
+      id: "agent-1",
+    });
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not coalesce options-bearing agent retrievals", async () => {
+    const backend = new APIBackend({
+      getClient: getClientMock as unknown as () => Promise<APIClient>,
+      forkConversation: forkConversationMock,
+    });
+
+    await Promise.all([
+      backend.retrieveAgent("agent-1"),
+      backend.retrieveAgent("agent-1", { include: ["agent.tags"] }),
+      backend.retrieveAgent("agent-1", { include: ["agent.tags"] }),
+      backend.retrieveAgent("agent-2"),
+    ]);
+
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(4);
+    expect(retrieveAgentMock).toHaveBeenNthCalledWith(1, "agent-1", undefined);
+    expect(retrieveAgentMock).toHaveBeenNthCalledWith(2, "agent-1", {
+      include: ["agent.tags"],
+    });
+    expect(retrieveAgentMock).toHaveBeenNthCalledWith(3, "agent-1", {
+      include: ["agent.tags"],
+    });
+    expect(retrieveAgentMock).toHaveBeenNthCalledWith(4, "agent-2", undefined);
+  });
+
+  test("removes failed agent retrievals from the in-flight set", async () => {
+    retrieveAgentMock
+      .mockRejectedValueOnce(new Error("network cooked"))
+      .mockResolvedValueOnce({ id: "agent-1" });
+    const backend = new APIBackend({
+      getClient: getClientMock as unknown as () => Promise<APIClient>,
+      forkConversation: forkConversationMock,
+    });
+
+    const first = backend.retrieveAgent("agent-1");
+    const second = backend.retrieveAgent("agent-1");
+    await expect(Promise.allSettled([first, second])).resolves.toEqual([
+      { status: "rejected", reason: expect.any(Error) },
+      { status: "rejected", reason: expect.any(Error) },
+    ]);
+
+    await expect(backend.retrieveAgent("agent-1")).resolves.toMatchObject({
+      id: "agent-1",
+    });
+    expect(retrieveAgentMock).toHaveBeenCalledTimes(2);
+  });
+
   test("delegates core conversation and run operations to the Letta API", async () => {
     const backend = new APIBackend({
       getClient: getClientMock as unknown as () => Promise<APIClient>,
@@ -170,11 +315,13 @@ describe("APIBackend", () => {
       remoteMemfs: true,
       serverSideToolManagement: true,
       serverSecrets: true,
-      agentFileImportExport: true,
       promptRecompile: true,
       byokProviderRefresh: true,
       localModelCatalog: false,
       localMemfs: false,
+      // Depends on the configured server URL; environment-routing-capability.test.ts
+      // covers the cloud/self-hosted split.
+      environmentRouting: expect.any(Boolean),
     });
     const agentUpdateBody = { system: "system" } as AgentUpdateBody;
     const agentCreateBody = { name: "new agent" } as AgentCreateBody;
@@ -210,6 +357,7 @@ describe("APIBackend", () => {
     } as unknown as RunMessageStreamBody;
 
     await backend.retrieveAgent("agent-1", { include: ["agent.tools"] });
+    await backend.listAgentSecrets("agent/1");
     await backend.updateAgent("agent-1", agentUpdateBody);
     await backend.createAgent(agentCreateBody);
     await backend.retrieveConversation("conv-1");
@@ -225,14 +373,18 @@ describe("APIBackend", () => {
     });
     await backend.streamConversationMessages("conv-1", streamBody);
     await backend.cancelConversation("conv-1");
-    await backend.retrieveRun("run-1");
+    await backend.cancelRun("agent-1", "run-1");
+    await backend.retrieveRun("run-1", {
+      headers: { "X-Letta-Acting-User-Id": "user-1" },
+    });
     await backend.streamRunMessages("run-1", runStreamBody);
     await backend.forkConversation("conv-1", { agentId: "agent-1" });
 
-    expect(getClientMock).toHaveBeenCalledTimes(16);
+    expect(getClientMock).toHaveBeenCalledTimes(18);
     expect(retrieveAgentMock).toHaveBeenCalledWith("agent-1", {
       include: ["agent.tools"],
     });
+    expect(getMock).toHaveBeenCalledWith("/v1/agents/agent%2F1/secrets");
     expect(updateAgentMock).toHaveBeenCalledWith(
       "agent-1",
       agentUpdateBody,
@@ -275,7 +427,12 @@ describe("APIBackend", () => {
       undefined,
     );
     expect(cancelConversationMock).toHaveBeenCalledWith("conv-1");
-    expect(retrieveRunMock).toHaveBeenCalledWith("run-1");
+    expect(cancelRunMock).toHaveBeenCalledWith("agent-1", {
+      run_ids: ["run-1"],
+    });
+    expect(retrieveRunMock).toHaveBeenCalledWith("run-1", {
+      headers: { "X-Letta-Acting-User-Id": "user-1" },
+    });
     expect(streamRunMessagesMock).toHaveBeenCalledWith(
       "run-1",
       runStreamBody,
@@ -284,5 +441,73 @@ describe("APIBackend", () => {
     expect(forkConversationMock).toHaveBeenCalledWith("conv-1", {
       agentId: "agent-1",
     });
+  });
+
+  test("normalizes descending message cursors to chronological before and after", async () => {
+    const backend = new APIBackend({
+      getClient: getClientMock as unknown as () => Promise<APIClient>,
+      forkConversation: forkConversationMock,
+    });
+
+    await backend.listConversationMessages("conv-1", {
+      before: "message-older-page",
+      order: "desc",
+      limit: 10,
+    });
+    expect(listConversationMessagesMock).toHaveBeenLastCalledWith(
+      "conv-1",
+      {
+        after: "message-older-page",
+        before: undefined,
+        order: "desc",
+        limit: 10,
+      },
+      undefined,
+    );
+
+    await backend.listConversationMessages("conv-1", {
+      before: "message-default-order-page",
+      limit: 10,
+    });
+    expect(listConversationMessagesMock).toHaveBeenLastCalledWith(
+      "conv-1",
+      {
+        after: "message-default-order-page",
+        before: undefined,
+        limit: 10,
+      },
+      undefined,
+    );
+
+    await backend.listConversationMessages("conv-1", {
+      before: "message-older-page",
+      order: "asc",
+      limit: 10,
+    });
+    expect(listConversationMessagesMock).toHaveBeenLastCalledWith(
+      "conv-1",
+      {
+        before: "message-older-page",
+        order: "asc",
+        limit: 10,
+      },
+      undefined,
+    );
+
+    await backend.listConversationMessages("conv-1", {
+      after: "message-newer-page",
+      order: "desc",
+      limit: 10,
+    });
+    expect(listConversationMessagesMock).toHaveBeenLastCalledWith(
+      "conv-1",
+      {
+        after: undefined,
+        before: "message-newer-page",
+        order: "desc",
+        limit: 10,
+      },
+      undefined,
+    );
   });
 });

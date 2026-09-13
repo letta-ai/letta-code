@@ -44,9 +44,13 @@ describe("shared CLI arg schema", () => {
     const interactiveFlags = getFlagsForMode("interactive");
 
     expect(headlessFlags).toContain("memfs-startup");
+    expect(headlessFlags).toContain("stateless");
+    expect(headlessFlags).toContain("ephemeral");
     expect(headlessFlags).not.toContain("resume");
     expect(interactiveFlags).toContain("resume");
     expect(interactiveFlags).not.toContain("memfs-startup");
+    expect(interactiveFlags).not.toContain("stateless");
+    expect(interactiveFlags).not.toContain("ephemeral");
     expect(headlessFlags).toContain("agent");
     expect(interactiveFlags).toContain("agent");
     expect(headlessFlags).toContain("no-mods");
@@ -60,6 +64,9 @@ describe("shared CLI arg schema", () => {
     expect(help).toContain("--no-mods");
     expect(help).toContain("LETTA_DISABLE_MODS=1 letta");
     expect(help).toContain("--memfs-startup <m>");
+    expect(help).toContain("--stateless");
+    expect(help).toContain("--computer <selector>");
+    expect(help).not.toContain("--environment");
     expect(help).toContain("Default: text");
     expect(help).not.toContain("--run");
     expect(help).not.toContain("--dev-backend");
@@ -86,6 +93,26 @@ describe("shared CLI arg schema", () => {
     );
     expect(parsed.values.conversation).toBe("conv-123");
     expect(parsed.positionals.slice(2).join(" ")).toBe("hello");
+  });
+
+  test("accepts computer routing and its legacy environment aliases", () => {
+    const primary = parseCliArgs(
+      ["node", "script", "-p", "hello", "--computer", "office-mac"],
+      true,
+    );
+    expect(primary.values.computer).toBe("office-mac");
+
+    const legacy = parseCliArgs(
+      ["node", "script", "-p", "hello", "--environment", "office-mac"],
+      true,
+    );
+    expect(legacy.values.environment).toBe("office-mac");
+
+    const shortLegacy = parseCliArgs(
+      ["node", "script", "-p", "hello", "--env", "office-mac"],
+      true,
+    );
+    expect(shortLegacy.values.env).toBe("office-mac");
   });
 
   test("recognizes headless-specific startup flags in strict mode", () => {
@@ -150,8 +177,9 @@ describe("shared CLI arg schema", () => {
     expect(parsed.values["no-mods"]).toBe(true);
   });
 
-  test("validates backend mode values", () => {
+  test("normalizes cloud backend mode and preserves the api compatibility alias", () => {
     expect(parseBackendModeFlag(undefined)).toBeUndefined();
+    expect(parseBackendModeFlag("cloud")).toBe("api");
     expect(parseBackendModeFlag("api")).toBe("api");
     expect(parseBackendModeFlag("local")).toBe("local");
     expect(() => parseBackendModeFlag("server")).toThrow(
@@ -159,10 +187,14 @@ describe("shared CLI arg schema", () => {
     );
   });
 
-  test("extracts backend flag before routing subcommands", () => {
+  test("extracts and normalizes backend flags before routing subcommands", () => {
     expect(
       extractBackendFlag(["--backend", "local", "connect", "help"]),
     ).toEqual({ backend: "local", args: ["connect", "help"] });
+    expect(extractBackendFlag(["connect", "help", "--backend=cloud"])).toEqual({
+      backend: "api",
+      args: ["connect", "help"],
+    });
     expect(extractBackendFlag(["connect", "help", "--backend=api"])).toEqual({
       backend: "api",
       args: ["connect", "help"],
@@ -170,6 +202,34 @@ describe("shared CLI arg schema", () => {
     expect(() => extractBackendFlag(["--backend"])).toThrow(
       "Missing value for --backend",
     );
+  });
+
+  test("accepts deprecated --no-memfs as a hidden no-op (version-skew compat)", () => {
+    // Older parents spawn subagents with --no-memfs; after auto-update the
+    // child binary is newer than the running parent (LET-9436). The flag must
+    // parse without error, do nothing, and stay out of help output.
+    const parsed = parseCliArgs(
+      preprocessCliArgs(["node", "script", "-p", "hello", "--no-memfs"]),
+      true,
+    );
+    expect(parsed.values["no-memfs"]).toBe(true);
+    expect(renderCliOptionsHelp()).not.toContain("--no-memfs");
+  });
+
+  test("accepts --stateless for headless existing-agent sessions", () => {
+    const parsed = parseCliArgs(
+      preprocessCliArgs([
+        "node",
+        "script",
+        "--agent",
+        "agent-123",
+        "--stateless",
+        "-p",
+        "hello",
+      ]),
+      true,
+    );
+    expect(parsed.values.stateless).toBe(true);
   });
 
   test("rejects removed system-append flag in strict mode", () => {
@@ -188,21 +248,25 @@ describe("shared CLI arg schema", () => {
     ).toThrow();
   });
 
-  test("treats --import argument as a flag value, not prompt text", () => {
-    const parsed = parseCliArgs(
-      preprocessCliArgs([
-        "node",
-        "script",
-        "-p",
-        "hello",
-        "--import",
-        "@author/agent",
-      ]),
-      true,
-    );
-    expect(parsed.values.import).toBe("@author/agent");
-    expect(parsed.positionals.slice(2).join(" ")).toBe("hello");
-  });
+  test.each(["--import", "--from-af"])(
+    "rejects removed AgentFile flag %s before treating its value as prompt text",
+    (flag) => {
+      for (const promptArgs of [[], ["-p", "hello"]]) {
+        expect(() =>
+          parseCliArgs(
+            preprocessCliArgs([
+              "node",
+              "script",
+              ...promptArgs,
+              flag,
+              "@author/agent",
+            ]),
+            true,
+          ),
+        ).toThrow(`Unknown option '${flag}'`);
+      }
+    },
+  );
 
   test("supports short aliases used by headless and interactive modes", () => {
     const parsed = parseCliArgs(

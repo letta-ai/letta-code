@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isCronPauseCommand,
+  isCronResumeCommand,
+} from "@/websocket/listener/cron-protocol-inbound";
+import {
   isChannelAccountCreateCommand,
   isChannelAccountUpdateCommand,
   isChannelSetConfigCommand,
+  isConnectProviderCommand,
+  isUpdateModelCommand,
   parseServerMessage,
 } from "@/websocket/listener/protocol-inbound";
 
@@ -20,6 +26,278 @@ describe("app-server protocol hard cut", () => {
   });
 });
 
+describe("connect provider protocol", () => {
+  test("accepts completed ChatGPT OAuth credentials", () => {
+    expect(
+      isConnectProviderCommand({
+        type: "connect_provider",
+        request_id: "request-1",
+        target: "local",
+        provider_id: "openai-codex-oauth",
+        provider_name: "chatgpt-work",
+        fields: {},
+        oauth_config: {
+          access_token: "access-token",
+          id_token: "id-token",
+          refresh_token: "refresh-token",
+          account_id: "account-id",
+          expires_at: 1_800_000_000_000,
+        },
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects incomplete ChatGPT OAuth credentials", () => {
+    expect(
+      isConnectProviderCommand({
+        type: "connect_provider",
+        request_id: "request-1",
+        target: "local",
+        provider_id: "openai-codex-oauth",
+        fields: {},
+        oauth_config: {
+          access_token: "access-token",
+          id_token: "id-token",
+          expires_at: 1_800_000_000_000,
+        },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("input protocol-inbound validators", () => {
+  test("accepts create_message with interactive tools excluded", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            exclude_interactive_tools: true,
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("input");
+    if (parsed?.type === "input" && parsed.payload.kind === "create_message") {
+      expect(parsed.payload.exclude_interactive_tools).toBe(true);
+    }
+  });
+
+  test("rejects non-boolean exclude_interactive_tools", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            exclude_interactive_tools: "yes",
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("__invalid_input");
+    if (parsed?.type === "__invalid_input") {
+      expect(parsed.reason).toContain(
+        "exclude_interactive_tools must be boolean",
+      );
+    }
+  });
+
+  test("accepts a teleport continuation without a synthetic user message", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          request_id: "continue-1",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "teleport_continue",
+            teleport_id: "teleport-1",
+            source: {
+              device_id: "source-device",
+              connection_name: "Laptop",
+            },
+            continuation: {
+              approvals: [
+                {
+                  type: "tool",
+                  tool_call_id: "call-1",
+                  status: "success",
+                  tool_return: "done",
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("input");
+    if (parsed?.type === "input") {
+      expect(parsed.payload.kind).toBe("teleport_continue");
+    }
+  });
+
+  test("rejects a teleport continuation without source identity", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "teleport_continue",
+            teleport_id: "teleport-1",
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("__invalid_input");
+  });
+});
+
+describe("teleport protocol-inbound validators", () => {
+  test.each([
+    {
+      type: "teleport_probe",
+      request_id: "probe-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+    },
+    {
+      type: "teleport_request",
+      request_id: "teleport-1",
+      teleport_id: "teleport-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      target: {
+        connection_id: "target-connection",
+        device_id: "target-device",
+        connection_name: "Cloud",
+      },
+    },
+    {
+      type: "teleport_failed",
+      teleport_id: "teleport-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      error: "Target failed to start",
+    },
+  ])("accepts $type", (message) => {
+    expect(parseServerMessage(Buffer.from(JSON.stringify(message)))?.type).toBe(
+      message.type,
+    );
+  });
+});
+
+describe("resume_queue protocol-inbound validators", () => {
+  test("accepts the resume_queue wire shape with and without request_id", () => {
+    const withRequestId = {
+      type: "resume_queue" as const,
+      request_id: "resume-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+    };
+    const withoutRequestId = {
+      type: "resume_queue" as const,
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+    };
+    expect(
+      parseServerMessage(Buffer.from(JSON.stringify(withRequestId))),
+    ).toEqual(withRequestId);
+    expect(
+      parseServerMessage(Buffer.from(JSON.stringify(withoutRequestId))),
+    ).toEqual(withoutRequestId);
+  });
+
+  test("rejects resume_queue without a runtime scope", () => {
+    expect(
+      parseServerMessage(
+        Buffer.from(
+          JSON.stringify({ type: "resume_queue", request_id: "resume-1" }),
+        ),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("cron pause protocol-inbound validators", () => {
+  test("accepts the exact pause and resume wire shapes", () => {
+    const pause = {
+      type: "cron_pause" as const,
+      request_id: "pause-1",
+      task_id: "task-1",
+    };
+    const resume = {
+      type: "cron_resume" as const,
+      request_id: "resume-1",
+      task_id: "task-1",
+      scheduled_for: "2026-08-27T12:00:00.000Z",
+    };
+
+    expect(isCronPauseCommand(pause)).toBe(true);
+    expect(isCronResumeCommand(resume)).toBe(true);
+    expect(parseServerMessage(Buffer.from(JSON.stringify(pause)))).toEqual(
+      pause,
+    );
+    expect(parseServerMessage(Buffer.from(JSON.stringify(resume)))).toEqual(
+      resume,
+    );
+  });
+
+  test("rejects malformed pause and resume commands", () => {
+    expect(
+      isCronPauseCommand({
+        type: "cron_pause",
+        request_id: "pause-1",
+      }),
+    ).toBe(false);
+    expect(
+      isCronResumeCommand({
+        type: "cron_resume",
+        request_id: "resume-1",
+        task_id: "task-1",
+        scheduled_for: null,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("update model protocol-inbound validator", () => {
+  const base = {
+    type: "update_model",
+    request_id: "model-1",
+    runtime: { agent_id: "agent-1", conversation_id: "default" },
+  };
+
+  test("accepts explicit proxy effort and provider Default", () => {
+    expect(
+      isUpdateModelCommand({
+        ...base,
+        payload: { model_handle: "proxy/model", reasoning_effort: "high" },
+      }),
+    ).toBe(true);
+    expect(
+      isUpdateModelCommand({
+        ...base,
+        payload: { model_handle: "proxy/model", reasoning_effort: null },
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects unknown effort values", () => {
+    expect(
+      isUpdateModelCommand({
+        ...base,
+        payload: { model_handle: "proxy/model", reasoning_effort: "ultra" },
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("agent/conversation management protocol-inbound validators", () => {
   test.each([
     {
@@ -27,8 +305,15 @@ describe("agent/conversation management protocol-inbound validators", () => {
       request_id: "r0",
       create_agent: { body: { name: "Agent" }, pin_global: false },
       create_conversation: { body: { summary: "New conversation" } },
+      conversation_source_tags: ["channel:slack"],
       cwd: "/tmp/project",
       mode: "acceptEdits",
+      workspace_sandbox: {
+        root: "/tmp/runs/run-1",
+        isolation_root: "/tmp/runs",
+      },
+      skill_sources: [],
+      preserve_skill_sources: true,
       client_info: { name: "test", title: "Test", version: "1.0.0" },
       external_tools: [
         {
@@ -47,6 +332,35 @@ describe("agent/conversation management protocol-inbound validators", () => {
       type: "external_tool_call_response",
       request_id: "ext-1",
       result: { content: [{ type: "text", text: "ok" }] },
+    },
+    {
+      type: "runtime_external_tools_update",
+      request_id: "tools-1",
+      updates: [
+        {
+          runtimes: [
+            { agent_id: "agent-1", conversation_id: "conv-1" },
+            { agent_id: "agent-1", conversation_id: "conv-2" },
+          ],
+          external_tools: [
+            {
+              tools: [
+                {
+                  name: "MessageChannel",
+                  description: "Deliver a channel message",
+                  parameters: { type: "object", properties: {} },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      type: "create_agent",
+      request_id: "create-1",
+      personality: "tutorial",
+      tags: ["origin:onboarding"] as string[],
     },
     { type: "agent_list", request_id: "r1", query: { limit: 10 } },
     { type: "agent_retrieve", request_id: "r2", agent_id: "agent-1" },
@@ -89,7 +403,7 @@ describe("agent/conversation management protocol-inbound validators", () => {
       type: "conversation_fork",
       request_id: "r11",
       conversation_id: "conv-1",
-      body: { hidden: true },
+      body: { hidden: true, message_id: "msg-1" },
     },
     {
       type: "conversation_messages_list",
@@ -120,7 +434,25 @@ describe("agent/conversation management protocol-inbound validators", () => {
       type: "runtime_start",
       request_id: "r0",
       agent_id: "agent-1",
+      conversation_source_tags: ["channel:slack", 42],
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
       mode: "bad",
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      skill_sources: ["bundled", "invalid"],
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      preserve_skill_sources: "yes",
     },
     {
       type: "runtime_start",
@@ -138,6 +470,41 @@ describe("agent/conversation management protocol-inbound validators", () => {
       type: "external_tool_call_response",
       request_id: "ext-1",
       result: { content: "not-array" },
+    },
+    {
+      type: "runtime_external_tools_update",
+      request_id: "tools-empty-runtime-list",
+      updates: [{ runtimes: [], external_tools: [] }],
+    },
+    {
+      type: "runtime_external_tools_update",
+      request_id: "tools-duplicate-runtime",
+      updates: [
+        {
+          runtimes: [{ agent_id: "agent-1", conversation_id: "conv-1" }],
+          external_tools: [],
+        },
+        {
+          runtimes: [{ agent_id: "agent-1", conversation_id: "conv-1" }],
+          external_tools: [],
+        },
+      ],
+    },
+    {
+      type: "runtime_external_tools_update",
+      request_id: "tools-invalid-definition",
+      updates: [
+        {
+          runtimes: [{ agent_id: "agent-1", conversation_id: "conv-1" }],
+          external_tools: [{ tools: [{ name: "missing schema" }] }],
+        },
+      ],
+    },
+    {
+      type: "create_agent",
+      request_id: "create-bad-tags",
+      personality: "tutorial",
+      tags: ["origin:onboarding", 1],
     },
     { type: "agent_list", request_id: "r1", query: "bad" },
     { type: "agent_retrieve", request_id: "r2" },
@@ -159,6 +526,24 @@ describe("agent/conversation management protocol-inbound validators", () => {
       request_id: "r9",
       conversation_id: "conv-1",
       body: [],
+    },
+    {
+      type: "conversation_fork",
+      request_id: "r9",
+      conversation_id: "conv-1",
+      body: { message_id: 123 },
+    },
+    {
+      type: "conversation_fork",
+      request_id: "r9",
+      conversation_id: "conv-1",
+      body: { message_id: "" },
+    },
+    {
+      type: "conversation_fork",
+      request_id: "r9",
+      conversation_id: "conv-1",
+      body: { hidden: "yes" },
     },
     {
       type: "conversation_messages_list",
@@ -223,7 +608,7 @@ describe("discord protocol-inbound validators", () => {
     expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });
 
-  test("discord account create rejects non-string allowed_channels", () => {
+  test("defers non-string Discord allowed_channels validation to the gateway", () => {
     const msg = {
       type: "channel_account_create",
       channel_id: "discord",
@@ -232,29 +617,29 @@ describe("discord protocol-inbound validators", () => {
         config: { token: "test-token", allowed_channels: ["channel-1", 42] },
       },
     };
-    expect(isChannelAccountCreateCommand(msg)).toBe(false);
+    expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });
 
-  test("discord account create rejects invalid default_permission_mode", () => {
+  test("defers Discord permission-mode validation to the gateway", () => {
     const msg = {
       type: "channel_account_create",
       channel_id: "discord",
       request_id: "r1",
       account: {
-        config: { token: "test-token", default_permission_mode: "memory" },
+        config: { token: "test-token", default_permission_mode: "banana" },
       },
     };
-    expect(isChannelAccountCreateCommand(msg)).toBe(false);
+    expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });
 
-  test("discord account create rejects unknown nested plugin config fields", () => {
+  test("defers unknown nested Discord fields to the gateway", () => {
     const msg = {
       type: "channel_account_create",
       channel_id: "discord",
       request_id: "r1",
       account: { config: { bot_token: "xoxb-test" } },
     };
-    expect(isChannelAccountCreateCommand(msg)).toBe(false);
+    expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });
 
   test("discord account create rejects legacy top-level plugin fields", () => {

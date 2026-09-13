@@ -1,5 +1,5 @@
 import { Box } from "ink";
-import { Fragment, memo, type ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { getSubagentByToolCallId } from "@/agent/subagent-state.js";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import {
@@ -38,64 +38,10 @@ function isQuestionTool(name: string): boolean {
   return name === "AskUserQuestion";
 }
 
-/**
- * Colorize tool args string with file paths, numbers, and labels.
- * Regex-based tokenizer that applies shell syntax palette colors.
- */
-function colorizeArgs(argsStr: string): ReactNode {
-  if (!argsStr) return null;
-
-  const palette = colors.shellSyntax;
-  const parts: ReactNode[] = [];
-  let lastIndex = 0;
-  let key = 0;
-
-  // Group 1: paths containing / (e.g. src/cli/foo.tsx, **/*.ts)
-  // Group 2: filenames with extension (e.g. foo.tsx, package.json)
-  // Group 3: labels before : (e.g. offset, limit)
-  // Group 4: standalone numbers (e.g. 50, 10)
-  const re =
-    /([\w.*?\-@~/]+\/[\w.*?\-@~/]*)|((?<=[(\s,])[\w.-]+\.\w{1,5}(?=[)\s,]|$))|(\w+)(?=\s*:)|(\b\d+\b)/g;
-
-  for (let m = re.exec(argsStr); m !== null; m = re.exec(argsStr)) {
-    if (m.index > lastIndex) {
-      parts.push(
-        <Fragment key={key++}>{argsStr.slice(lastIndex, m.index)}</Fragment>,
-      );
-    }
-
-    const color = m[1]
-      ? palette.string // path with /
-      : m[2]
-        ? palette.string // filename.ext
-        : m[3]
-          ? palette.comment // label (dimmed)
-          : palette.number; // number
-
-    parts.push(
-      <Text key={key++} color={color}>
-        {m[0]}
-      </Text>,
-    );
-    lastIndex = m.index + m[0].length;
-  }
-
-  if (lastIndex < argsStr.length) {
-    parts.push(<Fragment key={key++}>{argsStr.slice(lastIndex)}</Fragment>);
-  }
-
-  return <>{parts}</>;
-}
-
 import type { StreamingState } from "@/cli/helpers/accumulator";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
-import { BlinkDot } from "./BlinkDot.js";
 import { CollapsedOutputDisplay } from "./CollapsedOutputDisplay";
-import {
-  CreateWorktreeResultRenderer,
-  parseCreateWorktreeResult,
-} from "./CreateWorktreeResultRenderer.js";
 import { colors } from "./colors.js";
 import {
   EditRenderer,
@@ -105,6 +51,10 @@ import {
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { MemoryDiffRenderer } from "./MemoryDiffRenderer.js";
 import { PlanRenderer } from "./PlanRenderer.js";
+import {
+  parseSendAgentMessageDisplay,
+  SendAgentMessageRenderer,
+} from "./SendAgentMessageRenderer";
 import { StreamingOutputDisplay } from "./StreamingOutputDisplay";
 import {
   clipStyledSpans,
@@ -112,6 +62,11 @@ import {
   type StyledSpan,
 } from "./SyntaxHighlightedCommand";
 import { TodoRenderer } from "./TodoRenderer.js";
+import { colorizeArgs, ToolCallHeader } from "./ToolCallHeader";
+import {
+  hasWorktreeResultRenderer,
+  WorktreeToolResult,
+} from "./WorktreeResultRenderer.js";
 
 const LIVE_SHELL_ARGS_MAX_LINES = 2;
 
@@ -193,6 +148,19 @@ export const ToolCallMessage = memo(
         // Finished Task tools render here (both success and error)
       }
 
+      if (rawName === "SendAgentMessage") {
+        const display = parseSendAgentMessageDisplay(line);
+        if (display) {
+          return (
+            <SendAgentMessageRenderer
+              display={display}
+              phase={line.phase}
+              isStreaming={isStreaming}
+            />
+          );
+        }
+      }
+
       // Apply tool name remapping
       let displayName = getDisplayToolName(rawName);
 
@@ -232,6 +200,7 @@ export const ToolCallMessage = memo(
       let args: ReactNode = null;
       let shellCommand: string | null = null;
       let shellSemanticKind: "read" | "list" | "search" | "run" | null = null;
+      let hasShellDescription = false;
       if (!isQuestionTool(rawName)) {
         const parseArgs = (): {
           formatted: ReturnType<typeof formatArgsDisplay> | null;
@@ -277,7 +246,13 @@ export const ToolCallMessage = memo(
           if (formattedArgs.shellSemantic) {
             shellSemanticKind = formattedArgs.shellSemantic.kind;
             displayName = formattedArgs.shellSemantic.label;
-            if (formattedArgs.shellSemantic.kind === "run") {
+            hasShellDescription =
+              typeof formattedArgs.parsed.description === "string" &&
+              formattedArgs.parsed.description.trim().length > 0;
+            if (
+              formattedArgs.shellSemantic.kind === "run" &&
+              !hasShellDescription
+            ) {
               shellCommand = formattedArgs.shellSemantic.rawCommand;
             }
           } else if (formattedArgs.displayName) {
@@ -301,6 +276,7 @@ export const ToolCallMessage = memo(
         !shellCommand &&
         isShellTool(rawName) &&
         argsText.trim() &&
+        !hasShellDescription &&
         (shellSemanticKind === null || shellSemanticKind === "run")
       ) {
         try {
@@ -336,28 +312,6 @@ export const ToolCallMessage = memo(
         shellFirstLineSpans = clippedFirstLine.spans;
         shellContinuationLines = visibleLines.slice(1);
       }
-
-      // If name exceeds available width, fall back to simple wrapped rendering
-      const fallback = displayName.length >= rightWidth;
-
-      const dotColor = (() => {
-        switch (line.phase) {
-          case "streaming":
-            return colors.tool.streaming;
-          case "ready":
-            return colors.tool.pending;
-          case "running":
-            return colors.tool.running;
-          case "finished":
-            return line.resultOk === false
-              ? colors.tool.error
-              : colors.tool.completed;
-          default:
-            return undefined;
-        }
-      })();
-      const dotShouldAnimate =
-        line.phase === "running" || (line.phase === "ready" && !isStreaming);
 
       // Extract display text from tool result (handles JSON responses)
       const extractMessageFromResult = (text: string): string => {
@@ -577,12 +531,12 @@ export const ToolCallMessage = memo(
           // Fall through to regular handling if parsing fails
         }
 
-        // Check if this is CreateWorktree - show a compact structured summary
-        // instead of the full instructional tool return.
-        if (rawName === "CreateWorktree" && line.resultOk !== false) {
-          if (parseCreateWorktreeResult(extractedText)) {
-            return <CreateWorktreeResultRenderer resultText={extractedText} />;
-          }
+        // Worktree tools show a compact structured summary instead of the
+        // full instructional tool return.
+        if (hasWorktreeResultRenderer(rawName, extractedText, line.resultOk)) {
+          return (
+            <WorktreeToolResult toolName={rawName} resultText={extractedText} />
+          );
         }
 
         // Check if this is a file edit tool - show diff instead of success message
@@ -964,60 +918,18 @@ export const ToolCallMessage = memo(
 
       return (
         <Box flexDirection="column">
-          {/* Tool call with exact wrapping logic from old codebase */}
-          <Box flexDirection="row">
-            <Box width={2} flexShrink={0}>
-              <BlinkDot color={dotColor} shouldAnimate={dotShouldAnimate} />
-              <Text></Text>
-            </Box>
-            <Box flexGrow={1} width={rightWidth}>
-              {fallback ? (
-                <Text wrap="wrap">
-                  {isMemoryTool(rawName) ? (
-                    <>
-                      <Text bold color={colors.tool.memoryName}>
-                        {displayName}{" "}
-                      </Text>
-                      {args}
-                    </>
-                  ) : (
-                    <>
-                      <Text bold>{displayName} </Text>
-                      {args}
-                    </>
-                  )}
-                </Text>
-              ) : (
-                <Box flexDirection="row">
-                  <Text
-                    bold
-                    color={
-                      isMemoryTool(rawName) ? colors.tool.memoryName : undefined
-                    }
-                  >
-                    {displayName}{" "}
-                  </Text>
-                  {shellFirstLineSpans ? (
-                    <Box
-                      flexGrow={1}
-                      width={Math.max(0, rightWidth - displayName.length - 1)}
-                    >
-                      <Text color={colors.shellSyntax.text}>
-                        {renderSpans(shellFirstLineSpans)}
-                      </Text>
-                    </Box>
-                  ) : args ? (
-                    <Box
-                      flexGrow={1}
-                      width={Math.max(0, rightWidth - displayName.length - 1)}
-                    >
-                      <Text wrap="wrap">{args}</Text>
-                    </Box>
-                  ) : null}
-                </Box>
-              )}
-            </Box>
-          </Box>
+          <ToolCallHeader
+            name={displayName}
+            args={args}
+            shellArgs={
+              shellFirstLineSpans ? renderSpans(shellFirstLineSpans) : undefined
+            }
+            columns={columns}
+            phase={line.phase}
+            resultOk={line.resultOk}
+            isStreaming={isStreaming}
+            isMemory={isMemoryTool(rawName)}
+          />
 
           {/* Shell command continuation lines with │ prefix */}
           {shellContinuationLines.map((spans) => {

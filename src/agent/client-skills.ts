@@ -1,8 +1,16 @@
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
+import type { AvailableSkillSummary } from "@/types/protocol_v2";
+import type { AttachedAgentRepository } from "./attached-repositories";
+import { ClientSkillsWatcher } from "./client-skills-watcher";
 import { getSkillSources, getSkillsDirectory } from "./context";
 import { resolveScopedMemoryDir } from "./memory-filesystem";
+import {
+  discoverSharedMemorySkills,
+  invalidateAttachedRepositoriesCache,
+  resolveSharedMemorySkillsContext,
+} from "./shared-memory-skills";
 import {
   compareSkills,
   discoverSkills,
@@ -10,6 +18,7 @@ import {
   getAgentSkillsDir,
   isModelInvocableSkill,
   isSkillAvailableForAgent,
+  PROJECT_SKILLS_DIR,
   SKILLS_DIR,
   type Skill,
   type SkillDiscoveryError,
@@ -28,6 +37,10 @@ import {
  * deduplication (same pattern as secretsStore).
  */
 const CLIENT_SKILLS_CACHE_KEY = Symbol.for("@letta/clientSkillsCache");
+const CLIENT_SKILLS_CACHE_GENERATION_KEY = Symbol.for(
+  "@letta/clientSkillsCacheGeneration",
+);
+const CLIENT_SKILLS_WATCHER_KEY = Symbol.for("@letta/clientSkillsWatcher");
 
 interface CacheEntry {
   key: string;
@@ -40,12 +53,44 @@ type GlobalWithClientSkillsCache = typeof globalThis & {
   [key: symbol]: ClientSkillsCache | undefined;
 };
 
+type GlobalWithClientSkillsState = typeof globalThis & {
+  [CLIENT_SKILLS_CACHE_GENERATION_KEY]?: number;
+  [CLIENT_SKILLS_WATCHER_KEY]?: ClientSkillsWatcher;
+};
+
 function getCache(): ClientSkillsCache {
   const global = globalThis as GlobalWithClientSkillsCache;
   if (!global[CLIENT_SKILLS_CACHE_KEY]) {
     global[CLIENT_SKILLS_CACHE_KEY] = new Map();
   }
   return global[CLIENT_SKILLS_CACHE_KEY] as ClientSkillsCache;
+}
+
+function getCacheGeneration(): number {
+  const global = globalThis as GlobalWithClientSkillsState;
+  return global[CLIENT_SKILLS_CACHE_GENERATION_KEY] ?? 0;
+}
+
+function advanceCacheGeneration(): void {
+  const global = globalThis as GlobalWithClientSkillsState;
+  global[CLIENT_SKILLS_CACHE_GENERATION_KEY] = getCacheGeneration() + 1;
+}
+
+function shouldStartSkillWatchers(): boolean {
+  return (
+    process.env.NODE_ENV !== "test" &&
+    process.env.LETTA_DISABLE_SKILL_WATCHERS !== "1"
+  );
+}
+
+function getWatcher(): ClientSkillsWatcher {
+  const global = globalThis as GlobalWithClientSkillsState;
+  if (!global[CLIENT_SKILLS_WATCHER_KEY]) {
+    global[CLIENT_SKILLS_WATCHER_KEY] = new ClientSkillsWatcher(() => {
+      invalidateClientSkillsPayloadCache();
+    });
+  }
+  return global[CLIENT_SKILLS_WATCHER_KEY];
 }
 
 /**
@@ -55,113 +100,57 @@ function getCache(): ClientSkillsCache {
  *  - agentId
  *  - sorted skill sources
  *  - cwd (affects `.agents/skills` and `.skills` resolution)
- *  - legacy skills directory
- *  - primary project skills directory
+ *  - configured skills directory
+ *  - legacy and primary project skills directories
  *  - resolved memory skills dirs (scoped or env-fallback)
+ *  - attached shared-memory skill dirs and attachment-resolution errors
  *
- * This is conservative: any change in these inputs produces a cache miss,
- * ensuring correctness while still caching the common case where nothing
- * changes between `sendMessageStream` calls.
+ * Filesystem changes invalidate this cache through ClientSkillsWatcher rather
+ * than adding a recursive filesystem revision to this request-time key.
  */
 function computeCacheKey(components: {
   agentId: string | undefined;
   skillSources: SkillSource[];
   cwd: string;
+  configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
   memorySkillsDirs: string[];
-  skillRootRevisions: string[];
+  sharedMemorySkillsDirs: string[];
+  sharedMemoryErrors: SkillDiscoveryError[];
 }): string {
   return [
     components.agentId ?? "",
     [...components.skillSources].sort().join(","),
     components.cwd,
+    components.configuredSkillsDirectory ?? "",
     components.legacySkillsDirectory,
     components.primaryProjectSkillsDirectory,
     [...components.memorySkillsDirs].sort().join(","),
-    [...components.skillRootRevisions].sort().join(","),
+    [...components.sharedMemorySkillsDirs].sort().join(","),
+    components.sharedMemoryErrors
+      .map((error) => `${error.path}:${error.message}`)
+      .sort()
+      .join(","),
   ].join("|");
 }
 
-function getSkillDirectoryRevision(
-  root: string,
-  visitedRealPaths: Set<string> = new Set(),
-): string {
-  const normalizedRoot = root.trim();
-  if (normalizedRoot.length === 0) {
-    return "empty";
-  }
-
-  try {
-    const rootStat = statSync(normalizedRoot);
-    const realPath = realpathSync(normalizedRoot);
-    if (visitedRealPaths.has(realPath)) {
-      return `${normalizedRoot}:cycle`;
-    }
-    visitedRealPaths.add(realPath);
-
-    if (!rootStat.isDirectory()) {
-      return `${normalizedRoot}:file:${rootStat.mtimeMs}:${rootStat.size}`;
-    }
-
-    const entries = readdirSync(normalizedRoot, { withFileTypes: true }).sort(
-      (a, b) => a.name.localeCompare(b.name),
-    );
-    const parts = [`${realPath}:dir:${rootStat.mtimeMs}:${rootStat.size}`];
-
-    for (const entry of entries) {
-      const fullPath = join(normalizedRoot, entry.name);
-      try {
-        if (entry.isDirectory()) {
-          parts.push(
-            `${entry.name}/(${getSkillDirectoryRevision(fullPath, visitedRealPaths)})`,
-          );
-          continue;
-        }
-
-        const isSkillFile = entry.name.toUpperCase() === "SKILL.MD";
-        if (entry.isSymbolicLink()) {
-          const targetStat = statSync(fullPath);
-          if (targetStat.isDirectory()) {
-            parts.push(
-              `${entry.name}@(${getSkillDirectoryRevision(fullPath, visitedRealPaths)})`,
-            );
-          } else if (isSkillFile) {
-            parts.push(
-              `${entry.name}:${targetStat.mtimeMs}:${targetStat.size}`,
-            );
-          }
-          continue;
-        }
-
-        if (entry.isFile() && isSkillFile) {
-          const fileStat = statSync(fullPath);
-          parts.push(`${entry.name}:${fileStat.mtimeMs}:${fileStat.size}`);
-        }
-      } catch (error) {
-        parts.push(
-          `${entry.name}:error:${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-
-    return parts.join(",");
-  } catch (error) {
-    return `${normalizedRoot}:missing:${error instanceof Error ? error.message : String(error)}`;
-  }
-}
-
-function getSkillRootRevisions(components: {
+function getSkillRoots(components: {
   agentId: string | undefined;
   skillSources: SkillSource[];
+  configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
   memorySkillsDirs: string[];
+  sharedMemorySkillsDirs: string[];
 }): string[] {
   const roots = new Set<string>();
   const sourceSet = new Set(components.skillSources);
 
   if (sourceSet.has("project")) {
+    if (components.configuredSkillsDirectory) {
+      roots.add(components.configuredSkillsDirectory);
+    }
     roots.add(components.legacySkillsDirectory);
     roots.add(components.primaryProjectSkillsDirectory);
   }
@@ -176,9 +165,12 @@ function getSkillRootRevisions(components: {
     for (const dir of components.memorySkillsDirs) {
       roots.add(dir);
     }
+    for (const dir of components.sharedMemorySkillsDirs) {
+      roots.add(dir);
+    }
   }
 
-  return [...roots].map((root) => `${root}=${getSkillDirectoryRevision(root)}`);
+  return [...roots];
 }
 
 /**
@@ -190,6 +182,7 @@ function cloneResult(
 ): BuildClientSkillsPayloadResult {
   return {
     clientSkills: result.clientSkills.map((s) => ({ ...s })),
+    availableSkills: result.availableSkills.map((skill) => ({ ...skill })),
     skillPathById: { ...result.skillPathById },
     errors: result.errors.map((e) => ({ ...e })),
   };
@@ -202,7 +195,9 @@ function cloneResult(
  * (e.g. cwd switch, env var change, or global skill source update).
  */
 export function invalidateClientSkillsPayloadCache(): void {
+  advanceCacheGeneration();
   getCache().clear();
+  invalidateAttachedRepositoriesCache();
 }
 
 /**
@@ -215,6 +210,7 @@ export function invalidateClientSkillsPayloadCache(): void {
 export function invalidateClientSkillsPayloadCacheForAgent(
   agentId: string,
 ): void {
+  advanceCacheGeneration();
   const cache = getCache();
   for (const [k, entry] of cache) {
     // The agentId is the first component of the key before the first "|".
@@ -223,6 +219,62 @@ export function invalidateClientSkillsPayloadCacheForAgent(
       cache.delete(k);
     }
   }
+  invalidateAttachedRepositoriesCache(agentId);
+}
+
+/** Metadata-only reminder for changes since a conversation's last accepted send. */
+export function buildClientSkillsUpdateReminder(
+  previous: BuildClientSkillsPayloadResult["clientSkills"] | undefined,
+  current: BuildClientSkillsPayloadResult["clientSkills"],
+): string | null {
+  // The initial request already supplies the complete catalog in client_skills.
+  if (!previous) return null;
+  const previousByName = new Map(previous.map((skill) => [skill.name, skill]));
+  const currentNames = new Set(current.map((skill) => skill.name));
+  const changed = current.filter((skill) => {
+    const old = previousByName.get(skill.name);
+    return (
+      !old ||
+      old.description !== skill.description ||
+      old.location !== skill.location
+    );
+  });
+  const removed = previous
+    .filter((skill) => !currentNames.has(skill.name))
+    .map((skill) => skill.name);
+  if (changed.length === 0 && removed.length === 0) return null;
+
+  const escapeXml = (text: string): string =>
+    text
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#x27;");
+  // Keep this metadata-only. Skill bodies stay lazy-loaded through Skill.
+  return [
+    "<system-reminder>",
+    ...(changed.length > 0
+      ? [
+          "Additional skills are now available. These supplement the skills already listed in your context:",
+          "<available_skills>",
+          ...changed.flatMap((skill) => [
+            "  <skill>",
+            `    <name>${escapeXml(skill.name)}</name>`,
+            `    <description>${escapeXml(skill.description)}</description>`,
+            "  </skill>",
+          ]),
+          "</available_skills>",
+        ]
+      : []),
+    ...(removed.length > 0
+      ? [
+          "Skills no longer available:",
+          ...removed.map((name) => `- ${escapeXml(name)}`),
+        ]
+      : []),
+    "</system-reminder>",
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -262,8 +314,8 @@ async function discoverMemorySkills(
   for (const dir of getMemorySkillsDirs(agentId)) {
     try {
       // Reuse the canonical skill parser by scanning this path as a project scope.
-      // We remap source to "agent" because memory skill precedence should be:
-      // project > agent > memory > global > bundled.
+      // We remap source to "agent" so agent memory stays ahead of attached
+      // shared memory, global skills, and bundled skills.
       const discovery = await discoverSkills(dir, undefined, {
         sources: ["project"],
         skipBundled: true,
@@ -301,14 +353,17 @@ export type ClientSkill = NonNullable<
 
 export interface BuildClientSkillsPayloadOptions {
   agentId?: string;
+  workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
+  attachedRepositories?: readonly AttachedAgentRepository[];
   discoverSkillsFn?: typeof discoverSkills;
   logger?: (message: string) => void;
 }
 
 export interface BuildClientSkillsPayloadResult {
   clientSkills: NonNullable<ConversationMessageCreateParams["client_skills"]>;
+  availableSkills: AvailableSkillSummary[];
   skillPathById: Record<string, string>;
   errors: SkillDiscoveryError[];
 }
@@ -328,32 +383,46 @@ function toClientSkill(skill: Skill): ClientSkill {
 function resolveSkillDiscoveryContext(
   options: BuildClientSkillsPayloadOptions,
 ): {
+  workingDirectory: string;
+  configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
+  primaryProjectSkillsDirectory: string;
   skillSources: SkillSource[];
 } {
-  const legacySkillsDirectory =
-    options.skillsDirectory ??
-    getSkillsDirectory() ??
-    join(process.cwd(), SKILLS_DIR);
+  const workingDirectory = options.workingDirectory ?? process.cwd();
+  const configuredSkillsDirectory =
+    options.skillsDirectory ?? getSkillsDirectory();
+  const legacySkillsDirectory = join(workingDirectory, SKILLS_DIR);
+  const primaryProjectSkillsDirectory = join(
+    workingDirectory,
+    PROJECT_SKILLS_DIR,
+  );
   const skillSources = options.skillSources ?? getSkillSources();
-  return { legacySkillsDirectory, skillSources };
-}
-
-function getPrimaryProjectSkillsDirectory(): string {
-  return join(process.cwd(), ".agents", "skills");
+  return {
+    workingDirectory,
+    configuredSkillsDirectory,
+    legacySkillsDirectory,
+    primaryProjectSkillsDirectory,
+    skillSources,
+  };
 }
 
 export interface DiscoverClientSideSkillsOptions {
   agentId?: string;
+  workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
+  attachedRepositories?: readonly AttachedAgentRepository[];
   discoverSkillsFn?: typeof discoverSkills;
 }
 
 interface CollectClientSideSkillsOptions
   extends DiscoverClientSideSkillsOptions {
+  configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
+  sharedMemorySkillsDirs: string[];
+  sharedMemoryErrors: SkillDiscoveryError[];
 }
 
 async function collectClientSideSkills(
@@ -361,7 +430,7 @@ async function collectClientSideSkills(
 ): Promise<SkillDiscoveryResult> {
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
   const skillsById = new Map<string, Skill>();
-  const errors: SkillDiscoveryError[] = [];
+  const errors: SkillDiscoveryError[] = [...options.sharedMemoryErrors];
 
   const nonProjectSources =
     options.skillSources?.filter(
@@ -369,9 +438,21 @@ async function collectClientSideSkills(
     ) ?? [];
 
   const discoveryRuns: Array<{ path: string; sources: SkillSource[] }> = [];
+  const discoveryRunKeys = new Set<string>();
+  const addDiscoveryRun = (run: {
+    path: string;
+    sources: SkillSource[];
+  }): void => {
+    const key = `${resolve(run.path)}|${[...run.sources].sort().join(",")}`;
+    if (discoveryRunKeys.has(key)) {
+      return;
+    }
+    discoveryRunKeys.add(key);
+    discoveryRuns.push(run);
+  };
 
   if (nonProjectSources.length > 0) {
-    discoveryRuns.push({
+    addDiscoveryRun({
       path: options.primaryProjectSkillsDirectory,
       sources: nonProjectSources,
     });
@@ -382,16 +463,28 @@ async function collectClientSideSkills(
 
   if (
     includeProjectSource &&
+    options.configuredSkillsDirectory &&
+    options.configuredSkillsDirectory !== options.legacySkillsDirectory &&
+    options.configuredSkillsDirectory !== options.primaryProjectSkillsDirectory
+  ) {
+    addDiscoveryRun({
+      path: options.configuredSkillsDirectory,
+      sources: ["project"],
+    });
+  }
+
+  if (
+    includeProjectSource &&
     options.legacySkillsDirectory !== options.primaryProjectSkillsDirectory
   ) {
-    discoveryRuns.push({
+    addDiscoveryRun({
       path: options.legacySkillsDirectory,
       sources: ["project"],
     });
   }
 
   if (includeProjectSource) {
-    discoveryRuns.push({
+    addDiscoveryRun({
       path: options.primaryProjectSkillsDirectory,
       sources: ["project"],
     });
@@ -430,6 +523,21 @@ async function collectClientSideSkills(
       }
       skillsById.set(skill.id, skill);
     }
+
+    const sharedMemoryDiscovery = await discoverSharedMemorySkills(
+      options.sharedMemorySkillsDirs,
+    );
+    errors.push(...sharedMemoryDiscovery.errors);
+    for (const skill of sharedMemoryDiscovery.skills) {
+      if (!isSkillAvailableForAgent(skill, options.agentId)) {
+        continue;
+      }
+      const existing = skillsById.get(skill.id);
+      if (existing?.source === "project" || existing?.source === "agent") {
+        continue;
+      }
+      skillsById.set(skill.id, skill);
+    }
   }
 
   return {
@@ -446,13 +554,25 @@ async function collectClientSideSkills(
 export async function discoverClientSideSkills(
   options: DiscoverClientSideSkillsOptions = {},
 ): Promise<SkillDiscoveryResult> {
-  const { legacySkillsDirectory, skillSources } =
-    resolveSkillDiscoveryContext(options);
+  const {
+    configuredSkillsDirectory,
+    legacySkillsDirectory,
+    primaryProjectSkillsDirectory,
+    skillSources,
+  } = resolveSkillDiscoveryContext(options);
+  const sharedMemoryContext = await resolveSharedMemorySkillsContext({
+    agentId: options.agentId,
+    skillSources,
+    attachedRepositories: options.attachedRepositories,
+  });
   return collectClientSideSkills({
     ...options,
+    configuredSkillsDirectory,
     legacySkillsDirectory,
     skillSources,
-    primaryProjectSkillsDirectory: getPrimaryProjectSkillsDirectory(),
+    primaryProjectSkillsDirectory,
+    sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
+    sharedMemoryErrors: sharedMemoryContext.errors,
   });
 }
 
@@ -474,31 +594,47 @@ export async function discoverClientSideSkills(
 export async function buildClientSkillsPayload(
   options: BuildClientSkillsPayloadOptions = {},
 ): Promise<BuildClientSkillsPayloadResult> {
-  const { legacySkillsDirectory, skillSources } =
-    resolveSkillDiscoveryContext(options);
+  const {
+    workingDirectory,
+    configuredSkillsDirectory,
+    legacySkillsDirectory,
+    primaryProjectSkillsDirectory,
+    skillSources,
+  } = resolveSkillDiscoveryContext(options);
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
 
   // When a custom discoverSkillsFn is provided (tests / DI), bypass the cache
   // so the injected function is always called.
   const useCache = !options.discoverSkillsFn;
 
-  const cwd = process.cwd();
-  const primaryProjectSkillsDirectory = getPrimaryProjectSkillsDirectory();
   const memorySkillsDirs = getMemorySkillsDirs(options.agentId);
-  const cacheComponents = {
+  const sharedMemoryContext = await resolveSharedMemorySkillsContext({
     agentId: options.agentId,
     skillSources,
-    cwd,
+    attachedRepositories: options.attachedRepositories,
+  });
+  const skillRoots = getSkillRoots({
+    agentId: options.agentId,
+    skillSources,
+    configuredSkillsDirectory,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     memorySkillsDirs,
-    skillRootRevisions: getSkillRootRevisions({
-      agentId: options.agentId,
-      skillSources,
-      legacySkillsDirectory,
-      primaryProjectSkillsDirectory,
-      memorySkillsDirs,
-    }),
+    sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
+  });
+  if (useCache && shouldStartSkillWatchers()) {
+    getWatcher().ensureRoots(skillRoots);
+  }
+  const cacheComponents = {
+    agentId: options.agentId,
+    skillSources,
+    cwd: workingDirectory,
+    configuredSkillsDirectory,
+    legacySkillsDirectory,
+    primaryProjectSkillsDirectory,
+    memorySkillsDirs,
+    sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
+    sharedMemoryErrors: sharedMemoryContext.errors,
   };
   const cacheKey = computeCacheKey(cacheComponents);
 
@@ -510,11 +646,15 @@ export async function buildClientSkillsPayload(
     }
   }
 
+  const generationBeforeDiscovery = getCacheGeneration();
   const discovery = await collectClientSideSkills({
     ...options,
+    configuredSkillsDirectory,
     legacySkillsDirectory,
     skillSources,
     primaryProjectSkillsDirectory,
+    sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
+    sharedMemoryErrors: sharedMemoryContext.errors,
     discoverSkillsFn,
   });
   const errors = discovery.errors;
@@ -532,6 +672,13 @@ export async function buildClientSkillsPayload(
 
   const result: BuildClientSkillsPayloadResult = {
     clientSkills: sortedSkills.map(toClientSkill),
+    availableSkills: sortedSkills.map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      path: skill.path,
+      source: skill.source,
+    })),
     skillPathById: Object.fromEntries(
       sortedSkills
         .filter(
@@ -542,7 +689,7 @@ export async function buildClientSkillsPayload(
     errors,
   };
 
-  if (useCache) {
+  if (useCache && generationBeforeDiscovery === getCacheGeneration()) {
     getCache().set(cacheKey, { key: cacheKey, result: cloneResult(result) });
   }
 

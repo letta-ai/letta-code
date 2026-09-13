@@ -46,7 +46,11 @@ export const AssistantMessage = memo(({ line }: { line: AssistantLine }) => {
         <Text>{line.isContinuation ? " " : CLI_GLYPHS.bullet}</Text>
       </Box>
       <Box flexGrow={1} width={contentWidth}>
-        <MarkdownDisplay text={normalizedText} hangingIndent={0} />
+        <MarkdownDisplay
+          text={normalizedText}
+          hangingIndent={0}
+          contentWidth={contentWidth}
+        />
       </Box>
     </Box>
   );

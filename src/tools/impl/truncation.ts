@@ -12,15 +12,26 @@ export const LIMITS = {
   // Command output limits
   BASH_OUTPUT_CHARS: 30_000, // 30K characters for bash/shell output
   TASK_OUTPUT_CHARS: 30_000, // 30K characters for subagent task output
+  // Background shell completion notifications are injected into the agent's
+  // context unprompted, so they get a tighter budget than a tool return the
+  // agent actually asked for. The full transcript stays in the output file.
+  BASH_NOTIFICATION_CHARS: 10_000,
 
   // File reading limits
   READ_MAX_LINES: 2_000, // Max lines per file read
   READ_MAX_CHARS_PER_LINE: 2_000, // Max characters per line
+  READ_OUTPUT_CHARS: 30_000, // 30K total characters for file read output
 
   // Search/discovery limits
   GREP_OUTPUT_CHARS: 10_000, // Max characters for grep results
   GLOB_MAX_FILES: 2_000, // Max number of file paths
   LS_MAX_ENTRIES: 1_000, // Max directory entries
+
+  // Backstop for any model-facing tool return that doesn't apply its own
+  // clamp (MCP/external tools, mod tools, item-count-limited tools, etc.).
+  // Slightly above BASH_OUTPUT_CHARS so outputs already clamped by a tool
+  // (30K + truncation notice) pass through unchanged.
+  TOOL_RETURN_MAX_CHARS: 32_000,
 } as const;
 
 /**
@@ -33,6 +44,8 @@ export interface TruncationOptions {
   toolName?: string;
   /** Whether to use middle truncation (keep beginning and end) */
   useMiddleTruncation?: boolean;
+  /** Secret values available to this tool invocation */
+  secrets?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -62,6 +75,7 @@ export function truncateByChars(
         text,
         options.workingDirectory,
         options.toolName ?? toolName,
+        options.secrets,
       );
     } catch (error) {
       // Silently fail if overflow file creation fails
@@ -165,6 +179,7 @@ export function truncateByLines(
         text,
         options.workingDirectory,
         options.toolName ?? toolName,
+        options.secrets,
       );
     } catch (error) {
       // Silently fail if overflow file creation fails
@@ -248,6 +263,7 @@ export function truncateArray<T>(
         fullContent,
         options.workingDirectory,
         options.toolName ?? toolName,
+        options.secrets,
       );
     } catch (error) {
       // Silently fail if overflow file creation fails

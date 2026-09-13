@@ -51,6 +51,8 @@ describe("memoryReminder", () => {
     expect(getReflectionSettings()).toEqual({
       trigger: "compaction-event",
       stepCount: 33,
+      merge: "auto",
+      mergeInstructions: "",
     });
   });
 
@@ -71,6 +73,8 @@ describe("memoryReminder", () => {
     expect(getReflectionSettings()).toEqual({
       trigger: "compaction-event",
       stepCount: 25,
+      merge: "auto",
+      mergeInstructions: "",
     });
   });
 
@@ -81,6 +85,8 @@ describe("memoryReminder", () => {
           "agent-1": {
             trigger: "compaction-event",
             stepCount: 13,
+            merge: "explicit",
+            mergeInstructions: "Review conservatively.",
           },
         },
       }) as unknown as ReturnType<
@@ -92,6 +98,7 @@ describe("memoryReminder", () => {
           "agent-1": {
             trigger: "step-count",
             stepCount: 9,
+            merge: "auto",
           },
         },
       }) as unknown as ReturnType<
@@ -101,6 +108,8 @@ describe("memoryReminder", () => {
     expect(getReflectionSettings("agent-1")).toEqual({
       trigger: "compaction-event",
       stepCount: 13,
+      merge: "explicit",
+      mergeInstructions: "Review conservatively.",
     });
   });
 
@@ -128,6 +137,8 @@ describe("memoryReminder", () => {
     expect(getReflectionSettings("agent-1")).toEqual({
       trigger: "compaction-event",
       stepCount: 17,
+      merge: "auto",
+      mergeInstructions: "",
     });
   });
 
@@ -216,17 +227,29 @@ describe("memoryReminder", () => {
     await persistReflectionSettingsForAgent("agent-1", {
       trigger: "compaction-event",
       stepCount: 11,
+      merge: "explicit",
+      mergeInstructions: "Preserve exact user wording.",
     });
 
     expect(localUpdates).toHaveLength(1);
     expect(globalUpdates).toHaveLength(1);
     expect(localUpdates[0]?.reflectionSettingsByAgent).toEqual({
       "agent-2": { trigger: "off", stepCount: 5 },
-      "agent-1": { trigger: "compaction-event", stepCount: 11 },
+      "agent-1": {
+        trigger: "compaction-event",
+        stepCount: 11,
+        merge: "explicit",
+        mergeInstructions: "Preserve exact user wording.",
+      },
     });
     expect(globalUpdates[0]?.reflectionSettingsByAgent).toEqual({
       "agent-3": { trigger: "off", stepCount: 7 },
-      "agent-1": { trigger: "compaction-event", stepCount: 11 },
+      "agent-1": {
+        trigger: "compaction-event",
+        stepCount: 11,
+        merge: "explicit",
+        mergeInstructions: "Preserve exact user wording.",
+      },
     });
   });
 });

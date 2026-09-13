@@ -315,28 +315,20 @@ async function runStartupUpdateFlow(env: NodeJS.ProcessEnv) {
     );
   }
 
-  const maxAttempts = 15;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    await runCommand("letta", ["--help"], {
-      env: {
-        ...env,
-        LETTA_TEST_HELP_EXIT_DELAY_MS: "3000",
-      },
-      timeoutMs: 120000,
-    });
+  await runCommand("letta", ["--help"], {
+    env: {
+      ...env,
+      LETTA_TEST_WAIT_FOR_STARTUP_AUTO_UPDATE: "1",
+    },
+    timeoutMs: 120000,
+  });
 
-    const current = await getInstalledVersion(env);
-    if (current === NEW_VERSION) {
-      return;
-    }
-
-    await sleep(1500);
+  const versionAfter = await getInstalledVersion(env);
+  if (versionAfter !== NEW_VERSION) {
+    throw new Error(
+      `Expected post-startup version ${NEW_VERSION}, got ${versionAfter}`,
+    );
   }
-
-  const finalVersion = await getInstalledVersion(env);
-  throw new Error(
-    `Startup auto-update did not converge to ${NEW_VERSION}; final version ${finalVersion}`,
-  );
 }
 
 async function main() {

@@ -125,7 +125,9 @@ export async function executeCommandHook(
   const timeout = hook.timeout ?? DEFAULT_TIMEOUT_MS;
   const inputJson = JSON.stringify(input);
 
-  const launchers = buildShellLaunchers(hook.command);
+  const launchers = buildShellLaunchers(hook.command, {
+    preservePowerShellExitCode: true,
+  });
   if (launchers.length === 0) {
     return {
       exitCode: HookExitCode.ERROR,

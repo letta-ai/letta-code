@@ -5,6 +5,7 @@ export {
   type CancelReason,
   type CronRunOutcome,
   type CronRunReason,
+  type CronStateChangeResult,
   type CronTask,
   type CronTaskStatus,
   claimSchedulerLease,
@@ -17,8 +18,11 @@ export {
   getTask,
   isProcessAlive,
   listTasks,
+  pauseTask,
   readCronFile,
+  recordTaskQueued,
   releaseSchedulerLease,
+  resumeTask,
   type SchedulerOwner,
   updateTask,
   verifySchedulerLease,
@@ -49,7 +53,12 @@ export {
   safeAppendCronRunLogForTask,
 } from "./run-log";
 export {
+  type CronPromptTiming,
+  formatCronPrompt,
+  formatTimezoneQualifiedIso,
+  getIntendedCronOccurrence,
   handleMissedOneShot,
+  handleTaskPreflight,
   shouldFireTask,
   wrapCronPrompt,
 } from "./scheduler";

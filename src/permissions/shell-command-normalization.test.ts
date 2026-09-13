@@ -98,4 +98,34 @@ describe("shellAnalysis", () => {
       'curl -s -u "$EXAMPLE_API_KEY:" "https://api.stripe.com/v1/customers/cus_examplecustomer0001"',
     );
   });
+
+  test("trailing && with nothing after is unparseable", () => {
+    expect(splitShellSegments("npm test &&")).toBeNull();
+    expect(splitShellSegments("npm test && ")).toBeNull();
+    expect(splitShellSegments("npm test &&\t")).toBeNull();
+  });
+
+  test("trailing || with nothing after is unparseable", () => {
+    expect(splitShellSegments("npm test ||")).toBeNull();
+    expect(splitShellSegments("npm test || ")).toBeNull();
+  });
+
+  test("trailing && in command-substitution-aware splitter is unparseable", () => {
+    expect(
+      splitShellSegmentsAllowCommandSubstitution("npm test &&"),
+    ).toBeNull();
+    expect(
+      splitShellSegmentsAllowCommandSubstitution("npm test ||"),
+    ).toBeNull();
+  });
+
+  test("non-trailing && still splits normally", () => {
+    expect(splitShellSegments("npm test && npm run lint")).toEqual([
+      "npm test",
+      "npm run lint",
+    ]);
+    expect(
+      splitShellSegmentsAllowCommandSubstitution("npm test && npm run lint"),
+    ).toEqual(["npm test", "npm run lint"]);
+  });
 });

@@ -1,13 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
-import { getServerUrl } from "@/backend/api/client";
 import { getServerHealth } from "@/backend/api/health";
 import { submitTelemetryMetadata } from "@/backend/api/metadata";
+import { getServerUrl } from "@/backend/api/server-url";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { settingsManager } from "@/settings-manager";
 import { debugLogFile } from "@/utils/debug";
 import { isLoopbackHostname, parseUrl } from "@/utils/url";
 import { getVersion } from "@/version";
+import {
+  resolveTelemetryAgentOrigin,
+  type TelemetryAgentOrigin,
+} from "./agent-origin";
+import { extractInputChannel } from "./channel";
+import { installFatalErrorHandlers } from "./fatal-error-handler";
 
 export type TelemetrySurface =
   | "letta_code_tui"
@@ -16,11 +22,15 @@ export type TelemetrySurface =
   | "letta_code_desktop";
 
 export type TelemetryBackend =
-  | "constellation"
+  | "cloud"
   | "local"
   | "docker_deprecated"
   | "self_hosted_api"
   | "unknown";
+
+export interface TelemetryInitOptions {
+  handleSigint?: boolean;
+}
 
 export interface TelemetryEvent {
   type:
@@ -30,7 +40,9 @@ export interface TelemetryEvent {
     | "error"
     | "user_input"
     | "reflection_start"
-    | "reflection_end";
+    | "reflection_end"
+    | "reflection_worktree_cleanup"
+    | "reflection_arena_vote";
   timestamp: string;
   data: Record<string, unknown>;
 }
@@ -62,6 +74,8 @@ export interface SessionEndData {
 
 export interface ToolUsageData {
   tool_name: string;
+  channel?: string;
+  channel_action?: string;
   success: boolean;
   duration: number;
   response_length?: number;
@@ -78,10 +92,17 @@ export interface ErrorData {
   run_id?: string;
   recent_chunks?: Record<string, unknown>[];
   debug_log_tail?: string;
+  is_subagent?: boolean;
+  subagent_type?: string;
+  model_handle?: string;
+  fallback_kind?: string;
+  platform?: string;
+  version?: string;
 }
 
 export interface UserInputData {
   input_length: number;
+  channel?: string;
   is_command: boolean;
   command_name?: string;
   message_type: string;
@@ -99,6 +120,9 @@ export interface ReflectionStartData {
   conversation_id?: string;
   start_message_id?: string;
   end_message_id?: string;
+  model?: string;
+  version?: string;
+  platform?: string;
 }
 
 export interface ReflectionEndData {
@@ -109,6 +133,53 @@ export interface ReflectionEndData {
   error?: string;
   step_count?: number;
   duration_ms?: number;
+  model?: string;
+  version?: string;
+  platform?: string;
+}
+
+export type ReflectionWorktreeCleanupOutcome =
+  | "parent_dirty"
+  | "merge_conflict"
+  | "reflection_worktree_dirty"
+  | "subagent_failed";
+
+export interface ReflectionWorktreeCleanupData {
+  outcome: ReflectionWorktreeCleanupOutcome;
+  integration_status:
+    | "parent_dirty"
+    | "merge_conflict"
+    | "dirty_uncommitted"
+    | "failed";
+  trigger_source?: ReflectionTriggerSource;
+  subagent_id?: string;
+  conversation_id?: string;
+  reflection_worktree_id?: string;
+  commit_count?: number;
+  model?: string;
+  version?: string;
+  platform?: string;
+}
+
+export interface ReflectionArenaVoteData {
+  run_id: string;
+  choice: "win_loss" | "tie";
+  winner: string | null;
+  loser: string | null;
+  winner_agent_id: string | null;
+  loser_agent_id: string | null;
+  parent_agent_id: string;
+  parent_convo_id: string;
+  timestamp: string;
+  feedbackstr: string | null;
+  lc_version: string;
+  memory_base_commit: string | null;
+  memory_candidate_commit: string | null;
+  transcript_payload: string | null;
+  transcript_payload_chars: number | null;
+  transcript_payload_truncated: boolean;
+  version?: string;
+  platform?: string;
 }
 
 export function isLettaCodeDesktopRuntime(
@@ -169,11 +240,11 @@ export function resolveTelemetryBackend(options?: {
   }
 
   if (isTelemetryCloudServerUrl(serverUrl)) {
-    return "constellation";
+    return "cloud";
   }
 
   if (isLettaCodeDesktopRuntime(env)) {
-    return "constellation";
+    return "cloud";
   }
 
   if (isLikelyDeprecatedDockerBackendUrl(serverUrl)) {
@@ -210,6 +281,7 @@ class TelemetryManager {
   private sessionId: string;
   private deviceId: string | null = null;
   private currentAgentId: string | null = null;
+  private currentAgentOrigin: TelemetryAgentOrigin | null = null;
   private surface: TelemetrySurface = "letta_code_tui";
   private sessionStartTime: number;
   private messageCount = 0;
@@ -217,6 +289,8 @@ class TelemetryManager {
   private sessionEndTracked = false;
   private initialized = false;
   private flushInterval: NodeJS.Timeout | null = null;
+  private removeSigintHandler: (() => void) | null = null;
+  private removeFatalErrorHandlers: (() => void) | null = null;
   private serverVersion: string | null = null;
   /** Deduplicates concurrent flushes (prevents the 429 double-flush race on shutdown). */
   private inflightFlush: Promise<void> | null = null;
@@ -286,13 +360,18 @@ class TelemetryManager {
   }
 
   /**
-   * Check if telemetry is enabled based on LETTA_CODE_TELEM env var
-   * Enabled by default unless explicitly disabled or using self-hosted server
+   * Check if telemetry is enabled based on environment variables.
+   * Enabled by default unless explicitly disabled.
    */
   private isTelemetryEnabled(): boolean {
-    // Check environment variable - must be explicitly set to "0" or "false" to disable
+    // LETTA_CODE_TELEM is Letta Code's specific opt-out. DO_NOT_TRACK is a
+    // broader convention also honored by install-time analytics packages.
     const envValue = process.env.LETTA_CODE_TELEM;
     if (envValue === "0" || envValue === "false") {
+      return false;
+    }
+
+    if (process.env.DO_NOT_TRACK === "1") {
       return false;
     }
 
@@ -317,7 +396,7 @@ class TelemetryManager {
   /**
    * Initialize telemetry and start periodic flushing
    */
-  init() {
+  init(options: TelemetryInitOptions = {}) {
     if (!this.isTelemetryEnabled() || this.initialized) {
       return;
     }
@@ -344,63 +423,35 @@ class TelemetryManager {
     // Don't let the interval prevent process from exiting
     this.flushInterval.unref();
 
-    // Await drain() (bounded by DRAIN_TIMEOUT_MS) so the final batch ships before exit.
-    process.on("SIGINT", () => {
-      void (async () => {
-        try {
-          this.trackSessionEnd(undefined, "sigint");
-          await this.drain();
-        } catch {
-          // Silently ignore - don't prevent process from exiting
-        }
-        process.exit(0);
-      })();
+    if (options.handleSigint !== false) {
+      // Await drain() (bounded by DRAIN_TIMEOUT_MS) so the final batch ships before exit.
+      const sigintHandler = () => {
+        void (async () => {
+          try {
+            this.trackSessionEnd(undefined, "sigint");
+            await this.drain();
+          } catch {
+            // Silently ignore - don't prevent process from exiting
+          }
+          process.exit(0);
+        })();
+      };
+      process.on("SIGINT", sigintHandler);
+      this.removeSigintHandler = () => {
+        process.off("SIGINT", sigintHandler);
+      };
+    }
+
+    this.removeFatalErrorHandlers = installFatalErrorHandlers({
+      drain: () => this.drain(),
+      trackError: (errorType, message, context) => {
+        this.trackError(errorType, message, context);
+      },
     });
 
-    process.on("uncaughtException", (error) => {
-      void (async () => {
-        try {
-          const msg = error instanceof Error ? error.message : String(error);
-          // Broken pipe/TTY — not actionable (e.g. terminal closed while writing)
-          if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
-          this.trackError(
-            "uncaught_exception",
-            msg,
-            "process_uncaught_exception",
-          );
-          await this.drain();
-        } catch {
-          // Silently ignore - don't prevent process from exiting
-        }
-      })();
-    });
-
-    process.on("unhandledRejection", (reason) => {
-      void (async () => {
-        try {
-          const msg = reason instanceof Error ? reason.message : String(reason);
-          // Broken pipe/TTY — not actionable
-          if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
-          // Rate limits surfacing as unhandled rejections — expected under load
-          if (/\b429\b/.test(msg) && /rate.?limit/i.test(msg)) return;
-          this.trackError(
-            "unhandled_rejection",
-            msg,
-            "process_unhandled_rejection",
-          );
-          await this.drain();
-        } catch {
-          // Silently ignore - don't prevent process from exiting
-        }
-      })();
-    });
-
-    // TODO: Add telemetry for crashes and abnormal exits
-    // Current limitation: We can't reliably flush telemetry on process.on("exit")
-    // because the event loop is shut down and async operations don't work.
-    // Potential solution: Write unsent events to ~/.letta/telemetry-queue.json
-    // and send them on next startup. This would capture crash telemetry without
-    // risking hangs on exit.
+    // Fatal handlers can only make a bounded flush attempt. Persisting unsent
+    // events for delivery on the next startup would make crash telemetry more
+    // reliable without extending the fatal shutdown deadline.
   }
 
   /**
@@ -416,7 +467,9 @@ class TelemetryManager {
       | ErrorData
       | UserInputData
       | ReflectionStartData
-      | ReflectionEndData,
+      | ReflectionEndData
+      | ReflectionWorktreeCleanupData
+      | ReflectionArenaVoteData,
   ) {
     if (!this.isTelemetryEnabled()) {
       return;
@@ -429,6 +482,7 @@ class TelemetryManager {
         ...data,
         session_id: this.sessionId,
         agent_id: this.currentAgentId || undefined,
+        agent_origin: this.currentAgentOrigin || undefined,
         surface: this.surface,
         backend: resolveTelemetryBackend(),
       },
@@ -452,6 +506,35 @@ class TelemetryManager {
    */
   setCurrentAgentId(agentId: string | null) {
     this.currentAgentId = agentId;
+    this.currentAgentOrigin = null;
+  }
+
+  /**
+   * Attach safe analytics fields from an agent that the caller already loaded.
+   * Events queued during startup are enriched without another API request.
+   */
+  setCurrentAgent(
+    agentId: string | null,
+    tags: readonly string[] | null | undefined,
+  ) {
+    this.currentAgentId = agentId;
+    this.currentAgentOrigin = agentId
+      ? (resolveTelemetryAgentOrigin(tags) ?? null)
+      : null;
+
+    if (!agentId) {
+      return;
+    }
+
+    for (const event of this.events) {
+      if (event.data.agent_id && event.data.agent_id !== agentId) {
+        continue;
+      }
+      event.data.agent_id = agentId;
+      if (this.currentAgentOrigin) {
+        event.data.agent_origin = this.currentAgentOrigin;
+      }
+    }
   }
 
   setSurface(surface: TelemetrySurface) {
@@ -619,6 +702,7 @@ class TelemetryManager {
     responseLength?: number,
     errorType?: string,
     stderr?: string,
+    channelMetadata?: Pick<ToolUsageData, "channel" | "channel_action">,
   ) {
     this.toolCallCount++;
     const data: ToolUsageData = {
@@ -628,6 +712,7 @@ class TelemetryManager {
       response_length: responseLength,
       error_type: errorType,
       stderr,
+      ...channelMetadata,
     };
     this.track("tool_usage", data);
   }
@@ -644,6 +729,10 @@ class TelemetryManager {
       modelId?: string;
       runId?: string;
       recentChunks?: Record<string, unknown>[];
+      isSubagent?: boolean;
+      subagentType?: string;
+      modelHandle?: string;
+      fallbackKind?: string;
     },
   ) {
     // Skip error telemetry for self-hosted users to avoid spamming cloud analytics
@@ -665,6 +754,12 @@ class TelemetryManager {
       run_id: options?.runId,
       recent_chunks: options?.recentChunks,
       debug_log_tail: debugLogFile.getTail(),
+      is_subagent: options?.isSubagent,
+      subagent_type: options?.subagentType,
+      model_handle: options?.modelHandle,
+      fallback_kind: options?.fallbackKind,
+      platform: process.platform,
+      version: getVersion(),
     };
     this.track("error", data);
   }
@@ -685,6 +780,7 @@ class TelemetryManager {
       command_name: commandName,
       message_type: messageType,
       model_id: modelId,
+      channel: extractInputChannel(input),
     };
     this.track("user_input", data);
   }
@@ -699,6 +795,7 @@ class TelemetryManager {
       conversationId?: string;
       startMessageId?: string;
       endMessageId?: string;
+      model?: string | null;
     },
   ) {
     const data: ReflectionStartData = {
@@ -707,6 +804,9 @@ class TelemetryManager {
       conversation_id: options?.conversationId,
       start_message_id: options?.startMessageId,
       end_message_id: options?.endMessageId,
+      model: options?.model ?? undefined,
+      version: getVersion(),
+      platform: process.platform,
     };
     this.track("reflection_start", data);
   }
@@ -723,6 +823,7 @@ class TelemetryManager {
       error?: string;
       stepCount?: number;
       durationMs?: number;
+      model?: string | null;
     },
   ) {
     const data: ReflectionEndData = {
@@ -733,8 +834,32 @@ class TelemetryManager {
       error: options?.error,
       step_count: options?.stepCount,
       duration_ms: options?.durationMs,
+      model: options?.model ?? undefined,
+      version: getVersion(),
+      platform: process.platform,
     };
     this.track("reflection_end", data);
+  }
+
+  trackReflectionWorktreeCleanup(
+    options: Omit<ReflectionWorktreeCleanupData, "version" | "platform">,
+  ) {
+    const data: ReflectionWorktreeCleanupData = {
+      ...options,
+      version: getVersion(),
+      platform: process.platform,
+    };
+    this.track("reflection_worktree_cleanup", data);
+  }
+
+  trackReflectionArenaVote(
+    vote: Omit<ReflectionArenaVoteData, "version" | "platform">,
+  ) {
+    this.track("reflection_arena_vote", {
+      ...vote,
+      version: getVersion(),
+      platform: process.platform,
+    });
   }
 
   /** Concurrent callers share one in-flight POST (prevents 429 double-flush race on shutdown). */
@@ -801,6 +926,10 @@ class TelemetryManager {
    * Clean up resources
    */
   cleanup() {
+    this.removeSigintHandler?.();
+    this.removeSigintHandler = null;
+    this.removeFatalErrorHandlers?.();
+    this.removeFatalErrorHandlers = null;
     if (this.flushInterval) {
       clearInterval(this.flushInterval);
       this.flushInterval = null;

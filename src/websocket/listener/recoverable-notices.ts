@@ -4,6 +4,8 @@ import type { RunErrorInfo } from "@/agent/approval-recovery";
 import { extractConflictDetail } from "@/agent/turn-recovery-policy";
 import {
   checkCloudflareEdgeError,
+  type ErrorDisplaySurface,
+  type FormatErrorDetailsOptions,
   formatErrorDetails,
 } from "@/cli/helpers/error-formatter";
 import type { ErrorInfo } from "@/cli/helpers/stream-processor";
@@ -49,11 +51,10 @@ export function getRecoverableStatusNoticeVisibility(
 
 export function getRecoverableRetryNoticeVisibility(
   kind: RecoverableRetryNoticeKind,
-  attempt: number,
 ): "debug_only" | "transcript" {
   switch (kind) {
     case "transient_provider_retry":
-      return attempt === 1 ? "debug_only" : "transcript";
+      return "transcript";
     default:
       return "transcript";
   }
@@ -184,6 +185,8 @@ export function getLoopErrorNoticeDecision(params: {
   conversationId?: string | null;
   cancelRequested?: boolean;
   abortSignal?: AbortSignal;
+  surface?: ErrorDisplaySurface;
+  unclassifiedFallback?: FormatErrorDetailsOptions["unclassifiedFallback"];
 }): LoopErrorNoticeDecision {
   const apiError =
     params.apiError ??
@@ -234,6 +237,10 @@ export function getLoopErrorNoticeDecision(params: {
       : (params.error ?? params.message),
     params.agentId ?? undefined,
     params.conversationId ?? undefined,
+    {
+      surface: params.surface,
+      unclassifiedFallback: params.unclassifiedFallback,
+    },
   );
 
   return {
@@ -241,6 +248,28 @@ export function getLoopErrorNoticeDecision(params: {
     message: formattedMessage,
     apiError,
   };
+}
+
+export function getTranscriptLoopErrorMessage(
+  params: Parameters<typeof getLoopErrorNoticeDecision>[0],
+): string | undefined {
+  const decision = getLoopErrorNoticeDecision({
+    ...params,
+    surface: "plain",
+    unclassifiedFallback: "generic",
+  });
+  return decision.visibility === "transcript" ? decision.message : undefined;
+}
+
+/** Match the plain error that interactive consumers receive from loop_error. */
+export function getConsumerLoopErrorMessage(
+  params: Parameters<typeof getLoopErrorNoticeDecision>[0],
+): string | undefined {
+  const decision = getLoopErrorNoticeDecision({
+    ...params,
+    surface: "plain",
+  });
+  return decision.visibility === "transcript" ? decision.message : undefined;
 }
 
 export function emitLoopErrorNotice(
@@ -323,10 +352,7 @@ export function emitRecoverableRetryNotice(
     kind: RecoverableRetryNoticeKind;
   },
 ): void {
-  const visibility = getRecoverableRetryNoticeVisibility(
-    params.kind,
-    params.attempt,
-  );
+  const visibility = getRecoverableRetryNoticeVisibility(params.kind);
 
   if (visibility === "debug_only") {
     debugLog(

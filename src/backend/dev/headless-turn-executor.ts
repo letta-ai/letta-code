@@ -117,6 +117,7 @@ export class DeterministicToolCallExecutor implements HeadlessTurnExecutor {
           name: "Bash",
           arguments: JSON.stringify({
             command: "echo deterministic-tool-ok",
+            description: "Run the deterministic test command",
             login: false,
           }),
         },

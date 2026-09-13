@@ -20,9 +20,14 @@ export interface SubagentState {
   id: string;
   type: string; // "General-purpose", "Recall", "code-reviewer", etc.
   description: string;
+  prompt?: string;
   status: "pending" | "running" | "completed" | "error";
   agentId?: string | null;
   agentURL: string | null;
+  // The subagent's own conversation id (from its init event). Needed by
+  // desktop dual-view routing: local agents have a bare-id agentURL with no
+  // ?conversation= param to parse, so this is the only conversation source.
+  conversationId?: string | null;
   toolCalls: ToolCall[];
   // Monotonic counter to avoid transient regressions in rendered tool usage.
   maxToolCallsSeen: number;
@@ -36,6 +41,25 @@ export interface SubagentState {
   silent?: boolean; // True if this subagent should be hidden from SubagentGroupDisplay
   parentAgentId?: string; // Parent runtime scope agent id (for listener-mode WS scoping)
   parentConversationId?: string; // Parent runtime scope conversation id
+}
+
+export type SubagentLifecycleStatus = SubagentState["status"];
+
+export interface SubagentLifecycleItem {
+  id: string;
+  type: string;
+  description: string;
+  status: SubagentLifecycleStatus;
+  agentId: string | null;
+  agentUrl: string | null;
+  startedAtMs: number;
+  elapsedMs: number;
+  isBackground: boolean;
+  visibleInTranscript: boolean;
+}
+
+export interface SubagentLifecycleContext {
+  list(): SubagentLifecycleItem[];
 }
 
 interface SubagentStore {
@@ -61,6 +85,7 @@ let cachedSnapshot: { agents: SubagentState[]; expanded: boolean } = {
   agents: [],
   expanded: false,
 };
+let cachedLifecycleItems: SubagentLifecycleItem[] = [];
 
 const DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS = 30_000;
 let completedSubagentRetentionMs = DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS;
@@ -71,10 +96,15 @@ const completedSubagentCleanupTimers = new Map<string, TimerHandle>();
 // ============================================================================
 
 function updateSnapshot(): void {
+  const agents = Array.from(store.agents.values());
+  const now = Date.now();
   cachedSnapshot = {
-    agents: Array.from(store.agents.values()),
+    agents,
     expanded: store.expanded,
   };
+  cachedLifecycleItems = agents.map((agent) =>
+    toSubagentLifecycleItem(agent, now),
+  );
 }
 
 function notifyListeners(): void {
@@ -171,6 +201,7 @@ export function registerSubagent(
     agentId?: string | null;
     conversationId?: string | null;
   },
+  prompt?: string,
 ): void {
   // Capitalize type for display (recall -> Recall)
   const displayType = type.charAt(0).toUpperCase() + type.slice(1);
@@ -179,6 +210,7 @@ export function registerSubagent(
     id,
     type: displayType,
     description,
+    prompt,
     status: "pending",
     agentId: null,
     agentURL: null,
@@ -341,6 +373,48 @@ export function getActiveBackgroundAgents(): SubagentState[] {
     (a) =>
       a.silent === true && (a.status === "pending" || a.status === "running"),
   );
+}
+
+function toSubagentLifecycleItem(
+  agent: SubagentState,
+  now: number,
+): SubagentLifecycleItem {
+  return {
+    id: agent.id,
+    type: agent.type,
+    description: agent.description,
+    status: agent.status,
+    agentId: agent.agentId ?? null,
+    agentUrl: agent.agentURL,
+    startedAtMs: agent.startTime,
+    elapsedMs:
+      agent.status === "pending" || agent.status === "running"
+        ? Math.max(0, now - agent.startTime)
+        : agent.durationMs,
+    isBackground: agent.isBackground === true,
+    visibleInTranscript: agent.silent !== true,
+  };
+}
+
+export function getSubagentLifecycleItems(): SubagentLifecycleItem[] {
+  const now = Date.now();
+  return Array.from(store.agents.values()).map((agent) =>
+    toSubagentLifecycleItem(agent, now),
+  );
+}
+
+export function getSubagentLifecycleSnapshot(): SubagentLifecycleItem[] {
+  return cachedLifecycleItems;
+}
+
+export function getSubagentLifecycleContext(): SubagentLifecycleContext {
+  return {
+    list: getSubagentLifecycleItems,
+  };
+}
+
+export function subscribeToSubagentLifecycle(listener: () => void): () => void {
+  return subscribe(listener);
 }
 
 /**

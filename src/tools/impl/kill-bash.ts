@@ -1,6 +1,8 @@
 import {
   backgroundProcesses,
   clearBackgroundProcessCleanup,
+  notifyBackgroundProcessStateChanged,
+  scheduleBackgroundProcessCleanup,
 } from "./process_manager.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -13,15 +15,35 @@ interface KillBashResult {
 
 export async function kill_bash(args: KillBashArgs): Promise<KillBashResult> {
   validateRequiredParams(args, ["shell_id"], "KillBash");
-  const { shell_id } = args;
+  return { killed: killBackgroundProcess(args.shell_id) };
+}
+
+export function killBackgroundProcess(shell_id: string): boolean {
   const proc = backgroundProcesses.get(shell_id);
-  if (!proc) return { killed: false };
+  if (!proc || (proc.kind === "monitor" && proc.status !== "running")) {
+    return false;
+  }
+  const previousStatus = proc.status;
+  const previousNotificationSuppression = proc.completionNotificationSuppressed;
   try {
+    // The kill below still fires the child's "exit" event; suppress the
+    // completion notification so a deliberate stop does not wake the agent.
+    proc.completionNotificationSuppressed = true;
+    if (proc.kind === "monitor") {
+      proc.status = "failed";
+    }
     proc.process.kill("SIGTERM");
     clearBackgroundProcessCleanup(shell_id);
-    backgroundProcesses.delete(shell_id);
-    return { killed: true };
+    if (proc.kind === "monitor") {
+      scheduleBackgroundProcessCleanup(shell_id);
+      notifyBackgroundProcessStateChanged(proc.runtimeScope);
+    } else {
+      backgroundProcesses.delete(shell_id);
+    }
+    return true;
   } catch {
-    return { killed: false };
+    proc.status = previousStatus;
+    proc.completionNotificationSuppressed = previousNotificationSuppression;
+    return false;
   }
 }

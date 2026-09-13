@@ -1,6 +1,4 @@
 import { afterEach, expect, test } from "bun:test";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { checkPermission } from "@/permissions/checker";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { permissionMode } from "@/permissions/mode";
@@ -429,11 +427,11 @@ test("acceptEdits mode - does NOT allow Bash", () => {
 });
 
 // ============================================================================
-// Permission Mode: plan
+// Permission Mode: strict
 // ============================================================================
 
-test("memory mode - allows broad read-only tools", () => {
-  permissionMode.setMode("memory");
+test("strict mode - Read within working directory defaults to ask (no auto-allow)", () => {
+  permissionMode.setMode("strict");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -443,17 +441,18 @@ test("memory mode - allows broad read-only tools", () => {
 
   const result = checkPermission(
     "Read",
-    { file_path: "/tmp/test.txt" },
+    { file_path: "/Users/test/project/src/index.ts" },
     permissions,
     "/Users/test/project",
   );
 
-  expect(result.decision).toBe("allow");
-  expect(result.matchedRule).toBe("memory mode");
+  // In standard mode this would auto-allow, but strict mode forces "ask"
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
 });
 
-test("memory mode - denies non-memory mutation helper tools", () => {
-  permissionMode.setMode("memory");
+test("strict mode - Glob within working directory defaults to ask (no auto-allow)", () => {
+  permissionMode.setMode("strict");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -461,532 +460,209 @@ test("memory mode - denies non-memory mutation helper tools", () => {
     ask: [],
   };
 
-  const todoWriteResult = checkPermission(
-    "TodoWrite",
-    { todos: [{ content: "x", status: "pending", priority: "high" }] },
+  const result = checkPermission(
+    "Glob",
+    { path: "/Users/test/project/**/*.ts" },
     permissions,
     "/Users/test/project",
   );
-  expect(todoWriteResult.decision).toBe("deny");
 
-  const updatePlanResult = checkPermission(
-    "update_plan",
-    { plan: [{ step: "x", status: "in_progress" }] },
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
+test("strict mode - Grep within working directory defaults to ask (no auto-allow)", () => {
+  permissionMode.setMode("strict");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Grep",
+    { path: "/Users/test/project/src", pattern: "TODO" },
     permissions,
     "/Users/test/project",
   );
-  expect(updatePlanResult.decision).toBe("deny");
+
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
 });
 
-test("memory mode - allows Write inside MEMORY_DIR", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+test("strict mode - read-only shell command defaults to ask (no auto-allow)", () => {
+  permissionMode.setMode("strict");
 
-  try {
-    const result = checkPermission(
-      "Write",
-      { file_path: "system/test.md" },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-1/memory",
-    );
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
 
-    expect(result.decision).toBe("allow");
-    expect(result.matchedRule).toBe("memory mode");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
-});
-
-test("memory mode - allows Bash redirection inside MEMORY_DIR", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
-
-  try {
-    const result = checkPermission(
-      "Bash",
-      {
-        command:
-          'echo "test content" > "$MEMORY_DIR/skills/example/SKILL.md" && ls -la "$MEMORY_DIR/skills/example/"',
-      },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-1/memory",
-    );
-
-    expect(result.decision).toBe("allow");
-    expect(result.matchedRule).toBe("memory mode");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
-});
-
-test("memory mode - applies shell scoping to exec_command cmd", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
-
-  try {
-    const result = checkPermission(
-      "exec_command",
-      { cmd: 'echo "test content" > "$MEMORY_DIR/system/test.md"' },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-1/memory",
-    );
-
-    expect(result.decision).toBe("allow");
-    expect(result.matchedRule).toBe("memory mode");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
-});
-
-test("memory mode - allows write_stdin polls but denies stdin writes", () => {
-  permissionMode.setMode("memory");
-
-  const pollResult = checkPermission(
-    "write_stdin",
-    { session_id: 1, chars: "" },
-    { allow: [], deny: [], ask: [] },
+  const result = checkPermission(
+    "Bash",
+    { command: "ls -la /Users/test/project" },
+    permissions,
     "/Users/test/project",
   );
-  expect(pollResult.decision).toBe("allow");
-  expect(pollResult.matchedRule).toBe("memory mode");
 
-  const writeResult = checkPermission(
-    "write_stdin",
-    { session_id: 1, chars: "echo pwn\n" },
-    { allow: [], deny: [], ask: [] },
+  // In standard mode, read-only shell commands auto-allow; strict mode forces "ask"
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
+test("strict mode - Skill tool defaults to ask (no auto-allow)", () => {
+  permissionMode.setMode("strict");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Skill",
+    { skill: "pdf" },
+    permissions,
     "/Users/test/project",
   );
-  expect(writeResult.decision).toBe("deny");
-  expect(writeResult.matchedRule).toBe("memory mode");
+
+  // In standard mode, Skill auto-allows; strict mode forces "ask"
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
 });
 
-test("memory mode - denies Bash redirection outside MEMORY_DIR", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+test("strict mode - memory tool defaults to ask (no auto-allow)", () => {
+  permissionMode.setMode("strict");
 
-  try {
-    const result = checkPermission(
-      "Bash",
-      { command: 'echo "test content" > /tmp/outside-memory.txt' },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-1/memory",
-    );
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
 
-    expect(result.decision).toBe("deny");
-    expect(result.matchedRule).toBe("memory mode");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
-});
-
-test("memory mode - denies Write outside memory roots", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
-
-  try {
-    const result = checkPermission(
-      "Write",
-      { file_path: "/Users/test/project/README.md" },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/project",
-    );
-
-    expect(result.decision).toBe("deny");
-    expect(result.matchedRule).toBe("memory mode");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
-});
-
-test("memory mode - allows Write inside parent memory for subagents", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
-  const originalAgentId = process.env.AGENT_ID;
-  const originalParentAgentId = process.env.LETTA_PARENT_AGENT_ID;
-  const originalAgentRole = process.env.LETTA_CODE_AGENT_ROLE;
-  const home = homedir();
-  const parentMemoryPath = join(
-    home,
-    ".letta",
-    "agents",
-    "agent-parent",
+  const result = checkPermission(
     "memory",
+    {
+      command: "create",
+      reason: "seed",
+      path: "system/human/profile.md",
+      description: "Profile",
+      file_text: "hello",
+    },
+    permissions,
+    "/Users/test/project",
   );
-  process.env.MEMORY_DIR = parentMemoryPath;
-  process.env.LETTA_MEMORY_DIR = parentMemoryPath;
-  process.env.AGENT_ID = "agent-self";
-  process.env.LETTA_PARENT_AGENT_ID = "agent-parent";
-  process.env.LETTA_CODE_AGENT_ROLE = "subagent";
 
-  try {
-    const result = checkPermission(
-      "Write",
-      { file_path: "system/parent.md" },
-      { allow: [], deny: [], ask: [] },
-      parentMemoryPath,
-    );
-
-    expect(result.decision).toBe("allow");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-    if (originalLettaMemoryDir === undefined)
-      delete process.env.LETTA_MEMORY_DIR;
-    else process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
-    if (originalAgentId === undefined) delete process.env.AGENT_ID;
-    else process.env.AGENT_ID = originalAgentId;
-    if (originalParentAgentId === undefined)
-      delete process.env.LETTA_PARENT_AGENT_ID;
-    else process.env.LETTA_PARENT_AGENT_ID = originalParentAgentId;
-    if (originalAgentRole === undefined)
-      delete process.env.LETTA_CODE_AGENT_ROLE;
-    else process.env.LETTA_CODE_AGENT_ROLE = originalAgentRole;
-  }
+  // In standard mode, memory auto-allows; strict mode forces "ask"
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
 });
 
-test("memory mode - no roots allows reads but denies mutations", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
-  const originalAgentId = process.env.AGENT_ID;
-  const originalLettaAgentId = process.env.LETTA_AGENT_ID;
-  const originalParentAgentId = process.env.LETTA_PARENT_AGENT_ID;
-  delete process.env.MEMORY_DIR;
-  delete process.env.LETTA_MEMORY_DIR;
-  delete process.env.AGENT_ID;
-  delete process.env.LETTA_AGENT_ID;
-  delete process.env.LETTA_PARENT_AGENT_ID;
+test("strict mode - Write tool defaults to ask", () => {
+  permissionMode.setMode("strict");
 
-  try {
-    const readResult = checkPermission(
-      "Read",
-      { file_path: "/tmp/test.txt" },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/project",
-    );
-    expect(readResult.decision).toBe("allow");
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
 
-    const writeResult = checkPermission(
-      "Write",
-      { file_path: "/tmp/test.txt" },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/project",
-    );
-    expect(writeResult.decision).toBe("deny");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-    if (originalLettaMemoryDir === undefined)
-      delete process.env.LETTA_MEMORY_DIR;
-    else process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
-    if (originalAgentId === undefined) delete process.env.AGENT_ID;
-    else process.env.AGENT_ID = originalAgentId;
-    if (originalLettaAgentId === undefined) delete process.env.LETTA_AGENT_ID;
-    else process.env.LETTA_AGENT_ID = originalLettaAgentId;
-    if (originalParentAgentId === undefined)
-      delete process.env.LETTA_PARENT_AGENT_ID;
-    else process.env.LETTA_PARENT_AGENT_ID = originalParentAgentId;
-  }
+  const result = checkPermission(
+    "Write",
+    { file_path: "/tmp/test.txt", content: "hello" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
 });
 
-test("memory mode - denies mixed-target ApplyPatch when any target is outside allowed roots", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+test("strict mode - does NOT override deny rules", () => {
+  permissionMode.setMode("strict");
 
-  try {
-    const result = checkPermission(
-      "ApplyPatch",
-      {
-        input:
-          "*** Begin Patch\n*** Add File: system/ok.md\n+ok\n*** Add File: /Users/test/project/bad.md\n+bad\n*** End Patch\n",
-      },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-1/memory",
-    );
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: ["Read"],
+    ask: [],
+  };
 
-    expect(result.decision).toBe("deny");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
+  const result = checkPermission(
+    "Read",
+    { file_path: "/Users/test/project/src/index.ts" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  // Deny rules still take precedence
+  expect(result.decision).toBe("deny");
+  expect(result.reason).toBe("Matched deny rule");
 });
 
-test("memory mode - CLI allowedTools cannot widen writes outside roots", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
-  cliPermissions.setAllowedTools("Write,Bash");
+test("strict mode - does NOT override alwaysAsk rules", () => {
+  permissionMode.setMode("strict");
 
-  try {
-    const writeResult = checkPermission(
-      "Write",
-      { file_path: "/Users/test/project/outside.md" },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/project",
-    );
-    expect(writeResult.decision).toBe("deny");
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+    alwaysAsk: ["Read"],
+  };
 
-    const bashResult = checkPermission(
-      "Bash",
-      { command: "cd /Users/test/project && git push" },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/project",
-    );
-    expect(bashResult.decision).toBe("deny");
-  } finally {
-    cliPermissions.clear();
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
+  const result = checkPermission(
+    "Read",
+    { file_path: "/Users/test/project/src/index.ts" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  // alwaysAsk rules still take precedence
+  expect(result.decision).toBe("alwaysAsk");
+  expect(result.reason).toBe("Matched alwaysAsk rule");
 });
 
-test("memory mode - allows scoped git push from MEMORY_DIR working directory", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+test("strict mode - explicit allow rules still work", () => {
+  permissionMode.setMode("strict");
 
-  try {
-    const bashResult = checkPermission(
-      "Bash",
-      { command: "git push" },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-1/memory",
-    );
-    expect(bashResult.decision).toBe("allow");
-    expect(bashResult.matchedRule).toBe("memory mode");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
+  const permissions: PermissionRules = {
+    allow: ["Read"],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Read",
+    { file_path: "/Users/test/project/src/index.ts" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  // Explicit allow rules still work
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Matched allow rule");
 });
 
-test("memory mode - allows builtin env-based worktree setup commands", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  const originalWorktreeDir = process.env.WORKTREE_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
-  process.env.WORKTREE_DIR =
-    "/Users/test/.letta/agents/agent-1/memory-worktrees";
+test("strict mode - CLI --allowedTools still work", () => {
+  permissionMode.setMode("strict");
+  cliPermissions.setAllowedTools("Read");
 
-  try {
-    const bashResult = checkPermission(
-      "Bash",
-      {
-        command: [
-          'BRANCH="defrag-123"',
-          'mkdir -p "$WORKTREE_DIR"',
-          'cd "$MEMORY_DIR"',
-          'git worktree add "$WORKTREE_DIR/$BRANCH" -b "$BRANCH"',
-        ].join("\n"),
-      },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-1/memory",
-    );
-    expect(bashResult.decision).toBe("allow");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-    if (originalWorktreeDir === undefined) delete process.env.WORKTREE_DIR;
-    else process.env.WORKTREE_DIR = originalWorktreeDir;
-  }
-});
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
 
-test("memory mode - denies command substitution inside scoped shell commands", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+  const result = checkPermission(
+    "Read",
+    { file_path: "/Users/test/project/src/index.ts" },
+    permissions,
+    "/Users/test/project",
+  );
 
-  try {
-    const bashResult = checkPermission(
-      "Bash",
-      {
-        command:
-          'cd /Users/test/.letta/agents/agent-1/memory && git commit -m "$(touch /tmp/pwn)"',
-      },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-1/memory",
-    );
-    expect(bashResult.decision).toBe("deny");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
-});
-
-test("memory mode - denies git rebase exec hooks inside scoped shell commands", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
-
-  try {
-    const bashResult = checkPermission(
-      "Bash",
-      {
-        command:
-          'cd /Users/test/.letta/agents/agent-1/memory && git rebase --exec "touch /tmp/pwn" main',
-      },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-1/memory",
-    );
-    expect(bashResult.decision).toBe("deny");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
-});
-
-// ============================================================================
-// Permission Mode: memory — instructive denial reasons
-// ============================================================================
-// The bare "Permission mode: memory" reason gives the agent no signal for
-// how to recover. These tests assert that each deny path produces a
-// category-specific reason that names the offending construct and a
-// concrete remediation idiom.
-
-test("memory mode reason - tool not allowed names the tool", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
-
-  try {
-    const result = checkPermission(
-      "WebSearch",
-      { query: "letta" },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-1/memory",
-    );
-    expect(result.decision).toBe("deny");
-    expect(result.reason).toContain("Memory mode");
-    expect(result.reason).toContain("WebSearch");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
-});
-
-test("memory mode reason - Write outside roots names target and roots", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
-
-  try {
-    const result = checkPermission(
-      "Write",
-      { file_path: "/Users/test/project/README.md" },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/project",
-    );
-    expect(result.decision).toBe("deny");
-    expect(result.reason).toContain("/Users/test/project/README.md");
-    expect(result.reason).toContain("/Users/test/.letta/agents/agent-1/memory");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
-});
-
-test("memory mode reason - Bash with $() points at variable usage", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
-
-  try {
-    const result = checkPermission(
-      "Bash",
-      {
-        command:
-          'cd "$MEMORY_DIR" && CHILD=$(echo $LETTA_AGENT_ID) && echo $CHILD',
-      },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-1/memory",
-    );
-    expect(result.decision).toBe("deny");
-    expect(result.reason).toContain("command substitution");
-    expect(result.reason).toContain("$LETTA_AGENT_ID");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
-});
-
-test("memory mode reason - Bash with python3 points at heredoc", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
-
-  try {
-    const result = checkPermission(
-      "Bash",
-      {
-        command: `cd "$MEMORY_DIR" && python3 -c "open('x.md','w').write('hi')"`,
-      },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-1/memory",
-    );
-    expect(result.decision).toBe("deny");
-    expect(result.reason).toContain("python3");
-    expect(result.reason).toContain("heredoc");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
-});
-
-test("memory mode reason - Bash redirect outside roots names target", () => {
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
-
-  try {
-    const result = checkPermission(
-      "Bash",
-      { command: 'echo "hi" > /tmp/outside.txt' },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-1/memory",
-    );
-    expect(result.decision).toBe("deny");
-    expect(result.reason).toContain("redirects only to paths under");
-    expect(result.reason).toContain("/tmp/outside.txt");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
-});
-
-test("memory mode reason - existing scoped denials get instructive reason too", () => {
-  // Regression: existing scoped-denial coverage should also surface the
-  // specific category reason, not the generic "Permission mode: memory".
-  permissionMode.setMode("memory");
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
-
-  try {
-    const result = checkPermission(
-      "Bash",
-      {
-        command:
-          'cd /Users/test/.letta/agents/agent-1/memory && git commit -m "$(touch /tmp/pwn)"',
-      },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-1/memory",
-    );
-    expect(result.decision).toBe("deny");
-    expect(result.reason).toContain("command substitution");
-    expect(result.reason).not.toBe("Permission mode: memory");
-  } finally {
-    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
-    else process.env.MEMORY_DIR = originalMemoryDir;
-  }
+  // CLI --allowedTools still allows the tool
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toContain("(CLI)");
+  expect(result.reason).toBe("Matched --allowedTools flag");
 });

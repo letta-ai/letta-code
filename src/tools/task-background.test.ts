@@ -236,6 +236,39 @@ describe("TaskOutput with background tasks", () => {
     fs.unlinkSync(outputFile);
   });
 
+  test("interrupting TaskOutput stops the wait but leaves the task running", async () => {
+    const taskId = "task_interrupt_wait_test";
+    const outputFile = createBackgroundOutputFile(taskId);
+    const bgTask: BackgroundTask = {
+      description: "Interrupt wait test",
+      subagentType: "general-purpose",
+      subagentId: "subagent_interrupt_wait",
+      status: "running",
+      output: [],
+      startTime: new Date(),
+      outputFile,
+      abortController: new AbortController(),
+    };
+    backgroundTasks.set(taskId, bgTask);
+    const waitAbortController = new AbortController();
+    setTimeout(() => waitAbortController.abort(), 50);
+
+    const startTime = Date.now();
+    await expect(
+      task_output({
+        task_id: taskId,
+        block: true,
+        timeout: 600000,
+        signal: waitAbortController.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(Date.now() - startTime).toBeLessThan(1000);
+    expect(backgroundTasks.get(taskId)?.status).toBe("running");
+    expect(bgTask.abortController?.signal.aborted).toBe(false);
+    fs.unlinkSync(outputFile);
+  });
+
   test("TaskOutput handles non-existent task_id", async () => {
     const result = await task_output({
       task_id: "nonexistent_task",

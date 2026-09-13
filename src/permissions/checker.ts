@@ -15,8 +15,13 @@ import {
   modToolApprovalPolicy,
 } from "@/mods/tool-registry";
 import type { ModContext } from "@/mods/types";
-import type { PermissionModeState } from "@/tools/manager";
-import { canonicalToolName, isShellToolName } from "./canonical";
+import { getRuntimeContext } from "@/runtime-context";
+import type { PermissionModeState } from "@/tools/permission-mode-state";
+import {
+  canonicalToolName,
+  isShellToolName,
+  toolNameForPermissionCheck,
+} from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
 import { evaluateCrossAgentGuard, extractFilePath } from "./cross-agent-guard";
 import {
@@ -36,6 +41,7 @@ import type {
   PermissionRules,
   PermissionTraceEvent,
 } from "./types";
+import { evaluateWorkspaceSandboxGuard } from "./workspace-sandbox";
 
 /**
  * Tools that don't require approval within working directory
@@ -62,17 +68,6 @@ const WORKING_DIRECTORY_TOOLS_V1 = [
   "read_many_files",
   "ReadManyFiles",
 ];
-const READ_ONLY_SHELL_TOOLS = new Set([
-  "Bash",
-  "shell",
-  "Shell",
-  "shell_command",
-  "ShellCommand",
-  "exec_command",
-  "write_stdin",
-  "run_shell_command",
-  "RunShellCommand",
-]);
 const FILE_TOOLS_V2 = ["Read", "Write", "Edit", "Glob", "Grep", "ListDir"];
 const FILE_TOOLS_V1 = [
   "Read",
@@ -139,11 +134,10 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
  * Check permission for a tool execution.
  *
  * Decision logic:
- * 0. Cross-agent guard (enabled by default for headless + subagents,
- *    unbypassable when enabled) → DENY any tool call targeting another
- *    agent's memory dir unless it targets the current agent, targets an
- *    explicit parent agent for a subagent process, or the parent process
- *    passed --disable-memory-guard.
+ * 0. Cross-agent guard (enabled by default and unbypassable when enabled) →
+ *    DENY any in-process file-tool call targeting another agent's memory dir
+ *    unless it targets the current agent, targets an explicit parent agent for
+ *    a subagent process, or the parent process passed --disable-memory-guard.
  * 1. Check deny rules from settings (first match wins) → DENY
  * 2. Check CLI disallowedTools (--disallowedTools flag) → DENY
  * 3. Check alwaysAsk rules and mod tool alwaysAsk policy → ALWAYS_ASK
@@ -289,19 +283,61 @@ function checkPermissionForEngine(
   agentId?: string,
   modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
 ): { result: PermissionCheckResult; trace: PermissionCheckTrace } {
-  const canonicalTool = canonicalToolName(toolName);
-  const queryTool = engine === "v2" ? canonicalTool : toolName;
+  const permissionToolName = toolNameForPermissionCheck(toolName, toolArgs);
+  const canonicalTool = canonicalToolName(permissionToolName);
+  const queryTool = engine === "v2" ? canonicalTool : permissionToolName;
   const query = buildPermissionQuery(queryTool, toolArgs, engine);
+  const originalQueryTool =
+    engine === "v2" ? canonicalToolName(toolName) : toolName;
+  const originalQuery =
+    permissionToolName === toolName
+      ? query
+      : buildPermissionQuery(originalQueryTool, toolArgs, engine);
+  const matchesRule = (pattern: string, includeOriginal = false): boolean =>
+    matchesPattern(
+      permissionToolName,
+      query,
+      pattern,
+      workingDirectory,
+      engine,
+    ) ||
+    (includeOriginal &&
+      permissionToolName !== toolName &&
+      matchesPattern(
+        toolName,
+        originalQuery,
+        pattern,
+        workingDirectory,
+        engine,
+      ));
   const trace = createTrace(engine, toolName, canonicalTool, query);
   const sessionRules = sessionPermissions.getRules();
   const workingDirectoryTools =
     engine === "v2" ? WORKING_DIRECTORY_TOOLS_V2 : WORKING_DIRECTORY_TOOLS_V1;
 
+  const workspaceGuardResult = evaluateWorkspaceSandboxGuard(
+    permissionToolName,
+    toolArgs,
+    workingDirectory,
+    getRuntimeContext()?.workspaceSandbox,
+  );
+  if (workspaceGuardResult) {
+    traceEvent(trace, "workspace-sandbox", workspaceGuardResult.reason);
+    return {
+      result: {
+        decision: "deny",
+        matchedRule: workspaceGuardResult.matchedRule,
+        reason: workspaceGuardResult.reason,
+      },
+      trace,
+    };
+  }
+
   // Cross-agent guard — when enabled, denies any tool call targeting another
   // agent's memory unless that agent is in the allowed set. Unbypassable by
   // any mode, rule, or flag.
   const guardResult = evaluateCrossAgentGuard(
-    toolName,
+    permissionToolName,
     toolArgs,
     workingDirectory,
     { currentAgentId: agentId },
@@ -320,13 +356,7 @@ function checkPermissionForEngine(
 
   if (permissions.deny) {
     for (const pattern of permissions.deny) {
-      const matched = matchesPattern(
-        toolName,
-        query,
-        pattern,
-        workingDirectory,
-        engine,
-      );
+      const matched = matchesRule(pattern, true);
       traceEvent(trace, "deny-rule", undefined, pattern, matched);
       if (matched) {
         return {
@@ -343,13 +373,7 @@ function checkPermissionForEngine(
 
   const disallowedTools = cliPermissions.getDisallowedTools();
   for (const pattern of disallowedTools) {
-    const matched = matchesPattern(
-      toolName,
-      query,
-      pattern,
-      workingDirectory,
-      engine,
-    );
+    const matched = matchesRule(pattern, true);
     traceEvent(trace, "cli-disallow-rule", undefined, pattern, matched);
     if (matched) {
       return {
@@ -365,13 +389,7 @@ function checkPermissionForEngine(
 
   if (sessionRules.alwaysAsk) {
     for (const pattern of sessionRules.alwaysAsk) {
-      const matched = matchesPattern(
-        toolName,
-        query,
-        pattern,
-        workingDirectory,
-        engine,
-      );
+      const matched = matchesRule(pattern, true);
       traceEvent(trace, "session-always-ask-rule", undefined, pattern, matched);
       if (matched) {
         return {
@@ -388,13 +406,7 @@ function checkPermissionForEngine(
 
   if (permissions.alwaysAsk) {
     for (const pattern of permissions.alwaysAsk) {
-      const matched = matchesPattern(
-        toolName,
-        query,
-        pattern,
-        workingDirectory,
-        engine,
-      );
+      const matched = matchesRule(pattern, true);
       traceEvent(trace, "always-ask-rule", undefined, pattern, matched);
       if (matched) {
         return {
@@ -429,13 +441,11 @@ function checkPermissionForEngine(
   // otherwise fall back to the global singleton (local/CLI mode).
   const effectiveMode = modeState?.mode ?? permissionMode.getMode();
   const modeOverride = permissionMode.checkModeOverride(
-    toolName,
-    toolArgs,
-    workingDirectory,
+    permissionToolName,
     effectiveMode,
   );
   if (modeOverride) {
-    const reason = modeOverride.reason ?? `Permission mode: ${effectiveMode}`;
+    const reason = `Permission mode: ${effectiveMode}`;
     traceEvent(trace, "mode-override", reason);
     return {
       result: {
@@ -449,13 +459,7 @@ function checkPermissionForEngine(
 
   const allowedTools = cliPermissions.getAllowedTools();
   for (const pattern of allowedTools) {
-    const matched = matchesPattern(
-      toolName,
-      query,
-      pattern,
-      workingDirectory,
-      engine,
-    );
+    const matched = matchesRule(pattern);
     traceEvent(trace, "cli-allow-rule", undefined, pattern, matched);
     if (matched) {
       return {
@@ -469,7 +473,11 @@ function checkPermissionForEngine(
     }
   }
 
-  if (toolName === "Skill") {
+  // Strict mode skips all auto-allow paths; every tool goes through the
+  // approval callback (or defaults to "ask" if no callback is registered).
+  const isStrictMode = effectiveMode === "strict";
+
+  if (toolName === "Skill" && !isStrictMode) {
     traceEvent(trace, "skill-auto-allow", "Skill tool is always allowed");
     return {
       result: {
@@ -480,7 +488,7 @@ function checkPermissionForEngine(
     };
   }
 
-  if (READ_ONLY_SHELL_TOOLS.has(toolName) || isShellToolName(canonicalTool)) {
+  if (!isStrictMode && isShellToolName(canonicalTool)) {
     const shellCommand = extractShellCommand(toolArgs);
     if (
       shellCommand &&
@@ -523,7 +531,7 @@ function checkPermissionForEngine(
     }
   }
 
-  if (workingDirectoryTools.includes(queryTool)) {
+  if (!isStrictMode && workingDirectoryTools.includes(queryTool)) {
     const filePath = extractFilePath(toolArgs);
     if (
       filePath &&
@@ -546,13 +554,7 @@ function checkPermissionForEngine(
 
   if (sessionRules.allow) {
     for (const pattern of sessionRules.allow) {
-      const matched = matchesPattern(
-        toolName,
-        query,
-        pattern,
-        workingDirectory,
-        engine,
-      );
+      const matched = matchesRule(pattern);
       traceEvent(trace, "session-allow-rule", undefined, pattern, matched);
       if (matched) {
         return {
@@ -569,13 +571,7 @@ function checkPermissionForEngine(
 
   if (permissions.allow) {
     for (const pattern of permissions.allow) {
-      const matched = matchesPattern(
-        toolName,
-        query,
-        pattern,
-        workingDirectory,
-        engine,
-      );
+      const matched = matchesRule(pattern);
       traceEvent(trace, "allow-rule", undefined, pattern, matched);
       if (matched) {
         return {
@@ -592,13 +588,7 @@ function checkPermissionForEngine(
 
   if (permissions.ask) {
     for (const pattern of permissions.ask) {
-      const matched = matchesPattern(
-        toolName,
-        query,
-        pattern,
-        workingDirectory,
-        engine,
-      );
+      const matched = matchesRule(pattern, true);
       traceEvent(trace, "ask-rule", undefined, pattern, matched);
       if (matched) {
         return {
@@ -613,7 +603,12 @@ function checkPermissionForEngine(
     }
   }
 
-  const defaultDecision = getDefaultDecision(toolName, toolArgs, modTools);
+  const defaultDecision = getDefaultDecision(
+    permissionToolName,
+    toolArgs,
+    modTools,
+    effectiveMode,
+  );
   traceEvent(trace, "default-decision", `Default: ${defaultDecision}`);
   return {
     result: {
@@ -804,14 +799,14 @@ function matchesPattern(
 /**
  * Subagent types that are safe to auto-approve by default.
  * Some are read-only explorers; others are memory-rooted writers whose
- * mutations are constrained by dedicated permission-mode enforcement.
+ * mutations are constrained by the memory-subagent sandbox.
  */
 const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
   "recall", // Conversation history search - Skill, Bash, Read, TaskOutput
   "Recall",
-  "reflection", // Memory reflection - writes constrained by memory mode
+  "reflection", // Memory reflection - writes constrained by memory-subagent sandbox
   "Reflection",
-  "history-analyzer", // History analysis - writes constrained by memory mode
+  "history-analyzer", // History analysis - writes constrained by memory-subagent sandbox
 ]);
 
 /**
@@ -821,7 +816,14 @@ function getDefaultDecision(
   toolName: string,
   toolArgs?: ToolArgs,
   modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
+  mode?: string,
 ): PermissionDecision {
+  // Strict mode: every tool defaults to "ask" so the approval callback
+  // (or user) must explicitly allow it.
+  if (mode === "strict") {
+    return "ask";
+  }
+
   const modApprovalPolicy = modToolApprovalPolicy(toolName, modTools);
   if (modApprovalPolicy !== undefined) {
     if (modApprovalPolicy === "auto") return "allow";

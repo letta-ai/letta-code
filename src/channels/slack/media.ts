@@ -1,25 +1,21 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
-import { getChannelDir } from "@/channels/config";
+import { readFile } from "node:fs/promises";
 import type { ChannelMessageAttachment } from "@/channels/types";
+import {
+  collectSlackFiles,
+  fetchSlackFile,
+  resolveSlackFileMetadata,
+  resolveSlackMessageFiles,
+  type SlackAttachmentReadClient,
+  type SlackFileLike,
+} from "./attachment-primitives";
+import {
+  SlackAttachmentDownloadError,
+  type SlackAttachmentDownloadFailureReason,
+  saveSlackAttachmentStream,
+} from "./attachment-stream";
+import { hasSlackMention } from "./utils";
 
-const MAX_SLACK_ATTACHMENTS = 8;
 const MAX_SLACK_ATTACHMENT_BYTES = 20 * 1024 * 1024;
-const ALLOWED_SLACK_HOST_SUFFIXES = [
-  "slack.com",
-  "slack-edge.com",
-  "slack-files.com",
-] as const;
-
-type SlackFileLike = {
-  id?: string;
-  name?: string;
-  mimetype?: string;
-  size?: number;
-  url_private?: string;
-  url_private_download?: string;
-};
 
 type SlackAttachmentLike = {
   text?: string;
@@ -27,26 +23,6 @@ type SlackAttachmentLike = {
   pretext?: string;
   author_name?: string;
   title?: string;
-  image_url?: string;
-  files?: SlackFileLike[];
-};
-
-type SlackRepliesClient = {
-  conversations: {
-    history(args: {
-      channel: string;
-      latest?: string;
-      limit?: number;
-      inclusive?: boolean;
-    }): Promise<unknown>;
-    replies(args: {
-      channel: string;
-      ts: string;
-      limit?: number;
-      inclusive?: boolean;
-      cursor?: string;
-    }): Promise<unknown>;
-  };
 };
 
 type SlackRepliesPageMessage = {
@@ -54,6 +30,7 @@ type SlackRepliesPageMessage = {
   user?: string;
   bot_id?: string;
   ts?: string;
+  thread_ts?: string;
   files?: unknown[];
   attachments?: unknown[];
 };
@@ -63,21 +40,44 @@ type SlackRepliesPage = {
   response_metadata?: { next_cursor?: string };
 };
 
+type SlackThreadAttachmentParams = {
+  accountId?: string;
+  token?: string;
+  transcribeVoice?: boolean;
+};
+
+type SlackThreadAttachmentOptions = {
+  accountId: string;
+  token: string;
+  transcribeVoice?: boolean;
+};
+
 export type SlackThreadMessage = {
   text: string;
   userId?: string;
   botId?: string;
   ts?: string;
+  attachments?: ChannelMessageAttachment[];
 };
 
-function mapSlackThreadMessage(
+type SlackThreadHistoryEntryKind = "all" | "bot" | "unrouted-bot";
+
+async function mapSlackThreadMessage(
   message: SlackRepliesPageMessage,
-): SlackThreadMessage {
+  attachmentOptions?: SlackThreadAttachmentOptions,
+  sourceThreadId?: string,
+): Promise<SlackThreadMessage> {
+  const attachments = await resolveSlackMessageAttachments(
+    message,
+    attachmentOptions,
+    sourceThreadId,
+  );
   return {
     text: resolveSlackThreadMessageText(message),
     userId: isNonEmptyString(message.user) ? message.user : undefined,
     botId: isNonEmptyString(message.bot_id) ? message.bot_id : undefined,
     ts: isNonEmptyString(message.ts) ? message.ts : undefined,
+    ...(attachments.length > 0 ? { attachments } : {}),
   };
 }
 
@@ -91,26 +91,6 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function normalizeSlackFileLike(value: unknown): SlackFileLike | null {
-  const record = asRecord(value);
-  if (!record) {
-    return null;
-  }
-
-  return {
-    id: isNonEmptyString(record.id) ? record.id : undefined,
-    name: isNonEmptyString(record.name) ? record.name : undefined,
-    mimetype: isNonEmptyString(record.mimetype) ? record.mimetype : undefined,
-    size: typeof record.size === "number" ? record.size : undefined,
-    url_private: isNonEmptyString(record.url_private)
-      ? record.url_private
-      : undefined,
-    url_private_download: isNonEmptyString(record.url_private_download)
-      ? record.url_private_download
-      : undefined,
-  };
-}
-
 function normalizeSlackAttachmentLike(
   value: unknown,
 ): SlackAttachmentLike | null {
@@ -118,12 +98,6 @@ function normalizeSlackAttachmentLike(
   if (!record) {
     return null;
   }
-
-  const files = Array.isArray(record.files)
-    ? record.files
-        .map((entry) => normalizeSlackFileLike(entry))
-        .filter((entry): entry is SlackFileLike => Boolean(entry))
-    : undefined;
 
   return {
     text: isNonEmptyString(record.text) ? record.text : undefined,
@@ -133,10 +107,6 @@ function normalizeSlackAttachmentLike(
       ? record.author_name
       : undefined,
     title: isNonEmptyString(record.title) ? record.title : undefined,
-    image_url: isNonEmptyString(record.image_url)
-      ? record.image_url
-      : undefined,
-    files,
   };
 }
 
@@ -188,11 +158,7 @@ function resolveSlackThreadMessageText(
     return attachmentTexts.join("\n\n");
   }
 
-  const files = Array.isArray(message.files)
-    ? message.files
-        .map((entry) => normalizeSlackFileLike(entry))
-        .filter((entry): entry is SlackFileLike => Boolean(entry))
-    : [];
+  const files = collectSlackFiles(message);
 
   if (files.length === 0) {
     return "";
@@ -200,110 +166,6 @@ function resolveSlackThreadMessageText(
 
   const fileNames = files.map((file) => file.name ?? "file").join(", ");
   return `[attached: ${fileNames}]`;
-}
-
-function isAllowedSlackHostname(hostname: string): boolean {
-  const normalized = hostname.trim().toLowerCase();
-  return ALLOWED_SLACK_HOST_SUFFIXES.some(
-    (suffix) => normalized === suffix || normalized.endsWith(`.${suffix}`),
-  );
-}
-
-function assertSlackFileUrl(rawUrl: string): URL {
-  const parsed = new URL(rawUrl);
-  if (parsed.protocol !== "https:") {
-    throw new Error(`Unsupported Slack file protocol: ${parsed.protocol}`);
-  }
-  if (!isAllowedSlackHostname(parsed.hostname)) {
-    throw new Error(`Refusing non-Slack attachment host: ${parsed.hostname}`);
-  }
-  return parsed;
-}
-
-function sanitizeFileName(name: string): string {
-  const normalized = name.trim().replace(/[^\w.-]+/g, "_");
-  return normalized.length > 0 ? normalized : "attachment";
-}
-
-function extensionForMimeType(mimeType?: string): string {
-  switch (mimeType?.toLowerCase()) {
-    case "image/png":
-      return ".png";
-    case "image/jpeg":
-      return ".jpg";
-    case "image/gif":
-      return ".gif";
-    case "image/webp":
-      return ".webp";
-    case "audio/aac":
-      return ".aac";
-    case "audio/m4a":
-    case "audio/mp4":
-    case "audio/x-m4a":
-      return ".m4a";
-    case "audio/mpeg":
-      return ".mp3";
-    case "audio/ogg":
-      return ".ogg";
-    case "audio/wav":
-    case "audio/x-wav":
-      return ".wav";
-    case "audio/webm":
-      return ".webm";
-    case "application/pdf":
-      return ".pdf";
-    case "text/plain":
-      return ".txt";
-    default:
-      return "";
-  }
-}
-
-function resolveMimeType(name: string, fallback?: string): string | undefined {
-  if (fallback) {
-    return fallback;
-  }
-
-  switch (extname(name).toLowerCase()) {
-    case ".png":
-      return "image/png";
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg";
-    case ".gif":
-      return "image/gif";
-    case ".webp":
-      return "image/webp";
-    case ".aac":
-      return "audio/aac";
-    case ".m4a":
-      return "audio/mp4";
-    case ".mp3":
-      return "audio/mpeg";
-    case ".oga":
-    case ".ogg":
-    case ".opus":
-      return "audio/ogg";
-    case ".wav":
-      return "audio/wav";
-    case ".webm":
-      return "audio/webm";
-    case ".pdf":
-      return "application/pdf";
-    case ".txt":
-    case ".md":
-      return "text/plain";
-    default:
-      return undefined;
-  }
-}
-
-function isGenericSlackMimeType(mimeType?: string): boolean {
-  const normalized = mimeType?.trim().toLowerCase();
-  return (
-    normalized === "application/octet-stream" ||
-    normalized === "binary/octet-stream"
-  );
 }
 
 function resolveAttachmentKind(
@@ -325,113 +187,106 @@ function resolveAttachmentKind(
   return "file";
 }
 
-async function fetchWithSlackAuth(
-  url: string,
-  token: string,
-): Promise<Response> {
-  const parsed = assertSlackFileUrl(url);
-  const authHeaders = { Authorization: `Bearer ${token}` };
-
-  const initial = await fetch(parsed.href, {
-    headers: authHeaders,
-    redirect: "manual",
+function createUndownloadedSlackAttachment(params: {
+  file: SlackFileLike;
+  sourceMessageId?: string;
+  sourceThreadId?: string | null;
+  reason: SlackAttachmentDownloadFailureReason;
+}): ChannelMessageAttachment {
+  const { fileName, mimeType } = resolveSlackFileMetadata({
+    file: params.file,
   });
-
-  if (initial.status < 300 || initial.status >= 400) {
-    return initial;
-  }
-
-  const redirectUrl = initial.headers.get("location");
-  if (!redirectUrl) {
-    return initial;
-  }
-
-  const resolved = new URL(redirectUrl, parsed.href);
-  if (resolved.origin === parsed.origin) {
-    return fetch(resolved.href, {
-      headers: authHeaders,
-      redirect: "follow",
-    });
-  }
-
-  return fetch(resolved.href, { redirect: "follow" });
+  return {
+    id: params.file.id,
+    name: fileName,
+    mimeType,
+    sizeBytes: params.file.size,
+    kind: resolveAttachmentKind(mimeType),
+    sourceMessageId: params.sourceMessageId,
+    ...(params.sourceThreadId ? { sourceThreadId: params.sourceThreadId } : {}),
+    downloadReason: params.reason,
+    ...(params.reason === "exceeds_auto_download_limit"
+      ? { autoDownloadLimitBytes: MAX_SLACK_ATTACHMENT_BYTES }
+      : {}),
+  };
 }
 
-async function saveSlackAttachment(params: {
-  accountId: string;
-  fileName: string;
-  buffer: Buffer;
-}): Promise<string> {
-  const inboundDir = join(
-    getChannelDir("slack"),
-    "inbound",
-    sanitizeFileName(params.accountId),
-  );
-  await mkdir(inboundDir, { recursive: true });
-
-  const filePath = join(
-    inboundDir,
-    `${Date.now()}-${randomUUID()}-${sanitizeFileName(params.fileName)}`,
-  );
-  await writeFile(filePath, params.buffer);
-  return filePath;
-}
-
-async function downloadSlackAttachment(params: {
+export async function materializeSlackAttachment(params: {
   accountId: string;
   token: string;
   file: SlackFileLike;
+  sourceMessageId?: string;
+  sourceThreadId?: string | null;
+  maxBytes?: number;
   transcribeVoice?: boolean;
-}): Promise<ChannelMessageAttachment | null> {
+  signal?: AbortSignal;
+}): Promise<ChannelMessageAttachment> {
+  if (
+    params.maxBytes !== undefined &&
+    typeof params.file.size === "number" &&
+    params.file.size > params.maxBytes
+  ) {
+    throw new SlackAttachmentDownloadError(
+      "exceeds_auto_download_limit",
+      `Slack attachment is ${params.file.size} bytes; automatic download limit is ${params.maxBytes} bytes.`,
+    );
+  }
+
   const url = params.file.url_private_download ?? params.file.url_private;
   if (!url) {
-    return null;
+    throw new SlackAttachmentDownloadError(
+      "missing_download_url",
+      "Slack attachment does not include a private download URL.",
+    );
   }
 
-  const response = await fetchWithSlackAuth(url, params.token);
-  if (!response.ok) {
-    return null;
+  const fetched = await fetchSlackFile({
+    token: params.token,
+    file: params.file,
+    signal: params.signal,
+  }).catch((error) => {
+    throw new SlackAttachmentDownloadError(
+      "download_failed",
+      error instanceof Error ? error.message : "Slack attachment fetch failed.",
+    );
+  });
+  if (
+    params.maxBytes !== undefined &&
+    fetched.contentLength !== undefined &&
+    fetched.contentLength > params.maxBytes
+  ) {
+    await fetched.body.cancel().catch(() => undefined);
+    throw new SlackAttachmentDownloadError(
+      "exceeds_auto_download_limit",
+      `Slack attachment is ${fetched.contentLength} bytes; automatic download limit is ${params.maxBytes} bytes.`,
+    );
   }
 
-  const arrayBuffer = await response.arrayBuffer();
-  if (arrayBuffer.byteLength > MAX_SLACK_ATTACHMENT_BYTES) {
-    return null;
-  }
-
-  const buffer = Buffer.from(arrayBuffer);
-  const hintedName =
-    params.file.name ??
-    basename(new URL(url).pathname) ??
-    `${params.file.id ?? "attachment"}${extensionForMimeType(params.file.mimetype)}`;
-  const responseMimeType =
-    response.headers.get("content-type")?.split(";")[0]?.trim() || undefined;
-  const fileMimeType = params.file.mimetype;
-  const preferredMimeType =
-    responseMimeType && !isGenericSlackMimeType(responseMimeType)
-      ? responseMimeType
-      : fileMimeType && !isGenericSlackMimeType(fileMimeType)
-        ? fileMimeType
-        : undefined;
-  const mimeType = resolveMimeType(hintedName, preferredMimeType);
-  const fileName =
-    extname(hintedName) || !mimeType
-      ? hintedName
-      : `${hintedName}${extensionForMimeType(mimeType)}`;
-  const localPath = await saveSlackAttachment({
+  const { fileName, mimeType } = fetched;
+  const saved = await saveSlackAttachmentStream({
     accountId: params.accountId,
     fileName,
-    buffer,
+    body: fetched.body,
+    maxBytes: params.maxBytes,
+    signal: params.signal,
   });
 
   const kind = resolveAttachmentKind(mimeType);
+  // Images are deliberately NOT inlined as base64 (no imageDataBase64):
+  // attachments are saved to disk and surfaced via local_path in the channel
+  // notification, so the agent Reads them on demand through the shared image
+  // resize seam. Inlining every attachment let per-image-legal payloads
+  // accumulate past the inference gateway's request byte limit (LET-9517,
+  // LET-9501).
   const attachment: ChannelMessageAttachment = {
     id: params.file.id,
     name: fileName,
     mimeType,
-    sizeBytes: buffer.byteLength,
+    sizeBytes: saved.sizeBytes,
     kind,
-    localPath,
-    ...(kind === "image" ? { imageDataBase64: buffer.toString("base64") } : {}),
+    localPath: saved.localPath,
+    sourceMessageId: params.sourceMessageId,
+    ...(params.sourceThreadId ? { sourceThreadId: params.sourceThreadId } : {}),
   };
 
   // Slack voice memos arrive as ordinary audio files/file_share events, so the
@@ -441,7 +296,7 @@ async function downloadSlackAttachment(params: {
       "@/channels/transcription/index"
     );
     if (isTranscriptionConfigured()) {
-      const result = await transcribeAudioFile(localPath);
+      const result = await transcribeAudioFile(saved.localPath);
       if (result.success && result.text) {
         attachment.transcription = result.text;
       } else if (result.error) {
@@ -460,51 +315,97 @@ async function downloadSlackAttachment(params: {
   return attachment;
 }
 
-function collectSlackFiles(rawEvent: unknown): SlackFileLike[] {
-  const record = asRecord(rawEvent);
-  if (!record) {
+async function resolveSlackFilesAsAttachments(params: {
+  accountId: string;
+  token: string;
+  files: SlackFileLike[];
+  sourceMessageId?: string;
+  sourceThreadId?: string | null;
+  transcribeVoice?: boolean;
+}): Promise<ChannelMessageAttachment[]> {
+  if (params.files.length === 0) {
     return [];
   }
 
-  const deduped = new Map<string, SlackFileLike>();
+  const resolved = await Promise.all(
+    params.files.map(async (file) => {
+      try {
+        return await materializeSlackAttachment({
+          accountId: params.accountId,
+          token: params.token,
+          file,
+          sourceMessageId: params.sourceMessageId,
+          sourceThreadId: params.sourceThreadId,
+          maxBytes: MAX_SLACK_ATTACHMENT_BYTES,
+          transcribeVoice: params.transcribeVoice,
+        });
+      } catch (error) {
+        const reason =
+          error instanceof SlackAttachmentDownloadError
+            ? error.reason
+            : "download_failed";
+        return createUndownloadedSlackAttachment({
+          file,
+          sourceMessageId: params.sourceMessageId,
+          sourceThreadId: params.sourceThreadId,
+          reason,
+        });
+      }
+    }),
+  );
 
-  const push = (file: SlackFileLike | null) => {
-    if (!file) {
-      return;
-    }
-    const key =
-      file.id ??
-      file.url_private_download ??
-      file.url_private ??
-      `${file.name ?? "attachment"}:${file.mimetype ?? ""}`;
-    deduped.set(key, file);
+  return resolved;
+}
+
+function resolveSlackThreadAttachmentOptions(
+  params: SlackThreadAttachmentParams,
+): SlackThreadAttachmentOptions | undefined {
+  if (!isNonEmptyString(params.accountId) || !isNonEmptyString(params.token)) {
+    return undefined;
+  }
+
+  return {
+    accountId: params.accountId,
+    token: params.token,
+    transcribeVoice: params.transcribeVoice,
   };
+}
 
-  if (Array.isArray(record.files)) {
-    for (const entry of record.files) {
-      push(normalizeSlackFileLike(entry));
-    }
+function hasSlackThreadMessageContent(
+  message: SlackRepliesPageMessage,
+  attachmentOptions?: SlackThreadAttachmentOptions,
+): boolean {
+  if (resolveSlackThreadMessageText(message)) {
+    return true;
+  }
+  return Boolean(attachmentOptions && collectSlackFiles(message).length > 0);
+}
+
+function hasHydratedSlackThreadMessageContent(
+  message: SlackThreadMessage,
+): boolean {
+  return message.text.length > 0 || Boolean(message.attachments?.length);
+}
+
+async function resolveSlackMessageAttachments(
+  message: SlackRepliesPageMessage,
+  attachmentOptions?: SlackThreadAttachmentOptions,
+  sourceThreadId?: string,
+): Promise<ChannelMessageAttachment[]> {
+  if (!attachmentOptions) {
+    return [];
   }
 
-  if (Array.isArray(record.attachments)) {
-    record.attachments
-      .map((entry) => normalizeSlackAttachmentLike(entry))
-      .filter((entry): entry is SlackAttachmentLike => Boolean(entry))
-      .forEach((attachment, index) => {
-        for (const file of attachment.files ?? []) {
-          push(file);
-        }
-        if (attachment.image_url) {
-          push({
-            id: `attachment-image-${index}`,
-            name: `attachment-image-${index}.png`,
-            url_private: attachment.image_url,
-          });
-        }
-      });
-  }
-
-  return Array.from(deduped.values()).slice(0, MAX_SLACK_ATTACHMENTS);
+  return resolveSlackFilesAsAttachments({
+    accountId: attachmentOptions.accountId,
+    token: attachmentOptions.token,
+    files: collectSlackFiles(message),
+    sourceMessageId: message.ts,
+    sourceThreadId:
+      sourceThreadId ??
+      (isNonEmptyString(message.thread_ts) ? message.thread_ts : null),
+    transcribeVoice: attachmentOptions.transcribeVoice,
+  });
 }
 
 export async function resolveSlackInboundAttachments(params: {
@@ -513,25 +414,52 @@ export async function resolveSlackInboundAttachments(params: {
   rawEvent: unknown;
   transcribeVoice?: boolean;
 }): Promise<ChannelMessageAttachment[]> {
-  const files = collectSlackFiles(params.rawEvent);
-  if (files.length === 0) {
+  const rawEvent = asRecord(params.rawEvent);
+  return resolveSlackFilesAsAttachments({
+    accountId: params.accountId,
+    token: params.token,
+    files: collectSlackFiles(params.rawEvent),
+    sourceMessageId: isNonEmptyString(rawEvent?.ts) ? rawEvent.ts : undefined,
+    sourceThreadId: isNonEmptyString(rawEvent?.thread_ts)
+      ? rawEvent.thread_ts
+      : null,
+    transcribeVoice: params.transcribeVoice,
+  });
+}
+
+export async function resolveSlackCurrentMessageAttachments(
+  params: {
+    channelId: string;
+    threadTs: string;
+    messageTs: string;
+    client: SlackAttachmentReadClient;
+  } & SlackThreadAttachmentParams,
+): Promise<ChannelMessageAttachment[]> {
+  const attachmentOptions = resolveSlackThreadAttachmentOptions(params);
+  if (!attachmentOptions) {
     return [];
   }
 
-  const resolved = await Promise.all(
-    files.map((file) =>
-      downloadSlackAttachment({
-        accountId: params.accountId,
-        token: params.token,
-        file,
-        transcribeVoice: params.transcribeVoice,
-      }).catch(() => null),
-    ),
-  );
-
-  return resolved.filter((attachment): attachment is ChannelMessageAttachment =>
-    Boolean(attachment),
-  );
+  try {
+    const files = await resolveSlackMessageFiles({
+      channelId: params.channelId,
+      threadTs: params.threadTs,
+      messageTs: params.messageTs,
+      client: params.client,
+    });
+    return files
+      ? resolveSlackFilesAsAttachments({
+          accountId: attachmentOptions.accountId,
+          token: attachmentOptions.token,
+          files,
+          sourceMessageId: params.messageTs,
+          sourceThreadId: params.threadTs,
+          transcribeVoice: attachmentOptions.transcribeVoice,
+        })
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function readSlackAttachmentFile(
@@ -540,11 +468,13 @@ export async function readSlackAttachmentFile(
   return readFile(localPath);
 }
 
-export async function resolveSlackThreadStarter(params: {
-  channelId: string;
-  threadTs: string;
-  client: SlackRepliesClient;
-}): Promise<SlackThreadMessage | null> {
+export async function resolveSlackThreadStarter(
+  params: {
+    channelId: string;
+    threadTs: string;
+    client: SlackAttachmentReadClient;
+  } & SlackThreadAttachmentParams,
+): Promise<SlackThreadMessage | null> {
   try {
     const response = (await params.client.conversations.replies({
       channel: params.channelId,
@@ -558,29 +488,35 @@ export async function resolveSlackThreadStarter(params: {
       return null;
     }
 
-    const text = resolveSlackThreadMessageText(message);
-    if (!text) {
+    const attachmentOptions = resolveSlackThreadAttachmentOptions(params);
+    if (!hasSlackThreadMessageContent(message, attachmentOptions)) {
       return null;
     }
 
-    return {
-      text,
-      userId: isNonEmptyString(message.user) ? message.user : undefined,
-      botId: isNonEmptyString(message.bot_id) ? message.bot_id : undefined,
-      ts: isNonEmptyString(message.ts) ? message.ts : undefined,
-    };
+    const mapped = await mapSlackThreadMessage(
+      message,
+      attachmentOptions,
+      params.threadTs,
+    );
+    return hasHydratedSlackThreadMessageContent(mapped) ? mapped : null;
   } catch {
     return null;
   }
 }
 
-export async function resolveSlackThreadHistory(params: {
-  channelId: string;
-  threadTs: string;
-  client: SlackRepliesClient;
-  currentMessageTs?: string;
-  limit?: number;
-}): Promise<SlackThreadMessage[]> {
+export async function resolveSlackThreadHistory(
+  params: {
+    channelId: string;
+    threadTs: string;
+    client: SlackAttachmentReadClient;
+    currentMessageTs?: string;
+    limit?: number;
+    include?: SlackThreadHistoryEntryKind;
+    excludeBotId?: string | null;
+    routedBotUserId?: string | null;
+    acceptMentionedBots?: boolean;
+  } & SlackThreadAttachmentParams,
+): Promise<SlackThreadMessage[]> {
   const maxMessages = params.limit ?? 20;
   if (!Number.isFinite(maxMessages) || maxMessages <= 0) {
     return [];
@@ -588,6 +524,7 @@ export async function resolveSlackThreadHistory(params: {
 
   const fetchLimit = 200;
   const retained: SlackRepliesPageMessage[] = [];
+  const attachmentOptions = resolveSlackThreadAttachmentOptions(params);
   let cursor: string | undefined;
 
   try {
@@ -601,14 +538,37 @@ export async function resolveSlackThreadHistory(params: {
       })) as SlackRepliesPage;
 
       for (const message of response.messages ?? []) {
-        const text = resolveSlackThreadMessageText(message);
-        if (!text) {
-          continue;
-        }
         if (params.currentMessageTs && message.ts === params.currentMessageTs) {
           continue;
         }
         if (message.ts === params.threadTs) {
+          continue;
+        }
+
+        const isBotMessage = isNonEmptyString(message.bot_id);
+        if (params.include === "unrouted-bot") {
+          if (!isBotMessage) {
+            retained.length = 0;
+            continue;
+          }
+          if (
+            isNonEmptyString(params.excludeBotId) &&
+            message.bot_id === params.excludeBotId
+          ) {
+            continue;
+          }
+          if (
+            params.acceptMentionedBots === true &&
+            hasSlackMention(message.text ?? "", params.routedBotUserId ?? null)
+          ) {
+            retained.length = 0;
+            continue;
+          }
+        }
+        if (params.include === "bot" && !isNonEmptyString(message.bot_id)) {
+          continue;
+        }
+        if (!hasSlackThreadMessageContent(message, attachmentOptions)) {
           continue;
         }
 
@@ -625,24 +585,32 @@ export async function resolveSlackThreadHistory(params: {
           : undefined;
     } while (cursor);
 
-    return retained.map(mapSlackThreadMessage);
+    const mapped = await Promise.all(
+      retained.map((message) =>
+        mapSlackThreadMessage(message, attachmentOptions, params.threadTs),
+      ),
+    );
+    return mapped.filter(hasHydratedSlackThreadMessageContent);
   } catch {
     return [];
   }
 }
 
-export async function resolveSlackChannelHistory(params: {
-  channelId: string;
-  beforeTs: string;
-  client: SlackRepliesClient;
-  limit?: number;
-}): Promise<SlackThreadMessage[]> {
+export async function resolveSlackChannelHistory(
+  params: {
+    channelId: string;
+    beforeTs: string;
+    client: SlackAttachmentReadClient;
+    limit?: number;
+  } & SlackThreadAttachmentParams,
+): Promise<SlackThreadMessage[]> {
   const maxMessages = params.limit ?? 20;
   if (!Number.isFinite(maxMessages) || maxMessages <= 0) {
     return [];
   }
 
   const fetchLimit = Math.min(Math.max(maxMessages * 3, maxMessages), 100);
+  const attachmentOptions = resolveSlackThreadAttachmentOptions(params);
 
   try {
     const response = (await params.client.conversations.history({
@@ -658,12 +626,17 @@ export async function resolveSlackChannelHistory(params: {
           return false;
         }
 
-        return Boolean(resolveSlackThreadMessageText(message));
+        return hasSlackThreadMessageContent(message, attachmentOptions);
       })
       .slice(0, fetchLimit)
       .reverse();
 
-    return retained.slice(-maxMessages).map(mapSlackThreadMessage);
+    const mapped = await Promise.all(
+      retained
+        .slice(-maxMessages)
+        .map((message) => mapSlackThreadMessage(message, attachmentOptions)),
+    );
+    return mapped.filter(hasHydratedSlackThreadMessageContent);
   } catch {
     return [];
   }

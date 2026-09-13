@@ -1,7 +1,11 @@
 import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
-import { LETTA_CLOUD_API_URL, refreshAccessToken } from "@/auth/oauth";
-import { experimentManager } from "@/experiments/manager";
+import {
+  bindDesktopCredentials,
+  getDesktopAccessToken,
+} from "@/auth/desktop-credentials";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
 import { type Settings, settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { isDebugEnabled } from "@/utils/debug";
@@ -105,19 +109,6 @@ const sdkLogger = {
   },
 };
 
-/**
- * Get the current Letta server URL from environment or settings.
- * Used for cache keys and API operations.
- */
-export function getServerUrl(): string {
-  const settings = settingsManager.getSettings();
-  return (
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL
-  );
-}
-
 export {
   getMemfsGitProxyRewriteConfig,
   getMemfsServerUrl,
@@ -125,9 +116,19 @@ export {
   type MemfsGitProxyRewriteConfig,
 } from "./memfs-git-proxy";
 
-export function getClientDefaultHeaders(): Record<string, string> {
-  const nodeExperiment = experimentManager.getSnapshot("node");
+const RUNTIME_ENVIRONMENT_DEVICE_ID_ENV = "LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID";
 
+export function getRuntimeEnvironmentDeviceId(): string {
+  // A managed runtime may have an orchestrator-assigned execution identity
+  // distinct from this installation's persisted device id. Keep the override
+  // scoped to runtime attribution; registration and auth still use settings.
+  return (
+    process.env[RUNTIME_ENVIRONMENT_DEVICE_ID_ENV]?.trim() ||
+    settingsManager.getOrCreateDeviceId()
+  );
+}
+
+export function getClientDefaultHeaders(): Record<string, string> {
   return {
     "X-Letta-Source": "letta-code",
     "User-Agent": `letta-code/${packageJson.version}`,
@@ -135,12 +136,7 @@ export function getClientDefaultHeaders(): Record<string, string> {
     // persist the (agent, conversation) → device association and
     // restore it on other browsers/sessions. The cloud middleware
     // ignores this header on non-message routes.
-    "X-Letta-Environment-Device-Id": settingsManager.getOrCreateDeviceId(),
-    ...(nodeExperiment.source === "override"
-      ? { "x-letta-node": nodeExperiment.enabled ? "1" : "0" }
-      : nodeExperiment.enabled
-        ? { "x-letta-node": "1" }
-        : {}),
+    "X-Letta-Environment-Device-Id": getRuntimeEnvironmentDeviceId(),
     ...(process.env.LETTA_MEMFS_BACKEND === "hosted"
       ? { "x-letta-memfs-backend": "hosted" }
       : {}),
@@ -169,7 +165,11 @@ export async function getClient() {
       ? cachedSettings
       : await settingsManager.getSettingsWithSecureTokens();
 
-  let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+  const desktopAccessToken = getDesktopAccessToken();
+  let apiKey =
+    desktopAccessToken ||
+    process.env.LETTA_API_KEY ||
+    settings.env?.LETTA_API_KEY;
 
   if (!process.env.LETTA_API_KEY) {
     if (apiKey) {
@@ -185,6 +185,7 @@ export async function getClient() {
 
   // Check if token is expired and refresh if needed
   if (
+    !desktopAccessToken &&
     !process.env.LETTA_API_KEY &&
     settings.tokenExpiresAt &&
     settings.refreshToken
@@ -201,7 +202,7 @@ export async function getClient() {
         const deviceId = settingsManager.getOrCreateDeviceId();
         const deviceName = hostname();
 
-        const tokens = await refreshAccessToken(
+        const tokens = await refreshAccessTokenSingleFlight(
           settings.refreshToken,
           deviceId,
           deviceName,
@@ -294,5 +295,5 @@ export async function getClient() {
     return promise;
   }) as typeof client.messages.retrieve;
 
-  return client;
+  return bindDesktopCredentials(client);
 }

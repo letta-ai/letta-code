@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -544,6 +544,37 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
 });
 
 describe("pullMemory recovery", () => {
+  test("repairs multiple upstream branches before pulling", async () => {
+    const remote = makeBareGitRepo();
+    const source = cloneRepo(remote);
+    commitFile(source, "remote.md", "remote memory");
+    git(source, "push -u origin main");
+
+    const agentId = `agent-test-${Date.now()}`;
+    const agentRoot = getAgentRootDir(agentId);
+    tempDirs.push(agentRoot);
+    mkdirSync(agentRoot, { recursive: true });
+    const memoryDir = getMemoryRepoDir(agentId);
+    execFileSync("git", ["clone", remote, memoryDir], { stdio: "ignore" });
+    git(memoryDir, "config --add branch.main.merge refs/heads/other");
+
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({
+      apiKey: "test-token",
+    }));
+
+    const result = await pullMemory(agentId);
+
+    expect(result.updated).toBe(false);
+    expect(result.summary).toBe("Already up to date");
+    expect(git(memoryDir, "config --get-all branch.main.merge").trim()).toBe(
+      "refs/heads/main",
+    );
+    expect(git(memoryDir, "config --get-all branch.main.remote").trim()).toBe(
+      "origin",
+    );
+  });
+
   test("recovers clean unrelated local memory history by resetting to origin/main", async () => {
     const remote = makeBareGitRepo();
     const source = cloneRepo(remote);
@@ -565,7 +596,7 @@ describe("pullMemory recovery", () => {
 
     process.env.LETTA_API_KEY = "test-token";
     __testOverrideGetClient(async () => ({
-      _options: { apiKey: "test-token" },
+      apiKey: "test-token",
     }));
 
     const result = await pullMemory(agentId);
@@ -577,13 +608,104 @@ describe("pullMemory recovery", () => {
   });
 });
 
+describe("credential helper reset", () => {
+  async function refreshCredentialConfig(
+    repo: string,
+    options: { proxy?: boolean } = {},
+  ): Promise<void> {
+    process.env.LETTA_BASE_URL = "https://api.letta.com";
+    delete process.env.LETTA_MEMFS_BASE_URL;
+    delete process.env.LETTA_DESKTOP_MODE;
+    if (options.proxy) {
+      process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL = "http://localhost:51338";
+    } else {
+      delete process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL;
+    }
+    process.env.LETTA_API_KEY = "fresh-token";
+    __testOverrideGetClient(async () => ({
+      apiKey: "fresh-token",
+    }));
+
+    await syncPendingMemoryCommitsAfterTurn("agent-123", {
+      memoryDir: repo,
+    });
+  }
+
+  test("resets inherited helpers before the repo-local Letta helper", async () => {
+    const { repo } = makeSyncedRepo();
+
+    // Run twice to prove the two-entry write is idempotent rather than
+    // accumulating another helper on every sync.
+    await refreshCredentialConfig(repo);
+    await refreshCredentialConfig(repo);
+
+    const key = "credential.https://api.letta.com.helper";
+    const helpers = git(repo, `config --local --get-all ${key}`)
+      .replaceAll("\r\n", "\n")
+      .replace(/\n$/, "")
+      .split("\n");
+    expect(helpers).toHaveLength(2);
+    expect(helpers[0]).toBe("");
+
+    // Model a system/global helper such as osxkeychain returning a stale Letta
+    // identity. Git must skip it after seeing the host-scoped empty reset.
+    const globalConfig = join(repo, "global.gitconfig");
+    const systemConfig = join(repo, "system.gitconfig");
+    writeFileSync(
+      globalConfig,
+      '[credential]\n\thelper = "!f() { echo username=stale; echo password=stale-keychain-token; }; f"\n',
+      "utf-8",
+    );
+    writeFileSync(systemConfig, "", "utf-8");
+
+    const filled = execSync("git credential fill", {
+      cwd: repo,
+      encoding: "utf-8",
+      input: "protocol=https\nhost=api.letta.com\n\n",
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: globalConfig,
+        GIT_CONFIG_SYSTEM: systemConfig,
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    });
+
+    expect(filled).toContain("username=letta");
+    expect(filled).toContain("password=fresh-token");
+    expect(filled).not.toContain("stale-keychain-token");
+  });
+
+  test("desktop proxy mode clears both reset and helper entries", async () => {
+    const { repo } = makeSyncedRepo();
+    const key = "credential.https://api.letta.com.helper";
+    git(repo, `config --local --add ${key} ""`);
+    // Argv array instead of a shell string: cmd.exe on Windows does not strip
+    // single quotes, so a quoted helper value would split into extra args.
+    execFileSync(
+      "git",
+      [
+        "config",
+        "--local",
+        "--add",
+        key,
+        "!f() { echo username=stale; echo password=stale; }; f",
+      ],
+      { cwd: repo },
+    );
+
+    await refreshCredentialConfig(repo, { proxy: true });
+
+    expect(gitOrEmpty(repo, `config --local --get-all ${key}`)).toBe("");
+  });
+});
+
 describe("assertMemoryRepoCleanForWrite", () => {
   test("allows clean local commits to wait for post-turn sync", async () => {
     const { repo, remote } = makeSyncedRepo();
     const localSha = commitFile(repo, "local.md", "local");
     process.env.LETTA_API_KEY = "test-token";
     __testOverrideGetClient(async () => ({
-      _options: { apiKey: "test-token" },
+      apiKey: "test-token",
     }));
 
     await assertMemoryRepoCleanForWrite(repo);
@@ -604,7 +726,7 @@ describe("assertMemoryRepoCleanForWrite", () => {
     git(other, "push");
     process.env.LETTA_API_KEY = "test-token";
     __testOverrideGetClient(async () => ({
-      _options: { apiKey: "test-token" },
+      apiKey: "test-token",
     }));
 
     await assertMemoryRepoCleanForWrite(repo);
@@ -643,7 +765,7 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
     const localSha = commitFile(repo, "local.md", "local");
     process.env.LETTA_API_KEY = "test-token";
     __testOverrideGetClient(async () => ({
-      _options: { apiKey: "test-token" },
+      apiKey: "test-token",
     }));
 
     const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
@@ -664,7 +786,7 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
     writeFileSync(join(repo, "dirty.md"), "dirty", "utf-8");
     process.env.LETTA_API_KEY = "test-token";
     __testOverrideGetClient(async () => ({
-      _options: { apiKey: "test-token" },
+      apiKey: "test-token",
     }));
 
     const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
@@ -681,7 +803,7 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
     writeFileSync(join(repo, ".git", "MERGE_HEAD"), `${head}\n`, "utf-8");
     process.env.LETTA_API_KEY = "test-token";
     __testOverrideGetClient(async () => ({
-      _options: { apiKey: "test-token" },
+      apiKey: "test-token",
     }));
 
     const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {

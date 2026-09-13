@@ -2,6 +2,7 @@
 // CLI-level permission overrides from command-line flags
 // These take precedence over settings.json but not over enterprise managed policies
 
+import { getRuntimeContext } from "@/runtime-context";
 import {
   canonicalToolName,
   isFileToolName,
@@ -17,7 +18,7 @@ import { normalizePermissionRule } from "./rule-normalization";
 export class CliPermissions {
   private allowedTools: string[] = [];
   private disallowedTools: string[] = [];
-  private memoryGuardDisabled = true;
+  private memoryGuardDisabled = false;
 
   /**
    * Parse and set allowed tools from CLI flag
@@ -37,8 +38,9 @@ export class CliPermissions {
 
   /**
    * Disable the cross-agent memory guard for this parent CLI process. Parent
-   * processes start disabled by default; headless startup clears this bit.
-   * Subagent processes ignore this setting when evaluating the guard.
+   * processes start guarded by default; this is only set by the explicit
+   * --disable-memory-guard override. Subagent processes ignore this setting
+   * when evaluating the guard.
    */
   setMemoryGuardDisabled(disabled: boolean): void {
     this.memoryGuardDisabled = disabled;
@@ -122,21 +124,30 @@ export class CliPermissions {
    * Get all allowed tool patterns
    */
   getAllowedTools(): string[] {
-    return [...this.allowedTools];
+    return [
+      ...(getRuntimeContext()?.executionSettings?.allowed_tools ??
+        this.allowedTools),
+    ];
   }
 
   /**
    * Get all disallowed tool patterns
    */
   getDisallowedTools(): string[] {
-    return [...this.disallowedTools];
+    return [
+      ...(getRuntimeContext()?.executionSettings?.disallowed_tools ??
+        this.disallowedTools),
+    ];
   }
 
   /**
    * Whether --disable-memory-guard was set on the CLI.
    */
   isMemoryGuardDisabled(): boolean {
-    return this.memoryGuardDisabled;
+    return (
+      getRuntimeContext()?.executionSettings?.disable_memory_guard ??
+      this.memoryGuardDisabled
+    );
   }
 
   /**
@@ -145,6 +156,6 @@ export class CliPermissions {
   clear(): void {
     this.allowedTools = [];
     this.disallowedTools = [];
-    this.memoryGuardDisabled = true;
+    this.memoryGuardDisabled = false;
   }
 }

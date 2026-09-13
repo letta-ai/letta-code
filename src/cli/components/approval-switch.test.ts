@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { getQuestionsFromApproval } from "@/cli/app/approval-questions";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { getQuestions } from "./ApprovalSwitch";
 
@@ -241,7 +242,7 @@ describe("getQuestions (AskUserQuestion shape validation)", () => {
   test("returns [] when question-level fields have the wrong type", () => {
     // InlineQuestionApproval calls `question.includes(...)` and renders
     // `header` as a React child, so non-string values throw. multiSelect/
-    // allowOther must be booleans (allowOther may be omitted).
+    // allowOther must be booleans when present.
     const baseOptions = [
       { label: "A", description: "" },
       { label: "B", description: "" },
@@ -279,10 +280,6 @@ describe("getQuestions (AskUserQuestion shape validation)", () => {
       ],
     });
     expect(getQuestions(approval(nonBooleanMultiSelect))).toEqual([]);
-    const missingMultiSelect = JSON.stringify({
-      questions: [{ header: "H", question: "Q?", options: baseOptions }],
-    });
-    expect(getQuestions(approval(missingMultiSelect))).toEqual([]);
     const nonBooleanAllowOther = JSON.stringify({
       questions: [
         {
@@ -310,6 +307,25 @@ describe("getQuestions (AskUserQuestion shape validation)", () => {
       ],
     });
     expect(getQuestions(approval(validWithoutAllowOther))).toHaveLength(1);
+  });
+
+  test("accepts omitted multiSelect in both render and submit parsing", () => {
+    const questions = [
+      {
+        header: "H",
+        question: "Q?",
+        options: [
+          { label: "A", description: "First" },
+          { label: "B", description: "Second" },
+        ],
+      },
+    ];
+    expect(getQuestions(approval(JSON.stringify({ questions })))).toEqual(
+      questions,
+    );
+    expect(
+      getQuestionsFromApproval(approval(JSON.stringify({ questions }))),
+    ).toEqual(questions);
   });
 
   test("returns [] if any single question is malformed (all-or-nothing)", () => {

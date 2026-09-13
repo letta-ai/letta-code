@@ -7,6 +7,8 @@ import {
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import {
+  extractTaskNotificationsForDisplay,
+  formatMonitorEventNotification,
   formatTaskNotification,
   type TaskNotification,
 } from "@/utils/task-notifications";
@@ -117,6 +119,42 @@ describe("taskNotifications", () => {
       expect(formatted).toContain("tool_uses: 4");
       expect(formatted).toContain("duration_ms: 5678");
       expect(formatted).toContain("</usage>");
+    });
+
+    test("hides agent-only system reminder notifications from display", () => {
+      const message = `<task-notification>
+<summary>Memory reflection merge pending; resolving in parent agent.</summary>
+<result>
+<system-reminder>
+ACTION REQUIRED: Resolve pending reflection memory merge.
+</system-reminder>
+</result>
+</task-notification>`;
+
+      expect(extractTaskNotificationsForDisplay(message)).toEqual({
+        notifications: [],
+        cleanedText: "",
+      });
+    });
+
+    test("formats monitor events as task notifications and escapes output", () => {
+      const formatted = formatMonitorEventNotification({
+        taskId: "monitor_1",
+        description: "deploy <status>",
+        event: "failed & needs <attention>",
+      });
+
+      expect(formatted).toContain("<task-id>monitor_1</task-id>");
+      expect(formatted).toContain(
+        '<summary>Monitor event: "deploy &lt;status&gt;"</summary>',
+      );
+      expect(formatted).toContain(
+        "<event>failed &amp; needs &lt;attention&gt;</event>",
+      );
+      expect(extractTaskNotificationsForDisplay(formatted)).toEqual({
+        notifications: ['Monitor event: "deploy <status>"'],
+        cleanedText: "",
+      });
     });
   });
 });

@@ -2,18 +2,23 @@ import { describe, expect, test } from "bun:test";
 import * as path from "node:path";
 import type { SubagentConfig } from "@/agent/subagents";
 import {
+  buildSubagentPrompt,
   estimateStartupContextTokens,
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
 } from "@/agent/subagents/context-budget";
 import {
   buildSubagentArgs,
-  buildSubagentPrompt,
-  getModelHandleFromAgent,
   recallPromptForBackend,
-  resolveSubagentLauncher,
-  resolveSubagentModel,
-  resolveSubagentWorkingDirectory,
+  shouldPrependDeploySystemReminder,
 } from "@/agent/subagents/manager";
+import {
+  resolveSubagentLauncher,
+  resolveSubagentWorkingDirectory,
+} from "@/agent/subagents/subagent-launcher";
+import {
+  getModelHandleFromAgent,
+  resolveSubagentModel,
+} from "@/agent/subagents/subagent-model";
 
 describe("recallPromptForBackend", () => {
   test("uses separate API and local recall prompts", () => {
@@ -27,6 +32,17 @@ describe("recallPromptForBackend", () => {
     expect(localPrompt).toContain("~/.letta/lc-local-backend");
     expect(localPrompt).not.toContain("--mode <mode>");
     expect(localPrompt).not.toContain("Semantic similarity search");
+  });
+});
+
+describe("shouldPrependDeploySystemReminder", () => {
+  test("does not describe a same-agent conversation as coming from itself", () => {
+    expect(
+      shouldPrependDeploySystemReminder("agent-primary", "agent-primary"),
+    ).toBe(false);
+    expect(
+      shouldPrependDeploySystemReminder("agent-worker", "agent-primary"),
+    ).toBe(true);
   });
 });
 
@@ -204,7 +220,7 @@ describe("resolveSubagentWorkingDirectory", () => {
     expect(cwd).toBe("/tmp/repo-root");
   });
 
-  test("reflection memory-mode subagents run from the inherited parent memory root", () => {
+  test("reflection subagents with the memory-subagent profile run from the inherited parent memory root", () => {
     const cwd = resolveSubagentWorkingDirectory(
       {
         USER_CWD: "/tmp/project-root",
@@ -212,12 +228,54 @@ describe("resolveSubagentWorkingDirectory", () => {
       "/tmp/fallback-root",
       {
         subagentType: "reflection",
-        permissionMode: "memory",
+        launchProfile: "memory-subagent",
         inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
       },
     );
 
     expect(cwd).toBe("/Users/test/.letta/agents/agent-parent/memory");
+  });
+
+  test("reflection subagents with memoryScope run from USER_CWD while MEMORY_DIR points at the worktree", () => {
+    const cwd = resolveSubagentWorkingDirectory(
+      {
+        USER_CWD: "/tmp/project-root",
+      } as NodeJS.ProcessEnv,
+      "/tmp/fallback-root",
+      {
+        subagentType: "reflection",
+        launchProfile: "memory-subagent",
+        inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
+        memoryScope: {
+          primaryRoot:
+            "/Users/test/.letta/agents/agent-parent/memory-worktrees/reflection-123",
+          writableRoots: [
+            "/Users/test/.letta/agents/agent-parent/memory-worktrees/reflection-123",
+          ],
+        },
+      },
+    );
+
+    expect(cwd).toBe("/tmp/project-root");
+  });
+
+  test("reflection integration agents run directly from their memory worktree", () => {
+    const worktree =
+      "/Users/test/.letta/agents/agent-parent/memory-worktrees/reflection-123";
+    const cwd = resolveSubagentWorkingDirectory(
+      { USER_CWD: "/tmp/project-root" } as NodeJS.ProcessEnv,
+      "/tmp/fallback-root",
+      {
+        subagentType: "general-purpose",
+        launchProfile: "memory-subagent",
+        memoryScope: {
+          primaryRoot: worktree,
+          writableRoots: [worktree],
+        },
+      },
+    );
+
+    expect(cwd).toBe(worktree);
   });
 
   test("non-reflection subagents still prefer USER_CWD", () => {
@@ -228,7 +286,7 @@ describe("resolveSubagentWorkingDirectory", () => {
       "/tmp/fallback-root",
       {
         subagentType: "general-purpose",
-        permissionMode: "memory",
+        launchProfile: "memory-subagent",
         inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
       },
     );
@@ -245,18 +303,79 @@ describe("buildSubagentArgs", () => {
     allowedTools: "all",
     recommendedModel: "inherit",
     skills: [],
-    mode: "stateful",
     fork: false,
-    background: false,
+    launchProfile: "default",
   };
 
-  test("adds --no-memfs for newly spawned subagents by default", () => {
+  test("does not pass --no-memfs (statelessness derives from subagent role env)", () => {
     const args = buildSubagentArgs("test-subagent", baseConfig, null, "hello");
 
-    expect(args).toContain("--no-memfs");
+    expect(args).not.toContain("--no-memfs");
+    expect(args).toContain("--new-agent");
   });
 
-  test("passes --backend local and --no-memfs for local backend subagents", () => {
+  test("tags new subagents with type and combines parent into one --tags value", () => {
+    const args = buildSubagentArgs(
+      "explore",
+      baseConfig,
+      null,
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { parentAgentId: "agent-parent-123" },
+    );
+
+    const tagFlagCount = args.filter((a) => a === "--tags").length;
+    expect(tagFlagCount).toBe(1);
+    const tagsValue = args[args.indexOf("--tags") + 1];
+    expect(tagsValue).toBe("type:explore,parent:agent-parent-123");
+  });
+
+  test("omits parent tag when no parentAgentId is provided", () => {
+    const args = buildSubagentArgs("explore", baseConfig, null, "hello");
+
+    const tagsValue = args[args.indexOf("--tags") + 1];
+    expect(tagsValue).toBe("type:explore");
+  });
+
+  test("threads the computer selector through as --computer", () => {
+    const args = buildSubagentArgs(
+      "explore",
+      baseConfig,
+      null,
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { environment: "office-mac" },
+    );
+
+    expect(args[args.indexOf("--computer") + 1]).toBe("office-mac");
+  });
+
+  test("omits --computer by default", () => {
+    const args = buildSubagentArgs("explore", baseConfig, null, "hello");
+
+    expect(args).not.toContain("--computer");
+  });
+
+  test("does not tag when deploying an existing agent (fork/recall)", () => {
+    const args = buildSubagentArgs(
+      "fork",
+      baseConfig,
+      null,
+      "hello",
+      "agent-existing",
+      undefined,
+      undefined,
+      { parentAgentId: "agent-parent-123" },
+    );
+
+    expect(args).not.toContain("--tags");
+  });
+
+  test("passes --backend local for local backend subagents", () => {
     const args = buildSubagentArgs(
       "test-subagent",
       baseConfig,
@@ -270,10 +389,10 @@ describe("buildSubagentArgs", () => {
 
     expect(args).toContain("--backend");
     expect(args).toContain("local");
-    expect(args).toContain("--no-memfs");
+    expect(args).not.toContain("--no-memfs");
   });
 
-  test("does not force --no-memfs when deploying an existing subagent agent", () => {
+  test("deploys existing subagent agents without --new-agent (keeps memfs)", () => {
     const args = buildSubagentArgs(
       "test-subagent",
       baseConfig,
@@ -287,19 +406,19 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--no-memfs");
   });
 
-  test("passes memory permission mode through when configured", () => {
+  test("subagents always use unrestricted permission mode", () => {
     const args = buildSubagentArgs(
       "test-subagent",
       {
         ...baseConfig,
-        permissionMode: "memory",
+        launchProfile: "memory-subagent",
       },
       null,
       "hello",
     );
 
     expect(args).toContain("--permission-mode");
-    expect(args).toContain("memory");
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("unrestricted");
   });
 
   test("caps reflection system prompt plus initial message to startup budget", () => {
@@ -375,15 +494,35 @@ describe("buildSubagentArgs", () => {
     expect(promptArg).toBe(longPrompt);
   });
 
-  test("injects --no-system-info-reminder and --no-skills for reflection subagents", () => {
+  test("injects --no-system-info-reminder and --no-skills for non-Windows reflection subagents", () => {
     const args = buildSubagentArgs(
       "reflection",
       { ...baseConfig, name: "reflection" },
       null,
       "hello",
+      undefined,
+      undefined,
+      undefined,
+      { platform: "linux" },
     );
 
     expect(args).toContain("--no-system-info-reminder");
+    expect(args).toContain("--no-skills");
+  });
+
+  test("keeps the Windows environment reminder for reflection subagents", () => {
+    const args = buildSubagentArgs(
+      "reflection",
+      { ...baseConfig, name: "reflection" },
+      null,
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { platform: "win32" },
+    );
+
+    expect(args).not.toContain("--no-system-info-reminder");
     expect(args).toContain("--no-skills");
   });
 
@@ -652,6 +791,18 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("letta/auto-fast");
   });
 
+  test("general-purpose inheritance takes precedence over free-tier defaults", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "general-purpose",
+      recommendedModel: "inherit",
+      parentModelHandle: "openai/gpt-5",
+      billingTier: "free",
+      availableHandles: new Set(["letta/auto-fast", "letta/auto"]),
+    });
+
+    expect(result).toBe("openai/gpt-5");
+  });
+
   test("free tier falls back to auto when auto-fast is unavailable", async () => {
     const result = await resolveSubagentModel({
       billingTier: "free",
@@ -733,6 +884,33 @@ describe("resolveSubagentModel", () => {
       parentModelHandle: "lmstudio/local-model",
       backendMode: "local",
       availableHandles: new Set(["openai/gpt-5"]),
+    });
+
+    expect(result).toBe("openai/gpt-5");
+  });
+
+  test("user-configured models override local parent inheritance", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      recommendedModel: "auto",
+      recommendedModelSource: "user",
+      parentModelHandle: "lmstudio/local-model",
+      backendMode: "local",
+      availableHandles: new Set(["letta/auto"]),
+    });
+
+    expect(result).toBe("letta/auto");
+  });
+
+  test("explicit Task models override user-configured models", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      userModel: "openai/gpt-5",
+      recommendedModel: "auto",
+      recommendedModelSource: "user",
+      parentModelHandle: "lmstudio/local-model",
+      backendMode: "local",
+      availableHandles: new Set(["letta/auto", "openai/gpt-5"]),
     });
 
     expect(result).toBe("openai/gpt-5");

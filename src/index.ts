@@ -1,13 +1,14 @@
 #!/usr/bin/env bun
+import "@/utils/startup-log-boundary";
 import { hostname } from "node:os";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
-import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import {
   getResumeDataFromBackend,
+  isResumedConversation,
   type ResumeData,
 } from "./agent/check-approval";
 import {
@@ -19,16 +20,17 @@ import {
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
   getResumeRefreshArgs,
-  type ModelReasoningEffort,
+  type ModelReasoningSelection,
+  preservableContextWindow,
   resolveModel,
+  withReasoningEffortUpdateArg,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
-import {
-  buildCreateAgentOptionsForPersonality,
-  resolvePersonalityId,
-} from "./agent/personality";
+import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
+import { resolvePersonalityId } from "./agent/personality-presets";
 import type { MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
+import { initializeDesktopCredentials } from "./auth/desktop-credentials";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "./auth/oauth";
 import {
   type Backend,
@@ -39,11 +41,7 @@ import {
   isExperimentalLocalBackendEnabled,
 } from "./backend";
 import { getBillingTier } from "./backend/api/metadata";
-import {
-  isLocalBackendNoMemfsEnvEnabled,
-  LOCAL_BACKEND_EXPERIMENTAL_ENV,
-  LOCAL_BACKEND_NO_MEMFS_ENV,
-} from "./backend/local/paths";
+import { LOCAL_BACKEND_EXPERIMENTAL_ENV } from "./backend/local/paths";
 import {
   extractBackendFlag,
   type ParsedCliArgs,
@@ -55,10 +53,11 @@ import { ConversationSelector } from "./cli/components/ConversationSelector";
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
-  resolveImportFlagAlias,
 } from "./cli/flag-utils";
+import { LETTA_CHAT_API_KEYS_URL } from "./cli/helpers/app-urls";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import { ensureFdPath, resolveFdPath } from "./cli/helpers/file-autocomplete";
+import { listPinnedAgentsForCurrentUser } from "./cli/helpers/pinned-agent-listing";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { initTerminalTheme } from "./cli/helpers/terminal-theme";
 import { ProfileSelectionInline } from "./cli/profile-selection";
@@ -69,32 +68,34 @@ import {
 } from "./cli/startup-backend-mode";
 import {
   validateConversationDefaultRequiresAgent,
-  validateFlagConflicts,
-  validateRegistryHandleOrThrow,
+  validatePrimaryStartupFlagConflicts,
 } from "./cli/startup-flag-validation";
+import { isHeadlessStartup } from "./cli/startup-mode";
 import {
   runSubcommand,
   subcommandNeedsEarlyBackendMode,
 } from "./cli/subcommands/router";
 import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import { applyStartupPermissionMode } from "./permissions/startup";
+import { assertSupportedBunRuntime } from "./runtime-version";
 import {
   type Settings,
   settingsManager,
   shouldPersistSessionState,
 } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
-import { loadTools } from "./tools/manager";
+import {
+  loadStartupTools,
+  type StartupToolsetPreference,
+} from "./tools/letta-toolset";
 import { clearPersistedClientToolRules } from "./tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
+import { startOrphanDetection } from "./utils/orphan-detection";
 import { markMilestone } from "./utils/timing";
 
-// Stable empty array constants to prevent new references on every render
-// These are used as fallbacks when resumeData is null, avoiding the React
-// anti-pattern of creating new [] on every render which triggers useEffect re-runs
+// Stable fallbacks avoid creating new arrays that retrigger effects on every render.
 const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
 const EMPTY_MESSAGE_ARRAY: Message[] = [];
-
 function normalizeUpdateCommandAliases(args: string[]): string[] {
   const [command, ...rest] = args;
 
@@ -174,23 +175,24 @@ USAGE
   letta -p "..."        One-off prompt in headless mode (no TTY UI)
 
   # maintenance
-  letta update          Manually check for updates and install if available
-  letta upgrade         Alias for \`letta update\`
-  letta --update        Alias for \`letta update\`
-  letta --upgrade       Alias for \`letta update\`
+  letta update          Check for updates and install (aliases: upgrade, --update, --upgrade)
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
+  letta model ...       Get, list, or set models and reasoning (JSON-only)
+  letta computers ...   List available remote computers (JSON-only)
+  letta teleport ...    Move the current conversation between computers
   letta messages ...    Messages subcommands (JSON-only)
-  letta app-server ...  Run local app-server websocket transport
+  letta mcp ...         List, search, and call MCP servers available to an agent
+  letta mods ...        List and manage local mods
+  letta sandbox ...     Transfer files to or from the current Cloud sandbox
+  letta server ...      Run a remote computer, channels, or the App Server
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
   letta setup           Re-run first-run setup
-  letta install ...     Install a skill into an agent memfs repository
+  letta install ...     Install a skill or mod package
   letta skills ...      List or delete installed agent skills
-
 OPTIONS
 ${renderCliOptionsHelp()}
-
 SUBCOMMANDS
   letta memory status --agent <id>
   letta memory diff --agent <id>
@@ -202,26 +204,33 @@ SUBCOMMANDS
   letta memory pull --agent <id>
   letta memory tokens [--memory-dir <path>] [--agent <id>] [--format text|json]
   letta agents list [--query <text> | --name <name> | --tags <tags>]
+  letta computers list [--online-only] | current
+  letta teleport list|cloud|local|<computer>
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
-  letta app-server [--listen ws://127.0.0.1:4500]
+  letta steps trace --agent <id> --step <id>
+  letta mods list [--agent <id>]
+  letta mods package <mod-file> --name <package-name> [--out <dir>]
+  letta mods enable <package-spec>
+  letta mods disable <package-spec>
+  letta mods remove <package-spec>
+  letta mcp list|get|tools|search|call ... [--agent <id>]
+  letta server [--computer-name <name> | --listen [url]] [options]
   letta connect <provider> [options]
-  letta install <skill> [--agent <id> | -n <name>]
+  letta install <thing> [--agent <id> | -n <name>]
   letta skills list [--agent <id> | -n <name>]
   letta skills delete <skill_name> --agent <id>
-  letta backend [api|local]
+  letta backend [cloud|local]
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
 
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
   - If profiles exist, you'll be prompted to select one or create a new agent
-  - Profiles can be "pinned" to specific projects for quick access
+  - Agents can be pinned for quick access with /pin
   - Use /profile save <name> to bookmark your current agent
 
-  Profiles are stored in:
-  - Global: ~/.letta/settings.json (available everywhere)
-  - Local: .letta/settings.local.json (pinned to project)
+  Agent pins are stored in ~/.letta/settings.json.
 
   If no credentials are configured, you'll be prompted to authenticate via
   Letta Cloud OAuth on first run.
@@ -232,12 +241,13 @@ EXAMPLES
   letta --new              # Create new conversation
   letta --agent agent_123  # Open specific agent
   letta install official/finance/stocks --agent agent-123
+  letta install npm:@letta-ai/mod-plan-mode
 
   # inside the interactive session
   /profile save MyAgent    # Save current agent as profile
   /profiles                # Open profile selector
-  /pin                     # Pin current profile to project
-  /unpin                   # Unpin profile from project
+  /pin                     # Pin current agent
+  /unpin                   # Unpin current agent
   /logout                  # Clear saved credentials and exit
 
   # headless with JSON output (includes stats)
@@ -265,19 +275,14 @@ async function printInfo() {
   await settingsManager.loadLocalProjectSettings(cwd);
 
   // Get pinned agents
-  const localPinned = settingsManager.getLocalPinnedAgents(cwd);
-  const globalPinned = settingsManager.getGlobalPinnedAgents();
+  const pinned = settingsManager.getPinnedAgents();
   const localSettings = settingsManager.getLocalProjectSettings(cwd);
   const lastAgent = localSettings.lastAgent;
 
   // Try to fetch agent names from API (if authenticated)
   const agentNames: Record<string, string> = {};
   const allAgentIds = [
-    ...new Set([
-      ...localPinned,
-      ...globalPinned,
-      ...(lastAgent ? [lastAgent] : []),
-    ]),
+    ...new Set([...pinned, ...(lastAgent ? [lastAgent] : [])]),
   ];
 
   if (allAgentIds.length > 0) {
@@ -315,7 +320,7 @@ async function printInfo() {
   // Show which agent will be resumed
   if (lastAgent) {
     console.log(`Will resume: ${formatAgent(lastAgent)}`);
-  } else if (localPinned.length > 0 || globalPinned.length > 0) {
+  } else if (pinned.length > 0) {
     console.log("Will resume: (will show selector)");
   } else {
     console.log("Will resume: (will create new agent)");
@@ -323,86 +328,17 @@ async function printInfo() {
 
   console.log("");
 
-  // Locally pinned agents
-  if (localPinned.length > 0) {
-    console.log("Locally pinned agents (this project):");
-    for (const id of localPinned) {
+  // Pinned agents
+  if (pinned.length > 0) {
+    console.log("Pinned agents:");
+    for (const id of pinned) {
       const isLast = id === lastAgent;
       const prefix = isLast ? "→ " : "  ";
       const suffix = isLast ? " (last used)" : "";
       console.log(`  ${prefix}${formatAgent(id)}${suffix}`);
     }
   } else {
-    console.log("Locally pinned agents: (none)");
-  }
-
-  console.log("");
-
-  // Globally pinned agents
-  if (globalPinned.length > 0) {
-    console.log("Globally pinned agents:");
-    for (const id of globalPinned) {
-      const isLocal = localPinned.includes(id);
-      console.log(`    ${formatAgent(id)}${isLocal ? " (also local)" : ""}`);
-    }
-  } else {
-    console.log("Globally pinned agents: (none)");
-  }
-}
-
-/**
- * Helper to determine which model identifier to pass to loadTools()
- * based on user's model and/or toolset preferences.
- */
-function getModelForToolLoading(
-  specifiedModel?: string,
-  specifiedToolset?: "auto" | "codex" | "default" | "gemini",
-): string | undefined {
-  // If toolset is explicitly specified, use a dummy model from that provider
-  // to trigger the correct toolset loading logic
-  if (specifiedToolset === "codex") {
-    return "openai/gpt-4";
-  }
-  if (specifiedToolset === "gemini") {
-    return "google_ai/gemini-3.1-pro-preview";
-  }
-  if (specifiedToolset === "default") {
-    return "anthropic/claude-sonnet-4";
-  }
-  // Otherwise, use the specified model (or undefined for auto-detection)
-  return specifiedModel;
-}
-
-function getCurrentBackendMode(): BackendMode {
-  return isExperimentalLocalBackendEnabled() ? "local" : "api";
-}
-
-function getPinnedAgentIdsForBackendMode(backendMode: BackendMode): string[] {
-  const previousBackendMode = getCurrentBackendMode();
-  configureBackendMode(backendMode);
-  try {
-    return settingsManager
-      .getMergedPinnedAgents()
-      .map((entry) => entry.agentId)
-      .filter((id) => isAgentIdCompatibleWithBackend(id, backendMode));
-  } finally {
-    configureBackendMode(previousBackendMode);
-  }
-}
-
-async function findLocalAgentsByName(name: string): Promise<AgentState[]> {
-  const backend = getBackendForMode("local");
-  const normalizedName = name.toLowerCase();
-  try {
-    const page = await backend.listAgents({
-      query_text: name,
-      limit: 100,
-    } as never);
-    return paginatedItems<AgentState>(page).filter(
-      (agent) => agent.name?.toLowerCase() === normalizedName,
-    );
-  } catch {
-    return [];
+    console.log("Pinned agents: (none)");
   }
 }
 
@@ -440,58 +376,35 @@ async function resolveAgentByName(
   backendMode: BackendMode;
 } | null> {
   const normalizedSearchName = name.toLowerCase();
+  const pinnedAgents = await listPinnedAgentsForCurrentUser(backendLookupOrder);
 
   for (const backendMode of backendLookupOrder) {
-    const backend = getBackendForMode(backendMode);
-    const pinnedAgents = getPinnedAgentIdsForBackendMode(backendMode);
-
-    const matches: Array<{
-      id: string;
-      name: string;
-      agent: AgentState;
-      backendMode: BackendMode;
-    }> = [];
-
-    if (pinnedAgents.length > 0) {
-      await Promise.all(
-        pinnedAgents.map(async (id) => {
-          try {
-            const agent = await backend.retrieveAgent(id);
-            if (agent.name?.toLowerCase() === normalizedSearchName) {
-              matches.push({ id, name: agent.name, agent, backendMode });
-            }
-          } catch {
-            // Agent not found or error, skip
-          }
-        }),
-      );
-    }
-
-    if (backendMode === "local") {
-      const seen = new Set(matches.map((match) => match.id));
-      for (const agent of await findLocalAgentsByName(name)) {
-        if (!seen.has(agent.id)) {
-          matches.push({
-            id: agent.id,
-            name: agent.name ?? agent.id,
-            agent,
-            backendMode,
-          });
-          seen.add(agent.id);
-        }
-      }
-    }
+    const matches = pinnedAgents.flatMap((pinned) =>
+      pinned.backendMode === backendMode &&
+      pinned.agent?.name?.toLowerCase() === normalizedSearchName
+        ? [
+            {
+              id: pinned.agentId,
+              name: pinned.agent.name,
+              agent: pinned.agent,
+              backendMode,
+            },
+          ]
+        : [],
+    );
 
     if (matches.length === 0) continue;
     if (matches.length === 1) return matches[0] ?? null;
 
     // Multiple matches within this backend - pick most recently used.
-    const localSettings = settingsManager.getLocalProjectSettings();
-    const localMatch = matches.find((m) => m.id === localSettings.lastAgent);
+    const localMatch = matches.find(
+      (match) => match.id === settingsManager.getLocalLastAgentId(),
+    );
     if (localMatch) return localMatch;
 
-    const settings = settingsManager.getSettings();
-    const globalMatch = matches.find((m) => m.id === settings.lastAgent);
+    const globalMatch = matches.find(
+      (match) => match.id === settingsManager.getGlobalLastAgentId(),
+    );
     if (globalMatch) return globalMatch;
 
     // Fallback to first match (preserves pinned order for this backend).
@@ -507,23 +420,10 @@ async function resolveAgentByName(
 async function getPinnedAgentNames(
   backendLookupOrder: BackendMode[],
 ): Promise<{ id: string; name: string }[]> {
-  const agents: { id: string; name: string }[] = [];
-  for (const backendMode of backendLookupOrder) {
-    const backend = getBackendForMode(backendMode);
-    const pinnedAgents = getPinnedAgentIdsForBackendMode(backendMode);
-
-    await Promise.all(
-      pinnedAgents.map(async (id) => {
-        try {
-          const agent = await backend.retrieveAgent(id);
-          agents.push({ id, name: agent.name || "(unnamed)" });
-        } catch {
-          // Agent not found, skip
-        }
-      }),
-    );
-  }
-  return agents;
+  const pinnedAgents = await listPinnedAgentsForCurrentUser(backendLookupOrder);
+  return pinnedAgents.flatMap(({ agentId, agent }) =>
+    agent ? [{ id: agentId, name: agent.name || "(unnamed)" }] : [],
+  );
 }
 
 async function resolveConversationAcrossBackends(
@@ -667,6 +567,10 @@ async function getLocalBackendStartupFallbackSession(
 
 async function main(): Promise<void> {
   markMilestone("CLI_START");
+  await initializeDesktopCredentials();
+
+  // Exit when the owning Desktop or terminal process dies.
+  startOrphanDetection();
 
   const rawCliArgs = process.argv.slice(2);
   let subcommandArgs = rawCliArgs;
@@ -716,9 +620,7 @@ async function main(): Promise<void> {
     }
   }
 
-  // Early exit for CLI subcommands (e.g., `letta server`, `letta memory`).
-  // Subcommands handle their own setup and don't need TUI init, theme
-  // detection, or base tool bootstrapping.
+  // Subcommands exit before TUI initialization and tool bootstrapping.
   const subcommandResult = await runSubcommand(subcommandArgs);
   if (subcommandResult !== null) {
     process.exit(subcommandResult);
@@ -726,7 +628,6 @@ async function main(): Promise<void> {
 
   // Everything below only runs for interactive/headless agent mode
   await settingsManager.initialize();
-
   const settings = await settingsManager.getSettingsWithSecureTokens();
   markMilestone("SETTINGS_LOADED");
 
@@ -786,13 +687,10 @@ async function main(): Promise<void> {
   if (values.help) {
     printHelp();
 
-    // Test-only hook to keep process alive briefly so startup auto-update can run.
-    const helpDelayMs = Number.parseInt(
-      process.env.LETTA_TEST_HELP_EXIT_DELAY_MS ?? "",
-      10,
-    );
-    if (Number.isFinite(helpDelayMs) && helpDelayMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, helpDelayMs));
+    // Test-only hook for the end-to-end startup update smoke. Normal startup
+    // keeps the update check non-blocking.
+    if (process.env.LETTA_TEST_WAIT_FOR_STARTUP_AUTO_UPDATE === "1") {
+      await autoUpdatePromise;
     }
 
     process.exit(0);
@@ -871,7 +769,7 @@ async function main(): Promise<void> {
     !explicitBackendMode &&
     specifiedAgentId &&
     inferredBackendModeFromAgentId === "api"
-      ? `Agent ${specifiedAgentId} is a Constellation agent. Sign in to access it, or rerun without --agent to start locally.`
+      ? `Agent ${specifiedAgentId} requires Letta sign-in. Sign in with Letta to access it, or rerun without --agent to start locally.`
       : undefined;
   const specifiedModel = values.model ?? undefined;
   const systemPromptPreset = values.system ?? undefined;
@@ -880,7 +778,6 @@ async function main(): Promise<void> {
   const specifiedToolset = values.toolset ?? undefined;
   const skillsDirectory = values.skills ?? undefined;
   const memfsFlag = values.memfs;
-  const noMemfsFlag = values["no-memfs"];
   const noSkillsFlag = values["no-skills"];
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
@@ -905,11 +802,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   })();
-  const fromAfFile = resolveImportFlagAlias({
-    importFlagValue: values.import,
-    fromAfFlagValue: values["from-af"],
-  });
-  const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+  const isHeadless = isHeadlessStartup(values, process.stdin.isTTY, command);
   const terminalThemePromise = !isHeadless
     ? initTerminalTheme().catch(() => undefined)
     : Promise.resolve(undefined);
@@ -998,26 +891,15 @@ async function main(): Promise<void> {
     hasRefreshToken: Boolean(settings.refreshToken),
   });
 
-  const startupBackend = getBackend();
-  const localNoMemfsRequested = Boolean(
-    startupBackend.capabilities.localMemfs &&
-      (noMemfsFlag || isLocalBackendNoMemfsEnvEnabled()),
-  );
-  if (localNoMemfsRequested) {
-    process.env[LOCAL_BACKEND_NO_MEMFS_ENV] = "1";
-  }
-  const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
+  const requestedMemoryPromptMode: "memfs" | undefined = memfsFlag
     ? "memfs"
-    : noMemfsFlag || localNoMemfsRequested
-      ? "standard"
-      : undefined;
-  const shouldAutoEnableMemfsForNewAgent =
-    !memfsFlag && !noMemfsFlag && !localNoMemfsRequested;
+    : undefined;
+  const shouldAutoEnableMemfsForNewAgent = !memfsFlag;
 
   // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
   // Surface is set here so session_start captures the correct mode.
   telemetry.setSurface(getTerminalTelemetrySurface(isHeadless));
-  telemetry.init();
+  telemetry.init({ handleSigint: !isHeadless });
 
   if (!isHeadless) {
     // TUI-only startup tasks: keep headless runs free of extra background work.
@@ -1034,7 +916,6 @@ async function main(): Promise<void> {
     });
   }
 
-  // Fail if an unknown command/argument is passed (and we're not in headless mode where it might be a prompt)
   if (command && !isHeadless) {
     console.error(`Error: Unknown command or argument "${command}"`);
     console.error("Run 'letta --help' for usage information.");
@@ -1071,10 +952,11 @@ async function main(): Promise<void> {
     specifiedToolset !== "codex" &&
     specifiedToolset !== "default" &&
     specifiedToolset !== "gemini" &&
+    specifiedToolset !== "letta" &&
     specifiedToolset !== "auto"
   ) {
     console.error(
-      `Error: Invalid toolset "${specifiedToolset}". Must be "auto", "codex", "default", or "gemini".`,
+      `Error: Invalid toolset "${specifiedToolset}". Must be "auto", "letta", "codex", "default", or "gemini".`,
     );
     process.exit(1);
   }
@@ -1092,7 +974,7 @@ async function main(): Promise<void> {
   // for internal subagent launches (LETTA_CODE_AGENT_ROLE=subagent).
   if (systemPromptPreset) {
     const { validateSystemPromptPreset } = await import(
-      "@/agent/prompt-assets"
+      "@/agent/system-prompt-resolution"
     );
     const allowSubagentNames = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
     try {
@@ -1114,105 +996,23 @@ async function main(): Promise<void> {
 
   // Validate shared mutual-exclusion rules for startup flags.
   try {
-    validateFlagConflicts({
-      guard: specifiedConversationId && specifiedConversationId !== "default",
-      checks: [
-        {
-          when: specifiedAgentId,
-          message: "--conversation cannot be used with --agent",
-        },
-        {
-          when: specifiedAgentName,
-          message: "--conversation cannot be used with --name",
-        },
-        {
-          when: forceNew,
-          message: "--conversation cannot be used with --new-agent",
-        },
-        {
-          when: fromAfFile,
-          message: "--conversation cannot be used with --import",
-        },
-        {
-          when: shouldResume,
-          message: "--conversation cannot be used with --resume",
-        },
-      ],
-    });
-
-    validateFlagConflicts({
-      guard: forceNewConversation,
-      checks: [
-        {
-          when: specifiedConversationId,
-          message: "--new cannot be used with --conversation",
-        },
-        { when: shouldResume, message: "--new cannot be used with --resume" },
-      ],
+    validatePrimaryStartupFlagConflicts({
+      specifiedConversationId,
+      specifiedAgentId,
+      specifiedAgentName,
+      forceNewAgent: forceNew,
+      forceNewConversation,
+      shouldResume,
+      stateless: values.stateless,
+      isHeadless,
+      memfs: memfsFlag,
+      memfsStartup: values["memfs-startup"],
     });
   } catch (error) {
     console.error(
       error instanceof Error ? `Error: ${error.message}` : String(error),
     );
     process.exit(1);
-  }
-
-  // Validate --import flag (also accepts legacy --from-af)
-  // Detect if it's a registry handle (e.g., @author/name) or a local file path
-  let isRegistryImport = false;
-  if (fromAfFile) {
-    try {
-      validateFlagConflicts({
-        guard: fromAfFile,
-        checks: [
-          {
-            when: specifiedAgentId,
-            message: "--import cannot be used with --agent",
-          },
-          {
-            when: specifiedAgentName,
-            message: "--import cannot be used with --name",
-          },
-          {
-            when: shouldResume,
-            message: "--import cannot be used with --resume",
-          },
-          {
-            when: forceNew,
-            message: "--import cannot be used with --new-agent",
-          },
-        ],
-      });
-    } catch (error) {
-      console.error(
-        error instanceof Error ? `Error: ${error.message}` : String(error),
-      );
-      process.exit(1);
-    }
-
-    // Check if this looks like a registry handle (@author/name)
-    if (fromAfFile.startsWith("@")) {
-      // Definitely a registry handle
-      isRegistryImport = true;
-      // Validate handle format
-      try {
-        validateRegistryHandleOrThrow(fromAfFile);
-      } catch {
-        console.error(
-          `Error: Invalid registry handle "${fromAfFile}". Use format: letta --import @author/agentname`,
-        );
-        process.exit(1);
-      }
-    } else {
-      // Local file - verify it exists
-      const { resolve } = await import("node:path");
-      const { existsSync } = await import("node:fs");
-      const resolvedPath = resolve(fromAfFile);
-      if (!existsSync(resolvedPath)) {
-        console.error(`Error: AgentFile not found: ${resolvedPath}`);
-        process.exit(1);
-      }
-    }
   }
 
   // Validate --name flag
@@ -1235,11 +1035,10 @@ async function main(): Promise<void> {
   const isUsingLocalBackend = isExperimentalLocalBackendEnabled();
 
   if (!isUsingDevBackend && !isUsingLocalBackend) {
-    // Headless mode against Letta API requires an explicit LETTA_API_KEY env var.
-    // Stored OAuth credentials (interactive session tokens) are not accepted for
-    // automated/headless use — get an API key at https://app.letta.com/api-keys
+    // Ephemeral runs may reuse saved OAuth; other headless automation requires an env key.
     if (
       isHeadless &&
+      !values.ephemeral &&
       baseURL === LETTA_CLOUD_API_URL &&
       !process.env.LETTA_API_KEY
     ) {
@@ -1247,7 +1046,7 @@ async function main(): Promise<void> {
       console.error(
         "Headless mode requires an API key set via the LETTA_API_KEY environment variable.",
       );
-      console.error("Get an API key at https://app.letta.com/api-keys");
+      console.error(`Get an API key at ${LETTA_CHAT_API_KEYS_URL}`);
       process.exit(1);
     }
 
@@ -1342,12 +1141,12 @@ async function main(): Promise<void> {
       }
       markMilestone("CREDENTIALS_VALIDATED");
 
-      // Ensure base tools exist on the server (first-run-per-machine,
-      // backgrounded for interactive startup). Must run after credentials are
-      // validated so OAuth tokens are available.
+      // Bootstrap after credential validation. Only interactive startup
+      // backgrounds the request.
       if (isValid) {
         const bootstrapPromise = import("@/agent/bootstrap-tools").then(
-          ({ bootstrapBaseToolsIfNeeded }) => bootstrapBaseToolsIfNeeded(),
+          ({ bootstrapBaseToolsIfNeeded }) =>
+            bootstrapBaseToolsIfNeeded({ quiet: isHeadless }),
         );
         if (isHeadless) {
           await bootstrapPromise;
@@ -1464,7 +1263,7 @@ async function main(): Promise<void> {
     specifiedAgentId = resolved.id;
     nameResolvedAgent = resolved.agent;
   }
-
+  await (await import("@/agent/remote-model-catalog")).initializeModelCatalog();
   // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
     const { toolFilter } = await import("@/tools/filter");
@@ -1509,12 +1308,11 @@ async function main(): Promise<void> {
   if (isHeadless) {
     markMilestone("HEADLESS_MODE_START");
     // For headless mode, load tools synchronously (respecting model/toolset when provided)
-    const modelForTools = getModelForToolLoading(
-      specifiedModel,
-      specifiedToolset as "auto" | "codex" | "default" | "gemini" | undefined,
-    );
-    // Exclude interactive-only tools that can't function without a live user session
-    await loadTools(modelForTools, { exclude: ["AskUserQuestion"] });
+    await loadStartupTools({
+      modelIdentifier: specifiedModel,
+      toolset: specifiedToolset as StartupToolsetPreference | undefined,
+      exclude: ["AskUserQuestion"],
+    });
     markMilestone("TOOLS_LOADED");
 
     // Keep headless startup in sync with interactive name resolution.
@@ -1560,8 +1358,6 @@ async function main(): Promise<void> {
     systemPromptPreset,
     toolset,
     skillsDirectory,
-    fromAfFile,
-    isRegistryImport,
   }: {
     forceNew: boolean;
     baseTools?: string[];
@@ -1569,10 +1365,8 @@ async function main(): Promise<void> {
     preResolvedAgent?: AgentState | null;
     model?: string;
     systemPromptPreset?: string;
-    toolset?: "auto" | "codex" | "default" | "gemini";
+    toolset?: StartupToolsetPreference;
     skillsDirectory?: string;
-    fromAfFile?: string;
-    isRegistryImport?: boolean;
   }) {
     const [showKeybindingSetup, setShowKeybindingSetup] = useState<
       boolean | null
@@ -1582,7 +1376,6 @@ async function main(): Promise<void> {
       | "selecting_global"
       | "selecting_conversation"
       | "assembling"
-      | "importing"
       | "initializing"
       | "checking"
       | "ready"
@@ -1633,7 +1426,7 @@ async function main(): Promise<void> {
     const [
       selectedServerModelReasoningEffort,
       setSelectedServerModelReasoningEffort,
-    ] = useState<ModelReasoningEffort | null>(null);
+    ] = useState<ModelReasoningSelection | undefined>(undefined);
     const [customApiDefaultModel, setCustomApiDefaultModel] = useState<
       string | null
     >(null);
@@ -1761,11 +1554,6 @@ async function main(): Promise<void> {
           LETTA_CLOUD_API_URL;
         const isCustomApiBackend =
           startupBackendMode !== "local" && !baseURL.includes("api.letta.com");
-        const isCredentiallessLocalStartup =
-          startupBackendMode === "local" &&
-          !isCustomApiBackend &&
-          !settings.refreshToken &&
-          !apiKey;
         setStartupHasCloudCredentials(Boolean(settings.refreshToken || apiKey));
         const startupModelsPromise =
           startupBackendMode === "local"
@@ -1874,16 +1662,12 @@ async function main(): Promise<void> {
           const globalSession = settingsManager.getGlobalLastSession();
           const globalAgentId = globalSession?.agentId;
 
+          // Both LRU getters already filter by the active server key (which
+          // encodes the backend mode), so no extra compatibility check is
+          // needed here.
           const preferredResumeAgentId =
-            startupBackendMode === "local"
-              ? localAgentId &&
-                isAgentIdCompatibleWithBackend(localAgentId, "local")
-                ? localAgentId
-                : null
-              : globalAgentId &&
-                  isAgentIdCompatibleWithBackend(globalAgentId, "api")
-                ? globalAgentId
-                : null;
+            (startupBackendMode === "local" ? localAgentId : globalAgentId) ??
+            null;
 
           if (preferredResumeAgentId) {
             try {
@@ -1916,10 +1700,10 @@ async function main(): Promise<void> {
         // =====================================================================
 
         // Short-circuit: flags handled by init() skip resolution entirely
-        if (forceNew || agentIdArg || fromAfFile) {
+        if (forceNew || agentIdArg) {
           // For --agent/--name: restore conversation from local session if the
           // agent matches, so we don't clobber a real conv ID with "default".
-          if (agentIdArg && !forceNew && !fromAfFile && !forceNewConversation) {
+          if (agentIdArg && !forceNew && !forceNewConversation) {
             // loadLocalProjectSettings is cached if already loaded (e.g. --name)
             await settingsManager.loadLocalProjectSettings(process.cwd());
             const localSession = settingsManager.getLocalLastSession(
@@ -1937,103 +1721,89 @@ async function main(): Promise<void> {
           return;
         }
 
-        // Step 1: Check recent session state for the active backend only.
-        // Cache the retrieved agent to avoid redundant re-fetch in init().
-        const rawLocalAgentId = settingsManager.getLocalLastAgentId(
-          process.cwd(),
-        );
-        const rawGlobalAgentId = settingsManager.getGlobalLastAgentId();
-        const localPinnedAgentIds = settingsManager
-          .getLocalPinnedAgents(process.cwd())
-          .filter((agentId) =>
-            isAgentIdCompatibleWithBackend(agentId, startupBackendMode),
-          );
-        const localPinnedAgentId =
-          localPinnedAgentIds.length === 1
-            ? (localPinnedAgentIds[0] ?? null)
-            : null;
-        const localAgentId =
-          startupBackendMode === "local" &&
-          rawLocalAgentId &&
-          isAgentIdCompatibleWithBackend(rawLocalAgentId, "local")
-            ? rawLocalAgentId
-            : null;
+        // Check recent session state for the active backend.
+        const localAgentId = settingsManager.getLocalLastAgentId(process.cwd());
         const globalAgentId =
-          startupBackendMode === "api" &&
-          rawGlobalAgentId &&
-          isAgentIdCompatibleWithBackend(rawGlobalAgentId, "api")
-            ? rawGlobalAgentId
+          startupBackendMode === "api"
+            ? settingsManager.getGlobalLastAgentId()
             : null;
+        const localSession = settingsManager.getLocalLastSession(process.cwd());
 
-        // Fetch local pin + LRU agents in parallel, de-duping shared IDs.
-        const agentIdsToValidate = [
-          ...new Set(
-            [localPinnedAgentId, localAgentId, globalAgentId].filter(
-              (agentId): agentId is string => Boolean(agentId),
-            ),
-          ),
-        ];
-        const validationResults = await Promise.allSettled(
-          agentIdsToValidate.map(async (agentId) => ({
-            agentId,
-            agent: await backend.retrieveAgent(agentId, {
-              include: ["agent.tags"],
-            }),
-          })),
-        );
-        const cachedAgents = new Map<string, AgentState>();
-        for (const result of validationResults) {
-          if (result.status === "fulfilled") {
-            cachedAgents.set(result.value.agentId, result.value.agent);
-          }
-        }
-
-        const localPinnedAgentExists = localPinnedAgentId
-          ? cachedAgents.has(localPinnedAgentId)
-          : false;
-        let localAgentExists = false;
-        let globalAgentExists = false;
+        // Validate the project target before a large pin set can flood the API.
         if (localAgentId) {
-          localAgentExists = cachedAgents.has(localAgentId);
-          if (!localAgentExists) {
+          try {
+            const localAgent = await backend.retrieveAgent(localAgentId, {
+              include: ["agent.tags"],
+            });
+            setSelectedGlobalAgentId(localAgentId);
+            setValidatedAgent(localAgent);
+            if (localSession?.conversationId && !forceNewConversation) {
+              setSelectedConversationId(localSession.conversationId);
+            }
+            markMilestone("STARTUP_LRU_FETCH_DONE");
+            setLoadingState("assembling");
+            return;
+          } catch {
             setFailedAgentMessage(
               `Unable to locate recently used agent ${localAgentId}`,
             );
           }
         }
-        if (globalAgentId) {
-          globalAgentExists = cachedAgents.has(globalAgentId);
+
+        const pinnedAgents = await listPinnedAgentsForCurrentUser([
+          startupBackendMode,
+        ]);
+        const pinnedAgentIds = pinnedAgents.map(({ agentId }) => agentId);
+        const cachedAgents = new Map(
+          pinnedAgents.flatMap(({ agentId, agent }) =>
+            agent ? [[agentId, agent] as const] : [],
+          ),
+        );
+        if (globalAgentId && !cachedAgents.has(globalAgentId)) {
+          try {
+            const globalAgent = await backend.retrieveAgent(globalAgentId, {
+              include: ["agent.tags"],
+            });
+            cachedAgents.set(globalAgentId, globalAgent);
+          } catch {
+            // Continue to pinned agents or fresh-start fallback.
+          }
         }
+
+        // A single existing pin resumes directly; multiple pins open selection.
+        const existingPinnedIds = pinnedAgentIds.filter((id) =>
+          cachedAgents.has(id),
+        );
+        const pinnedAgentId =
+          existingPinnedIds.length === 1
+            ? (existingPinnedIds[0] ?? null)
+            : null;
+        const pinnedAgentExists = pinnedAgentId !== null;
+        const globalAgentExists = globalAgentId
+          ? cachedAgents.has(globalAgentId)
+          : false;
         markMilestone("STARTUP_LRU_FETCH_DONE");
 
-        // Step 3: Resolve startup target using pure decision logic
-        const mergedPinned = isCredentiallessLocalStartup
-          ? settingsManager
-              .getMergedPinnedAgents(process.cwd())
-              .filter((entry) => entry.isLocal)
-          : settingsManager.getMergedPinnedAgents(process.cwd());
+        // Resolve the remaining fallback target.
         const fallbackSession =
-          startupBackendMode === "local" &&
-          !localAgentExists &&
-          !globalAgentExists
+          startupBackendMode === "local" && !globalAgentExists
             ? await getLocalBackendStartupFallbackSession(backend)
             : null;
         const { resolveStartupTarget } = await import(
           "@/agent/resolve-startup-agent"
         );
-        const localSession = settingsManager.getLocalLastSession(process.cwd());
         const target = resolveStartupTarget({
-          localPinnedAgentId,
-          localPinnedAgentExists,
-          localPinnedCount: localPinnedAgentIds.length,
+          pinnedAgentId,
+          pinnedAgentExists,
+          pinnedCount: pinnedAgentIds.length,
+          existingPinnedCount: existingPinnedIds.length,
           localAgentId,
           localConversationId: localSession?.conversationId ?? null,
-          localAgentExists,
+          localAgentExists: false,
           globalAgentId,
           globalAgentExists,
           fallbackAgentId: fallbackSession?.agentId ?? null,
           fallbackConversationId: fallbackSession?.conversationId ?? null,
-          mergedPinnedCount: mergedPinned.length,
           forceNew: false, // forceNew short-circuited above
           needsModelPicker,
         });
@@ -2060,6 +1830,11 @@ async function main(): Promise<void> {
             try {
               const defaultAgent = await ensureDefaultAgents(getBackend(), {
                 preferredModel: model,
+                // True fresh start (brand-new account, nothing to resume)
+                // gets the Tutor onboarding agent; an explicit --new-agent
+                // gets the standard Letta Code agent.
+                personality:
+                  target.trigger === "fresh-start" ? "tutorial" : "memo",
               });
               if (defaultAgent) {
                 startupCreatedAgentRef.current = defaultAgent;
@@ -2083,13 +1858,7 @@ async function main(): Promise<void> {
         setLoadingState("assembling");
       }
       checkAndStart();
-    }, [
-      forceNew,
-      agentIdArg,
-      fromAfFile,
-      shouldResume,
-      specifiedConversationId,
-    ]);
+    }, [forceNew, agentIdArg, shouldResume, specifiedConversationId]);
 
     // Main initialization effect - runs after profile selection
     const initStartedRef = React.useRef(false);
@@ -2142,7 +1911,7 @@ async function main(): Promise<void> {
           } else {
             try {
               const agent = await backend.retrieveAgent(agentIdArg, {
-                include: ["agent.secrets", "agent.tools", "agent.tags"],
+                include: ["agent.tools", "agent.tags"],
               });
               setValidatedAgent(agent);
               resolvedAgent = agent;
@@ -2168,7 +1937,7 @@ async function main(): Promise<void> {
           } else {
             try {
               const agent = await backend.retrieveAgent(selectedGlobalAgentId, {
-                include: ["agent.secrets", "agent.tools", "agent.tags"],
+                include: ["agent.tools", "agent.tags"],
               });
               setValidatedAgent(agent);
               resolvedAgent = agent;
@@ -2187,10 +1956,7 @@ async function main(): Promise<void> {
             startupBackendMode === "local"
               ? settingsManager.getLocalLastAgentId()
               : settingsManager.getGlobalLastAgentId();
-          if (
-            recentAgentId &&
-            isAgentIdCompatibleWithBackend(recentAgentId, startupBackendMode)
-          ) {
+          if (recentAgentId) {
             try {
               await backend.retrieveAgent(recentAgentId);
               resumingAgentId = recentAgentId;
@@ -2208,68 +1974,13 @@ async function main(): Promise<void> {
 
         // Load an initial toolset for startup (explicit --toolset or model-derived).
         // App.tsx will reconcile persisted per-agent toolset preference after agent metadata loads.
-        const modelForTools = getModelForToolLoading(
-          model,
-          toolset as "auto" | "codex" | "default" | "gemini" | undefined,
-        );
-        await loadTools(modelForTools);
+        await loadStartupTools({ modelIdentifier: model, toolset });
 
         setLoadingState("initializing");
         const { createAgent } = await import("@/agent/create");
 
         let agent: AgentState | null = null;
         let autoEnableMemfsForFreshAgent = false;
-
-        // Priority 1: Import from AgentFile template (local file or registry)
-        if (fromAfFile) {
-          setLoadingState("importing");
-          let result: { agent: AgentState; skills?: string[] };
-
-          if (isRegistryImport) {
-            // Import from letta-ai/agent-file registry
-            const { importAgentFromRegistry } = await import("@/agent/import");
-            result = await importAgentFromRegistry({
-              handle: fromAfFile,
-              modelOverride: model,
-              stripMessages: true,
-              stripSkills: false,
-              enableMemfs:
-                noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
-            });
-          } else {
-            // Import from local file
-            const { importAgentFromFile } = await import("@/agent/import");
-            result = await importAgentFromFile({
-              filePath: fromAfFile,
-              modelOverride: model,
-              stripMessages: true,
-              stripSkills: false,
-              enableMemfs:
-                noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
-            });
-          }
-
-          agent = result.agent;
-          setAgentProvenance({
-            isNew: true,
-            blocks: [],
-          });
-
-          // Mark imported agents as "custom" to prevent legacy auto-migration
-          // from overwriting their system prompt on resume.
-          if (settingsManager.isReady) {
-            settingsManager.setSystemPromptCustom(agent.id);
-          }
-
-          // Display extracted skills summary
-          if (result.skills && result.skills.length > 0) {
-            const { getAgentSkillsDir } = await import("@/agent/skills");
-            const skillsDir = getAgentSkillsDir(agent.id);
-            console.log(
-              `\n📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to ${skillsDir}: ${result.skills.join(", ")}\n`,
-            );
-          }
-        }
 
         // Priority 2: Try to use --agent specified ID
         if (!agent && agentIdArg) {
@@ -2319,9 +2030,7 @@ async function main(): Promise<void> {
             shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
           const effectiveMemoryMode: MemoryPromptMode | undefined = backend
             .capabilities.localMemfs
-            ? localNoMemfsRequested
-              ? "standard"
-              : "local-memfs"
+            ? "local-memfs"
             : (requestedMemoryPromptMode ??
               (willAutoEnableMemfs ? "memfs" : undefined));
 
@@ -2334,12 +2043,10 @@ async function main(): Promise<void> {
           const modelForUpdateArgs =
             personalityOptions?.model ?? effectiveModel;
           const baseUpdateArgs = getModelUpdateArgs(modelForUpdateArgs);
-          const updateArgs = selectedServerModelReasoningEffort
-            ? {
-                ...(baseUpdateArgs ?? {}),
-                reasoning_effort: selectedServerModelReasoningEffort,
-              }
-            : baseUpdateArgs;
+          const updateArgs = withReasoningEffortUpdateArg(
+            baseUpdateArgs,
+            selectedServerModelReasoningEffort,
+          );
           const result = await createAgent({
             ...(personalityOptions ?? {}),
             model: modelForUpdateArgs,
@@ -2397,17 +2104,31 @@ async function main(): Promise<void> {
         }
 
         // Set agent context for tools that need it (e.g., Skill tool)
-        setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
+        setAgentContext(
+          agent.id,
+          skillsDirectory,
+          resolvedSkillSources,
+          agent.name ?? null,
+        );
 
+        let startupMemfsFlag: boolean | undefined = autoEnableMemfsForFreshAgent
+          ? true
+          : memfsFlag;
         if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
-          const { hydrateMemfsSettingFromAgent } = await import(
+          const { hydrateMemfsSettingFromAgent, isLettaCloud } = await import(
             "@/agent/memory-filesystem"
           );
           const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
           if (!memfsEnabled) {
-            console.warn(
-              "Warning: this agent does not have git-backed memory enabled. Run `/memfs enable` to enable MemFS.",
-            );
+            if (await isLettaCloud()) {
+              // Auto-enable memfs for existing agents that don't have it yet.
+              // Agents can be created outside Letta Code without the tag.
+              startupMemfsFlag = true;
+            } else {
+              console.warn(
+                "Warning: this agent does not have git-backed memory enabled. Run `/memfs enable` to enable MemFS.",
+              );
+            }
           }
         }
 
@@ -2416,13 +2137,10 @@ async function main(): Promise<void> {
         // unless the user explicitly requested a memfs mode toggle.
         const agentId = agent.id;
         const agentTags = agent.tags ?? undefined;
-        const startupMemfsFlag = autoEnableMemfsForFreshAgent
-          ? true
-          : memfsFlag;
-        const shouldBlockOnMemfsStartup = Boolean(memfsFlag || noMemfsFlag);
+        const shouldBlockOnMemfsStartup = Boolean(memfsFlag);
         const memfsSyncPromise = backend.capabilities.remoteMemfs
           ? import("@/agent/memory-filesystem").then(({ applyMemfsFlags }) =>
-              applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
+              applyMemfsFlags(agentId, startupMemfsFlag, {
                 pullOnExistingRepo: true,
                 agentTags,
                 skipPromptUpdate: shouldCreateNew,
@@ -2430,21 +2148,13 @@ async function main(): Promise<void> {
             )
           : Promise.resolve().then(() => {
               if (backend.capabilities.localMemfs) {
-                settingsManager.setMemfsEnabled(
-                  agentId,
-                  !localNoMemfsRequested,
-                );
-                return {
-                  action: localNoMemfsRequested ? "disabled" : "enabled",
-                };
+                settingsManager.setMemfsEnabled(agentId, true);
+                return { action: "enabled" };
               }
               if (memfsFlag) {
                 throw new Error(
                   "MemFS is not supported by the active backend.",
                 );
-              }
-              if (noMemfsFlag || localNoMemfsRequested) {
-                settingsManager.setMemfsEnabled(agentId, false);
               }
               return null;
             });
@@ -2464,8 +2174,7 @@ async function main(): Promise<void> {
 
         // Init secrets cache — runs in parallel with memfs sync below.
         const secretsInitPromise = import("@/utils/secrets-store").then(
-          ({ initSecretsFromServer }) =>
-            initSecretsFromServer(agentId, agent ?? undefined),
+          ({ initSecretsFromServer }) => initSecretsFromServer(agentId),
         );
 
         // Check if we're resuming an existing agent
@@ -2474,8 +2183,7 @@ async function main(): Promise<void> {
         // 2. We're reusing a project agent (detected early as resumingAgentId)
         // 3. We retrieved an agent from LRU (detected by checking if agent already existed)
         const isResumingProject = !shouldCreateNew && !!resumingAgentId;
-        const isReusingExistingAgent =
-          !shouldCreateNew && !fromAfFile && agent && agent.id;
+        const isReusingExistingAgent = !shouldCreateNew && agent && agent.id;
         const resuming = !!(
           agentIdArg ||
           isResumingProject ||
@@ -2509,11 +2217,22 @@ async function main(): Promise<void> {
                 getResumeRefreshArgs(presetRefresh.updateArgs, agent);
 
               if (needsUpdate) {
+                // Resume refresh must not reset the context window; preserve
+                // it by re-sending the agent's current value explicitly
+                // (omitting it makes the server re-derive + clamp to a legacy
+                // 128k default — LET-9786). A current value that looks like
+                // that clamp is not preserved, letting the agent heal.
+                const preservedContextWindow = preservableContextWindow(
+                  agent.llm_config?.context_window,
+                  presetRefresh.modelHandle,
+                );
                 agent = await updateAgentLLMConfig(
                   agent.id,
                   presetRefresh.modelHandle,
                   resumeRefreshUpdateArgs,
-                  { avoidOverwritingExistingContextWindow: true },
+                  preservedContextWindow !== undefined
+                    ? { contextWindowOverride: preservedContextWindow }
+                    : undefined,
                 );
               }
             }
@@ -2568,11 +2287,9 @@ async function main(): Promise<void> {
             );
           });
 
-        // Handle conversation: either resume existing or create new
         // Using definite assignment assertion - all branches below either set this or exit/throw
         let conversationIdToUse!: string;
 
-        // Debug: log resume flag status
         if (isDebugEnabled()) {
           debugLog("startup", "shouldResume=%o", shouldResume);
           debugLog(
@@ -2583,18 +2300,15 @@ async function main(): Promise<void> {
         }
 
         if (specifiedConversationId) {
-          // Use the explicitly specified conversation ID
-          // User explicitly requested this conversation, so error if it doesn't exist
           conversationIdToUse = specifiedConversationId;
-          setResumedExistingConversation(true);
           try {
-            // Load message history and pending approvals from the conversation
             setLoadingState("checking");
             const data = await getResumeDataFromBackend(
               agent,
               specifiedConversationId,
             );
             setResumeData(data);
+            setResumedExistingConversation(true);
           } catch (error) {
             // Only treat 404/422 as "not found", rethrow other errors
             if (isBackendNotFoundError(error)) {
@@ -2742,7 +2456,6 @@ async function main(): Promise<void> {
       agentIdArg,
       model,
       systemPromptPreset,
-      fromAfFile,
       loadingState,
       selectedGlobalAgentId,
       validatedAgent,
@@ -2810,11 +2523,11 @@ async function main(): Promise<void> {
         },
         onCreateNewWithModel: (
           modelHandle: string,
-          reasoningEffort?: ModelReasoningEffort,
+          reasoningEffort?: ModelReasoningSelection,
         ) => {
           setUserRequestedNewAgent(true);
           setSelectedServerModel(modelHandle);
-          setSelectedServerModelReasoningEffort(reasoningEffort ?? null);
+          setSelectedServerModelReasoningEffort(reasoningEffort);
           setLoadingState("assembling");
         },
         onExit: () => {
@@ -2823,12 +2536,13 @@ async function main(): Promise<void> {
       });
     }
 
-    // At this point, loadingState is not "selecting", "selecting_global", or "selecting_conversation"
-    // (those are handled above), so it's safe to pass to App
     const appLoadingState = loadingState as Exclude<
       typeof loadingState,
       "selecting" | "selecting_global" | "selecting_conversation"
     >;
+    const startupConversationTitleEligible = !isResumedConversation(
+      resumeData?.conversation,
+    );
 
     if (!agentId || !conversationId) {
       return React.createElement(App, {
@@ -2840,6 +2554,7 @@ async function main(): Promise<void> {
         startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
         messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
         resumedExistingConversation,
+        startupConversationTitleEligible,
         tokenStreaming: settings.tokenStreaming,
         reasoningTabCycleEnabled: settings.reasoningTabCycleEnabled === true,
         showCompactions: settings.showCompactions,
@@ -2864,6 +2579,7 @@ async function main(): Promise<void> {
       startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
       messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
       resumedExistingConversation,
+      startupConversationTitleEligible,
       tokenStreaming: settings.tokenStreaming,
       reasoningTabCycleEnabled: settings.reasoningTabCycleEnabled === true,
       showCompactions: settings.showCompactions,
@@ -2887,15 +2603,8 @@ async function main(): Promise<void> {
       preResolvedAgent: nameResolvedAgent,
       model: specifiedModel,
       systemPromptPreset: systemPromptPreset,
-      toolset: specifiedToolset as
-        | "auto"
-        | "codex"
-        | "default"
-        | "gemini"
-        | undefined,
+      toolset: specifiedToolset as StartupToolsetPreference | undefined,
       skillsDirectory: skillsDirectory,
-      fromAfFile: fromAfFile,
-      isRegistryImport: isRegistryImport,
     }),
     {
       exitOnCtrlC: false, // We handle CTRL-C manually with double-press guard
@@ -2903,4 +2612,5 @@ async function main(): Promise<void> {
   );
 }
 
+assertSupportedBunRuntime();
 main();

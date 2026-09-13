@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { DeviceCodeResponse, TokenResponse } from "@/auth/oauth";
+import {
+  type DeviceCodeResponse,
+  OAuthRefreshError,
+  type TokenResponse,
+} from "@/auth/oauth";
 import { settingsManager } from "@/settings-manager";
+import { __listenerAuthTestUtils } from "@/websocket/listener/auth";
 
 const refreshAccessTokenMock = mock(async (): Promise<TokenResponse> => {
   throw new Error("refreshAccessToken not mocked");
@@ -27,12 +32,14 @@ describe("listen subcommand auth resolution", () => {
   const originalBaseUrl = process.env.LETTA_BASE_URL;
   const originalDesktopDebugPanel = process.env.LETTA_DESKTOP_MODE;
   const originalLocalBackend = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+  const originalSelfHostedListenerOverride =
+    process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;
 
   beforeEach(() => {
     refreshAccessTokenMock.mockReset();
     requestDeviceCodeMock.mockReset();
     pollForTokenMock.mockReset();
-    __listenSubcommandTestUtils.setOAuthDepsForTests({
+    __listenerAuthTestUtils.setOAuthDepsForTests({
       LETTA_CLOUD_API_URL: "https://api.letta.com",
       refreshAccessToken: refreshAccessTokenMock,
       requestDeviceCode: requestDeviceCodeMock,
@@ -43,6 +50,7 @@ describe("listen subcommand auth resolution", () => {
     delete process.env.LETTA_BASE_URL;
     delete process.env.LETTA_DESKTOP_MODE;
     delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+    delete process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;
 
     settingsManager.getSettingsWithSecureTokens = mock(async () => ({
       env: {},
@@ -88,7 +96,13 @@ describe("listen subcommand auth resolution", () => {
     } else {
       process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = originalLocalBackend;
     }
-    __listenSubcommandTestUtils.setOAuthDepsForTests(null);
+    if (originalSelfHostedListenerOverride === undefined) {
+      delete process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;
+    } else {
+      process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR =
+        originalSelfHostedListenerOverride;
+    }
+    __listenerAuthTestUtils.setOAuthDepsForTests(null);
   });
 
   test("prefers explicit LETTA_API_KEY over saved OAuth credentials", async () => {
@@ -183,7 +197,13 @@ describe("listen subcommand auth resolution", () => {
       updateSettingsMock as typeof settingsManager.updateSettings;
     settingsManager.flush = flushMock as typeof settingsManager.flush;
 
-    refreshAccessTokenMock.mockRejectedValue(new Error("refresh broke"));
+    refreshAccessTokenMock.mockRejectedValue(
+      new OAuthRefreshError("refresh token revoked", {
+        retryable: false,
+        status: 400,
+        oauthCode: "invalid_grant",
+      }),
+    );
     requestDeviceCodeMock.mockImplementation(async () => ({
       device_code: "device-code",
       user_code: "ABC123",
@@ -345,6 +365,24 @@ describe("listen subcommand auth resolution", () => {
     });
     expect(requestDeviceCodeMock).not.toHaveBeenCalled();
     expect(pollForTokenMock).not.toHaveBeenCalled();
+  });
+
+  test("uses remote registration for explicitly allowed self-hosted listeners", async () => {
+    process.env.LETTA_BASE_URL = "http://localhost:8283";
+    process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR = "1";
+
+    settingsManager.getSettingsWithSecureTokens = mock(async () => ({
+      env: {},
+    })) as unknown as typeof settingsManager.getSettingsWithSecureTokens;
+
+    const result = await __listenSubcommandTestUtils.resolveListenerStartupMode(
+      [],
+    );
+
+    expect(result).toEqual({
+      kind: "remote",
+      serverUrl: "http://localhost:8283",
+    });
   });
 
   test("uses remote registration mode for Cloud listeners with channels", async () => {

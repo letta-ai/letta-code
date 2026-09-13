@@ -7,10 +7,11 @@ import type {
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { debugLog } from "@/utils/debug.js";
+import { expandFilePath } from "@/utils/file-path";
 import { resizeImageIfNeeded } from "@/utils/image-resize.js";
 import { getUtf16Bom, readUtf8TextStrict } from "@/utils/text-files";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
-import { LIMITS } from "./truncation.js";
+import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface ReadArgs {
@@ -146,22 +147,33 @@ function formatWithLineNumbers(
   // Apply per-line character limit (Claude Code: 2000 chars/line)
   let linesWereTruncatedInLength = false;
   const formattedLines = selectedLines.map((line, index) => {
+    // `cat -n`-style prefix: flush-left line number + tab, matching Claude
+    // Code. The separator must stay a literal tab so the Edit tool's
+    // documented "line number + tab" prefix contract holds.
     const lineNumber = actualStartLine + index + 1;
-    const maxLineNumber = actualStartLine + selectedLines.length;
-    const padding = Math.max(1, maxLineNumber.toString().length);
-    const paddedNumber = lineNumber.toString().padStart(padding);
 
     // Truncate long lines
     if (line.length > LIMITS.READ_MAX_CHARS_PER_LINE) {
       linesWereTruncatedInLength = true;
       const truncated = line.slice(0, LIMITS.READ_MAX_CHARS_PER_LINE);
-      return `${paddedNumber}→${truncated}... [line truncated]`;
+      return `${lineNumber}\t${truncated}... [line truncated]`;
     }
 
-    return `${paddedNumber}→${line}`;
+    return `${lineNumber}\t${line}`;
   });
 
   let result = formattedLines.join("\n");
+
+  // Apply total-character clamp (Claude Code applies the same 30K class of
+  // limit as bash/task output). Line and per-line caps alone allow up to
+  // ~4M chars (2,000 lines x 2,000 chars) in a single read.
+  let wasTruncatedByTotalChars = false;
+  if (result.length > LIMITS.READ_OUTPUT_CHARS) {
+    wasTruncatedByTotalChars = true;
+    // Overflow is written below from the raw file content, so skip the
+    // overflow write here (no workingDirectory passed).
+    result = truncateByChars(result, LIMITS.READ_OUTPUT_CHARS, "Read").content;
+  }
 
   // Add truncation notices if applicable
   const notices: string[] = [];
@@ -170,7 +182,9 @@ function formatWithLineNumbers(
   // Write to overflow file if content was truncated and overflow is enabled
   let overflowPath: string | undefined;
   if (
-    (wasTruncatedByLineCount || linesWereTruncatedInLength) &&
+    (wasTruncatedByLineCount ||
+      linesWereTruncatedInLength ||
+      wasTruncatedByTotalChars) &&
     OVERFLOW_CONFIG.ENABLED &&
     workingDirectory
   ) {
@@ -195,6 +209,12 @@ function formatWithLineNumbers(
     );
   }
 
+  if (wasTruncatedByTotalChars) {
+    notices.push(
+      `\n\n[Use offset and limit parameters to read the file in smaller sections.]`,
+    );
+  }
+
   if (overflowPath) {
     notices.push(`\n\n[Full file content written to: ${overflowPath}]`);
   }
@@ -210,9 +230,7 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
   validateRequiredParams(args, ["file_path"], "Read");
   const { file_path, offset, limit } = args;
   const userCwd = getCurrentWorkingDirectory();
-  const resolvedPath = path.isAbsolute(file_path)
-    ? file_path
-    : path.resolve(userCwd, file_path);
+  const resolvedPath = expandFilePath(file_path, userCwd);
   try {
     const stats = await fs.stat(resolvedPath);
     if (stats.isDirectory())

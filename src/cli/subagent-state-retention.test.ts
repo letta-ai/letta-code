@@ -5,7 +5,9 @@ import {
   clearAllSubagents,
   completeSubagent,
   getSubagentByToolCallId,
+  getSubagentLifecycleContext,
   registerSubagent,
+  updateSubagent,
 } from "@/agent/subagent-state";
 
 describe("subagentState retention", () => {
@@ -29,5 +31,36 @@ describe("subagentState retention", () => {
     expect(getSubagentByToolCallId("tc-task")).toBeDefined();
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(getSubagentByToolCallId("tc-task")).toBeUndefined();
+  });
+
+  test("lifecycle context exposes normalized subagent state", () => {
+    registerSubagent(
+      "sub-reflection",
+      "reflection",
+      "Dream about memory",
+      "tc-reflection",
+      true,
+      true,
+    );
+    updateSubagent("sub-reflection", {
+      agentId: "agent-reflection",
+      agentURL: "https://chat.letta.com/agents/agent-reflection",
+    });
+
+    expect(getSubagentLifecycleContext().list()).toMatchObject([
+      {
+        id: "sub-reflection",
+        type: "Reflection",
+        description: "Dream about memory",
+        status: "running",
+        agentId: "agent-reflection",
+        agentUrl: "https://chat.letta.com/agents/agent-reflection",
+        isBackground: true,
+        visibleInTranscript: false,
+      },
+    ]);
+    expect(
+      getSubagentLifecycleContext().list()[0]?.elapsedMs,
+    ).toBeGreaterThanOrEqual(0);
   });
 });

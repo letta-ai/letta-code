@@ -11,13 +11,17 @@ import {
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
+  buildMultiReflectionPayload,
   buildParentMemorySnapshot,
+  buildReflectionSelectorPrompt,
   buildReflectionSubagentPrompt,
-  filterSystemPromptForReflection,
   finalizeAutoReflectionPayload,
+  finalizeMultiReflectionPayload,
   getReflectionTranscriptPaths,
   getReflectionTranscriptState,
+  listReflectionTranscriptCandidates,
   REFLECTION_STATE_SCHEMA_VERSION,
+  readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
 import { DIRECTORY_LIMIT_ENV } from "@/utils/directory-limits";
 
@@ -79,8 +83,21 @@ describe("reflectionTranscript helper", () => {
     const payloadText = await readFile(payload.payloadPath, "utf-8");
     const messages = JSON.parse(payloadText);
     expect(messages).toBeArray();
-    expect(messages).toContainEqual({ role: "user", content: "hello" });
-    expect(messages).toContainEqual({ role: "assistant", content: "hi there" });
+    expect(messages[0]).toEqual({ role: "meta", source: "letta-code" });
+    expect(messages).toContainEqual(
+      expect.objectContaining({ role: "user", content: "hello" }),
+    );
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        role: "assistant",
+        content: "hi there",
+      }),
+    );
+    for (const message of messages.slice(1)) {
+      expect(message.timestamp).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+      );
+    }
 
     await finalizeAutoReflectionPayload(
       agentId,
@@ -123,6 +140,12 @@ describe("reflectionTranscript helper", () => {
     if (!payload) return;
     expect(payload.startMessageId).toBe("u1");
     expect(payload.endMessageId).toBe("u1");
+    const payloadText = await readFile(payload.payloadPath, "utf-8");
+    const messages = JSON.parse(payloadText);
+    expect(messages.map((message: { role: string }) => message.role)).toEqual([
+      "meta",
+      "user",
+    ]);
 
     await finalizeAutoReflectionPayload(
       agentId,
@@ -145,6 +168,35 @@ describe("reflectionTranscript helper", () => {
 
     const retried = await buildAutoReflectionPayload(agentId, conversationId);
     expect(retried).not.toBeNull();
+  });
+
+  test("normalizes an assistant-only selected fragment", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "standalone answer",
+        phase: "finished",
+        messageId: "a1",
+      },
+    ]);
+
+    const payload = await buildAutoReflectionPayload(agentId, conversationId);
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+
+    const payloadText = await readFile(payload.payloadPath, "utf-8");
+    const messages = JSON.parse(payloadText);
+    expect(messages.map((message: { role: string }) => message.role)).toEqual([
+      "meta",
+      "assistant",
+    ]);
+    expect(messages[1]).toEqual(
+      expect.objectContaining({
+        content: "standalone answer",
+        timestamp: expect.any(String),
+      }),
+    );
   });
 
   test("v2 message-id state migrates from turn counts to assistant step counts", async () => {
@@ -271,11 +323,18 @@ describe("reflectionTranscript helper", () => {
 
     const payloadText = await readFile(payload.payloadPath, "utf-8");
     const messages = JSON.parse(payloadText);
-    expect(messages).toContainEqual({ role: "user", content: "live user row" });
-    expect(messages).toContainEqual({
-      role: "assistant",
-      content: "live assistant row",
-    });
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        role: "user",
+        content: "live user row",
+      }),
+    );
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        role: "assistant",
+        content: "live assistant row",
+      }),
+    );
 
     await finalizeAutoReflectionPayload(
       agentId,
@@ -518,9 +577,175 @@ describe("reflectionTranscript helper", () => {
     expect(state.total_completed_steps).toBe(5);
   });
 
+  test("multi payload recent uses replay slices when conversations are already reflected", async () => {
+    const convA = "conv-a";
+    const convB = "conv-b";
+    await appendTranscriptDeltaJsonl(agentId, convA, [
+      { kind: "user", id: "u-a", text: "alpha", messageId: "u-a" },
+      {
+        kind: "assistant",
+        id: "a-a",
+        text: "alpha response",
+        phase: "finished",
+        messageId: "a-a",
+      },
+    ]);
+    await appendTranscriptDeltaJsonl(agentId, convB, [
+      { kind: "user", id: "u-b", text: "beta", messageId: "u-b" },
+      {
+        kind: "assistant",
+        id: "a-b",
+        text: "beta response",
+        phase: "finished",
+        messageId: "a-b",
+      },
+    ]);
+
+    for (const conv of [convA, convB]) {
+      const payload = await buildAutoReflectionPayload(agentId, conv);
+      expect(payload).not.toBeNull();
+      if (!payload) return;
+      await finalizeAutoReflectionPayload(
+        agentId,
+        conv,
+        payload.payloadPath,
+        payload.endSnapshotLine,
+        true,
+      );
+    }
+
+    const multi = await buildMultiReflectionPayload({
+      agentId,
+      instruction: "Focus on cross-session coding preferences.",
+      selectionPolicy: { mode: "recent", limit: 10 },
+    });
+    expect(multi).not.toBeNull();
+    if (!multi) return;
+    expect(multi.manifest.user_instruction).toBe(
+      "Focus on cross-session coding preferences.",
+    );
+    expect(multi.manifest.transcripts).toHaveLength(2);
+    expect(multi.manifest.transcripts.every((t) => t.mode === "replay")).toBe(
+      true,
+    );
+
+    const manifestText = await readFile(multi.payloadPath, "utf-8");
+    expect(JSON.parse(manifestText).type).toBe(
+      "multi_transcript_reflection_payload",
+    );
+    for (const slice of multi.manifest.transcripts) {
+      const payloadText = await readFile(slice.payload_path, "utf-8");
+      const messages = JSON.parse(payloadText);
+      expect(messages.some((m: { role: string }) => m.role === "user")).toBe(
+        true,
+      );
+    }
+  });
+
+  test("multi finalizer advances only unreflected slices", async () => {
+    const replayConv = "conv-replay";
+    const freshConv = "conv-fresh";
+    await appendTranscriptDeltaJsonl(agentId, replayConv, [
+      { kind: "user", id: "u-r", text: "old", messageId: "u-r" },
+      {
+        kind: "assistant",
+        id: "a-r",
+        text: "old response",
+        phase: "finished",
+        messageId: "a-r",
+      },
+    ]);
+    await appendTranscriptDeltaJsonl(agentId, freshConv, [
+      { kind: "user", id: "u-f", text: "new", messageId: "u-f" },
+      {
+        kind: "assistant",
+        id: "a-f",
+        text: "new response",
+        phase: "finished",
+        messageId: "a-f",
+      },
+    ]);
+
+    const replayPayload = await buildAutoReflectionPayload(agentId, replayConv);
+    expect(replayPayload).not.toBeNull();
+    if (!replayPayload) return;
+    await finalizeAutoReflectionPayload(
+      agentId,
+      replayConv,
+      replayPayload.payloadPath,
+      replayPayload.endSnapshotLine,
+      true,
+    );
+
+    const multi = await buildMultiReflectionPayload({
+      agentId,
+      selectionPolicy: {
+        mode: "explicit-conversations",
+        conversationIds: [replayConv, freshConv],
+      },
+    });
+    expect(multi).not.toBeNull();
+    if (!multi) return;
+    expect(
+      multi.manifest.transcripts.map((slice) => [
+        slice.conversation_id,
+        slice.mode,
+      ]),
+    ).toEqual([
+      [replayConv, "replay"],
+      [freshConv, "unreflected"],
+    ]);
+
+    await finalizeMultiReflectionPayload(agentId, multi.manifest, true);
+
+    const replayState = await getReflectionTranscriptState(agentId, replayConv);
+    const freshState = await getReflectionTranscriptState(agentId, freshConv);
+    expect(replayState.reflected_through_message_id).toBe("a-r");
+    expect(replayState.steps_since_last_successful_reflection).toBe(0);
+    expect(freshState.reflected_through_message_id).toBe("a-f");
+    expect(freshState.steps_since_last_successful_reflection).toBe(0);
+  });
+
+  test("multi finalizer leaves cursors unchanged on failure", async () => {
+    const conv = "conv-failure";
+    await appendTranscriptDeltaJsonl(agentId, conv, [
+      { kind: "user", id: "u1", text: "new", messageId: "u1" },
+    ]);
+    const multi = await buildMultiReflectionPayload({
+      agentId,
+      selectionPolicy: {
+        mode: "explicit-conversations",
+        conversationIds: [conv],
+      },
+    });
+    expect(multi).not.toBeNull();
+    if (!multi) return;
+
+    await finalizeMultiReflectionPayload(agentId, multi.manifest, false);
+
+    const state = await getReflectionTranscriptState(agentId, conv);
+    expect(state.reflected_through_message_id).toBeUndefined();
+    expect(state.steps_since_last_successful_reflection).toBe(0);
+  });
+
+  test("listReflectionTranscriptCandidates orders by recent transcript mtime", async () => {
+    await appendTranscriptDeltaJsonl(agentId, "older", [
+      { kind: "user", id: "u-old", text: "old", messageId: "u-old" },
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await appendTranscriptDeltaJsonl(agentId, "newer", [
+      { kind: "user", id: "u-new", text: "new", messageId: "u-new" },
+    ]);
+
+    const candidates = await listReflectionTranscriptCandidates(agentId);
+    expect(candidates.map((candidate) => candidate.conversationId)).toEqual([
+      "newer",
+      "older",
+    ]);
+  });
+
   test("buildParentMemorySnapshot renders tree descriptions and system <memory> blocks", async () => {
     const memoryDir = join(testRoot, "memory");
-    const normalizedMemoryDir = memoryDir.replace(/\\/g, "/");
     await mkdir(join(memoryDir, "system"), { recursive: true });
     await mkdir(join(memoryDir, "reference"), { recursive: true });
     await mkdir(join(memoryDir, "skills", "bird"), { recursive: true });
@@ -553,15 +778,14 @@ describe("reflectionTranscript helper", () => {
     expect(snapshot).toContain("SKILL.md (X/Twitter CLI for posting)");
 
     expect(snapshot).toContain("<memory>");
-    expect(snapshot).toContain(
-      `<path>${normalizedMemoryDir}/system/human.md</path>`,
-    );
+    expect(snapshot).toContain("<path>$MEMORY_DIR/system/human.md</path>");
     expect(snapshot).toContain("Dr. Wooders prefers direct answers.");
     expect(snapshot).toContain("</memory>");
 
     expect(snapshot).not.toContain(
-      `<path>${normalizedMemoryDir}/reference/project.md</path>`,
+      "<path>$MEMORY_DIR/reference/project.md</path>",
     );
+    expect(snapshot).not.toContain(memoryDir.replace(/\\/g, "/"));
     expect(snapshot).not.toContain("letta-code CLI details");
     expect(snapshot).not.toContain(
       "This body should not be inlined into parent memory.",
@@ -600,7 +824,6 @@ describe("reflectionTranscript helper", () => {
 
   test("buildParentMemorySnapshot truncates large system memory previews", async () => {
     const memoryDir = join(testRoot, "memory-large-system");
-    const normalizedMemoryDir = memoryDir.replace(/\\/g, "/");
     await mkdir(join(memoryDir, "system"), { recursive: true });
 
     const largeContent = `---\ndescription: Large system memory\n---\nSTART\n${"x".repeat(60_000)}\nEND_SHOULD_BE_TRUNCATED\n`;
@@ -625,9 +848,8 @@ describe("reflectionTranscript helper", () => {
     );
     expect(snapshot).toContain("<memory_filesystem>");
     expect(snapshot).toContain("large.md");
-    expect(snapshot).toContain(
-      `<path>${normalizedMemoryDir}/system/large.md</path>`,
-    );
+    expect(snapshot).toContain("<path>$MEMORY_DIR/system/large.md</path>");
+    expect(snapshot).not.toContain(memoryDir.replace(/\\/g, "/"));
     expect(snapshot).toContain("START");
     expect(snapshot).toContain("Memory preview truncated");
     expect(snapshot).not.toContain("END_SHOULD_BE_TRUNCATED");
@@ -636,31 +858,37 @@ describe("reflectionTranscript helper", () => {
 
   test("buildReflectionSubagentPrompt uses expanded reflection instructions", () => {
     const prompt = buildReflectionSubagentPrompt({
-      memoryDir: "/tmp/memory",
+      instruction: "Focus on repo gotchas.",
       parentMemory: "<parent_memory>snapshot</parent_memory>",
     });
 
     expect(prompt).toContain("Review the conversation transcript");
     expect(prompt).not.toContain("Your current working directory is:");
-    expect(prompt).toContain(
-      "The current conversation transcript path is available as the",
-    );
+    expect(prompt).toContain("The payload path is available as the");
+    expect(prompt).toContain("multi_transcript_reflection_payload");
+    expect(prompt).toContain('mode: "replay"');
     // Prompt references the $TRANSCRIPT_PATH env var (resolved via Bash),
     // not a literal absolute path.
     expect(prompt).toContain("$TRANSCRIPT_PATH");
-    expect(prompt).toContain("cat $TRANSCRIPT_PATH");
+    expect(prompt).toContain('wc -c "$TRANSCRIPT_PATH"');
     expect(prompt).not.toContain("/tmp/transcript");
+    expect(prompt).not.toContain("/tmp/memory");
+    expect(prompt).not.toContain("worktree");
+    expect(prompt).toContain("$MEMORY_DIR");
     expect(prompt).toContain(
       "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below.",
     );
     expect(prompt).toContain(
       "Additional memory files (such as skills and external memory) may also be read and modified.",
     );
+    expect(prompt).toContain("Additional user-provided reflection instruction");
+    expect(prompt).toContain("Focus on repo gotchas.");
     expect(prompt).toContain("<parent_memory>snapshot</parent_memory>");
   });
 
-  test("reflection payload drops tool call results and truncates args", async () => {
-    const longArgs = "a".repeat(500);
+  test("reflection payload preserves tool calls and bounds results", async () => {
+    const longArgs = JSON.stringify({ pattern: "a".repeat(25_000) });
+    const longResult = `BEGIN:${"x".repeat(3_000)}:END`;
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "run a search", messageId: "u1" },
       {
@@ -669,7 +897,7 @@ describe("reflectionTranscript helper", () => {
         toolCallId: "tc1",
         name: "Grep",
         argsText: longArgs,
-        resultText: "found 42 matches in 10 files",
+        resultText: longResult,
         resultOk: true,
         phase: "finished",
       },
@@ -689,29 +917,59 @@ describe("reflectionTranscript helper", () => {
     const payloadText = await readFile(payload.payloadPath, "utf-8");
     const messages = JSON.parse(payloadText);
 
-    // Tool call should be present with truncated args
     const toolMsg = messages.find(
       (m: { tool_calls?: unknown[] }) => m.tool_calls,
     );
     expect(toolMsg).toBeDefined();
+    expect(toolMsg.timestamp).toBeString();
+    expect(toolMsg.tool_calls[0].id).toBe("tc1");
     expect(toolMsg.tool_calls[0].name).toBe("Grep");
-    expect(toolMsg.tool_calls[0].args).toContain("…[truncated]");
-    expect(toolMsg.tool_calls[0].args.length).toBeLessThan(longArgs.length);
-    // Tool result should NOT be present anywhere
-    expect(payloadText).not.toContain("found 42 matches");
-    // User and assistant messages should be present
-    expect(messages).toContainEqual({ role: "user", content: "run a search" });
-    expect(messages).toContainEqual({
-      role: "assistant",
-      content: "Found results",
-    });
+    const normalizedArgs = toolMsg.tool_calls[0].args;
+    expect(normalizedArgs).toBe(longArgs);
+    expect(JSON.parse(normalizedArgs)).toBeObject();
+
+    const toolResult = messages.find(
+      (message: { role: string }) => message.role === "tool",
+    );
+    expect(toolResult).toEqual(
+      expect.objectContaining({
+        role: "tool",
+        tool_call_id: "tc1",
+        timestamp: expect.any(String),
+      }),
+    );
+    expect(Array.from(toolResult.content)).toHaveLength(2_500);
+    expect(toolResult.content).toStartWith("BEGIN:");
+    expect(toolResult.content).toEndWith(":END");
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        role: "user",
+        content: "run a search",
+      }),
+    );
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        role: "assistant",
+        content: "Found results",
+      }),
+    );
   });
 
-  test("reflection payload strips inline base64 images from text", async () => {
-    const userTextWithImage =
-      "Check this: ![screenshot](data:image/png;base64,iVBORw0KGgoAAAANS) and tell me what you see";
+  test("reflection payload drops runtime errors and has no parent system prompt", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: userTextWithImage, messageId: "u1" },
+      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
+      {
+        kind: "error",
+        id: "error-1",
+        text: "temporary stream warning",
+      },
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "hi",
+        phase: "finished",
+        messageId: "a1",
+      },
     ]);
 
     const payload = await buildAutoReflectionPayload(agentId, conversationId);
@@ -720,132 +978,107 @@ describe("reflectionTranscript helper", () => {
 
     const payloadText = await readFile(payload.payloadPath, "utf-8");
     const messages = JSON.parse(payloadText);
-    const userMsg = messages.find((m: { role: string }) => m.role === "user");
-    expect(userMsg.content).not.toContain("data:image/png;base64");
-    expect(userMsg.content).toContain("[image]");
-    expect(userMsg.content).toContain("Check this:");
-    expect(userMsg.content).toContain("and tell me what you see");
+    expect(messages[0]).toEqual({ role: "meta", source: "letta-code" });
+    expect(
+      messages.some((message: { role: string }) => message.role === "error"),
+    ).toBe(false);
+    expect(
+      messages.some((message: { role: string }) => message.role === "system"),
+    ).toBe(false);
+    expect(payloadText).not.toContain("temporary stream warning");
   });
 
-  test("reflection payload prepends filtered system prompt when provided", async () => {
-    await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
+  test("reflection selector prompt describes auto-only mode", () => {
+    const prompt = buildReflectionSelectorPrompt({
+      instruction: "Find repeated mistakes.",
+    });
+    expect(prompt).toContain("auto_transcript_reflection_candidates");
+    expect(prompt).toContain("Do not edit memory files");
+    expect(prompt).toContain("Return strict JSON");
+    expect(prompt).toContain("Find repeated mistakes.");
+  });
+
+  test("readReflectionAutoSelection validates and caps selector report", async () => {
+    const selected = await readReflectionAutoSelection({
+      selectionReport: JSON.stringify({
+        selected_conversations: [
+          { conversation_id: "conv-a", reason: "correction", priority: "high" },
+          { conversation_id: "conv-a", reason: "duplicate", priority: "low" },
+          {
+            conversation_id: "conv-b",
+            reason: "repo gotcha",
+            priority: "medium",
+          },
+        ],
+      }),
+      candidates: {
+        schema_version: 1,
+        type: "auto_transcript_reflection_candidates",
+        agent_id: agentId,
+        created_at: new Date().toISOString(),
+        max_selected: 1,
+        instructions: "select",
+        candidates: [
+          {
+            conversation_id: "conv-a",
+            total_completed_turns: 3,
+            reflected_completed_turns: 0,
+            turns_since_last_successful_reflection: 3,
+            has_unreflected_content: true,
+            is_current_conversation: false,
+            sources: ["unreflected"],
+            search_scores: [],
+            heuristic_score: 10,
+          },
+          {
+            conversation_id: "conv-b",
+            total_completed_turns: 3,
+            reflected_completed_turns: 3,
+            turns_since_last_successful_reflection: 0,
+            has_unreflected_content: false,
+            is_current_conversation: false,
+            sources: ["search:coding-style"],
+            search_scores: [],
+            heuristic_score: 8,
+          },
+        ],
+      },
+    });
+
+    expect(selected).toEqual([
+      { conversation_id: "conv-a", reason: "correction", priority: "high" },
     ]);
-
-    const systemPrompt = [
-      "You are a helpful coding assistant.",
-      "",
-      "<memory>",
-      "<self>I am a persona block</self>",
-      "<human>User info here</human>",
-      "</memory>",
-      "",
-      "<available_skills>",
-      "skill1, skill2",
-      "</available_skills>",
-      "",
-      "Always be concise.",
-    ].join("\n");
-
-    const payload = await buildAutoReflectionPayload(
-      agentId,
-      conversationId,
-      systemPrompt,
-    );
-    expect(payload).not.toBeNull();
-    if (!payload) return;
-
-    const payloadText = await readFile(payload.payloadPath, "utf-8");
-    const messages = JSON.parse(payloadText);
-    // Filtered system prompt should be the first message
-    const systemMsg = messages[0];
-    expect(systemMsg.role).toBe("system");
-    expect(systemMsg.content).toContain("You are a helpful coding assistant.");
-    expect(systemMsg.content).toContain("Always be concise.");
-    // Dynamic sections should be stripped
-    expect(systemMsg.content).not.toContain("I am a persona block");
-    expect(systemMsg.content).not.toContain("User info here");
-    expect(systemMsg.content).not.toContain("skill1, skill2");
-    expect(systemMsg.content).not.toContain("<available_skills>");
-    // Transcript should follow
-    expect(messages).toContainEqual({ role: "user", content: "hello" });
   });
 
-  test("filterSystemPromptForReflection strips all dynamic sections", () => {
-    const raw = [
-      "Core instructions here.",
-      "<memory><self>persona</self><human>user data</human></memory>",
-      "<system-reminder>This is a reminder</system-reminder>",
-      "<memory_metadata>agent-id: foo</memory_metadata>",
-      "<available_skills>skill list</available_skills>",
-      "Final instructions.",
-    ].join("\n");
+  test("readReflectionAutoSelection accepts fenced selector JSON", async () => {
+    const selected = await readReflectionAutoSelection({
+      selectionReport:
+        '```json\n{"selected_conversations":[{"conversation_id":"conv-a","reason":"correction"}]}\n```',
+      candidates: {
+        schema_version: 1,
+        type: "auto_transcript_reflection_candidates",
+        agent_id: agentId,
+        created_at: new Date().toISOString(),
+        max_selected: 5,
+        instructions: "select",
+        candidates: [
+          {
+            conversation_id: "conv-a",
+            total_completed_turns: 3,
+            reflected_completed_turns: 0,
+            turns_since_last_successful_reflection: 3,
+            has_unreflected_content: true,
+            is_current_conversation: false,
+            sources: ["unreflected"],
+            search_scores: [],
+            heuristic_score: 10,
+          },
+        ],
+      },
+    });
 
-    const filtered = filterSystemPromptForReflection(raw);
-    expect(filtered).toContain("Core instructions here.");
-    expect(filtered).toContain("Final instructions.");
-    expect(filtered).not.toContain("persona");
-    expect(filtered).not.toContain("user data");
-    expect(filtered).not.toContain("This is a reminder");
-    expect(filtered).not.toContain("agent-id: foo");
-    expect(filtered).not.toContain("skill list");
-  });
-
-  test("filterSystemPromptForReflection strips standalone memory sub-tags", () => {
-    const raw = [
-      "You are Letta Code.",
-      "",
-      "<self>",
-      "I'm a coding assistant.",
-      "</self>",
-      "",
-      "<human>",
-      "The user likes TypeScript.",
-      "</human>",
-      "",
-      "Keep being helpful.",
-    ].join("\n");
-
-    const filtered = filterSystemPromptForReflection(raw);
-    expect(filtered).toContain("You are Letta Code.");
-    expect(filtered).toContain("Keep being helpful.");
-    expect(filtered).not.toContain("I'm a coding assistant.");
-    expect(filtered).not.toContain("The user likes TypeScript.");
-  });
-
-  test("filterSystemPromptForReflection strips the # Memory markdown section", () => {
-    const raw = [
-      "You are a persistent coding agent.",
-      "",
-      "# How you work",
-      "",
-      "Never modify code you haven't read.",
-      "",
-      "# Memory",
-      "",
-      "Your memory is projected onto the local memory filesystem.",
-      "",
-      "## Memory structure",
-      "",
-      "Files in system/ are pinned into your prompt.",
-      "",
-      "## Syncing",
-      "",
-      "```bash",
-      "git push",
-      "```",
-    ].join("\n");
-
-    const filtered = filterSystemPromptForReflection(raw);
-    expect(filtered).toContain("You are a persistent coding agent.");
-    expect(filtered).toContain("# How you work");
-    expect(filtered).toContain("Never modify code you haven't read.");
-    // Everything from "# Memory" onward should be stripped
-    expect(filtered).not.toContain("# Memory");
-    expect(filtered).not.toContain("memory filesystem");
-    expect(filtered).not.toContain("Memory structure");
-    expect(filtered).not.toContain("pinned into your prompt");
-    expect(filtered).not.toContain("Syncing");
-    expect(filtered).not.toContain("git push");
+    expect(selected).toEqual([
+      { conversation_id: "conv-a", reason: "correction" },
+    ]);
   });
 });

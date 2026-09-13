@@ -11,6 +11,7 @@ import {
   __resetBackgroundRetentionConfigForTests,
   backgroundProcesses,
 } from "@/tools/impl/process_manager";
+import { clearPendingMessages } from "@/utils/message-queue-bridge";
 
 const isWindows = process.platform === "win32";
 
@@ -28,6 +29,7 @@ function deleteOverflowFiles(output: string): void {
 describe.skipIf(isWindows)("Codex unified exec tools", () => {
   beforeEach(() => {
     __resetBackgroundRetentionConfigForTests();
+    clearPendingMessages();
   });
 
   afterEach(() => {
@@ -45,10 +47,11 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     backgroundProcesses.clear();
     __clearExecSessionsForTests();
     __resetBackgroundRetentionConfigForTests();
+    clearPendingMessages();
 
     for (const outputFile of outputFiles) {
       if (fs.existsSync(outputFile)) {
-        fs.unlinkSync(outputFile);
+        fs.rmSync(outputFile, { recursive: true, force: true });
       }
     }
   });
@@ -62,6 +65,39 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     expect(result.output).toContain("Original token count:");
     expect(result.output).toContain("Output:\nhello");
     expect(result.output).not.toContain("Process running with session ID");
+  });
+
+  test("redacts split invocation secrets from output and transcript files", async () => {
+    const secret = "he$$o";
+    const result = await exec_command({
+      cmd: "node -e \"const value = process.env.PASSWORD ?? ''; process.stdout.write(value.slice(0, 2)); setTimeout(() => process.stdout.write(value.slice(2)), 25)\"",
+      secretEnv: { PASSWORD: secret },
+    });
+
+    expect(result.output).toContain("PASSWORD=<REDACTED>");
+    expect(result.output).not.toContain(secret);
+    const outputFile = Array.from(backgroundProcesses.values()).at(
+      -1,
+    )?.outputFile;
+    expect(fs.readFileSync(outputFile as string, "utf8")).not.toContain(secret);
+  });
+
+  test("scrubs invocation secrets before writing overflow output", async () => {
+    const secret = "he$$o";
+    const result = await exec_command({
+      cmd: "node -e \"process.stdout.write((process.env.PASSWORD ?? '') + 'x'.repeat(50000))\"",
+      secretEnv: { PASSWORD: secret },
+      max_output_tokens: 80_000,
+    });
+
+    const overflowPath = result.output.match(
+      /\[Full output written to: (.+?\.txt)\]/,
+    )?.[1];
+    expect(overflowPath).toBeString();
+    const overflow = fs.readFileSync(overflowPath as string, "utf8");
+    expect(overflow).toContain("PASSWORD=<REDACTED>");
+    expect(overflow).not.toContain(secret);
+    deleteOverflowFiles(result.output);
   });
 
   test("caps exec_command inline output when max_output_tokens is too large", async () => {
@@ -128,14 +164,19 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
   });
 
   test("returns session id for running command and write_stdin polls it", async () => {
+    const runtimeScope = { agentId: "agent-1", conversationId: "conv-1" };
     const first = await exec_command({
       cmd: "printf start; sleep 0.5; printf done",
       yield_time_ms: 250,
+      parentScope: runtimeScope,
     });
 
     const match = first.output.match(/Process running with session ID (\d+)/);
     expect(match?.[1]).toBeDefined();
     expect(first.output).toContain("Output:\nstart");
+    expect(backgroundProcesses.get(match?.[1] ?? "")?.runtimeScope).toEqual(
+      runtimeScope,
+    );
 
     const second = await write_stdin({
       session_id: Number(match?.[1]),
@@ -152,6 +193,26 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
         chars: "",
       }),
     ).rejects.toThrow("Unknown process id");
+  });
+
+  test("fails the session when its output file cannot be written", async () => {
+    const first = await exec_command({
+      cmd: "printf 'start\\n'; sleep 1; printf 'after\\n'; sleep 30",
+      yield_time_ms: 250,
+    });
+    const sessionId = first.output.match(
+      /Process running with session ID (\d+)/,
+    )?.[1];
+    expect(sessionId).toBeDefined();
+
+    const processState = backgroundProcesses.get(sessionId ?? "");
+    expect(processState?.outputFile).toBeDefined();
+    fs.rmSync(processState?.outputFile ?? "", { force: true });
+    fs.mkdirSync(processState?.outputFile ?? "");
+
+    await Bun.sleep(1_250);
+
+    expect(backgroundProcesses.get(sessionId ?? "")?.status).toBe("failed");
   });
 
   test("caps write_stdin inline output when max_output_tokens is too large", async () => {
@@ -291,6 +352,25 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     ).rejects.toThrow(
       "stdin is closed for this session; rerun exec_command with tty=true to keep stdin open",
     );
+  });
+
+  test("write_stdin interrupts non-tty sessions with Ctrl-C", async () => {
+    const first = await exec_command({
+      cmd: "trap 'printf interrupted; exit 23' INT; while :; do sleep 1; done",
+      yield_time_ms: 250,
+    });
+
+    const match = first.output.match(/Process running with session ID (\d+)/);
+    expect(match?.[1]).toBeDefined();
+
+    const second = await write_stdin({
+      session_id: Number(match?.[1]),
+      chars: "\u0003",
+      yield_time_ms: 5_000,
+    });
+
+    expect(second.output).toContain("Process exited with code 23");
+    expect(second.output).toContain("Output:\ninterrupted");
   });
 
   test("preserves non-zero exit code in model-facing output", async () => {

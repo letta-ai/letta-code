@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { getSubagentModelDisplay } from "@/cli/helpers/subagent-display";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
+
+setupRuntimeModelCatalogFixture();
 
 describe("getSubagentModelDisplay", () => {
   test("formats known model IDs using short labels", () => {

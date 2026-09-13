@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { commands } from "@/cli/commands/registry";
 import {
+  canConnectAnotherProvider,
+  connectAnotherProviderOption,
+  connectedProviderSummary,
   fieldValuesFromProviderPlaceholders,
   filterProviderConfigs,
-  hasConstellationProviderStoreCredentials,
+  hasCloudProviderStoreCredentials,
+  isChatGPTUsageProvider,
   isProviderTargetLoading,
+  nextProviderConnectionName,
   providerApiKeyFromInput,
   providerSelectionFlow,
   shouldShowProviderStoreTabs,
@@ -13,6 +18,7 @@ import {
   type ByokProvider,
   defaultProviderApiKey,
   getProviderConfigs,
+  type ProviderResponse,
 } from "@/providers/byok-providers";
 
 function withEnv<T>(
@@ -53,6 +59,26 @@ function providerById(id: string): ByokProvider {
 }
 
 describe("ProviderSelector local provider API keys", () => {
+  test("recognizes ChatGPT OAuth providers for usage display", () => {
+    const chatgpt = providerById("openai-codex-oauth");
+    const openai = providerById("openai");
+
+    expect(isChatGPTUsageProvider(chatgpt)).toBe(true);
+    expect(isChatGPTUsageProvider(openai)).toBe(false);
+  });
+
+  test("keeps OpenAI-compatible endpoints distinct from named local engines", () => {
+    const provider = providerById("openai-compatible");
+
+    expect(provider).toMatchObject({
+      providerType: "openai-compatible",
+      providerName: "openai-compatible",
+      requiresApiKey: false,
+      fields: [{ key: "apiKey", required: false }, { key: "baseUrl" }],
+    });
+    expect(defaultProviderApiKey(provider)).toBe("not-needed");
+  });
+
   test("keeps LM Studio UI identity while using server provider type", () => {
     const lmstudio = providerById("lmstudio");
 
@@ -94,6 +120,9 @@ describe("ProviderSelector local provider API keys", () => {
         expect(providerApiKeyFromInput(providerById("ollama"), "   ")).toBe(
           "not-needed",
         );
+        expect(
+          providerApiKeyFromInput(providerById("openai-compatible"), ""),
+        ).toBe("not-needed");
         expect(providerApiKeyFromInput(providerById("openai"), "")).toBe(
           undefined,
         );
@@ -116,9 +145,9 @@ describe("ProviderSelector local provider API keys", () => {
   });
 });
 
-describe("ProviderSelector Constellation auth gating", () => {
-  test("requires Constellation credentials before showing provider-store tabs", () => {
-    const loggedOut = hasConstellationProviderStoreCredentials(
+describe("ProviderSelector Letta Cloud auth gating", () => {
+  test("requires Letta Cloud credentials before showing provider-store tabs", () => {
+    const loggedOut = hasCloudProviderStoreCredentials(
       { env: {}, refreshToken: undefined },
       {},
     );
@@ -128,21 +157,21 @@ describe("ProviderSelector Constellation auth gating", () => {
     expect(shouldShowProviderStoreTabs(null)).toBe(false);
   });
 
-  test("accepts env, stored API key, or refresh token as Constellation auth", () => {
+  test("accepts env, stored API key, or refresh token as Letta Cloud auth", () => {
     expect(
-      hasConstellationProviderStoreCredentials(
+      hasCloudProviderStoreCredentials(
         { env: {}, refreshToken: undefined },
         { LETTA_API_KEY: "env-key" },
       ),
     ).toBe(true);
     expect(
-      hasConstellationProviderStoreCredentials(
+      hasCloudProviderStoreCredentials(
         { env: { LETTA_API_KEY: "stored-key" }, refreshToken: undefined },
         {},
       ),
     ).toBe(true);
     expect(
-      hasConstellationProviderStoreCredentials(
+      hasCloudProviderStoreCredentials(
         { env: {}, refreshToken: "refresh-token" },
         {},
       ),
@@ -159,8 +188,20 @@ describe("ProviderSelector provider filtering", () => {
       filterProviderConfigs(providers, "copilot").map((p) => p.id),
     ).toEqual(["github-copilot"]);
     expect(
+      filterProviderConfigs(providers, "openrou").map((p) => p.id),
+    ).toEqual(["openrouter", "openrouter-oauth"]);
+    // Keep the subscription filter aligned with pi-ai's OAuth providers.
+    expect(
       filterProviderConfigs(providers, "subscription").map((p) => p.id),
-    ).toEqual(["anthropic-oauth", "openai-codex-oauth", "github-copilot"]);
+    ).toEqual([
+      "anthropic-oauth",
+      "github-copilot",
+      "kimi-coding",
+      "openai-codex-oauth",
+      "openrouter-oauth",
+      "radius",
+      "xai",
+    ]);
   });
 
   test("matches provider aliases and restores all providers for blank query", () => {
@@ -201,9 +242,44 @@ describe("ProviderSelector multi-field defaults", () => {
       ]),
     ).toEqual({});
   });
+
+  test("does not prefill optional field placeholders", () => {
+    expect(
+      fieldValuesFromProviderPlaceholders([
+        {
+          key: "baseUrl",
+          label: "Base URL",
+          placeholder: "http://localhost:11434/v1",
+          required: false,
+        },
+        { key: "apiKey", label: "API Key", secret: true, required: false },
+      ]),
+    ).toEqual({});
+  });
 });
 
 describe("ProviderSelector connected provider actions", () => {
+  const codexProvider: ByokProvider = {
+    id: "codex",
+    displayName: "ChatGPT / Codex plan",
+    description: "Connect your ChatGPT coding plan",
+    providerType: "chatgpt_oauth",
+    providerName: "chatgpt-plus-pro",
+    isOAuth: true,
+  };
+  const chatgptWorkProvider: ProviderResponse = {
+    id: "provider-chatgpt-work",
+    name: "chatgpt-work",
+    provider_type: "chatgpt_oauth",
+    provider_category: "byok",
+  };
+  const chatgptDefaultProvider: ProviderResponse = {
+    id: "provider-chatgpt-plus-pro",
+    name: "chatgpt-plus-pro",
+    provider_type: "chatgpt_oauth",
+    provider_category: "byok",
+  };
+
   test("opens options for connected OAuth providers before starting OAuth", () => {
     const codex = getProviderConfigs("api").find(
       (provider) => provider.id === "codex",
@@ -222,6 +298,66 @@ describe("ProviderSelector connected provider actions", () => {
 
     expect(providerSelectionFlow(openai)).toBe("input");
     expect(providerSelectionFlow(openai, "provider-2")).toBe("options");
+  });
+
+  test("summarizes disconnected providers with their description", () => {
+    expect(connectedProviderSummary(codexProvider, [])).toBe(
+      "Connect your ChatGPT coding plan",
+    );
+  });
+
+  test("summarizes a single named provider with its alias", () => {
+    expect(connectedProviderSummary(codexProvider, [chatgptWorkProvider])).toBe(
+      "Connected (chatgpt-work)",
+    );
+  });
+
+  test("summarizes the built-in provider name as connected", () => {
+    expect(
+      connectedProviderSummary(codexProvider, [chatgptDefaultProvider]),
+    ).toBe("Connected");
+  });
+
+  test("summarizes multiple named providers by count", () => {
+    expect(
+      connectedProviderSummary(codexProvider, [
+        chatgptDefaultProvider,
+        chatgptWorkProvider,
+      ]),
+    ).toBe("2 connected");
+  });
+
+  test("surfaces connect-another only for API ChatGPT OAuth providers", () => {
+    const openai = getProviderConfigs("api").find(
+      (provider) => provider.id === "openai",
+    );
+    if (!openai) throw new Error("Expected openai provider config");
+
+    expect(canConnectAnotherProvider(codexProvider, "api")).toBe(true);
+    expect(canConnectAnotherProvider(codexProvider, "local")).toBe(false);
+    expect(canConnectAnotherProvider(openai, "api")).toBe(false);
+    expect(connectAnotherProviderOption(codexProvider)).toBe(
+      "Connect another ChatGPT / Codex plan",
+    );
+  });
+
+  test("suggests the next available ChatGPT OAuth provider name", () => {
+    expect(nextProviderConnectionName(codexProvider, [])).toBe(
+      "chatgpt-plus-pro",
+    );
+    expect(
+      nextProviderConnectionName(codexProvider, [chatgptDefaultProvider]),
+    ).toBe("chatgpt-plus-pro-2");
+    expect(
+      nextProviderConnectionName(codexProvider, [
+        chatgptDefaultProvider,
+        {
+          ...chatgptDefaultProvider,
+          id: "provider-chatgpt-plus-pro-2",
+          name: "chatgpt-plus-pro-2",
+        },
+      ]),
+    ).toBe("chatgpt-plus-pro-3");
   });
 
   test("removes the legacy slash disconnect command from discovery", () => {

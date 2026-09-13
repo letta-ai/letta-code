@@ -32,12 +32,21 @@ export function writeWireMessage(msg: WireMessage): void {
   console.log(JSON.stringify(stampWireMessage(msg)));
 }
 
-export async function writeWireMessageAsync(msg: WireMessage): Promise<void> {
+/**
+ * Returns whether the line was actually written: `false` means stdout was
+ * already destroyed or ended, so the message never reached the wire. Callers
+ * emitting a message that downstream consumers depend on (e.g. the final
+ * result envelope a subagent parent parses) must check the return value
+ * instead of treating a silent drop as success.
+ */
+export async function writeWireMessageAsync(
+  msg: WireMessage,
+): Promise<boolean> {
   const line = `${JSON.stringify(stampWireMessage(msg))}\n`;
 
-  await new Promise<void>((resolve, reject) => {
+  return await new Promise<boolean>((resolve, reject) => {
     if (process.stdout.destroyed || process.stdout.writableEnded) {
-      resolve();
+      resolve(false);
       return;
     }
 
@@ -46,7 +55,7 @@ export async function writeWireMessageAsync(msg: WireMessage): Promise<void> {
         reject(error);
         return;
       }
-      resolve();
+      resolve(true);
     });
   });
 }

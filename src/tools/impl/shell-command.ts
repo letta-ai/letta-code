@@ -1,4 +1,4 @@
-import { getCurrentAgentId } from "@/agent/context";
+import { getCurrentAgentId, getCurrentAgentName } from "@/agent/context";
 import { isMemoryDirCommand } from "@/permissions/read-only-shell";
 import { resolveShellWorkdir, type ShellResult, shell } from "./shell.js";
 import { buildShellLaunchers } from "./shell-launchers.js";
@@ -8,6 +8,7 @@ import { validateRequiredParams } from "./validation.js";
 
 interface ShellCommandArgs {
   command: string;
+  description?: string;
   workdir?: string;
   login?: boolean;
   timeout_ms?: number;
@@ -28,6 +29,7 @@ interface ShellCommandResult {
 function normalizeShellCommandResult(
   result: ShellResult,
   resolvedWorkdir: string,
+  secrets: Readonly<Record<string, string>>,
 ): ShellCommandResult {
   const { content: truncatedOutput, wasTruncated } = truncateByChars(
     result.output || "(Command completed with no output)",
@@ -36,6 +38,7 @@ function normalizeShellCommandResult(
     {
       workingDirectory: resolvedWorkdir,
       toolName: "Bash",
+      secrets,
     },
   );
 
@@ -92,7 +95,11 @@ export async function shell_command(
         signal,
         onOutput,
       });
-      return normalizeShellCommandResult(result, resolvedWorkdir);
+      return normalizeShellCommandResult(
+        result,
+        resolvedWorkdir,
+        secretEnv ?? {},
+      );
     } catch (error) {
       if (error instanceof ShellExecutionError && error.code === "ENOENT") {
         tried.push(launcher[0] || "");
@@ -131,7 +138,7 @@ function getMemoryGitIdentityEnvOverrides(
     return undefined;
   }
 
-  const agentName = (process.env.AGENT_NAME || "").trim() || agentId;
+  const agentName = getCurrentAgentNameOrEnv() || agentId;
   const agentEmail = `${agentId}@letta.com`;
 
   return {
@@ -153,6 +160,16 @@ function getCurrentAgentIdOrEnv(): string {
   }
 
   return (process.env.LETTA_AGENT_ID || process.env.AGENT_ID || "").trim();
+}
+
+function getCurrentAgentNameOrEnv(): string | null {
+  const scopedName = getCurrentAgentName()?.trim();
+  if (scopedName) {
+    return scopedName;
+  }
+
+  const envName = process.env.AGENT_NAME?.trim();
+  return envName || null;
 }
 
 function containsGitCommitInvocation(command: string): boolean {

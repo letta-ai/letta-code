@@ -3,6 +3,7 @@ import type React from "react";
 import stringWidth from "string-width";
 import { colors, hexToBgAnsi } from "./colors.js";
 import { InlineMarkdown } from "./InlineMarkdownRenderer.js";
+import { MarkdownTable } from "./MarkdownTable.js";
 import {
   highlightCode,
   languageFromPath,
@@ -15,7 +16,7 @@ interface MarkdownDisplayProps {
   dimColor?: boolean;
   hangingIndent?: number; // indent for wrapped lines within a paragraph
   backgroundColor?: string; // background color for all text
-  contentWidth?: number; // available width — used to pad lines to fill background
+  contentWidth?: number; // available width for responsive blocks and background padding
 }
 
 // Regex patterns for markdown elements (defined outside component to avoid re-creation)
@@ -129,97 +130,6 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
             `${key}-code-${lineIdx}`,
           ),
         )}
-      </Box>
-    );
-  };
-
-  // Helper function to parse table cells from a row
-  const parseTableCells = (row: string): string[] => {
-    return row
-      .slice(1, -1) // Remove leading and trailing |
-      .split("|")
-      .map((cell) => cell.trim());
-  };
-
-  // Helper function to render a table
-  const renderTable = (
-    tableLines: string[],
-    startIndex: number,
-  ): React.ReactNode => {
-    if (tableLines.length < 2 || !tableLines[0]) return null;
-
-    const headerRow = parseTableCells(tableLines[0]);
-    const bodyRows = tableLines.slice(2).map(parseTableCells); // Skip separator row
-
-    // Calculate column widths
-    const colWidths = headerRow.map((header, colIdx) => {
-      const bodyMax = bodyRows.reduce((max, row) => {
-        const cell = row[colIdx] || "";
-        return Math.max(max, cell.length);
-      }, 0);
-      return Math.max(header.length, bodyMax, 3); // Minimum 3 chars
-    });
-
-    return (
-      <Box key={`table-${startIndex}`} flexDirection="column" marginY={0}>
-        {/* Header row */}
-        <Box flexDirection="row">
-          <Text dimColor={dimColor} backgroundColor={backgroundColor}>
-            │
-          </Text>
-          {headerRow.map((cell, idx) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: static table content
-            <Box key={`h-${idx}`} flexDirection="row">
-              <Text bold dimColor={dimColor} backgroundColor={backgroundColor}>
-                {" "}
-                {cell.padEnd(colWidths[idx] ?? 3)}
-              </Text>
-              <Text dimColor={dimColor} backgroundColor={backgroundColor}>
-                {" "}
-                │
-              </Text>
-            </Box>
-          ))}
-        </Box>
-        {/* Separator */}
-        <Box flexDirection="row">
-          <Text dimColor={dimColor} backgroundColor={backgroundColor}>
-            ├
-          </Text>
-          {colWidths.map((width, idx) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: static table content
-            <Box key={`s-${idx}`} flexDirection="row">
-              <Text dimColor={dimColor} backgroundColor={backgroundColor}>
-                {"─".repeat(width + 2)}
-              </Text>
-              <Text dimColor={dimColor} backgroundColor={backgroundColor}>
-                {idx < colWidths.length - 1 ? "┼" : "┤"}
-              </Text>
-            </Box>
-          ))}
-        </Box>
-        {/* Body rows */}
-        {bodyRows.map((row, rowIdx) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: static table content
-          <Box key={`r-${rowIdx}`} flexDirection="row">
-            <Text dimColor={dimColor} backgroundColor={backgroundColor}>
-              │
-            </Text>
-            {row.map((cell, colIdx) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: static table content
-              <Box key={`c-${colIdx}`} flexDirection="row">
-                <Text dimColor={dimColor} backgroundColor={backgroundColor}>
-                  {" "}
-                  {(cell || "").padEnd(colWidths[colIdx] || 3)}
-                </Text>
-                <Text dimColor={dimColor} backgroundColor={backgroundColor}>
-                  {" "}
-                  │
-                </Text>
-              </Box>
-            ))}
-          </Box>
-        ))}
       </Box>
     );
   };
@@ -387,10 +297,15 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       }
       // Also accept separator-only lines
       if (tableLines.length >= 2) {
-        const tableElement = renderTable(tableLines, index);
-        if (tableElement) {
-          contentBlocks.push(tableElement);
-        }
+        contentBlocks.push(
+          <MarkdownTable
+            key={`table-${index}`}
+            tableLines={tableLines}
+            contentWidth={contentWidth}
+            dimColor={dimColor}
+            backgroundColor={backgroundColor}
+          />,
+        );
         index = tableIdx;
         continue;
       }

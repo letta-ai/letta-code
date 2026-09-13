@@ -1,9 +1,14 @@
-import { existsSync, statSync } from "node:fs";
 import * as path from "node:path";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { isUsableDirectory } from "@/helpers/usable-directory";
+import {
+  consumeWorkingDirectoryRecovery,
+  getCurrentWorkingDirectory,
+} from "@/runtime-context";
+import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import { getShellEnv } from "./shell-env.js";
 import { buildShellLaunchers } from "./shell-launchers.js";
 import { ShellExecutionError, spawnWithLauncher } from "./shell-runner.js";
+import { applyShellSandbox } from "./shell-sandbox.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface ShellArgs {
@@ -39,12 +44,29 @@ const DEFAULT_TIMEOUT = 120000;
 
 type SpawnContext = {
   command: string[];
+  sourceCommand: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeout: number;
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
 };
+
+function withWorkingDirectoryRecoveryNote(
+  result: ShellResult,
+  recoveredFrom: string | null,
+  cwd: string,
+): ShellResult {
+  if (!recoveredFrom) {
+    return result;
+  }
+
+  const note = `Note: working directory ${recoveredFrom} no longer exists; running in ${cwd} instead.`;
+  return {
+    ...result,
+    output: result.output ? `${note}\n${result.output}` : note,
+  };
+}
 
 async function runProcess(context: SpawnContext): Promise<ShellResult> {
   const { stdout, stderr, exitCode } = await spawnWithLauncher(
@@ -53,6 +75,7 @@ async function runProcess(context: SpawnContext): Promise<ShellResult> {
       cwd: context.cwd,
       env: context.env,
       timeoutMs: context.timeout,
+      sourceCommand: context.sourceCommand,
       signal: context.signal,
       onOutput: context.onOutput,
     },
@@ -100,31 +123,57 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
 
   const timeout = timeout_ms ?? DEFAULT_TIMEOUT;
   const cwd = resolveShellWorkdir(workdir);
+  const env = {
+    ...getShellEnv(),
+    ...(env_overrides ?? {}),
+    ...(secretEnv ?? {}),
+  };
+  const recoveredFrom = consumeWorkingDirectoryRecovery();
+
+  // Confine the command under the cross-agent shell sandbox. The wrapper hides
+  // the inner shell from spawnWithLauncher's worktree-ownership note, so note
+  // the unwrapped command here first. Under the sandbox the ENOENT shell
+  // fallback below stops triggering (sandbox-exec always spawns) — acceptable:
+  // it's a rare missing-shell nicety and this path is flag-gated.
+  const sandboxed = applyShellSandbox(command, cwd, env);
+  if (sandboxed.backend) {
+    noteExpectedWorktreeForLauncher(command, cwd);
+  }
 
   const context: SpawnContext = {
-    command,
+    command: sandboxed.launcher,
+    sourceCommand: command,
     cwd,
-    env: {
-      ...getShellEnv(),
-      ...(env_overrides ?? {}),
-      ...(secretEnv ?? {}),
-    },
+    env: sandboxed.env,
     timeout,
     signal,
     onOutput,
   };
 
   try {
-    return await runProcess(context);
+    return withWorkingDirectoryRecoveryNote(
+      await runProcess(context),
+      recoveredFrom,
+      cwd,
+    );
   } catch (error) {
-    if (error instanceof ShellExecutionError && error.code === "ENOENT") {
+    if (
+      error instanceof ShellExecutionError &&
+      error.code === "ENOENT" &&
+      error.reason !== "cwd_missing"
+    ) {
       for (const fallback of buildFallbackCommands(command)) {
         try {
-          return await runProcess({ ...context, command: fallback });
+          return withWorkingDirectoryRecoveryNote(
+            await runProcess({ ...context, command: fallback }),
+            recoveredFrom,
+            cwd,
+          );
         } catch (retryError) {
           if (
             retryError instanceof ShellExecutionError &&
-            retryError.code === "ENOENT"
+            retryError.code === "ENOENT" &&
+            retryError.reason !== "cwd_missing"
           ) {
             continue;
           }
@@ -152,14 +201,6 @@ function arraysEqual(a: string[], b: string[]): boolean {
     if (a[i] !== b[i]) return false;
   }
   return true;
-}
-
-function isUsableDirectory(candidate: string): boolean {
-  try {
-    return existsSync(candidate) && statSync(candidate).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 function isShellExecutableName(name: string): boolean {

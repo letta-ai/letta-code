@@ -19,11 +19,13 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import reflectionSubagentMd from "@/agent/subagents/builtin/reflection.md";
 import { formatCapturedOutput } from "@/integration-tests/process-diagnostics";
 import { createAuthenticatedCliTestEnv } from "./test-process-env";
 
 interface Args {
   model: string;
+  reflectionModel: string;
 }
 
 interface ReflectionTranscriptState {
@@ -61,16 +63,23 @@ interface LiveReflectionSummary {
 
 const TURN_ONE_MARKER = "LIVE_REFLECTION_TURN_ONE_MARKER";
 const TURN_TWO_MARKER = "LIVE_REFLECTION_TURN_TWO_MARKER";
+const DEFAULT_REFLECTION_MODEL = "gpt-5.4-mini-low";
+const MAX_TURN_ATTEMPTS = 4;
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { model: "auto" };
+  const args: Args = {
+    model: "auto",
+    reflectionModel: DEFAULT_REFLECTION_MODEL,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const value = argv[i];
     if (value === "--model") {
       args.model = argv[++i] ?? args.model;
+    } else if (value === "--reflection-model") {
+      args.reflectionModel = argv[++i] ?? args.reflectionModel;
     } else if (value === "--help" || value === "-h") {
       console.log(
-        "Usage: bun run src/test-utils/headless-reflection-scenario.ts [--model auto]",
+        "Usage: bun run src/test-utils/headless-reflection-scenario.ts [--model auto] [--reflection-model gpt-5.4-mini-low]",
       );
       process.exit(0);
     } else {
@@ -88,8 +97,17 @@ async function runLiveBidirectionalReflectionSmoke(
   const projectDir = join(tmpRoot, "project");
   const transcriptRoot = join(tmpRoot, "transcripts");
   await mkdir(join(homeDir, ".letta"), { recursive: true });
+  await mkdir(join(homeDir, ".letta", "agents"), { recursive: true });
   await mkdir(projectDir, { recursive: true });
   await mkdir(transcriptRoot, { recursive: true });
+
+  await writeFile(
+    join(homeDir, ".letta", "agents", "reflection.md"),
+    reflectionSubagentMd.replace(
+      "\nmodel: inherit\n",
+      `\nmodel: ${args.reflectionModel}\n`,
+    ),
+  );
 
   await writeFile(
     join(homeDir, ".letta", "settings.json"),
@@ -169,6 +187,10 @@ async function runLiveBidirectionalCli(paths: {
     let conversationId: string | null = null;
     let resultCount = 0;
     let closing = false;
+    let phase: "first" | "second" = "first";
+    let phaseAttempt = 0;
+    let sawAssistantMessage = false;
+    let retryTimer: NodeJS.Timeout | null = null;
 
     const transcriptDir = () =>
       agentId && conversationId
@@ -181,12 +203,37 @@ async function runLiveBidirectionalCli(paths: {
       );
     };
 
+    const endInput = () => {
+      if (closing) return;
+      closing = true;
+      proc.stdin.end();
+    };
+
+    const sendCurrentTurn = () => {
+      if (closing) return;
+      phaseAttempt += 1;
+      sawAssistantMessage = false;
+      const marker = phase === "first" ? TURN_ONE_MARKER : TURN_TWO_MARKER;
+      sendUser(`Return OK as your final answer. Do not use tools. ${marker}`);
+    };
+
+    const retryCurrentTurn = () => {
+      if (phaseAttempt >= MAX_TURN_ATTEMPTS) {
+        endInput();
+        return;
+      }
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        sendCurrentTurn();
+      }, 1_000);
+    };
+
     const closeWhenReflectionPayloadExists = () => {
       if (closing) return;
       closing = true;
-      void waitForLaunchArtifacts(transcriptDir, 90_000).finally(() => {
-        proc.stdin.end();
-      });
+      void waitForLaunchArtifacts(transcriptDir, 2, 90_000).finally(() =>
+        proc.stdin.end(),
+      );
     };
 
     proc.stdout.on("data", (chunk) => {
@@ -216,20 +263,35 @@ async function runLiveBidirectionalCli(paths: {
             : conversationId;
 
         if (parsed.type === "system" && parsed.subtype === "init") {
-          sendUser(`Reply with OK only. Do not use tools. ${TURN_ONE_MARKER}`);
+          sendCurrentTurn();
+        }
+
+        if (
+          parsed.type === "message" &&
+          parsed.message_type === "assistant_message"
+        ) {
+          sawAssistantMessage = true;
         }
 
         if (parsed.type === "result") {
           resultCount += 1;
-          if (resultCount === 1) {
-            setTimeout(
-              () =>
-                sendUser(
-                  `Reply with OK only. Do not use tools. ${TURN_TWO_MARKER}`,
-                ),
-              1_000,
+          if (!sawAssistantMessage) {
+            // The live auto route can return final text only as reasoning. That
+            // turn is not an assistant step, so keep the current snapshot phase.
+            retryCurrentTurn();
+          } else if (phase === "first") {
+            void waitForLaunchArtifacts(transcriptDir, 1, 10_000).then(
+              (launched) => {
+                if (!launched) {
+                  endInput();
+                  return;
+                }
+                phase = "second";
+                phaseAttempt = 0;
+                sendCurrentTurn();
+              },
             );
-          } else if (resultCount === 2) {
+          } else {
             closeWhenReflectionPayloadExists();
           }
         }
@@ -261,6 +323,7 @@ async function runLiveBidirectionalCli(paths: {
 
     proc.on("close", (code, signal) => {
       clearTimeout(timeout);
+      if (retryTimer) clearTimeout(retryTimer);
       void buildSummary({
         code,
         signal,
@@ -280,22 +343,24 @@ async function runLiveBidirectionalCli(paths: {
 
 async function waitForLaunchArtifacts(
   getTranscriptDir: () => string | null,
+  minimumCompletedSteps: number,
   timeoutMs: number,
-): Promise<void> {
+): Promise<boolean> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const dir = getTranscriptDir();
     const state = dir ? await readReflectionState(dir) : null;
     const payloadFiles = dir ? await readPayloadFiles(dir) : [];
     if (
-      (state?.total_completed_steps ?? 0) >= 2 &&
+      (state?.total_completed_steps ?? 0) >= minimumCompletedSteps &&
       state?.last_reflection_started_at &&
       payloadFiles.length >= 1
     ) {
-      return;
+      return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
+  return false;
 }
 
 async function buildSummary(args: {
@@ -449,7 +514,7 @@ function assertScenario(summary: LiveReflectionSummary): void {
   assertTrue(summary.conversationId, `Missing conversation id.\n${details}`);
   assertTrue(
     summary.resultCount >= 2,
-    `Expected at least two completed steps.\n${details}`,
+    `Expected at least two turn results.\n${details}`,
   );
   assertTrue(
     summary.reflectionLaunchCount >= 1,
@@ -486,8 +551,12 @@ function assertScenario(summary: LiveReflectionSummary): void {
 
   const firstPayload = parsePayload(summary.firstPayloadText);
   assertTrue(
-    firstPayload.roles.includes("system"),
-    `Payload missing system message.\n${details}`,
+    firstPayload.roles[0] === "meta",
+    `Payload missing leading metadata record.\n${details}`,
+  );
+  assertTrue(
+    !firstPayload.roles.includes("system"),
+    `Payload unexpectedly includes a system message.\n${details}`,
   );
   assertTrue(
     firstPayload.roles.includes("user"),
@@ -516,7 +585,9 @@ async function main(): Promise<void> {
 
   const summary = await runLiveBidirectionalReflectionSmoke(args);
   assertScenario(summary);
-  console.log(`OK: reflection / headless / ${args.model}`);
+  console.log(
+    `OK: reflection / headless / ${args.model} / reflection ${args.reflectionModel}`,
+  );
 }
 
 main().catch((error) => {

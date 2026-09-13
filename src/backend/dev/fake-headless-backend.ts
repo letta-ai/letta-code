@@ -5,8 +5,10 @@ import type {
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
+import { mapModelHandleToLlmConfigPatch } from "@/agent/model-handles";
 import type {
   Backend,
+  BackendCapabilities,
   ConversationCreateBody,
   ConversationMessageCreateBody,
   ConversationMessageListBody,
@@ -180,17 +182,19 @@ export interface HeadlessBackendOptions {
 
 const FAKE_HEADLESS_MODEL = "dev/fake-headless";
 
+export const HEADLESS_BACKEND_CAPABILITIES: BackendCapabilities = {
+  remoteMemfs: false,
+  serverSideToolManagement: false,
+  serverSecrets: false,
+  promptRecompile: false,
+  byokProviderRefresh: false,
+  localModelCatalog: true,
+  localMemfs: false,
+  environmentRouting: false,
+};
+
 export class HeadlessBackend implements Backend {
-  readonly capabilities = {
-    remoteMemfs: false,
-    serverSideToolManagement: false,
-    serverSecrets: false,
-    agentFileImportExport: false,
-    promptRecompile: false,
-    byokProviderRefresh: false,
-    localModelCatalog: true,
-    localMemfs: false,
-  };
+  readonly capabilities = HEADLESS_BACKEND_CAPABILITIES;
 
   protected readonly store: LocalStore;
   private readonly executor: HeadlessTurnExecutor;
@@ -340,11 +344,12 @@ export class HeadlessBackend implements Backend {
   }
 
   async listModels(): ReturnType<Backend["listModels"]> {
+    const llmConfigPatch = mapModelHandleToLlmConfigPatch(this.modelHandle);
     return [
       {
         handle: this.modelHandle,
-        model: this.modelHandle,
-        model_endpoint_type: "openai",
+        model: llmConfigPatch.model ?? this.modelHandle,
+        model_endpoint_type: llmConfigPatch.model_endpoint_type ?? "openai",
       },
     ] as never;
   }
@@ -386,6 +391,28 @@ export class HeadlessBackend implements Backend {
       controller?.abort();
     }
     return { status: "cancelled" } as never;
+  }
+
+  async cancelRun(...args: Parameters<Backend["cancelRun"]>) {
+    const [agentId, runId] = args;
+    const run = this.runs.get(runId);
+    if (!run || run.agent_id !== agentId || isTerminalRun(run)) {
+      return { [runId]: "failed" } as never;
+    }
+
+    if (run.conversation_id) {
+      this.store.settleInterruptedToolCalls(run.conversation_id, { agentId });
+    } else {
+      this.store.settleInterruptedToolCalls(agentId);
+    }
+    const controller = this.runControllerByRunId.get(runId);
+    this.recordRunChunk(runId, {
+      message_type: "stop_reason",
+      stop_reason: "cancelled",
+    } as LettaStreamingResponse);
+    this.completeRun(runId, "cancelled");
+    controller?.abort();
+    return { [runId]: "cancelled" } as never;
   }
 
   async retrieveRun(runId: string) {

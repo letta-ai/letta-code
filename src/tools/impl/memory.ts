@@ -12,10 +12,22 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
 import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
 import {
+  assertMemfsV2MemoryPathIndexed,
+  detectMemoryFormat,
+  isMemoryIndexPath,
+  type LocalMemoryFormat,
+} from "@/agent/memory-format";
+import {
   assertMemoryRepoCleanForWrite,
   commitMemoryWrite,
   type MemoryWriteSyncMode,
 } from "@/agent/memory-git";
+import {
+  defaultMemoryName,
+  type MemoryMarkdownFrontmatter,
+  parseMemoryMarkdown,
+  renderMemoryMarkdown,
+} from "@/agent/memory-markdown";
 import { validateRequiredParams } from "./validation";
 
 type MemoryCommand =
@@ -87,14 +99,6 @@ interface MemoryResult {
   message: string;
 }
 
-interface ParsedMemoryFile {
-  frontmatter: {
-    description: string;
-    read_only?: string;
-  };
-  body: string;
-}
-
 export async function memory(args: MemoryArgs): Promise<MemoryResult> {
   validateRequiredParams(args, ["command", "reason"], "memory");
 
@@ -107,10 +111,15 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
   ensureMemoryRepo(memoryDir);
 
   const { agentId, agentName } = await getAgentIdentity();
+  const { getBackend } = await import("@/backend");
+  const memoryFormat = detectMemoryFormat(
+    memoryDir,
+    getBackend().capabilities.localMemfs,
+  );
   const syncMode = await getMemoryWriteSyncMode();
   await assertMemoryRepoCleanForWrite(memoryDir);
 
-  const affectedPaths = await applyMemoryCommand(memoryDir, args);
+  const affectedPaths = await applyMemoryCommand(memoryDir, args, memoryFormat);
   if (affectedPaths.length === 0) {
     throw new Error(
       `Memory ${args.command} made no changes: it produced no changed paths. ` +
@@ -153,25 +162,34 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
 async function applyMemoryCommand(
   memoryDir: string,
   args: MemoryArgs,
+  memoryFormat: LocalMemoryFormat,
 ): Promise<string[]> {
   const command = args.command;
 
   if (command === "create") {
     const pathArg = requireString(args.file_path, "file_path", "create");
-    const description = requireString(
-      args.description,
-      "description",
-      "create",
-    );
     const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
+    assertMemoryLabelAllowed(label, memoryFormat);
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
+    const isV2Index = memoryFormat === "memfs-v2" && isMemoryIndexPath(relPath);
+    const description = isV2Index
+      ? ""
+      : requireString(args.description, "description", "create");
+    if (memoryFormat === "memfs-v2") {
+      assertMemfsV2MemoryPathIndexed(memoryDir, relPath);
+    }
     const body = args.file_text ?? "";
     const rendered = renderMemoryFile(
       {
+        ...(memoryFormat === "memfs-v2"
+          ? { name: defaultMemoryName(relPath) }
+          : {}),
         description,
       },
       body,
+      relPath,
+      memoryFormat,
     );
 
     if (existsSync(filePath)) {
@@ -197,9 +215,15 @@ async function applyMemoryCommand(
     );
 
     const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
+    assertMemoryLabelAllowed(label, memoryFormat);
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
-    const file = await loadEditableMemoryFile(filePath, pathArg);
+    const file = await loadEditableMemoryFile(
+      filePath,
+      pathArg,
+      relPath,
+      memoryFormat,
+    );
 
     const idx = file.body.indexOf(oldString);
     if (idx === -1) {
@@ -209,7 +233,12 @@ async function applyMemoryCommand(
     }
 
     const nextBody = `${file.body.slice(0, idx)}${newString}${file.body.slice(idx + oldString.length)}`;
-    const rendered = renderMemoryFile(file.frontmatter, nextBody);
+    const rendered = renderMemoryFile(
+      file.frontmatter,
+      nextBody,
+      relPath,
+      memoryFormat,
+    );
     await writeFile(filePath, rendered, "utf8");
     return [relPath];
   }
@@ -226,9 +255,15 @@ async function applyMemoryCommand(
     }
 
     const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
+    assertMemoryLabelAllowed(label, memoryFormat);
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
-    const file = await loadEditableMemoryFile(filePath, pathArg);
+    const file = await loadEditableMemoryFile(
+      filePath,
+      pathArg,
+      relPath,
+      memoryFormat,
+    );
 
     const lineNumber = Math.max(1, Math.floor(args.insert_line));
     const existingLines = file.body.length > 0 ? file.body.split("\n") : [];
@@ -241,7 +276,12 @@ async function applyMemoryCommand(
     existingLines.splice(insertionIndex, 0, ...insertion);
     const nextBody = existingLines.join("\n");
 
-    const rendered = renderMemoryFile(file.frontmatter, nextBody);
+    const rendered = renderMemoryFile(
+      file.frontmatter,
+      nextBody,
+      relPath,
+      memoryFormat,
+    );
     await writeFile(filePath, rendered, "utf8");
     return [relPath];
   }
@@ -249,6 +289,10 @@ async function applyMemoryCommand(
   if (command === "delete") {
     const pathArg = requireString(args.file_path, "file_path", "delete");
     const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
+    assertMemoryLabelAllowed(label, memoryFormat);
+    if (memoryFormat === "memfs-v2" && isMemoryIndexPath(`${label}.md`)) {
+      throw new Error("memory delete: MEMORY.md indexes cannot be deleted");
+    }
     const targetPath = resolveMemoryPath(memoryDir, label);
 
     if (existsSync(targetPath) && (await stat(targetPath)).isDirectory()) {
@@ -260,7 +304,7 @@ async function applyMemoryCommand(
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
 
-    await loadEditableMemoryFile(filePath, pathArg);
+    await loadEditableMemoryFile(filePath, pathArg, relPath, memoryFormat);
     await unlink(filePath);
     return [relPath];
   }
@@ -271,6 +315,8 @@ async function applyMemoryCommand(
 
     const oldLabel = normalizeMemoryLabel(memoryDir, oldPathArg, "old_path");
     const newLabel = normalizeMemoryLabel(memoryDir, newPathArg, "new_path");
+    assertMemoryLabelAllowed(oldLabel, memoryFormat);
+    assertMemoryLabelAllowed(newLabel, memoryFormat);
 
     const oldFilePath = resolveMemoryFilePath(memoryDir, oldLabel);
     const newFilePath = resolveMemoryFilePath(memoryDir, newLabel);
@@ -284,7 +330,21 @@ async function applyMemoryCommand(
       );
     }
 
-    await loadEditableMemoryFile(oldFilePath, oldPathArg);
+    await loadEditableMemoryFile(
+      oldFilePath,
+      oldPathArg,
+      oldRelPath,
+      memoryFormat,
+    );
+    if (
+      memoryFormat === "memfs-v2" &&
+      (isMemoryIndexPath(oldRelPath) || isMemoryIndexPath(newRelPath))
+    ) {
+      throw new Error("memory rename: MEMORY.md indexes cannot be renamed");
+    }
+    if (memoryFormat === "memfs-v2") {
+      assertMemfsV2MemoryPathIndexed(memoryDir, newRelPath);
+    }
     await mkdir(dirname(newFilePath), { recursive: true });
     await rename(oldFilePath, newFilePath);
     return [oldRelPath, newRelPath];
@@ -303,9 +363,20 @@ async function applyMemoryCommand(
     );
 
     const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
+    assertMemoryLabelAllowed(label, memoryFormat);
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
-    const file = await loadEditableMemoryFile(filePath, pathArg);
+    const file = await loadEditableMemoryFile(
+      filePath,
+      pathArg,
+      relPath,
+      memoryFormat,
+    );
+    if (memoryFormat === "memfs-v2" && isMemoryIndexPath(relPath)) {
+      throw new Error(
+        "memory update_description: MEMORY.md has no frontmatter",
+      );
+    }
 
     const rendered = renderMemoryFile(
       {
@@ -313,6 +384,8 @@ async function applyMemoryCommand(
         description: newDescription,
       },
       file.body,
+      relPath,
+      memoryFormat,
     );
     await writeFile(filePath, rendered, "utf8");
     return [relPath];
@@ -425,6 +498,28 @@ function normalizeRelativeMemoryLabel(
   return segments.join("/");
 }
 
+function assertMemoryLabelAllowed(
+  label: string,
+  memoryFormat: LocalMemoryFormat,
+): void {
+  if (
+    memoryFormat === "memfs-v2" &&
+    (label === "system" || label.startsWith("system/"))
+  ) {
+    throw new Error(
+      "memory: core memory uses root Markdown files, not system/",
+    );
+  }
+  if (
+    memoryFormat === "memfs-v2" &&
+    (label === "skills" || label.startsWith("skills/"))
+  ) {
+    throw new Error(
+      "memory: skills are managed by the skill/file tooling, not the memory tool",
+    );
+  }
+}
+
 function memoryPrefixError(memoryDir: string): string {
   return `The memory tool can only be used to modify files in {${memoryDir}} or provided as a relative path`;
 }
@@ -454,13 +549,15 @@ function toRepoRelative(memoryDir: string, absolutePath: string): string {
 async function loadEditableMemoryFile(
   filePath: string,
   sourcePath: string,
-): Promise<ParsedMemoryFile> {
+  relativePath: string,
+  memoryFormat: LocalMemoryFormat,
+) {
   const content = await readFile(filePath, "utf8").catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`memory: failed to read ${sourcePath}: ${message}`);
   });
 
-  const parsed = parseMemoryFile(content);
+  const parsed = parseMemoryFile(content, relativePath, memoryFormat);
   if (parsed.frontmatter.read_only === "true") {
     throw new Error(
       `memory: ${sourcePath} is read_only and cannot be modified`,
@@ -469,71 +566,32 @@ async function loadEditableMemoryFile(
   return parsed;
 }
 
-function parseMemoryFile(content: string): ParsedMemoryFile {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) {
-    throw new Error("memory: target file is missing required frontmatter");
-  }
-
-  const frontmatterText = match[1] ?? "";
-  const body = match[2] ?? "";
-
-  let description: string | undefined;
-  let readOnly: string | undefined;
-
-  for (const line of frontmatterText.split(/\r?\n/)) {
-    const idx = line.indexOf(":");
-    if (idx <= 0) continue;
-    const key = line.slice(0, idx).trim();
-    const value = line.slice(idx + 1).trim();
-
-    if (key === "description") {
-      description = value;
-    } else if (key === "read_only") {
-      readOnly = value;
-    }
-  }
-
-  if (!description || !description.trim()) {
-    throw new Error("memory: target file frontmatter is missing 'description'");
-  }
-  return {
-    frontmatter: {
-      description,
-      ...(readOnly !== undefined ? { read_only: readOnly } : {}),
-    },
-    body,
-  };
+function parseMemoryFile(
+  content: string,
+  relativePath: string,
+  memoryFormat: LocalMemoryFormat,
+) {
+  return parseMemoryMarkdown({
+    content,
+    relativePath,
+    format: memoryFormat,
+    errorPrefix: "memory",
+  });
 }
 
 function renderMemoryFile(
-  frontmatter: { description: string; read_only?: string },
+  frontmatter: MemoryMarkdownFrontmatter,
   body: string,
+  relativePath: string,
+  memoryFormat: LocalMemoryFormat,
 ): string {
-  const description = frontmatter.description.trim();
-  if (!description) {
-    throw new Error("memory: 'description' must not be empty");
-  }
-  const lines = [
-    "---",
-    `description: ${sanitizeFrontmatterValue(description)}`,
-  ];
-
-  if (frontmatter.read_only !== undefined) {
-    lines.push(`read_only: ${frontmatter.read_only}`);
-  }
-
-  lines.push("---");
-
-  const header = lines.join("\n");
-  if (!body) {
-    return `${header}\n`;
-  }
-  return `${header}\n${body}`;
-}
-
-function sanitizeFrontmatterValue(value: string): string {
-  return value.replace(/\r?\n/g, " ").trim();
+  return renderMemoryMarkdown({
+    frontmatter,
+    body,
+    relativePath,
+    format: memoryFormat,
+    errorPrefix: "memory",
+  });
 }
 function requireString(
   value: string | undefined,

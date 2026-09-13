@@ -1,0 +1,52 @@
+[
+  {
+    "id": "read-tab-prefix",
+    "previous_version": "2.1.227",
+    "current_version": "2.1.228",
+    "previous_tools": ["Read"],
+    "current_tools": ["Read"],
+    "probe_name": "read-lines-9-10-tab-prefix",
+    "previous_result": " 9→line9\n10→line10",
+    "current_result": "9\tline9\n10\tline10",
+    "expected_verdict": "tool contract review needed",
+    "local_surfaces": ["src/tools/impl/read.ts", "src/tools/read.test.ts"]
+  },
+  {
+    "id": "task-metadata-delete-contract",
+    "previous_version": "2.1.19",
+    "current_version": "2.1.20",
+    "previous_tools": ["TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+    "current_tools": ["TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+    "probe_name": "task-metadata-delete-contract",
+    "previous_result": "metadata values must be strings; deleted task remains retrievable",
+    "current_result": "metadata accepts arbitrary values; null deletes a key; deleted task is absent",
+    "expected_verdict": "tool contract review needed",
+    "local_surfaces": [
+      "src/tools/schemas/TaskUpdate.json",
+      "src/tools/impl/task-update.ts",
+      "src/tools/impl/tasks/store.ts"
+    ]
+  },
+  {
+    "id": "task-tool-transition",
+    "previous_version": "2.1.82",
+    "current_version": "2.1.83",
+    "previous_tools": ["LS", "MultiEdit", "Read", "TaskOutput", "TodoWrite"],
+    "current_tools": [
+      "Read",
+      "TaskCreate",
+      "TaskGet",
+      "TaskList",
+      "TaskUpdate"
+    ],
+    "probe_name": "task-metadata-delete-contract",
+    "previous_result": "legacy task surface",
+    "current_result": "task family advertised; TaskOutput deprecated in favor of Read output path",
+    "expected_verdict": "tool surface review needed",
+    "local_surfaces": [
+      "src/agent/subagents/builtin/fork.md",
+      "src/agent/subagents/builtin/general-purpose.md",
+      "src/tools/descriptions/TaskOutput.md"
+    ]
+  }
+]

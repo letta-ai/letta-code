@@ -20,6 +20,15 @@ export type Base64ImageContentPart = {
 
 export type ImageNormalizationFailureMode = "strict" | "drop";
 
+export type ImageFailureModesByMessageOtid = Readonly<
+  Record<string, ImageNormalizationFailureMode>
+>;
+
+type NormalizeMessageImagePartsOptions = {
+  failureModesByMessageOtid?: ImageFailureModesByMessageOtid;
+  resize?: typeof resizeImageIfNeeded;
+};
+
 function formatImageNormalizationError(error: unknown): Error {
   const detail = error instanceof Error ? error.message : String(error);
   return new Error(`Failed to prepare image for model: ${detail}`);
@@ -52,11 +61,13 @@ export function isBase64ImageContentPart(
   );
 }
 
-export async function normalizeMessageContentImages(
-  content: MessageCreate["content"],
+async function normalizeMessageContentImages<
+  T extends MessageCreate["content"],
+>(
+  content: T,
   resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
   failureMode: ImageNormalizationFailureMode = "strict",
-): Promise<MessageCreate["content"]> {
+): Promise<T> {
   if (typeof content === "string") {
     return content;
   }
@@ -116,26 +127,76 @@ export async function normalizeMessageContentImages(
       part !== null,
   );
 
-  return didChange ? filteredParts : content;
+  return (didChange ? filteredParts : content) as T;
+}
+
+async function normalizeApprovalImages(
+  message: ApprovalCreate,
+  resize: typeof resizeImageIfNeeded,
+  failureMode: ImageNormalizationFailureMode,
+): Promise<ApprovalCreate> {
+  if (!Array.isArray(message.approvals)) {
+    return message;
+  }
+
+  let didChange = false;
+  const approvals = await Promise.all(
+    message.approvals.map(async (approval) => {
+      if (!("tool_return" in approval)) {
+        return approval;
+      }
+
+      const toolReturn = await normalizeMessageContentImages(
+        approval.tool_return,
+        resize,
+        failureMode,
+      );
+      if (toolReturn === approval.tool_return) {
+        return approval;
+      }
+
+      didChange = true;
+      return {
+        ...approval,
+        tool_return: toolReturn,
+      };
+    }),
+  );
+
+  return didChange ? { ...message, approvals } : message;
 }
 
 export async function normalizeMessageImageParts<
   T extends ApprovalCreate | MessageCreate,
 >(
   messages: T[],
-  resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
+  options: NormalizeMessageImagePartsOptions = {},
 ): Promise<T[]> {
   let didChange = false;
+  const resize = options.resize ?? resizeImageIfNeeded;
 
   const normalizedMessages = await Promise.all(
     messages.map(async (message) => {
+      const failureMode = getImageFailureMode(
+        message,
+        options.failureModesByMessageOtid,
+      );
       if (!("content" in message)) {
-        return message;
+        const normalizedApproval = await normalizeApprovalImages(
+          message,
+          resize,
+          failureMode,
+        );
+        if (normalizedApproval !== message) {
+          didChange = true;
+        }
+        return normalizedApproval as T;
       }
 
       const normalizedContent = await normalizeMessageContentImages(
         message.content,
         resize,
+        failureMode,
       );
       if (normalizedContent !== message.content) {
         didChange = true;
@@ -151,24 +212,81 @@ export async function normalizeMessageImageParts<
   return didChange ? normalizedMessages : messages;
 }
 
+function getImageFailureMode(
+  message: ApprovalCreate | MessageCreate,
+  failureModesByMessageOtid?: ImageFailureModesByMessageOtid,
+): ImageNormalizationFailureMode {
+  if (!failureModesByMessageOtid) {
+    return "strict";
+  }
+
+  const otid = (message as { otid?: unknown }).otid;
+  return typeof otid === "string"
+    ? (failureModesByMessageOtid[otid] ?? "strict")
+    : "strict";
+}
+
+export function buildImageFailureModesByMessageOtid(
+  messages: Array<ApprovalCreate | MessageCreate>,
+  failureMode: ImageNormalizationFailureMode,
+): ImageFailureModesByMessageOtid | undefined {
+  const entries: Array<[string, ImageNormalizationFailureMode]> = [];
+  for (const message of messages) {
+    if (!("content" in message)) {
+      continue;
+    }
+    const otid = (message as { otid?: unknown }).otid;
+    if (typeof otid === "string" && otid.length > 0) {
+      entries.push([otid, failureMode]);
+    }
+  }
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+export function mergeImageFailureModesByMessageOtid(
+  ...failureModes: Array<ImageFailureModesByMessageOtid | undefined>
+): ImageFailureModesByMessageOtid | undefined {
+  const presentModes = failureModes.filter(
+    (modes): modes is ImageFailureModesByMessageOtid => modes !== undefined,
+  );
+  return presentModes.length > 0
+    ? Object.assign({}, ...presentModes)
+    : undefined;
+}
+
 export function assertSupportedBase64ImageMediaTypes(
   messages: Array<ApprovalCreate | MessageCreate>,
 ): void {
   for (const message of messages) {
-    if (!("content" in message) || typeof message.content === "string") {
+    if ("content" in message) {
+      assertSupportedBase64ImageContent(message.content);
       continue;
     }
 
-    for (const part of message.content) {
-      if (!isBase64ImageContentPart(part)) {
+    for (const approval of message.approvals ?? []) {
+      if (!("tool_return" in approval)) {
         continue;
       }
+      assertSupportedBase64ImageContent(approval.tool_return);
+    }
+  }
+}
 
-      if (!isSupportedBase64ImageMediaType(part.source.media_type)) {
-        throw new Error(
-          `Unsupported base64 image media type after normalization: ${part.source.media_type}`,
-        );
-      }
+function assertSupportedBase64ImageContent(
+  content: MessageCreate["content"],
+): void {
+  if (typeof content === "string") {
+    return;
+  }
+
+  for (const part of content) {
+    if (
+      isBase64ImageContentPart(part) &&
+      !isSupportedBase64ImageMediaType(part.source.media_type)
+    ) {
+      throw new Error(
+        `Unsupported base64 image media type after normalization: ${part.source.media_type}`,
+      );
     }
   }
 }

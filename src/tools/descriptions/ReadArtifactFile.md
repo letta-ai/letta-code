@@ -1,0 +1,1 @@
+Read a file from the Letta Code Desktop artifacts directory (`~/.letta/artifacts`). Paths must be relative to the artifacts root, such as `todo-app/ui/index.html`. Use this to inspect existing artifact files before editing them. Supports `utf8` (default) and `base64` for binary files.

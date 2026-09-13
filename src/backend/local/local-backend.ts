@@ -1,6 +1,5 @@
-import type { Usage } from "@earendil-works/pi-ai";
+import { GIT_MEMORY_ENABLED_TAG } from "@/agent/agent-tags";
 import {
-  GIT_MEMORY_ENABLED_TAG,
   type InitializeLocalMemoryRepoFile,
   initializeLocalMemoryRepo,
 } from "@/agent/memory-git";
@@ -15,20 +14,20 @@ import type {
   ConversationMessageStreamBody,
   ConversationRecompileBody,
 } from "@/backend/backend";
-import { HeadlessBackend } from "@/backend/dev/headless-backend";
 import {
-  DeterministicPongExecutor,
-  type HeadlessTurnExecutor,
-} from "@/backend/dev/headless-turn-executor";
-import {
-  PiStreamAdapter,
-  type PiStreamFunction,
+  HEADLESS_BACKEND_CAPABILITIES,
+  HeadlessBackend,
+} from "@/backend/dev/headless-backend";
+import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
+import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
+import type {
+  LocalContextPressure,
+  PiStreamFunction,
 } from "@/backend/dev/pi-stream-adapter";
-import type { ProviderTurnInput } from "@/backend/dev/provider-turn-executor";
-import {
-  contextTokensFromUsage,
-  estimateProviderContextTokens,
-  ProviderTurnExecutor,
+import type {
+  LlmEndInfo,
+  LlmStartInfo,
+  ProviderTurnInput,
 } from "@/backend/dev/provider-turn-executor";
 import { isRecord } from "@/utils/type-guards";
 import {
@@ -45,6 +44,10 @@ import {
   summarizeLocalMessagesAll,
   summarizeLocalMessagesSlidingWindow,
 } from "./compaction";
+import {
+  createLocalExecutor,
+  type LocalBackendExecutionMode,
+} from "./local-executor-factory";
 import type { LocalMessage } from "./local-message";
 import {
   listLocalModels,
@@ -58,7 +61,7 @@ import type {
 } from "./local-store";
 import {
   getLocalBackendMemoryFilesystemRoot,
-  isLocalBackendNoMemfsEnvEnabled,
+  isLocalBackendMemfsDisabledForProcess,
 } from "./paths";
 import {
   appendAvailableSkillsBlock,
@@ -68,10 +71,9 @@ import {
   type LocalCompiledSystemPrompt,
 } from "./system-prompt-compilation";
 
-export type LocalBackendExecutionMode = "pi" | "deterministic";
-
 export interface LocalBackendOptions {
   storageDir: string;
+  stateStorageDir?: string;
   defaultAgentId?: string;
   executionMode?: LocalBackendExecutionMode;
   executor?: HeadlessTurnExecutor;
@@ -79,6 +81,31 @@ export interface LocalBackendOptions {
   complete?: LocalCompleteFunction;
   memoryDir?: string;
   memfsEnabled?: boolean;
+  modelsRuntime?: LocalPiModelsRuntime;
+}
+/**
+ * Hooks the harness installs (via {@link LocalBackend.setModEventHooks}) so
+ * mods can observe backend-internal lifecycle that only the local backend owns
+ * (compaction and provider calls). The backend stays mod-agnostic: it invokes
+ * these plain callbacks and never touches mod state.
+ */
+export interface LocalBackendModEventHooks {
+  onCompactStart?: (info: {
+    agentId: string;
+    conversationId: string;
+    trigger: string;
+  }) => void | Promise<void>;
+  onCompactEnd?: (info: {
+    agentId: string;
+    conversationId: string;
+    trigger: string;
+    messagesBefore: number;
+    messagesAfter: number;
+    contextTokensBefore: number;
+    contextTokensAfter: number;
+  }) => void | Promise<void>;
+  onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
+  onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
 }
 
 function sanitizeFrontmatterValue(value: string): string {
@@ -218,68 +245,37 @@ function formatMidConversationMemoryUpdate(
   ].join("\n");
 }
 
-function createLocalExecutor(
-  options: LocalBackendOptions,
-  onContextWindowOverflow?: (
-    input: ProviderTurnInput,
-    error: unknown,
-  ) => Promise<{
-    uiMessages: LocalMessage[];
-    summary: string;
-    stats?: LocalCompactionStats;
-  } | null>,
-  onContextUsage?: (
-    input: ProviderTurnInput,
-    usage: Usage,
-  ) => Promise<{
-    uiMessages: LocalMessage[];
-    summary: string;
-    stats?: LocalCompactionStats;
-  } | null>,
-): HeadlessTurnExecutor {
-  if (options.executor) return options.executor;
-  if (options.executionMode === "deterministic") {
-    return new DeterministicPongExecutor();
-  }
-  return new ProviderTurnExecutor(
-    new PiStreamAdapter({
-      stream: options.stream,
-      localProviderAuthStorageDir: options.storageDir,
-      onContextWindowOverflow,
-      onContextUsage,
-    }),
-  );
-}
-
 export class LocalBackend extends HeadlessBackend {
   override readonly capabilities: BackendCapabilities = {
-    remoteMemfs: false,
-    serverSideToolManagement: false,
-    serverSecrets: false,
-    agentFileImportExport: false,
+    ...HEADLESS_BACKEND_CAPABILITIES,
     promptRecompile: true,
-    byokProviderRefresh: false,
-    localModelCatalog: true,
     localMemfs: true,
   };
 
   private readonly memoryDir?: string;
   private readonly storageDir: string;
+  private readonly piModelsRuntime: LocalPiModelsRuntime;
   private readonly complete?: LocalCompleteFunction;
   private readonly memfsEnabledOverride?: boolean;
+  private modEventHooks?: LocalBackendModEventHooks;
 
   constructor(options: LocalBackendOptions) {
     const localBackendRef: { current?: LocalBackend } = {};
-    const modelConfig = resolveLocalModelConfig(options.storageDir);
+    // One runtime per backend: listing/turns/compaction share Models state.
+    const runtime =
+      options.modelsRuntime ??
+      new LocalPiModelsRuntime({ storageDir: options.storageDir });
+    const modelConfig = resolveLocalModelConfig(options.storageDir, runtime);
     const storeOptions: LocalStoreOptions = {
-      storageDir: options.storageDir,
+      storageDir: options.stateStorageDir ?? options.storageDir,
       seedDefaultAgent: false,
       strictAgentAccess: true,
       strictConversationAccess: true,
       defaultAgentName: "Letta Code",
       defaultAgentModel: modelConfig.handle,
       defaultAgentModelSettings: modelConfig.modelSettings,
-      modelSettingsForModel: localModelSettingsForHandle,
+      modelSettingsForModel: (handle) =>
+        localModelSettingsForHandle(handle, runtime),
       conversationIdPrefix: "local-conv-",
       storedMessageIdPrefix: "letta-msg-",
       localMessageIdPrefix: "ui-msg-",
@@ -288,12 +284,17 @@ export class LocalBackend extends HeadlessBackend {
       options.defaultAgentId ?? "agent-local-default",
       createLocalExecutor(
         options,
+        runtime,
         (input, error) =>
           localBackendRef.current?.compactAfterContextOverflow(input, error) ??
           Promise.resolve(null),
-        (input, usage) =>
-          localBackendRef.current?.compactAfterContextUsage(input, usage) ??
+        (input, pressure) =>
+          localBackendRef.current?.compactForContextPressure(input, pressure) ??
           Promise.resolve(null),
+        (info) =>
+          localBackendRef.current?.emitLlmStart(info) ?? Promise.resolve(),
+        (info) =>
+          localBackendRef.current?.emitLlmEnd(info) ?? Promise.resolve(),
       ),
       storeOptions,
       {
@@ -307,6 +308,73 @@ export class LocalBackend extends HeadlessBackend {
     this.memoryDir = options.memoryDir;
     this.complete = options.complete;
     this.memfsEnabledOverride = options.memfsEnabled;
+    this.piModelsRuntime = runtime;
+  }
+
+  /**
+   * Late-bound because the backend is a process-global singleton constructed
+   * before the harness mod adapter exists. The harness calls this once the
+   * registry is ready to forward backend-internal events to local mods.
+   */
+  setModEventHooks(hooks: LocalBackendModEventHooks | undefined): void {
+    this.modEventHooks = hooks;
+  }
+
+  private async emitCompactStart(
+    conversationId: string,
+    agentId: string,
+    trigger: string,
+  ): Promise<void> {
+    const hook = this.modEventHooks?.onCompactStart;
+    if (!hook) return;
+    try {
+      await hook({ agentId, conversationId, trigger });
+    } catch {
+      // Mod event hooks must never break compaction.
+    }
+  }
+
+  private async emitCompactEnd(
+    conversationId: string,
+    agentId: string,
+    trigger: string,
+    stats: LocalCompactionStats,
+  ): Promise<void> {
+    const hook = this.modEventHooks?.onCompactEnd;
+    if (!hook) return;
+    try {
+      await hook({
+        agentId,
+        conversationId,
+        trigger,
+        messagesBefore: stats.messages_count_before ?? 0,
+        messagesAfter: stats.messages_count_after ?? 0,
+        contextTokensBefore: stats.context_tokens_before ?? 0,
+        contextTokensAfter: stats.context_tokens_after ?? 0,
+      });
+    } catch {
+      // Mod event hooks must never break compaction.
+    }
+  }
+
+  private async emitLlmStart(info: LlmStartInfo): Promise<void> {
+    const hook = this.modEventHooks?.onLlmStart;
+    if (!hook) return;
+    try {
+      await hook(info);
+    } catch {
+      // Mod event hooks must never break a provider request.
+    }
+  }
+
+  private async emitLlmEnd(info: LlmEndInfo): Promise<void> {
+    const hook = this.modEventHooks?.onLlmEnd;
+    if (!hook) return;
+    try {
+      await hook(info);
+    } catch {
+      // Mod event hooks must never break a provider request.
+    }
   }
 
   getLocalStorageDir(): string {
@@ -314,16 +382,16 @@ export class LocalBackend extends HeadlessBackend {
   }
 
   override async listModels() {
-    return listLocalModels(this.storageDir) as never;
+    return listLocalModels(this.storageDir, {
+      modelsRuntime: this.piModelsRuntime,
+    }) as never;
   }
 
   override async createAgent(
     ...args: Parameters<HeadlessBackend["createAgent"]>
   ) {
     let [body, ...restArgs] = args;
-    // When local memfs is enabled, stamp the git-memory-enabled tag on the
-    // agent body so all downstream tag-checking paths (isMemfsEnabledOnServer,
-    // memfs-sync, etc.) see this agent as memfs-enabled from creation.
+    // Stamp local memfs agents so downstream tag checks enable memory sync.
     if (this.isLocalMemfsEnabled()) {
       const bodyRecord = body as Record<string, unknown>;
       const existingTags = Array.isArray(bodyRecord.tags)
@@ -479,7 +547,9 @@ export class LocalBackend extends HeadlessBackend {
   }
 
   private isLocalMemfsEnabled(): boolean {
-    return this.memfsEnabledOverride ?? !isLocalBackendNoMemfsEnvEnabled();
+    return (
+      this.memfsEnabledOverride ?? !isLocalBackendMemfsDisabledForProcess()
+    );
   }
 
   private async ensureLocalMemoryRepo(
@@ -518,28 +588,14 @@ export class LocalBackend extends HeadlessBackend {
     };
   }
 
-  private async compactAfterContextUsage(
+  private async compactForContextPressure(
     input: ProviderTurnInput,
-    usage: Usage,
+    _pressure: LocalContextPressure,
   ): Promise<{
     uiMessages: LocalMessage[];
     summary: string;
     stats?: LocalCompactionStats;
   } | null> {
-    const contextTokens =
-      contextTokensFromUsage(usage) ?? estimateProviderContextTokens(input);
-    const contextWindow = this.effectiveContextWindow(
-      input.conversationId,
-      input.agentId,
-    );
-    if (
-      contextTokens === undefined ||
-      contextWindow === undefined ||
-      contextTokens <= contextWindow
-    ) {
-      return null;
-    }
-
     const result = await this.compactLocalConversation(
       input.conversationId,
       input.agentId,
@@ -691,6 +747,28 @@ export class LocalBackend extends HeadlessBackend {
     summary: string;
     stats: LocalCompactionStats;
   }> {
+    await this.emitCompactStart(conversationId, agentId, trigger);
+    const result = await this.compactLocalConversationInner(
+      conversationId,
+      agentId,
+      trigger,
+      body,
+    );
+    await this.emitCompactEnd(conversationId, agentId, trigger, result.stats);
+    return result;
+  }
+
+  private async compactLocalConversationInner(
+    conversationId: string,
+    agentId: string,
+    trigger: string,
+    body?: ConversationMessageCompactBody,
+  ): Promise<{
+    numMessagesBefore: number;
+    numMessagesAfter: number;
+    summary: string;
+    stats: LocalCompactionStats;
+  }> {
     const agent = this.effectiveAgentForConversation(conversationId, agentId);
     const settings = this.resolveCompactionSettings(agent, body);
     let result: {
@@ -734,7 +812,7 @@ export class LocalBackend extends HeadlessBackend {
       {
         ...settings,
         mode: "all",
-        prompt: settings.mode === "all" ? settings.prompt : undefined,
+        prompt: settings.prompt, // not a user mode switch: keep it (#3955)
       },
     );
     await this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
@@ -759,12 +837,14 @@ export class LocalBackend extends HeadlessBackend {
     const contextTokensBefore = estimateLocalMessageTokens(messages);
     const plan = planLocalAllCompaction(messages);
     const summary = await summarizeLocalMessagesAll({
+      conversationId,
       agent,
       messages: plan.messagesToSummarize,
       complete: this.complete,
       prompt: settings.prompt,
       clipChars: settings.clipChars,
       localProviderAuthStorageDir: this.storageDir,
+      modelsRuntime: this.piModelsRuntime,
     });
     const stats: LocalCompactionStats = {
       trigger,
@@ -811,12 +891,14 @@ export class LocalBackend extends HeadlessBackend {
       contextWindow,
     });
     const summary = await summarizeLocalMessagesSlidingWindow({
+      conversationId,
       agent,
       messages: plan.messagesToSummarize,
       complete: this.complete,
       prompt: settings.prompt,
       clipChars: settings.clipChars,
       localProviderAuthStorageDir: this.storageDir,
+      modelsRuntime: this.piModelsRuntime,
     });
     const contextTokensAfter =
       Math.ceil(summary.length / 4) +

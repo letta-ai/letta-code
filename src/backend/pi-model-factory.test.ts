@@ -2,12 +2,16 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModels } from "@earendil-works/pi-ai";
-import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { getBuiltinModels as getModels } from "@earendil-works/pi-ai/providers/all";
 import {
   applyPiEnvOverrides,
+  reasoningForSettings,
   resolvePiModelForAgent,
+  resolveZaiConnection,
 } from "@/backend/dev/pi-model-factory";
+import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
+import { getProviderOAuthAuth } from "@/backend/dev/pi-oauth";
 import {
   clearRegisteredPiProviders,
   registerPiProvider,
@@ -40,6 +44,138 @@ async function withEnv<T>(
 describe("pi model factory", () => {
   afterEach(() => {
     clearRegisteredPiProviders();
+  });
+
+  test("defaults always-on zAI GLM models to a valid thinking level", () => {
+    expect(reasoningForSettings({}, "zai/glm-5.3")).toBe("low");
+    expect(
+      reasoningForSettings({ thinking: { type: "disabled" } }, "zai/glm-5.3"),
+    ).toBe("low");
+    expect(
+      reasoningForSettings({ reasoning_effort: "high" }, "zai/glm-5.3"),
+    ).toBe("high");
+    expect(
+      reasoningForSettings({ reasoning_effort: "medium" }, "zai/glm-5.3"),
+    ).toBe("low");
+    expect(reasoningForSettings({}, "zai/glm-5-turbo")).toBe("low");
+    expect(reasoningForSettings({}, "anthropic/claude-sonnet-4-6")).toBe(
+      undefined,
+    );
+  });
+
+  test("pi-ai 0.84.4+ generates thinkingLevelMap for OpenRouter mandatory-reasoning models", () => {
+    // pi-ai 0.84.4 fixed https://github.com/earendil-works/pi/issues/8454:
+    // the generated OpenRouter catalog now derives thinkingLevelMap from
+    // OpenRouter's reasoning metadata, so the temporary local patch is no
+    // longer needed. Verify the catalog includes the map for a model that
+    // previously required the workaround.
+    const model = getModels("openrouter").find(
+      (entry) => entry.id === "google/gemini-3.7-flash",
+    );
+    expect(model).toBeDefined();
+    expect(model?.thinkingLevelMap).toEqual({
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: null,
+      max: null,
+    });
+    expect(getSupportedThinkingLevels(model!)).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(
+      reasoningForSettings({}, "openrouter/google/gemini-3.7-flash", model),
+    ).toBeUndefined();
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "high" },
+        "openrouter/google/gemini-3.7-flash",
+        model,
+      ),
+    ).toBe("high");
+  });
+
+  test("reuses a lone zAI key on the published coding-plan endpoint", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-zai-coding-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "zai",
+        providerName: "zai",
+        apiKey: "test-zai-coding-plan-key",
+      });
+
+      expect(
+        resolveZaiConnection({
+          storageDir,
+          preferredProviderType: "zai",
+          publishedBaseURL: "https://api.z.ai/api/coding/paas/v4",
+        }),
+      ).toMatchObject({
+        apiKey: "test-zai-coding-plan-key",
+        baseURL: "https://api.z.ai/api/coding/paas/v4",
+        providerName: "zai-coding",
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "zai/glm-5.3",
+        { provider_type: "zai" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+      expect(resolved.model.baseUrl).toBe(
+        "https://api.z.ai/api/coding/paas/v4",
+      );
+      expect(resolved.apiKey).toBe("test-zai-coding-plan-key");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps dedicated zAI pay-as-you-go and coding records distinct", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-zai-split-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "zai",
+        providerName: "zai",
+        apiKey: "test-zai-paygo-key",
+      });
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "zai_coding",
+        providerName: "lc-zai-coding",
+        apiKey: "test-zai-coding-key",
+      });
+
+      expect(
+        resolveZaiConnection({
+          storageDir,
+          preferredProviderType: "zai",
+          publishedBaseURL: "https://api.z.ai/api/coding/paas/v4",
+        }),
+      ).toMatchObject({
+        apiKey: "test-zai-paygo-key",
+        baseURL: "https://api.z.ai/api/paas/v4",
+        providerName: "zai",
+      });
+      expect(
+        resolveZaiConnection({
+          storageDir,
+          preferredProviderType: "zai_coding",
+          publishedBaseURL: "https://api.z.ai/api/coding/paas/v4",
+        }),
+      ).toMatchObject({
+        apiKey: "test-zai-coding-key",
+        baseURL: "https://api.z.ai/api/coding/paas/v4",
+        providerName: "zai-coding",
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("notifies subscribers when mod provider registry changes", () => {
@@ -140,7 +276,7 @@ describe("pi model factory", () => {
           id_token: "chatgpt-id-token",
           refresh_token: "chatgpt-refresh-token",
           account_id: "account-123",
-          expires_at: Date.now() + 60_000,
+          expires_at: Date.now() + 3_600_000,
         }),
       });
 
@@ -156,6 +292,49 @@ describe("pi model factory", () => {
     }
   });
 
+  test("resolves local ChatGPT OAuth GPT-5.6 with max reasoning", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-chatgpt-56-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "chatgpt_oauth",
+        providerName: "chatgpt-plus-pro",
+        apiKey: JSON.stringify({
+          access_token: "chatgpt-access-token",
+          id_token: "chatgpt-id-token",
+          refresh_token: "chatgpt-refresh-token",
+          account_id: "account-123",
+          expires_at: Date.now() + 3_600_000,
+        }),
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "chatgpt-plus-pro/gpt-5.6-sol",
+        { provider_type: "chatgpt_oauth" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.provider).toBe("openai-codex");
+      expect(resolved.model.id).toBe("gpt-5.6-sol");
+      expect(resolved.model.contextWindow).toBe(272000);
+      expect(getSupportedThinkingLevels(resolved.model)).toContain("max");
+      expect(
+        reasoningForSettings(
+          { reasoning_effort: "max" },
+          "openai-codex/gpt-5.6-sol",
+        ),
+      ).toBe("max");
+      expect(
+        reasoningForSettings(
+          { reasoning: { reasoning_effort: "minimal" } },
+          "openai-codex/gpt-5.6-sol",
+        ),
+      ).toBe("none" as "low");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("resolves generic local OAuth credentials through pi OAuth providers", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-anthropic-oauth-"));
     try {
@@ -166,7 +345,7 @@ describe("pi model factory", () => {
         auth: localOAuthAuthFromCredentials({
           access: "sk-ant-oat-local",
           refresh: "anthropic-refresh-token",
-          expires: Date.now() + 60_000,
+          expires: Date.now() + 3_600_000,
         }),
       });
 
@@ -195,7 +374,7 @@ describe("pi model factory", () => {
         auth: localOAuthAuthFromCredentials({
           access: "tid=1;exp=1;proxy-ep=proxy.enterprise.githubcopilot.com;",
           refresh: "copilot-refresh-token",
-          expires: Date.now() + 60_000,
+          expires: Date.now() + 3_600_000,
         }),
       });
 
@@ -216,13 +395,13 @@ describe("pi model factory", () => {
     }
   });
 
-  test("resolves Anthropic Opus 4.8 from the Pi model catalog", async () => {
-    const resolved = await resolvePiModelForAgent("anthropic/claude-opus-4-8", {
+  test("resolves Anthropic Opus 5 from the Pi model catalog", async () => {
+    const resolved = await resolvePiModelForAgent("anthropic/claude-opus-5", {
       provider_type: "anthropic",
     });
 
     expect(resolved.provider).toBe("anthropic");
-    expect(resolved.model.id).toBe("claude-opus-4-8");
+    expect(resolved.model.id).toBe("claude-opus-5");
     expect(resolved.model.api).toBe("anthropic-messages");
     expect(resolved.model.reasoning).toBe(true);
     expect(resolved.model.contextWindow).toBe(1000000);
@@ -435,14 +614,14 @@ describe("pi model factory", () => {
           login: async () => ({
             access: "login-token",
             refresh: "refresh-token",
-            expires: Date.now() + 60_000,
+            expires: Date.now() + 3_600_000,
           }),
           refreshToken: async (credentials) => {
             refreshes.push(credentials);
             return {
               ...credentials,
               access: "refreshed-token",
-              expires: Date.now() + 60_000,
+              expires: Date.now() + 3_600_000,
             };
           },
           getApiKey: (credentials) => `oauth:${credentials.access}`,
@@ -481,14 +660,18 @@ describe("pi model factory", () => {
         { localProviderAuthStorageDir: storageDir },
       );
 
-      expect(getOAuthProvider("kilo")?.name).toBe("Kilo");
+      expect(getProviderOAuthAuth("kilo")?.name).toBe("Kilo");
       expect(refreshes).toHaveLength(1);
       expect(resolved.apiKey).toBe("oauth:refreshed-token");
       expect(resolved.model).toMatchObject({
         id: "kilo-code",
         provider: "kilo",
         baseUrl: "https://refreshed-token.kilo.dev/v1",
-        headers: { Authorization: "Bearer oauth:refreshed-token" },
+      });
+      // Connection auth is per-request state carried in stream options, not
+      // baked into the provider-published Model.
+      expect(resolved.headers).toMatchObject({
+        Authorization: "Bearer oauth:refreshed-token",
       });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
@@ -540,38 +723,90 @@ describe("pi model factory", () => {
     }
   });
 
-  test("normalizes local OpenAI-compatible provider base URLs for runtime", async () => {
+  test("normalizes wrapped llama.cpp handles and custom base URLs", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-llama-cpp-base-url-"));
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({
+            data: [{ id: "local-model", object: "model" }],
+          });
+        }
+        if (url.pathname === "/props") {
+          return Response.json({});
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
     try {
       await createOrUpdateLocalProvider({
         storageDir,
         providerType: "llama_cpp",
         providerName: "lc-llama-cpp",
         apiKey: "not-needed",
-        baseURL: "http://localhost:8088/",
+        baseURL: `http://localhost:${server.port}/`,
       });
+      const modelsRuntime = new LocalPiModelsRuntime({ storageDir });
 
-      const resolved = await resolvePiModelForAgent(
+      const native = await resolvePiModelForAgent(
         "llama.cpp/local-model",
-        { provider_type: "llama_cpp" },
-        { localProviderAuthStorageDir: storageDir },
+        {
+          provider_type: "llama_cpp",
+          context_window_limit: 128000,
+          max_tokens: 32000,
+        },
+        { localProviderAuthStorageDir: storageDir, modelsRuntime },
+      );
+      const wrapped = await resolvePiModelForAgent(
+        "openai/llama.cpp/local-model",
+        {
+          provider_type: "llama_cpp",
+          context_window_limit: 128000,
+          max_tokens: 32000,
+        },
+        { localProviderAuthStorageDir: storageDir, modelsRuntime },
       );
 
-      expect(resolved.model.baseUrl).toBe("http://localhost:8088/v1");
+      expect(native.provider).toBe("llama-cpp");
+      expect(wrapped).toEqual(native);
+      expect(native.model).toMatchObject({
+        id: "local-model",
+        api: "openai-completions",
+        provider: "llama-cpp",
+        baseUrl: `http://localhost:${server.port}/v1`,
+        contextWindow: 128000,
+        maxTokens: 32000,
+      });
     } finally {
+      server.stop(true);
       await rm(storageDir, { recursive: true, force: true });
     }
   });
 
   test("does not let local no-key placeholders mask LM Studio env API keys", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-lmstudio-env-key-"));
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/api/v0/models") {
+          return Response.json({
+            object: "list",
+            data: [{ id: "local-model", object: "model", type: "llm" }],
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
     try {
       await createOrUpdateLocalProvider({
         storageDir,
         providerType: "lmstudio",
         providerName: "lc-lmstudio",
         apiKey: "not-needed",
-        baseURL: "http://localhost:8000/v1",
+        baseURL: `http://localhost:${server.port}/v1`,
       });
 
       await withEnv({ LMSTUDIO_API_KEY: "1234" }, async () => {
@@ -584,6 +819,7 @@ describe("pi model factory", () => {
         expect(resolved.apiKey).toBe("1234");
       });
     } finally {
+      server.stop(true);
       await rm(storageDir, { recursive: true, force: true });
     }
   });

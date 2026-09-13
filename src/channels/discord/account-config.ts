@@ -5,11 +5,16 @@ import type {
   DiscordChannelMode,
 } from "@/channels/types";
 import { migratePermissionMode } from "@/permissions/mode";
+import {
+  isValidDiscordAllowBotsConfigValue,
+  normalizeDiscordAllowBotsMode,
+} from "./bot-policy";
 
 const DISCORD_CONFIG_KEYS = new Set([
   "token",
   "agent_id",
   "allowed_channels",
+  "allow_bots",
   "default_permission_mode",
   "transcribe_voice",
   "auto_thread_on_mention",
@@ -105,6 +110,8 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         (config.agent_id === undefined || isNullableString(config.agent_id)) &&
         (config.allowed_channels === undefined ||
           isAllowedChannels(config.allowed_channels)) &&
+        (config.allow_bots === undefined ||
+          isValidDiscordAllowBotsConfigValue(config.allow_bots)) &&
         (config.default_permission_mode === undefined ||
           isDefaultPermissionMode(config.default_permission_mode)) &&
         (config.transcribe_voice === undefined ||
@@ -150,6 +157,11 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
             ) as ChannelDefaultPermissionMode)
           : undefined,
         allowedChannels,
+        allowBots:
+          config.allow_bots !== undefined &&
+          isValidDiscordAllowBotsConfigValue(config.allow_bots)
+            ? normalizeDiscordAllowBotsMode(config.allow_bots)
+            : undefined,
         transcribeVoice: isBoolean(config.transcribe_voice)
           ? config.transcribe_voice
           : undefined,
@@ -184,6 +196,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         agent_id: account.agentId,
         default_permission_mode: account.defaultPermissionMode ?? "standard",
         allowed_channels: serializeAllowedChannels(account.allowedChannels),
+        allow_bots: account.allowBots ?? false,
         transcribe_voice: account.transcribeVoice === true,
         auto_thread_on_mention: account.autoThreadOnMention ?? false,
         thread_policy_by_channel: account.threadPolicyByChannel ?? {},
@@ -200,6 +213,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         agent_id: account.agentId,
         default_permission_mode: account.defaultPermissionMode ?? "standard",
         allowed_channels: serializeAllowedChannels(account.allowedChannels),
+        allow_bots: account.allowBots ?? false,
         transcribe_voice: account.transcribeVoice === true,
         auto_thread_on_mention: account.autoThreadOnMention ?? false,
         thread_policy_by_channel: account.threadPolicyByChannel ?? {},

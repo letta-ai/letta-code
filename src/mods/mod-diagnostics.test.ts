@@ -35,6 +35,7 @@ describe("mod diagnostics", () => {
     expect(getModDiagnosticSeverity("activate")).toBe("error");
     expect(getModDiagnosticSeverity("deprecated_api")).toBe("warning");
     expect(getModDiagnosticSeverity("deprecated_api", "error")).toBe("error");
+    expect(getModDiagnosticSeverity("legacy_extension")).toBe("warning");
     expect(getModDiagnosticSeverity("event")).toBe("error");
   });
 

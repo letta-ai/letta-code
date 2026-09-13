@@ -86,9 +86,12 @@ Commands:
   list-resources          List available resources
   info <tool>             Show tool schema
   call <tool> '<json>'    Call a tool
+  login                   Run OAuth flow and cache tokens for this server
+  logout                  Clear cached OAuth tokens for this server
 
 Options:
-  --header "K: V"         Add HTTP header (repeatable)
+  --header "K: V"         Add HTTP header (repeatable). Disables auto-OAuth.
+  --auth <mode>           "auto" (default), "oauth", or "none"
   --timeout <ms>          Request timeout (default: 30000)
 ```
 
@@ -97,12 +100,36 @@ Options:
 # Basic usage
 npx tsx mcp-http.ts http://localhost:3001/mcp list-tools
 
-# With authentication
+# With static bearer authentication
 npx tsx mcp-http.ts http://localhost:3001/mcp --header "Authorization: Bearer KEY" list-tools
+
+# OAuth-protected server (opens a browser to sign in, then caches tokens)
+npx tsx mcp-http.ts https://example.com/mcp login
+npx tsx mcp-http.ts https://example.com/mcp list-tools
 
 # Call a tool
 npx tsx mcp-http.ts http://localhost:3001/mcp call vault '{"action":"search","query":"notes"}'
 ```
+
+**OAuth support:**
+When a server returns `401 WWW-Authenticate: Bearer ...` and no static
+`Authorization` header was supplied, `mcp-http.ts` will automatically:
+
+1. Discover the authorization server via `resource_metadata`, the
+   `realm=` param, or the server's own origin (`.well-known/oauth-authorization-server`
+   then `.well-known/openid-configuration`).
+2. Dynamically register a public client with PKCE (`token_endpoint_auth_method: none`).
+3. Open the system browser to the authorization endpoint, catch the redirect
+   on a `127.0.0.1` loopback port, and exchange the code for tokens.
+4. Cache the token set (and the registered client) at
+   `~/.letta/mcp-oauth/<host>_<path>.json` with `0600` perms.
+5. Auto-refresh expired access tokens using the stored refresh token before
+   each request; if refresh fails, it re-runs the browser flow once.
+
+Use `login` to run the flow explicitly (e.g. as a first step in a skill's
+setup) and `logout` to clear cached tokens. Passing an explicit
+`--header "Authorization: ..."` disables auto-OAuth so you stay in control.
+Pass `--auth none` to force static-only behavior.
 
 ### mcp-stdio.ts - stdio Transport
 
@@ -153,8 +180,22 @@ Here are some well-known MCP servers:
 - For stdio: Check the command works when run directly in terminal
 
 **"Authentication required" error:**
-- Add `--header "Authorization: Bearer YOUR_KEY"` for HTTP
+- Add `--header "Authorization: Bearer YOUR_KEY"` for HTTP servers using static bearers
 - Or `--env "API_KEY=xxx"` for stdio servers that need env vars
+- For OAuth-protected HTTP servers, just run any command (or `login`) — the helper
+  will do PKCE + dynamic client registration and cache tokens under
+  `~/.letta/mcp-oauth/`. Delete that file (or run `logout`) to force a re-login.
+
+**OAuth issues:**
+- "Could not discover OAuth server metadata": the server didn't include
+  `resource_metadata` and its origin doesn't serve `.well-known/oauth-authorization-server`
+  or `.well-known/openid-configuration`. Fall back to a static bearer, or point the
+  helper at the auth server manually via a custom skill.
+- "Dynamic client registration failed": the auth server disables open DCR.
+  You'll need to pre-register a client and pass its `client_id` (and any required
+  credentials) via headers, or wrap this skill with a server-specific one.
+- "state mismatch" / callback timeout: another process may be holding the browser
+  callback; re-run and complete the sign-in in the newly opened tab.
 
 **Tool call fails:**
 - Use `info <tool>` to see the expected input schema

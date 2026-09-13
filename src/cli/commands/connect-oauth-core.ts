@@ -10,7 +10,7 @@ import {
   type ChatGPTOAuthConfig,
   createOrUpdateOpenAICodexProvider,
   getOpenAICodexProvider,
-  OPENAI_CODEX_PROVIDER_NAME,
+  normalizeChatGPTOAuthProviderName,
 } from "@/providers/openai-codex-provider";
 import { settingsManager } from "@/settings-manager";
 
@@ -44,7 +44,10 @@ interface OAuthFlowDeps {
     redirectUri: string,
   ) => Promise<OpenAITokens>;
   extractAccountId: (accessToken: string) => string;
-  createOrUpdateProvider: (config: ChatGPTOAuthConfig) => Promise<unknown>;
+  createOrUpdateProvider: (
+    config: ChatGPTOAuthConfig,
+    providerName: string,
+  ) => Promise<unknown>;
   getProvider: () => Promise<unknown>;
   storeOAuthState: typeof settingsManager.storeOAuthState;
   clearOAuthState: typeof settingsManager.clearOAuthState;
@@ -56,15 +59,21 @@ const DEFAULT_DEPS: OAuthFlowDeps = {
       (port as typeof OPENAI_OAUTH_CONFIG.defaultPort | undefined) ??
         OPENAI_OAUTH_CONFIG.defaultPort,
     ),
-  startCallbackServer: (expectedState: string, port?: number) =>
+  startCallbackServer: (
+    expectedState: string,
+    port?: number,
+    signal?: AbortSignal,
+  ) =>
     startLocalOAuthServer(
       expectedState,
       (port as typeof OPENAI_OAUTH_CONFIG.defaultPort | undefined) ??
         OPENAI_OAUTH_CONFIG.defaultPort,
+      signal,
     ),
   exchangeTokens: exchangeCodeForTokens,
   extractAccountId: extractAccountIdFromToken,
-  createOrUpdateProvider: createOrUpdateOpenAICodexProvider,
+  createOrUpdateProvider: (config, providerName) =>
+    createOrUpdateOpenAICodexProvider(config, {}, providerName),
   getProvider: getOpenAICodexProvider,
   storeOAuthState: (...args) => settingsManager.storeOAuthState(...args),
   clearOAuthState: () => settingsManager.clearOAuthState(),
@@ -74,6 +83,7 @@ export interface ChatGPTOAuthFlowCallbacks {
   onStatus: (message: string) => void | Promise<void>;
   openBrowser?: (authorizationUrl: string) => Promise<void>;
   signal?: AbortSignal;
+  providerName?: string;
 }
 
 export async function openOAuthBrowser(
@@ -104,6 +114,9 @@ export async function runChatGPTOAuthConnectFlow(
 ): Promise<{ providerName: string }> {
   const mergedDeps = { ...DEFAULT_DEPS, ...deps };
   const browserOpener = callbacks.openBrowser ?? openOAuthBrowser;
+  const providerName = normalizeChatGPTOAuthProviderName(
+    callbacks.providerName,
+  );
 
   await callbacks.onStatus("Checking account eligibility...");
 
@@ -155,17 +168,22 @@ export async function runChatGPTOAuthConnectFlow(
     await callbacks.onStatus("Extracting account information...");
     const accountId = mergedDeps.extractAccountId(tokens.access_token);
 
-    await callbacks.onStatus("Creating ChatGPT OAuth provider...");
-    await mergedDeps.createOrUpdateProvider({
-      access_token: tokens.access_token,
-      id_token: tokens.id_token,
-      refresh_token: tokens.refresh_token,
-      account_id: accountId,
-      expires_at: Date.now() + tokens.expires_in * 1000,
-    });
+    await callbacks.onStatus(
+      `Creating ChatGPT OAuth provider '${providerName}'...`,
+    );
+    await mergedDeps.createOrUpdateProvider(
+      {
+        access_token: tokens.access_token,
+        id_token: tokens.id_token,
+        refresh_token: tokens.refresh_token,
+        account_id: accountId,
+        expires_at: Date.now() + tokens.expires_in * 1000,
+      },
+      providerName,
+    );
 
     mergedDeps.clearOAuthState();
-    return { providerName: OPENAI_CODEX_PROVIDER_NAME };
+    return { providerName };
   } catch (error) {
     mergedDeps.clearOAuthState();
     throw error;

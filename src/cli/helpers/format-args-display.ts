@@ -399,6 +399,10 @@ export function formatArgsDisplay(
           // Shell/Bash tools: show just the command
           if (isShellTool(toolName) && (parsed.command || parsed.cmd)) {
             const commandValue = parsed.cmd ?? parsed.command;
+            const description =
+              typeof parsed.description === "string"
+                ? parsed.description.trim()
+                : "";
             shellSemantic = summarizeShellDisplay(
               Array.isArray(commandValue)
                 ? commandValue.filter(
@@ -406,7 +410,7 @@ export function formatArgsDisplay(
                   )
                 : String(commandValue),
             );
-            display = shellSemantic.summary;
+            display = description || shellSemantic.summary;
             return { display, parsed, shellSemantic };
           }
         }

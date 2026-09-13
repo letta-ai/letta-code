@@ -11,10 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { __testOverrideChannelsRoot } from "@/channels/config";
 import { __testOverrideChannelRuntimeDeps } from "@/channels/runtime-deps";
-import {
-  createTelegramAdapter,
-  validateTelegramToken,
-} from "@/channels/telegram/adapter";
+import { validateTelegramToken } from "@/channels/telegram/account-display";
+import { createTelegramAdapter } from "@/channels/telegram/adapter";
 import type { TelegramChannelAccount } from "@/channels/types";
 
 const runLiveSmoke = process.env.LETTA_RUN_LIVE_TELEGRAM_SMOKE === "1";

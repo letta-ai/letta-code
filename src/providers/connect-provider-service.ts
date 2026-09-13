@@ -13,6 +13,15 @@ import {
   type ProviderStorageTarget,
   removeProviderByName,
 } from "@/providers/byok-providers";
+import {
+  createOrUpdateOpenAICodexProvider,
+  normalizeChatGPTOAuthProviderName,
+} from "@/providers/openai-codex-provider";
+import {
+  connectedRecordsForProvider,
+  uniqueProviderNames,
+} from "@/providers/provider-connections";
+import type { ChatGPTOAuthConfig } from "@/types/chatgpt-oauth";
 
 export interface ConnectProviderField {
   key: string;
@@ -53,6 +62,7 @@ export interface ConnectProviderEntry {
   fields?: ConnectProviderField[];
   auth_methods?: ConnectProviderAuthMethod[];
   connected: ConnectProviderConnectionState;
+  connected_providers: ConnectProviderConnectionState[];
 }
 
 export interface ListConnectProvidersResult<
@@ -69,6 +79,8 @@ export interface ConnectProviderInput<
   providerId: string;
   authMethodId?: string;
   fields: Record<string, string>;
+  providerName?: string;
+  oauthConfig?: ChatGPTOAuthConfig;
 }
 
 export interface DisconnectProviderInput<
@@ -76,6 +88,7 @@ export interface DisconnectProviderInput<
 > {
   target: TTarget;
   providerId: string;
+  providerName?: string;
 }
 
 export interface ResolvedProviderConnectionFields {
@@ -86,36 +99,25 @@ export interface ResolvedProviderConnectionFields {
   options: ProviderConnectionOptions;
 }
 
-function uniqueProviderNames(provider: ByokProvider): string[] {
-  return [
-    ...new Set([provider.providerName, ...(provider.providerNames ?? [])]),
-  ];
-}
-
-function providerIsConnectedToRecord(
+export function resolveChatGPTOAuthConnection(
   provider: ByokProvider,
-  record: ProviderResponse | undefined,
-  target: ProviderStorageTarget,
-): record is ProviderResponse {
-  if (!record) return false;
-  if (target !== "local" || !record.auth_type) return true;
-  return provider.isOAuth === true
-    ? record.auth_type === "oauth"
-    : record.auth_type !== "oauth";
-}
-
-function connectedRecordForProvider(
-  provider: ByokProvider,
-  connectedProviders: ReadonlyMap<string, ProviderResponse>,
-  target: ProviderStorageTarget,
-): ProviderResponse | undefined {
-  for (const providerName of uniqueProviderNames(provider)) {
-    const record = connectedProviders.get(providerName);
-    if (providerIsConnectedToRecord(provider, record, target)) {
-      return record;
+  input: Pick<ConnectProviderInput, "providerName" | "oauthConfig">,
+): { providerName: string; oauthConfig: ChatGPTOAuthConfig } | null {
+  if (!input.oauthConfig) {
+    if (input.providerName) {
+      throw new Error("providerName requires OAuth credentials.");
     }
+    return null;
   }
-  return undefined;
+  if (!provider.isOAuth || provider.providerType !== "chatgpt_oauth") {
+    throw new Error(`${provider.displayName} does not accept ChatGPT OAuth.`);
+  }
+  return {
+    providerName: normalizeChatGPTOAuthProviderName(
+      input.providerName ?? provider.providerName,
+    ),
+    oauthConfig: input.oauthConfig,
+  };
 }
 
 function serializeConnectedProvider(
@@ -142,6 +144,7 @@ function serializeFields(
     label: field.label,
     ...(field.placeholder ? { placeholder: field.placeholder } : {}),
     ...(field.secret !== undefined ? { secret: field.secret } : {}),
+    required: field.required !== false,
   }));
 }
 
@@ -226,7 +229,7 @@ export function resolveProviderConnectionFields(
     input.authMethodId,
   );
   const missingField = requiredFields.find(
-    (field) => !fieldValue(input.fields, field.key),
+    (field) => field.required !== false && !fieldValue(input.fields, field.key),
   );
   if (missingField) {
     throw new Error(`Missing ${missingField.label}.`);
@@ -234,7 +237,9 @@ export function resolveProviderConnectionFields(
 
   const apiKey =
     fieldValue(input.fields, "apiKey") ?? defaultProviderApiKey(provider);
-  const apiKeyRequired = requiredFields.some((field) => field.key === "apiKey");
+  const apiKeyRequired = requiredFields.some(
+    (field) => field.key === "apiKey" && field.required !== false,
+  );
   if (!apiKey && apiKeyRequired) {
     throw new Error(`Missing ${provider.displayName} API key.`);
   }
@@ -272,11 +277,12 @@ export function buildConnectProviderEntries(
   target: ProviderStorageTarget,
 ): ConnectProviderEntry[] {
   return providers.map((provider) => {
-    const connected = connectedRecordForProvider(
+    const connectedRecords = connectedRecordsForProvider(
       provider,
       connectedProviders,
       target,
     );
+    const connected = connectedRecords[0];
     const fields = fieldsForProvider(provider);
     return {
       id: provider.id,
@@ -295,6 +301,7 @@ export function buildConnectProviderEntries(
         ? { auth_methods: serializeAuthMethods(provider.authMethods) }
         : {}),
       connected: serializeConnectedProvider(connected),
+      connected_providers: connectedRecords.map(serializeConnectedProvider),
     };
   });
 }
@@ -323,6 +330,18 @@ export async function connectProvider<TTarget extends ProviderStorageTarget>(
     getProviderConfigs(input.target),
     input.providerId,
   );
+  const oauthConnection = resolveChatGPTOAuthConnection(provider, input);
+  if (oauthConnection) {
+    if (input.authMethodId || Object.keys(input.fields).length > 0) {
+      throw new Error("ChatGPT OAuth does not accept API credential fields.");
+    }
+    await createOrUpdateOpenAICodexProvider(
+      oauthConnection.oauthConfig,
+      { target: input.target },
+      oauthConnection.providerName,
+    );
+    return listConnectProviders(input.target);
+  }
   const resolved = resolveProviderConnectionFields(provider, {
     authMethodId: input.authMethodId,
     fields: input.fields,
@@ -334,7 +353,7 @@ export async function connectProvider<TTarget extends ProviderStorageTarget>(
     resolved.accessKey,
     resolved.region,
     resolved.profile,
-    { target: input.target },
+    { target: input.target, connection: resolved.options },
   );
   await createOrUpdateProvider(
     provider.providerType,
@@ -358,11 +377,14 @@ export async function disconnectProvider<TTarget extends ProviderStorageTarget>(
   const connectedProviders = await getConnectedProviders({
     target: input.target,
   });
-  const connected = connectedRecordForProvider(
+  const connectedRecords = connectedRecordsForProvider(
     provider,
     connectedProviders,
     input.target,
   );
+  const connected = input.providerName
+    ? connectedRecords.find((record) => record.name === input.providerName)
+    : connectedRecords[0];
   if (connected) {
     await removeProviderByName(connected.name, { target: input.target });
   }

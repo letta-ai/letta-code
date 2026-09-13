@@ -3,7 +3,7 @@ import type {
   AssistantMessage,
   ImageContent,
   Message as PiMessage,
-  Provider,
+  ProviderId,
   TextContent,
   ThinkingContent,
   ToolCall,
@@ -54,6 +54,7 @@ export interface LocalUserMessage
   extends Omit<UserMessage, "timestamp">,
     LocalMessageBase {
   role: "user";
+  otid?: string;
   timestamp: number;
 }
 
@@ -63,7 +64,7 @@ export interface LocalAssistantMessage
   role: "assistant";
   content: (LocalTextContent | LocalThinkingContent | LocalToolCall)[];
   api: Api;
-  provider: Provider;
+  provider: ProviderId;
   model: string;
   usage: Usage;
   timestamp: number;

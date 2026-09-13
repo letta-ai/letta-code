@@ -4,11 +4,13 @@ import { parseArgs } from "node:util";
 import { parseLocalProviderTimeout } from "@/backend/local/local-provider-timeout";
 import {
   type LocalOAuthConnectCallbacks,
+  runCloudOAuthConnectFlow,
   runLocalOAuthConnectFlow,
 } from "@/cli/commands/connect-local-oauth";
 import {
   defaultConnectApiKey,
   isConnectApiKeyProvider,
+  isConnectBaseURLRequired,
   isConnectBedrockProvider,
   isConnectOAuthProvider,
   isConnectZaiBaseProvider,
@@ -25,8 +27,14 @@ import {
   checkProviderApiKey,
   createOrUpdateProvider,
   type ProviderConnectionOptions,
+  type ProviderOperationOptions,
   providerStorageTargetLabel,
 } from "@/providers/byok-providers";
+import {
+  getOpenAICodexProvider,
+  normalizeChatGPTOAuthProviderName,
+  OPENAI_CODEX_PROVIDER_NAME,
+} from "@/providers/openai-codex-provider";
 import { settingsManager } from "@/settings-manager";
 import { getErrorMessage } from "@/utils/error";
 
@@ -39,6 +47,7 @@ const CONNECT_OPTIONS = {
   region: { type: "string" },
   profile: { type: "string" },
   "base-url": { type: "string" },
+  name: { type: "string" },
   timeout: { type: "string" },
   "no-timeout": { type: "boolean" },
 } as const;
@@ -55,6 +64,7 @@ interface ConnectSubcommandDeps {
     accessKey?: string,
     region?: string,
     profile?: string,
+    operationOptions?: ProviderOperationOptions,
   ) => Promise<void>;
   createOrUpdateProvider: (
     providerType: string,
@@ -65,10 +75,11 @@ interface ConnectSubcommandDeps {
     profile?: string,
     options?: ProviderConnectionOptions,
   ) => Promise<unknown>;
-  isChatGPTOAuthConnected: () => Promise<boolean>;
+  isChatGPTOAuthConnected: (providerName?: string) => Promise<boolean>;
   runChatGPTOAuthConnectFlow: (
     callbacks: ChatGPTOAuthFlowCallbacks,
   ) => Promise<unknown>;
+  runCloudOAuthConnectFlow: typeof runCloudOAuthConnectFlow;
   runLocalOAuthConnectFlow: (
     provider: Parameters<typeof runLocalOAuthConnectFlow>[0],
     callbacks: LocalOAuthConnectCallbacks,
@@ -93,8 +104,13 @@ const DEFAULT_DEPS: ConnectSubcommandDeps = {
   promptSecret: promptSecret,
   checkProviderApiKey,
   createOrUpdateProvider,
-  isChatGPTOAuthConnected,
+  isChatGPTOAuthConnected: (providerName) =>
+    isChatGPTOAuthConnected({
+      getProvider: () =>
+        getOpenAICodexProvider({}, providerName ?? OPENAI_CODEX_PROVIDER_NAME),
+    }),
   runChatGPTOAuthConnectFlow,
+  runCloudOAuthConnectFlow,
   runLocalOAuthConnectFlow,
   providerStorageTargetLabel,
 };
@@ -109,10 +125,13 @@ function formatUsage(): string {
     "",
     "Examples:",
     "  letta connect chatgpt",
+    "  letta connect chatgpt --name chatgpt-work",
     "  letta connect codex",
     "  letta connect codex --method device-code",
     "  letta connect anthropic <api_key>",
     "  letta connect openai --api-key <api_key>",
+    "  letta connect openai-compatible --base-url http://localhost:8000/v1 [--api-key <api_key>]",
+    "  letta connect ollama --base-url http://192.168.1.50:11434/v1",
     "  letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s",
     "  letta connect llama-cpp --base-url http://localhost:8080/v1",
     "  letta connect bedrock --method iam --access-key <id> --secret-key <key> --region <region>",
@@ -220,6 +239,14 @@ export async function runConnectSubcommand(
 
   const provider = resolveConnectProvider(providerToken);
   if (!provider) {
+    const localProvider = resolveConnectProvider(providerToken, "local");
+    if (localProvider) {
+      io.stderr(
+        `Provider "${providerToken}" is only available with the local backend.\n` +
+          `Retry with: letta --backend local connect ${argv.join(" ")}`,
+      );
+      return 1;
+    }
     io.stderr(
       `Unknown provider: ${providerToken}. Supported providers: ${listConnectProviderTokens().join(", ")}`,
     );
@@ -230,24 +257,66 @@ export async function runConnectSubcommand(
     try {
       if (provider.target !== "local") {
         await io.ensureSettingsReady();
-
-        if (await io.isChatGPTOAuthConnected()) {
+        if (
+          provider.byokProvider.oauthProviderId !== "openai-codex" &&
+          provider.byokProvider.providerType !== "chatgpt_oauth"
+        ) {
+          const result = await io.runCloudOAuthConnectFlow(
+            provider.byokProvider,
+            { onStatus: (status) => io.stdout(status) },
+          );
+          const providerName =
+            typeof result === "object" &&
+            result !== null &&
+            "providerName" in result &&
+            typeof result.providerName === "string"
+              ? result.providerName
+              : provider.byokProvider.providerName;
           io.stdout(
-            "Already connected to ChatGPT via OAuth. Use /connect in the TUI and select ChatGPT / Codex plan to disconnect or re-authenticate.",
+            `Successfully connected to ${provider.byokProvider.displayName}.\nProvider '${providerName}' saved.`,
+          );
+          return 0;
+        }
+
+        let providerName: string;
+        try {
+          providerName = normalizeChatGPTOAuthProviderName(
+            readStringOption(parsed.values.name),
+          );
+        } catch (error) {
+          io.stderr(error instanceof Error ? error.message : String(error));
+          return 1;
+        }
+
+        if (await io.isChatGPTOAuthConnected(providerName)) {
+          io.stdout(
+            `Already connected to ChatGPT via OAuth as '${providerName}'. Use /connect in the TUI and select ChatGPT / Codex plan to disconnect or re-authenticate.`,
           );
           return 0;
         }
 
         await io.runChatGPTOAuthConnectFlow({
+          providerName,
           onStatus: (status) => io.stdout(status),
         });
 
-        io.stdout("Successfully connected to ChatGPT OAuth.");
+        io.stdout(
+          `Successfully connected to ChatGPT OAuth.\nProvider '${providerName}' saved.`,
+        );
         return 0;
       }
 
       const loginMethod = readStringOption(parsed.values.method);
+      let connectionOptions: ProviderConnectionOptions;
+      try {
+        connectionOptions = connectionOptionsFromArgs(parsed.values);
+      } catch (error) {
+        io.stderr(getErrorMessage(error));
+        return 1;
+      }
       await io.runLocalOAuthConnectFlow(provider.byokProvider, {
+        baseURL: connectionOptions.baseURL,
+        timeout: connectionOptions.timeout,
         onStatus: (status) => io.stdout(status),
         onPrompt: async (prompt) => {
           if (prompt.allowEmpty && !io.isTTY()) return "";
@@ -383,6 +452,15 @@ export async function runConnectSubcommand(
       io.stderr(getErrorMessage(error));
       return 1;
     }
+    if (
+      isConnectBaseURLRequired(provider) &&
+      !connectionOptions.baseURL?.trim()
+    ) {
+      io.stderr(
+        `Missing base URL for ${provider.canonical}. Pass --base-url <url>.`,
+      );
+      return 1;
+    }
     apiKey ||= defaultConnectApiKey(provider) ?? "";
     if (!apiKey && isConnectZaiBaseProvider(provider)) {
       io.stdout(
@@ -414,7 +492,23 @@ export async function runConnectSubcommand(
       if (provider.target !== "local") {
         await io.ensureSettingsReady();
       }
-      await io.checkProviderApiKey(provider.byokProvider.providerType, apiKey);
+      if (hasConnectionOptions(connectionOptions)) {
+        // The API key must be validated against the user-supplied endpoint, not
+        // the provider's default one, or third-party keys fail with a 401.
+        await io.checkProviderApiKey(
+          provider.byokProvider.providerType,
+          apiKey,
+          undefined,
+          undefined,
+          undefined,
+          { connection: connectionOptions },
+        );
+      } else {
+        await io.checkProviderApiKey(
+          provider.byokProvider.providerType,
+          apiKey,
+        );
+      }
 
       io.stdout("Saving provider...");
       if (hasConnectionOptions(connectionOptions)) {

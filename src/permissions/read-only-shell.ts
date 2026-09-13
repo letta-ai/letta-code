@@ -1,7 +1,9 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { getAllowedMemoryPrefixes } from "./agent-memory-prefixes";
 
 import { isPathWithinRoots, normalizeMemoryPath } from "./memory-paths";
+import { isReadOnlyLettaCommand } from "./read-only-letta";
 import {
   extractDashCArgument,
   isShellExecutor,
@@ -173,15 +175,6 @@ const SAFE_MEMORY_COMMANDS = new Set([
   "cd",
   "sleep",
 ]);
-
-// letta CLI read-only subcommands: group -> allowed actions
-const SAFE_LETTA_COMMANDS: Record<string, Set<string>> = {
-  memory: new Set(["status", "help", "backups", "export", "tokens"]),
-  // Legacy alias for `letta memory ...`.
-  memfs: new Set(["status", "help", "backups", "export", "tokens"]),
-  agents: new Set(["list", "help"]),
-  messages: new Set(["search", "list", "help"]),
-};
 
 // gh CLI read-only commands: category -> allowed actions
 // null means any action is allowed for that category
@@ -1182,18 +1175,7 @@ function isSafeSegment(
   }
 
   if (command === "letta") {
-    const group = tokens[1];
-    if (!group) {
-      return false;
-    }
-    if (!(group in SAFE_LETTA_COMMANDS)) {
-      return false;
-    }
-    const action = tokens[2];
-    if (!action) {
-      return false;
-    }
-    return SAFE_LETTA_COMMANDS[group]?.has(action) ?? false;
+    return isReadOnlyLettaCommand(tokens.slice(1));
   }
 
   if (command === "find") {
@@ -1301,28 +1283,6 @@ function parseGitInvocation(
   }
 
   return { subcommand: null, subcommandIndex: -1, isSafePath: true };
-}
-
-function getAllowedMemoryPrefixes(agentId: string): string[] {
-  const home = homedir();
-  const prefixes: string[] = [
-    normalizeSeparators(resolve(home, ".letta", "agents", agentId, "memory")),
-    normalizeSeparators(
-      resolve(home, ".letta", "agents", agentId, "memory-worktrees"),
-    ),
-  ];
-  const parentId = process.env.LETTA_PARENT_AGENT_ID;
-  if (parentId && parentId !== agentId) {
-    prefixes.push(
-      normalizeSeparators(
-        resolve(home, ".letta", "agents", parentId, "memory"),
-      ),
-      normalizeSeparators(
-        resolve(home, ".letta", "agents", parentId, "memory-worktrees"),
-      ),
-    );
-  }
-  return prefixes;
 }
 
 function normalizeSeparators(p: string): string {
@@ -1485,8 +1445,8 @@ function hasUnsafeRebaseOption(tokens: string[], startIndex: number): boolean {
 
 function isSafeMemoryGitConfig(tokens: string[], startIndex: number): boolean {
   const args = tokens.slice(startIndex);
-  // Preserve main's behavior: memory-mode git config is allowed except for
-  // scopes that write outside the memory repo.
+  // Memory git config is allowed except for scopes that write outside the
+  // memory repo.
   return !args.some((arg) => {
     const lower = arg.toLowerCase();
     return lower === "--global" || lower === "--system";
@@ -1510,7 +1470,7 @@ function isSafeMemoryGitFetch(tokens: string[], startIndex: number): boolean {
       return false;
     }
     // Remote names are local config aliases (usually "origin"). Disallow
-    // URL-like or path-like values so memory mode cannot fetch arbitrary URLs.
+    // URL-like or path-like values so memory commands cannot fetch arbitrary URLs.
     if (!/^[A-Za-z0-9._-]+$/.test(arg)) {
       return false;
     }

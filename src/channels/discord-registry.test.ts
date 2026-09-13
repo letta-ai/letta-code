@@ -12,6 +12,8 @@ import {
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
 } from "@/channels/accounts";
+import { createDiscordAdapter } from "@/channels/discord/adapter";
+import { __testOverrideLoadDiscordModule } from "@/channels/discord/runtime";
 import {
   __testOverrideLoadPairingStore,
   __testOverrideSavePairingStore,
@@ -23,9 +25,151 @@ import {
   clearAllRoutes,
   getRoute,
 } from "@/channels/routing";
-import type { ChannelAdapter, InboundChannelMessage } from "@/channels/types";
+import type {
+  ChannelAdapter,
+  DiscordChannelAccount,
+  InboundChannelMessage,
+} from "@/channels/types";
 
 const createConversation = mock(async () => ({ id: "conv-discord" }));
+
+interface DiscordIntegrationMessage {
+  id: string;
+  content: string;
+  channelId: string;
+  guildId: string;
+  author: {
+    id: string;
+    username: string;
+    globalName: string;
+    bot: boolean;
+  };
+  member: { displayName: string };
+  channel: {
+    name: string;
+    parentId: string | null;
+    isThread: () => boolean;
+    send: (options: Record<string, unknown>) => Promise<{ id: string }>;
+  };
+  mentions: { has: (user: unknown) => boolean };
+  attachments: Map<string, never>;
+  createdTimestamp: number;
+  startThread: () => Promise<{ id: string; name: string }>;
+  react: () => Promise<void>;
+  reactions: { cache: Map<string, never> };
+}
+
+class DiscordIntegrationClient {
+  static instances: DiscordIntegrationClient[] = [];
+  static threadReplies: Record<string, unknown>[] = [];
+
+  readonly user = {
+    id: "bot-user",
+    username: "Loop",
+    tag: "Loop#0001",
+    bot: true,
+  };
+  readonly channels = {
+    fetch: async (id: string) => ({
+      isTextBased: () => id === "created-thread",
+      send: async (options: Record<string, unknown>) => {
+        DiscordIntegrationClient.threadReplies.push(options);
+        return { id: "thread-reply" };
+      },
+    }),
+  };
+  readonly login = mock(async () => {
+    await this.onceHandlers.get("ready")?.();
+  });
+  readonly destroy = mock(() => {});
+  private readonly handlers = new Map<
+    string,
+    (...args: unknown[]) => unknown
+  >();
+  private readonly onceHandlers = new Map<
+    string,
+    (...args: unknown[]) => unknown
+  >();
+
+  constructor() {
+    DiscordIntegrationClient.instances.push(this);
+  }
+
+  once(event: string, handler: (...args: unknown[]) => unknown): this {
+    this.onceHandlers.set(event, handler);
+    return this;
+  }
+
+  on(event: string, handler: (...args: unknown[]) => unknown): this {
+    this.handlers.set(event, handler);
+    return this;
+  }
+
+  async emitMessageCreate(message: DiscordIntegrationMessage): Promise<void> {
+    await this.handlers.get("messageCreate")?.(message);
+  }
+}
+
+function createDiscordIntegrationRuntime() {
+  return {
+    Client: DiscordIntegrationClient,
+    GatewayIntentBits: {
+      Guilds: "Guilds",
+      GuildMessages: "GuildMessages",
+      GuildMessageReactions: "GuildMessageReactions",
+      MessageContent: "MessageContent",
+      DirectMessages: "DirectMessages",
+      DirectMessageReactions: "DirectMessageReactions",
+    },
+    Partials: {
+      Channel: "Channel",
+      Message: "Message",
+      Reaction: "Reaction",
+      User: "User",
+    },
+  };
+}
+
+function createDiscordIntegrationMessage(options: {
+  id: string;
+  content: string;
+  channelId: string;
+  parentChannelId: string | null;
+  isThread: boolean;
+  parentReplies: Record<string, unknown>[];
+}): DiscordIntegrationMessage {
+  return {
+    id: options.id,
+    content: options.content,
+    channelId: options.channelId,
+    guildId: "guild-1",
+    author: {
+      id: "user-1",
+      username: "cameron",
+      globalName: "Cameron",
+      bot: false,
+    },
+    member: { displayName: "Cameron" },
+    channel: {
+      name: options.channelId,
+      parentId: options.parentChannelId,
+      isThread: () => options.isThread,
+      send: async (reply) => {
+        options.parentReplies.push(reply);
+        return { id: "parent-reply" };
+      },
+    },
+    mentions: { has: () => true },
+    attachments: new Map<string, never>(),
+    createdTimestamp: Date.now(),
+    startThread: async () => ({
+      id: "created-thread",
+      name: "created thread",
+    }),
+    react: async () => {},
+    reactions: { cache: new Map<string, never>() },
+  };
+}
 
 mock.module("@/backend/api/client", () => ({
   getServerUrl: () => "https://api.letta.com",
@@ -47,6 +191,9 @@ describe("discord channel registry", () => {
     __testOverrideSaveRoutes(null);
     __testOverrideLoadPairingStore(null);
     __testOverrideSavePairingStore(null);
+    __testOverrideLoadDiscordModule(null);
+    DiscordIntegrationClient.instances.length = 0;
+    DiscordIntegrationClient.threadReplies.length = 0;
     createConversation.mockReset();
     createConversation.mockResolvedValue({ id: "conv-discord" });
   }
@@ -171,6 +318,163 @@ describe("discord channel registry", () => {
     expect(deliveries).toHaveLength(1);
   });
 
+  test("recovers a Discord auto-thread through the raw adapter boundary after route provisioning fails", async () => {
+    const account: DiscordChannelAccount = {
+      channel: "discord",
+      accountId: "discord-bot",
+      enabled: true,
+      token: "discord-token",
+      agentId: "agent-1",
+      defaultPermissionMode: "standard",
+      dmPolicy: "pairing",
+      allowedUsers: [],
+      autoThreadOnMention: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    };
+    __testOverrideLoadDiscordModule(async () =>
+      createDiscordIntegrationRuntime(),
+    );
+
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createDiscordAdapter(account);
+    registry.registerAdapter(adapter);
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+    await adapter.start();
+
+    const client = DiscordIntegrationClient.instances.at(-1);
+    if (!client) throw new Error("Discord client was not created");
+    const parentReplies: Record<string, unknown>[] = [];
+    createConversation.mockRejectedValueOnce({
+      status: 401,
+      message: "Unauthorized",
+    });
+
+    await client.emitMessageCreate(
+      createDiscordIntegrationMessage({
+        id: "parent-mention",
+        content: "<@bot-user> start",
+        channelId: "parent-channel",
+        parentChannelId: null,
+        isThread: false,
+        parentReplies,
+      }),
+    );
+
+    expect(
+      getRoute("discord", "created-thread", "discord-bot", "created-thread"),
+    ).toBeNull();
+    expect(parentReplies).toHaveLength(1);
+    expect(parentReplies[0]?.content).toContain(
+      "my Letta API credentials were rejected",
+    );
+
+    await client.emitMessageCreate(
+      createDiscordIntegrationMessage({
+        id: "bare-thread-mention",
+        content: "<@bot-user>",
+        channelId: "created-thread",
+        parentChannelId: "parent-channel",
+        isThread: true,
+        parentReplies,
+      }),
+    );
+
+    expect(
+      getRoute("discord", "created-thread", "discord-bot", "created-thread"),
+    ).not.toBeNull();
+    expect(deliveries).toHaveLength(0);
+    expect(DiscordIntegrationClient.threadReplies).toEqual([
+      {
+        content:
+          "This thread is connected now. Send a message here to continue.",
+        reply: {
+          messageReference: "bare-thread-mention",
+          failIfNotExists: false,
+        },
+      },
+    ]);
+  });
+
+  test("recovers an untracked thread from a bare explicit mention without starting an empty turn", async () => {
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const replies: Array<{ chatId: string; text: string }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        isMention: true,
+        text: "",
+      }),
+    );
+
+    expect(createConversation).toHaveBeenCalledTimes(1);
+    expect(getRoute("discord", "thread-1", "discord-bot", "thread-1")).not.toBe(
+      null,
+    );
+    expect(deliveries).toHaveLength(0);
+    expect(replies).toEqual([
+      {
+        chatId: "thread-1",
+        text: "This thread is connected now. Send a message here to continue.",
+      },
+    ]);
+  });
+
+  test("diagnoses a bare mention in an existing route without starting an empty turn", async () => {
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const replies: Array<{ chatId: string; text: string }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        isMention: true,
+        text: "first message",
+      }),
+    );
+    deliveries.length = 0;
+    replies.length = 0;
+    createConversation.mockClear();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        messageId: "msg-2",
+        isMention: true,
+        text: "",
+      }),
+    );
+
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(deliveries).toHaveLength(0);
+    expect(replies).toEqual([
+      {
+        chatId: "thread-1",
+        text: "This thread is already connected. Send a message here to continue.",
+      },
+    ]);
+  });
+
   test("creates a route for policy-permitted open-channel traffic without marking it as a mention", async () => {
     const { ChannelRegistry } = await import("@/channels/registry");
     const registry = new ChannelRegistry();
@@ -271,10 +575,13 @@ describe("discord channel registry", () => {
     );
 
     expect(createConversation).toHaveBeenCalledTimes(1);
-    expect(createConversation).toHaveBeenCalledWith({
-      agent_id: "agent-1",
-      summary: "[Discord] DM with Cameron",
-    });
+    expect(createConversation).toHaveBeenCalledWith(
+      {
+        agent_id: "agent-1",
+        summary: "DM with Cameron",
+      },
+      undefined,
+    );
     expect(getRoute("discord", "dm-1", "discord-bot")).toMatchObject({
       accountId: "discord-bot",
       chatId: "dm-1",
@@ -286,7 +593,7 @@ describe("discord channel registry", () => {
     expect(deliveries).toHaveLength(1);
   });
 
-  test("emits default permission mode when Discord creates a conversation", async () => {
+  test("emits standard permission mode when Discord creates a conversation", async () => {
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => [
       {
@@ -295,7 +602,7 @@ describe("discord channel registry", () => {
         enabled: true,
         token: "discord-token",
         agentId: "agent-1",
-        defaultPermissionMode: "unrestricted",
+        defaultPermissionMode: "standard",
         dmPolicy: "open",
         allowedUsers: [],
         createdAt: "2026-04-11T00:00:00.000Z",
@@ -327,7 +634,7 @@ describe("discord channel registry", () => {
       accountId: "discord-bot",
       agentId: "agent-1",
       conversationId: "conv-discord",
-      defaultPermissionMode: "unrestricted",
+      defaultPermissionMode: "standard",
     });
   });
 
@@ -379,6 +686,52 @@ describe("discord channel registry", () => {
         text: "You are not on the allowed users list for this Discord bot.",
       },
     ]);
+  });
+
+  test("admin users pass the Discord DM allowlist and auto-route", async () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "discord-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "standard",
+        dmPolicy: "allowlist",
+        allowedUsers: ["user-2"],
+        adminUsers: ["user-1"],
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const replies: Array<{ chatId: string; text: string }> = [];
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        chatId: "dm-1",
+        threadId: null,
+        chatType: "direct",
+        isMention: false,
+        messageId: "dm-msg-1",
+      }),
+    );
+
+    expect(replies).toHaveLength(0);
+    expect(createConversation).toHaveBeenCalledTimes(1);
+    expect(getRoute("discord", "dm-1", "discord-bot")).not.toBe(null);
+    expect(deliveries).toHaveLength(1);
   });
 
   test("keeps explicit Discord pairing DMs on the pairing flow with the account agent", async () => {

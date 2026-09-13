@@ -8,21 +8,50 @@ import { Box, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
 import { isLocalAgentId } from "@/agent/agent-id";
 import {
+  type AvailableModel,
+  getCachedAvailableModels,
+  getCachedModelReasoningCapabilities,
+  type ReasoningCapabilities,
+} from "@/agent/available-models";
+import {
+  getByokOpenAIReasoningTierOptions,
   getReasoningTierOptionsForHandle,
-  type ModelReasoningEffort,
+  type ModelReasoningSelection,
 } from "@/agent/model";
 import { getBackendForMode } from "@/backend";
+import { listPinnedAgentsForCurrentUser } from "@/cli/helpers/pinned-agent-listing";
 import { getRecentAgentOptions } from "@/cli/helpers/recent-agent-options";
 import { settingsManager } from "@/settings-manager";
 import { colors } from "./components/colors";
 import { ModelReasoningSelector } from "./components/ModelReasoningSelector";
+import { registryHandleForBackendModel } from "./components/model-selector-helpers";
 import { Text } from "./components/Text";
 import { WelcomeScreen } from "./components/WelcomeScreen";
+
+export function getNewAgentReasoningOptions(
+  modelHandle: string,
+  availableModel?: AvailableModel,
+  reasoningCapabilities?: ReasoningCapabilities | null,
+): Array<{ effort: ModelReasoningSelection; modelId: string }> {
+  const registryHandle = registryHandleForBackendModel(
+    modelHandle,
+    availableModel?.providerType,
+  );
+  return availableModel?.openAICompatibleProxy
+    ? getByokOpenAIReasoningTierOptions(modelHandle, {
+        registryHandle,
+        reasoningCapabilities,
+      })
+    : getReasoningTierOptionsForHandle(
+        registryHandle,
+        undefined,
+        reasoningCapabilities,
+      );
+}
 
 interface ProfileOption {
   name: string | null;
   agentId: string;
-  isLocal: boolean;
   isLru: boolean;
   agent: AgentState | null;
 }
@@ -32,7 +61,7 @@ interface ProfileSelectionResult {
   agentId?: string;
   profileName?: string | null;
   model?: string;
-  reasoningEffort?: ModelReasoningEffort;
+  reasoningEffort?: ModelReasoningSelection;
 }
 
 const MAX_DISPLAY = 3;
@@ -66,46 +95,11 @@ function formatModel(agent: AgentState): string {
   return agent.llm_config?.model || "unknown";
 }
 
-function getLabel(option: ProfileOption, freshRepoMode?: boolean): string {
+function getLabel(option: ProfileOption, _freshRepoMode?: boolean): string {
   const parts: string[] = [];
   if (option.isLru) parts.push("last used");
-  if (option.isLocal) parts.push("pinned");
-  else if (!option.isLru && !freshRepoMode) parts.push("global"); // Pinned globally but not locally
+  if (!option.isLru) parts.push("pinned");
   return parts.length > 0 ? ` (${parts.join(", ")})` : "";
-}
-
-function buildInitialProfileOptions(
-  lruAgentId: string | null,
-): ProfileOption[] {
-  const mergedPinned = settingsManager.getMergedPinnedAgents();
-  const options: ProfileOption[] = [];
-  const seenAgentIds = new Set<string>();
-
-  if (lruAgentId) {
-    const matchingPinned = mergedPinned.find((p) => p.agentId === lruAgentId);
-    options.push({
-      name: null,
-      agentId: lruAgentId,
-      isLocal: matchingPinned?.isLocal || false,
-      isLru: true,
-      agent: null,
-    });
-    seenAgentIds.add(lruAgentId);
-  }
-
-  for (const pinned of mergedPinned) {
-    if (seenAgentIds.has(pinned.agentId)) continue;
-    options.push({
-      name: null,
-      agentId: pinned.agentId,
-      isLocal: pinned.isLocal,
-      isLru: false,
-      agent: null,
-    });
-    seenAgentIds.add(pinned.agentId);
-  }
-
-  return options;
 }
 
 function ProfileSelectionUI({
@@ -127,10 +121,9 @@ function ProfileSelectionUI({
   serverBaseUrl?: string;
   onComplete: (result: ProfileSelectionResult) => void;
 }) {
-  const [options, setOptions] = useState<ProfileOption[]>(() =>
-    externalLoading ? [] : buildInitialProfileOptions(lruAgentId),
-  );
-  const loading = externalLoading;
+  const [options, setOptions] = useState<ProfileOption[]>([]);
+  const [optionsLoading, setOptionsLoading] = useState(true);
+  const loading = externalLoading || optionsLoading;
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [showAll, setShowAll] = useState(false);
   // Model selection mode for custom API backends
@@ -143,79 +136,70 @@ function ProfileSelectionUI({
   const [modelReasoningPrompt, setModelReasoningPrompt] = useState<{
     model: string;
     initialModelId: string;
-    initialEffort?: ModelReasoningEffort;
-    options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
+    initialEffort?: ModelReasoningSelection;
+    options: Array<{ effort: ModelReasoningSelection; modelId: string }>;
   } | null>(null);
 
   const loadOptions = useCallback(async () => {
+    setOptionsLoading(true);
     try {
-      const mergedPinned = settingsManager.getMergedPinnedAgents();
-      const optionsToFetch: ProfileOption[] = [];
+      const pinned = await listPinnedAgentsForCurrentUser();
+      let fetchedOptions: ProfileOption[] = [];
       const seenAgentIds = new Set<string>();
 
       // First: LRU agent
       if (lruAgentId) {
-        const matchingPinned = mergedPinned.find(
-          (p) => p.agentId === lruAgentId,
+        const pinnedLru = pinned.find(
+          ({ agentId, agent }) => agentId === lruAgentId && agent,
         );
-        optionsToFetch.push({
-          name: null, // Will be fetched from server
-          agentId: lruAgentId,
-          isLocal: matchingPinned?.isLocal || false,
-          isLru: true,
-          agent: null,
-        });
+        let agent = pinnedLru?.agent ?? null;
+        if (!agent) {
+          try {
+            const backend = getBackendForMode(
+              isLocalAgentId(lruAgentId) ? "local" : "api",
+            );
+            agent = await backend.retrieveAgent(lruAgentId, {
+              include: ["agent.blocks"],
+            });
+          } catch {
+            agent = null;
+          }
+        }
+        if (agent) {
+          fetchedOptions.push({
+            name: agent.name,
+            agentId: lruAgentId,
+            isLru: true,
+            agent,
+          });
+        }
         seenAgentIds.add(lruAgentId);
       }
 
       // Then: Other pinned agents
-      for (const pinned of mergedPinned) {
-        if (!seenAgentIds.has(pinned.agentId)) {
-          optionsToFetch.push({
-            name: null, // Will be fetched from server
-            agentId: pinned.agentId,
-            isLocal: pinned.isLocal,
+      for (const { agentId, agent } of pinned) {
+        if (agent && !seenAgentIds.has(agentId)) {
+          fetchedOptions.push({
+            name: agent.name,
+            agentId,
             isLru: false,
-            agent: null,
+            agent,
           });
-          seenAgentIds.add(pinned.agentId);
+          seenAgentIds.add(agentId);
         }
       }
-
-      // Fetch agent data
-      let fetchedOptions = await Promise.all(
-        optionsToFetch.map(async (opt) => {
-          if (opt.agent) {
-            return opt;
-          }
-          try {
-            const backend = getBackendForMode(
-              isLocalAgentId(opt.agentId) ? "local" : "api",
-            );
-            const agent = await backend.retrieveAgent(opt.agentId, {
-              include: ["agent.blocks"],
-            });
-            return { ...opt, agent };
-          } catch {
-            return { ...opt, agent: null };
-          }
-        }),
-      );
-
-      fetchedOptions = fetchedOptions.filter((opt) => opt.agent !== null);
 
       // Fresh repo / invalid pins fallback: show recent agents from the active backend(s)
       if (fetchedOptions.length === 0) {
         const recentAgents = await getRecentAgentOptions({
           includeLocal: false,
-          includeConstellation: true,
+          includeCloud: true,
           limit: RECENT_FALLBACK_DISPLAY,
         });
 
         fetchedOptions = recentAgents.map((recent) => ({
           name: recent.agent.name,
           agentId: recent.agent.id,
-          isLocal: recent.isLocal,
           isLru: false,
           agent: recent.agent,
         }));
@@ -224,16 +208,15 @@ function ProfileSelectionUI({
       setOptions(fetchedOptions);
     } catch {
       setOptions([]);
+    } finally {
+      setOptionsLoading(false);
     }
   }, [lruAgentId]);
 
   useEffect(() => {
     if (externalLoading) return;
-    setOptions((current) =>
-      current.length > 0 ? current : buildInitialProfileOptions(lruAgentId),
-    );
     loadOptions();
-  }, [externalLoading, loadOptions, lruAgentId]);
+  }, [externalLoading, loadOptions]);
 
   const displayOptions = showAll ? options : options.slice(0, MAX_DISPLAY);
   const hasMore = options.length > MAX_DISPLAY;
@@ -283,11 +266,26 @@ function ProfileSelectionUI({
       } else if (key.return) {
         const selected = filteredModels[modelSelectedIndex];
         if (selected) {
-          const reasoningOptions = getReasoningTierOptionsForHandle(selected);
+          const availableModel = getCachedAvailableModels()?.find(
+            (model) => model.handle === selected,
+          );
+          const registryHandle = registryHandleForBackendModel(
+            selected,
+            availableModel?.providerType,
+          );
+          const capabilities = getCachedModelReasoningCapabilities();
+          const reasoningOptions = getNewAgentReasoningOptions(
+            selected,
+            availableModel,
+            capabilities?.get(selected) ?? capabilities?.get(registryHandle),
+          );
           if (reasoningOptions.length > 1) {
             const preferredOption =
-              reasoningOptions.find((option) => option.effort === "medium") ??
-              reasoningOptions[0];
+              (availableModel?.openAICompatibleProxy
+                ? reasoningOptions.find((option) => option.effort === null)
+                : reasoningOptions.find(
+                    (option) => option.effort === "medium",
+                  )) ?? reasoningOptions[0];
             if (preferredOption) {
               setModelReasoningPrompt({
                 model: selected,
@@ -591,7 +589,7 @@ export function ProfileSelectionInline({
   /** Called when user selects a model from serverModelsForNewAgent */
   onCreateNewWithModel?: (
     model: string,
-    reasoningEffort?: ModelReasoningEffort,
+    reasoningEffort?: ModelReasoningSelection,
   ) => void;
   onExit: () => void;
 }) {
@@ -625,10 +623,9 @@ export function ProfileSelectionInline({
 export async function shouldShowProfileSelection(
   forceNew: boolean,
   agentIdArg: string | null,
-  fromAfFile: string | undefined,
 ): Promise<{ show: boolean; lruAgentId: string | null }> {
   // Skip for explicit flags
-  if (forceNew || agentIdArg || fromAfFile) {
+  if (forceNew || agentIdArg) {
     return { show: false, lruAgentId: null };
   }
 

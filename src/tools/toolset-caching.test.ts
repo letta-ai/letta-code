@@ -16,18 +16,31 @@ describe("listener tool prep metadata reuse", () => {
     expect(source).toContain("cachedAgent?: AgentState | null;");
     expect(source).toContain("cachedEffectiveModel?: string | null;");
     expect(source).toContain("cachedAgent ??");
-    expect(source).toContain("resolveModel(cachedEffectiveModel)");
+    expect(source).toContain("normalizeModelHandle(cachedEffectiveModel)");
   });
 
   test("listener turn passes cached agent metadata into reflection and tool prep", () => {
-    const source = readSource("../websocket/listener/turn.ts");
+    const listenSource = readSource("../cli/subcommands/listen.tsx");
+    const turnSource = readSource("../websocket/listener/turn.ts");
+    const setupSource = readSource("../websocket/listener/turn-setup.ts");
+    const completionSource = readSource(
+      "../websocket/listener/turn-completion.ts",
+    );
 
-    expect(source).toContain("cachedAgent: AgentState | null = null;");
-    expect(source).toContain(
+    expect(setupSource).toContain("cachedAgent: AgentState | null = null;");
+    expect(setupSource).toContain(
       "cachedAgent = (await getBackend().retrieveAgent(",
     );
-    expect(source).toContain("buildMaybeLaunchReflectionSubagent({");
-    expect(source).toContain("cachedAgent,");
-    expect(source).toContain("prepareToolExecutionContextForScope({");
+    expect(listenSource).toContain('skills: { type: "string" }');
+    expect(listenSource).toContain("process.env.LETTA_SKILLS_DIRECTORY");
+    expect(listenSource.match(/skillsDirectory,/g)).toHaveLength(2);
+    expect(setupSource).toContain("prepareToolExecutionContextForScope({");
+    expect(setupSource).toContain(
+      "skillsDirectory: listenerOptions?.skillsDirectory,",
+    );
+    expect(readSource("./toolset.ts")).toContain("{ skillsDirectory }");
+    expect(turnSource).toContain("getCachedAgent: setup.getCachedAgent,");
+    expect(completionSource).toContain("buildMaybeLaunchReflectionSubagent({");
+    expect(completionSource).toContain("cachedAgent: params.getCachedAgent(),");
   });
 });

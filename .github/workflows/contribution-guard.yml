@@ -1,0 +1,34 @@
+name: Contribution policy guard
+
+on:
+  issues:
+    types: [opened, reopened]
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  validate:
+    if: github.event_name == 'issues' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      # pull_request_target deliberately checks out the trusted base branch, not
+      # the contributor's branch. No pull request code is executed.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts/contribution-guard.cjs
+            .github/TRUSTED_CONTRIBUTORS
+          sparse-checkout-cone-mode: false
+
+      - name: Validate contribution policy
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runContributionGuard = require('./.github/scripts/contribution-guard.cjs');
+            await runContributionGuard({ github, context });

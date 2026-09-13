@@ -100,6 +100,7 @@ describe("drainStream stop reason", () => {
       async *[Symbol.asyncIterator]() {
         yield {
           message_type: "approval_request_message",
+          id: "message-approval-1",
           tool_call: {
             tool_call_id: "tc-end-turn",
             name: "ShellCommand",
@@ -123,6 +124,7 @@ describe("drainStream stop reason", () => {
         toolCallId: "tc-end-turn",
         toolName: "ShellCommand",
         toolArgs: '{"command":"pwd"}',
+        messageId: "message-approval-1",
       },
     ]);
     const line = buffers.byId.get("tc-end-turn");

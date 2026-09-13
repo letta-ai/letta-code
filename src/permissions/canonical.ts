@@ -75,6 +75,15 @@ export function canonicalToolName(toolName: string): string {
   return toolName;
 }
 
+export function toolNameForPermissionCheck(
+  toolName: string,
+  toolArgs: Record<string, unknown>,
+): string {
+  return toolName === "Monitor" && typeof toolArgs.command === "string"
+    ? "Bash"
+    : toolName;
+}
+
 export function isShellToolName(toolName: string): boolean {
   return canonicalToolName(toolName) === "Bash";
 }

@@ -25,7 +25,7 @@ Use a focused file name, e.g. `~/.letta/mods/review.ts` or `~/.letta/mods/comman
 | Command shows transient progress/results | Mod command + panel |
 | Command needs model output while the main agent is busy | `runWhenBusy: true` command + forked `ctx.conversation` |
 
-If the command is a durable workflow like `/goal`, put the workflow instructions in a skill and keep the mod command as a small launcher/prompt.
+If the command is a reusable workflow like `/goal`, put the workflow instructions in a skill and keep the mod command as a small launcher/prompt.
 
 ## Workflow
 

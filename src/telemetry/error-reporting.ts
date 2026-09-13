@@ -37,3 +37,25 @@ export function trackBoundaryError(options: BoundaryErrorOptions): void {
     },
   );
 }
+
+export function trackEndTurnNoAssistant(params: {
+  fallbackKind: "reasoning" | "tool_call";
+  modelHandle?: string;
+  runId?: string;
+  isSubagent: boolean;
+  subagentType?: string;
+}): void {
+  telemetry.trackError(
+    "end_turn_no_assistant",
+    `end_turn fell back to ${params.fallbackKind}`,
+    "headless_result_extraction",
+    {
+      modelId: params.modelHandle,
+      runId: params.runId,
+      isSubagent: params.isSubagent,
+      subagentType: params.subagentType,
+      modelHandle: params.modelHandle,
+      fallbackKind: params.fallbackKind,
+    },
+  );
+}

@@ -7,7 +7,6 @@ import type {
   ToolReturn,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
-import type { ChannelTurnSource } from "@/channels/types";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -205,7 +204,6 @@ async function executeSingleDecision(
     ) => void;
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
-    channelTurnSources?: ChannelTurnSource[];
     onFileWrite?: (filePath: string, content: string) => void;
   },
 ): Promise<ApprovalResult> {
@@ -266,7 +264,6 @@ async function executeSingleDecision(
           toolCallId: decision.approval.toolCallId,
           toolContextId: options?.toolContextId,
           parentScope: options?.parentScope,
-          channelTurnSources: options?.channelTurnSources,
           onOutput: options?.onStreamingOutput
             ? (chunk, stream) =>
                 options.onStreamingOutput?.(
@@ -385,7 +382,6 @@ export async function executeApprovalBatch(
     toolContextId?: string;
     workingDirectory?: string;
     parentScope?: { agentId: string; conversationId: string };
-    channelTurnSources?: ChannelTurnSource[];
     onFileWrite?: (filePath: string, content: string) => void;
   },
 ): Promise<ApprovalResult[]> {

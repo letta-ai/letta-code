@@ -5,11 +5,15 @@ import humanPrompt from "./prompts/human.mdx";
 import humanKawaiiPrompt from "./prompts/human_kawaii.mdx";
 import humanLinusPrompt from "./prompts/human_linus.mdx";
 import humanMemoPrompt from "./prompts/human_memo.mdx";
+import humanTutorialPrompt from "./prompts/human_tutorial.mdx";
 import interruptRecoveryAlert from "./prompts/interrupt_recovery_alert.txt";
 import lettaMemfsPrompt from "./prompts/letta.md";
+import lettaLocalMemfsPrompt from "./prompts/letta_local_memfs.md";
 import lettaNoMemfsPrompt from "./prompts/letta_no_memfs.md";
+import lettaRootMemfsPrompt from "./prompts/letta_root_memfs.md";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
 import onboardingPrompt from "./prompts/onboarding.mdx";
+import onboardingLocalPrompt from "./prompts/onboarding_local.mdx";
 import personaPrompt from "./prompts/persona.mdx";
 import personaBlankPrompt from "./prompts/persona_blank.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
@@ -43,10 +47,12 @@ export const MEMORY_PROMPTS: Record<string, string> = {
   "human_kawaii.mdx": humanKawaiiPrompt,
   "human_linus.mdx": humanLinusPrompt,
   "human_memo.mdx": humanMemoPrompt,
+  "human_tutorial.mdx": humanTutorialPrompt,
   "project.mdx": projectPrompt,
 
   "memory_filesystem.mdx": memoryFilesystemPrompt,
   "onboarding.mdx": onboardingPrompt,
+  "onboarding_local.mdx": onboardingLocalPrompt,
   "style.mdx": stylePrompt,
 };
 
@@ -57,6 +63,8 @@ export interface SystemPromptOption {
   description: string;
   content: string;
   memfsContent?: string;
+  rootMemfsContent?: string;
+  localMemfsContent?: string;
   isDefault?: boolean;
   isFeatured?: boolean;
 }
@@ -68,6 +76,8 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     description: "Alias for letta",
     content: lettaNoMemfsPrompt,
     memfsContent: lettaMemfsPrompt,
+    rootMemfsContent: lettaRootMemfsPrompt,
+    localMemfsContent: lettaLocalMemfsPrompt,
     isDefault: true,
     isFeatured: true,
   },
@@ -77,6 +87,8 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     description: "Full Letta Code system prompt",
     content: lettaNoMemfsPrompt,
     memfsContent: lettaMemfsPrompt,
+    rootMemfsContent: lettaRootMemfsPrompt,
+    localMemfsContent: lettaLocalMemfsPrompt,
     isFeatured: true,
   },
   {
@@ -99,7 +111,22 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
   },
 ];
 
-export type MemoryPromptMode = "standard" | "memfs" | "local-memfs";
+export type MemoryPromptMode =
+  | "standard"
+  | "memfs"
+  | "root-memfs"
+  | "local-memfs";
+
+export function getSystemPromptVariantContents(
+  prompt: SystemPromptOption,
+): string[] {
+  return [
+    prompt.content,
+    prompt.memfsContent,
+    prompt.rootMemfsContent,
+    prompt.localMemfsContent,
+  ].filter((content): content is string => typeof content === "string");
+}
 
 /**
  * Check if a preset ID exists in SYSTEM_PROMPTS.
@@ -122,42 +149,25 @@ export function buildSystemPrompt(
       `Unknown preset "${presetId}" — cannot rebuild system prompt`,
     );
   }
-  if (memoryMode === "memfs" || memoryMode === "local-memfs") {
+  if (memoryMode === "local-memfs") {
+    return (
+      preset.localMemfsContent ??
+      preset.memfsContent ??
+      preset.content
+    ).trim();
+  }
+  if (memoryMode === "root-memfs") {
+    return (
+      preset.rootMemfsContent ??
+      preset.memfsContent ??
+      preset.content
+    ).trim();
+  }
+  if (memoryMode === "memfs") {
     return (preset.memfsContent ?? preset.content).trim();
   }
 
   return preset.content.trim();
-}
-
-/**
- * Validate a system prompt preset ID.
- *
- * Known preset IDs are always accepted. Subagent names are only accepted
- * when `allowSubagentNames` is true (internal subagent launches).
- *
- * @throws Error with a descriptive message listing valid options
- */
-export async function validateSystemPromptPreset(
-  id: string,
-  opts?: { allowSubagentNames?: boolean },
-): Promise<void> {
-  const validPresets = SYSTEM_PROMPTS.map((p) => p.id);
-  if (validPresets.includes(id)) return;
-
-  if (opts?.allowSubagentNames) {
-    const { getAllSubagentConfigs } = await import("@/agent/subagents");
-    const subagentConfigs = await getAllSubagentConfigs();
-    if (subagentConfigs[id]) return;
-
-    const allValid = [...validPresets, ...Object.keys(subagentConfigs)];
-    throw new Error(
-      `Invalid system prompt "${id}". Must be one of: ${allValid.join(", ")}.`,
-    );
-  }
-
-  throw new Error(
-    `Invalid system prompt "${id}". Must be one of: ${validPresets.join(", ")}.`,
-  );
 }
 
 /**
@@ -170,57 +180,4 @@ export function shouldRecommendDefaultPrompt(
 ): boolean {
   const defaultPrompt = buildSystemPrompt("default", memoryMode);
   return currentPrompt !== defaultPrompt;
-}
-
-/**
- * Resolve a prompt ID and build the full system prompt for the memory mode.
- * Known presets are rebuilt deterministically. Unknown IDs (subagent names)
- * are resolved as complete prompts and are not modified.
- */
-export async function resolveAndBuildSystemPrompt(
-  promptId: string | undefined,
-  memoryMode: MemoryPromptMode,
-): Promise<string> {
-  const id = promptId ?? "default";
-  if (isKnownPreset(id)) {
-    return buildSystemPrompt(id, memoryMode);
-  }
-  return resolveSystemPrompt(id);
-}
-
-/**
- * Resolve a system prompt ID to its content.
- *
- * Resolution order:
- * 1. No input → default system prompt
- * 2. Known preset ID → preset content
- * 3. Subagent name → subagent's system prompt
- * 4. Unknown → throws (callers should validate first via validateSystemPromptPreset)
- *
- * @param systemPromptPreset - The system prompt preset (e.g., "letta", "source-claude") or subagent name (e.g., "recall")
- * @returns The resolved system prompt content
- * @throws Error if the ID doesn't match any preset or subagent
- */
-export async function resolveSystemPrompt(
-  systemPromptPreset: string | undefined,
-): Promise<string> {
-  if (!systemPromptPreset) {
-    return SYSTEM_PROMPT;
-  }
-
-  const matchedPrompt = SYSTEM_PROMPTS.find((p) => p.id === systemPromptPreset);
-  if (matchedPrompt) {
-    return matchedPrompt.content;
-  }
-
-  const { getAllSubagentConfigs } = await import("@/agent/subagents");
-  const subagentConfigs = await getAllSubagentConfigs();
-  const matchedSubagent = subagentConfigs[systemPromptPreset];
-  if (matchedSubagent) {
-    return matchedSubagent.systemPrompt;
-  }
-
-  throw new Error(
-    `Unknown system prompt "${systemPromptPreset}" — does not match any preset or subagent`,
-  );
 }

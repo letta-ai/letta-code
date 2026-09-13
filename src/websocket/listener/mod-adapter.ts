@@ -1,39 +1,81 @@
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type Letta from "@letta-ai/letta-client";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getBackend } from "@/backend";
 import { buildModInvocationContext } from "@/mods/context";
+import type { ModEvents } from "@/mods/event-emitter";
 import { createModAdapter, type ModAdapter } from "@/mods/mod-adapter";
-import type { ModCapabilities, ModContext } from "@/mods/types";
+import { getModCacheDirectory } from "@/mods/paths";
+import type {
+  ModCapabilities,
+  ModContext,
+  ModEventEmissionResult,
+  ModEventMap,
+  ModEventName,
+} from "@/mods/types";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
+import { getBootWorkingDirectory } from "./cwd";
+import { ensureMemfsSyncedForAgent } from "./memfs-sync";
+import { emitStatusDelta } from "./protocol-outbound";
 import type { ListenerRuntime } from "./types";
 
 export const LISTENER_MOD_CAPABILITIES: ModCapabilities = {
   tools: true,
-  commands: false,
+  commands: true,
   events: {
     lifecycle: false,
-    tools: false,
-    turns: false,
+    tools: true,
+    turns: true,
+    compact: false,
+    llm: false,
   },
-  permissions: false,
+  permissions: true,
   providers: true,
   ui: {
     panels: false,
-    statusValues: false,
-    customStatuslineRenderer: false,
   },
 };
 
+const LISTENER_AGENT_MOD_CAPABILITIES: ModCapabilities = {
+  ...LISTENER_MOD_CAPABILITIES,
+  // Provider registration is process-global and cannot be isolated per agent.
+  providers: false,
+};
+
 export interface CreateListenerModAdapterOptions {
+  agentModsDirectory?: string;
   cacheDirectory?: string;
+  capabilities?: ModCapabilities;
   diagnosticsRootDirectory?: string;
   disabled?: boolean;
   globalModsDirectory?: string;
+  includeGlobalMods?: boolean;
+  onNotification?: (message: string, context: ModContext | null) => void;
+  registerCapabilitiesGlobally?: boolean;
   sessionId?: string | null;
   workingDirectory?: string | null;
 }
 
 async function getUnavailableListenerClient(): Promise<Letta> {
   throw new Error("letta.client is not available in listener mods");
+}
+
+function resolveListenerAgentMemfsContext(
+  agentId: string | null,
+): ModContext["memfs"] {
+  if (!agentId) return { enabled: false, memoryDir: null };
+  try {
+    return settingsManager.isMemfsEnabled(agentId)
+      ? {
+          enabled: true,
+          memoryDir: getScopedMemoryFilesystemRoot(agentId),
+        }
+      : { enabled: false, memoryDir: null };
+  } catch {
+    return { enabled: false, memoryDir: null };
+  }
 }
 
 export function createListenerModContext(
@@ -57,7 +99,7 @@ export function createListenerModContext(
   } = {},
 ): ModContext {
   const cwd = options.workingDirectory ?? getCurrentWorkingDirectory();
-  return buildModInvocationContext({
+  const context = buildModInvocationContext({
     agent: options.agent ?? null,
     conversationId: options.sessionId ?? null,
     modelIdentifier: options.modelIdentifier ?? null,
@@ -65,16 +107,27 @@ export function createListenerModContext(
     toolset: options.toolset ?? null,
     workingDirectory: cwd,
   });
+  return {
+    ...context,
+    memfs: resolveListenerAgentMemfsContext(context.agent.id),
+  };
+}
+
+export function createListenerAgentModContext(agentId: string): ModContext {
+  return createListenerModContext({ agent: { id: agentId } });
 }
 
 export function createListenerModAdapter(
   options: CreateListenerModAdapterOptions = {},
 ): ModAdapter {
   return createModAdapter({
+    ...(options.agentModsDirectory
+      ? { agentModsDirectory: options.agentModsDirectory }
+      : {}),
     ...(options.cacheDirectory
       ? { cacheDirectory: options.cacheDirectory }
       : {}),
-    capabilities: LISTENER_MOD_CAPABILITIES,
+    capabilities: options.capabilities ?? LISTENER_MOD_CAPABILITIES,
     ...(options.diagnosticsRootDirectory
       ? { diagnosticsRootDirectory: options.diagnosticsRootDirectory }
       : {}),
@@ -84,25 +137,235 @@ export function createListenerModAdapter(
     ...(options.globalModsDirectory
       ? { globalModsDirectory: options.globalModsDirectory }
       : {}),
+    ...(options.includeGlobalMods !== undefined
+      ? { includeGlobalMods: options.includeGlobalMods }
+      : {}),
+    ...(options.onNotification
+      ? { onNotification: options.onNotification }
+      : {}),
+    ...(options.registerCapabilitiesGlobally !== undefined
+      ? {
+          registerCapabilitiesGlobally: options.registerCapabilitiesGlobally,
+        }
+      : {}),
+  });
+}
+
+export function emitListenerModNotification(
+  runtime: ListenerRuntime,
+  message: string,
+  context: ModContext | null,
+): void {
+  const agentId = context?.agent.id;
+  const conversationId = context?.sessionId;
+  if (!agentId || !conversationId) return;
+
+  const origin =
+    runtime.transport ??
+    runtime.socket ??
+    runtime.connections.values().next().value?.writer;
+  if (!origin) return;
+
+  emitStatusDelta(origin, runtime, {
+    message,
+    level: "info",
+    agentId,
+    conversationId,
   });
 }
 
 export function ensureListenerModAdapter(runtime: ListenerRuntime): ModAdapter {
   runtime.modAdapter ??= createListenerModAdapter({
     sessionId: runtime.sessionId,
-    workingDirectory: runtime.bootWorkingDirectory,
+    workingDirectory: getBootWorkingDirectory(runtime),
+    onNotification: (message, context) =>
+      emitListenerModNotification(runtime, message, context),
   });
   return runtime.modAdapter;
 }
 
+function resolveListenerAgentModsDirectory(agentId: string): string | null {
+  try {
+    return settingsManager.isMemfsEnabled(agentId)
+      ? join(getScopedMemoryFilesystemRoot(agentId), "mods")
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveListenerAgentModCacheDirectory(agentId: string): string {
+  // A distinct import path gives each agent its own ESM module instance while
+  // keeping generated files outside the git-backed MemFS repository.
+  const cacheKey = createHash("sha256").update(agentId).digest("hex");
+  return join(getModCacheDirectory(), "listener-agents", cacheKey);
+}
+
+let resolveAgentModsDirectory = resolveListenerAgentModsDirectory;
+let resolveAgentModCacheDirectory = resolveListenerAgentModCacheDirectory;
+let ensureAgentMemfsSynced = ensureMemfsSyncedForAgent;
+
+export async function ensureListenerAgentModAdapter(
+  runtime: ListenerRuntime,
+  agentId: string,
+): Promise<ModAdapter | null> {
+  runtime.agentModAdapters ??= new Map();
+  runtime.agentModAdapterLoads ??= new Map();
+  const agentModAdapters = runtime.agentModAdapters;
+  const agentModAdapterLoads = runtime.agentModAdapterLoads;
+  const existing = agentModAdapters.get(agentId);
+  if (existing) return existing;
+
+  const pending = agentModAdapterLoads.get(agentId);
+  if (pending) return pending;
+
+  let load: Promise<ModAdapter | null> | undefined;
+  load = (async () => {
+    try {
+      const syncSucceeded = await ensureAgentMemfsSynced(runtime, agentId);
+      if (!syncSucceeded || agentModAdapterLoads.get(agentId) !== load) {
+        return null;
+      }
+
+      const agentModsDirectory = resolveAgentModsDirectory(agentId);
+      if (!agentModsDirectory) return null;
+
+      const adapter = createListenerModAdapter({
+        agentModsDirectory,
+        cacheDirectory: resolveAgentModCacheDirectory(agentId),
+        capabilities: LISTENER_AGENT_MOD_CAPABILITIES,
+        includeGlobalMods: false,
+        onNotification: (message, context) =>
+          emitListenerModNotification(runtime, message, context),
+        registerCapabilitiesGlobally: false,
+        sessionId: runtime.sessionId,
+        workingDirectory: runtime.bootWorkingDirectory,
+      });
+      try {
+        await adapter.reload();
+        if (agentModAdapterLoads.get(agentId) !== load) {
+          adapter.dispose();
+          return null;
+        }
+        agentModAdapters.set(agentId, adapter);
+        return adapter;
+      } catch (error) {
+        adapter.dispose();
+        throw error;
+      }
+    } finally {
+      if (agentModAdapterLoads.get(agentId) === load) {
+        agentModAdapterLoads.delete(agentId);
+      }
+    }
+  })();
+
+  agentModAdapterLoads.set(agentId, load);
+  return load;
+}
+
+export async function ensureListenerModAdaptersForAgent(
+  runtime: ListenerRuntime,
+  agentId: string,
+): Promise<ModAdapter[]> {
+  const globalAdapter = ensureListenerModAdapter(runtime);
+  const agentAdapter = await ensureListenerAgentModAdapter(runtime, agentId);
+  return agentAdapter ? [globalAdapter, agentAdapter] : [globalAdapter];
+}
+
+export function getLoadedListenerModAdapters(
+  runtime: ListenerRuntime,
+  agentId?: string | null,
+): ModAdapter[] {
+  const adapters = runtime.modAdapter ? [runtime.modAdapter] : [];
+  const agentAdapter = agentId
+    ? runtime.agentModAdapters?.get(agentId)
+    : undefined;
+  if (agentAdapter) adapters.push(agentAdapter);
+  return adapters;
+}
+
+export function createListenerModEvents(adapters: ModAdapter[]): ModEvents {
+  return {
+    async emit<TName extends ModEventName>(
+      name: TName,
+      event: ModEventMap[TName],
+      context: ModContext,
+    ) {
+      const combined: ModEventEmissionResult<TName> = {
+        diagnostics: [],
+        handlerCount: 0,
+        name,
+        results: [],
+      };
+      for (const adapter of adapters) {
+        const result = await adapter.events.emit(name, event, context);
+        combined.diagnostics.push(...result.diagnostics);
+        combined.handlerCount += result.handlerCount;
+        combined.results.push(...result.results);
+      }
+      return combined;
+    },
+  };
+}
+
 export async function reloadListenerModAdapter(
   runtime: ListenerRuntime,
+  agentId?: string | null,
 ): Promise<void> {
   const adapter = ensureListenerModAdapter(runtime);
   await adapter.reload();
+
+  if (!agentId) return;
+  const agentAdapter = runtime.agentModAdapters?.get(agentId);
+  if (!resolveAgentModsDirectory(agentId)) {
+    agentAdapter?.dispose();
+    runtime.agentModAdapters?.delete(agentId);
+    return;
+  }
+  if (agentAdapter) {
+    await agentAdapter.reload();
+    return;
+  }
+  await ensureListenerAgentModAdapter(runtime, agentId);
 }
+
+export const __listenerModAdapterTestUtils = {
+  setAgentModsDirectoryResolverForTests(
+    resolver: (agentId: string) => string | null,
+  ): void {
+    resolveAgentModsDirectory = resolver;
+  },
+  setAgentModCacheDirectoryResolverForTests(
+    resolver: (agentId: string) => string,
+  ): void {
+    resolveAgentModCacheDirectory = resolver;
+  },
+  setEnsureMemfsSyncedForAgentForTests(
+    ensureSynced: typeof ensureMemfsSyncedForAgent,
+  ): void {
+    ensureAgentMemfsSynced = ensureSynced;
+  },
+  resetForTests(): void {
+    resolveAgentModsDirectory = resolveListenerAgentModsDirectory;
+    resolveAgentModCacheDirectory = resolveListenerAgentModCacheDirectory;
+    ensureAgentMemfsSynced = ensureMemfsSyncedForAgent;
+  },
+};
 
 export function disposeListenerModAdapter(runtime: ListenerRuntime): void {
   runtime.modAdapter?.dispose();
   runtime.modAdapter = undefined;
+  for (const adapter of runtime.agentModAdapters?.values() ?? []) {
+    adapter.dispose();
+  }
+  runtime.agentModAdapters?.clear();
+  for (const [agentId, pending] of runtime.agentModAdapterLoads?.entries() ??
+    []) {
+    void pending.then((adapter) => {
+      adapter?.dispose();
+      runtime.agentModAdapters?.delete(agentId);
+    });
+  }
+  runtime.agentModAdapterLoads?.clear();
 }

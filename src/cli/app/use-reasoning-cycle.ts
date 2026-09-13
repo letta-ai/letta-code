@@ -9,30 +9,44 @@ import {
   useCallback,
 } from "react";
 import {
+  getCachedAvailableModels,
+  getCachedModelReasoningCapabilities,
+  type ReasoningCapabilities,
+} from "@/agent/available-models";
+import {
   CHATGPT_FAST_SERVICE_TIER,
+  getByokOpenAIReasoningTierOptions,
   getChatGptFastRegistryHandleForModelHandle,
+  getReasoningTierOptionsForHandle,
   isLocalModelHandle,
-  type ModelReasoningEffort,
+  type ModelReasoningSelection,
+  normalizeModelHandleForRegistry,
+  preservableContextWindow,
 } from "@/agent/model";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import { isOpenAICompatibleProxyEndpoint } from "@/utils/openai-endpoint";
 
 import {
   deriveReasoningEffort,
   mapHandleToLlmConfigPatch,
+  providerTypeFromModelSettings,
 } from "./model-config";
 import type { CommandStarter } from "./types";
 
 type ReasoningCycleDesired = {
   modelHandle: string;
-  effort: string;
+  effort: ModelReasoningSelection;
   modelId: string;
+  providerType?: string | null;
   serviceTier?: string | null;
 };
 
 function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   return (
     modelHandle.includes("claude-fable-5") ||
+    modelHandle.includes("claude-opus-5") ||
+    modelHandle.includes("claude-sonnet-5") ||
     modelHandle.includes("claude-opus-4-7") ||
     modelHandle.includes("claude-opus-4-8")
   );
@@ -60,6 +74,7 @@ type ReasoningCycleContext = {
     AgentState["model_settings"] | null
   >;
   conversationIdRef: MutableRefObject<string>;
+  currentModelHandleRef: MutableRefObject<string | null>;
   hasConversationModelOverrideRef: MutableRefObject<boolean>;
   isAgentBusy: () => boolean;
   llmConfigRef: MutableRefObject<LlmConfig | null>;
@@ -86,11 +101,36 @@ type ReasoningCycleContext = {
   withCommandLock: (fn: () => Promise<void>) => Promise<void>;
 };
 
+function isProviderQualifiedModelHandle(
+  modelHandle: string | null | undefined,
+): modelHandle is string {
+  if (!modelHandle) return false;
+  const slashIndex = modelHandle.indexOf("/");
+  return slashIndex > 0 && slashIndex < modelHandle.length - 1;
+}
+
+function modelNameFromHandle(modelHandle: string): string | null {
+  const slashIndex = modelHandle.indexOf("/");
+  if (slashIndex === -1 || slashIndex === modelHandle.length - 1) return null;
+  return modelHandle.slice(slashIndex + 1);
+}
+
+function registryProviderForProviderType(providerType: string): string {
+  return providerType === "chatgpt_oauth"
+    ? OPENAI_CODEX_PROVIDER_NAME
+    : providerType;
+}
+
 export function resolveReasoningCycleModelHandle(
   llmConfig: LlmConfig | null | undefined,
   agentModel: string | null | undefined,
+  currentModelHandle?: string | null,
 ): string | null {
-  if (agentModel && isLocalModelHandle(agentModel)) {
+  if (isProviderQualifiedModelHandle(currentModelHandle)) {
+    return currentModelHandle;
+  }
+
+  if (isProviderQualifiedModelHandle(agentModel)) {
     return agentModel;
   }
 
@@ -112,6 +152,58 @@ export function resolveReasoningCycleModelHandle(
   return model;
 }
 
+export function resolveReasoningCycleTierLookupHandle(
+  modelHandle: string,
+  modelSettings: AgentState["model_settings"] | null | undefined,
+): string {
+  const normalizedHandle = normalizeModelHandleForRegistry(modelHandle);
+  if (normalizedHandle && normalizedHandle !== modelHandle) {
+    return normalizedHandle;
+  }
+
+  if (isLocalModelHandle(modelHandle)) {
+    return modelHandle;
+  }
+
+  const providerType = providerTypeFromModelSettings(modelSettings);
+  const modelName = modelNameFromHandle(modelHandle);
+  if (!providerType || !modelName) {
+    return normalizedHandle ?? modelHandle;
+  }
+
+  const registryProvider = registryProviderForProviderType(providerType);
+  const provider = modelHandle.split("/")[0];
+  if (provider === registryProvider) {
+    return normalizedHandle ?? modelHandle;
+  }
+
+  return `${registryProvider}/${modelName}`;
+}
+
+export function getReasoningCycleTierOptions(params: {
+  modelHandle: string;
+  tierLookupHandle: string;
+  contextWindow?: number;
+  openAICompatibleProxy: boolean;
+  reasoningCapabilities?: ReasoningCapabilities | null;
+}): Array<{ id: string; effort: ModelReasoningSelection }> {
+  const options = params.openAICompatibleProxy
+    ? getByokOpenAIReasoningTierOptions(params.modelHandle, {
+        registryHandle: params.tierLookupHandle,
+        contextWindow: params.contextWindow,
+        reasoningCapabilities: params.reasoningCapabilities,
+      })
+    : getReasoningTierOptionsForHandle(
+        params.tierLookupHandle,
+        params.contextWindow,
+        params.reasoningCapabilities,
+      );
+  return options.map((option) => ({
+    id: option.modelId,
+    effort: option.effort,
+  }));
+}
+
 export function useReasoningCycle(ctx: ReasoningCycleContext) {
   const {
     agentId,
@@ -120,6 +212,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
     commandRunner,
     conversationOverrideModelSettingsRef,
     conversationIdRef,
+    currentModelHandleRef,
     hasConversationModelOverrideRef,
     isAgentBusy,
     llmConfigRef,
@@ -182,6 +275,21 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           // active, reasoning tier changes must update the agent itself so the next
           // agent sync doesn't snap back.
           const isDefaultConversation = conversationIdRef.current === "default";
+          // Reasoning changes preserve the current context window (keeps 1M
+          // dual-listing variants and custom /context-limit values intact) by
+          // RE-SENDING it explicitly via contextWindowOverride — omitting the
+          // field would make the server re-derive it from the handle and
+          // clamp it to a legacy global default (128k). A current value that
+          // looks like that server clamp is NOT preserved, so poisoned agents
+          // heal instead of re-poisoning themselves. See LET-9786.
+          const preservedContextWindow = preservableContextWindow(
+            llmConfigRef.current?.context_window,
+            desired.modelHandle,
+          );
+          const preserveOptions =
+            preservedContextWindow !== undefined
+              ? { contextWindowOverride: preservedContextWindow }
+              : undefined;
           let conversationModelSettings:
             | AgentState["model_settings"]
             | null
@@ -195,11 +303,14 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
               desired.modelHandle,
               {
                 reasoning_effort: desired.effort,
+                ...(desired.providerType
+                  ? { provider_type: desired.providerType }
+                  : {}),
                 ...(desired.serviceTier !== undefined
                   ? { service_tier: desired.serviceTier }
                   : {}),
               },
-              { avoidOverwritingExistingContextWindow: true },
+              preserveOptions,
             );
           } else {
             const { updateConversationLLMConfig } = await import(
@@ -210,11 +321,14 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
               desired.modelHandle,
               {
                 reasoning_effort: desired.effort,
+                ...(desired.providerType
+                  ? { provider_type: desired.providerType }
+                  : {}),
                 ...(desired.serviceTier !== undefined
                   ? { service_tier: desired.serviceTier }
                   : {}),
               },
-              { avoidOverwritingExistingContextWindow: true },
+              preserveOptions,
             );
             conversationModelSettings = (
               updatedConversation as {
@@ -263,8 +377,15 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
             ...(updatedAgent?.llm_config ??
               llmConfigRef.current ??
               ({} as LlmConfig)),
-            ...mapHandleToLlmConfigPatch(desired.modelHandle),
-            reasoning_effort: resolvedReasoningEffort as ModelReasoningEffort,
+            ...mapHandleToLlmConfigPatch(
+              desired.modelHandle,
+              providerTypeFromModelSettings(
+                isDefaultConversation
+                  ? (updatedAgent?.model_settings ?? null)
+                  : conversationModelSettings,
+              ),
+            ),
+            reasoning_effort: resolvedReasoningEffort,
             ...(typeof resolvedConversationContextWindowLimit === "number"
               ? { context_window: resolvedConversationContextWindowLimit }
               : {}),
@@ -279,11 +400,13 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           reasoningCyclePatchedAgentStateRef.current = false;
 
           const display =
-            desired.effort === "medium"
-              ? "med"
-              : desired.effort === "minimal"
-                ? "low"
-                : desired.effort;
+            desired.effort === null
+              ? "default"
+              : desired.effort === "medium"
+                ? "med"
+                : desired.effort === "minimal"
+                  ? "low"
+                  : desired.effort;
           cmd.finish(`Reasoning set to ${display}`, true);
         } catch (error) {
           const errorDetails = formatErrorDetails(error, agentId);
@@ -350,41 +473,60 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       if (reasoningCycleInFlightRef.current) return;
 
       const current = llmConfigRef.current;
+      const modelSettingsForEffort = hasConversationModelOverrideRef.current
+        ? conversationOverrideModelSettingsRef.current
+        : agentStateRef.current?.model_settings;
+      const providerType = providerTypeFromModelSettings(
+        modelSettingsForEffort,
+      );
       const modelHandle = resolveReasoningCycleModelHandle(
         current,
         hasConversationModelOverrideRef.current
           ? null
           : (agentStateRef.current?.model ?? null),
+        currentModelHandleRef.current,
       );
       if (!modelHandle) return;
 
       // Derive current effort from effective model settings (conversation override aware)
-      const modelSettingsForEffort = hasConversationModelOverrideRef.current
-        ? conversationOverrideModelSettingsRef.current
-        : agentStateRef.current?.model_settings;
-      const currentEffort =
-        deriveReasoningEffort(modelSettingsForEffort, current) ?? "none";
+      const currentEffort = deriveReasoningEffort(
+        modelSettingsForEffort,
+        current,
+      );
+      const tierLookupHandle = resolveReasoningCycleTierLookupHandle(
+        modelHandle,
+        modelSettingsForEffort,
+      );
 
-      const { getReasoningTierOptionsForHandle } = await import(
-        "@/agent/model"
+      const availableModel = getCachedAvailableModels()?.find(
+        (model) => model.handle === modelHandle,
       );
-      const tiers = getReasoningTierOptionsForHandle(modelHandle).map(
-        (option) => ({
-          id: option.modelId,
-          effort: option.effort,
-        }),
-      );
+      const openAICompatibleProxy =
+        availableModel?.openAICompatibleProxy === true ||
+        (current?.provider_category === "byok" &&
+          providerType === "openai" &&
+          isOpenAICompatibleProxyEndpoint(current.model_endpoint));
+      const capabilities = getCachedModelReasoningCapabilities();
+      const tiers = getReasoningCycleTierOptions({
+        modelHandle,
+        tierLookupHandle,
+        contextWindow: current?.context_window ?? undefined,
+        openAICompatibleProxy,
+        reasoningCapabilities:
+          capabilities?.get(modelHandle) ?? capabilities?.get(tierLookupHandle),
+      });
 
       // Only enable cycling when there are multiple tiers for the same handle.
       if (tiers.length < 2) return;
 
       const anthropicXHighEffort = supportsDistinctAnthropicXHighEffort(
-        modelHandle,
+        tierLookupHandle,
       )
         ? "xhigh"
         : "max";
 
-      const order = [
+      const order: ModelReasoningSelection[] = [
+        null,
         "none",
         "minimal",
         "low",
@@ -393,7 +535,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
         "xhigh",
         "max",
       ];
-      const rank = (effort: string): number => {
+      const rank = (effort: ModelReasoningSelection): number => {
         const idx = order.indexOf(effort);
         return idx >= 0 ? idx : 999;
       };
@@ -404,7 +546,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       const next = sorted[nextIndex];
       if (!next) return;
       const serviceTier = serviceTierForReasoningCycle(
-        modelHandle,
+        tierLookupHandle,
         modelSettingsForEffort,
       );
 
@@ -436,16 +578,14 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
               ...prev,
               model_settings: {
                 ...ms,
-                reasoning: {
-                  ...(ms as { reasoning?: Record<string, unknown> }).reasoning,
-                  reasoning_effort: next.effort as
-                    | "none"
-                    | "minimal"
-                    | "low"
-                    | "medium"
-                    | "high"
-                    | "xhigh",
-                },
+                reasoning:
+                  next.effort === null
+                    ? null
+                    : {
+                        ...(ms as { reasoning?: Record<string, unknown> })
+                          .reasoning,
+                        reasoning_effort: next.effort,
+                      },
               },
             } as AgentState;
           }
@@ -453,7 +593,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
             ms.provider_type === "anthropic" ||
             ms.provider_type === "bedrock"
           ) {
-            // "xhigh" is distinct on Fable and Opus 4.7+; older Anthropic models map it to backend "max".
+            // Preserve distinct xhigh on supported newer Anthropic models; legacy models map it to backend max.
             return {
               ...prev,
               model_settings: {
@@ -476,6 +616,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
         modelHandle,
         effort: next.effort,
         modelId: next.id,
+        providerType,
         serviceTier,
       };
       if (reasoningCycleTimerRef.current) {

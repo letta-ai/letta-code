@@ -27,20 +27,31 @@ export async function maybeLaunchPostTurnReflection(params: {
   reminderState: SharedReminderState;
   contextTracker: ContextTracker;
   launch: PostTurnReflectionLauncher;
+  onCompaction?: () => Promise<void>;
   getTranscriptState?: typeof getReflectionTranscriptState;
 }): Promise<boolean> {
+  // Reminder restoration is client context maintenance, not reflection work.
+  // Always consume compaction state even when MemFS or reflection is disabled.
+  syncReminderStateFromContextTracker(
+    params.reminderState,
+    params.contextTracker,
+  );
+
   if (!params.agentId || !params.memfsEnabled) {
+    params.reminderState.pendingReflectionTrigger = false;
     return false;
+  }
+
+  const hadCompactionEvent = params.reminderState.pendingReflectionTrigger;
+  if (hadCompactionEvent) {
+    await params.onCompaction?.();
   }
 
   switch (params.reflectionSettings.trigger) {
     case "off":
+      params.reminderState.pendingReflectionTrigger = false;
       return false;
     case "compaction-event": {
-      syncReminderStateFromContextTracker(
-        params.reminderState,
-        params.contextTracker,
-      );
       if (!params.reminderState.pendingReflectionTrigger) {
         return false;
       }
@@ -48,6 +59,7 @@ export async function maybeLaunchPostTurnReflection(params: {
       return params.launch("compaction-event");
     }
     case "step-count": {
+      params.reminderState.pendingReflectionTrigger = false;
       const readTranscriptState =
         params.getTranscriptState ?? getReflectionTranscriptState;
       const transcriptState = await readTranscriptState(

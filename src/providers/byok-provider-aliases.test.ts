@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   BYOK_PROVIDERS,
   buildByokProviderAliases,
+  buildOpenAICompatibleProxyProviderNames,
   isByokHandleForSelector,
 } from "@/providers/byok-providers";
 
@@ -93,6 +94,39 @@ describe("buildByokProviderAliases", () => {
 
     // Still maps correctly (same value)
     expect(aliases["lc-anthropic"]).toBe("anthropic");
+  });
+});
+
+describe("buildOpenAICompatibleProxyProviderNames", () => {
+  test("includes custom OpenAI endpoints but excludes the official API", () => {
+    const names = buildOpenAICompatibleProxyProviderNames([
+      {
+        name: "proxy",
+        provider_type: "openai",
+        provider_category: "byok",
+        base_url: "https://proxy.example.com/v1",
+      },
+      {
+        name: "official",
+        provider_type: "openai",
+        provider_category: "byok",
+        base_url: "https://api.openai.com/v1",
+      },
+      {
+        name: "hosted",
+        provider_type: "openai",
+        provider_category: "base",
+        base_url: "https://internal.example.com/v1",
+      },
+      {
+        name: "anthropic",
+        provider_type: "anthropic",
+        provider_category: "byok",
+        base_url: "https://api.anthropic.com",
+      },
+    ] as never);
+
+    expect([...names]).toEqual(["proxy"]);
   });
 });
 

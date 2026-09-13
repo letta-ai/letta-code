@@ -243,4 +243,60 @@ EOF`,
     const filePath = join(testDir.path, "eof.txt");
     expect(readFileSync(filePath, "utf-8")).toBe("line1\nline2 updated\n");
   });
+
+  test("rejects duplicate resolved paths across operations", async () => {
+    testDir = new TestDirectory();
+    originalUserCwd = process.env.USER_CWD;
+    process.env.USER_CWD = testDir.path;
+
+    testDir.createFile("duplicate.txt", "before\n");
+
+    await expect(
+      apply_patch({
+        input: `*** Begin Patch
+*** Update File: duplicate.txt
+@@
+-before
++first after
+*** Update File: ./duplicate.txt
+@@
+-before
++second after
+*** End Patch`,
+      }),
+    ).rejects.toThrow(/multiple operations target/);
+
+    expect(readFileSync(join(testDir.path, "duplicate.txt"), "utf-8")).toBe(
+      "before\n",
+    );
+  });
+
+  test("allows distinct resolved paths across operations", async () => {
+    testDir = new TestDirectory();
+    originalUserCwd = process.env.USER_CWD;
+    process.env.USER_CWD = testDir.path;
+
+    testDir.createFile("first.txt", "first before\n");
+    testDir.createFile("second.txt", "second before\n");
+
+    await apply_patch({
+      input: `*** Begin Patch
+*** Update File: first.txt
+@@
+-first before
++first after
+*** Update File: second.txt
+@@
+-second before
++second after
+*** End Patch`,
+    });
+
+    expect(readFileSync(join(testDir.path, "first.txt"), "utf-8")).toBe(
+      "first after\n",
+    );
+    expect(readFileSync(join(testDir.path, "second.txt"), "utf-8")).toBe(
+      "second after\n",
+    );
+  });
 });

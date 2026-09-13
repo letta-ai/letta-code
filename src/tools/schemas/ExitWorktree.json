@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["keep", "remove"],
+      "description": "\"keep\" leaves the worktree directory and its branch on disk; \"remove\" deletes both."
+    },
+    "discard_changes": {
+      "type": "boolean",
+      "description": "Only meaningful with `action: \"remove\"`. When the worktree has uncommitted changes or commits not in the base ref, removal is refused unless this is true. Defaults to false."
+    }
+  },
+  "required": ["action"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

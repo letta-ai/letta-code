@@ -20,4 +20,12 @@ describe("session context reminder", () => {
     expect(context).not.toContain("Agent name");
     expect(context).not.toContain("Server location");
   });
+
+  test("describes refreshed context after compaction", () => {
+    const context = buildSessionContext({ reason: "post_compaction" });
+
+    expect(context).toContain(
+      "Conversation history was compacted. Refreshed environment context follows.",
+    );
+  });
 });

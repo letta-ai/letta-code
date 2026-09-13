@@ -45,23 +45,22 @@ async function resolveFromSettings(options?: {
   const localAgentId = settingsManager.getLocalLastAgentId(testProjectDir);
   const localSession = settingsManager.getLocalLastSession(testProjectDir);
   const globalAgentId = settingsManager.getGlobalLastAgentId();
-  const localPinnedAgents =
-    settingsManager.getLocalPinnedAgents(testProjectDir);
-  const localPinnedAgentId =
-    localPinnedAgents.length === 1 ? (localPinnedAgents[0] ?? null) : null;
+  const pinnedAgents = settingsManager.getPinnedAgents();
+  const existingPinnedIds = pinnedAgents.filter((id) => existing.has(id));
+  const pinnedAgentId =
+    existingPinnedIds.length === 1 ? (existingPinnedIds[0] ?? null) : null;
 
-  const localPinnedAgentExists = localPinnedAgentId
-    ? existing.has(localPinnedAgentId)
-    : false;
+  const pinnedAgentExists = pinnedAgentId !== null;
   const localAgentExists = localAgentId ? existing.has(localAgentId) : false;
   const globalAgentExists = globalAgentId ? existing.has(globalAgentId) : false;
-  const mergedPinnedCount =
-    settingsManager.getMergedPinnedAgents(testProjectDir).length;
+  const pinnedCount = pinnedAgents.length;
+  const existingPinnedCount = existingPinnedIds.length;
 
   return resolveStartupTarget({
-    localPinnedAgentId,
-    localPinnedAgentExists,
-    localPinnedCount: localPinnedAgents.length,
+    pinnedAgentId,
+    pinnedAgentExists,
+    pinnedCount,
+    existingPinnedCount,
     localAgentId,
     localConversationId: options?.includeLocalConversation
       ? (localSession?.conversationId ?? null)
@@ -69,7 +68,6 @@ async function resolveFromSettings(options?: {
     localAgentExists,
     globalAgentId,
     globalAgentExists,
-    mergedPinnedCount,
     forceNew: options?.forceNew ?? false,
     needsModelPicker: options?.needsModelPicker ?? false,
   });
@@ -118,7 +116,7 @@ afterEach(async () => {
 describe("startup resolution from settings files", () => {
   test("no local/global settings files => create", async () => {
     const target = await resolveFromSettings();
-    expect(target).toEqual({ action: "create" });
+    expect(target).toEqual({ action: "create", trigger: "fresh-start" });
   });
 
   test("fresh dir + valid global session => resume global agent", async () => {
@@ -157,7 +155,7 @@ describe("startup resolution from settings files", () => {
     });
 
     const target = await resolveFromSettings();
-    expect(target).toEqual({ action: "create" });
+    expect(target).toEqual({ action: "create", trigger: "fresh-start" });
   });
 
   test("local session + valid local agent => resume local agent", async () => {
@@ -202,16 +200,16 @@ describe("startup resolution from settings files", () => {
     });
   });
 
-  test("local pinned agent takes precedence over stale local last session", async () => {
+  test("project last session takes precedence over a pinned agent", async () => {
     await writeLocalSettings({
       lastAgent: "agent-last-used",
       lastSession: {
         agentId: "agent-last-used",
         conversationId: "conv-stale",
       },
-      pinnedAgentsByServer: {
-        "api.letta.com": ["agent-pinned"],
-      },
+    });
+    await writeGlobalSettings({
+      agents: [{ agentId: "agent-pinned", pinned: true }],
     });
 
     const target = await resolveFromSettings({
@@ -221,7 +219,40 @@ describe("startup resolution from settings files", () => {
 
     expect(target).toEqual({
       action: "resume",
-      agentId: "agent-pinned",
+      agentId: "agent-last-used",
+      conversationId: "conv-stale",
+    });
+  });
+
+  test("project last session takes precedence over multiple pinned agents", async () => {
+    await writeLocalSettings({
+      sessionsByServer: {
+        "api.letta.com": {
+          agentId: "agent-project-last",
+          conversationId: "conv-project-last",
+        },
+      },
+    });
+    await writeGlobalSettings({
+      agents: [
+        { agentId: "agent-pinned-1", pinned: true },
+        { agentId: "agent-pinned-2", pinned: true },
+      ],
+    });
+
+    const target = await resolveFromSettings({
+      existingAgentIds: [
+        "agent-project-last",
+        "agent-pinned-1",
+        "agent-pinned-2",
+      ],
+      includeLocalConversation: true,
+    });
+
+    expect(target).toEqual({
+      action: "resume",
+      agentId: "agent-project-last",
+      conversationId: "conv-project-last",
     });
   });
 
@@ -269,16 +300,14 @@ describe("startup resolution from settings files", () => {
           conversationId: "conv-global",
         },
       },
-      pinnedAgentsByServer: {
-        "api.letta.com": ["agent-pinned-global"],
-      },
+      agents: [{ agentId: "agent-pinned-global", pinned: true }],
     });
 
     const target = await resolveFromSettings();
     expect(target).toEqual({ action: "select" });
   });
 
-  test("invalid local/global + local pinned only => select", async () => {
+  test("invalid local/global + pinned only => select", async () => {
     await writeLocalSettings({
       sessionsByServer: {
         "api.letta.com": {
@@ -286,13 +315,59 @@ describe("startup resolution from settings files", () => {
           conversationId: "conv-local",
         },
       },
-      pinnedAgentsByServer: {
-        "api.letta.com": ["agent-pinned-local"],
-      },
+    });
+    await writeGlobalSettings({
+      agents: [{ agentId: "agent-pinned", pinned: true }],
     });
 
     const target = await resolveFromSettings();
     expect(target).toEqual({ action: "select" });
+  });
+
+  test("multiple pins but only one exists in org => resume the existing pin", async () => {
+    await writeGlobalSettings({
+      agents: [
+        { agentId: "agent-pinned-live", pinned: true },
+        { agentId: "agent-pinned-stale-1", pinned: true },
+        { agentId: "agent-pinned-stale-2", pinned: true },
+      ],
+    });
+
+    // Two pins belong to other orgs / were deleted and don't resolve here.
+    const target = await resolveFromSettings({
+      existingAgentIds: ["agent-pinned-live"],
+    });
+
+    expect(target).toEqual({
+      action: "resume",
+      agentId: "agent-pinned-live",
+    });
+  });
+
+  test("multiple stale pins + valid global LRU => resume LRU, not select", async () => {
+    await writeGlobalSettings({
+      sessionsByServer: {
+        "api.letta.com": {
+          agentId: "agent-global",
+          conversationId: "conv-global",
+        },
+      },
+      agents: [
+        { agentId: "agent-pinned-stale-1", pinned: true },
+        { agentId: "agent-pinned-stale-2", pinned: true },
+      ],
+    });
+
+    // Neither pin resolves in this org, so the LRU should win instead of the
+    // selector firing on a raw pin count.
+    const target = await resolveFromSettings({
+      existingAgentIds: ["agent-global"],
+    });
+
+    expect(target).toEqual({
+      action: "resume",
+      agentId: "agent-global",
+    });
   });
 
   test("no valid sessions + no pinned + needsModelPicker => select", async () => {
@@ -323,7 +398,7 @@ describe("startup resolution from settings files", () => {
       forceNew: true,
     });
 
-    expect(target).toEqual({ action: "create" });
+    expect(target).toEqual({ action: "create", trigger: "force-new" });
   });
 
   test("sessionsByServer takes precedence over legacy lastAgent (global)", async () => {

@@ -125,6 +125,20 @@ describe("overflow utilities", () => {
       expect(fs.existsSync(filePath)).toBe(true);
       expect(fs.readFileSync(filePath, "utf-8")).toBe(largeContent);
     });
+
+    test("scrubs invocation secrets before writing", () => {
+      const secretValue = "supersecretoverflowvalue";
+      const filePath = writeOverflowFile(
+        `before ${secretValue} after`,
+        testWorkingDir,
+        "Bash",
+        { OVERFLOW_TOKEN: secretValue },
+      );
+
+      const written = fs.readFileSync(filePath, "utf-8");
+      expect(written).not.toContain(secretValue);
+      expect(written).toBe("before OVERFLOW_TOKEN=<REDACTED> after");
+    });
   });
 
   describe("cleanupOldOverflowFiles", () => {

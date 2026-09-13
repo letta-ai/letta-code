@@ -28,6 +28,25 @@ Prompt body`;
     expect(body.includes("\r")).toBe(false);
   });
 
+  test("parses bodyless frontmatter without a trailing newline", () => {
+    const { frontmatter, body } = parseFrontmatter(
+      "---\r\nname: reflection\r\nmodel: auto\r\n---",
+    );
+
+    expect(frontmatter.name).toBe("reflection");
+    expect(frontmatter.model).toBe("auto");
+    expect(body).toBe("");
+  });
+
+  test("preserves explicit empty fields", () => {
+    const { frontmatter } = parseFrontmatter(
+      "---\nname: reflection\nmodel:\n---",
+    );
+
+    expect(Object.hasOwn(frontmatter, "model")).toBe(true);
+    expect(frontmatter.model).toBe("");
+  });
+
   test("parses BOM + CRLF frontmatter", () => {
     const content =
       "\uFEFF---\r\nname: reflection\r\ndescription: custom reflection\r\n---\r\nPrompt body";
@@ -37,5 +56,21 @@ Prompt body`;
     expect(frontmatter.name).toBe("reflection");
     expect(frontmatter.description).toBe("custom reflection");
     expect(body).toBe("Prompt body");
+  });
+
+  test("does not flatten nested YAML fields over top-level fields", () => {
+    const { frontmatter } = parseFrontmatter(`---
+name: cua-driver
+description: Drive native GUI applications.
+metadata:
+  openclaw:
+    envVars:
+      - name: CUA_DRIVER_TOKEN
+        description: Required host-generated bearer token.
+---
+Instructions`);
+
+    expect(frontmatter.name).toBe("cua-driver");
+    expect(frontmatter.description).toBe("Drive native GUI applications.");
   });
 });

@@ -8,11 +8,15 @@ import type {
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
+import type { Backend } from "@/backend";
 import { getBackend } from "@/backend";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { debugLog } from "@/utils/debug";
+import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
+import { normalizeReasoningEffortForModel } from "@/utils/openai-reasoning-effort";
 import { isRecord } from "@/utils/type-guards";
 import { getModelContextWindow } from "./available-models";
+import { getModelInfo, type ModelReasoningSelection } from "./model";
 
 type ModelSettings =
   | OpenAIModelSettings
@@ -23,6 +27,8 @@ type ModelSettings =
 function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   return (
     modelHandle.includes("claude-fable-5") ||
+    modelHandle.includes("claude-opus-5") ||
+    modelHandle.includes("claude-sonnet-5") ||
     modelHandle.includes("claude-opus-4-7") ||
     modelHandle.includes("claude-opus-4-8")
   );
@@ -32,48 +38,83 @@ function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
  * Builds model_settings from updateArgs based on provider type.
  * Always ensures parallel_tool_calls is enabled.
  */
-function buildModelSettings(
+export function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
+  localModelCatalog = false,
 ): ModelSettings {
-  // Include our custom ChatGPT OAuth provider (chatgpt-plus-pro)
-  const isOpenAICodex = modelHandle.startsWith("openai-codex/");
+  const explicitProviderType =
+    typeof updateArgs?.provider_type === "string"
+      ? updateArgs.provider_type
+      : undefined;
+  // Include ChatGPT OAuth/Codex providers, including user-defined aliases whose
+  // provider_type is supplied by the server model catalog.
+  const isOpenAICodex =
+    explicitProviderType === "chatgpt_oauth" ||
+    modelHandle.startsWith("openai-codex/");
   const isOpenAI =
+    explicitProviderType === "openai" ||
     modelHandle.startsWith("openai/") ||
     isOpenAICodex ||
     modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
   // Include legacy custom Anthropic OAuth provider (claude-pro-max) and minimax
   const isAnthropic =
+    explicitProviderType === "anthropic" ||
     modelHandle.startsWith("anthropic/") ||
+    modelHandle.startsWith("lc-anthropic/") ||
     modelHandle.startsWith("claude-pro-max/") ||
     modelHandle.startsWith("minimax/");
-  const isZai = modelHandle.startsWith("zai/");
-  const isGoogleAI = modelHandle.startsWith("google_ai/");
-  const isGoogleVertex = modelHandle.startsWith("google_vertex/");
-  const isOpenRouter = modelHandle.startsWith("openrouter/");
-  const isBedrock = modelHandle.startsWith("bedrock/");
+  const isMoonshot =
+    explicitProviderType === "moonshot" ||
+    explicitProviderType === "moonshotai" ||
+    modelHandle.startsWith("moonshot/") ||
+    modelHandle.startsWith("moonshotai/");
+  const isZai =
+    explicitProviderType === "zai" || modelHandle.startsWith("zai/");
+  const isXai =
+    explicitProviderType === "xai" || modelHandle.startsWith("xai/");
+  const isGoogleAI =
+    explicitProviderType === "google_ai" ||
+    modelHandle.startsWith("google_ai/");
+  const isGoogleVertex =
+    explicitProviderType === "google_vertex" ||
+    modelHandle.startsWith("google_vertex/");
+  const isOpenRouter =
+    explicitProviderType === "openrouter" ||
+    modelHandle.startsWith("openrouter/");
+  const isBedrock =
+    explicitProviderType === "bedrock" || modelHandle.startsWith("bedrock/");
 
   let settings: ModelSettings;
 
-  if (isOpenAI || isOpenRouter) {
-    const openaiSettings: OpenAIModelSettings = {
-      provider_type: "openai",
+  if (isMoonshot) {
+    const moonshotSettings: Record<string, unknown> = {
+      provider_type: "moonshot",
       parallel_tool_calls: true,
     };
+    if (typeof updateArgs?.reasoning_effort === "string") {
+      moonshotSettings.reasoning_effort = updateArgs.reasoning_effort;
+    }
+    settings = moonshotSettings;
+  } else if (isOpenAI || isOpenRouter) {
+    const openaiSettings: OpenAIModelSettings = {
+      provider_type: isOpenRouter ? "openrouter" : "openai",
+      parallel_tool_calls: true,
+    } as OpenAIModelSettings;
     if (isOpenAICodex) {
       (openaiSettings as Record<string, unknown>).provider_type =
         "chatgpt_oauth";
     }
-    if (updateArgs?.reasoning_effort) {
-      openaiSettings.reasoning = {
-        reasoning_effort: updateArgs.reasoning_effort as
-          | "none"
-          | "minimal"
-          | "low"
-          | "medium"
-          | "high"
-          | "xhigh",
-      };
+    if (updateArgs && "reasoning_effort" in updateArgs) {
+      (openaiSettings as Record<string, unknown>).reasoning =
+        updateArgs.reasoning_effort === null
+          ? null
+          : {
+              reasoning_effort: normalizeReasoningEffortForModel(
+                modelHandle,
+                String(updateArgs.reasoning_effort),
+              ),
+            };
     }
     const verbosity = updateArgs?.verbosity;
     if (verbosity === "low" || verbosity === "medium" || verbosity === "high") {
@@ -100,7 +141,7 @@ function buildModelSettings(
     if (effort === "low" || effort === "medium" || effort === "high") {
       anthropicSettings.effort = effort;
     } else if (effort === "xhigh") {
-      // "xhigh" is distinct on Fable and Opus 4.7+; older Anthropic models map it to backend "max".
+      // Preserve distinct xhigh on supported newer Anthropic models; legacy models map it to backend max.
       (anthropicSettings as Record<string, unknown>).effort = hasDistinctXHigh
         ? "xhigh"
         : "max";
@@ -129,6 +170,16 @@ function buildModelSettings(
     // Ensure parallel_tool_calls is enabled.
     settings = {
       provider_type: "zai",
+      parallel_tool_calls: true,
+      ...(typeof updateArgs?.reasoning_effort === "string" && {
+        reasoning_effort: updateArgs.reasoning_effort,
+      }),
+    };
+  } else if (isXai) {
+    // xAI is OpenAI-compatible on the wire, but direct xAI handles must route
+    // through provider_type=xai instead of the generic OpenAI fallback.
+    settings = {
+      provider_type: "xai",
       parallel_tool_calls: true,
     };
   } else if (isGoogleAI) {
@@ -191,24 +242,25 @@ function buildModelSettings(
     }
     settings = bedrockSettings;
   } else {
-    // Unknown/BYOK providers (e.g. openai-proxy) — assume OpenAI-compatible
-    const openaiProxySettings: OpenAIModelSettings = {
-      provider_type: "openai",
+    // Preserve runtime provider identity for organization-specific BYOK names.
+    // Only untyped custom handles retain the OpenAI-compatible fallback.
+    const openaiProxySettings = {
+      provider_type: explicitProviderType ?? "openai",
       parallel_tool_calls:
         typeof updateArgs?.parallel_tool_calls === "boolean"
           ? updateArgs.parallel_tool_calls
           : true,
-    };
-    if (updateArgs?.reasoning_effort) {
-      openaiProxySettings.reasoning = {
-        reasoning_effort: updateArgs.reasoning_effort as
-          | "none"
-          | "minimal"
-          | "low"
-          | "medium"
-          | "high"
-          | "xhigh",
-      };
+    } as OpenAIModelSettings;
+    if (updateArgs && "reasoning_effort" in updateArgs) {
+      (openaiProxySettings as Record<string, unknown>).reasoning =
+        updateArgs.reasoning_effort === null
+          ? null
+          : {
+              reasoning_effort: normalizeReasoningEffortForModel(
+                modelHandle,
+                String(updateArgs.reasoning_effort),
+              ),
+            };
     }
     if (typeof updateArgs?.strict === "boolean") {
       (openaiProxySettings as Record<string, unknown>).strict =
@@ -239,16 +291,35 @@ function buildModelSettings(
       updateArgs.capabilities;
   }
 
+  // Local pi-ai reads a provider-neutral effort as well. Cloud-specific
+  // settings for Google/xAI/zAI do not otherwise preserve the selected level.
+  if (
+    localModelCatalog &&
+    (typeof updateArgs?.reasoning_effort === "string" ||
+      updateArgs?.reasoning_effort === null)
+  ) {
+    (settings as Record<string, unknown>).reasoning_effort =
+      updateArgs.reasoning_effort;
+  }
   return settings;
 }
+
+export const __modifyTestUtils = {
+  buildModelSettings,
+  updateArgsForModelSettings,
+};
 
 function updateArgsForModelSettings(
   updateArgs: Record<string, unknown> | undefined,
   options: { useBackendModelCatalog: boolean },
 ): Record<string, unknown> | undefined {
-  if (!options.useBackendModelCatalog || !updateArgs) return updateArgs;
+  if (!updateArgs) return updateArgs;
   return Object.fromEntries(
-    Object.entries(updateArgs).filter(([key]) => key !== "max_output_tokens"),
+    Object.entries(updateArgs).filter(
+      ([key]) =>
+        key !== OPENAI_COMPATIBLE_PROXY_UPDATE_ARG &&
+        (!options.useBackendModelCatalog || key !== "max_output_tokens"),
+    ),
   );
 }
 
@@ -271,24 +342,91 @@ function maxTokensForUpdatePayload(
  * @param agentId - The agent ID
  * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
  * @param updateArgs - Additional config args (context_window, reasoning_effort, enable_reasoner, etc.)
- * @param options - Optional update behavior overrides
  * @returns The updated agent state from the server (includes llm_config and model_settings)
  */
-export interface UpdateAgentLLMConfigOptions {
+export interface UpdateLLMConfigOptions {
+  signal?: AbortSignal;
   /**
-   * When true, do not derive and send a default context_window_limit unless the
-   * caller explicitly supplied updateArgs.context_window. This is for updates to
-   * existing agent/conversation model settings where omitting the field lets the
-   * backend keep its current value.
+   * Context window to send explicitly. Wins over updateArgs.context_window
+   * and catalog derivation on EVERY backend — including local backends, where
+   * updateArgs.context_window is otherwise ignored in favor of the pi model
+   * catalog. Preserve paths (reasoning cycles, resume refresh, conversation
+   * carryover, same-variant /model changes) use this to re-send the current
+   * window (LET-9786).
    */
-  avoidOverwritingExistingContextWindow?: boolean;
+  contextWindowOverride?: number;
+}
+
+/**
+ * Resolve the context window to send with a model-bearing update.
+ *
+ * Always produces a value when one is knowable. The server treats an omitted
+ * context_window_limit as "re-derive from the handle", which clamps to a
+ * legacy 128k global default (LET-9786) — so omission is never a preserve
+ * mechanism. Resolution order:
+ *  1. options.contextWindowOverride (preserve paths; all backends)
+ *  2. updateArgs.context_window (catalog presets; API backends only — local
+ *     backends own token limits via the pi catalog)
+ *  3. models API listing for the handle
+ *  4. registry preset for the handle (API backends)
+ *  5. the current server-side value, re-sent as-is (API backends; last resort
+ *     for uncatalogued/custom handles so the field is still not omitted)
+ */
+async function resolveContextWindowForUpdate(params: {
+  modelHandle: string;
+  updateArgs?: Record<string, unknown>;
+  options?: UpdateLLMConfigOptions;
+  useBackendModelCatalog: boolean;
+  fetchCurrent: () => Promise<number | undefined>;
+}): Promise<number | undefined> {
+  const { modelHandle, updateArgs, options, useBackendModelCatalog } = params;
+  if (typeof options?.contextWindowOverride === "number") {
+    return options.contextWindowOverride;
+  }
+  const presetContextWindow = useBackendModelCatalog
+    ? undefined
+    : (updateArgs?.context_window as number | undefined);
+  if (typeof presetContextWindow === "number") {
+    return presetContextWindow;
+  }
+  const catalogContextWindow = await getModelContextWindow(modelHandle);
+  if (typeof catalogContextWindow === "number") {
+    return catalogContextWindow;
+  }
+  if (useBackendModelCatalog) {
+    // Local backends derive token limits from the pi catalog server-side and
+    // treat an omitted value as "keep current"; no clamp exists there.
+    return undefined;
+  }
+  const registryContextWindow = (
+    getModelInfo(modelHandle)?.updateArgs as
+      | { context_window?: number }
+      | null
+      | undefined
+  )?.context_window;
+  if (typeof registryContextWindow === "number") {
+    return registryContextWindow;
+  }
+  return params.fetchCurrent();
+}
+
+function contextWindowFromEntityRecord(entity: unknown): number | undefined {
+  if (!isRecord(entity)) return undefined;
+  if (typeof entity.context_window_limit === "number") {
+    return entity.context_window_limit;
+  }
+  const llmConfig = entity.llm_config;
+  if (isRecord(llmConfig) && typeof llmConfig.context_window === "number") {
+    return llmConfig.context_window;
+  }
+  return undefined;
 }
 
 export async function updateAgentLLMConfig(
   agentId: string,
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
-  options?: UpdateAgentLLMConfigOptions,
+  options?: UpdateLLMConfigOptions,
 ): Promise<AgentState> {
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
@@ -296,32 +434,35 @@ export async function updateAgentLLMConfig(
   const modelSettings = buildModelSettings(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+    useBackendModelCatalog,
   );
-  const explicitContextWindow = useBackendModelCatalog
-    ? undefined
-    : (updateArgs?.context_window as number | undefined);
-  const shouldAvoidOverwritingExistingContextWindow =
-    options?.avoidOverwritingExistingContextWindow === true;
-  // Resume refresh updates should not implicitly reset context window.
-  const contextWindow =
-    explicitContextWindow ??
-    (!shouldAvoidOverwritingExistingContextWindow
-      ? await getModelContextWindow(modelHandle)
-      : undefined);
+  const contextWindow = await resolveContextWindowForUpdate({
+    modelHandle,
+    updateArgs,
+    options,
+    useBackendModelCatalog,
+    fetchCurrent: async () =>
+      contextWindowFromEntityRecord(await backend.retrieveAgent(agentId)),
+  });
   const hasModelSettings = Object.keys(modelSettings).length > 0;
   const maxTokens = maxTokensForUpdatePayload(updateArgs, {
     useBackendModelCatalog,
   });
 
-  await backend.updateAgent(agentId, {
-    model: modelHandle,
-    ...(hasModelSettings && { model_settings: modelSettings }),
-    ...(contextWindow && { context_window_limit: contextWindow }),
-    ...(maxTokens !== undefined && { max_tokens: maxTokens }),
-  });
+  options?.signal?.throwIfAborted();
+  await backend.updateAgent(
+    agentId,
+    {
+      model: modelHandle,
+      ...(hasModelSettings && { model_settings: modelSettings }),
+      ...(contextWindow && { context_window_limit: contextWindow }),
+      ...(maxTokens !== undefined && { max_tokens: maxTokens }),
+    },
+    ...(options?.signal ? [{ signal: options.signal }] : []),
+  );
 
   const finalAgent = await backend.retrieveAgent(agentId, {
-    include: ["agent.secrets", "agent.tools", "agent.tags"],
+    include: ["agent.tools", "agent.tags"],
   });
   return finalAgent;
 }
@@ -341,7 +482,7 @@ export async function updateConversationLLMConfig(
   conversationId: string,
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
-  options?: UpdateAgentLLMConfigOptions,
+  options?: UpdateLLMConfigOptions,
 ): Promise<Conversation> {
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
@@ -349,17 +490,34 @@ export async function updateConversationLLMConfig(
   const modelSettings = buildModelSettings(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+    useBackendModelCatalog,
   );
-  const explicitContextWindow = useBackendModelCatalog
-    ? undefined
-    : (updateArgs?.context_window as number | undefined);
-  const shouldAvoidOverwritingExistingContextWindow =
-    options?.avoidOverwritingExistingContextWindow === true;
-  const contextWindow =
-    explicitContextWindow ??
-    (!shouldAvoidOverwritingExistingContextWindow
-      ? await getModelContextWindow(modelHandle)
-      : undefined);
+  const contextWindow = await resolveContextWindowForUpdate({
+    modelHandle,
+    updateArgs,
+    options,
+    useBackendModelCatalog,
+    fetchCurrent: async () => {
+      // A conversation without its own override has context_window_limit
+      // null and inherits from its agent — walk up so uncatalogued handles
+      // still never omit the field (LET-9786).
+      const conversation = await backend.retrieveConversation(conversationId);
+      const conversationContextWindow =
+        contextWindowFromEntityRecord(conversation);
+      if (conversationContextWindow !== undefined) {
+        return conversationContextWindow;
+      }
+      const agentId = isRecord(conversation)
+        ? conversation.agent_id
+        : undefined;
+      if (typeof agentId !== "string" || agentId.length === 0) {
+        return undefined;
+      }
+      return contextWindowFromEntityRecord(
+        await backend.retrieveAgent(agentId),
+      );
+    },
+  });
   const hasModelSettings = Object.keys(modelSettings).length > 0;
   const maxTokens = maxTokensForUpdatePayload(updateArgs, {
     useBackendModelCatalog,
@@ -371,7 +529,149 @@ export async function updateConversationLLMConfig(
     ...(maxTokens !== undefined && { max_tokens: maxTokens }),
   } as Parameters<typeof backend.updateConversation>[1];
 
-  return backend.updateConversation(conversationId, payload);
+  options?.signal?.throwIfAborted();
+  return backend.updateConversation(
+    conversationId,
+    payload,
+    ...(options?.signal ? [{ signal: options.signal }] : []),
+  );
+}
+
+export interface ModelConfigUpdate {
+  /** Model handle, e.g. "anthropic/claude-opus-4-8". Omit to keep the current model. */
+  model?: string;
+  /** Reasoning effort tier. Omit to leave reasoning settings untouched. */
+  reasoningEffort?: ModelReasoningSelection;
+  /** Context window limit. Omit to leave the current limit untouched. */
+  contextWindow?: number;
+}
+
+export type ModelConfigTarget =
+  | { scope: "agent"; agentId: string }
+  | { scope: "conversation"; conversationId: string; agentId?: string | null };
+
+function modelHandleFromLlmConfig(
+  llmConfig:
+    | { model?: string | null; model_endpoint_type?: string | null }
+    | null
+    | undefined,
+): string | null {
+  if (!llmConfig) return null;
+  if (llmConfig.model_endpoint_type && llmConfig.model) {
+    return `${llmConfig.model_endpoint_type}/${llmConfig.model}`;
+  }
+  return llmConfig.model ?? null;
+}
+
+async function resolveAgentModelHandle(
+  backend: Backend,
+  agentId: string,
+): Promise<string | null> {
+  const agent = await backend.retrieveAgent(agentId);
+  if (typeof agent.model === "string" && agent.model.length > 0) {
+    return agent.model;
+  }
+  return modelHandleFromLlmConfig(agent.llm_config);
+}
+
+async function resolveCurrentModelHandle(
+  backend: Backend,
+  target: ModelConfigTarget,
+): Promise<string | null> {
+  if (target.scope === "agent") {
+    return resolveAgentModelHandle(backend, target.agentId);
+  }
+  if (target.conversationId !== "default") {
+    const conversation = await backend.retrieveConversation(
+      target.conversationId,
+    );
+    const conversationModel = (conversation as { model?: unknown }).model;
+    if (typeof conversationModel === "string" && conversationModel.length > 0) {
+      return conversationModel;
+    }
+  }
+  return target.agentId
+    ? resolveAgentModelHandle(backend, target.agentId)
+    : null;
+}
+
+/**
+ * Applies a partial model-config update (model, reasoning effort, and/or context
+ * window) without rebuilding settings the caller did not touch.
+ *
+ * - Only `contextWindow`: sends `context_window_limit` alone, preserving the
+ *   current model and model_settings (including reasoning effort).
+ * - `reasoningEffort` without `model`: resolves the current model handle so
+ *   model_settings can be rebuilt for the right provider.
+ * - `model` (with optional effort/context): rebuilds model_settings and derives
+ *   a context window when one is not supplied, matching updateAgentLLMConfig.
+ *
+ * Routes through the supplied backend's updateAgent/updateConversation, so it
+ * works for both local and cloud agents.
+ */
+export async function updateModelConfig(
+  backend: Backend,
+  target: ModelConfigTarget,
+  update: ModelConfigUpdate,
+): Promise<void> {
+  const touchesModelSettings =
+    update.model !== undefined || update.reasoningEffort !== undefined;
+
+  let modelHandle = update.model;
+  if (touchesModelSettings && !modelHandle) {
+    modelHandle =
+      (await resolveCurrentModelHandle(backend, target)) ?? undefined;
+    if (!modelHandle) {
+      throw new Error(
+        "updateModelConfig: cannot change reasoning effort because the current model could not be resolved",
+      );
+    }
+  }
+
+  const useBackendModelCatalog = backend.capabilities.localModelCatalog;
+  const updateArgs =
+    update.reasoningEffort !== undefined
+      ? { reasoning_effort: update.reasoningEffort }
+      : undefined;
+
+  const modelSettings =
+    touchesModelSettings && modelHandle
+      ? buildModelSettings(
+          modelHandle,
+          updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+          useBackendModelCatalog,
+        )
+      : undefined;
+  const hasModelSettings =
+    modelSettings !== undefined && Object.keys(modelSettings).length > 0;
+
+  // Honor an explicit context window regardless of catalog mode; only derive a
+  // default (on model change) when the backend does not own the catalog.
+  const contextWindow =
+    update.contextWindow ??
+    (update.model !== undefined && !useBackendModelCatalog
+      ? await getModelContextWindow(update.model)
+      : undefined);
+
+  const patch = {
+    ...(update.model !== undefined && { model: update.model }),
+    ...(hasModelSettings && { model_settings: modelSettings }),
+    ...(contextWindow !== undefined && { context_window_limit: contextWindow }),
+  };
+
+  if (Object.keys(patch).length === 0) return;
+
+  if (target.scope === "agent") {
+    await backend.updateAgent(
+      target.agentId,
+      patch as Parameters<typeof backend.updateAgent>[1],
+    );
+  } else {
+    await backend.updateConversation(
+      target.conversationId,
+      patch as Parameters<typeof backend.updateConversation>[1],
+    );
+  }
 }
 
 /**
@@ -478,20 +778,16 @@ export async function updateAgentSystemPrompt(
   systemPromptId: string,
 ): Promise<UpdateSystemPromptResult> {
   try {
-    const { isKnownPreset, resolveAndBuildSystemPrompt } = await import(
-      "@/agent/prompt-assets"
+    const { isKnownPreset } = await import("@/agent/prompt-assets");
+    const { resolveAndBuildSystemPrompt } = await import(
+      "@/agent/system-prompt-resolution"
     );
-    const { recordManagedSystemPrompt } = await import(
-      "@/agent/system-prompt-versioning"
-    );
+    const { getMemoryPromptModeForAgent, recordManagedSystemPrompt } =
+      await import("@/agent/system-prompt-versioning");
     const { settingsManager } = await import("@/settings-manager");
 
     const backend = getBackend();
-    const memoryMode = backend.capabilities.localMemfs
-      ? "local-memfs"
-      : settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
-        ? "memfs"
-        : "standard";
+    const memoryMode = getMemoryPromptModeForAgent(agentId);
 
     const systemPromptContent = await resolveAndBuildSystemPrompt(
       systemPromptId,
@@ -526,10 +822,10 @@ export async function updateAgentSystemPrompt(
       }
     }
 
-    // Re-fetch agent to get updated state (include relationships so
-    // callers that rely on agent.tags/tools/secrets aren't broken).
+    // Re-fetch agent to get updated state (include relationships so callers
+    // that rely on agent.tags/tools aren't broken). Secrets use their own API.
     const agent = await backend.retrieveAgent(agentId, {
-      include: ["agent.secrets", "agent.tools", "agent.tags"],
+      include: ["agent.tools", "agent.tags"],
     });
 
     return {
@@ -547,32 +843,33 @@ export async function updateAgentSystemPrompt(
 }
 
 /**
- * Updates an agent's system prompt to swap between full prompt variants when
- * the stored managed prompt hash is known. Custom prompts are already complete and
- * are left unchanged.
+ * Updates an agent's system prompt to the memfs full-prompt variant when
+ * the stored managed prompt hash is known. Custom prompts are already complete
+ * and are left unchanged.
+ *
+ * MemFS cannot be disabled, so there is no path back to the standard variant.
  *
  * @param agentId - The agent ID to update
- * @param enableMemfs - Whether to use the memfs or standard full prompt variant
  * @returns Result with success status and message
  */
 export async function updateAgentSystemPromptMemfs(
   agentId: string,
-  enableMemfs: boolean,
 ): Promise<SystemPromptUpdateResult> {
   try {
     const { settingsManager } = await import("@/settings-manager");
-    const { isKnownPreset, buildSystemPrompt } = await import(
-      "@/agent/prompt-assets"
-    );
-    const { hashSystemPrompt, recordManagedSystemPrompt } = await import(
-      "@/agent/system-prompt-versioning"
-    );
+    const {
+      isKnownPreset,
+      buildSystemPrompt,
+      getSystemPromptVariantContents,
+      SYSTEM_PROMPTS,
+    } = await import("@/agent/prompt-assets");
+    const {
+      getMemoryPromptModeForAgent,
+      hashSystemPrompt,
+      recordManagedSystemPrompt,
+    } = await import("@/agent/system-prompt-versioning");
 
-    const newMode = enableMemfs
-      ? getBackend().capabilities.localMemfs
-        ? "local-memfs"
-        : "memfs"
-      : "standard";
+    const newMode = getMemoryPromptModeForAgent(agentId);
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
       : undefined;
@@ -595,14 +892,15 @@ export async function updateAgentSystemPromptMemfs(
       }
 
       if (!storedHash && settingsManager.isReady) {
-        const currentMode = settingsManager.isMemfsEnabled(agentId)
-          ? getBackend().capabilities.localMemfs
-            ? "local-memfs"
-            : "memfs"
-          : "standard";
-        if (
-          currentSystemPrompt !== buildSystemPrompt(storedPreset, currentMode)
-        ) {
+        const preset = SYSTEM_PROMPTS.find(
+          (candidate) => candidate.id === storedPreset,
+        );
+        const matchesBundledVariant =
+          preset &&
+          getSystemPromptVariantContents(preset).some(
+            (content) => content.trim() === currentSystemPrompt.trim(),
+          );
+        if (!matchesBundledVariant) {
           settingsManager.setSystemPromptCustom(agentId);
           return {
             success: true,
@@ -632,9 +930,7 @@ export async function updateAgentSystemPromptMemfs(
 
     return {
       success: true,
-      message: enableMemfs
-        ? "System prompt updated for memfs memory mode"
-        : "System prompt updated for standard memory mode",
+      message: "System prompt updated for memfs memory mode",
     };
   } catch (error) {
     return {

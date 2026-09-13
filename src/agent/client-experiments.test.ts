@@ -3,13 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getClientDefaultHeaders } from "@/backend/api/client";
-import { experimentManager } from "@/experiments/manager";
 import { settingsManager } from "@/settings-manager";
 
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 const originalApiKey = process.env.LETTA_API_KEY;
-const originalNodeFlag = process.env.LETTA_NODE;
 const originalMemfsBackend = process.env.LETTA_MEMFS_BACKEND;
 
 let testHomeDir = "";
@@ -20,7 +18,6 @@ beforeEach(async () => {
   process.env.HOME = testHomeDir;
   process.env.USERPROFILE = testHomeDir;
   process.env.LETTA_API_KEY = "test-api-key";
-  delete process.env.LETTA_NODE;
   delete process.env.LETTA_MEMFS_BACKEND;
   await settingsManager.initialize();
 });
@@ -45,12 +42,6 @@ afterEach(async () => {
     process.env.LETTA_API_KEY = originalApiKey;
   }
 
-  if (originalNodeFlag === undefined) {
-    delete process.env.LETTA_NODE;
-  } else {
-    process.env.LETTA_NODE = originalNodeFlag;
-  }
-
   if (originalMemfsBackend === undefined) {
     delete process.env.LETTA_MEMFS_BACKEND;
   } else {
@@ -59,24 +50,7 @@ afterEach(async () => {
 });
 
 describe("getClient experiment headers", () => {
-  test("uses LETTA_NODE when no explicit experiment override exists", async () => {
-    process.env.LETTA_NODE = "1";
-
-    expect(getClientDefaultHeaders()["x-letta-node"]).toBe("1");
-  });
-
-  test("sends an explicit off header when the override disables node", async () => {
-    process.env.LETTA_NODE = "1";
-    experimentManager.set("node", false);
-
-    expect(getClientDefaultHeaders()["x-letta-node"]).toBe("0");
-  });
-
-  test("omits the node header when the experiment is default-off", async () => {
-    expect(getClientDefaultHeaders()["x-letta-node"]).toBeUndefined();
-  });
-
-  test("sends hosted backend header when requested", async () => {
+  test("sends hosted backend header when requested", () => {
     process.env.LETTA_MEMFS_BACKEND = "hosted";
 
     expect(getClientDefaultHeaders()["x-letta-memfs-backend"]).toBe("hosted");

@@ -11,12 +11,18 @@
 export type QueuedMessage = {
   kind: "user" | "task_notification";
   text: string;
+  /** Preserve scheduled origin even when its prompt is rendered as user text. */
+  source?: "cron";
   /** Optional parent agent scope for routing in listener mode. */
   agentId?: string;
   /** Optional parent conversation scope for routing in listener mode. */
   conversationId?: string;
+  /** Authenticated human responsible for a notification-triggered turn. */
+  actingUserId?: string;
   /** QueueRuntime-assigned ID for targeted remove/edit operations. */
   queueItemId?: string;
+  /** Parked by Esc; waits for Enter on an empty input or the next message. */
+  paused?: boolean;
 };
 
 type QueueAdder = (message: QueuedMessage) => void;

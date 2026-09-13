@@ -1,6 +1,4 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { getChannelRegistry } from "@/channels/registry";
-import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -9,13 +7,15 @@ import type {
 import { isCoalescable } from "@/queue/queue-runtime";
 import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
-import { resizeImageIfNeeded } from "@/utils/image-resize";
-import {
-  type ImageNormalizationFailureMode,
-  normalizeMessageContentImages as normalizeSharedMessageContentImages,
-} from "@/utils/message-image-normalization";
+import { debugWarn } from "@/utils/debug";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
-import { emitDequeuedUserMessage } from "./protocol-outbound";
+import { getInboundImageFailureMode } from "./image-policy";
+import { getInboundClientMessageIds } from "./inbound-queue";
+import {
+  emitDequeuedUserMessage,
+  emitLoopStatusUpdate,
+  emitQueueUpdate,
+} from "./protocol-outbound";
 import {
   emitListenerStatus,
   evictConversationRuntimeIfIdle,
@@ -24,10 +24,9 @@ import {
   getPendingControlRequestCount,
 } from "./runtime";
 import { resolveRuntimeScope } from "./scope";
-import type { ListenerTransport } from "./transport";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
-  InboundMessagePayload,
   IncomingMessage,
   StartListenerOptions,
 } from "./types";
@@ -103,146 +102,20 @@ function mergeDequeuedBatchContent(
         kind: "cron_prompt",
         text: item.text,
       });
+      continue;
+    }
+    if (item.kind === "mod_continue") {
+      // A continue is plain user text — merge it as user content.
+      queuedInputs.push({
+        kind: "user",
+        content: item.text,
+      });
     }
   }
 
   return mergeQueuedTurnInput(queuedInputs, {
     normalizeUserContent: (content) => content,
   });
-}
-
-function getChannelTurnSourceKey(source: ChannelTurnSource): string {
-  return [
-    source.channel,
-    source.accountId ?? "",
-    source.chatId,
-    source.messageId ?? "",
-    source.threadId ?? "",
-    source.agentId,
-    source.conversationId,
-  ].join(":");
-}
-
-function collectBatchChannelTurnSources(
-  runtime: ConversationRuntime,
-  batch: DequeuedBatch,
-): ChannelTurnSource[] | undefined {
-  const seen = new Set<string>();
-  const sources: ChannelTurnSource[] = [];
-
-  for (const item of batch.items) {
-    const template = runtime.queuedMessagesByItemId.get(item.id);
-    for (const source of template?.channelTurnSources ?? []) {
-      const key = getChannelTurnSourceKey(source);
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      sources.push(source);
-    }
-  }
-
-  return sources.length > 0 ? sources : undefined;
-}
-
-async function dispatchChannelTurnLifecycleEvent(
-  event:
-    | {
-        type: "processing";
-        batchId: string;
-        sources: ChannelTurnSource[];
-      }
-    | {
-        type: "finished";
-        batchId: string;
-        sources: ChannelTurnSource[];
-        outcome: ChannelTurnOutcome;
-        error?: string;
-      },
-): Promise<void> {
-  if (event.sources.length === 0) {
-    return;
-  }
-
-  const registry = getChannelRegistry();
-  if (!registry) {
-    return;
-  }
-
-  if (event.type === "processing") {
-    await registry.dispatchTurnLifecycleEvent(event);
-    return;
-  }
-
-  await registry.dispatchTurnLifecycleEvent({
-    type: "finished",
-    batchId: event.batchId,
-    sources: event.sources,
-    outcome: event.outcome,
-    ...(event.error ? { error: event.error } : {}),
-  });
-}
-
-function mapTurnLifecycleOutcome(
-  lastStopReason: string | null,
-  didThrow: boolean,
-): ChannelTurnOutcome {
-  if (didThrow) {
-    return "error";
-  }
-  if (lastStopReason === "cancelled") {
-    return "cancelled";
-  }
-  if (lastStopReason && lastStopReason !== "end_turn") {
-    return "error";
-  }
-  return "completed";
-}
-
-export async function normalizeMessageContentImages(
-  content: MessageCreate["content"],
-  resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
-  failureMode: ImageNormalizationFailureMode = "strict",
-): Promise<MessageCreate["content"]> {
-  return await normalizeSharedMessageContentImages(
-    content,
-    resize,
-    failureMode,
-  );
-}
-
-export async function normalizeInboundMessages(
-  messages: InboundMessagePayload[],
-  resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
-  options: {
-    imageFailureMode?: ImageNormalizationFailureMode;
-  } = {},
-): Promise<InboundMessagePayload[]> {
-  let didChange = false;
-
-  const normalizedMessages = await Promise.all(
-    messages.map(async (message) => {
-      if (!("content" in message)) {
-        return message;
-      }
-
-      const normalizedContent = await normalizeMessageContentImages(
-        message.content,
-        resize,
-        options.imageFailureMode ?? "strict",
-      );
-      if (normalizedContent !== message.content) {
-        didChange = true;
-        return {
-          ...message,
-          content: normalizedContent,
-        };
-      }
-      return message;
-    }),
-  );
-
-  return didChange ? normalizedMessages : messages;
 }
 
 function getPrimaryQueueMessageItem(items: QueueItem[]): QueueItem | null {
@@ -256,11 +129,10 @@ function getPrimaryQueueMessageItem(items: QueueItem[]): QueueItem | null {
 
 /**
  * Picks an acting cloud user id to attribute the outbound
- * createMessage to. When a batch coalesces messages from multiple
- * users we use the **last enqueued** sender — matches user intuition
- * ("whoever just hit send pays") and matches the seq order the queue
- * already preserves. Returns undefined when no item in the batch
- * carries an actingUserId (self-hosted / pre-channel-split flow).
+ * createMessage to. Queue consumers keep different non-empty acting users in
+ * separate batches; scanning from the end tolerates unattributed items around
+ * the attributed work. Returns undefined when no item in the batch carries an
+ * actingUserId (self-hosted / pre-channel-split flow).
  */
 export function pickBatchActingUserId(items: QueueItem[]): string | undefined {
   for (let i = items.length - 1; i >= 0; i -= 1) {
@@ -276,7 +148,6 @@ function buildQueuedTurnMessage(
   runtime: ConversationRuntime,
   batch: DequeuedBatch,
 ): IncomingMessage | null {
-  const channelTurnSources = collectBatchChannelTurnSources(runtime, batch);
   const actingUserId = pickBatchActingUserId(batch.items);
   const primaryItem = getPrimaryQueueMessageItem(batch.items);
   if (!primaryItem) {
@@ -297,12 +168,12 @@ function buildQueuedTurnMessage(
       type: "message",
       agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
       conversationId: scopeItem?.conversationId ?? runtime.conversationId,
-      ...(channelTurnSources ? { channelTurnSources } : {}),
       ...(actingUserId ? { actingUserId } : {}),
       messages: [
         {
           role: "user",
           content: mergedContent,
+          otid: crypto.randomUUID(),
         } satisfies MessageCreate,
       ],
     };
@@ -341,10 +212,30 @@ function buildQueuedTurnMessage(
 
   return {
     ...template,
-    ...(channelTurnSources ? { channelTurnSources } : {}),
     ...(actingUserId ? { actingUserId } : {}),
     messages,
   };
+}
+
+function getDequeuedClientMessageIds(
+  runtime: ConversationRuntime,
+  batch: DequeuedBatch,
+): string[] {
+  const clientMessageIds = new Set<string>();
+  for (const item of batch.items) {
+    const queuedMessage = runtime.queuedMessagesByItemId.get(item.id);
+    const inboundClientMessageIds = queuedMessage
+      ? getInboundClientMessageIds(queuedMessage)
+      : [];
+    for (const clientMessageId of inboundClientMessageIds.length > 0
+      ? inboundClientMessageIds
+      : item.clientMessageId
+        ? [item.clientMessageId]
+        : []) {
+      clientMessageIds.add(clientMessageId);
+    }
+  }
+  return [...clientMessageIds];
 }
 
 export function shouldQueueInboundMessage(parsed: IncomingMessage): boolean {
@@ -365,19 +256,13 @@ export function shouldProcessInboundMessageDirectly(
     runtime.queuePumpScheduled ||
     runtime.pendingTurns > 0 ||
     runtime.queuedMessagesByItemId.size > 0 ||
-    runtime.isProcessing ||
-    runtime.isRecoveringApprovals ||
-    runtime.cancelRequested ||
+    runtime.turnLifecycle.kind !== "idle" ||
     runtime.pendingApprovalResolvers.size > 0 ||
     runtime.pendingApprovalBatchByToolCallId.size > 0 ||
     runtime.recoveredApprovalState !== null ||
     runtime.pendingInterruptedResults !== null ||
     runtime.pendingInterruptedContext !== null ||
-    runtime.activeExecutingToolCallIds.length > 0 ||
-    (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
-    runtime.activeRunId !== null ||
-    runtime.activeRunStartedAt !== null ||
-    runtime.activeAbortController !== null
+    (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0
   ) {
     return false;
   }
@@ -387,23 +272,23 @@ export function shouldProcessInboundMessageDirectly(
     conversation_id: runtime.conversationId,
   });
   return (
-    getListenerBlockedReason({
-      loopStatus: runtime.loopStatus,
-      isProcessing: runtime.isProcessing,
-      pendingApprovalsLen: activeScope
+    getListenerBlockedReason(
+      runtime.turnLifecycle.snapshot(),
+      activeScope
         ? getPendingControlRequestCount(runtime.listener, activeScope)
         : 0,
-      cancelRequested: runtime.cancelRequested,
-      isRecoveringApprovals: runtime.isRecoveringApprovals,
-    }) === null
+    ) === null
   );
 }
 
-export function consumeQueuedTurn(runtime: ConversationRuntime): {
+export function consumeQueuedTurn(
+  runtime: ConversationRuntime,
+  continuation?: { actingUserId: string | undefined },
+): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;
 } | null {
-  const queuedItems = runtime.queueRuntime.peek();
+  const queuedItems = runtime.queueRuntime.peekReady();
   const firstQueuedItem = queuedItems[0];
   if (!firstQueuedItem || !isCoalescable(firstQueuedItem.kind)) {
     return null;
@@ -413,14 +298,63 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasMessage = false;
   let hasTaskNotification = false;
   let hasCronPrompt = false;
+  let hasModContinue = false;
+  let batchConnectionId: string | undefined;
+  let batchActingUserId = firstQueuedItem.actingUserId;
+  let batchImageFailureMode: "strict" | "drop" | null = null;
+  const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
+    candidate.kind === "message" && candidate.noCoalesce === true;
   for (const item of queuedItems) {
+    // Tool results belong to the active request's sender. Leave a different
+    // sender's input queued for its own turn, including attributed/anonymous
+    // transitions. Idle queue drains do not have an active sender to preserve.
+    if (continuation && item.actingUserId !== continuation.actingUserId) {
+      break;
+    }
     if (
       !isCoalescable(item.kind) ||
       !hasSameQueueScope(firstQueuedItem, item)
     ) {
       break;
     }
+    // noCoalesce items run as single-item batches: one never joins an
+    // existing batch, and nothing joins a batch it started.
+    if (queueLen > 0 && (isNoCoalesce(item) || isNoCoalesce(firstQueuedItem))) {
+      break;
+    }
+    if (
+      batchActingUserId &&
+      item.actingUserId &&
+      batchActingUserId !== item.actingUserId
+    ) {
+      break;
+    }
 
+    if (item.kind === "message") {
+      const itemConnectionId = runtime.queuedMessagesByItemId.get(
+        item.id,
+      )?.connectionId;
+      if (
+        batchConnectionId !== undefined &&
+        itemConnectionId !== undefined &&
+        itemConnectionId !== batchConnectionId
+      ) {
+        break;
+      }
+      batchConnectionId ??= itemConnectionId;
+      const itemImageFailureMode = getInboundImageFailureMode(
+        runtime.queuedMessagesByItemId.get(item.id),
+      );
+      if (
+        batchImageFailureMode !== null &&
+        itemImageFailureMode !== batchImageFailureMode
+      ) {
+        break;
+      }
+      batchImageFailureMode = itemImageFailureMode;
+    }
+
+    batchActingUserId ??= item.actingUserId;
     queueLen += 1;
     if (item.kind === "message") {
       hasMessage = true;
@@ -431,10 +365,16 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     if (item.kind === "cron_prompt") {
       hasCronPrompt = true;
     }
+    if (item.kind === "mod_continue") {
+      hasModContinue = true;
+    }
   }
 
   if (
-    (!hasMessage && !hasTaskNotification && !hasCronPrompt) ||
+    (!hasMessage &&
+      !hasTaskNotification &&
+      !hasCronPrompt &&
+      !hasModContinue) ||
     queueLen === 0
   ) {
     return null;
@@ -445,9 +385,16 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     return null;
   }
 
+  const clientMessageIds = getDequeuedClientMessageIds(runtime, dequeuedBatch);
   const queuedTurn = buildQueuedTurnMessage(runtime, dequeuedBatch);
   if (!queuedTurn) {
     return null;
+  }
+  if (clientMessageIds.length > 0) {
+    runtime.dequeuedClientMessageIdsByBatchId.set(
+      dequeuedBatch.batchId,
+      clientMessageIds,
+    );
   }
 
   return {
@@ -463,15 +410,36 @@ function computeListenerQueueBlockedReason(
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,
   });
-  return getListenerBlockedReason({
-    loopStatus: runtime.loopStatus,
-    isProcessing: runtime.isProcessing,
-    pendingApprovalsLen: activeScope
+  return getListenerBlockedReason(
+    runtime.turnLifecycle.snapshot(),
+    activeScope
       ? getPendingControlRequestCount(runtime.listener, activeScope)
       : 0,
-    cancelRequested: runtime.cancelRequested,
-    isRecoveringApprovals: runtime.isRecoveringApprovals,
-  });
+  );
+}
+
+/**
+ * Turn-boundary status re-emit (LET-11174). Queue frames are emitted only on
+ * change and loop frames only on transition, so one lost frame leaves
+ * downstream status consumers stale until the next change happens to land.
+ * Re-sending the full snapshot at turn start and turn end bounds any silent
+ * frame loss to a single turn. Both frames coalesce as status-class snapshots
+ * on the outbound wire, so unchanged re-emits cost at most one extra frame
+ * each per boundary.
+ */
+function emitTurnBoundaryStatus(
+  runtime: ConversationRuntime,
+  socket: ListenerTransport,
+): void {
+  if (!isListenerTransportOpen(socket)) {
+    return;
+  }
+  const scope = {
+    agent_id: runtime.agentId,
+    conversation_id: runtime.conversationId,
+  };
+  emitQueueUpdate(socket, runtime, scope);
+  emitLoopStatusUpdate(socket, runtime, scope);
 }
 
 async function drainQueuedMessages(
@@ -503,15 +471,24 @@ async function drainQueuedMessages(
         return;
       }
 
+      if (runtime.queueRuntime.readyLength === 0) {
+        // Only interrupt-parked user messages remain: report it once and wait
+        // for resume_queue or the next inbound message.
+        if (runtime.queueRuntime.length > 0) {
+          runtime.queueRuntime.tryDequeue("paused_by_user");
+        }
+        return;
+      }
+
       const consumedQueuedTurn = consumeQueuedTurn(runtime);
       if (!consumedQueuedTurn) {
         return;
       }
 
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-      const channelTurnSources = queuedTurn.channelTurnSources ?? [];
-
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
+      // Turn start boundary: unconditional snapshot even when nothing changed.
+      emitTurnBoundaryStatus(runtime, socket);
 
       const preTurnStatus =
         getListenerStatus(runtime.listener) === "processing"
@@ -524,49 +501,15 @@ async function drainQueuedMessages(
         runtime.listener.lastEmittedStatus = preTurnStatus;
         opts.onStatusChange?.(preTurnStatus, opts.connectionId);
       }
-      if (channelTurnSources.length > 0) {
-        await dispatchChannelTurnLifecycleEvent({
-          type: "processing",
-          batchId: dequeuedBatch.batchId,
-          sources: channelTurnSources,
-        });
-      }
-
-      let turnError: string | undefined;
-      let didThrow = false;
-      runtime.activeChannelTurnSources = channelTurnSources;
-      try {
-        await processQueuedTurn(queuedTurn, dequeuedBatch);
-      } catch (error) {
-        didThrow = true;
-        turnError = error instanceof Error ? error.message : String(error);
-        throw error;
-      } finally {
-        runtime.activeChannelTurnSources = null;
-        if (channelTurnSources.length > 0) {
-          const outcome = mapTurnLifecycleOutcome(
-            runtime.lastStopReason,
-            didThrow,
-          );
-          const lifecycleError =
-            turnError ??
-            (outcome === "error"
-              ? (runtime.lastTerminalLoopErrorMessage ?? undefined)
-              : undefined);
-          await dispatchChannelTurnLifecycleEvent({
-            type: "finished",
-            batchId: dequeuedBatch.batchId,
-            sources: channelTurnSources,
-            outcome,
-            ...(lifecycleError ? { error: lifecycleError } : {}),
-          });
-        }
-      }
+      await processQueuedTurn(queuedTurn, dequeuedBatch);
       emitListenerStatus(
         runtime.listener,
         opts.onStatusChange,
         opts.connectionId,
       );
+      // Turn end boundary: repair any queue/loop frame the turn's own
+      // change-driven emissions failed to deliver.
+      emitTurnBoundaryStatus(runtime, socket);
       evictConversationRuntimeIfIdle(runtime);
     }
   } finally {
@@ -593,7 +536,8 @@ export function scheduleQueuePump(
       runtime.queuePumpScheduled = false;
       if (
         runtime.listener !== getActiveRuntime() ||
-        runtime.listener.intentionallyClosed
+        runtime.listener.intentionallyClosed ||
+        !isListenerTransportOpen(socket)
       ) {
         return;
       }
@@ -606,7 +550,7 @@ export function scheduleQueuePump(
         error,
         context: "listener_queue_pump",
       });
-      console.error("[Listen] Error in queue pump:", error);
+      debugWarn("Listen", "Error in queue pump:", error);
       emitListenerStatus(
         runtime.listener,
         opts.onStatusChange,

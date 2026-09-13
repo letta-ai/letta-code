@@ -7,7 +7,7 @@ function printUsage(): void {
 Usage:
   letta setup
 
-Re-run the interactive setup menu to choose local mode or Login to Constellation.
+Re-run the interactive setup menu to choose local mode or sign in with Letta.
 `.trim(),
   );
 }

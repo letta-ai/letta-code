@@ -1,11 +1,16 @@
 import { recompileAgentSystemPrompt } from "@/agent/modify";
 import { isDebugEnabled } from "@/utils/debug";
+import { buildAgentTerminalLink, isLocalAgentId } from "./app-urls";
 import {
   estimateSystemTokens,
   setSystemPromptDoctorState,
 } from "./system-prompt-warning";
 
 export type MemorySubagentType = "init" | "reflection";
+
+export type MemorySubagentSuccessMessageOverride =
+  | string
+  | ((args: { action: string; defaultMessage: string }) => string);
 
 type RecompileAgentSystemPromptFn = (
   conversationId: string,
@@ -19,6 +24,9 @@ export interface MemorySubagentCompletionArgs {
   subagentType: MemorySubagentType;
   success: boolean;
   error?: string;
+  subagentAgentId?: string;
+  skipRecompile?: boolean;
+  successMessageOverride?: MemorySubagentSuccessMessageOverride;
 }
 
 export interface MemorySubagentCompletionDeps {
@@ -37,11 +45,17 @@ export async function handleMemorySubagentCompletion(
   deps: MemorySubagentCompletionDeps,
 ): Promise<string> {
   const { agentId, conversationId, subagentType, success, error } = args;
+  const subagentLink = args.subagentAgentId
+    ? buildAgentTerminalLink(args.subagentAgentId, undefined, "Dreamed")
+    : null;
+  const canLinkSubagent = args.subagentAgentId
+    ? !isLocalAgentId(args.subagentAgentId)
+    : false;
   const recompileAgentSystemPromptFn =
     deps.recompileAgentSystemPromptImpl ?? recompileAgentSystemPrompt;
   let recompileError: string | null = null;
 
-  if (success) {
+  if (success && !args.skipRecompile) {
     try {
       let inFlight = deps.recompileByConversation.get(conversationId);
 
@@ -83,6 +97,14 @@ export async function handleMemorySubagentCompletion(
 
   if (!success) {
     if (subagentType === "reflection") {
+      if (args.successMessageOverride) {
+        const action =
+          subagentLink && canLinkSubagent ? subagentLink : "Dreamed";
+        const defaultMessage = `${action} and made some memories.`;
+        return typeof args.successMessageOverride === "function"
+          ? args.successMessageOverride({ action, defaultMessage })
+          : args.successMessageOverride;
+      }
       const detail = isDebugEnabled() ? `: ${error || "Unknown error"}` : "";
       return `Tried to reflect, but got lost in the palace${detail}`;
     }
@@ -90,10 +112,20 @@ export async function handleMemorySubagentCompletion(
     return `Memory initialization failed: ${normalizedError}`;
   }
 
-  const baseMessage =
+  const action =
+    subagentType === "reflection" && subagentLink && canLinkSubagent
+      ? subagentLink
+      : subagentType === "reflection"
+        ? "Dreamed"
+        : "Built";
+  const defaultMessage =
     subagentType === "reflection"
-      ? "Reflected on /palace, the halls remember more now."
+      ? `${action} and made some memories.`
       : "Built a memory palace of you. Visit it with /palace.";
+  const baseMessage =
+    typeof args.successMessageOverride === "function"
+      ? args.successMessageOverride({ action, defaultMessage })
+      : (args.successMessageOverride ?? defaultMessage);
 
   if (!recompileError) {
     return baseMessage;

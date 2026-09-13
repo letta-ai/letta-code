@@ -62,9 +62,9 @@ test("Handle whitespace in tool list", () => {
 });
 
 test("tracks memory guard disabled state", () => {
-  expect(cliPermissions.isMemoryGuardDisabled()).toBe(true);
-  cliPermissions.setMemoryGuardDisabled(false);
   expect(cliPermissions.isMemoryGuardDisabled()).toBe(false);
+  cliPermissions.setMemoryGuardDisabled(true);
+  expect(cliPermissions.isMemoryGuardDisabled()).toBe(true);
 });
 
 test("stores singleton on global symbol for bundled duplicate modules", () => {
@@ -75,9 +75,9 @@ test("stores singleton on global symbol for bundled duplicate modules", () => {
 });
 
 test("clear resets disable-memory-guard CLI override", () => {
-  cliPermissions.setMemoryGuardDisabled(false);
+  cliPermissions.setMemoryGuardDisabled(true);
   cliPermissions.clear();
-  expect(cliPermissions.isMemoryGuardDisabled()).toBe(true);
+  expect(cliPermissions.isMemoryGuardDisabled()).toBe(false);
 });
 
 // ============================================================================
@@ -236,6 +236,21 @@ test("disallowedTools denies tool", () => {
 
   expect(result.decision).toBe("deny");
   expect(result.matchedRule).toBe("WebFetch (CLI)");
+  expect(result.reason).toBe("Matched --disallowedTools flag");
+});
+
+test("disallowedTools denies Monitor command sources by tool name", () => {
+  cliPermissions.setDisallowedTools("Monitor");
+
+  const result = checkPermission(
+    "Monitor",
+    { command: "node watch-build.js" },
+    { allow: ["Bash(node:*)"], deny: [], ask: [] },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("deny");
+  expect(result.matchedRule).toBe("Monitor (CLI)");
   expect(result.reason).toBe("Matched --disallowedTools flag");
 });
 

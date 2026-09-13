@@ -1,4 +1,5 @@
 Runs a shell command and returns its output.
+- Provide the required `description` field as a clear, concise user-facing status label for what the command does.
 - Always set the `workdir` param when using the shell_command function. Do not use `cd` unless absolutely necessary.
 
 # Committing changes with git

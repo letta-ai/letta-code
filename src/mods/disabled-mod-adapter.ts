@@ -20,14 +20,11 @@ function createDisabledModRegistry(): LocalModRegistry {
     ownerAbortControllers: {},
     owners: {},
     permissions: {},
+    registerCapabilitiesGlobally: false,
     sources: [],
     tools: {},
     ui: {
       panels: {},
-      statusRecorders: {},
-      statuslineRenderer: null,
-      statusOwners: {},
-      statusValues: {},
     },
   };
 }
@@ -58,7 +55,7 @@ export function createDisabledModAdapter() {
   const registry = createDisabledModRegistry();
   const engine = createDisabledModEngine(registry);
   const snapshot = {
-    hadStatuslineRenderer: false,
+    hadModPanels: false,
     hasModSources: false,
     isLoading: false,
     registry,
@@ -72,6 +69,12 @@ export function createDisabledModAdapter() {
   return {
     dispose() {},
     events,
+    getAvailablePermissions() {
+      return new Map();
+    },
+    getAvailableTools() {
+      return new Map();
+    },
     getBackend() {
       return undefined;
     },

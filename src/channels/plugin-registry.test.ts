@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { __testOverrideChannelsRoot } from "@/channels/config";
 import {
   buildDynamicMessageChannelSchema,
-  clearDynamicMessageChannelToolCache,
+  clearMessageChannelDiscoveryErrors,
 } from "@/channels/message-tool";
 import {
   __testClearUserChannelPluginCache,
@@ -74,13 +74,13 @@ beforeEach(() => {
   channelsRoot = mkdtempSync(join(tmpdir(), "letta-channel-plugins-"));
   __testOverrideChannelsRoot(channelsRoot);
   __testClearUserChannelPluginCache();
-  clearDynamicMessageChannelToolCache();
+  clearMessageChannelDiscoveryErrors();
 });
 
 afterEach(() => {
   __testOverrideChannelsRoot(null);
   __testClearUserChannelPluginCache();
-  clearDynamicMessageChannelToolCache();
+  clearMessageChannelDiscoveryErrors();
   rmSync(channelsRoot, { recursive: true, force: true });
 });
 

@@ -8,12 +8,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { getChannelDir, getChannelRoutingPath } from "./config";
-import type { ChannelRoute } from "./types";
+import { resolveChannelRouteThreadKey } from "./route-thread-key";
+import { normalizeTelegramChatId } from "./telegram/chat-id";
+import type { ChannelRoute, InboundChannelMessage } from "./types";
 
 // ── In-memory store ───────────────────────────────────────────────
 
 /** Key: "channel:chatId" */
 const routesByKey = new Map<string, ChannelRoute>();
+const routeChangeListeners = new Set<(channelId: string) => void>();
 
 let loadRoutesOverride: ((channelId: string) => ChannelRoute[] | null) | null =
   null;
@@ -22,9 +25,15 @@ function normalizeAccountId(accountId?: string): string {
   return accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
 }
 
-function normalizeThreadId(threadId?: string | null): string {
-  const trimmed = threadId?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : "__root__";
+export function subscribeChannelRoutesChanged(
+  listener: (channelId: string) => void,
+): () => void {
+  routeChangeListeners.add(listener);
+  return () => routeChangeListeners.delete(listener);
+}
+
+function notifyChannelRoutesChanged(channelId: string): void {
+  for (const listener of routeChangeListeners) listener(channelId);
 }
 
 function routeKey(
@@ -33,10 +42,28 @@ function routeKey(
   accountId?: string,
   threadId?: string | null,
 ): string {
-  return `${channel}:${normalizeAccountId(accountId)}:${chatId}:${normalizeThreadId(threadId)}`;
+  return `${channel}:${normalizeAccountId(accountId)}:${chatId}:${resolveChannelRouteThreadKey(threadId)}`;
 }
 
 // ── Load/save ─────────────────────────────────────────────────────
+
+/** Read the current persisted routes without merging into the process cache. */
+export function readRoutes(channelId: string): ChannelRoute[] {
+  if (loadRoutesOverride) {
+    return loadRoutesOverride(channelId) ?? getRoutesForChannel(channelId);
+  }
+  try {
+    const text = readFileSync(getChannelRoutingPath(channelId), "utf-8");
+    const parsed = JSON.parse(text) as { routes?: ChannelRoute[] };
+    return Array.isArray(parsed.routes)
+      ? parsed.routes.filter(
+          (route) => route?.chatId && route.agentId && route.conversationId,
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Load routing table from disk for a given channel.
@@ -67,6 +94,8 @@ export function loadRoutes(channelId: string): void {
             agentId: route.agentId,
             conversationId: route.conversationId,
             enabled: route.enabled !== false,
+            outboundEnabled: route.outboundEnabled !== false,
+            detached: route.detached === true,
             createdAt: route.createdAt ?? new Date().toISOString(),
             updatedAt:
               route.updatedAt ?? route.createdAt ?? new Date().toISOString(),
@@ -81,9 +110,7 @@ export function loadRoutes(channelId: string): void {
   if (!existsSync(path)) return;
 
   try {
-    const text = readFileSync(path, "utf-8");
-    const parsed = JSON.parse(text) as { routes?: ChannelRoute[] };
-    const routes = parsed.routes ?? [];
+    const routes = readRoutes(channelId);
 
     for (const route of routes) {
       if (route.chatId && route.agentId && route.conversationId) {
@@ -97,6 +124,8 @@ export function loadRoutes(channelId: string): void {
             agentId: route.agentId,
             conversationId: route.conversationId,
             enabled: route.enabled !== false,
+            outboundEnabled: route.outboundEnabled !== false,
+            detached: route.detached === true,
             createdAt: route.createdAt ?? new Date().toISOString(),
             updatedAt:
               route.updatedAt ?? route.createdAt ?? new Date().toISOString(),
@@ -177,6 +206,56 @@ export function getRouteRaw(
   return routesByKey.get(routeKey(channel, chatId, accountId, threadId));
 }
 
+type InboundRouteMessage = Pick<
+  InboundChannelMessage,
+  "channel" | "chatId" | "chatType" | "threadId"
+>;
+
+function selectRoute(
+  route: ChannelRoute | undefined,
+  includeDisabled: boolean,
+): ChannelRoute | null {
+  if (!route || (!includeDisabled && route.enabled === false)) return null;
+  return route;
+}
+
+export function getRouteForInboundMessage(
+  msg: InboundRouteMessage,
+  accountId?: string,
+  options: { includeDisabled?: boolean } = {},
+): ChannelRoute | null {
+  const includeDisabled = options.includeDisabled === true;
+  const exactRoute = getRouteRaw(
+    msg.channel,
+    msg.chatId,
+    accountId,
+    msg.threadId,
+  );
+  if (exactRoute) return selectRoute(exactRoute, includeDisabled);
+  if (
+    msg.channel !== "telegram" ||
+    msg.chatType !== "direct" ||
+    !msg.threadId?.trim()
+  ) {
+    return null;
+  }
+  return selectRoute(
+    getRouteRaw(msg.channel, msg.chatId, accountId, null),
+    includeDisabled,
+  );
+}
+
+export function loadRouteForInboundMessage(
+  msg: InboundRouteMessage,
+  accountId?: string,
+  options?: { includeDisabled?: boolean },
+): ChannelRoute | null {
+  const route = getRouteForInboundMessage(msg, accountId, options);
+  if (route) return route;
+  loadRoutes(msg.channel);
+  return getRouteForInboundMessage(msg, accountId, options);
+}
+
 /**
  * Get all routes for a channel.
  */
@@ -210,15 +289,22 @@ export function getAllRoutes(): ChannelRoute[] {
  * Add or update a route. Automatically saves to disk.
  */
 export function addRoute(channelId: string, route: ChannelRoute): void {
+  const chatId =
+    channelId === "telegram"
+      ? normalizeTelegramChatId(route.chatId)
+      : route.chatId;
   routesByKey.set(
-    routeKey(channelId, route.chatId, route.accountId, route.threadId),
+    routeKey(channelId, chatId, route.accountId, route.threadId),
     {
       ...route,
+      chatId,
       accountId: normalizeAccountId(route.accountId),
       threadId: route.threadId ?? null,
+      outboundEnabled: route.outboundEnabled !== false,
     },
   );
   saveRoutes(channelId);
+  notifyChannelRoutesChanged(channelId);
 }
 
 /**
@@ -234,6 +320,7 @@ export function removeRoute(
   const existed = routesByKey.delete(key);
   if (existed) {
     saveRoutes(channelId);
+    notifyChannelRoutesChanged(channelId);
   }
   return existed;
 }
@@ -262,6 +349,7 @@ export function setRouteInMemory(channelId: string, route: ChannelRoute): void {
       ...route,
       accountId: normalizeAccountId(route.accountId),
       threadId: route.threadId ?? null,
+      outboundEnabled: route.outboundEnabled !== false,
     },
   );
 }
@@ -293,6 +381,7 @@ export function removeRoutesForScope(
   }
   if (removed > 0) {
     saveRoutes(channelId);
+    notifyChannelRoutesChanged(channelId);
   }
   return removed;
 }
@@ -311,6 +400,7 @@ export function removeRoutesForAccount(
   }
   if (removed > 0) {
     saveRoutes(channelId);
+    notifyChannelRoutesChanged(channelId);
   }
   return removed;
 }

@@ -5,6 +5,7 @@ import {
   isConnectBedrockProvider,
   isConnectOAuthProvider,
   listConnectProvidersForHelp,
+  listConnectProviderTokens,
   resolveConnectProvider,
 } from "@/cli/commands/connect-normalize";
 
@@ -49,6 +50,25 @@ describe("connect provider normalization", () => {
     expect(isConnectOAuthProvider(resolved)).toBe(true);
   });
 
+  test("resolves OpenRouter API-key and OAuth cloud providers separately", () => {
+    const apiKey = resolveConnectProvider("openrouter", "api");
+    const oauth = resolveConnectProvider("openrouter-oauth", "api");
+
+    expect(apiKey?.byokProvider).toMatchObject({
+      id: "openrouter",
+      providerType: "openrouter",
+      providerName: "lc-openrouter",
+    });
+    expect(apiKey?.byokProvider.isOAuth).not.toBe(true);
+    expect(oauth?.byokProvider).toMatchObject({
+      id: "openrouter-oauth",
+      providerType: "openrouter",
+      providerName: "openrouter-oauth",
+      isOAuth: true,
+      oauthProviderId: "openrouter",
+    });
+  });
+
   test("resolves standard api-key providers", () => {
     const anthropic = resolveConnectProvider("anthropic", "api");
     const openrouter = resolveConnectProvider("openrouter", "api");
@@ -62,6 +82,19 @@ describe("connect provider normalization", () => {
 
     expect(openrouter?.canonical).toBe("openrouter");
     expect(isConnectApiKeyProvider(openrouter)).toBe(true);
+  });
+
+  test("resolves OpenAI-compatible API provider", () => {
+    const resolved = resolveConnectProvider("openai-compatible", "api");
+
+    if (!resolved) {
+      throw new Error("Expected openai-compatible provider to resolve");
+    }
+
+    expect(resolved.canonical).toBe("openai-compatible");
+    expect(resolved.byokProvider.providerType).toBe("openai");
+    expect(resolved.byokProvider.providerName).toBe("lc-openai-compatible");
+    expect(isConnectApiKeyProvider(resolved)).toBe(true);
   });
 
   test("resolves bedrock as non-api-key provider", () => {
@@ -112,6 +145,21 @@ describe("connect provider normalization", () => {
         expect(lmstudio.byokProvider.providerType).toBe("lmstudio_openai");
         expect(defaultConnectApiKey(llamaCpp)).toBe("not-needed");
         expect(llamaCpp.canonical).toBe("llama-cpp");
+
+        const openAICompatible = resolveConnectProvider(
+          "openai-compatible",
+          "local",
+        );
+        if (!openAICompatible) {
+          throw new Error(
+            "Expected local openai-compatible provider to resolve",
+          );
+        }
+        expect(openAICompatible.canonical).toBe("openai-compatible");
+        expect(openAICompatible.byokProvider.providerType).toBe(
+          "openai-compatible",
+        );
+        expect(defaultConnectApiKey(openAICompatible)).toBe("not-needed");
       },
     );
   });
@@ -119,8 +167,9 @@ describe("connect provider normalization", () => {
   test("resolves local subscription providers from the pi OAuth catalog", () => {
     const anthropicOAuth = resolveConnectProvider("anthropic-oauth", "local");
     const githubCopilot = resolveConnectProvider("github-copilot", "local");
+    const grok = resolveConnectProvider("grok", "local");
 
-    if (!anthropicOAuth || !githubCopilot) {
+    if (!anthropicOAuth || !githubCopilot || !grok) {
       throw new Error("Expected local OAuth providers to resolve");
     }
 
@@ -128,6 +177,16 @@ describe("connect provider normalization", () => {
     expect(anthropicOAuth.byokProvider.oauthProviderId).toBe("anthropic");
     expect(isConnectOAuthProvider(githubCopilot)).toBe(true);
     expect(githubCopilot.byokProvider.oauthProviderId).toBe("github-copilot");
+    expect(grok.canonical).toBe("xai");
+    expect(grok.byokProvider).toMatchObject({
+      displayName: "xAI (Grok/X subscription)",
+      providerType: "xai",
+      providerName: "xai",
+      isOAuth: true,
+      oauthProviderId: "xai",
+    });
+    expect(listConnectProviderTokens("local")).toContain("grok");
+    expect(listConnectProviderTokens("api")).not.toContain("grok");
   });
 
   test("uses environment keys before API-key optional defaults", () => {

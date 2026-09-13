@@ -19,6 +19,7 @@ import {
 } from "@/headless-mod-adapter";
 import { LETTA_DISABLE_MODS_ENV } from "@/mods/disable";
 import { clearModTools, getModToolDefinition } from "@/mods/tool-registry";
+import { settingsManager } from "@/settings-manager";
 import { executeTool } from "@/tools/manager";
 
 function readHeadlessSource(): string {
@@ -41,13 +42,13 @@ describe("headless mod adapter", () => {
         lifecycle: true,
         tools: true,
         turns: true,
+        compact: true,
+        llm: true,
       },
       permissions: true,
       providers: true,
       ui: {
         panels: false,
-        statusValues: false,
-        customStatuslineRenderer: false,
       },
     });
   });
@@ -163,7 +164,6 @@ describe("headless mod adapter", () => {
       expect(snapshot.tools[toolName]).toBeDefined();
       expect(snapshot.commands).toEqual({});
       expect(snapshot.ui.panels).toEqual({});
-      expect(snapshot.ui.statusValues).toEqual({});
       expect(getModToolDefinition(toolName)).toBeDefined();
 
       const prepared =
@@ -196,6 +196,90 @@ describe("headless mod adapter", () => {
       adapter.dispose();
       expect(getModToolDefinition(toolName)).toBeUndefined();
     } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("loads agent mod source from MemFS when enabled", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "letta-headless-agent-mods-"));
+    const originalIsMemfsEnabled = settingsManager.isMemfsEnabled;
+    const originalLocalBackendFlag =
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+    const originalLocalBackendDir = process.env.LETTA_LOCAL_BACKEND_DIR;
+    const agent = {
+      id: "agent-1",
+      name: "Amelia",
+      llm_config: { model: "anthropic/claude-sonnet-4" },
+    } as AgentState;
+    const backend = {
+      forkConversation: async () => ({ id: "forked" }),
+      sendMessageStream: async () => (async function* () {})(),
+    } as unknown as Backend;
+    const storageDir = path.join(root, "local-backend");
+    const agentModsDir = path.join(
+      storageDir,
+      "memfs",
+      agent.id,
+      "memory",
+      "mods",
+    );
+    const modPath = path.join(agentModsDir, "headless-agent-tool.ts");
+
+    try {
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+      process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+      (settingsManager as typeof settingsManager).isMemfsEnabled = (agentId) =>
+        agentId === agent.id;
+
+      mkdirSync(agentModsDir, { recursive: true });
+      writeFileSync(
+        modPath,
+        `export default function activate(letta) {
+          letta.tools.register({
+            name: "headless_agent_tool",
+            description: "Agent-scoped headless tool",
+            parameters: { type: "object", properties: {} },
+            run() { return "agent"; },
+          });
+        }`,
+      );
+
+      const adapter = createHeadlessModAdapter({
+        agent,
+        backend,
+        cacheDirectory: path.join(root, "mod-cache"),
+        conversationId: "default",
+        globalModsDirectory: path.join(root, "global-mods"),
+      });
+
+      await adapter.reload();
+      const snapshot = adapter.getSnapshot().registry;
+
+      expect(snapshot.sources.map((source) => source.scope)).toEqual([
+        "global",
+        "agent",
+      ]);
+      expect(snapshot.loadedPaths).toEqual([modPath]);
+      expect(snapshot.tools.headless_agent_tool).toMatchObject({
+        description: "Agent-scoped headless tool",
+        owner: { path: modPath, scope: "agent" },
+      });
+
+      adapter.dispose();
+      expect(getModToolDefinition("headless_agent_tool")).toBeUndefined();
+    } finally {
+      (settingsManager as typeof settingsManager).isMemfsEnabled =
+        originalIsMemfsEnabled;
+      if (originalLocalBackendFlag === undefined) {
+        delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+      } else {
+        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = originalLocalBackendFlag;
+      }
+      if (originalLocalBackendDir === undefined) {
+        delete process.env.LETTA_LOCAL_BACKEND_DIR;
+      } else {
+        process.env.LETTA_LOCAL_BACKEND_DIR = originalLocalBackendDir;
+      }
       rmSync(root, { force: true, recursive: true });
     }
   });
@@ -253,7 +337,6 @@ describe("headless mod adapter", () => {
       expect(snapshot.registry.loadedPaths).toEqual([]);
       expect(snapshot.registry.commands).toEqual({});
       expect(snapshot.registry.tools).toEqual({});
-      expect(snapshot.registry.ui.statuslineRenderer).toBeNull();
       expect(getModToolDefinition(toolName)).toBeUndefined();
       expect(process.env[LETTA_DISABLE_MODS_ENV]).toBe("1");
 

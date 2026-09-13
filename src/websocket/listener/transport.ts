@@ -14,7 +14,14 @@ export interface LocalTransport {
   send(data: string): void;
 }
 
-export type ListenerTransport = WebSocket | LocalTransport;
+export interface RuntimeTransport {
+  readonly kind: "runtime";
+  readonly bufferedAmount: number;
+  isOpen(): boolean;
+  send(data: string): void;
+}
+
+export type ListenerTransport = WebSocket | LocalTransport | RuntimeTransport;
 
 export class LocalListenerTransport implements LocalTransport {
   readonly kind = "local" as const;
@@ -39,6 +46,6 @@ export function isListenerTransportOpen(transport: ListenerTransport): boolean {
 
 export function getListenerTransportKind(
   transport: ListenerTransport,
-): "websocket" | "local" {
+): "websocket" | "local" | "runtime" {
   return "kind" in transport ? transport.kind : "websocket";
 }

@@ -6,6 +6,8 @@ import {
   registerSubagent,
   updateSubagent,
 } from "@/agent/subagent-state";
+import type { SubagentResult } from "@/agent/subagents";
+import { runWithRuntimeContext } from "@/runtime-context";
 import {
   __resetBackgroundRetentionConfigForTests,
   __setBackgroundRetentionConfigForTests,
@@ -14,15 +16,14 @@ import {
 import {
   spawnBackgroundSubagentTask,
   waitForBackgroundSubagentAgentId,
+  waitForBackgroundSubagentConversationId,
   waitForBackgroundSubagentLink,
 } from "@/tools/impl/task";
+import type { QueuedMessage } from "@/utils/message-queue-bridge";
 
 describe("spawnBackgroundSubagentTask", () => {
   let subagentCounter = 0;
-  const queueMessages: Array<{
-    kind: "user" | "task_notification";
-    text: string;
-  }> = [];
+  const queueMessages: QueuedMessage[] = [];
 
   const generateSubagentIdImpl = () => {
     subagentCounter += 1;
@@ -60,10 +61,7 @@ describe("spawnBackgroundSubagentTask", () => {
     agents: [buildSnapshot("subagent-test-1")],
     expanded: false,
   });
-  const addToMessageQueueImpl = (msg: {
-    kind: "user" | "task_notification";
-    text: string;
-  }) => {
+  const addToMessageQueueImpl = (msg: QueuedMessage) => {
     queueMessages.push(msg);
   };
   const formatTaskNotificationImpl = mock(
@@ -110,6 +108,7 @@ describe("spawnBackgroundSubagentTask", () => {
 
     const launched = spawnBackgroundSubagentTask({
       subagentType: "reflection",
+      displayType: "reflection integration",
       prompt: "Reflect",
       description: "Reflect on memory",
       deps: {
@@ -127,7 +126,13 @@ describe("spawnBackgroundSubagentTask", () => {
     expect(launched.taskId).toMatch(/^task_\d+$/);
     expect(launched.subagentId).toBe("subagent-test-1");
     expect(backgroundTasks.get(launched.taskId)?.status).toBe("running");
+    expect(backgroundTasks.get(launched.taskId)?.displayType).toBe(
+      "reflection integration",
+    );
     expect(registerSubagentImpl).toHaveBeenCalledTimes(1);
+    expect(registerSubagentImpl.mock.calls[0]?.[1]).toBe(
+      "reflection integration",
+    );
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -148,6 +153,98 @@ describe("spawnBackgroundSubagentTask", () => {
     const outputContent = readFileSync(launched.outputFile, "utf-8");
     expect(outputContent).toContain("[Task started: Reflect on memory]");
     expect(outputContent).toContain("[Task completed]");
+  });
+
+  test("keeps launch-time acting user through delayed completion", async () => {
+    let resolveSpawn: ((result: SubagentResult) => void) | undefined;
+    const spawnSubagentImpl = mock(
+      (..._args: unknown[]) =>
+        new Promise<SubagentResult>((resolve) => {
+          resolveSpawn = resolve;
+        }),
+    );
+
+    const launched = runWithRuntimeContext(
+      { actingUserId: "cloud-user-a" },
+      () =>
+        spawnBackgroundSubagentTask({
+          subagentType: "general-purpose",
+          prompt: "Investigate",
+          description: "Investigate billing",
+          parentScope: {
+            agentId: "agent-parent",
+            conversationId: "conv-parent",
+          },
+          deps: {
+            spawnSubagentImpl,
+            copyGitHubPullRequestTagsImpl: async () => {},
+            addToMessageQueueImpl,
+            formatTaskNotificationImpl,
+            runSubagentStopHooksImpl,
+            generateSubagentIdImpl,
+            registerSubagentImpl,
+            completeSubagentImpl,
+            getSubagentSnapshotImpl,
+          },
+        }),
+    );
+
+    expect(backgroundTasks.get(launched.taskId)?.actingUserId).toBe(
+      "cloud-user-a",
+    );
+    expect(spawnSubagentImpl.mock.calls[0]?.[15]).toBe("cloud-user-a");
+
+    runWithRuntimeContext({ actingUserId: "cloud-user-b" }, () => {
+      resolveSpawn?.({
+        agentId: "agent-child",
+        conversationId: "conv-child",
+        report: "done",
+        success: true,
+      });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(queueMessages).toHaveLength(1);
+    expect(queueMessages[0]?.actingUserId).toBe("cloud-user-a");
+  });
+
+  test("copies PR tags from the Agent conversation to its parent", async () => {
+    const spawnSubagentImpl = mock(async () => ({
+      agentId: "agent-child",
+      conversationId: "conv-child",
+      report: "PR opened",
+      success: true,
+      totalTokens: 21,
+    }));
+    const copyGitHubPullRequestTagsImpl = mock(async () => {});
+
+    spawnBackgroundSubagentTask({
+      subagentType: "fork",
+      prompt: "Open the PR",
+      description: "Open PR",
+      parentScope: {
+        agentId: "agent-parent",
+        conversationId: "conv-parent",
+      },
+      deps: {
+        spawnSubagentImpl,
+        copyGitHubPullRequestTagsImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(copyGitHubPullRequestTagsImpl).toHaveBeenCalledWith(
+      "conv-child",
+      "conv-parent",
+    );
   });
 
   test("silentCompletion skips message queue notification", async () => {
@@ -316,6 +413,40 @@ describe("spawnBackgroundSubagentTask", () => {
     ]);
   });
 
+  test("passes the resolved subagent model to onComplete", async () => {
+    const spawnSubagentImpl = mock(async () => ({
+      agentId: "agent-model",
+      conversationId: "default",
+      model: "letta/auto-memory",
+      report: "reflection done",
+      success: true,
+    }));
+    const onComplete = mock(() => {});
+
+    spawnBackgroundSubagentTask({
+      subagentType: "reflection",
+      prompt: "Reflect",
+      description: "Reflect on memory",
+      onComplete,
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "letta/auto-memory" }),
+    );
+  });
+
   test("continues queue notification and hooks when onComplete throws", async () => {
     const spawnSubagentImpl = mock(async () => ({
       agentId: "agent-oncomplete-error",
@@ -480,7 +611,7 @@ describe("waitForBackgroundSubagentLink", () => {
 
     setTimeout(() => {
       updateSubagent("subagent-link-1", {
-        agentURL: "https://app.letta.com/chat/agent-123",
+        agentURL: "https://chat.letta.com/chat/agent-123",
       });
     }, 20);
 
@@ -508,7 +639,7 @@ describe("waitForBackgroundSubagentLink", () => {
     setTimeout(() => {
       updateSubagent("subagent-link-3", {
         agentId: "agent-123",
-        agentURL: "https://app.letta.com/chat/agent-123",
+        agentURL: "https://chat.letta.com/chat/agent-123",
       });
     }, 20);
 
@@ -529,5 +660,45 @@ describe("waitForBackgroundSubagentLink", () => {
     );
 
     expect(agentId).toBeNull();
+  });
+
+  test("returns the conversation id after the subagent publishes it", async () => {
+    registerSubagent(
+      "subagent-link-5",
+      "general-purpose",
+      "Integrate",
+      "tc-5",
+      true,
+    );
+
+    setTimeout(() => {
+      updateSubagent("subagent-link-5", {
+        conversationId: "conv-integration-123",
+      });
+    }, 20);
+
+    const conversationId = await waitForBackgroundSubagentConversationId(
+      "subagent-link-5",
+      300,
+    );
+
+    expect(conversationId).toBe("conv-integration-123");
+  });
+
+  test("returns null when the conversation id is unavailable", async () => {
+    registerSubagent(
+      "subagent-link-6",
+      "general-purpose",
+      "Integrate",
+      "tc-6",
+      true,
+    );
+
+    const conversationId = await waitForBackgroundSubagentConversationId(
+      "subagent-link-6",
+      70,
+    );
+
+    expect(conversationId).toBeNull();
   });
 });

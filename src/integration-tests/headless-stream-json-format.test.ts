@@ -32,7 +32,8 @@ async function runHeadlessCommandOnce(
         "run",
         "dev",
         "--new-agent",
-        "--no-memfs",
+        "--memfs-startup",
+        "skip",
         "-p",
         prompt,
         "--output-format",
@@ -184,6 +185,7 @@ describe("stream-json format", () => {
       expect(init.type).toBe("system");
       expect(init.subtype).toBe("init");
       expect(init.agent_id).toBeDefined();
+      if (!init.agent_id) throw new Error("init agent_id not found");
       expect(init.session_id).toBe(init.agent_id); // session_id should equal agent_id
       expect(init.model).toBeDefined();
       expect(init.tools).toBeInstanceOf(Array);
@@ -240,6 +242,7 @@ describe("stream-json format", () => {
       expect(result.subtype).toBe("success");
       expect(result.session_id).toBeDefined();
       expect(result.agent_id).toBeDefined();
+      if (!result.agent_id) throw new Error("result agent_id not found");
       expect(result.session_id).toBe(result.agent_id);
       expect(result.duration_ms).toBeGreaterThan(0);
       expect(result.uuid).toContain("result-");

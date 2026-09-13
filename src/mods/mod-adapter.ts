@@ -1,4 +1,5 @@
 import type { Backend } from "@/backend";
+import { resolveProcessModCapabilities } from "@/mods/capabilities";
 import { areModsDisabled, disableModsForProcess } from "@/mods/disable";
 import { createDisabledModAdapter } from "@/mods/disabled-mod-adapter";
 import { emptyEventEmissionResult, type ModEvents } from "@/mods/event-emitter";
@@ -11,12 +12,21 @@ import {
   type ResolveLocalModSourcesOptions,
   resolveLocalModSources,
 } from "@/mods/mod-engine";
+import {
+  filterAvailableModPermissionsRegistry,
+  type ModPermissionDefinition,
+} from "@/mods/permission-registry";
+import {
+  filterAvailableModToolsRegistry,
+  type ModToolDefinition,
+} from "@/mods/tool-registry";
+import type { ModContext } from "@/mods/types";
 import { debugLog } from "@/utils/debug";
 
 const RUNTIME_DIAGNOSTICS_WRITE_DELAY_MS = 30_000;
 
 export interface ModAdapterLoadState {
-  hadStatuslineRenderer: boolean;
+  hadModPanels: boolean;
   hasModSources: boolean;
   isLoading: boolean;
 }
@@ -34,6 +44,12 @@ export interface CreateModAdapterOptions extends CreateModEngineOptions {
 export interface ModAdapter {
   dispose: () => void;
   events: ModEvents;
+  getAvailablePermissions: (
+    context?: ModContext | null,
+  ) => Map<string, ModPermissionDefinition>;
+  getAvailableTools: (
+    context?: ModContext | null,
+  ) => Map<string, ModToolDefinition>;
   getBackend: () => Backend | undefined;
   getSnapshot: () => ModAdapterSnapshot;
   engine: ModEngine;
@@ -64,10 +80,15 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
     return createDisabledModAdapter();
   }
 
+  const effectiveEngineOptions = {
+    ...engineOptions,
+    capabilities: resolveProcessModCapabilities(engineOptions.capabilities),
+  };
+
   let disposed = false;
-  const initialHasModSources = hasModSources(engineOptions);
+  const initialHasModSources = hasModSources(effectiveEngineOptions);
   let loadState: ModAdapterLoadState = {
-    hadStatuslineRenderer: false,
+    hadModPanels: false,
     hasModSources: initialHasModSources,
     isLoading: initialHasModSources,
   };
@@ -77,7 +98,7 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
   const getBackend = () => resolveBackend?.();
 
   const engine = createModEngine({
-    ...engineOptions,
+    ...effectiveEngineOptions,
     getBackend,
     onDiagnostic: () => scheduleDiagnosticsWrite(),
   });
@@ -158,12 +179,12 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
     clearPendingDiagnosticsWrite();
 
     const previousSnapshot = engine.getSnapshot();
-    const previousHadStatuslineRenderer =
-      Boolean(previousSnapshot.ui.statuslineRenderer) ||
-      loadState.hadStatuslineRenderer;
+    const previousHadModPanels =
+      Object.keys(previousSnapshot.ui.panels).length > 0 ||
+      loadState.hadModPanels;
     loadState = {
-      hadStatuslineRenderer: previousHadStatuslineRenderer,
-      hasModSources: hasModSources(engineOptions),
+      hadModPanels: previousHadModPanels,
+      hasModSources: hasModSources(effectiveEngineOptions),
       isLoading: true,
     };
     publish();
@@ -176,10 +197,10 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
 
     debugLog(
       "mods",
-      "loaded %s mod(s) from %s source(s); renderer=%s",
+      "loaded %s mod(s) from %s source(s); panels=%s",
       nextRegistry.loadedPaths.length,
       nextRegistry.sources.length,
-      nextRegistry.ui.statuslineRenderer?.id ?? "(none)",
+      Object.keys(nextRegistry.ui.panels).length,
     );
 
     for (const diagnostic of getModErrorDiagnostics(nextRegistry.diagnostics)) {
@@ -198,7 +219,7 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
     }
 
     loadState = {
-      hadStatuslineRenderer: Boolean(nextRegistry.ui.statuslineRenderer),
+      hadModPanels: Object.keys(nextRegistry.ui.panels).length > 0,
       hasModSources: nextRegistry.sources.some(
         (source) => source.files.length > 0,
       ),
@@ -217,6 +238,18 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
       listeners.clear();
     },
     events,
+    getAvailablePermissions(context) {
+      return filterAvailableModPermissionsRegistry(
+        new Map(Object.entries(engine.getSnapshot().permissions)),
+        context,
+      );
+    },
+    getAvailableTools(context) {
+      return filterAvailableModToolsRegistry(
+        new Map(Object.entries(engine.getSnapshot().tools)),
+        context,
+      );
+    },
     getBackend,
     getSnapshot,
     engine,

@@ -1,7 +1,17 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type WebSocket from "ws";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
+import { TOOLSET_OPTIONS } from "@/tools/toolset-options";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { createListenerMessageHandler } from "@/websocket/listener/message-router";
+import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
+import { resetRemoteSettingsCache } from "@/websocket/listener/remote-settings";
 import type {
   IncomingMessage,
   ListenerRuntime,
@@ -46,7 +56,6 @@ function makeHandler(
     },
     runDetachedListenerTask: () => {},
     trackListenerError: () => {},
-    wireChannelIngress: async () => {},
     ...overrides,
   });
 }
@@ -54,6 +63,45 @@ function makeHandler(
 describe("listener protocol ergonomics", () => {
   afterEach(() => {
     __listenClientTestUtils.setActiveRuntime(null);
+  });
+
+  test("parses legacy environment messages as runtime-scoped input", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "message",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          messages: [
+            {
+              type: "message",
+              role: "user",
+              content: "hello from cloud-api environment router",
+              client_message_id: "cm-1",
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(parsed).toEqual({
+      type: "input",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      payload: {
+        kind: "create_message",
+        messages: [
+          {
+            type: "message",
+            role: "user",
+            content: "hello from cloud-api environment router",
+            client_message_id: "cm-1",
+          },
+        ],
+        client_tool_allowlist: undefined,
+        client_toolset: undefined,
+        external_tool_scope_ids: undefined,
+      },
+    });
   });
 
   test("sync sends an ack response when request_id is provided", async () => {
@@ -78,7 +126,12 @@ describe("listener protocol ergonomics", () => {
       runtime,
       expect.anything(),
       { agent_id: "agent-1", conversation_id: "default" },
-      { recoverApprovals: false, forceDeviceStatus: true },
+      {
+        recoverApprovals: false,
+        forceDeviceStatus: true,
+        onStatusChange: undefined,
+        connectionId: "conn-test",
+      },
     );
     expect(sent).toContainEqual({
       type: "sync_response",
@@ -86,6 +139,134 @@ describe("listener protocol ergonomics", () => {
       runtime: { agent_id: "agent-1", conversation_id: "default" },
       success: true,
     });
+  });
+
+  test.each([
+    { backend: "api", supported: true },
+    { backend: "local", supported: false },
+  ] as const)(
+    "teleport probe on $backend backend",
+    async ({ backend, supported }) => {
+      const previousBackend = resolveBackendMode();
+      setConfiguredBackendMode(backend);
+      try {
+        const runtime = __listenClientTestUtils.createListenerRuntime();
+        const sent: unknown[] = [];
+
+        await makeHandler(
+          runtime,
+          sent,
+        )(
+          Buffer.from(
+            JSON.stringify({
+              type: "teleport_probe",
+              request_id: "probe-1",
+              runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+            }),
+          ),
+        );
+
+        expect(sent).toContainEqual({
+          type: "teleport_probe_response",
+          request_id: "probe-1",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          supported,
+          drains_accepted_inputs: true,
+          idempotent_continuation: true,
+        });
+      } finally {
+        setConfiguredBackendMode(previousBackend);
+      }
+    },
+  );
+
+  test("teleport continuation resumes with tool results and hidden destination context", async () => {
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+    const conversationRuntime =
+      __listenClientTestUtils.getOrCreateScopedRuntime(
+        runtime,
+        "agent-1",
+        "conv-1",
+      );
+    const sent: unknown[] = [];
+    const receivedIncoming: IncomingMessage[] = [];
+    const processIncomingMessage = mock(async (incoming: IncomingMessage) => {
+      receivedIncoming.push(incoming);
+    });
+    let detachedTask: Promise<void> | null = null;
+    __listenClientTestUtils.setActiveRuntime(runtime);
+
+    await makeHandler(runtime, sent, {
+      getParsedRuntimeScope: () => ({
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+      }),
+      getOrCreateScopedRuntime: () => conversationRuntime,
+      processIncomingMessage,
+      runDetachedListenerTask: (_name, task) => {
+        detachedTask = task();
+      },
+    })(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          request_id: "continue-1",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "teleport_continue",
+            teleport_id: "teleport-1",
+            source: {
+              device_id: "source-device",
+              connection_name: "Laptop",
+            },
+            continuation: {
+              approvals: [
+                {
+                  type: "tool",
+                  tool_call_id: "call-1",
+                  status: "success",
+                  tool_return: "done",
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    );
+    await detachedTask;
+
+    expect(sent).toContainEqual({
+      type: "input_accepted",
+      request_id: "continue-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      accepted: true,
+      disposition: "started",
+    });
+    const incoming = receivedIncoming[0];
+    expect(incoming?.messages).toHaveLength(2);
+    expect(incoming?.messages[0]).toMatchObject({
+      type: "approval",
+      otid: "teleport-1",
+      approvals: [
+        {
+          type: "tool",
+          tool_call_id: "call-1",
+          status: "success",
+          tool_return: "done",
+        },
+      ],
+    });
+    expect(incoming?.messages[1]).toEqual({
+      role: "system",
+      content:
+        "<system-reminder>Teleportation to this environment is complete. Continue the existing task from this environment now.</system-reminder>",
+      otid: "teleport-1:continue",
+    });
+    expect(
+      incoming?.messages.some(
+        (message) => "role" in message && message.role === "user",
+      ),
+    ).toBe(false);
   });
 
   test("sync request_id gets a failure response when the listener is inactive", async () => {
@@ -163,5 +344,209 @@ describe("listener protocol ergonomics", () => {
       aborted: false,
       success: true,
     });
+  });
+
+  test("get_cwd_map prunes stale active and non-active cwd entries before responding", async () => {
+    const originalHome = process.env.HOME;
+    const tempRoot = await mkdtemp(path.join(tmpdir(), "letta-cwd-map-"));
+    const fakeHome = path.join(tempRoot, "home");
+    const liveDir = path.join(tempRoot, "live");
+    const deletedActiveDir = path.join(tempRoot, "deleted-active");
+    const filePath = path.join(tempRoot, "not-a-directory");
+
+    try {
+      await mkdir(fakeHome);
+      process.env.HOME = fakeHome;
+      resetRemoteSettingsCache();
+      const runtime = __listenClientTestUtils.createListenerRuntime();
+      const sent: unknown[] = [];
+      await mkdir(liveDir);
+      await mkdir(deletedActiveDir);
+      await writeFile(filePath, "not a directory");
+      await rm(deletedActiveDir, { recursive: true, force: true });
+
+      __listenClientTestUtils.getOrCreateScopedRuntime(
+        runtime,
+        "agent-1",
+        "conv-active",
+      );
+      runtime.workingDirectoryByConversation.set(
+        "conversation:conv-active",
+        deletedActiveDir,
+      );
+      runtime.workingDirectoryByConversation.set(
+        "conversation:conv-file",
+        filePath,
+      );
+      runtime.workingDirectoryByConversation.set(
+        "conversation:conv-live",
+        liveDir,
+      );
+
+      await makeHandler(
+        runtime,
+        sent,
+      )(
+        Buffer.from(
+          JSON.stringify({
+            type: "get_cwd_map",
+            request_id: "cwd-map-1",
+          }),
+        ),
+      );
+
+      expect(sent).toContainEqual({
+        type: "get_cwd_map_response",
+        request_id: "cwd-map-1",
+        success: true,
+        cwd_map: {
+          "conversation:conv-live": liveDir,
+        },
+        boot_working_directory: runtime.bootWorkingDirectory,
+      });
+      expect(
+        Object.fromEntries(runtime.workingDirectoryByConversation),
+      ).toEqual({
+        "conversation:conv-live": liveDir,
+      });
+      const persistedSettings = JSON.parse(
+        await readFile(
+          path.join(fakeHome, ".letta", "remote-settings.json"),
+          "utf-8",
+        ),
+      );
+      expect(persistedSettings.cwdMap).toEqual({
+        "conversation:conv-live": liveDir,
+      });
+    } finally {
+      resetRemoteSettingsCache();
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("unscoped device_status cwd_map prunes stale entries but preserves valid cwd entries", async () => {
+    const originalHome = process.env.HOME;
+    const tempRoot = await mkdtemp(
+      path.join(tmpdir(), "letta-device-cwd-map-"),
+    );
+    const fakeHome = path.join(tempRoot, "home");
+    const liveDir = path.join(tempRoot, "live");
+    const deletedActiveDir = path.join(tempRoot, "deleted-active");
+    const filePath = path.join(tempRoot, "not-a-directory");
+
+    try {
+      await mkdir(fakeHome);
+      process.env.HOME = fakeHome;
+      resetRemoteSettingsCache();
+      const runtime = __listenClientTestUtils.createListenerRuntime();
+      await mkdir(liveDir);
+      await mkdir(deletedActiveDir);
+      await writeFile(filePath, "not a directory");
+      await rm(deletedActiveDir, { recursive: true, force: true });
+
+      __listenClientTestUtils.getOrCreateScopedRuntime(
+        runtime,
+        "agent-1",
+        "conv-active",
+      );
+      runtime.workingDirectoryByConversation.set(
+        "conversation:conv-active",
+        deletedActiveDir,
+      );
+      runtime.workingDirectoryByConversation.set(
+        "conversation:conv-file",
+        filePath,
+      );
+      runtime.workingDirectoryByConversation.set(
+        "conversation:conv-live",
+        liveDir,
+      );
+
+      const status = __listenClientTestUtils.buildDeviceStatus(runtime);
+
+      expect(status.current_working_directory).toBe(
+        runtime.bootWorkingDirectory,
+      );
+      expect(status.cwd_map).toEqual({
+        "conversation:conv-live": liveDir,
+      });
+      expect(
+        Object.fromEntries(runtime.workingDirectoryByConversation),
+      ).toEqual({
+        "conversation:conv-live": liveDir,
+      });
+    } finally {
+      resetRemoteSettingsCache();
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("repairs a deleted boot cwd before reporting or using it", () => {
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+    const missingBootDirectory = path.join(
+      tmpdir(),
+      `letta-missing-boot-${crypto.randomUUID()}`,
+    );
+    runtime.bootWorkingDirectory = missingBootDirectory;
+
+    const status = __listenClientTestUtils.buildDeviceStatus(runtime);
+
+    expect(status.current_working_directory).not.toBe(missingBootDirectory);
+    expect(status.boot_working_directory).toBe(runtime.bootWorkingDirectory);
+    expect(status.current_working_directory).toBe(runtime.bootWorkingDirectory);
+    expect(runtime.workingDirectoryRevision).toBe(1);
+  });
+
+  test("advertises the toolsets supported by this listener", () => {
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    const status = __listenClientTestUtils.buildDeviceStatus(runtime);
+
+    expect(status.available_toolsets).toEqual([...TOOLSET_OPTIONS]);
+    expect(status.available_toolsets).toContainEqual({
+      id: "letta",
+      display_name: "Letta",
+      label: "Letta toolset",
+      description: "Experimental unified toolset for every model",
+      is_featured: true,
+    });
+  });
+
+  test("reports the skills prepared for the active conversation", () => {
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+    const conversationRuntime =
+      __listenClientTestUtils.getOrCreateScopedRuntime(
+        runtime,
+        "agent-1",
+        "conv-1",
+      );
+    conversationRuntime.currentAvailableSkills = [
+      {
+        id: "searching-and-viewing-slack",
+        name: "searching-and-viewing-slack",
+        description: "Search Slack from a managed computer.",
+        path: "/root/.letta/cloud-skills/searching-and-viewing-slack/SKILL.md",
+        source: "project",
+      },
+    ];
+
+    const status = __listenClientTestUtils.buildDeviceStatus(runtime, {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    });
+
+    expect(status.current_available_skills).toEqual(
+      conversationRuntime.currentAvailableSkills,
+    );
   });
 });

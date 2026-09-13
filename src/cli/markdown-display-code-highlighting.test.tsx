@@ -99,7 +99,7 @@ test("markdown renders indented fenced code blocks inside list items", async () 
   const output = await renderMarkdown(
     [
       "1. Immediately, via the tool result",
-      "   CreateWorktree returns text like:",
+      "   EnterWorktree returns text like:",
       "   ```txt",
       "   Created worktree.",
       "",

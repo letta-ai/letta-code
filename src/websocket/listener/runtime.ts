@@ -1,12 +1,15 @@
 import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { createSharedReminderState } from "@/reminders/state";
 import type { PendingControlRequest } from "@/types/protocol_v2";
+import { getWorkingDirectoryScopeKey } from "./cwd";
 import {
   normalizeConversationId,
   normalizeCwdAgentId,
   resolveScopedAgentId,
   resolveScopedConversationId,
 } from "./scope";
+import { releaseListenerTurnContext } from "./turn-context";
+import { TurnLifecycle } from "./turn-lifecycle";
 import type {
   ConversationRuntime,
   ListenerRuntime,
@@ -55,12 +58,106 @@ export function clearRuntimeTimers(runtime: ListenerRuntime): void {
   }
 }
 
+/**
+ * How long an evicted conversation's worktree watcher may stay alive waiting
+ * for the conversation to come back. Runtime eviction is routine (it fires
+ * after every quiescent turn), and the watcher's job is to track worktree
+ * changes for an attached client *between* turns — so it must survive
+ * eviction, but not for the life of the process. Without this, one live
+ * fs.watch loop accumulates per conversation ever touched (LET-10138).
+ */
+export const WORKTREE_WATCHER_IDLE_STOP_MS = 30 * 60 * 1000;
+
+type WatcherIdleStop = {
+  timer: ReturnType<typeof setTimeout>;
+  /** Structural view of WorktreeWatcherState; a type import would cycle. */
+  watcher: { abort: AbortController };
+};
+
+const watcherIdleStopsByListener = new WeakMap<
+  ListenerRuntime,
+  Map<string, WatcherIdleStop>
+>();
+
+function scheduleWorktreeWatcherIdleStop(
+  listener: ListenerRuntime,
+  runtime: ConversationRuntime,
+): void {
+  const scopeKey = getWorkingDirectoryScopeKey(
+    runtime.agentId,
+    runtime.conversationId,
+  );
+  const watcher = listener.worktreeWatcherByConversation.get(scopeKey);
+  if (!watcher) return;
+
+  let stops = watcherIdleStopsByListener.get(listener);
+  if (!stops) {
+    stops = new Map();
+    watcherIdleStopsByListener.set(listener, stops);
+  }
+  const existing = stops.get(scopeKey);
+  if (existing) {
+    if (existing.watcher === watcher) return;
+    clearTimeout(existing.timer);
+  }
+
+  const timer = setTimeout(() => {
+    fireWatcherIdleStop(listener, scopeKey, watcher);
+  }, WORKTREE_WATCHER_IDLE_STOP_MS);
+  (timer as { unref?: () => void }).unref?.();
+  stops.set(scopeKey, { timer, watcher });
+}
+
+function fireWatcherIdleStop(
+  listener: ListenerRuntime,
+  scopeKey: string,
+  watcher: WatcherIdleStop["watcher"],
+): void {
+  watcherIdleStopsByListener.get(listener)?.delete(scopeKey);
+  // Only stop the watcher this timer was scheduled for; a CWD change may
+  // have replaced it with a fresh one that is still in use.
+  if (listener.worktreeWatcherByConversation.get(scopeKey) === watcher) {
+    watcher.abort.abort();
+    listener.worktreeWatcherByConversation.delete(scopeKey);
+  }
+}
+
+export const __watcherIdleStopTestUtils = {
+  /** Fire every pending idle stop immediately (tests cannot wait 30 minutes). */
+  firePending(listener: ListenerRuntime): void {
+    const stops = watcherIdleStopsByListener.get(listener);
+    if (!stops) return;
+    for (const [scopeKey, pending] of [...stops.entries()]) {
+      clearTimeout(pending.timer);
+      fireWatcherIdleStop(listener, scopeKey, pending.watcher);
+    }
+  },
+  hasPending(listener: ListenerRuntime, scopeKey: string): boolean {
+    return watcherIdleStopsByListener.get(listener)?.has(scopeKey) ?? false;
+  },
+};
+
+/** The conversation is active again: keep its worktree watcher running. */
+function cancelWorktreeWatcherIdleStop(
+  listener: ListenerRuntime,
+  agentId?: string | null,
+  conversationId?: string | null,
+): void {
+  const stops = watcherIdleStopsByListener.get(listener);
+  if (!stops) return;
+  const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
+  const pending = stops.get(scopeKey);
+  if (pending) {
+    clearTimeout(pending.timer);
+    stops.delete(scopeKey);
+  }
+}
+
 export function evictConversationRuntimeIfIdle(
   runtime: ConversationRuntime,
 ): boolean {
   if (
-    runtime.isProcessing ||
-    runtime.isRecoveringApprovals ||
+    runtime.turnLifecycle.kind !== "idle" ||
     runtime.queuePumpActive ||
     runtime.queuePumpScheduled ||
     runtime.pendingTurns > 0 ||
@@ -69,14 +166,12 @@ export function evictConversationRuntimeIfIdle(
     runtime.recoveredApprovalState !== null ||
     runtime.pendingInterruptedResults !== null ||
     runtime.pendingInterruptedContext !== null ||
-    runtime.activeExecutingToolCallIds.length > 0 ||
     (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
-    runtime.activeRunId !== null ||
-    runtime.activeRunStartedAt !== null ||
-    runtime.activeAbortController !== null ||
-    runtime.cancelRequested ||
     runtime.queuedMessagesByItemId.size > 0 ||
-    runtime.queueRuntime?.length > 0
+    runtime.queueRuntime?.length > 0 ||
+    ((runtime.workspaceSandbox !== undefined ||
+      runtime.executionSettings !== undefined) &&
+      runtime.listener.connectionIdsByRuntimeKey.has(runtime.key))
   ) {
     return false;
   }
@@ -86,12 +181,7 @@ export function evictConversationRuntimeIfIdle(
   }
 
   runtime.listener.conversationRuntimes.delete(runtime.key);
-  for (const [requestId, runtimeKey] of runtime.listener
-    .approvalRuntimeKeyByRequestId) {
-    if (runtimeKey === runtime.key) {
-      runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
-    }
-  }
+  scheduleWorktreeWatcherIdleStop(runtime.listener, runtime);
   if (
     runtime.listener.pendingQueueEmitScope?.agent_id === runtime.agentId &&
     normalizeConversationId(
@@ -108,7 +198,7 @@ export function getListenerStatus(
 ): "idle" | "receiving" | "processing" {
   let hasPendingTurns = false;
   for (const runtime of listener.conversationRuntimes.values()) {
-    if (runtime.isProcessing || runtime.isRecoveringApprovals) {
+    if (runtime.isProcessing) {
       return "processing";
     }
     if (runtime.pendingTurns > 0) {
@@ -154,40 +244,66 @@ export function createConversationRuntime(
     normalizedAgentId,
     normalizedConversationId,
   );
+  cancelWorktreeWatcherIdleStop(
+    listener,
+    normalizedAgentId,
+    normalizedConversationId,
+  );
+  const turnLifecycle = new TurnLifecycle();
   const conversationRuntime: ConversationRuntime = {
     listener,
     key: runtimeKey,
     agentId: normalizedAgentId,
     conversationId: normalizedConversationId,
-    activeChannelTurnSources: null,
+    skillSources: listener.skillSourcesByConversation.get(runtimeKey)?.slice(),
+    workspaceSandbox: undefined,
+    activeConnectionId: null,
+    turnLifecycle,
     messageQueue: Promise.resolve(),
+    acceptedInputDispositions: new Map(),
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
-    lastStopReason: null,
+    syncApprovalRecoveryCompleted: false,
+    expectedTeleportId: null,
+    expectedTeleportExpiresAt: null,
+    get lastStopReason() {
+      return turnLifecycle.lastStopReason;
+    },
     lastTerminalLoopErrorMessage: null,
-    isProcessing: false,
-    activeWorkingDirectory: null,
+    lastTerminalLoopErrorRunId: null,
+    get isProcessing() {
+      return turnLifecycle.isProcessing;
+    },
+    get activeWorkingDirectory() {
+      return turnLifecycle.activeWorkingDirectory;
+    },
     expectedWorktreePath: null,
     expectedWorktreeExpiresAt: null,
-    activeRunId: null,
-    activeRunStartedAt: null,
-    activeAbortController: null,
-    cancelRequested: false,
+    get activeRunId() {
+      return turnLifecycle.activeRunId;
+    },
+    get cancelRequested() {
+      return turnLifecycle.cancelRequested;
+    },
     queueRuntime: null as unknown as ConversationRuntime["queueRuntime"],
     queuedMessagesByItemId: new Map(),
+    dequeuedClientMessageIdsByBatchId: new Map(),
     queuePumpActive: false,
     queuePumpScheduled: false,
     pendingTurns: 0,
-    isRecoveringApprovals: false,
-    loopStatus: "WAITING_ON_INPUT",
+    get loopStatus() {
+      return turnLifecycle.loopStatus;
+    },
     currentToolset: null,
     currentToolsetPreference: "auto",
     currentLoadedTools: [],
+    currentAvailableSkills: [],
+    transientChannelRuntimeTools: false,
     pendingApprovalBatchByToolCallId: new Map(),
+    approvalMessageIdByToolCallId: new Map(),
     pendingInterruptedResults: null,
     pendingInterruptedContext: null,
     continuationEpoch: 0,
-    activeExecutingToolCallIds: [],
     pendingInterruptedToolCallIds: null,
     reminderState:
       listener.reminderStateByConversation.get(runtimeKey) ??
@@ -234,13 +350,6 @@ export function getOrCreateConversationRuntime(
   );
 }
 
-export function clearActiveRunState(runtime: ConversationRuntime): void {
-  runtime.activeWorkingDirectory = null;
-  runtime.activeRunId = null;
-  runtime.activeRunStartedAt = null;
-  runtime.activeAbortController = null;
-}
-
 export function clearRecoveredApprovalState(
   runtime: ConversationRuntime,
 ): void {
@@ -251,24 +360,24 @@ export function clearRecoveredApprovalState(
 export function clearConversationRuntimeState(
   runtime: ConversationRuntime,
 ): void {
-  runtime.cancelRequested = true;
-  if (
-    runtime.activeAbortController &&
-    !runtime.activeAbortController.signal.aborted
-  ) {
-    runtime.activeAbortController.abort();
-  }
+  runtime.turnLifecycle.reset("cancelled");
+  releaseListenerTurnContext({
+    runtime,
+    agentId: runtime.agentId,
+    conversationId: runtime.conversationId,
+  });
   runtime.pendingApprovalBatchByToolCallId.clear();
+  runtime.approvalMessageIdByToolCallId.clear();
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
-  runtime.activeExecutingToolCallIds = [];
-  runtime.loopStatus = "WAITING_ON_INPUT";
+  runtime.expectedTeleportId = null;
+  runtime.expectedTeleportExpiresAt = null;
+  runtime.dequeuedClientMessageIdsByBatchId.clear();
   runtime.continuationEpoch += 1;
   runtime.pendingTurns = 0;
   runtime.queuePumpActive = false;
   runtime.queuePumpScheduled = false;
-  clearActiveRunState(runtime);
 }
 
 export function getRecoveredApprovalStateForScope(
@@ -340,7 +449,9 @@ export function getPendingControlRequests(
     return requests;
   }
 
-  for (const pending of conversationRuntime.pendingApprovalResolvers.values()) {
+  for (const pending of new Set(
+    conversationRuntime.pendingApprovalResolvers.values(),
+  )) {
     const request = pending.controlRequest;
     if (!request) continue;
     requests.push({

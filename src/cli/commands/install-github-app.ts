@@ -271,7 +271,7 @@ export function buildInstallPrBody(workflowPath: string): string {
     "",
     "You can also specify a particular agent: `@letta-code [--agent agent-xxx]`",
     "",
-    "View agent runs and conversations at [app.letta.com](https://app.letta.com).",
+    "Chat with your agent at [chat.letta.com](https://chat.letta.com).",
     "",
     "### Important Notes",
     "",

@@ -13,6 +13,9 @@ export function createIsolatedCliTestEnv(
   });
 
   applyEnvOverrides(env, extraEnv);
+  if (extraEnv.HOME !== undefined && extraEnv.USERPROFILE === undefined) {
+    env.USERPROFILE = extraEnv.HOME;
+  }
   return env;
 }
 
@@ -42,6 +45,7 @@ export const AMBIENT_LETTA_TEST_ENV_KEYS = [
   "LETTA_LOCAL_BACKEND_EXECUTOR",
   "LETTA_MEMORY_DIR",
   "LETTA_PARENT_AGENT_ID",
+  "LETTA_SUBAGENT_NAME",
   "LETTA_REFRESH_TOKEN",
   "MEMORY_DIR",
   "LETTA_CODE_DEV_PI_MODEL",

@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { TestDirectory } from "@/test-utils/test-fs";
 import { glob } from "@/tools/impl/glob";
+import {
+  executeTool,
+  prepareToolExecutionContextForSpecificTools,
+  releaseToolExecutionContext,
+} from "@/tools/manager";
 
 describe("Glob tool", () => {
   let testDir: TestDirectory;
@@ -43,5 +48,33 @@ describe("Glob tool", () => {
     const result = await glob({ pattern: "*.ts", path: testDir.path });
 
     expect(result.files).toEqual([]);
+  });
+
+  test("stops when the turn is interrupted", async () => {
+    testDir = new TestDirectory();
+    testDir.createFile("test.ts", "");
+    const abortController = new AbortController();
+    abortController.abort();
+    const prepared = await prepareToolExecutionContextForSpecificTools([
+      "Glob",
+    ]);
+
+    try {
+      const result = await executeTool(
+        "Glob",
+        { pattern: "*.ts", path: testDir.path },
+        {
+          signal: abortController.signal,
+          toolContextId: prepared.contextId,
+        },
+      );
+
+      expect(result).toMatchObject({
+        status: "error",
+        toolReturn: "Interrupted by user",
+      });
+    } finally {
+      releaseToolExecutionContext(prepared.contextId);
+    }
   });
 });

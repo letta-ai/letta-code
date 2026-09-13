@@ -3,11 +3,10 @@ import ApplyPatchDescription from "./descriptions/ApplyPatch.md";
 import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
 import BashDescription from "./descriptions/Bash.md";
 import BashOutputDescription from "./descriptions/BashOutput.md";
-import CreateGoalDescription from "./descriptions/CreateGoal.md";
-import CreateWorktreeDescription from "./descriptions/CreateWorktree.md";
 import EditDescription from "./descriptions/Edit.md";
+import EnterWorktreeDescription from "./descriptions/EnterWorktree.md";
 import ExecCommandDescription from "./descriptions/ExecCommand.md";
-import GetGoalDescription from "./descriptions/GetGoal.md";
+import ExitWorktreeDescription from "./descriptions/ExitWorktree.md";
 import GlobDescription from "./descriptions/Glob.md";
 // Gemini toolset
 import GlobGeminiDescription from "./descriptions/GlobGemini.md";
@@ -19,9 +18,12 @@ import ListDirectoryGeminiDescription from "./descriptions/ListDirectoryGemini.m
 import LSDescription from "./descriptions/LS.md";
 import MemoryDescription from "./descriptions/Memory.md";
 import MemoryApplyPatchDescription from "./descriptions/MemoryApplyPatch.md";
-import MessageChannelDescription from "./descriptions/MessageChannel.md";
+import MemoryApplyPatchV2Description from "./descriptions/MemoryApplyPatchV2.md";
+import MemoryV2Description from "./descriptions/MemoryV2.md";
+import MonitorDescription from "./descriptions/Monitor.md";
 import MultiEditDescription from "./descriptions/MultiEdit.md";
 import ReadDescription from "./descriptions/Read.md";
+import ReadArtifactFileDescription from "./descriptions/ReadArtifactFile.md";
 import ReadFileCodexDescription from "./descriptions/ReadFileCodex.md";
 import ReadFileGeminiDescription from "./descriptions/ReadFileGemini.md";
 import ReadLSPDescription from "./descriptions/ReadLSP.md";
@@ -29,6 +31,8 @@ import ReadManyFilesGeminiDescription from "./descriptions/ReadManyFilesGemini.m
 import ReplaceGeminiDescription from "./descriptions/ReplaceGemini.md";
 import RunShellCommandGeminiDescription from "./descriptions/RunShellCommandGemini.md";
 import SearchFileContentGeminiDescription from "./descriptions/SearchFileContentGemini.md";
+import SendAgentMessageDescription from "./descriptions/SendAgentMessage.md";
+import SetWorkingDirectoryDescription from "./descriptions/SetWorkingDirectory.md";
 import ShellDescription from "./descriptions/Shell.md";
 import ShellCommandDescription from "./descriptions/ShellCommand.md";
 import SkillDescription from "./descriptions/Skill.md";
@@ -40,22 +44,22 @@ import TaskOutputDescription from "./descriptions/TaskOutput.md";
 import TaskStopDescription from "./descriptions/TaskStop.md";
 import TaskUpdateDescription from "./descriptions/TaskUpdate.md";
 import TodoWriteDescription from "./descriptions/TodoWrite.md";
-import UpdateGoalDescription from "./descriptions/UpdateGoal.md";
 import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import ViewImageDescription from "./descriptions/ViewImage.md";
 import WriteDescription from "./descriptions/Write.md";
+import WriteArtifactFileDescription from "./descriptions/WriteArtifactFile.md";
 import WriteFileGeminiDescription from "./descriptions/WriteFileGemini.md";
 import WriteStdinDescription from "./descriptions/WriteStdin.md";
 import WriteTodosGeminiDescription from "./descriptions/WriteTodosGemini.md";
 import { apply_patch } from "./impl/apply-patch";
+import { read_artifact_file, write_artifact_file } from "./impl/artifact-files";
 import { ask_user_question } from "./impl/ask-user-question";
 import { bash } from "./impl/bash";
 import { bash_output } from "./impl/bash-output";
-import { create_goal } from "./impl/create-goal";
-import { create_worktree } from "./impl/create-worktree";
 import { edit } from "./impl/edit";
+import { enter_worktree } from "./impl/enter-worktree";
 import { exec_command, write_stdin } from "./impl/exec-command";
-import { get_goal } from "./impl/get-goal";
+import { exit_worktree } from "./impl/exit-worktree";
 import { glob } from "./impl/glob";
 // Gemini toolset
 import { glob_gemini } from "./impl/glob-gemini";
@@ -67,7 +71,7 @@ import { list_directory } from "./impl/list-directory-gemini";
 import { ls } from "./impl/ls";
 import { memory } from "./impl/memory";
 import { memory_apply_patch } from "./impl/memory-apply-patch";
-import { message_channel } from "./impl/message-channel";
+import { monitor } from "./impl/monitor";
 import { multi_edit } from "./impl/multi-edit";
 import { read } from "./impl/read";
 import { read_file } from "./impl/read-file-codex";
@@ -77,6 +81,8 @@ import { read_many_files } from "./impl/read-many-files-gemini";
 import { replace } from "./impl/replace-gemini";
 import { run_shell_command } from "./impl/run-shell-command-gemini";
 import { search_file_content } from "./impl/search-file-content-gemini";
+import { send_agent_message } from "./impl/send-agent-message";
+import { set_working_directory } from "./impl/set-working-directory";
 import { shell } from "./impl/shell";
 import { shell_command } from "./impl/shell-command";
 import { skill } from "./impl/skill";
@@ -88,7 +94,6 @@ import { task_output } from "./impl/task-output";
 import { task_stop } from "./impl/task-stop";
 import { task_update } from "./impl/task-update";
 import { todo_write } from "./impl/todo-write";
-import { update_goal } from "./impl/update-goal";
 import { update_plan } from "./impl/update-plan";
 import { view_image } from "./impl/view-image";
 import { write } from "./impl/write";
@@ -99,11 +104,10 @@ import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
 import BashOutputSchema from "./schemas/BashOutput.json";
-import CreateGoalSchema from "./schemas/CreateGoal.json";
-import CreateWorktreeSchema from "./schemas/CreateWorktree.json";
 import EditSchema from "./schemas/Edit.json";
+import EnterWorktreeSchema from "./schemas/EnterWorktree.json";
 import ExecCommandSchema from "./schemas/ExecCommand.json";
-import GetGoalSchema from "./schemas/GetGoal.json";
+import ExitWorktreeSchema from "./schemas/ExitWorktree.json";
 import GlobSchema from "./schemas/Glob.json";
 // Gemini toolset
 import GlobGeminiSchema from "./schemas/GlobGemini.json";
@@ -115,9 +119,11 @@ import ListDirectoryGeminiSchema from "./schemas/ListDirectoryGemini.json";
 import LSSchema from "./schemas/LS.json";
 import MemorySchema from "./schemas/Memory.json";
 import MemoryApplyPatchSchema from "./schemas/MemoryApplyPatch.json";
-import MessageChannelSchema from "./schemas/MessageChannel.json";
+import MemoryV2Schema from "./schemas/MemoryV2.json";
+import MonitorSchema from "./schemas/Monitor.json";
 import MultiEditSchema from "./schemas/MultiEdit.json";
 import ReadSchema from "./schemas/Read.json";
+import ReadArtifactFileSchema from "./schemas/ReadArtifactFile.json";
 import ReadFileCodexSchema from "./schemas/ReadFileCodex.json";
 import ReadFileGeminiSchema from "./schemas/ReadFileGemini.json";
 import ReadLSPSchema from "./schemas/ReadLSP.json";
@@ -125,6 +131,8 @@ import ReadManyFilesGeminiSchema from "./schemas/ReadManyFilesGemini.json";
 import ReplaceGeminiSchema from "./schemas/ReplaceGemini.json";
 import RunShellCommandGeminiSchema from "./schemas/RunShellCommandGemini.json";
 import SearchFileContentGeminiSchema from "./schemas/SearchFileContentGemini.json";
+import SendAgentMessageSchema from "./schemas/SendAgentMessage.json";
+import SetWorkingDirectorySchema from "./schemas/SetWorkingDirectory.json";
 import ShellSchema from "./schemas/Shell.json";
 import ShellCommandSchema from "./schemas/ShellCommand.json";
 import SkillSchema from "./schemas/Skill.json";
@@ -136,10 +144,10 @@ import TaskOutputSchema from "./schemas/TaskOutput.json";
 import TaskStopSchema from "./schemas/TaskStop.json";
 import TaskUpdateSchema from "./schemas/TaskUpdate.json";
 import TodoWriteSchema from "./schemas/TodoWrite.json";
-import UpdateGoalSchema from "./schemas/UpdateGoal.json";
 import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import ViewImageSchema from "./schemas/ViewImage.json";
 import WriteSchema from "./schemas/Write.json";
+import WriteArtifactFileSchema from "./schemas/WriteArtifactFile.json";
 import WriteFileGeminiSchema from "./schemas/WriteFileGemini.json";
 import WriteStdinSchema from "./schemas/WriteStdin.json";
 import WriteTodosGeminiSchema from "./schemas/WriteTodosGemini.json";
@@ -154,6 +162,17 @@ const WINDOWS_BASH_EXECUTION_GUIDANCE = `Windows execution:
 - Write commands using PowerShell-compatible syntax by default. POSIX/bash constructs such as heredocs, \`export VAR=...\`, and Unix-style shell quoting may not work unless you explicitly invoke a POSIX shell.
 
 ${WINDOWS_UNIFIED_EXEC_GUIDANCE}`;
+
+export const ROOT_MEMORY_TOOL_ASSETS = {
+  memory: {
+    schema: MemoryV2Schema,
+    description: MemoryV2Description.trim(),
+  },
+  memory_apply_patch: {
+    schema: MemoryApplyPatchSchema,
+    description: MemoryApplyPatchV2Description.trim(),
+  },
+} as const;
 
 export function buildBashDescriptionForPlatform(
   platform: NodeJS.Platform = process.platform,
@@ -187,10 +206,15 @@ const toolDefinitions = {
     description: BashOutputDescription.trim(),
     impl: bash_output,
   }),
-  CreateWorktree: defineTool({
-    schema: CreateWorktreeSchema,
-    description: CreateWorktreeDescription.trim(),
-    impl: create_worktree,
+  EnterWorktree: defineTool({
+    schema: EnterWorktreeSchema,
+    description: EnterWorktreeDescription.trim(),
+    impl: enter_worktree,
+  }),
+  ExitWorktree: defineTool({
+    schema: ExitWorktreeSchema,
+    description: ExitWorktreeDescription.trim(),
+    impl: exit_worktree,
   }),
   Edit: defineTool({
     schema: EditSchema,
@@ -237,10 +261,10 @@ const toolDefinitions = {
     description: MemoryApplyPatchDescription.trim(),
     impl: memory_apply_patch,
   }),
-  MessageChannel: defineTool({
-    schema: MessageChannelSchema,
-    description: MessageChannelDescription.trim(),
-    impl: message_channel,
+  Monitor: defineTool({
+    schema: MonitorSchema,
+    description: MonitorDescription.trim(),
+    impl: monitor,
   }),
   MultiEdit: defineTool({
     schema: MultiEditSchema,
@@ -251,6 +275,11 @@ const toolDefinitions = {
     schema: ReadSchema,
     description: ReadDescription.trim(),
     impl: read,
+  }),
+  read_artifact_file: defineTool({
+    schema: ReadArtifactFileSchema,
+    description: ReadArtifactFileDescription.trim(),
+    impl: read_artifact_file,
   }),
   view_image: defineTool({
     schema: ViewImageSchema,
@@ -267,6 +296,16 @@ const toolDefinitions = {
     schema: ReadLSPSchema,
     description: ReadLSPDescription.trim(),
     impl: read_lsp,
+  }),
+  SendAgentMessage: defineTool({
+    schema: SendAgentMessageSchema,
+    description: SendAgentMessageDescription.trim(),
+    impl: send_agent_message,
+  }),
+  SetWorkingDirectory: defineTool({
+    schema: SetWorkingDirectorySchema,
+    description: SetWorkingDirectoryDescription.trim(),
+    impl: set_working_directory,
   }),
   Skill: defineTool({
     schema: SkillSchema,
@@ -307,6 +346,11 @@ const toolDefinitions = {
     schema: WriteSchema,
     description: WriteDescription.trim(),
     impl: write,
+  }),
+  write_artifact_file: defineTool({
+    schema: WriteArtifactFileSchema,
+    description: WriteArtifactFileDescription.trim(),
+    impl: write_artifact_file,
   }),
   shell_command: defineTool({
     schema: ShellCommandSchema,
@@ -352,21 +396,6 @@ const toolDefinitions = {
     schema: UpdatePlanSchema,
     description: UpdatePlanDescription.trim(),
     impl: update_plan,
-  }),
-  get_goal: defineTool({
-    schema: GetGoalSchema,
-    description: GetGoalDescription.trim(),
-    impl: get_goal,
-  }),
-  create_goal: defineTool({
-    schema: CreateGoalSchema,
-    description: CreateGoalDescription.trim(),
-    impl: create_goal,
-  }),
-  update_goal: defineTool({
-    schema: UpdateGoalSchema,
-    description: UpdateGoalDescription.trim(),
-    impl: update_goal,
   }),
   // Gemini toolset
   glob_gemini: defineTool({
@@ -449,21 +478,6 @@ const toolDefinitions = {
     schema: UpdatePlanSchema,
     description: UpdatePlanDescription.trim(),
     impl: update_plan,
-  }),
-  GetGoal: defineTool({
-    schema: GetGoalSchema,
-    description: GetGoalDescription.trim(),
-    impl: get_goal,
-  }),
-  CreateGoal: defineTool({
-    schema: CreateGoalSchema,
-    description: CreateGoalDescription.trim(),
-    impl: create_goal,
-  }),
-  UpdateGoal: defineTool({
-    schema: UpdateGoalSchema,
-    description: UpdateGoalDescription.trim(),
-    impl: update_goal,
   }),
   // Gemini-2 toolset (PascalCase aliases for Gemini tools)
   RunShellCommand: defineTool({

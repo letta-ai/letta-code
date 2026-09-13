@@ -8,7 +8,10 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { projectLocalAgentState } from "@/backend/local";
+import {
+  isHiddenLocalAgentRecord,
+  projectLocalAgentState,
+} from "@/backend/local";
 import type { LocalAgentRecord } from "@/backend/local/local-types";
 import { getLocalBackendStorageDir } from "@/backend/local/paths";
 
@@ -30,6 +33,7 @@ export function listLocalAgentsFromDisk(): AgentState[] {
       const filePath = join(agentsDir, file);
       const raw = readFileSync(filePath, "utf8");
       const record = JSON.parse(raw) as LocalAgentRecord;
+      if (isHiddenLocalAgentRecord(record)) continue;
       const mtime = statSync(filePath).mtimeMs;
       agents.push({
         agent: projectLocalAgentState(

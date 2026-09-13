@@ -3,7 +3,11 @@
 
 import { homedir } from "node:os";
 import { dirname, relative, resolve, win32 } from "node:path";
-import { canonicalToolName, isFileToolName } from "./canonical";
+import {
+  canonicalToolName,
+  isFileToolName,
+  toolNameForPermissionCheck,
+} from "./canonical";
 import {
   isReadOnlyShellCommand,
   SAFE_GH_COMMANDS,
@@ -114,7 +118,9 @@ export function analyzeApprovalContext(
   toolArgs: ToolArgs,
   workingDirectory: string,
 ): ApprovalContext {
-  const canonicalTool = canonicalToolName(toolName);
+  const canonicalTool = canonicalToolName(
+    toolNameForPermissionCheck(toolName, toolArgs),
+  );
   const resolveFilePath = () => {
     const candidate =
       toolArgs.file_path ?? toolArgs.path ?? toolArgs.notebook_path ?? "";

@@ -89,6 +89,10 @@ type WhatsAppConnectionUpdate = Record<string, unknown> & {
   };
 };
 
+export type WhatsAppConnectionUpdateResult = {
+  claimedConnectionState?: boolean;
+};
+
 type WhatsAppAuthState = {
   creds: unknown;
   keys: unknown;
@@ -265,7 +269,10 @@ export async function createWhatsAppSocket(params: {
   accountId: string;
   printQr?: boolean;
   messageStore?: Map<string, unknown>;
-  onConnectionUpdate?: (update: WhatsAppConnectionUpdate) => void;
+  loadRuntimeModule?: typeof loadWhatsAppModule;
+  onConnectionUpdate?: (
+    update: WhatsAppConnectionUpdate,
+  ) => WhatsAppConnectionUpdateResult | undefined;
 }): Promise<CreateSocketResult> {
   installWhatsAppConsoleFilters();
   const authDir = getWhatsAppAuthDir(params.accountId);
@@ -274,7 +281,7 @@ export async function createWhatsAppSocket(params: {
   setWhatsAppConnectionState(params.accountId, { status: "connecting" });
 
   try {
-    const mod = await loadWhatsAppModule();
+    const mod = await (params.loadRuntimeModule ?? loadWhatsAppModule)();
     const runtime = mod as WhatsAppRuntimeRecord;
     const makeWASocket = resolveMakeWASocket(runtime);
     const useMultiFileAuthState = runtime.useMultiFileAuthState;
@@ -333,8 +340,10 @@ export async function createWhatsAppSocket(params: {
 
     sock.ev?.on?.("connection.update", async (payload?: unknown) => {
       const update = (payload ?? {}) as WhatsAppConnectionUpdate;
-      params.onConnectionUpdate?.(update);
-      if (update.qr) {
+      const updateResult = params.onConnectionUpdate?.(update);
+      const claimedConnectionState =
+        updateResult?.claimedConnectionState === true;
+      if (update.qr && !claimedConnectionState) {
         const qrMod = await loadQrCodeTerminalModule().catch(() => null);
         const qrTerminal = renderQrTerminal(qrMod, update.qr);
         setWhatsAppConnectionState(params.accountId, {
@@ -353,7 +362,7 @@ export async function createWhatsAppSocket(params: {
           }
         }
       }
-      if (update.connection === "open") {
+      if (update.connection === "open" && !claimedConnectionState) {
         setWhatsAppConnectionState(params.accountId, {
           status: "connected",
           phoneJid: sock.user?.id,
@@ -362,6 +371,7 @@ export async function createWhatsAppSocket(params: {
       }
       if (update.connection === "close") {
         sessionLease.release();
+        if (claimedConnectionState) return;
         const statusCode = update.lastDisconnect?.error?.output?.statusCode;
         const disconnectReason = runtime.DisconnectReason as
           | Record<string, number>

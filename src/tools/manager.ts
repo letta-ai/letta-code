@@ -11,14 +11,8 @@ import {
 import { getModelInfo } from "@/agent/model";
 import { getAllSubagentConfigs } from "@/agent/subagents";
 import { getBackend } from "@/backend";
-import {
-  buildDynamicMessageChannelToolDefinition,
-  getCachedDynamicMessageChannelToolDefinition,
-  type MessageChannelToolDiscoveryScope,
-} from "@/channels/message-tool";
-import { getActiveChannelIds } from "@/channels/registry";
-import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { experimentManager } from "@/experiments/manager";
 import {
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
@@ -44,13 +38,12 @@ import {
 } from "@/mods/tool-registry";
 import type {
   ModContext,
+  ModSecretResolver,
+  ModToolEndEvent,
   ModToolRunContext,
+  ModToolStartEvent,
   ToolApprovalPolicy,
 } from "@/mods/types";
-import {
-  permissionMode as globalPermissionMode,
-  type PermissionMode,
-} from "@/permissions/mode";
 import type {
   PermissionDecision,
   PermissionRuleType,
@@ -64,99 +57,32 @@ import {
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
+import { messageChannelTelemetry } from "@/telemetry/channel";
 import { debugLog } from "@/utils/debug";
+import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
+import { serializeClientTools } from "./client-tool-serialization";
+import { normalizeExternalToolResultContent } from "./external-tool-content";
+import { toolFilter } from "./filter";
+import { clampToolReturnContent } from "./impl/tool-return-clamp";
+import { resolveBackendSpecificToolAssets } from "./memory-tool-assets";
 import {
   functionToolForm,
   type JsonSchema,
   type ModelFacingToolForm,
-  serializeFunctionOnlyToolPayload,
 } from "./model-facing-tool";
+import {
+  getEffectivePermissionModeState,
+  type PermissionModeState,
+} from "./permission-mode-state";
 import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
+import { TOOL_PERMISSIONS } from "./tool-permissions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
-
-/**
- * Append MessageChannel tool if any channels are active.
- * Used by both resolveBaseToolNamesForModel() and getToolNamesForToolset().
- */
-function maybeAppendChannelTools(
-  toolNames: ToolName[],
-  channelToolScope?: MessageChannelToolDiscoveryScope | null,
-): ToolName[] {
-  const hasActiveChannelTools =
-    channelToolScope !== undefined
-      ? (channelToolScope?.channels.length ?? 0) > 0
-      : getActiveChannelIds().length > 0;
-  if (
-    hasActiveChannelTools &&
-    !toolNames.includes("MessageChannel" as ToolName)
-  ) {
-    return [...toolNames, "MessageChannel" as ToolName];
-  }
-  return toolNames;
-}
-
-/**
- * Inject dynamic channel-tool discovery into MessageChannel if channels are active.
- * Used by both buildRegistryForModel() and buildSpecificToolRegistry().
- */
-async function maybeResolveDynamicChannelTool(
-  name: string,
-  description: string,
-  schema: Record<string, unknown>,
-  channelToolScope?: MessageChannelToolDiscoveryScope | null,
-): Promise<{ description: string; input_schema: Record<string, unknown> }> {
-  if (name !== "MessageChannel") {
-    return {
-      description,
-      input_schema: schema,
-    };
-  }
-  const resolved = await buildDynamicMessageChannelToolDefinition(
-    description,
-    schema,
-    channelToolScope,
-  );
-  return {
-    description: resolved.description,
-    input_schema: resolved.schema,
-  };
-}
-
-async function resolveBackendSpecificToolDescription(
-  name: string,
-  description: string,
-): Promise<string> {
-  let isLocalMemfs = false;
-  try {
-    const { getBackend } = await import("@/backend");
-    isLocalMemfs = getBackend().capabilities.localMemfs;
-  } catch {
-    isLocalMemfs = false;
-  }
-  if (!isLocalMemfs) return description;
-
-  if (name === "memory_apply_patch") {
-    return description.replace(
-      "The harness pushes clean committed memory changes after the turn for remote MemFS agents.",
-      "Local backend MemFS has no Letta remote; memory changes are committed locally.",
-    );
-  }
-
-  if (name === "memory") {
-    return description.replace(
-      "The harness pushes clean committed memory changes after the turn for remote MemFS agents.",
-      "Local backend MemFS has no Letta remote; memory changes are committed locally.",
-    );
-  }
-
-  return description;
-}
 
 function resolvedModelForm(
   base: ModelFacingToolForm,
@@ -180,46 +106,6 @@ function resolvedModelForm(
   });
 }
 
-function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
-  const nextRegistry = new Map(registry);
-  const existing = nextRegistry.get("MessageChannel");
-
-  // Only update an existing entry — never inject MessageChannel into a registry
-  // that deliberately excluded it (e.g. a conversation with no channel routes).
-  if (!existing) {
-    return nextRegistry;
-  }
-
-  if (
-    existing.schema.description !== TOOL_DEFINITIONS.MessageChannel.description
-  ) {
-    return nextRegistry;
-  }
-
-  if (getActiveChannelIds().length === 0) {
-    nextRegistry.delete("MessageChannel");
-    return nextRegistry;
-  }
-
-  const cachedMessageChannel = getCachedDynamicMessageChannelToolDefinition();
-  if (!cachedMessageChannel) {
-    return nextRegistry;
-  }
-
-  nextRegistry.set("MessageChannel", {
-    schema: {
-      name: "MessageChannel",
-      description: cachedMessageChannel.description,
-      input_schema: cachedMessageChannel.schema as JsonSchema,
-    },
-    modelForm: functionToolForm({
-      description: cachedMessageChannel.description,
-      parameters: cachedMessageChannel.schema as JsonSchema,
-    }),
-    fn: existing?.fn ?? TOOL_DEFINITIONS.MessageChannel.impl,
-  });
-  return nextRegistry;
-}
 const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
   "BashOutput",
@@ -232,6 +118,7 @@ const STREAMING_SHELL_TOOLS = new Set([
   "Shell",
   "run_shell_command",
   "RunShellCommand",
+  "Monitor",
 ]);
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
@@ -312,7 +199,10 @@ export function filterBuiltInToolNamesByClientAllowlist(
   );
 }
 
-const WORKTREE_TOOL_NAMES = new Set<ToolName>(["CreateWorktree"]);
+const ARTIFACT_TOOL_NAMES: ToolName[] = [
+  "read_artifact_file",
+  "write_artifact_file",
+];
 
 function shouldIncludeWorktreeTool(): boolean {
   try {
@@ -328,6 +218,19 @@ function filterWorktreeTools(toolNames: ToolName[]): ToolName[] {
   }
 
   return toolNames.filter((name) => !WORKTREE_TOOL_NAMES.has(name));
+}
+
+function resolveArtifactToolNames(toolNames: ToolName[]): ToolName[] {
+  const artifactToolSet = new Set<ToolName>(ARTIFACT_TOOL_NAMES);
+  const withoutArtifactTools = toolNames.filter(
+    (name) => !artifactToolSet.has(name),
+  );
+
+  if (!experimentManager.isEnabled("artifacts")) {
+    return withoutArtifactTools;
+  }
+
+  return [...withoutArtifactTools, ...ARTIFACT_TOOL_NAMES];
 }
 
 function filterExternalToolsByClientAllowlist(
@@ -346,19 +249,45 @@ function filterExternalToolsByClientAllowlist(
   );
 }
 
+function filterToolRegistryByClientAllowlist(
+  registry: ToolRegistry,
+  clientToolAllowlist?: string[],
+): ToolRegistry {
+  if (clientToolAllowlist === undefined) {
+    return new Map(registry);
+  }
+
+  const allowSet = new Set(clientToolAllowlist);
+  return new Map(
+    Array.from(registry.entries()).filter(([internalName]) =>
+      matchesClientToolAllowlistEntry(
+        allowSet,
+        getServerToolName(internalName),
+        internalName,
+      ),
+    ),
+  );
+}
+
 function filterExternalToolsByRuntimeContext(
   externalTools: Map<string, ExternalToolDefinition>,
   runtimeContext: RuntimeContextSnapshot,
 ): Map<string, ExternalToolDefinition> {
   return new Map(
     Array.from(externalTools.entries()).filter(([, tool]) => {
-      if (!tool.runtime) {
-        return true;
-      }
-      return (
-        tool.runtime.agentId === runtimeContext.agentId &&
-        tool.runtime.conversationId === runtimeContext.conversationId
-      );
+      const matchesRuntime =
+        !tool.runtime ||
+        (tool.runtime.agentId === runtimeContext.agentId &&
+          tool.runtime.conversationId === runtimeContext.conversationId);
+      // An unscoped runtime tool belongs to its agent/conversation. The
+      // registration connection remains its execution return path, but turns
+      // for that runtime may originate from another connection or the process
+      // queue (for example, cron). Scoped tools remain connection-owned.
+      const matchesConnection =
+        tool.connectionId === undefined ||
+        tool.connectionId === runtimeContext.connectionId ||
+        (tool.runtime !== undefined && tool.scopeId === undefined);
+      return matchesRuntime && matchesConnection;
     }),
   );
 }
@@ -407,166 +336,11 @@ function filterModToolsByClientAllowlist(
   );
 }
 
-export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
-  "AskUserQuestion",
-  "Bash",
-  "TaskOutput",
-  "CreateWorktree",
-  "Edit",
-  "TaskStop",
-  // "MultiEdit",
-  // "LS",
-  "memory",
-  "Read",
-  "Skill",
-  "Task",
-  "TaskCreate",
-  "TaskGet",
-  "TaskList",
-  "TaskUpdate",
-  "Write",
-];
-
-export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
-  "exec_command",
-  "write_stdin",
-  // TODO(codex-parity): add once request_user_input tool exists in raw codex path.
-  // "request_user_input",
-  "apply_patch",
-  "memory_apply_patch",
-  "update_plan",
-  "view_image",
-];
-
-export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
-  "run_shell_command",
-  "read_file_gemini",
-  "list_directory",
-  "glob_gemini",
-  "search_file_content",
-  "memory",
-  "CreateWorktree",
-  "replace",
-  "write_file_gemini",
-  "write_todos",
-  "read_many_files",
-  "Skill",
-  "Task",
-];
-
-// PascalCase toolsets (codex-2 and gemini-2) for consistency with Skill tool naming
-export const OPENAI_PASCAL_TOOLS: ToolName[] = [
-  // Additional Letta Code tools
-  "AskUserQuestion",
-  "CreateWorktree",
-  "memory_apply_patch",
-  "Task",
-  "TaskOutput",
-  "TaskStop",
-  "Skill",
-  // Standard Codex tools
-  "exec_command",
-  "write_stdin",
-  "ViewImage",
-  "ApplyPatch",
-  "UpdatePlan",
-];
-
-export const GEMINI_PASCAL_TOOLS: ToolName[] = [
-  // Additional Letta Code tools
-  "AskUserQuestion",
-  "CreateWorktree",
-  "memory",
-  "Skill",
-  "Task",
-  // Standard Gemini tools
-  "RunShellCommand",
-  "ReadFileGemini",
-  "ListDirectory",
-  "GlobGemini",
-  "SearchFileContent",
-  "Replace",
-  "WriteFileGemini",
-  "WriteTodos",
-  "ReadManyFiles",
-];
-
-// Tool permissions configuration
-const TOOL_PERMISSIONS: Record<
-  ToolName,
-  { requiresApproval: boolean; approvalPolicy?: ToolApprovalPolicy }
-> = {
-  AskUserQuestion: { requiresApproval: true },
-  Bash: { requiresApproval: true },
-  BashOutput: { requiresApproval: false },
-  TaskOutput: { requiresApproval: false },
-  CreateWorktree: { requiresApproval: true },
-  Edit: { requiresApproval: true },
-  Glob: { requiresApproval: false },
-  Grep: { requiresApproval: false },
-  KillBash: { requiresApproval: true },
-  TaskStop: { requiresApproval: true },
-  LS: { requiresApproval: false },
-  memory: { requiresApproval: false },
-  memory_apply_patch: { requiresApproval: false },
-  MessageChannel: { requiresApproval: false },
-  MultiEdit: { requiresApproval: true },
-  Read: { requiresApproval: false },
-  view_image: { requiresApproval: false },
-  ViewImage: { requiresApproval: false },
-  ReadLSP: { requiresApproval: false },
-  Skill: { requiresApproval: false },
-  Task: { requiresApproval: true },
-  TaskCreate: { requiresApproval: false },
-  TaskGet: { requiresApproval: false },
-  TaskList: { requiresApproval: false },
-  TaskUpdate: { requiresApproval: false },
-  TodoWrite: { requiresApproval: false },
-  Write: { requiresApproval: true },
-  shell_command: { requiresApproval: true },
-  exec_command: { requiresApproval: true },
-  write_stdin: { requiresApproval: false },
-  shell: { requiresApproval: true },
-  read_file: { requiresApproval: false },
-  list_dir: { requiresApproval: false },
-  grep_files: { requiresApproval: false },
-  apply_patch: { requiresApproval: true },
-  update_plan: { requiresApproval: false },
-  get_goal: { requiresApproval: false },
-  create_goal: { requiresApproval: false },
-  update_goal: { requiresApproval: false },
-  // Gemini toolset
-  glob_gemini: { requiresApproval: false },
-  list_directory: { requiresApproval: false },
-  read_file_gemini: { requiresApproval: false },
-  read_many_files: { requiresApproval: false },
-  replace: { requiresApproval: true },
-  run_shell_command: { requiresApproval: true },
-  search_file_content: { requiresApproval: false },
-  write_todos: { requiresApproval: false },
-  write_file_gemini: { requiresApproval: true },
-  // Codex-2 toolset (PascalCase)
-  ShellCommand: { requiresApproval: true },
-  Shell: { requiresApproval: true },
-  ReadFile: { requiresApproval: false },
-  ListDir: { requiresApproval: false },
-  GrepFiles: { requiresApproval: false },
-  ApplyPatch: { requiresApproval: true },
-  UpdatePlan: { requiresApproval: false },
-  GetGoal: { requiresApproval: false },
-  CreateGoal: { requiresApproval: false },
-  UpdateGoal: { requiresApproval: false },
-  // Gemini-2 toolset (PascalCase)
-  RunShellCommand: { requiresApproval: true },
-  ReadFileGemini: { requiresApproval: false },
-  ListDirectory: { requiresApproval: false },
-  GlobGemini: { requiresApproval: false },
-  SearchFileContent: { requiresApproval: false },
-  Replace: { requiresApproval: true },
-  WriteFileGemini: { requiresApproval: true },
-  WriteTodos: { requiresApproval: false },
-  ReadManyFiles: { requiresApproval: false },
-};
+import {
+  ANTHROPIC_DEFAULT_TOOLS,
+  OPENAI_PASCAL_TOOLS,
+  WORKTREE_TOOL_NAMES,
+} from "./toolset-defaults";
 
 type ToolArgs = Record<string, unknown>;
 
@@ -636,15 +410,6 @@ function getSwitchLock(): SwitchLockState {
 const toolRegistry = getRegistry();
 let toolExecutionContextCounter = 0;
 
-/**
- * Mutable, shared-by-reference permission mode state.
- * Listener mode populates this from ConversationRuntime; CLI mode uses a
- * wrapper around the global permissionMode singleton.
- */
-export type PermissionModeState = {
-  mode: PermissionMode;
-};
-
 type ToolExecutionContextSnapshot = {
   toolRegistry: ToolRegistry;
   externalTools: Map<string, ExternalToolDefinition>;
@@ -696,8 +461,6 @@ function buildExecutionRuntimeContextSnapshot(options?: {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   runtimeContext?: Partial<RuntimeContextSnapshot>;
-  channelToolScope?: MessageChannelToolDiscoveryScope | null;
-  channelTurnSources?: ChannelTurnSource[];
 }): RuntimeContextSnapshot {
   const mergedScope: RuntimeContextSnapshot = {
     ...(getRuntimeContext() ?? {}),
@@ -861,13 +624,8 @@ export interface ClientTool {
   parameters?: { [key: string]: unknown } | null;
 }
 
-// ═══════════════════════════════════════════════════════════════
 // EXTERNAL TOOLS (SDK-side execution)
-// ═══════════════════════════════════════════════════════════════
 
-/**
- * External tool definition from SDK
- */
 export interface ExternalToolDefinition {
   name: string;
   label?: string;
@@ -875,6 +633,7 @@ export interface ExternalToolDefinition {
   parameters: Record<string, unknown>; // JSON Schema
   /** Internal registration key; model-facing calls still use name. */
   registrationKey?: string;
+  connectionId?: string;
   /** Optional visibility scope; scoped tools are hidden unless selected for a turn. */
   scopeId?: string;
   /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
@@ -882,6 +641,8 @@ export interface ExternalToolDefinition {
     agentId?: string;
     conversationId?: string;
   };
+  /** Client-local executor owned by this tool (for example an MCP process). */
+  executor?: ExternalToolExecutor;
 }
 
 /**
@@ -1007,6 +768,8 @@ export async function executeExternalTool(
     };
   }
 
+  const startedAt = Date.now();
+  let success = false;
   try {
     const tool = toolDefinition ?? getExternalToolDefinition(toolName);
     const result = await executor(
@@ -1015,15 +778,13 @@ export async function executeExternalTool(
       input,
       tool ? { tool } : undefined,
     );
-
-    // Convert external tool result to ToolExecutionResult format
-    const textContent = result.content
-      .filter((c) => c.type === "text" && c.text)
-      .map((c) => c.text)
-      .join("\n");
+    success = !result.isError;
 
     return {
-      toolReturn: textContent || JSON.stringify(result.content),
+      toolReturn: clampToolReturnContent(
+        normalizeExternalToolResultContent(result.content),
+        toolName,
+      ),
       status: result.isError ? "error" : "success",
     };
   } catch (error) {
@@ -1032,6 +793,18 @@ export async function executeExternalTool(
       toolReturn: `External tool execution error: ${errorMessage}`,
       status: "error",
     };
+  } finally {
+    if (toolName === "MessageChannel" || toolName === "message_channel") {
+      telemetry.trackToolUsage(
+        toolName,
+        success,
+        Date.now() - startedAt,
+        undefined,
+        success ? undefined : "tool_error",
+        undefined,
+        messageChannelTelemetry(input),
+      );
+    }
   }
 }
 
@@ -1042,7 +815,7 @@ export async function executeExternalTool(
  */
 export function getClientToolsFromRegistry(): ClientTool[] {
   return buildClientToolsFromSnapshot(
-    withDynamicMessageChannelCache(toolRegistry),
+    toolRegistry,
     toModelFacingExternalToolMap(
       filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
     ),
@@ -1055,48 +828,11 @@ function buildClientToolsFromSnapshot(
   externalTools: Map<string, ExternalToolDefinition>,
   modTools: Map<string, ModToolDefinition>,
 ): ClientTool[] {
-  const builtInTools = Array.from(registry.entries()).map(([name, tool]) =>
-    serializeFunctionOnlyToolPayload(getServerToolName(name), tool.modelForm),
-  );
-  for (const name of externalTools.keys()) {
-    if (modTools.has(name)) {
-      debugLog(
-        "tools",
-        "mod tool %s shadows external tool with same name",
-        name,
-      );
-    }
-  }
-  const externalClientTools = Array.from(externalTools.values())
-    .filter((tool) => !modTools.has(tool.name))
-    .map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    }));
-  const modClientTools = Array.from(modTools.values()).map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters,
-  }));
-
-  return [...builtInTools, ...externalClientTools, ...modClientTools];
-}
-
-function getEffectivePermissionModeState(
-  permissionModeState?: PermissionModeState,
-): PermissionModeState {
-  // When no scoped state is provided (local/CLI mode), create a live proxy to
-  // the global singleton.
-  return (
-    permissionModeState ?? {
-      get mode() {
-        return globalPermissionMode.getMode();
-      },
-      set mode(value: PermissionMode) {
-        globalPermissionMode.setMode(value);
-      },
-    }
+  return serializeClientTools(
+    registry,
+    externalTools,
+    modTools,
+    getServerToolName,
   );
 }
 
@@ -1118,19 +854,17 @@ function capturePreparedToolExecutionContext(
     modContext?: ModContext;
     modEvents?: ModEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
-    channelToolScope?: MessageChannelToolDiscoveryScope | null;
-    channelTurnSources?: ChannelTurnSource[];
   },
 ): PreparedToolExecutionContext {
   const runtimeContext = buildExecutionRuntimeContextSnapshot(options);
-  if (options?.channelToolScope !== undefined) {
-    runtimeContext.channelToolScope = options.channelToolScope;
-  }
-  if (options?.channelTurnSources?.length) {
-    runtimeContext.channelTurnSources = [...options.channelTurnSources];
-  }
+  const clientToolAllowlist =
+    options?.clientToolAllowlist ?? toolFilter.getEnabledTools() ?? undefined;
+  const toolRegistrySnapshot = filterToolRegistryByClientAllowlist(
+    snapshot.toolRegistry,
+    clientToolAllowlist,
+  );
   const executionSnapshot: ToolExecutionContextSnapshot = {
-    toolRegistry: withDynamicMessageChannelCache(snapshot.toolRegistry),
+    toolRegistry: toolRegistrySnapshot,
     externalTools: toModelFacingExternalToolMap(
       filterExternalToolsByClientAllowlist(
         filterExternalToolsByScopeIds(
@@ -1140,7 +874,7 @@ function capturePreparedToolExecutionContext(
           ),
           options?.externalToolScopeIds,
         ),
-        options?.clientToolAllowlist,
+        clientToolAllowlist,
       ),
     ),
     externalExecutor: snapshot.externalExecutor,
@@ -1149,7 +883,7 @@ function capturePreparedToolExecutionContext(
     modPermissions: snapshot.modPermissions,
     modTools: filterModToolsByClientAllowlist(
       snapshot.modTools,
-      options?.clientToolAllowlist,
+      clientToolAllowlist,
     ),
     workingDirectory:
       runtimeContext.workingDirectory ?? getCurrentWorkingDirectory(),
@@ -1207,15 +941,13 @@ export async function prepareCurrentToolExecutionContext(options?: {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   runtimeContext?: Partial<RuntimeContextSnapshot>;
-  channelToolScope?: MessageChannelToolDiscoveryScope | null;
-  channelTurnSources?: ChannelTurnSource[];
   modContext?: ModContext;
   modEvents?: ModEvents;
+  modPermissions?: Map<string, ModPermissionDefinition>;
+  modTools?: Map<string, ModToolDefinition>;
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
-  const currentToolNames = maybeAppendChannelTools(
-    Array.from(toolRegistry.keys()) as ToolName[],
-  );
+  const currentToolNames = Array.from(toolRegistry.keys()) as ToolName[];
   const toolRegistrySnapshot =
     await buildSpecificToolRegistry(currentToolNames);
   return capturePreparedToolExecutionContext(
@@ -1225,8 +957,11 @@ export async function prepareCurrentToolExecutionContext(options?: {
       externalExecutor: getExternalToolExecutor(),
       modContext: options?.modContext,
       modEvents: options?.modEvents,
-      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
-      modTools: getAvailableModToolsRegistry(options?.modContext),
+      modPermissions:
+        options?.modPermissions ??
+        getAvailableModPermissionsRegistry(options?.modContext),
+      modTools:
+        options?.modTools ?? getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );
@@ -1239,17 +974,14 @@ export async function prepareToolExecutionContextForSpecificTools(
     externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
-    channelToolScope?: MessageChannelToolDiscoveryScope | null;
-    channelTurnSources?: ChannelTurnSource[];
     modContext?: ModContext;
     modEvents?: ModEvents;
+    modPermissions?: Map<string, ModPermissionDefinition>;
+    modTools?: Map<string, ModToolDefinition>;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
-  const toolRegistrySnapshot = await buildSpecificToolRegistry(
-    toolNames,
-    options?.channelToolScope,
-  );
+  const toolRegistrySnapshot = await buildSpecificToolRegistry(toolNames);
   return capturePreparedToolExecutionContext(
     {
       toolRegistry: toolRegistrySnapshot,
@@ -1257,26 +989,33 @@ export async function prepareToolExecutionContextForSpecificTools(
       externalExecutor: getExternalToolExecutor(),
       modContext: options?.modContext,
       modEvents: options?.modEvents,
-      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
-      modTools: getAvailableModToolsRegistry(options?.modContext),
+      modPermissions:
+        options?.modPermissions ??
+        getAvailableModPermissionsRegistry(options?.modContext),
+      modTools:
+        options?.modTools ?? getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );
 }
 
+type ModelToolsetOptions = {
+  resolvedToolset?: "codex" | "default";
+  exclude?: ToolName[];
+  include?: ToolName[];
+  clientToolAllowlist?: string[];
+};
+
 export async function prepareToolExecutionContextForModel(
   modelIdentifier?: string,
-  options?: {
-    exclude?: ToolName[];
-    include?: ToolName[];
-    clientToolAllowlist?: string[];
+  options?: ModelToolsetOptions & {
     externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
-    channelToolScope?: MessageChannelToolDiscoveryScope | null;
-    channelTurnSources?: ChannelTurnSource[];
     modContext?: ModContext;
     modEvents?: ModEvents;
+    modPermissions?: Map<string, ModPermissionDefinition>;
+    modTools?: Map<string, ModToolDefinition>;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1291,8 +1030,11 @@ export async function prepareToolExecutionContextForModel(
       externalExecutor: getExternalToolExecutor(),
       modContext: options?.modContext,
       modEvents: options?.modEvents,
-      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
-      modTools: getAvailableModToolsRegistry(options?.modContext),
+      modPermissions:
+        options?.modPermissions ??
+        getAvailableModPermissionsRegistry(options?.modContext),
+      modTools:
+        options?.modTools ?? getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );
@@ -1412,10 +1154,10 @@ export async function checkToolPermission(
       permissionMode: effectivePermissionModeState?.mode ?? null,
       workingDirectory: effectiveWorkingDirectory,
     });
-
   const permissions = await loadPermissions(effectiveWorkingDirectory);
   return runWithRuntimeContext(
     {
+      ...(context?.runtimeContext ?? {}),
       ...(effectiveAgentId ? { agentId: effectiveAgentId } : {}),
       workingDirectory: effectiveWorkingDirectory,
       permissionMode: effectivePermissionModeState?.mode,
@@ -1519,7 +1261,6 @@ function maybeApplyLspReadOverride(registry: ToolRegistry): void {
 
 async function buildSpecificToolRegistry(
   toolNames: string[],
-  channelToolScope?: MessageChannelToolDiscoveryScope | null,
 ): Promise<ToolRegistry> {
   const { toolFilter } = await import("@/tools/filter");
   const newRegistry: ToolRegistry = new Map();
@@ -1548,30 +1289,25 @@ async function buildSpecificToolRegistry(
       throw new Error(`Tool implementation not found for ${internalName}`);
     }
 
-    const description = await resolveBackendSpecificToolDescription(
+    const resolvedAssets = await resolveBackendSpecificToolAssets(
       internalName,
       definition.description,
+      definition.schema as JsonSchema,
     );
-
-    const resolvedTool = await maybeResolveDynamicChannelTool(
-      internalName,
-      description,
-      definition.schema,
-      channelToolScope,
-    );
+    const { description, inputSchema } = resolvedAssets;
 
     const toolSchema: ToolSchema = {
       name: internalName,
-      description: resolvedTool.description,
-      input_schema: resolvedTool.input_schema as JsonSchema,
+      description,
+      input_schema: inputSchema,
     };
 
     newRegistry.set(internalName, {
       schema: toolSchema,
       modelForm: resolvedModelForm(
         definition.modelForm,
-        resolvedTool.description,
-        resolvedTool.input_schema as JsonSchema,
+        description,
+        inputSchema,
       ),
       fn: definition.impl,
     });
@@ -1583,19 +1319,18 @@ async function buildSpecificToolRegistry(
 
 async function resolveBaseToolNamesForModel(
   modelIdentifier?: string,
-  options?: {
-    exclude?: ToolName[];
-    include?: ToolName[];
-    clientToolAllowlist?: string[];
-    channelToolScope?: MessageChannelToolDiscoveryScope | null;
-  },
+  options?: ModelToolsetOptions,
 ): Promise<ToolName[]> {
   const { toolFilter } = await import("@/tools/filter");
   let baseToolNames: ToolName[];
+  // Provider aliases can be classified by a caller that also has provider
+  // metadata. Prefer that result over re-inferring from the model handle.
   if (
     !toolFilter.isActive() &&
-    modelIdentifier &&
-    isOpenAIModel(modelIdentifier)
+    (options?.resolvedToolset === "codex" ||
+      (options?.resolvedToolset === undefined &&
+        modelIdentifier &&
+        isOpenAIModel(modelIdentifier)))
   ) {
     baseToolNames = OPENAI_PASCAL_TOOLS;
   } else if (!toolFilter.isActive()) {
@@ -1606,28 +1341,21 @@ async function resolveBaseToolNamesForModel(
     baseToolNames = TOOL_NAMES;
   }
 
+  if (options?.include && options.include.length > 0) {
+    // Copy rather than push: the branches above bind shared module-level
+    // preset arrays, so appending in place would leak one turn's tools into
+    // the preset itself for the life of the process.
+    baseToolNames = [...new Set([...baseToolNames, ...options.include])];
+  }
+
   if (options?.exclude && options.exclude.length > 0) {
     const excludeSet = new Set(options.exclude);
     baseToolNames = baseToolNames.filter((name) => !excludeSet.has(name));
   }
 
-  if (options?.include && options.include.length > 0) {
-    const seen = new Set(baseToolNames);
-    for (const name of options.include) {
-      if (!seen.has(name)) {
-        baseToolNames.push(name);
-        seen.add(name);
-      }
-    }
-  }
-
   baseToolNames = filterWorktreeTools(baseToolNames);
 
-  // Append channel tool if channels are active
-  baseToolNames = maybeAppendChannelTools(
-    baseToolNames,
-    options?.channelToolScope,
-  );
+  baseToolNames = resolveArtifactToolNames(baseToolNames);
 
   baseToolNames = filterBuiltInToolNamesByClientAllowlist(
     baseToolNames,
@@ -1639,12 +1367,7 @@ async function resolveBaseToolNamesForModel(
 
 async function buildRegistryForModel(
   modelIdentifier?: string,
-  options?: {
-    exclude?: ToolName[];
-    include?: ToolName[];
-    clientToolAllowlist?: string[];
-    channelToolScope?: MessageChannelToolDiscoveryScope | null;
-  },
+  options?: ModelToolsetOptions,
 ): Promise<ToolRegistry> {
   const { toolFilter } = await import("@/tools/filter");
   const allSubagentConfigs = await getAllSubagentConfigs();
@@ -1676,10 +1399,13 @@ async function buildRegistryForModel(
         throw new Error(`Tool implementation not found for ${name}`);
       }
 
-      let description = await resolveBackendSpecificToolDescription(
+      const resolvedAssets = await resolveBackendSpecificToolAssets(
         name,
         definition.description,
+        definition.schema as JsonSchema,
       );
+      let { description } = resolvedAssets;
+      const { inputSchema } = resolvedAssets;
       if (name === "Task" && discoveredSubagents.length > 0) {
         description = injectSubagentsIntoTaskDescription(
           description,
@@ -1687,25 +1413,18 @@ async function buildRegistryForModel(
         );
       }
 
-      const resolvedTool = await maybeResolveDynamicChannelTool(
-        name,
-        description,
-        definition.schema,
-        options?.channelToolScope,
-      );
-
       const toolSchema: ToolSchema = {
         name,
-        description: resolvedTool.description,
-        input_schema: resolvedTool.input_schema as JsonSchema,
+        description,
+        input_schema: inputSchema,
       };
 
       newRegistry.set(name, {
         schema: toolSchema,
         modelForm: resolvedModelForm(
           definition.modelForm,
-          resolvedTool.description,
-          resolvedTool.input_schema as JsonSchema,
+          description,
+          inputSchema,
         ),
         fn: definition.impl,
       });
@@ -1911,6 +1630,120 @@ function isMultimodalContent(
   return arr.every(
     (item) => isRecord(item) && (item.type === "text" || item.type === "image"),
   );
+}
+
+const MOD_SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
+
+type InvocationSecretRedactions = Map<string, string>;
+
+function normalizeModSecretName(name: string): string {
+  const normalized = name.toUpperCase();
+  if (!MOD_SECRET_NAME_PATTERN.test(normalized)) {
+    throw new Error(
+      `Invalid secret name '${name}'. Use uppercase letters, numbers, and underscores only. Must start with a letter or underscore.`,
+    );
+  }
+  return normalized;
+}
+
+function scrubInvocationSecretRedactions(
+  input: string,
+  redactions: InvocationSecretRedactions,
+): string {
+  let result = input;
+  const entries = Array.from(redactions.entries()).sort(
+    ([, a], [, b]) => b.length - a.length,
+  );
+  for (const [name, value] of entries) {
+    if (value.length > 0) {
+      result = result.replaceAll(value, `${name}=<REDACTED>`);
+    }
+  }
+  return result;
+}
+
+function scrubModToolString(
+  input: string,
+  redactions: InvocationSecretRedactions,
+): string {
+  return scrubInvocationSecretRedactions(input, redactions);
+}
+
+function scrubModToolReturnContent(
+  content: ToolReturnContent,
+  redactions: InvocationSecretRedactions,
+): ToolReturnContent {
+  if (typeof content === "string") {
+    return scrubModToolString(content, redactions);
+  }
+  return content.map((block) =>
+    block.type === "text"
+      ? { ...block, text: scrubModToolString(block.text, redactions) }
+      : block,
+  );
+}
+
+function scrubModToolLines(
+  lines: string[] | undefined,
+  redactions: InvocationSecretRedactions,
+): string[] | undefined {
+  return lines?.map((line) => scrubModToolString(line, redactions));
+}
+
+function createScrubbedError(error: unknown, message: string): Error {
+  const scrubbedError = new Error(message);
+  if (error instanceof Error) {
+    scrubbedError.name = error.name;
+  }
+  return scrubbedError;
+}
+
+function createModSecretResolver(options: {
+  addRedaction: (name: string, value: string) => void;
+  agentId: string | null | undefined;
+}): ModSecretResolver {
+  let agentSecretsPromise: Promise<Record<string, string>> | null = null;
+
+  const loadAgentSecrets = async (): Promise<Record<string, string>> => {
+    if (!options.agentId) return {};
+    agentSecretsPromise ??= refreshAndListSecrets(options.agentId).then(
+      (entries) =>
+        Object.fromEntries(entries.map(({ key, value }) => [key, value])),
+    );
+    return agentSecretsPromise;
+  };
+
+  return async (name, resolverOptions) => {
+    const key = normalizeModSecretName(name);
+    let agentLookupError: unknown;
+
+    if (options.agentId) {
+      try {
+        const agentSecrets = await loadAgentSecrets();
+        if (Object.hasOwn(agentSecrets, key)) {
+          const value = agentSecrets[key] ?? "";
+          options.addRedaction(key, value);
+          return value;
+        }
+      } catch (error) {
+        agentLookupError = error;
+      }
+    }
+
+    if (resolverOptions?.envFallback === true) {
+      const value = process.env[key];
+      if (value !== undefined) {
+        options.addRedaction(key, value);
+        return value;
+      }
+    }
+
+    if (agentLookupError !== undefined) {
+      throw agentLookupError;
+    }
+
+    return null;
+  };
 }
 
 function flattenToolResponse(result: unknown): ToolReturnContent {
@@ -2150,8 +1983,13 @@ async function emitToolStartEvent(options: {
   modContext: ModContext;
   toolCallId?: string;
   toolName: string;
-}): Promise<{ args: ToolArgs }> {
-  const event = {
+}): Promise<{
+  args: ToolArgs;
+  result?: { status: "success" | "error"; output: string };
+}> {
+  const event: ModToolStartEvent & {
+    result?: { status: "success" | "error"; output: string };
+  } = {
     agentId: options.executionScope.agentId ?? null,
     conversationId: options.executionScope.conversationId ?? null,
     toolCallId: options.toolCallId ?? null,
@@ -2166,7 +2004,42 @@ async function emitToolStartEvent(options: {
     return { args: options.args };
   }
 
-  return { args: isToolStartArgs(event.args) ? event.args : options.args };
+  return {
+    args: isToolStartArgs(event.args) ? event.args : options.args,
+    result: event.result,
+  };
+}
+
+async function emitToolEndEvent(options: {
+  args: ToolArgs;
+  events?: ModEvents;
+  executionScope: RuntimeContextSnapshot;
+  modContext: ModContext;
+  toolCallId?: string;
+  toolName: string;
+  status: "success" | "error";
+  output: string;
+}): Promise<{ status: "success" | "error"; output: string } | undefined> {
+  const event: ModToolEndEvent & {
+    result?: { status: "success" | "error"; output: string };
+  } = {
+    agentId: options.executionScope.agentId ?? null,
+    conversationId: options.executionScope.conversationId ?? null,
+    toolCallId: options.toolCallId ?? null,
+    toolName: options.toolName,
+    args: cloneToolArgsForModEvent(options.args),
+    status: options.status,
+    output: options.output,
+  };
+
+  try {
+    await emitModEvent(options.events, "tool_end", event, options.modContext);
+  } catch (error) {
+    debugLog("mods", "tool_end event failed", error);
+    return undefined;
+  }
+
+  return event.result;
 }
 
 async function executeModTool(
@@ -2189,6 +2062,12 @@ async function executeModTool(
     tool.activationSignal,
   ]);
   const { signal } = linkedSignal;
+  const redactions: InvocationSecretRedactions = new Map();
+  const addRedaction = (name: string, value: string): void => {
+    if (value.length > 0) {
+      redactions.set(name, value);
+    }
+  };
 
   const run = async (): Promise<ToolExecutionResult> => {
     const preHookResult = await runPreToolUseHooks(
@@ -2214,13 +2093,15 @@ async function executeModTool(
         args: args as Record<string, unknown>,
         toolCallId: options.toolCallId ?? null,
         signal,
+        secret: createModSecretResolver({
+          addRedaction,
+          agentId: modContext.agent.id,
+        }),
         ...(options.onOutput
           ? {
               onOutput: (chunk: string, stream: "stdout" | "stderr") => {
                 options.onOutput?.(
-                  stripAnsi(
-                    scrubSecretsFromString(chunk, options.scopedAgentId),
-                  ),
+                  stripAnsi(scrubModToolString(chunk, redactions)),
                   stream,
                 );
               },
@@ -2249,14 +2130,19 @@ async function executeModTool(
       );
       const duration = Date.now() - startTime;
       const recordResult = isRecord(result) ? result : undefined;
-      const stdout = isStringArray(recordResult?.stdout)
-        ? recordResult.stdout
-        : undefined;
-      const stderr = isStringArray(recordResult?.stderr)
-        ? recordResult.stderr
-        : undefined;
+      const stdout = scrubModToolLines(
+        isStringArray(recordResult?.stdout) ? recordResult.stdout : undefined,
+        redactions,
+      );
+      const stderr = scrubModToolLines(
+        isStringArray(recordResult?.stderr) ? recordResult.stderr : undefined,
+        redactions,
+      );
       const toolStatus = getModToolStatus(result);
-      const flattenedResponse = flattenToolResponse(result);
+      const flattenedResponse = clampToolReturnContent(
+        scrubModToolReturnContent(flattenToolResponse(result), redactions),
+        toolName,
+      );
       const responseSize =
         typeof flattenedResponse === "string"
           ? flattenedResponse.length
@@ -2302,11 +2188,6 @@ async function executeModTool(
         ...(stderr && { stderr }),
       };
     } catch (error) {
-      tool.recordDiagnostic?.({
-        capability: { id: toolName, kind: "tool" },
-        error: error instanceof Error ? error : new Error(String(error)),
-        phase: "tool.run",
-      });
       const duration = Date.now() - startTime;
       const isAbort =
         signal.aborted ||
@@ -2319,11 +2200,20 @@ async function executeModTool(
         : error instanceof Error
           ? error.name
           : "unknown";
-      const errorMessage = isAbort
-        ? INTERRUPTED_BY_USER
-        : error instanceof Error
-          ? error.message
-          : String(error);
+      const errorMessage = scrubModToolString(
+        isAbort
+          ? INTERRUPTED_BY_USER
+          : error instanceof Error
+            ? error.message
+            : String(error),
+        redactions,
+      );
+
+      tool.recordDiagnostic?.({
+        capability: { id: toolName, kind: "tool" },
+        error: createScrubbedError(error, errorMessage),
+        phase: "tool.run",
+      });
 
       telemetry.trackToolUsage(
         toolName,
@@ -2374,6 +2264,7 @@ function toolExecutionModContext(
   options: { workingDirectory: string; modContext?: ModContext },
 ): ModContext {
   return buildModInvocationContext({
+    agent: { id: executionScope.agentId ?? null },
     base: options.modContext,
     conversationId: executionScope.conversationId ?? null,
     permissionMode: executionScope.permissionMode ?? null,
@@ -2389,7 +2280,7 @@ function toolExecutionModContext(
  * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
  * @returns Promise with the tool's execution result including status and optional stdout/stderr
  */
-export async function executeTool(
+async function executeToolInner(
   name: string,
   args: ToolArgs,
   options?: {
@@ -2398,10 +2289,10 @@ export async function executeTool(
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
-    channelTurnSources?: ChannelTurnSource[];
     /** Called after a file-mutating tool (Edit, Write, MultiEdit) writes to disk.
      *  The listener layer uses this to broadcast the new content via WebSocket. */
     onFileWrite?: (filePath: string, content: string) => void;
+    toolEndArgsRef?: { current: ToolArgs };
   },
 ): Promise<ToolExecutionResult> {
   const context = options?.toolContextId
@@ -2446,7 +2337,7 @@ export async function executeTool(
         status: "error",
       };
     }
-    const { args: eventArgs } = await emitToolStartEvent({
+    const { args: eventArgs, result } = await emitToolStartEvent({
       args,
       events: modEvents,
       executionScope,
@@ -2454,6 +2345,14 @@ export async function executeTool(
       toolCallId: options?.toolCallId,
       toolName: name,
     });
+    if (result) {
+      if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
+      return {
+        toolReturn: result.output,
+        status: result.status,
+      };
+    }
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
     const permissionDecision = await checkModPermissionForContext({
       args: eventArgs,
       context,
@@ -2480,7 +2379,7 @@ export async function executeTool(
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
     const externalTool = activeExternalTools.get(name);
-    const { args: eventArgs } = await emitToolStartEvent({
+    const { args: eventArgs, result } = await emitToolStartEvent({
       args,
       events: modEvents,
       executionScope,
@@ -2488,6 +2387,14 @@ export async function executeTool(
       toolCallId: options?.toolCallId,
       toolName: name,
     });
+    if (result) {
+      if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
+      return {
+        toolReturn: result.output,
+        status: result.status,
+      };
+    }
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
     const permissionDecision = await checkModPermissionForContext({
       args: eventArgs,
       context,
@@ -2505,13 +2412,14 @@ export async function executeTool(
       options?.toolCallId ?? `ext-${Date.now()}`,
       name,
       eventArgs as Record<string, unknown>,
-      activeExternalExecutor,
+      externalTool?.executor ?? activeExternalExecutor,
       externalTool,
     );
   }
 
   const internalName = resolveInternalToolName(name, activeRegistry);
-  if (!internalName) {
+  const tool = internalName ? activeRegistry.get(internalName) : undefined;
+  if (!internalName || !tool) {
     const availableTools = [
       ...Array.from(activeRegistry.keys()),
       ...Array.from(activeExternalTools.keys()),
@@ -2523,20 +2431,7 @@ export async function executeTool(
     };
   }
 
-  const tool = activeRegistry.get(internalName);
-  if (!tool) {
-    const availableTools = [
-      ...Array.from(activeRegistry.keys()),
-      ...Array.from(activeExternalTools.keys()),
-      ...Array.from(activeModTools.keys()),
-    ];
-    return {
-      toolReturn: `Tool not found: ${name}. Available tools: ${availableTools.join(", ")}`,
-      status: "error",
-    };
-  }
-
-  const { args: eventArgs } = await emitToolStartEvent({
+  const { args: eventArgs, result } = await emitToolStartEvent({
     args,
     events: modEvents,
     executionScope,
@@ -2544,7 +2439,15 @@ export async function executeTool(
     toolCallId: options?.toolCallId,
     toolName: internalName,
   });
+  if (result) {
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
+    return {
+      toolReturn: result.output,
+      status: result.status,
+    };
+  }
   args = eventArgs;
+  if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
   const permissionDecision = await checkModPermissionForContext({
     args,
     context,
@@ -2584,58 +2487,63 @@ export async function executeTool(
         ...preHookResult.updatedInput,
       };
     }
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
 
     try {
-      // Inject options for tools that support them without altering schemas
       let enhancedArgs = args;
+      let invocationSecrets: Record<string, string> = {};
+
+      // Cancellation is internal, not part of model-facing tool schemas.
+      if (options?.signal) {
+        enhancedArgs = { ...enhancedArgs, signal: options.signal };
+      }
 
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
-        if (options?.signal) {
-          enhancedArgs = { ...enhancedArgs, signal: options.signal };
-        }
-        if (options?.onOutput) {
-          enhancedArgs = {
-            ...enhancedArgs,
-            onOutput: (chunk: string, stream: "stdout" | "stderr") => {
-              options.onOutput?.(
-                stripAnsi(scrubSecretsFromString(chunk, scopedAgentId)),
-                stream,
-              );
-            },
-          };
-        }
-
-        // Inject secrets as environment variables instead of substituting into
-        // the command string. This prevents shell metacharacters in secrets
-        // (e.g. $$, backticks, quotes) from being interpreted by the shell.
+        // Redact only this invocation's secrets.
         const command = enhancedArgs.command ?? enhancedArgs.cmd;
-        const secretEnv =
+        invocationSecrets =
           typeof command === "string" ||
           (Array.isArray(command) &&
             command.every((part) => typeof part === "string"))
             ? extractSecretEnvFromCommand(command, scopedAgentId)
             : {};
-        if (Object.keys(secretEnv).length > 0) {
-          enhancedArgs = { ...enhancedArgs, secretEnv };
+        if (options?.onOutput) {
+          enhancedArgs = {
+            ...enhancedArgs,
+            onOutput: (chunk: string, stream: "stdout" | "stderr") => {
+              options.onOutput?.(
+                stripAnsi(scrubSecretsFromString(chunk, invocationSecrets)),
+                stream,
+              );
+            },
+          };
+        }
+        if (Object.keys(invocationSecrets).length > 0) {
+          enhancedArgs = { ...enhancedArgs, secretEnv: invocationSecrets };
+        }
+        const parentScope =
+          options?.parentScope ??
+          (internalName === "Monitor" && scopedAgentId
+            ? {
+                agentId: scopedAgentId,
+                conversationId: executionScope.conversationId ?? "default",
+              }
+            : undefined);
+        if (parentScope) {
+          enhancedArgs = { ...enhancedArgs, parentScope };
         }
       }
 
-      // Inject toolCallId, abort signal, and parent scope for Task tool
       if (internalName === "Task") {
         if (options?.toolCallId) {
           enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
-        }
-        if (options?.signal) {
-          enhancedArgs = { ...enhancedArgs, signal: options.signal };
         }
         if (options?.parentScope) {
           enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
         }
       }
 
-      // Inject scoped metadata for Skill tool.
-      // In listener/desktop mode, relying on global agent context is unsafe
-      // because multiple agent/conversation scopes can overlap in one process.
+      // Skill metadata must not use process-global scope in listener mode.
       if (internalName === "Skill" && options?.toolCallId) {
         enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
       }
@@ -2643,28 +2551,12 @@ export async function executeTool(
         enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
       }
 
-      // Inject parent scope for MessageChannel tool (per-execution, not global singleton)
-      if (internalName === "MessageChannel") {
-        if (options?.parentScope) {
-          enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
-        }
-        if (options?.channelTurnSources?.length) {
-          enhancedArgs = {
-            ...enhancedArgs,
-            channelTurnSources: options.channelTurnSources,
-          };
-        }
-      }
-
-      // Inject the execution context id for tools that need to mutate
-      // turn-scoped execution state without touching global singletons.
-      if (
-        WORKTREE_TOOL_NAMES.has(internalName as ToolName) &&
-        options?.toolContextId
-      ) {
+      if (WORKTREE_TOOL_NAMES.has(internalName as ToolName)) {
         enhancedArgs = {
           ...enhancedArgs,
-          _executionContextId: options.toolContextId,
+          ...(options?.toolContextId && {
+            _executionContextId: options.toolContextId,
+          }),
         };
       }
 
@@ -2707,7 +2599,7 @@ export async function executeTool(
       // don't leak into agent context or render as garbage in downstream UIs.
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
         const sanitize = (text: string) =>
-          stripAnsi(scrubSecretsFromString(text, scopedAgentId));
+          stripAnsi(scrubSecretsFromString(text, invocationSecrets));
         if (typeof flattenedResponse === "string") {
           flattenedResponse = sanitize(flattenedResponse);
         } else if (Array.isArray(flattenedResponse)) {
@@ -2734,6 +2626,11 @@ export async function executeTool(
           }
         }
       }
+
+      flattenedResponse = clampToolReturnContent(
+        flattenedResponse,
+        internalName,
+      );
 
       // Track tool usage (calculate size for multimodal content)
       const responseSize =
@@ -2773,7 +2670,6 @@ export async function executeTool(
         hookFeedback,
       );
 
-      // Return the full response (truncation happens in UI layer only)
       return {
         toolReturn: finalToolReturn,
         status: toolStatus,
@@ -2843,6 +2739,69 @@ export async function executeTool(
 }
 
 /**
+ * Executes a tool and gives mods a chance to observe or replace the result via
+ * the `tool_end` event. A handler returning `{ result: { status, output } }`
+ * overrides what the agent sees (first handler wins). Only fires for string
+ * results — multimodal/image results pass through unchanged. Delivery is
+ * capability-gated (`events.tools`), so only enabled surfaces receive it.
+ *
+ * @param name - Name of the tool to execute
+ * @param args - Arguments object to pass to the tool
+ * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
+ * @returns Promise with the tool's execution result including status and optional stdout/stderr
+ */
+export async function executeTool(
+  ...params: Parameters<typeof executeToolInner>
+): Promise<ToolExecutionResult> {
+  const [name, args, options] = params;
+  const toolEndArgsRef = { current: args };
+  const res = await executeToolInner(name, args, {
+    ...options,
+    toolEndArgsRef,
+  });
+
+  const context = options?.toolContextId
+    ? getExecutionContextById(options.toolContextId)
+    : undefined;
+  const modEvents = context?.modEvents;
+  if (!modEvents || typeof res.toolReturn !== "string") {
+    return res;
+  }
+
+  const executionScope = context?.runtimeContext
+    ? buildExecutionRuntimeContextSnapshot({
+        workingDirectory: context.runtimeContext.workingDirectory ?? undefined,
+        permissionModeState: context.permissionModeState,
+        runtimeContext: context.runtimeContext,
+      })
+    : buildExecutionRuntimeContextSnapshot({
+        workingDirectory: context?.workingDirectory,
+        permissionModeState: context?.permissionModeState,
+      });
+  const modContext =
+    context?.modContext ??
+    toolExecutionModContext(executionScope, {
+      workingDirectory:
+        executionScope.workingDirectory ?? getCurrentWorkingDirectory(),
+    });
+
+  const override = await emitToolEndEvent({
+    args: toolEndArgsRef.current,
+    events: modEvents,
+    executionScope,
+    modContext,
+    toolCallId: options?.toolCallId,
+    toolName: name,
+    status: res.status,
+    output: res.toolReturn,
+  });
+
+  return override
+    ? { ...res, toolReturn: override.output, status: override.status }
+    : res;
+}
+
+/**
  * Gets all loaded tool names (for passing to Letta agent creation).
  *
  * @returns Array of tool names
@@ -2865,9 +2824,9 @@ export function getAllLettaToolNames(): string[] {
  * @returns Array of tool schemas
  */
 export function getToolSchemas(): ToolSchema[] {
-  const builtInSchemas = Array.from(
-    withDynamicMessageChannelCache(toolRegistry).values(),
-  ).map((tool) => tool.schema);
+  const builtInSchemas = Array.from(toolRegistry.values()).map(
+    (tool) => tool.schema,
+  );
   const modSchemas = Array.from(getAvailableModToolsRegistry().values()).map(
     (tool) => ({
       name: tool.name,
@@ -2884,13 +2843,19 @@ export function getToolSchemas(): ToolSchema[] {
  * @param name - The tool name
  * @returns The tool schema or undefined if not found
  */
-export function getToolSchema(name: string): ToolSchema | undefined {
-  const internalName = resolveInternalToolName(name);
+export function getToolSchema(
+  name: string,
+  toolContextId?: string | null,
+): ToolSchema | undefined {
+  const context = toolContextId
+    ? getExecutionContextById(toolContextId)
+    : undefined;
+  const registry = context?.toolRegistry ?? toolRegistry;
+  const internalName = resolveInternalToolName(name, registry);
   if (internalName) {
-    return withDynamicMessageChannelCache(toolRegistry).get(internalName)
-      ?.schema;
+    return registry.get(internalName)?.schema;
   }
-  const modTool = getModToolDefinition(name);
+  const modTool = context?.modTools.get(name) ?? getModToolDefinition(name);
   if (modTool) {
     return {
       name: modTool.name,
@@ -2898,7 +2863,8 @@ export function getToolSchema(name: string): ToolSchema | undefined {
       input_schema: modTool.parameters as JsonSchema,
     };
   }
-  const externalTool = getExternalToolDefinition(name);
+  const externalTool =
+    context?.externalTools.get(name) ?? getExternalToolDefinition(name);
   if (externalTool) {
     return {
       name: externalTool.name,
@@ -2907,37 +2873,6 @@ export function getToolSchema(name: string): ToolSchema | undefined {
     };
   }
   return undefined;
-}
-
-export async function refreshDynamicChannelToolsInLoadedRegistry(): Promise<void> {
-  const activeChannels = getActiveChannelIds();
-  if (activeChannels.length === 0) {
-    toolRegistry.delete("MessageChannel");
-    return;
-  }
-
-  const definition = TOOL_DEFINITIONS.MessageChannel;
-  if (!definition?.impl) {
-    throw new Error("Tool implementation not found for MessageChannel");
-  }
-
-  const resolvedTool = await maybeResolveDynamicChannelTool(
-    "MessageChannel",
-    definition.description,
-    definition.schema,
-  );
-  toolRegistry.set("MessageChannel", {
-    schema: {
-      name: "MessageChannel",
-      description: resolvedTool.description,
-      input_schema: resolvedTool.input_schema as JsonSchema,
-    },
-    modelForm: functionToolForm({
-      description: resolvedTool.description,
-      parameters: resolvedTool.input_schema as JsonSchema,
-    }),
-    fn: definition.impl,
-  });
 }
 
 /**

@@ -49,6 +49,12 @@ function makeOverlay(): Omit<
   return { kind: "overlay_action", source: "system", text: "plan_mode" };
 }
 
+function makeContinue(
+  text = "keep going",
+): Omit<Extract<QueueItem, { kind: "mod_continue" }>, "id" | "enqueuedAt"> {
+  return { kind: "mod_continue", source: "system", text };
+}
+
 // ── Enqueue ───────────────────────────────────────────────────────
 
 describe("enqueue basics", () => {
@@ -193,6 +199,16 @@ describe("dequeue coalescable items", () => {
     expect(batch?.mergedCount).toBe(3);
   });
 
+  test("mod_continue items are coalescable and dequeue as a batch", () => {
+    const q = new QueueRuntime();
+    q.enqueue(makeContinue("keep going"));
+    const batch = q.tryDequeue(null);
+    expect(batch).not.toBeNull();
+    expect(batch?.items).toHaveLength(1);
+    expect(batch?.items[0]?.kind).toBe("mod_continue");
+    expect(q.length).toBe(0);
+  });
+
   test("onDequeued fires with correct batch metadata", () => {
     const batches: DequeuedBatch[] = [];
     const q = new QueueRuntime({
@@ -232,6 +248,43 @@ describe("dequeue coalescable items", () => {
     const second = q.tryDequeue(null);
     expect(second?.items).toHaveLength(1);
     expect((second?.items[0] as MessageQueueItem).content).toBe("b");
+  });
+
+  test("coalesces task notifications for the same acting user", () => {
+    const q = new QueueRuntime();
+    q.enqueue({ ...makeTask("a"), actingUserId: "cloud-user-a" });
+    q.enqueue({ ...makeTask("b"), actingUserId: "cloud-user-a" });
+
+    const batch = q.tryDequeue(null);
+
+    expect(batch?.items.map((item) => item.actingUserId)).toEqual([
+      "cloud-user-a",
+      "cloud-user-a",
+    ]);
+    expect(q.length).toBe(0);
+  });
+
+  test("keeps different acting users in separate billed turns", () => {
+    const q = new QueueRuntime();
+    q.enqueue(makeTask("unattributed"));
+    q.enqueue({ ...makeTask("a"), actingUserId: "cloud-user-a" });
+    q.enqueue({ ...makeTask("b"), actingUserId: "cloud-user-b" });
+
+    const first = q.tryDequeue(null);
+    const second = q.tryDequeue(null);
+
+    expect(
+      first?.items.map((item) => ("text" in item ? item.text : undefined)),
+    ).toEqual(["unattributed", "a"]);
+    expect(first?.items.map((item) => item.actingUserId)).toEqual([
+      undefined,
+      "cloud-user-a",
+    ]);
+    expect(
+      second?.items.map((item) => ("text" in item ? item.text : undefined)),
+    ).toEqual(["b"]);
+    expect(second?.items[0]?.actingUserId).toBe("cloud-user-b");
+    expect(q.length).toBe(0);
   });
 
   test("length is 0 after full dequeue", () => {

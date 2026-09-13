@@ -3,10 +3,8 @@ import type { ReactNode } from "react";
 import { colors } from "@/cli/components/colors";
 import { Box, Text } from "@/cli/display/DisplayComponents";
 import { truncateStatuslineText } from "@/cli/display/statusline/formatting";
-import type {
-  StatuslineRenderContext,
-  StatuslineRenderer,
-} from "@/cli/display/statusline/types";
+import type { StatuslineUiContext } from "@/cli/display/statusline/types";
+import type { ModContext } from "@/mods/types";
 
 interface DefaultStatuslineParts {
   left: ReactNode;
@@ -16,19 +14,20 @@ interface DefaultStatuslineParts {
 }
 
 export function getDefaultStatuslineRightColumnWidth(
-  context: StatuslineRenderContext,
+  context: ModContext,
+  ui: StatuslineUiContext,
 ): number {
-  const terminalWidth = context.terminalWidth ?? context.ui.rightColumnWidth;
-  return Math.max(context.ui.rightColumnWidth, terminalWidth - 4);
+  const terminalWidth = context.terminalWidth ?? ui.rightColumnWidth;
+  return Math.max(ui.rightColumnWidth, terminalWidth - 4);
 }
 
 export function buildDefaultStatuslineParts(
-  context: StatuslineRenderContext,
-  rightColumnWidth = getDefaultStatuslineRightColumnWidth(context),
+  context: ModContext,
+  ui: StatuslineUiContext,
+  rightColumnWidth = getDefaultStatuslineRightColumnWidth(context, ui),
 ): DefaultStatuslineParts {
   const indicatorWidth =
-    (context.ui.isByokProvider ? 2 : 0) +
-    (context.ui.hasTemporaryModelOverride ? 2 : 0);
+    (ui.isByokProvider ? 2 : 0) + (ui.hasTemporaryModelOverride ? 2 : 0);
   const separatorWidth = 3;
   const availableTextWidth = Math.max(
     12,
@@ -59,23 +58,19 @@ export function buildDefaultStatuslineParts(
   rightCoreParts.push(chalk.hex(colors.footer.agentName)(displayAgentName));
   rightCoreParts.push(chalk.dim(" · "));
   rightCoreParts.push(chalk.dim(displayModel));
-  if (context.ui.isByokProvider) {
+  if (ui.isByokProvider) {
     rightCoreParts.push(chalk.dim(" "));
     rightCoreParts.push(
-      context.ui.isOpenAICodexProvider
-        ? chalk.hex("#74AA9C")("▲")
-        : chalk.yellow("▲"),
+      ui.isOpenAICodexProvider ? chalk.hex("#74AA9C")("▲") : chalk.yellow("▲"),
     );
   }
-  if (context.ui.hasTemporaryModelOverride) {
+  if (ui.hasTemporaryModelOverride) {
     rightCoreParts.push(chalk.dim(" "));
     rightCoreParts.push(chalk.yellow("▲"));
   }
 
   const rightCore = rightCoreParts.join("");
-  const right = context.ui.goalStatusText
-    ? chalk.magenta(context.ui.goalStatusText)
-    : " ".repeat(rightPrefixSpaces) + rightCore;
+  const right = " ".repeat(rightPrefixSpaces) + rightCore;
 
   return {
     left: <Text> </Text>,
@@ -85,9 +80,12 @@ export function buildDefaultStatuslineParts(
   };
 }
 
-export function renderDefaultStatusline(context: StatuslineRenderContext) {
-  const rightColumnWidth = getDefaultStatuslineRightColumnWidth(context);
-  const parts = buildDefaultStatuslineParts(context, rightColumnWidth);
+export function renderDefaultStatusline(
+  context: ModContext,
+  ui: StatuslineUiContext,
+) {
+  const rightColumnWidth = getDefaultStatuslineRightColumnWidth(context, ui);
+  const parts = buildDefaultStatuslineParts(context, ui, rightColumnWidth);
 
   return (
     <Box flexDirection="row" marginBottom={1}>
@@ -105,10 +103,3 @@ export function renderDefaultStatusline(context: StatuslineRenderContext) {
     </Box>
   );
 }
-
-export const defaultStatuslineRenderer: StatuslineRenderer = {
-  id: "default",
-  label: "Default",
-  description: "The built-in Letta Code statusline.",
-  render: renderDefaultStatusline,
-};

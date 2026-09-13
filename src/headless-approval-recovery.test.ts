@@ -122,4 +122,18 @@ describe("headless approval recovery wiring", () => {
     expect(helperSegment).toContain("conversationId: params.conversationId,");
     expect(helperSegment).toContain("preparedToolContext:");
   });
+
+  test("invalid-ID recovery replaces stale input before retrying", () => {
+    const start = source.indexOf("const invalidIdsDetected =");
+    const end = source.indexOf("// Unexpected stop reason", start);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain(
+      "currentInput = await rebuildInputForApprovalResync(",
+    );
+    expect(segment).not.toContain("await resolveAllPendingApprovals();");
+  });
 });

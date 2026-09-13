@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto";
-import type { AssistantMessageEvent, Usage } from "@earendil-works/pi-ai";
+import type {
+  AssistantMessage,
+  AssistantMessageEvent,
+  Usage,
+} from "@earendil-works/pi-ai";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import {
   contextTokensFromLocalUsage,
   estimateLocalContextTokens,
 } from "@/backend/local/local-context-estimate";
-import type { LocalMessage } from "@/backend/local/local-message";
+import type {
+  LocalAssistantMessage,
+  LocalMessage,
+} from "@/backend/local/local-message";
 import type {
   LocalAgentRecord,
   StoredMessage,
@@ -23,6 +30,9 @@ import type {
 } from "./headless-turn-executor";
 import { normalizeLocalProviderError } from "./local-provider-errors";
 
+const LOCAL_CONTEXT_COMPACTION_RESERVE_TOKENS = 16_384;
+const LOCAL_SMALL_CONTEXT_COMPACTION_RESERVE_RATIO = 0.2;
+
 export interface ProviderTurnInput {
   conversationId: string;
   agentId: string;
@@ -34,6 +44,37 @@ export interface ProviderTurnInput {
   uiMessages: LocalMessage[];
   clientTools: unknown[];
   clientSkills: unknown[];
+}
+
+/** Provider-request start info emitted at the model-call boundary. */
+export interface LlmStartInfo {
+  agentId: string;
+  conversationId: string;
+  model: string;
+  messageCount: number;
+  contextWindow: number;
+}
+
+export interface LlmEndErrorInfo {
+  message: string;
+  detail: string;
+  errorType: "llm_error" | "local_backend_error";
+  retryable: boolean;
+}
+
+/** Provider-request completion info emitted once a final message is produced. */
+export interface LlmEndInfo {
+  agentId: string;
+  conversationId: string;
+  model: string;
+  stopReason: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  } | null;
+  durationMs: number;
+  error?: LlmEndErrorInfo;
 }
 
 export type ProviderStreamEvent =
@@ -163,6 +204,72 @@ export function estimateProviderContextTokens(
   return total > 0 ? total : undefined;
 }
 
+/**
+ * Tokens the request cannot shed: the compiled system prompt plus the tool
+ * definitions. Compaction rewrites message history, so when this floor alone
+ * exceeds the serving context window there is no recovery — every turn would be
+ * truncated by the engine before the model ever sees the memory the system
+ * prompt carries. Callers use this to fail loudly instead.
+ */
+export function estimateProviderPromptFloorTokens(
+  input: ProviderTurnInput,
+): number {
+  return (
+    estimateSerializedTokens(input.systemPrompt ?? input.agent.system) +
+    estimateSerializedTokens(input.clientTools)
+  );
+}
+
+/**
+ * Context pressure must be handled before the provider request, not only after
+ * an overflow. pi-ai first makes an oversized request valid by shrinking its
+ * output allowance to `contextWindow - estimatedContext - 4096`, floored at
+ * one token. A near-full request can therefore finish with `length` instead of
+ * throwing the overflow that our retry path would catch.
+ *
+ * Keep the same 16,384-token reserve as Pi's coding-agent harness, capped at
+ * 20% for small local windows. This is deliberately based on context usage,
+ * not the configured output limit: an intentionally small `max_tokens` value
+ * remains a normal provider length stop (the policy preserved by #3355).
+ *
+ * Upstream references, pinned when #3508 was fixed:
+ * - pi-ai clamp: https://github.com/earendil-works/pi/blob/cee5ff7520d8828bed9955ef00419e995d1f91e0/packages/ai/src/api/simple-options.ts#L12-L19
+ * - Pi reserve: https://github.com/earendil-works/pi/blob/cee5ff7520d8828bed9955ef00419e995d1f91e0/packages/coding-agent/src/core/compaction/compaction.ts#L128-L137
+ * - Pi threshold: https://github.com/earendil-works/pi/blob/cee5ff7520d8828bed9955ef00419e995d1f91e0/packages/coding-agent/src/core/compaction/compaction.ts#L235-L238
+ */
+export function contextCompactionThreshold(
+  contextWindow: number | undefined,
+): number | undefined {
+  if (
+    typeof contextWindow !== "number" ||
+    !Number.isFinite(contextWindow) ||
+    contextWindow <= 0
+  ) {
+    return undefined;
+  }
+
+  const reserveTokens = Math.min(
+    LOCAL_CONTEXT_COMPACTION_RESERVE_TOKENS,
+    Math.max(
+      1,
+      Math.floor(contextWindow * LOCAL_SMALL_CONTEXT_COMPACTION_RESERVE_RATIO),
+    ),
+  );
+  return Math.max(0, contextWindow - reserveTokens);
+}
+
+export function shouldCompactForContextPressure(input: {
+  contextTokens: number | undefined;
+  contextWindow: number | undefined;
+}): boolean {
+  const threshold = contextCompactionThreshold(input.contextWindow);
+  return (
+    input.contextTokens !== undefined &&
+    threshold !== undefined &&
+    input.contextTokens > threshold
+  );
+}
+
 function serializedLength(value: unknown): number {
   if (value === undefined || value === null) return 0;
   try {
@@ -203,12 +310,14 @@ function createUsageStatisticsChunk(
   const contextTokens = usageContextTokens ?? contextTokensEstimate;
   const cachedInputTokens = usage?.cacheRead;
   const cacheWriteTokens = usage?.cacheWrite;
+  const reasoningTokens = usage?.reasoning;
   if (
     promptTokens === undefined &&
     completionTokens === undefined &&
     totalTokens === undefined &&
     cachedInputTokens === undefined &&
     cacheWriteTokens === undefined &&
+    reasoningTokens === undefined &&
     contextTokens === undefined
   ) {
     return undefined;
@@ -226,6 +335,9 @@ function createUsageStatisticsChunk(
     ...(cacheWriteTokens !== undefined
       ? { cache_write_tokens: cacheWriteTokens }
       : {}),
+    ...(reasoningTokens !== undefined
+      ? { reasoning_tokens: reasoningTokens }
+      : {}),
     ...(contextTokens !== undefined ? { context_tokens: contextTokens } : {}),
   } as unknown as LettaStreamingResponse;
 }
@@ -235,15 +347,51 @@ function errorFromAssistantEvent(part: AssistantMessageEvent): Error {
   return new Error(part.error.errorMessage ?? "Unknown local provider error");
 }
 
-function otidForContentIndex(
+type StreamedMessageType = "assistant_message" | "reasoning_message";
+
+function contentMatchesMessageType(
+  content: LocalAssistantMessage["content"][number] | undefined,
+  messageType: StreamedMessageType,
+): boolean {
+  if (!content || typeof content !== "object" || !("type" in content)) {
+    return false;
+  }
+  return messageType === "assistant_message"
+    ? content.type === "text"
+    : content.type === "thinking";
+}
+
+function contiguousContentStartIndex(
+  partial: AssistantMessage,
+  contentIndex: number,
+  messageType: StreamedMessageType,
+): number {
+  let startIndex = contentIndex;
+  while (
+    startIndex > 0 &&
+    contentMatchesMessageType(partial.content[startIndex - 1], messageType)
+  ) {
+    startIndex -= 1;
+  }
+  return startIndex;
+}
+
+function otidForContentSegment(
   otids: Map<number, string>,
   prefix: string,
   contentIndex: number,
+  partial: AssistantMessage,
+  messageType: StreamedMessageType,
 ): string {
-  const existing = otids.get(contentIndex);
+  const segmentStartIndex = contiguousContentStartIndex(
+    partial,
+    contentIndex,
+    messageType,
+  );
+  const existing = otids.get(segmentStartIndex);
   if (existing) return existing;
-  const otid = `${prefix}-${contentIndex}-${randomUUID()}`;
-  otids.set(contentIndex, otid);
+  const otid = `${prefix}-${segmentStartIndex}-${randomUUID()}`;
+  otids.set(segmentStartIndex, otid);
   return otid;
 }
 
@@ -281,10 +429,12 @@ function createProviderLettaStream(
           if (part.type === "text_delta") {
             yield {
               message_type: "assistant_message",
-              otid: otidForContentIndex(
+              otid: otidForContentSegment(
                 assistantOtids,
                 "provider-assistant",
                 part.contentIndex,
+                part.partial,
+                "assistant_message",
               ),
               content: [{ type: "text", text: part.delta }],
             } as LettaStreamingResponse;
@@ -294,10 +444,12 @@ function createProviderLettaStream(
           if (part.type === "thinking_delta") {
             yield {
               message_type: "reasoning_message",
-              otid: otidForContentIndex(
+              otid: otidForContentSegment(
                 reasoningOtids,
                 "provider-reasoning",
                 part.contentIndex,
+                part.partial,
+                "reasoning_message",
               ),
               reasoning: part.delta,
             } as LettaStreamingResponse;
@@ -333,7 +485,9 @@ function createProviderLettaStream(
               stop_reason:
                 sawToolCall || part.reason === "toolUse"
                   ? "requires_approval"
-                  : "end_turn",
+                  : part.reason === "length"
+                    ? "max_tokens_exceeded"
+                    : "end_turn",
             } as LettaStreamingResponse;
             continue;
           }

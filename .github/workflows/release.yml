@@ -16,6 +16,7 @@ jobs:
     permissions:
       contents: write
       id-token: write
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -53,7 +54,7 @@ jobs:
         if: steps.detect.outputs.should_publish == 'true'
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.0
+          bun-version: 1.3.14
 
       - name: Setup Node (bundled npm 11 for OIDC publishing)
         if: steps.detect.outputs.should_publish == 'true'
@@ -161,6 +162,70 @@ jobs:
         if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.npm_published != 'true'
         run: npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
 
+      - name: Wait for the published package
+        if: steps.detect.outputs.should_publish == 'true'
+        env:
+          PACKAGE_NAME: ${{ steps.version.outputs.package_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for _ in {1..30}; do
+            if npm view "$PACKAGE_NAME@$VERSION" version >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Package $PACKAGE_NAME@$VERSION did not become available within five minutes."
+          exit 1
+
+      - name: Set up QEMU
+        if: steps.detect.outputs.should_publish == 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: steps.detect.outputs.should_publish == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: steps.detect.outputs.should_publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: steps.detect.outputs.should_publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set container image tags
+        if: steps.detect.outputs.should_publish == 'true'
+        id: container
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}
+            letta/letta
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest,enable=${{ steps.version.outputs.is_prerelease == 'false' }}
+
+      - name: Build and publish container image
+        if: steps.detect.outputs.should_publish == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            LETTA_CODE_VERSION=${{ steps.version.outputs.version }}
+          tags: ${{ steps.container.outputs.tags }}
+          labels: ${{ steps.container.outputs.labels }}
+
       - name: Create GitHub Release
         if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.is_prerelease == 'false' && steps.version.outputs.previous_tag != ''
         uses: softprops/action-gh-release@v2
@@ -183,3 +248,37 @@ jobs:
           generate_release_notes: true
           files: letta.js
           fail_on_unmatched_files: true
+
+      # Propagate the release downstream: dispatch the packaging bump
+      # workflow with the exact version so bundled copies of the CLI never
+      # silently lag behind published releases. Non-blocking: a failed
+      # dispatch must not fail the release (a scheduled fallback run on the
+      # receiving side picks up missed versions).
+      - name: Dispatch downstream CLI bump
+        if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.is_prerelease == 'false'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          TARGET_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Brief wait so the npm registry has propagated the new version
+          # before the bump workflow tries to resolve it into lockfiles.
+          sleep 60
+          gh workflow run bump-code-desktop-letta-code.yml \
+            --repo letta-ai/letta-cloud \
+            -f letta_code_version="$TARGET_VERSION"
+
+      # A workflow-created release does not emit another Actions run when it
+      # uses GITHUB_TOKEN, so dispatch the separate cascade workflow directly.
+      # Once dispatched, downstream failures stay on the cascade run and cannot
+      # invalidate the already-published Letta Code release.
+      - name: Dispatch dependent package release cascade
+        if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.is_prerelease == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          TARGET_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh workflow run release-cascade.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f letta_code_version="$TARGET_VERSION"

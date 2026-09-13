@@ -2,7 +2,7 @@
  * Skills module - provides skill discovery and management functionality
  *
  * Skills are discovered from four sources (in order of priority):
- * 1. Project skills: .skills/ in current directory (highest priority - overrides)
+ * 1. Project skills: .agents/skills/ in current directory, with .skills/ as a legacy fallback (highest priority - overrides)
  * 2. Agent skills: ~/.letta/agents/{agent-id}/memory/skills/ for agent-specific skills
  * 3. Global skills: ~/.letta/skills/ for user's personal skills
  * 4. Bundled skills: embedded in package (lowest priority - defaults)
@@ -50,8 +50,6 @@ export interface Skill {
   whenToUse?: string;
   /** Hint shown in slash-command autocomplete */
   argumentHint?: string;
-  /** Named positional arguments for skill content substitution */
-  arguments?: string[];
   /** If true, hide from model auto-invocation / Skill tool listings */
   disableModelInvocation?: boolean;
   /** If false, hide from slash-command user invocation */
@@ -155,7 +153,11 @@ export function isUserInvocableSkill(skill: Skill): boolean {
   return skill.userInvocable !== false;
 }
 
-const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set(["image-generation"]);
+const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set([
+  "image-generation",
+  "managing-shared-memory",
+  "working-across-computers",
+]);
 
 export function isSkillAvailableForAgent(
   skill: Skill,
@@ -173,7 +175,12 @@ export function isSkillAvailableForAgent(
 }
 
 /**
- * Default directory name where project skills are stored
+ * Canonical directory where project skills are stored.
+ */
+export const PROJECT_SKILLS_DIR = join(".agents", "skills");
+
+/**
+ * Legacy directory name where project skills were stored.
  */
 export const SKILLS_DIR = ".skills";
 
@@ -247,7 +254,7 @@ async function discoverSkillsFromDir(
  * Later sources override earlier ones with the same ID.
  *
  * Priority order (highest to lowest):
- * 1. Project skills (.skills/ in current directory)
+ * 1. Project skills (the provided project skills path; callers may scan .agents/skills before .skills)
  * 2. Agent skills (~/.letta/agents/{agent-id}/memory/skills/)
  * 3. Global skills (~/.letta/skills/)
  * 4. Bundled skills (embedded in package)
@@ -417,7 +424,7 @@ async function parseSkillFile(
   // Parse frontmatter
   const { frontmatter, body } = parseFrontmatter(content);
 
-  // Derive ID from directory structure relative to root
+  // Derive the legacy fallback ID from the directory structure relative to root.
   // E.g., .skills/data-analysis/SKILL.MD -> "data-analysis"
   // E.g., .skills/web/scraper/SKILL.MD -> "web/scraper"
   // Normalize rootPath to not have trailing slash
@@ -428,12 +435,13 @@ async function parseSkillFile(
   const dirPath = relativePath.slice(0, -"/SKILL.MD".length);
   const defaultId = dirPath || "root";
 
+  const frontmatterName = getFrontmatterString(frontmatter, "name");
   const id =
-    (typeof frontmatter.id === "string" ? frontmatter.id : null) || defaultId;
+    getFrontmatterString(frontmatter, "id") || frontmatterName || defaultId;
 
   // Use name from frontmatter or derive from ID
   const name =
-    (typeof frontmatter.name === "string" ? frontmatter.name : null) ||
+    frontmatterName ||
     (typeof frontmatter.title === "string" ? frontmatter.title : null) ||
     (id.split("/").pop() ?? "")
       .replace(/-/g, " ")
@@ -462,7 +470,6 @@ async function parseSkillFile(
     description: modelDescription,
     whenToUse,
     argumentHint: getFrontmatterString(frontmatter, "argument-hint"),
-    arguments: getFrontmatterStringList(frontmatter, "arguments"),
     disableModelInvocation:
       getFrontmatterBoolean(frontmatter, "disable-model-invocation") ?? false,
     userInvocable: getFrontmatterBoolean(frontmatter, "user-invocable") ?? true,

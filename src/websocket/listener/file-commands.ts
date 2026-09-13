@@ -4,6 +4,7 @@ import path from "node:path";
 import picomatch from "picomatch";
 import type WebSocket from "ws";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { debugLog, debugWarn } from "@/utils/debug";
 import { readUtf8TextStrict, writeUtf8Text } from "@/utils/text-files";
 import { runGrepInFiles } from "./grep-in-files";
 import {
@@ -19,18 +20,18 @@ import {
   isWriteFileCommand,
 } from "./protocol-inbound";
 
+const logFileCommand = debugLog.bind(null, "file-commands");
+const warnFileCommand = debugWarn.bind(null, "file-commands");
 type SafeSocketSend = (
   socket: WebSocket,
   payload: unknown,
   errorType: string,
   context: string,
 ) => boolean;
-
 type RunDetachedListenerTask = (
   commandName: string,
   task: () => Promise<void>,
 ) => void;
-
 function trackListenerError(
   errorType: string,
   error: unknown,
@@ -42,7 +43,6 @@ function trackListenerError(
     context,
   });
 }
-
 /** File/directory names filtered from directory listings (OS/VCS noise). */
 const DIR_LISTING_IGNORED_NAMES = new Set([".DS_Store", ".git", "Thumbs.db"]);
 
@@ -87,6 +87,13 @@ const PROTECTED_HOME_NAMES = new Set([
 const MAX_SEARCH_VISITED_ENTRIES = 50_000;
 const MAX_TREE_ENTRIES = 5_000;
 const MAX_SEARCH_RESULTS = 200;
+
+/**
+ * Size cap for base64-encoded read_file responses (raw bytes, pre-encoding).
+ * Mirrors the desktop app's fs-read-image-as-data-url IPC cap so web image
+ * previews and desktop previews share the same ceiling.
+ */
+const MAX_BASE64_READ_BYTES = 25 * 1024 * 1024;
 
 interface IgnoreConfig {
   nameMatchers: picomatch.Matcher[];
@@ -571,12 +578,12 @@ export function createFileCommandSession(params: {
 
     // Directory listing (no runtime scope required)
     if (isListInDirectoryCommand(parsed)) {
-      console.log(
+      logFileCommand(
         `[Listen] Received list_in_directory command: path=${parsed.path}`,
       );
       runDetachedListenerTask("list_in_directory", async () => {
         try {
-          console.log(`[Listen] Reading directory: ${parsed.path}`);
+          logFileCommand(`[Listen] Reading directory: ${parsed.path}`);
           const { folders: allFolders, files: allFiles } =
             await listDirectoryDirect(
               parsed.path,
@@ -607,7 +614,7 @@ export function createFileCommandSession(params: {
           if (parsed.include_files) {
             response.files = files;
           }
-          console.log(
+          logFileCommand(
             `[Listen] Sending list_in_directory_response: ${folders.length} folders, ${files?.length ?? 0} files`,
           );
           safeSocketSend(
@@ -622,7 +629,7 @@ export function createFileCommandSession(params: {
             err,
             "listener_file_browser",
           );
-          console.error(
+          warnFileCommand(
             `[Listen] list_in_directory error: ${err instanceof Error ? err.message : "Unknown error"}`,
           );
           safeSocketSend(
@@ -647,7 +654,7 @@ export function createFileCommandSession(params: {
 
     // Depth-limited subtree fetch (no runtime scope required)
     if (isGetTreeCommand(parsed)) {
-      console.log(
+      logFileCommand(
         `[Listen] Received get_tree command: path=${parsed.path}, depth=${parsed.depth}`,
       );
       runDetachedListenerTask("get_tree", async () => {
@@ -657,7 +664,7 @@ export function createFileCommandSession(params: {
             depth: parsed.depth,
           });
 
-          console.log(
+          logFileCommand(
             `[Listen] Sending get_tree_response: ${results.length} entries, has_more_depth=${hasMoreDepth}`,
           );
           safeSocketSend(
@@ -679,7 +686,7 @@ export function createFileCommandSession(params: {
             err,
             "listener_file_browser",
           );
-          console.error(
+          warnFileCommand(
             `[Listen] get_tree error: ${err instanceof Error ? err.message : "Unknown error"}`,
           );
           safeSocketSend(
@@ -703,14 +710,28 @@ export function createFileCommandSession(params: {
 
     // File reading (no runtime scope required)
     if (isReadFileCommand(parsed)) {
-      console.log(
-        `[Listen] Received read_file command: path=${parsed.path}, request_id=${parsed.request_id}`,
+      const encoding = parsed.encoding ?? "utf8";
+      logFileCommand(
+        `[Listen] Received read_file command: path=${parsed.path}, encoding=${encoding}, request_id=${parsed.request_id}`,
       );
       runDetachedListenerTask("read_file", async () => {
         try {
-          const content = await readUtf8TextStrict(parsed.path);
-          console.log(
-            `[Listen] read_file success: ${parsed.path} (${content.length} bytes)`,
+          let content: string;
+          if (encoding === "base64") {
+            const { stat } = await import("node:fs/promises");
+            const stats = await stat(parsed.path);
+            if (stats.size > MAX_BASE64_READ_BYTES) {
+              throw new Error(
+                `File too large for base64 read (max ${Math.floor(MAX_BASE64_READ_BYTES / (1024 * 1024))}MB)`,
+              );
+            }
+            const bytes = await readFile(parsed.path);
+            content = bytes.toString("base64");
+          } else {
+            content = await readUtf8TextStrict(parsed.path);
+          }
+          logFileCommand(
+            `[Listen] read_file success: ${parsed.path} (${content.length} bytes, ${encoding})`,
           );
           safeSocketSend(
             socket,
@@ -719,6 +740,7 @@ export function createFileCommandSession(params: {
               request_id: parsed.request_id,
               path: parsed.path,
               content,
+              encoding,
               success: true,
             },
             "listener_read_file_send_failed",
@@ -730,7 +752,7 @@ export function createFileCommandSession(params: {
             err,
             "listener_file_read",
           );
-          console.error(
+          warnFileCommand(
             `[Listen] read_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
           );
           safeSocketSend(
@@ -740,6 +762,7 @@ export function createFileCommandSession(params: {
               request_id: parsed.request_id,
               path: parsed.path,
               content: null,
+              encoding,
               success: false,
               error: err instanceof Error ? err.message : "Failed to read file",
             },
@@ -753,7 +776,7 @@ export function createFileCommandSession(params: {
 
     // File writing (no runtime scope required)
     if (isWriteFileCommand(parsed)) {
-      console.log(
+      logFileCommand(
         `[Listen] Received write_file command: path=${parsed.path}, request_id=${parsed.request_id}`,
       );
       runDetachedListenerTask("write_file", async () => {
@@ -792,7 +815,7 @@ export function createFileCommandSession(params: {
             // else: content unchanged -- no-op, still respond success below
           }
 
-          console.log(
+          logFileCommand(
             `[Listen] write_file success: ${parsed.path} (${parsed.content.length} bytes)`,
           );
           safeSocketSend(
@@ -807,7 +830,7 @@ export function createFileCommandSession(params: {
             "listener_write_file",
           );
         } catch (err) {
-          console.error(
+          warnFileCommand(
             `[Listen] write_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
           );
           safeSocketSend(
@@ -917,14 +940,14 @@ export function createFileCommandSession(params: {
 
     // File editing (no runtime scope required)
     if (isEditFileCommand(parsed)) {
-      console.log(
+      logFileCommand(
         `[Listen] Received edit_file command: file_path=${parsed.file_path}, request_id=${parsed.request_id}`,
       );
       runDetachedListenerTask("edit_file", async () => {
         try {
           const { edit } = await import("@/tools/impl/edit");
 
-          console.log(
+          logFileCommand(
             `[Listen] Executing edit: old_string="${parsed.old_string.slice(0, 50)}${parsed.old_string.length > 50 ? "..." : ""}"`,
           );
           const result = await edit({
@@ -934,7 +957,7 @@ export function createFileCommandSession(params: {
             replace_all: parsed.replace_all,
             expected_replacements: parsed.expected_replacements,
           });
-          console.log(
+          logFileCommand(
             `[Listen] edit_file success: ${result.replacements} replacement(s) at line ${result.startLine}`,
           );
           // Notify web clients of the new content so they can update live.
@@ -979,7 +1002,7 @@ export function createFileCommandSession(params: {
             err,
             "listener_file_edit",
           );
-          console.error(
+          warnFileCommand(
             `[Listen] edit_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
           );
           safeSocketSend(
@@ -1010,11 +1033,11 @@ export function createFileCommandSession(params: {
           try {
             const content = parsed.document_content as string;
             await writeUtf8Text(parsed.path, content);
-            console.log(
+            logFileCommand(
               `[Listen] file_ops: wrote ${content.length} bytes to ${parsed.path}`,
             );
           } catch (err) {
-            console.error(
+            warnFileCommand(
               `[Listen] file_ops error: ${err instanceof Error ? err.message : "Unknown error"}`,
             );
           }

@@ -11,6 +11,10 @@ export {
   LocalSlidingWindowCompactionPlanningError,
   planLocalSlidingWindowCompaction,
 } from "./compaction";
+export {
+  isHiddenLocalAgentRecord,
+  projectLocalAgentState,
+} from "./local-agent-record";
 export { LocalBackend, type LocalBackendOptions } from "./local-backend";
 export type {
   LocalMessage,
@@ -64,7 +68,6 @@ export {
   LocalBackendNotFoundError,
   LocalStore,
   type LocalStoreOptions,
-  projectLocalAgentState,
   type StoredMessage,
   type StoredTurnInput,
 } from "./local-store";
@@ -73,6 +76,4 @@ export {
   getLocalBackendMemoryFilesystemRoot,
   getLocalBackendStorageDir,
   isLocalBackendEnvEnabled,
-  isLocalBackendNoMemfsEnvEnabled,
-  LOCAL_BACKEND_NO_MEMFS_ENV,
 } from "./paths";

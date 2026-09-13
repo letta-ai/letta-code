@@ -18,7 +18,7 @@ const CMD_COL_WIDTH = 14;
 
 const BUILTIN_SKILL_ALIASES = new Set([
   "acquiring-skills",
-  "context_doctor",
+  "context-doctor",
   "converting-mcps-to-skills",
   "creating-skills",
   "customizing-statusline",
@@ -67,7 +67,7 @@ export function SlashCommandAutocomplete({
   onAutocomplete,
   onActiveChange,
   agentId,
-  workingDirectory = process.cwd(),
+  workingDirectory: _workingDirectory = process.cwd(),
   modCommands = {},
 }: AutocompleteProps) {
   const columns = useTerminalWidth();
@@ -131,28 +131,21 @@ export function SlashCommandAutocomplete({
     };
   }, [agentId]);
 
-  // Check pin status to conditionally show/hide pin/unpin commands, merge with custom commands
+  // Check pin status to conditionally show/hide pin/unpin commands
   const allCommands = useMemo(() => {
     let builtins = _allCommands;
 
     if (agentId) {
       try {
-        const globalPinned = settingsManager.getGlobalPinnedAgents();
-        const localPinned =
-          settingsManager.getLocalPinnedAgents(workingDirectory);
-
-        const isPinnedGlobally = globalPinned.includes(agentId);
-        const isPinnedLocally = localPinned.includes(agentId);
-        const isPinnedAnywhere = isPinnedGlobally || isPinnedLocally;
-        const isPinnedBoth = isPinnedGlobally && isPinnedLocally;
+        const isPinned = settingsManager.isAgentPinned(agentId);
 
         builtins = _allCommands.filter((cmd) => {
-          // Hide /pin if agent is pinned both locally AND globally
-          if (cmd.cmd === "/pin" && isPinnedBoth) {
+          // Hide /pin if agent is already pinned
+          if (cmd.cmd === "/pin" && isPinned) {
             return false;
           }
-          // Hide /unpin if agent is not pinned anywhere
-          if (cmd.cmd === "/unpin" && !isPinnedAnywhere) {
+          // Hide /unpin if agent is not pinned
+          if (cmd.cmd === "/unpin" && !isPinned) {
             return false;
           }
           return true;
@@ -197,7 +190,7 @@ export function SlashCommandAutocomplete({
       ...customCommands,
       ...visibleSkillCommands,
     ].sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
-  }, [agentId, workingDirectory, modCommands, customCommands, skillCommands]);
+  }, [agentId, modCommands, customCommands, skillCommands]);
 
   const queryInfo = useMemo(
     () => extractSearchQuery(currentInput, cursorPosition),

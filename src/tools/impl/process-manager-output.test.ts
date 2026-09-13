@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
   __resetBackgroundOutputDirForTests,
+  appendToOutputFile,
   createBackgroundOutputFile,
   getBackgroundOutputDir,
 } from "@/tools/impl/process_manager";
@@ -86,6 +87,13 @@ describe("background output files", () => {
     expect(existsSync(outputFile)).toBe(true);
     expectPosixMode(outputFile, 0o600);
   });
+
+  test.skipIf(!existsSync("/dev/full"))(
+    "reports ENOSPC without throwing from an output callback",
+    () => {
+      expect(appendToOutputFile("/dev/full", "output")).toBe(false);
+    },
+  );
 
   test("creates one private temp directory for the current process", () => {
     const tempRoot = useTempRootForTmpdir();

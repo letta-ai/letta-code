@@ -4,7 +4,16 @@
 import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
 
-type CommandHandler = (args: string[]) => Promise<string> | string;
+type CommandHandlerResult =
+  | string
+  | {
+      output: string;
+      refreshSecretsInfo?: boolean;
+    };
+
+type CommandHandler = (
+  args: string[],
+) => Promise<CommandHandlerResult> | CommandHandlerResult;
 
 interface Command {
   desc: string;
@@ -44,12 +53,12 @@ export const commands: Record<string, Command> = {
     },
   },
   "/doctor": {
-    desc: "Audit and refine your memory structure",
+    desc: "Investigate an agent issue in this conversation",
     order: 12.1,
-    noArgs: true,
+    args: "[symptom]",
     handler: () => {
-      // Handled specially in App.tsx to send doctor prompt
-      return "Running memory doctor...";
+      // Handled by the primary-agent turn in the TUI and listener.
+      return "Starting doctor...";
     },
   },
   "/remember": {
@@ -60,18 +69,9 @@ export const commands: Record<string, Command> = {
       return "Processing memory request...";
     },
   },
-  "/goal": {
-    desc: "Manage goal: /goal [status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]",
-    args: "[status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]",
-    order: 14,
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Managing conversation goal...";
-    },
-  },
   "/reflect": {
-    desc: "Launch reflection (/reflect [transcript_file])",
-    args: "[transcript_file]",
+    desc: "Launch reflection (/reflect [--recent N | --conversation ID ... | --auto] [--instruction TEXT])",
+    args: "[--recent N | --conversation ID ... | --auto] [--instruction TEXT]",
     order: 50,
     handler: () => {
       // Handled specially in App.tsx
@@ -85,6 +85,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx
       return "Launching reflection agent...";
+    },
+  },
+  "/reflect-arena": {
+    desc: "Experimental blind A/B reflection model comparison",
+    args: "[--model-a MODEL] [--model-b MODEL] | resume <run-id> | choose <run-id> <1|2|tie> [notes]",
+    order: 50.1,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Preparing reflection arena...";
     },
   },
   "/skills": {
@@ -123,7 +132,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/sleeptime": {
-    desc: "Configure sleep-time reflection trigger settings",
+    desc: "Configure sleep-time reflection trigger and merge settings",
     order: 15.5,
     noArgs: true,
     handler: () => {
@@ -150,7 +159,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/memfs": {
-    desc: "Manage filesystem-backed memory (/memfs [enable|disable|sync|reset])",
+    desc: "Manage filesystem-backed memory (/memfs [enable|sync|reset])",
     args: "[enable|disable|sync|reset]",
     order: 27.5, // Advanced feature, near /toolset
     handler: () => {
@@ -182,6 +191,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to reset agent messages
       return "Clearing in-context messages...";
+    },
+  },
+  "/clear-messages": {
+    desc: "Reset all agent messages (destructive)",
+    hidden: true,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to reset agent messages
+      return "Resetting agent messages...";
     },
   },
   "/chdir": {
@@ -231,7 +249,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/pin": {
-    desc: "Pin current agent or conversation (/pin [name]|agent [name]|convo)",
+    desc: "Pin current agent (/pin [name])",
     order: 22,
     handler: () => {
       // Handled specially in App.tsx
@@ -239,7 +257,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/unpin": {
-    desc: "Unpin current agent globally, or use -l for local only",
+    desc: "Unpin current agent",
     order: 23,
     handler: () => {
       // Handled specially in App.tsx
@@ -260,15 +278,6 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Updating description...";
-    },
-  },
-  "/export": {
-    desc: "Export AgentFile (.af)",
-    order: 26,
-    noArgs: true,
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
-      return "Exporting agent file...";
     },
   },
   "/toolset": {
@@ -295,6 +304,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in AppCoordinator to reload runtime surfaces in-place
       return "Reloading...";
+    },
+  },
+  "/mods": {
+    desc: "Run mod learning targets",
+    order: 27.3,
+    args: "learn [memory-citations] [options] | generate-env [request]",
+    handler: () => {
+      // Handled specially in use-submit-handler.ts to stream mod learning progress
+      return "Starting mod learning...";
     },
   },
   "/ade": {
@@ -347,10 +365,7 @@ export const commands: Record<string, Command> = {
     desc: "Manage secrets for shell commands",
     order: 33,
     args: "<set|list|unset> [key] [value]",
-    handler: async (args: string[]) => {
-      const result = await handleSecretCommand(args);
-      return result.output;
-    },
+    handler: (args: string[]) => handleSecretCommand(args),
   },
   "/memory-repository": {
     desc: "Push this agent's memory repo to an additional git remote",
@@ -537,7 +552,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/login": {
-    desc: "Sign in to Letta Constellation",
+    desc: "Sign in with Letta",
     order: 43,
     noArgs: true,
     handler: () => {
@@ -625,22 +640,31 @@ export const commands: Record<string, Command> = {
       return "Opening agent browser...";
     },
   },
-  "/download": {
-    desc: "Export AgentFile (.af)",
-    hidden: true, // Legacy alias for /export
-    noArgs: true,
-    handler: () => {
-      return "Exporting agent file...";
-    },
-  },
 };
+
+export interface CommandExecutionResult {
+  success: boolean;
+  output: string;
+  notFound?: boolean;
+  refreshSecretsInfo?: boolean;
+}
+
+function normalizeCommandHandlerResult(result: CommandHandlerResult): {
+  output: string;
+  refreshSecretsInfo?: boolean;
+} {
+  if (typeof result === "string") {
+    return { output: result };
+  }
+  return result;
+}
 
 /**
  * Execute a command and return the result
  */
 export async function executeCommand(
   input: string,
-): Promise<{ success: boolean; output: string; notFound?: boolean }> {
+): Promise<CommandExecutionResult> {
   const [command, ...args] = input.trim().split(/\s+/);
 
   if (!command) {
@@ -667,8 +691,8 @@ export async function executeCommand(
   }
 
   try {
-    const output = await handler.handler(args);
-    return { success: true, output };
+    const result = normalizeCommandHandlerResult(await handler.handler(args));
+    return { success: true, ...result };
   } catch (error) {
     return {
       success: false,

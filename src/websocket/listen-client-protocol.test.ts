@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
@@ -13,10 +11,11 @@ import {
 } from "@/agent/memory-filesystem";
 import { buildConversationMessagesCreateRequestBody } from "@/agent/message";
 import { models } from "@/agent/model";
+import * as personalityModule from "@/agent/personality";
 import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   getPersonalityOption,
-} from "@/agent/personality";
+} from "@/agent/personality-presets";
 import { clearAllSubagents, registerSubagent } from "@/agent/subagent-state";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
@@ -27,6 +26,7 @@ import { appendCronRunLog, getCronRunLogPath } from "@/cron";
 import type { MessageQueueItem } from "@/queue/queue-runtime";
 import type { LocalProjectSettings, Settings } from "@/settings-manager";
 import { settingsManager } from "@/settings-manager";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
 import {
   backgroundProcesses,
   backgroundTasks,
@@ -36,7 +36,7 @@ import {
   clearExternalTools,
   prepareToolExecutionContextForModel,
 } from "@/tools/manager";
-import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
+import type { ControlRequest } from "@/types/protocol_v2";
 import {
   __listenClientTestUtils,
   emitInterruptedStatusDelta,
@@ -59,7 +59,38 @@ import {
   getLoopErrorNoticeDecision,
   getRecoverableRetryNoticeVisibility,
   getRecoverableStatusNoticeVisibility,
+  getTranscriptLoopErrorMessage as getTerminalError,
 } from "@/websocket/listener/recoverable-notices";
+import type { ConversationRuntime } from "@/websocket/listener/types";
+
+function beginTestTurn(
+  runtime: ConversationRuntime,
+  options: {
+    workingDirectory?: string;
+    initialStatus?: Parameters<
+      ConversationRuntime["turnLifecycle"]["begin"]
+    >[0]["initialStatus"];
+    abortController?: AbortController;
+    runId?: string;
+    executingToolCallIds?: readonly string[];
+  } = {},
+) {
+  const lease = runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: options.workingDirectory ?? "/tmp/test-worktree",
+    ...(options.initialStatus ? { initialStatus: options.initialStatus } : {}),
+    ...(options.abortController
+      ? { abortController: options.abortController }
+      : {}),
+    ...(options.executingToolCallIds
+      ? { executingToolCallIds: options.executingToolCallIds }
+      : {}),
+  });
+  if (options.runId) {
+    runtime.turnLifecycle.setRunId(lease, options.runId);
+  }
+  return lease;
+}
 
 class MockSocket {
   readyState: number;
@@ -88,51 +119,11 @@ class MockSocket {
   }
 }
 
-const actualChannelsService = await import("@/channels/service");
-
+setupRuntimeModelCatalogFixture();
 afterEach(() => {
   __testSetBackend(null);
   clearExternalTools();
-  __listenClientTestUtils.setChannelsServiceLoaderForTests(null);
   mock.restore();
-});
-
-describe("listen-client channel command dispatch", () => {
-  test("recognizes account-scoped channel commands as detached channels commands", () => {
-    expect(
-      __listenClientTestUtils.isDetachedChannelsCommand({
-        type: "channel_accounts_list",
-        request_id: "channel-accounts-list-1",
-        channel_id: "telegram",
-      }),
-    ).toBe(true);
-
-    expect(
-      __listenClientTestUtils.isDetachedChannelsCommand({
-        type: "channel_account_create",
-        request_id: "channel-account-create-1",
-        channel_id: "slack",
-        account: {
-          display_name: "DocsBot Slack",
-          dm_policy: "pairing",
-          config: {
-            bot_token: "xoxb-test",
-            app_token: "xapp-test",
-            mode: "socket",
-          },
-        },
-      }),
-    ).toBe(true);
-
-    expect(
-      __listenClientTestUtils.isDetachedChannelsCommand({
-        type: "channel_account_start",
-        request_id: "channel-account-start-1",
-        channel_id: "telegram",
-        account_id: "bot-1",
-      }),
-    ).toBe(true);
-  });
 });
 
 function makeControlRequest(requestId: string): ControlRequest {
@@ -150,11 +141,19 @@ function makeControlRequest(requestId: string): ControlRequest {
   };
 }
 
-function makeSuccessResponse(requestId: string): ApprovalResponseBody {
-  return {
-    request_id: requestId,
-    decision: { behavior: "allow" },
-  };
+function requestTestApproval(
+  runtime: ConversationRuntime,
+  socket: MockSocket,
+  turnLease: ReturnType<typeof beginTestTurn>,
+  requestId: string,
+) {
+  return requestApprovalOverWS(
+    runtime,
+    socket as unknown as WebSocket,
+    turnLease,
+    requestId,
+    makeControlRequest(requestId),
+  );
 }
 
 describe("listen-client parseServerMessage", () => {
@@ -207,7 +206,6 @@ describe("listen-client parseServerMessage", () => {
         "linus",
         "kawaii",
       ]);
-
       for (const personality of [...DEFAULT_CREATE_AGENT_PERSONALITIES]) {
         const socket = new MockSocket(WebSocket.OPEN);
         const personalityOption = getPersonalityOption(personality);
@@ -220,31 +218,33 @@ describe("listen-client parseServerMessage", () => {
           provenance: "created",
         }));
         mock.module("../agent/personality", () => ({
+          ...personalityModule,
           createAgentForPersonality: createAgentForPersonalityMock,
         }));
-
-        const originalPinGlobal = settingsManager.pinGlobal;
-        const pinGlobalMock = mock(() => {});
-        settingsManager.pinGlobal = pinGlobalMock;
-
+        const mockedPersonality = await import("../agent/personality");
+        expect(mockedPersonality.buildCreateAgentOptionsForPersonality).toBe(
+          personalityModule.buildCreateAgentOptionsForPersonality,
+        );
+        const originalPinAgent = settingsManager.pinAgent;
+        const pinAgentMock = mock(() => {});
+        settingsManager.pinAgent = pinAgentMock;
         await __listenClientTestUtils.handleCreateAgentCommand(
           {
             type: "create_agent",
             request_id: `create-${personality}`,
             personality,
+            tags: ["origin:onboarding"],
           },
           socket as unknown as WebSocket,
         );
-
-        settingsManager.pinGlobal = originalPinGlobal;
-
+        settingsManager.pinAgent = originalPinAgent;
         expect(createAgentForPersonalityMock).toHaveBeenCalledTimes(1);
         expect(createAgentForPersonalityMock).toHaveBeenCalledWith({
           personalityId: personality,
           model: undefined,
+          tags: ["origin:onboarding"],
         });
-        expect(pinGlobalMock).toHaveBeenCalledWith(`agent-${personality}`);
-
+        expect(pinAgentMock).toHaveBeenCalledWith(`agent-${personality}`);
         const messages = socket.sentPayloads.map((payload) =>
           JSON.parse(payload),
         );
@@ -261,7 +261,7 @@ describe("listen-client parseServerMessage", () => {
       }
     });
 
-    test("does not globally pin when pin_global is false", async () => {
+    test("does not pin when pin_global is false", async () => {
       const socket = new MockSocket(WebSocket.OPEN);
       const createAgentForPersonalityMock = mock(async () => ({
         agent: {
@@ -272,13 +272,12 @@ describe("listen-client parseServerMessage", () => {
         provenance: "created",
       }));
       mock.module("../agent/personality", () => ({
+        ...personalityModule,
         createAgentForPersonality: createAgentForPersonalityMock,
       }));
-
-      const originalPinGlobal = settingsManager.pinGlobal;
-      const pinGlobalMock = mock(() => {});
-      settingsManager.pinGlobal = pinGlobalMock;
-
+      const originalPinAgent = settingsManager.pinAgent;
+      const pinAgentMock = mock(() => {});
+      settingsManager.pinAgent = pinAgentMock;
       await __listenClientTestUtils.handleCreateAgentCommand(
         {
           type: "create_agent",
@@ -288,9 +287,8 @@ describe("listen-client parseServerMessage", () => {
         },
         socket as unknown as WebSocket,
       );
-
-      settingsManager.pinGlobal = originalPinGlobal;
-      expect(pinGlobalMock).not.toHaveBeenCalled();
+      settingsManager.pinAgent = originalPinAgent;
+      expect(pinAgentMock).not.toHaveBeenCalled();
     });
   });
 
@@ -719,13 +717,13 @@ describe("listen-client parseServerMessage", () => {
           conversation: { id: conversation.id },
           created: { agent: false, conversation: false },
         });
-
         const prepared = await prepareToolExecutionContextForModel(
           "anthropic/claude-sonnet-4",
           {
             clientToolAllowlist: ["RemoteLookup"],
             externalToolScopeIds: ["scope-1"],
             runtimeContext: {
+              connectionId: "test-connection",
               agentId: agent.id,
               conversationId: conversation.id,
             },
@@ -1413,6 +1411,85 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed?.type).toBe("disconnect_provider");
   });
 
+  test("parses disconnect_provider command with a provider name", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "disconnect_provider",
+          request_id: "disconnect-provider-2",
+          target: "local",
+          provider_id: "codex",
+          provider_name: "chatgpt-work",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("disconnect_provider");
+  });
+
+  test("parses chatgpt_usage_read command", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-1",
+          target: "local",
+          provider_name: "chatgpt-work",
+          force_refresh: true,
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("chatgpt_usage_read");
+  });
+
+  test("parses chatgpt_usage_read command for api target", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-2",
+          target: "api",
+          provider_name: "chatgpt-work",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("chatgpt_usage_read");
+  });
+
+  test("rejects chatgpt_usage_read command for unknown target", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-3",
+          target: "project",
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
+  test("rejects chatgpt_usage_read command with bad force_refresh", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-4",
+          target: "local",
+          force_refresh: "true",
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
   test("parses update_model command with model_id", () => {
     const parsed = parseServerMessage(
       Buffer.from(
@@ -1616,7 +1693,7 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "set_experiment",
           request_id: "experiment-set-1",
-          experiment_id: "node",
+          experiment_id: "tui_cron",
           enabled: true,
         }),
       ),
@@ -1629,7 +1706,6 @@ describe("listen-client parseServerMessage", () => {
   test("advertises context-limit and parses the legacy set-max-context alias", () => {
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("context-limit");
     expect(SUPPORTED_REMOTE_COMMANDS).not.toContain("set-max-context");
-    expect(SUPPORTED_REMOTE_COMMANDS).toContain("goal");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("compact");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("reload");
 
@@ -1963,7 +2039,7 @@ describe("listen-client parseServerMessage", () => {
 });
 
 describe("listen-client model command helpers", () => {
-  test("buildListModelsEntries reflects models.json metadata", () => {
+  test("buildListModelsEntries reflects runtime catalog metadata", () => {
     const entries = __listenClientTestUtils.buildListModelsEntries();
 
     expect(entries.length).toBe(models.length);
@@ -2012,9 +2088,7 @@ describe("listen-client model command helpers", () => {
     });
 
     expect(resolved).not.toBeNull();
-    // Handle must be the explicit BYOK handle, not the base static handle
     expect(resolved?.handle).toBe(byokHandle);
-    // But id/label/updateArgs still come from the model_id entry
     expect(resolved?.id).toBe(models[0]?.id);
     expect(resolved?.label).toBe(models[0]?.label);
   });
@@ -2026,7 +2100,6 @@ describe("listen-client model command helpers", () => {
     });
 
     expect(resolved).not.toBeNull();
-    // Should resolve handle from the static entry, not from an explicit override
     expect(resolved?.handle).toBe(models[0]?.handle);
   });
 });
@@ -2368,6 +2441,75 @@ describe("listen-client memory command handling", () => {
     }
   });
 
+  test("lists supported image assets alongside markdown memory", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
+    const socket = new MockSocket(WebSocket.OPEN);
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const ensureLocalMemfsCheckoutMock = mock(async () => {
+      await mkdir(join(tempRoot, ".git"), { recursive: true });
+      await mkdir(join(tempRoot, "system"), { recursive: true });
+      await writeFile(
+        join(tempRoot, "system", "persona.md"),
+        "---\ndescription: Persona\n---\nHello from memory\n",
+      );
+      await writeFile(join(tempRoot, "profile.png"), pngBytes);
+      await writeFile(join(tempRoot, "notes.bin"), Buffer.from([0x00, 0x01]));
+    });
+
+    try {
+      await __listenClientTestUtils.handleListMemoryCommand(
+        {
+          type: "list_memory",
+          request_id: "list-memory-images-1",
+          agent_id: "agent-1",
+          include_references: true,
+        },
+        socket as unknown as WebSocket,
+        {
+          getMemoryFilesystemRoot: () => tempRoot,
+          isMemfsEnabledOnServer: async () => true,
+          ensureLocalMemfsCheckout: ensureLocalMemfsCheckoutMock,
+        },
+      );
+
+      const messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        type: "list_memory_response",
+        request_id: "list-memory-images-1",
+        success: true,
+        done: true,
+        total: 2,
+      });
+      // Scanner orders directories first, so system/persona.md precedes
+      // the root-level profile.png. Unsupported binaries stay hidden.
+      expect(messages[0].entries).toEqual([
+        expect.objectContaining({
+          relative_path: "system/persona.md",
+          is_system: true,
+          description: "Persona",
+          kind: "markdown",
+          mime_type: "text/markdown",
+          references: [],
+        }),
+        expect.objectContaining({
+          relative_path: "profile.png",
+          is_system: false,
+          description: null,
+          content: "",
+          size: pngBytes.length,
+          kind: "image",
+          mime_type: "image/png",
+          references: [],
+        }),
+      ]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test("pulls an existing local memfs checkout before scanning", async () => {
     const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
     const socket = new MockSocket(WebSocket.OPEN);
@@ -2471,751 +2613,6 @@ describe("listen-client memory command handling", () => {
       });
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("listen-client channels command handling", () => {
-  test("returns typed channel summaries over WS", async () => {
-    const socket = new MockSocket(WebSocket.OPEN);
-    const runtime = __listenClientTestUtils.createListenerRuntime();
-
-    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
-      ...actualChannelsService,
-      listChannelSummaries: () => [
-        {
-          channelId: "telegram" as const,
-          displayName: "Telegram",
-          configured: true,
-          enabled: true,
-          running: true,
-          dmPolicy: "pairing" as const,
-          pendingPairingsCount: 2,
-          approvedUsersCount: 3,
-          routesCount: 4,
-        },
-      ],
-    }));
-
-    try {
-      await __listenClientTestUtils.handleChannelsProtocolCommand(
-        {
-          type: "channels_list",
-          request_id: "channels-list-1",
-        },
-        socket as unknown as WebSocket,
-        runtime,
-        {
-          onStatusChange: undefined,
-          connectionId: "conn-test",
-        },
-        async () => {},
-      );
-
-      expect(socket.sentPayloads).toHaveLength(1);
-      expect(JSON.parse(socket.sentPayloads[0] as string)).toMatchObject({
-        type: "channels_list_response",
-        request_id: "channels-list-1",
-        success: true,
-        channels: [
-          {
-            channel_id: "telegram",
-            display_name: "Telegram",
-            configured: true,
-            enabled: true,
-            running: true,
-            dm_policy: "pairing",
-            pending_pairings_count: 2,
-            approved_users_count: 3,
-            routes_count: 4,
-          },
-        ],
-      });
-    } finally {
-      __listenClientTestUtils.stopRuntime(runtime, true);
-    }
-  });
-
-  test("returns typed channel account snapshots over WS", async () => {
-    const socket = new MockSocket(WebSocket.OPEN);
-    const runtime = __listenClientTestUtils.createListenerRuntime();
-
-    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
-      ...actualChannelsService,
-      listChannelAccountSnapshots: () => [
-        {
-          channelId: "telegram" as const,
-          accountId: "bot-1",
-          displayName: "@docsbot",
-          enabled: true,
-          configured: true,
-          running: true,
-          dmPolicy: "pairing" as const,
-          allowedUsers: [],
-          config: {
-            has_token: true,
-            transcribe_voice: false,
-            binding: {
-              agent_id: "agent-1",
-              conversation_id: "default",
-            },
-          },
-          hasToken: true,
-          transcribeVoice: false,
-          binding: {
-            agentId: "agent-1",
-            conversationId: "default",
-          },
-          createdAt: "2026-04-11T00:00:00.000Z",
-          updatedAt: "2026-04-11T01:00:00.000Z",
-        },
-      ],
-    }));
-
-    try {
-      await __listenClientTestUtils.handleChannelsProtocolCommand(
-        {
-          type: "channel_accounts_list",
-          request_id: "channel-accounts-list-1",
-          channel_id: "telegram",
-        },
-        socket as unknown as WebSocket,
-        runtime,
-        {
-          onStatusChange: undefined,
-          connectionId: "conn-test",
-        },
-        async () => {},
-      );
-
-      expect(JSON.parse(socket.sentPayloads[0] as string)).toMatchObject({
-        type: "channel_accounts_list_response",
-        request_id: "channel-accounts-list-1",
-        success: true,
-        channel_id: "telegram",
-        accounts: [
-          {
-            channel_id: "telegram",
-            account_id: "bot-1",
-            display_name: "@docsbot",
-            enabled: true,
-            configured: true,
-            running: true,
-            dm_policy: "pairing",
-            config: {
-              has_token: true,
-              binding: {
-                agent_id: "agent-1",
-                conversation_id: "default",
-              },
-            },
-            created_at: "2026-04-11T00:00:00.000Z",
-            updated_at: "2026-04-11T01:00:00.000Z",
-          },
-        ],
-      });
-    } finally {
-      __listenClientTestUtils.stopRuntime(runtime, true);
-    }
-  });
-
-  test("bind emits pairing, route, and channel update events", async () => {
-    const socket = new MockSocket(WebSocket.OPEN);
-    const runtime = __listenClientTestUtils.createListenerRuntime();
-
-    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
-      ...actualChannelsService,
-      bindChannelPairing: () => ({
-        chatId: "chat-42",
-        route: {
-          channelId: "telegram" as const,
-          accountId: "bot-1",
-          chatId: "chat-42",
-          agentId: "agent-1",
-          conversationId: "conv-1",
-          enabled: true,
-          createdAt: "2026-04-09T00:00:00.000Z",
-          updatedAt: "2026-04-09T00:00:00.000Z",
-        },
-      }),
-    }));
-
-    try {
-      await __listenClientTestUtils.handleChannelsProtocolCommand(
-        {
-          type: "channel_pairing_bind",
-          request_id: "channel-bind-1",
-          channel_id: "telegram",
-          runtime: {
-            agent_id: "agent-1",
-            conversation_id: "conv-1",
-          },
-          code: "A7X9K2",
-        },
-        socket as unknown as WebSocket,
-        runtime,
-        {
-          onStatusChange: undefined,
-          connectionId: "conn-test",
-        },
-        async () => {},
-      );
-
-      const messages = socket.sentPayloads.map((payload) =>
-        JSON.parse(payload as string),
-      );
-
-      expect(messages[0]).toMatchObject({
-        type: "channel_pairing_bind_response",
-        request_id: "channel-bind-1",
-        success: true,
-        channel_id: "telegram",
-        chat_id: "chat-42",
-        route: {
-          channel_id: "telegram",
-          chat_id: "chat-42",
-          agent_id: "agent-1",
-          conversation_id: "conv-1",
-          enabled: true,
-          created_at: "2026-04-09T00:00:00.000Z",
-        },
-      });
-      expect(messages[1]).toMatchObject({
-        type: "channel_pairings_updated",
-        channel_id: "telegram",
-      });
-      expect(messages[2]).toMatchObject({
-        type: "channel_routes_updated",
-        channel_id: "telegram",
-        agent_id: "agent-1",
-        conversation_id: "conv-1",
-      });
-      expect(messages[3]).toMatchObject({
-        type: "channels_updated",
-        channel_id: "telegram",
-      });
-    } finally {
-      __listenClientTestUtils.stopRuntime(runtime, true);
-    }
-  });
-
-  test("target bind emits target, route, and channel update events", async () => {
-    const socket = new MockSocket(WebSocket.OPEN);
-    const runtime = __listenClientTestUtils.createListenerRuntime();
-
-    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
-      ...actualChannelsService,
-      bindChannelTarget: () => ({
-        chatId: "C123",
-        route: {
-          channelId: "slack" as const,
-          accountId: "workspace-1",
-          chatId: "C123",
-          agentId: "agent-1",
-          conversationId: "conv-1",
-          enabled: true,
-          createdAt: "2026-04-10T00:00:00.000Z",
-          updatedAt: "2026-04-10T00:00:00.000Z",
-        },
-      }),
-      listChannelTargetSnapshots: () => [],
-    }));
-
-    try {
-      await __listenClientTestUtils.handleChannelsProtocolCommand(
-        {
-          type: "channel_target_bind",
-          request_id: "channel-target-bind-1",
-          channel_id: "slack",
-          runtime: {
-            agent_id: "agent-1",
-            conversation_id: "conv-1",
-          },
-          target_id: "C123",
-        },
-        socket as unknown as WebSocket,
-        runtime,
-        {
-          onStatusChange: undefined,
-          connectionId: "conn-test",
-        },
-        async () => {},
-      );
-
-      const messages = socket.sentPayloads.map((payload) =>
-        JSON.parse(payload as string),
-      );
-
-      expect(messages[0]).toMatchObject({
-        type: "channel_target_bind_response",
-        request_id: "channel-target-bind-1",
-        success: true,
-        channel_id: "slack",
-        target_id: "C123",
-        chat_id: "C123",
-        route: {
-          channel_id: "slack",
-          chat_id: "C123",
-          agent_id: "agent-1",
-          conversation_id: "conv-1",
-          enabled: true,
-          created_at: "2026-04-10T00:00:00.000Z",
-        },
-      });
-      expect(messages[1]).toMatchObject({
-        type: "channel_targets_updated",
-        channel_id: "slack",
-      });
-      expect(messages[2]).toMatchObject({
-        type: "channel_routes_updated",
-        channel_id: "slack",
-        agent_id: "agent-1",
-        conversation_id: "conv-1",
-      });
-      expect(messages[3]).toMatchObject({
-        type: "channels_updated",
-        channel_id: "slack",
-      });
-    } finally {
-      __listenClientTestUtils.stopRuntime(runtime, true);
-    }
-  });
-
-  test("route update emits account, route, and channel update events", async () => {
-    const socket = new MockSocket(WebSocket.OPEN);
-    const runtime = __listenClientTestUtils.createListenerRuntime();
-
-    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
-      ...actualChannelsService,
-      updateChannelRouteLive: () => ({
-        channelId: "slack" as const,
-        accountId: "acct-1",
-        chatId: "C123",
-        agentId: "agent-2",
-        conversationId: "conv-2",
-        enabled: true,
-        createdAt: "2026-04-11T03:00:00.000Z",
-        updatedAt: "2026-04-11T03:00:00.000Z",
-      }),
-    }));
-
-    try {
-      await __listenClientTestUtils.handleChannelsProtocolCommand(
-        {
-          type: "channel_route_update",
-          request_id: "channel-route-update-1",
-          channel_id: "slack",
-          account_id: "acct-1",
-          chat_id: "C123",
-          runtime: {
-            agent_id: "agent-2",
-            conversation_id: "conv-2",
-          },
-        },
-        socket as unknown as WebSocket,
-        runtime,
-        {
-          onStatusChange: undefined,
-          connectionId: "conn-test",
-        },
-        async () => {},
-      );
-
-      const messages = socket.sentPayloads.map((payload) =>
-        JSON.parse(payload as string),
-      );
-
-      expect(messages[0]).toMatchObject({
-        type: "channel_route_update_response",
-        request_id: "channel-route-update-1",
-        success: true,
-        channel_id: "slack",
-        chat_id: "C123",
-        route: {
-          channel_id: "slack",
-          account_id: "acct-1",
-          chat_id: "C123",
-          agent_id: "agent-2",
-          conversation_id: "conv-2",
-          enabled: true,
-          created_at: "2026-04-11T03:00:00.000Z",
-        },
-      });
-      expect(messages[1]).toMatchObject({
-        type: "channel_accounts_updated",
-        channel_id: "slack",
-        account_id: "acct-1",
-      });
-      expect(messages[2]).toMatchObject({
-        type: "channel_routes_updated",
-        channel_id: "slack",
-        agent_id: "agent-2",
-        conversation_id: "conv-2",
-      });
-      expect(messages[3]).toMatchObject({
-        type: "channels_updated",
-        channel_id: "slack",
-      });
-    } finally {
-      __listenClientTestUtils.stopRuntime(runtime, true);
-    }
-  });
-
-  test("account bind and unbind emit account update events", async () => {
-    const socket = new MockSocket(WebSocket.OPEN);
-    const runtime = __listenClientTestUtils.createListenerRuntime();
-
-    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
-      ...actualChannelsService,
-      bindChannelAccountLive: () => ({
-        channelId: "slack" as const,
-        accountId: "acct-1",
-        displayName: "DocsBot Slack",
-        enabled: true,
-        configured: true,
-        running: false,
-        mode: "socket" as const,
-        dmPolicy: "pairing" as const,
-        allowedUsers: [],
-        config: {
-          mode: "socket",
-          has_bot_token: true,
-          has_app_token: true,
-          agent_id: "agent-1",
-          default_permission_mode: "acceptEdits",
-        },
-        hasBotToken: true,
-        hasAppToken: true,
-        agentId: "agent-1",
-        defaultPermissionMode: "acceptEdits" as const,
-        createdAt: "2026-04-11T00:00:00.000Z",
-        updatedAt: "2026-04-11T01:00:00.000Z",
-      }),
-      unbindChannelAccountLive: () => ({
-        channelId: "slack" as const,
-        accountId: "acct-1",
-        displayName: "DocsBot Slack",
-        enabled: true,
-        configured: true,
-        running: false,
-        mode: "socket" as const,
-        dmPolicy: "pairing" as const,
-        allowedUsers: [],
-        config: {
-          mode: "socket",
-          has_bot_token: true,
-          has_app_token: true,
-          agent_id: null,
-          default_permission_mode: "acceptEdits",
-        },
-        hasBotToken: true,
-        hasAppToken: true,
-        agentId: null,
-        defaultPermissionMode: "acceptEdits" as const,
-        createdAt: "2026-04-11T00:00:00.000Z",
-        updatedAt: "2026-04-11T02:00:00.000Z",
-      }),
-    }));
-
-    try {
-      await __listenClientTestUtils.handleChannelsProtocolCommand(
-        {
-          type: "channel_account_bind",
-          request_id: "channel-account-bind-1",
-          channel_id: "slack",
-          account_id: "acct-1",
-          runtime: {
-            agent_id: "agent-1",
-            conversation_id: "conv-1",
-          },
-        },
-        socket as unknown as WebSocket,
-        runtime,
-        {
-          onStatusChange: undefined,
-          connectionId: "conn-test",
-        },
-        async () => {},
-      );
-
-      let messages = socket.sentPayloads.map((payload) =>
-        JSON.parse(payload as string),
-      );
-      expect(messages[0]).toMatchObject({
-        type: "channel_account_bind_response",
-        request_id: "channel-account-bind-1",
-        success: true,
-        channel_id: "slack",
-        account: {
-          account_id: "acct-1",
-          config: {
-            agent_id: "agent-1",
-            default_permission_mode: "acceptEdits",
-          },
-        },
-      });
-      expect(messages[1]).toMatchObject({
-        type: "channel_accounts_updated",
-        channel_id: "slack",
-        account_id: "acct-1",
-      });
-      expect(messages[2]).toMatchObject({
-        type: "channels_updated",
-        channel_id: "slack",
-      });
-
-      socket.sentPayloads.length = 0;
-
-      await __listenClientTestUtils.handleChannelsProtocolCommand(
-        {
-          type: "channel_account_unbind",
-          request_id: "channel-account-unbind-1",
-          channel_id: "slack",
-          account_id: "acct-1",
-        },
-        socket as unknown as WebSocket,
-        runtime,
-        {
-          onStatusChange: undefined,
-          connectionId: "conn-test",
-        },
-        async () => {},
-      );
-
-      messages = socket.sentPayloads.map((payload) =>
-        JSON.parse(payload as string),
-      );
-      expect(messages[0]).toMatchObject({
-        type: "channel_account_unbind_response",
-        request_id: "channel-account-unbind-1",
-        success: true,
-        channel_id: "slack",
-        account: {
-          account_id: "acct-1",
-          config: {
-            agent_id: null,
-            default_permission_mode: "acceptEdits",
-          },
-        },
-      });
-      expect(messages[1]).toMatchObject({
-        type: "channel_accounts_updated",
-        channel_id: "slack",
-        account_id: "acct-1",
-      });
-      expect(messages[2]).toMatchObject({
-        type: "channels_updated",
-        channel_id: "slack",
-      });
-    } finally {
-      __listenClientTestUtils.stopRuntime(runtime, true);
-    }
-  });
-
-  test("account create, start, and delete emit typed responses and updates", async () => {
-    const socket = new MockSocket(WebSocket.OPEN);
-    const runtime = __listenClientTestUtils.createListenerRuntime();
-
-    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
-      ...actualChannelsService,
-      createChannelAccountLive: () => ({
-        channelId: "telegram" as const,
-        accountId: "bot-1",
-        displayName: "@docsbot",
-        enabled: false,
-        configured: true,
-        running: false,
-        dmPolicy: "pairing" as const,
-        allowedUsers: [],
-        config: {
-          has_token: true,
-          transcribe_voice: false,
-          binding: {
-            agent_id: null,
-            conversation_id: null,
-          },
-        },
-        hasToken: true,
-        transcribeVoice: false,
-        binding: {
-          agentId: null,
-          conversationId: null,
-        },
-        createdAt: "2026-04-11T00:00:00.000Z",
-        updatedAt: "2026-04-11T00:00:00.000Z",
-      }),
-      startChannelAccountLive: async () => ({
-        channelId: "telegram" as const,
-        accountId: "bot-1",
-        displayName: "@docsbot",
-        enabled: true,
-        configured: true,
-        running: true,
-        dmPolicy: "pairing" as const,
-        allowedUsers: [],
-        config: {
-          has_token: true,
-          transcribe_voice: false,
-          binding: {
-            agent_id: null,
-            conversation_id: null,
-          },
-        },
-        hasToken: true,
-        transcribeVoice: false,
-        binding: {
-          agentId: null,
-          conversationId: null,
-        },
-        createdAt: "2026-04-11T00:00:00.000Z",
-        updatedAt: "2026-04-11T00:05:00.000Z",
-      }),
-      removeChannelAccountLive: async () => true,
-    }));
-
-    try {
-      await __listenClientTestUtils.handleChannelsProtocolCommand(
-        {
-          type: "channel_account_create",
-          request_id: "channel-account-create-1",
-          channel_id: "telegram",
-          account: {
-            display_name: "@docsbot",
-            dm_policy: "pairing",
-            config: {
-              token: "telegram-token",
-            },
-          },
-        },
-        socket as unknown as WebSocket,
-        runtime,
-        {
-          onStatusChange: undefined,
-          connectionId: "conn-test",
-        },
-        async () => {},
-      );
-
-      let messages = socket.sentPayloads.map((payload) =>
-        JSON.parse(payload as string),
-      );
-      expect(messages[0]).toMatchObject({
-        type: "channel_account_create_response",
-        request_id: "channel-account-create-1",
-        success: true,
-        channel_id: "telegram",
-        account: {
-          account_id: "bot-1",
-          display_name: "@docsbot",
-          config: {
-            has_token: true,
-          },
-        },
-      });
-      expect(messages[1]).toMatchObject({
-        type: "channel_accounts_updated",
-        channel_id: "telegram",
-        account_id: "bot-1",
-      });
-      expect(messages[2]).toMatchObject({
-        type: "channels_updated",
-        channel_id: "telegram",
-      });
-
-      socket.sentPayloads.length = 0;
-
-      await __listenClientTestUtils.handleChannelsProtocolCommand(
-        {
-          type: "channel_account_start",
-          request_id: "channel-account-start-1",
-          channel_id: "telegram",
-          account_id: "bot-1",
-        },
-        socket as unknown as WebSocket,
-        runtime,
-        {
-          onStatusChange: undefined,
-          connectionId: "conn-test",
-        },
-        async () => {},
-      );
-
-      messages = socket.sentPayloads.map((payload) =>
-        JSON.parse(payload as string),
-      );
-      expect(messages[0]).toMatchObject({
-        type: "channel_account_start_response",
-        request_id: "channel-account-start-1",
-        success: true,
-        channel_id: "telegram",
-        account: {
-          account_id: "bot-1",
-          enabled: true,
-          running: true,
-        },
-      });
-      expect(messages[1]).toMatchObject({
-        type: "channel_accounts_updated",
-        channel_id: "telegram",
-        account_id: "bot-1",
-      });
-      expect(messages[2]).toMatchObject({
-        type: "channels_updated",
-        channel_id: "telegram",
-      });
-
-      socket.sentPayloads.length = 0;
-
-      await __listenClientTestUtils.handleChannelsProtocolCommand(
-        {
-          type: "channel_account_delete",
-          request_id: "channel-account-delete-1",
-          channel_id: "telegram",
-          account_id: "bot-1",
-        },
-        socket as unknown as WebSocket,
-        runtime,
-        {
-          onStatusChange: undefined,
-          connectionId: "conn-test",
-        },
-        async () => {},
-      );
-
-      messages = socket.sentPayloads.map((payload) =>
-        JSON.parse(payload as string),
-      );
-      expect(messages[0]).toMatchObject({
-        type: "channel_account_delete_response",
-        request_id: "channel-account-delete-1",
-        success: true,
-        channel_id: "telegram",
-        account_id: "bot-1",
-        deleted: true,
-      });
-      expect(messages[1]).toMatchObject({
-        type: "channel_accounts_updated",
-        channel_id: "telegram",
-        account_id: "bot-1",
-      });
-      expect(messages[2]).toMatchObject({
-        type: "channel_pairings_updated",
-        channel_id: "telegram",
-      });
-      expect(messages[3]).toMatchObject({
-        type: "channel_routes_updated",
-        channel_id: "telegram",
-      });
-      expect(messages[4]).toMatchObject({
-        type: "channel_targets_updated",
-        channel_id: "telegram",
-      });
-      expect(messages[5]).toMatchObject({
-        type: "channels_updated",
-        channel_id: "telegram",
-      });
-    } finally {
-      __listenClientTestUtils.stopRuntime(runtime, true);
     }
   });
 });
@@ -3373,11 +2770,9 @@ describe("listen-client experiment command handling", () => {
   test("wraps typed experiment reads and writes over WS", async () => {
     const originalGetSettings = settingsManager.getSettings;
     const originalUpdateSettings = settingsManager.updateSettings;
-    const originalNodeFlag = process.env.LETTA_NODE;
     const globalSettings = { autoConversationTitles: false } as Settings;
 
     try {
-      delete process.env.LETTA_NODE;
       (settingsManager as typeof settingsManager).getSettings = (() =>
         globalSettings) as typeof settingsManager.getSettings;
       (settingsManager as typeof settingsManager).updateSettings = ((
@@ -3413,7 +2808,7 @@ describe("listen-client experiment command handling", () => {
         success: true,
         experiments: expect.arrayContaining([
           expect.objectContaining({
-            id: "node",
+            id: "tui_cron",
             enabled: false,
             source: "default",
           }),
@@ -3430,7 +2825,7 @@ describe("listen-client experiment command handling", () => {
         {
           type: "set_experiment",
           request_id: "experiment-set-1",
-          experiment_id: "node",
+          experiment_id: "tui_cron",
           enabled: true,
         },
         socket as unknown as WebSocket,
@@ -3445,7 +2840,7 @@ describe("listen-client experiment command handling", () => {
         success: true,
         experiments: expect.arrayContaining([
           expect.objectContaining({
-            id: "node",
+            id: "tui_cron",
             enabled: true,
             source: "override",
           }),
@@ -3456,7 +2851,7 @@ describe("listen-client experiment command handling", () => {
         device_status: {
           experiments: expect.arrayContaining([
             expect.objectContaining({
-              id: "node",
+              id: "tui_cron",
               enabled: true,
               source: "override",
             }),
@@ -3491,11 +2886,6 @@ describe("listen-client experiment command handling", () => {
       });
       expect(globalSettings.autoConversationTitles).toBe(true);
     } finally {
-      if (originalNodeFlag === undefined) {
-        delete process.env.LETTA_NODE;
-      } else {
-        process.env.LETTA_NODE = originalNodeFlag;
-      }
       (settingsManager as typeof settingsManager).getSettings =
         originalGetSettings;
       (settingsManager as typeof settingsManager).updateSettings =
@@ -3533,202 +2923,48 @@ describe("listen-client permission mode scope keys", () => {
       ),
     ).toBe(false);
   });
-
-  test("slack conversation created event seeds the new conversation permission mode", () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-
-    __listenClientTestUtils.handleChannelRegistryEvent(
-      {
-        type: "slack_conversation_created",
-        channelId: "slack",
-        accountId: "acct-1",
-        agentId: "agent-123",
-        conversationId: "conv-slack-1",
-        defaultPermissionMode: "unrestricted",
-      },
-      socket as unknown as WebSocket,
-      listener,
-    );
-
-    const status = __listenClientTestUtils.buildDeviceStatus(listener, {
-      agent_id: "agent-123",
-      conversation_id: "conv-slack-1",
-    });
-
-    expect(status.current_permission_mode).toBe("unrestricted");
-    expect(
-      listener.permissionModeByConversation.get("conversation:conv-slack-1"),
-    ).toEqual({
-      mode: "unrestricted",
-    });
-  });
-
-  test("discord conversation created event seeds the new conversation permission mode", () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-
-    __listenClientTestUtils.handleChannelRegistryEvent(
-      {
-        type: "discord_conversation_created",
-        channelId: "discord",
-        accountId: "acct-1",
-        agentId: "agent-123",
-        conversationId: "conv-discord-1",
-        defaultPermissionMode: "acceptEdits",
-      },
-      socket as unknown as WebSocket,
-      listener,
-    );
-
-    const status = __listenClientTestUtils.buildDeviceStatus(listener, {
-      agent_id: "agent-123",
-      conversation_id: "conv-discord-1",
-    });
-
-    expect(status.current_permission_mode).toBe("acceptEdits");
-    expect(
-      listener.permissionModeByConversation.get("conversation:conv-discord-1"),
-    ).toEqual({
-      mode: "acceptEdits",
-    });
-  });
 });
 
-describe("listen-client approval resolver wiring", () => {
-  test("resolved approvals do not project WAITING_ON_INPUT while the enclosing turn is still processing", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    runtime.isProcessing = true;
-    runtime.loopStatus = "WAITING_ON_APPROVAL";
+describe("listen-client conversation working directory", () => {
+  test("falls back to boot dir and prunes a stale (deleted) persisted cwd", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const scopeKey = "agent:agent-123::conversation:default";
 
-    void requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      "perm-status",
-      makeControlRequest("perm-status"),
-    ).catch(() => {});
+    // Simulate a worktree dir that was persisted, then cleaned up.
+    const staleDir = await mkdtemp(join(os.tmpdir(), "ws-stale-cwd-"));
+    listener.workingDirectoryByConversation.set(scopeKey, staleDir);
+    await rm(staleDir, { recursive: true, force: true });
 
-    expect(runtime.loopStatus).toBe("WAITING_ON_APPROVAL");
-
-    const resolved = resolvePendingApprovalResolver(runtime, {
-      request_id: "perm-status",
-      decision: { behavior: "allow" },
-    });
-
-    expect(resolved).toBe(true);
-    expect(runtime.loopStatus as string).toBe("WAITING_ON_APPROVAL");
-  });
-
-  test("resolves matching pending resolver", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    const requestId = "perm-101";
-
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
-    expect(runtime.pendingApprovalResolvers.size).toBe(1);
-
-    const resolved = resolvePendingApprovalResolver(
-      runtime,
-      makeSuccessResponse(requestId),
-    );
-    expect(resolved).toBe(true);
-    await expect(pending).resolves.toMatchObject({
-      request_id: requestId,
-      decision: { behavior: "allow" },
-    });
-    expect(runtime.pendingApprovalResolvers.size).toBe(0);
-  });
-
-  test("ignores non-matching request_id and keeps pending resolver", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    const requestId = "perm-201";
-
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
-    let settled = false;
-    void pending.then(
-      () => {
-        settled = true;
-      },
-      () => {
-        settled = true;
-      },
+    const resolved = __listenClientTestUtils.getConversationWorkingDirectory(
+      listener,
+      "agent-123",
+      "default",
     );
 
-    const resolved = resolvePendingApprovalResolver(
-      runtime,
-      makeSuccessResponse("perm-other"),
-    );
-    expect(resolved).toBe(false);
-    await Promise.resolve();
-    expect(settled).toBe(false);
-    expect(runtime.pendingApprovalResolvers.size).toBe(1);
-
-    const handledPending = pending.catch((error) => error);
-    rejectPendingApprovalResolvers(runtime, "cleanup");
-    const cleanupError = await handledPending;
-    expect(cleanupError).toBeInstanceOf(Error);
-    expect((cleanupError as Error).message).toBe("cleanup");
+    expect(resolved).toBe(listener.bootWorkingDirectory);
+    // The dead entry should be pruned so it isn't served again.
+    expect(listener.workingDirectoryByConversation.has(scopeKey)).toBe(false);
   });
 
-  test("cleanup rejects all pending resolvers", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const first = new Promise<ApprovalResponseBody>((resolve, reject) => {
-      runtime.pendingApprovalResolvers.set("perm-a", { resolve, reject });
-    });
-    const second = new Promise<ApprovalResponseBody>((resolve, reject) => {
-      runtime.pendingApprovalResolvers.set("perm-b", { resolve, reject });
-    });
+  test("returns a persisted cwd that still exists", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const scopeKey = "agent:agent-123::conversation:default";
 
-    rejectPendingApprovalResolvers(runtime, "socket closed");
-    expect(runtime.pendingApprovalResolvers.size).toBe(0);
-    await expect(first).rejects.toThrow("socket closed");
-    await expect(second).rejects.toThrow("socket closed");
-  });
+    const liveDir = await mkdtemp(join(os.tmpdir(), "ws-live-cwd-"));
+    try {
+      listener.workingDirectoryByConversation.set(scopeKey, liveDir);
 
-  test("cleanup resets WAITING_ON_INPUT instead of restoring fake processing", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    runtime.isProcessing = true;
-    runtime.loopStatus = "WAITING_ON_APPROVAL";
+      const resolved = __listenClientTestUtils.getConversationWorkingDirectory(
+        listener,
+        "agent-123",
+        "default",
+      );
 
-    const pending = new Promise<ApprovalResponseBody>((resolve, reject) => {
-      runtime.pendingApprovalResolvers.set("perm-cleanup", { resolve, reject });
-    });
-
-    rejectPendingApprovalResolvers(runtime, "socket closed");
-
-    expect(runtime.loopStatus as string).toBe("WAITING_ON_INPUT");
-    await expect(pending).rejects.toThrow("socket closed");
-  });
-
-  test("stopRuntime rejects pending resolvers even when callbacks are suppressed", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const pending = new Promise<ApprovalResponseBody>((resolve, reject) => {
-      runtime.pendingApprovalResolvers.set("perm-stop", { resolve, reject });
-    });
-    const pendingError = pending.catch((error: unknown) => error);
-    const socket = new MockSocket(WebSocket.OPEN);
-    runtime.socket = socket as unknown as WebSocket;
-
-    __listenClientTestUtils.stopRuntime(runtime, true);
-
-    expect(runtime.pendingApprovalResolvers.size).toBe(0);
-    expect(socket.removeAllListenersCalls).toBe(1);
-    expect(socket.closeCalls).toBe(1);
-    const error = await pendingError;
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("Listener runtime stopped");
+      expect(resolved).toBe(liveDir);
+      expect(listener.workingDirectoryByConversation.has(scopeKey)).toBe(true);
+    } finally {
+      await rm(liveDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -3755,89 +2991,6 @@ describe("listen-client protocol emission", () => {
     } finally {
       console.error = originalConsoleError;
     }
-  });
-});
-
-describe("listen-client requestApprovalOverWS", () => {
-  test("rejects immediately when socket is not open", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.CLOSED);
-    const requestId = "perm-closed";
-
-    await expect(
-      requestApprovalOverWS(
-        runtime,
-        socket as unknown as WebSocket,
-        requestId,
-        makeControlRequest(requestId),
-      ),
-    ).rejects.toThrow("WebSocket not open");
-    expect(runtime.pendingApprovalResolvers.size).toBe(0);
-  });
-
-  test("rejects immediately when interrupt is already active", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    const requestId = "perm-cancelled";
-
-    runtime.cancelRequested = true;
-
-    await expect(
-      requestApprovalOverWS(
-        runtime,
-        socket as unknown as WebSocket,
-        requestId,
-        makeControlRequest(requestId),
-      ),
-    ).rejects.toThrow("Cancelled by user");
-    expect(runtime.pendingApprovalResolvers.size).toBe(0);
-    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
-  });
-
-  test("registers a pending resolver until an approval response arrives", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    const requestId = "perm-send-fail";
-
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
-
-    expect(runtime.pendingApprovalResolvers.size).toBe(1);
-    expect(
-      runtime.pendingApprovalResolvers.get(requestId)?.controlRequest,
-    ).toEqual(makeControlRequest(requestId));
-
-    rejectPendingApprovalResolvers(runtime, "cleanup");
-    await expect(pending).rejects.toThrow("cleanup");
-    expect(runtime.pendingApprovalResolvers.size).toBe(0);
-  });
-
-  test("cleans up a pending resolver if abort lands immediately after registration", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    const requestId = "perm-late-abort";
-
-    runtime.activeAbortController = new AbortController();
-
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
-
-    expect(runtime.pendingApprovalResolvers.size).toBe(1);
-
-    runtime.cancelRequested = true;
-    runtime.activeAbortController.abort();
-
-    await expect(pending).rejects.toThrow("Cancelled by user");
-    expect(runtime.pendingApprovalResolvers.size).toBe(0);
-    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
   });
 });
 
@@ -3943,31 +3096,21 @@ describe("listen-client v2 status builders", () => {
   });
 
   test("buildDeviceStatus includes the effective working directory", () => {
-    const originalNodeFlag = process.env.LETTA_NODE;
-    delete process.env.LETTA_NODE;
     const runtime = __listenClientTestUtils.createRuntime();
-    try {
-      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
-      expect(typeof deviceStatus.current_working_directory).toBe("string");
-      expect(
-        (deviceStatus.current_working_directory ?? "").length,
-      ).toBeGreaterThan(0);
-      expect(deviceStatus.current_toolset_preference).toBe("auto");
-      expect(deviceStatus.experiments).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: "node",
-            source: "default",
-          }),
-        ]),
-      );
-    } finally {
-      if (originalNodeFlag === undefined) {
-        delete process.env.LETTA_NODE;
-      } else {
-        process.env.LETTA_NODE = originalNodeFlag;
-      }
-    }
+    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
+    expect(typeof deviceStatus.current_working_directory).toBe("string");
+    expect(
+      (deviceStatus.current_working_directory ?? "").length,
+    ).toBeGreaterThan(0);
+    expect(deviceStatus.current_toolset_preference).toBe("auto");
+    expect(deviceStatus.experiments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "tui_cron",
+          source: "default",
+        }),
+      ]),
+    );
   });
 
   test("buildDeviceStatus includes should_doctor state when available", () => {
@@ -4010,7 +3153,6 @@ describe("listen-client v2 status builders", () => {
   });
 
   test("buildDeviceStatus includes only active bash and task background processes", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
     backgroundProcesses.clear();
     backgroundTasks.clear();
 
@@ -4044,7 +3186,7 @@ describe("listen-client v2 status builders", () => {
         outputFile: "/tmp/task_2.log",
       });
 
-      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
+      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(null);
       expect(deviceStatus.background_processes).toEqual([
         {
           process_id: "task_1",
@@ -4095,7 +3237,7 @@ describe("listen-client v2 status builders", () => {
       "conv-b",
     );
 
-    runtimeA.isProcessing = true;
+    beginTestTurn(runtimeA);
 
     expect(__listenClientTestUtils.resolveRuntimeScope(listener)).toBeNull();
   });
@@ -4284,41 +3426,6 @@ describe("listen-client v2 status builders", () => {
           message.delta?.message_type === "loop_error",
       ),
     ).toBe(false);
-  });
-
-  test("sync replay can skip backend approval recovery for lightweight state sync", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    __listenClientTestUtils.getOrCreateScopedRuntime(
-      listener,
-      "agent-1",
-      "default",
-    );
-    const socket = new MockSocket(WebSocket.OPEN);
-    const recoverApprovalStateForSync = mock(async () => {});
-
-    await __listenClientTestUtils.replaySyncStateForRuntime(
-      listener,
-      socket as unknown as WebSocket,
-      {
-        agent_id: "agent-1",
-        conversation_id: "default",
-      },
-      {
-        recoverApprovals: false,
-        recoverApprovalStateForSync,
-      },
-    );
-
-    expect(recoverApprovalStateForSync).not.toHaveBeenCalled();
-    const outbound = socket.sentPayloads.map((payload) =>
-      JSON.parse(payload as string),
-    );
-    expect(outbound.map((message) => message.type)).toEqual([
-      "update_device_status",
-      "update_loop_status",
-      "update_queue",
-      "update_subagent_state",
-    ]);
   });
 
   test("sync replay schedules background warmups after state sync", async () => {
@@ -4511,33 +3618,13 @@ describe("listen-client v2 status builders", () => {
     expect(outbound[1].loop_status).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
+      executing_tool_call_ids: [],
     });
-  });
-
-  test("sync wiring converts recovered stale approvals into queued denials", () => {
-    const recoveryPath = fileURLToPath(
-      new URL("../websocket/listener/recovery.ts", import.meta.url),
-    );
-    const source = readFileSync(recoveryPath, "utf-8");
-    const recoverySection =
-      source
-        .split("export async function recoverApprovalStateForSync")[1]
-        ?.split("export async function resolveRecoveredApprovalResponse")[0] ??
-      "";
-
-    expect(recoverySection).toContain(
-      "runtime.pendingInterruptedResults = buildFreshDenialApprovals(",
-    );
-    expect(recoverySection).toContain("STALE_APPROVAL_RECOVERY_DENIAL_REASON");
-    expect(recoverySection).toContain("clearRecoveredApprovalState(runtime);");
-    expect(recoverySection).not.toContain("classifyApprovalsWithSuggestions(");
-    expect(recoverySection).not.toContain("buildRecoveredAutoDecisions(");
   });
 
   test("sync ignores backend recovered approvals while a live turn is already processing", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    runtime.isProcessing = true;
-    runtime.loopStatus = "PROCESSING_API_RESPONSE";
+    beginTestTurn(runtime, { initialStatus: "PROCESSING_API_RESPONSE" });
     runtime.activeAgentId = "agent-1";
     runtime.activeConversationId = "default";
     runtime.recoveredApprovalState = {
@@ -4597,32 +3684,39 @@ describe("listen-client v2 status builders", () => {
     expect(runtime.recoveredApprovalState).toBeNull();
   });
 
-  test("scopes working directory to requested agent and conversation", () => {
+  test("scopes working directory to requested agent and conversation", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    __listenClientTestUtils.setConversationWorkingDirectory(
-      runtime,
-      "agent-a",
-      "conv-a",
-      "/repo/a",
-    );
-    __listenClientTestUtils.setConversationWorkingDirectory(
-      runtime,
-      "agent-b",
-      "default",
-      "/repo/b",
-    );
+    const repoA = await mkdtemp(join(os.tmpdir(), "ws-scope-cwd-a-"));
+    const repoB = await mkdtemp(join(os.tmpdir(), "ws-scope-cwd-b-"));
+    try {
+      __listenClientTestUtils.setConversationWorkingDirectory(
+        runtime,
+        "agent-a",
+        "conv-a",
+        repoA,
+      );
+      __listenClientTestUtils.setConversationWorkingDirectory(
+        runtime,
+        "agent-b",
+        "default",
+        repoB,
+      );
 
-    const activeStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
-      agent_id: "agent-a",
-      conversation_id: "conv-a",
-    });
-    expect(activeStatus.current_working_directory).toBe("/repo/a");
+      const activeStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
+        agent_id: "agent-a",
+        conversation_id: "conv-a",
+      });
+      expect(activeStatus.current_working_directory).toBe(repoA);
 
-    const defaultStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
-      agent_id: "agent-b",
-      conversation_id: "default",
-    });
-    expect(defaultStatus.current_working_directory).toBe("/repo/b");
+      const defaultStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
+        agent_id: "agent-b",
+        conversation_id: "default",
+      });
+      expect(defaultStatus.current_working_directory).toBe(repoB);
+    } finally {
+      await rm(repoA, { recursive: true, force: true });
+      await rm(repoB, { recursive: true, force: true });
+    }
   });
 
   test("scoped loop status is not suppressed just because another conversation is processing", () => {
@@ -4638,9 +3732,8 @@ describe("listen-client v2 status builders", () => {
       "conv-b",
     );
 
-    runtimeA.isProcessing = true;
-    runtimeA.loopStatus = "PROCESSING_API_RESPONSE";
-    runtimeB.loopStatus = "WAITING_ON_APPROVAL";
+    beginTestTurn(runtimeA, { initialStatus: "PROCESSING_API_RESPONSE" });
+    beginTestTurn(runtimeB, { initialStatus: "WAITING_ON_APPROVAL" });
 
     expect(
       __listenClientTestUtils.buildLoopStatus(listener, {
@@ -4650,6 +3743,7 @@ describe("listen-client v2 status builders", () => {
     ).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
+      executing_tool_call_ids: [],
     });
   });
 
@@ -4666,8 +3760,7 @@ describe("listen-client v2 status builders", () => {
       "conv-b",
     );
 
-    runtimeA.isProcessing = true;
-    runtimeA.loopStatus = "PROCESSING_API_RESPONSE";
+    beginTestTurn(runtimeA, { initialStatus: "PROCESSING_API_RESPONSE" });
     const queueInput = {
       kind: "message",
       source: "user",
@@ -4714,7 +3807,7 @@ describe("listen-client cwd change handling", () => {
       );
       runtime.activeAgentId = "agent-1";
       runtime.activeConversationId = "conv-1";
-      runtime.activeWorkingDirectory = normalizedServerDir;
+      beginTestTurn(runtime, { workingDirectory: normalizedServerDir });
 
       await __listenClientTestUtils.handleCwdChange(
         {
@@ -4929,13 +4022,9 @@ describe("listen-client capability-gated approval flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-update-test";
+    const turnLease = beginTestTurn(runtime);
 
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
+    const pending = requestTestApproval(runtime, socket, turnLease, requestId);
 
     // Simulate approval_response with updated_input
     resolvePendingApprovalResolver(runtime, {
@@ -4969,13 +4058,9 @@ describe("listen-client capability-gated approval flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-allow-comment-test";
+    const turnLease = beginTestTurn(runtime);
 
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
+    const pending = requestTestApproval(runtime, socket, turnLease, requestId);
 
     resolvePendingApprovalResolver(runtime, {
       request_id: requestId,
@@ -5001,13 +4086,9 @@ describe("listen-client capability-gated approval flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-deny-test";
+    const turnLease = beginTestTurn(runtime);
 
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
+    const pending = requestTestApproval(runtime, socket, turnLease, requestId);
 
     resolvePendingApprovalResolver(runtime, {
       request_id: requestId,
@@ -5030,13 +4111,9 @@ describe("listen-client capability-gated approval flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-error-test";
+    const turnLease = beginTestTurn(runtime);
 
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
+    const pending = requestTestApproval(runtime, socket, turnLease, requestId);
 
     resolvePendingApprovalResolver(runtime, {
       request_id: requestId,
@@ -5050,7 +4127,7 @@ describe("listen-client capability-gated approval flow", () => {
     }
   });
 
-  test("requestApprovalOverWS exposes the control request through device status instead of stream_delta", () => {
+  test("requestApprovalOverWS emits control_request and exposes it through device status", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
       listener,
@@ -5060,13 +4137,11 @@ describe("listen-client capability-gated approval flow", () => {
     const socket = new MockSocket(WebSocket.OPEN);
     listener.socket = socket as unknown as WebSocket;
     const requestId = "perm-adapter-test";
+    const turnLease = beginTestTurn(runtime);
 
-    void requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    ).catch(() => {});
+    void requestTestApproval(runtime, socket, turnLease, requestId).catch(
+      () => {},
+    );
 
     expect(socket.sentPayloads.length).toBeGreaterThanOrEqual(2);
     const outbound = socket.sentPayloads.map((payload) =>
@@ -5078,8 +4153,21 @@ describe("listen-client capability-gated approval flow", () => {
     const deviceStatus = outbound.find(
       (payload) => payload.type === "update_device_status",
     );
+    const controlRequest = outbound.find(
+      (payload) => payload.type === "control_request",
+    );
+    expect(controlRequest).toBeDefined();
     expect(loopStatus).toBeDefined();
     expect(deviceStatus).toBeDefined();
+    expect(controlRequest.type).toBe("control_request");
+    expect(controlRequest.request_id).toBe(requestId);
+    expect(controlRequest.request).toEqual(
+      makeControlRequest(requestId).request,
+    );
+    expect(controlRequest.runtime).toEqual({
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
     expect(loopStatus.type).toBe("update_loop_status");
     expect(loopStatus.loop_status.status).toBe("WAITING_ON_APPROVAL");
     expect(runtime.lastStopReason).toBe("requires_approval");
@@ -5104,13 +4192,12 @@ describe("listen-client capability-gated approval flow", () => {
     );
     const socket = new MockSocket(WebSocket.OPEN);
 
-    runtime.isProcessing = true;
-    runtime.activeRunId = "run-1";
-    void requestApprovalOverWS(
+    const turnLease = beginTestTurn(runtime, { runId: "run-1" });
+    void requestTestApproval(
       runtime,
-      socket as unknown as WebSocket,
+      socket,
+      turnLease,
       "perm-interrupted",
-      makeControlRequest("perm-interrupted"),
     ).catch(() => {});
     runtime.pendingInterruptedContext = {
       agentId: "agent-1",
@@ -5192,7 +4279,7 @@ describe("listen-client capability-gated approval flow", () => {
     );
   });
 
-  test("stale approval responses unlatch cancelRequested after approval-only interrupt", async () => {
+  test("stale approval responses cannot unlatch an active cancellation", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const targetRuntime =
       __listenClientTestUtils.getOrCreateConversationRuntime(
@@ -5204,8 +4291,8 @@ describe("listen-client capability-gated approval flow", () => {
     const scheduleQueuePumpMock = mock(() => {});
     const resolveRecoveredApprovalResponseMock = mock(async () => false);
 
-    targetRuntime.cancelRequested = true;
-    targetRuntime.isProcessing = false;
+    beginTestTurn(targetRuntime);
+    targetRuntime.turnLifecycle.requestCancellation();
 
     const handled = await __listenClientTestUtils.handleApprovalResponseInput(
       listener,
@@ -5232,14 +4319,9 @@ describe("listen-client capability-gated approval flow", () => {
     );
 
     expect(handled).toBe(false);
-    expect(targetRuntime.cancelRequested).toBe(false);
+    expect(targetRuntime.cancelRequested).toBe(true);
     expect(resolveRecoveredApprovalResponseMock).not.toHaveBeenCalled();
-    expect(scheduleQueuePumpMock).toHaveBeenCalledWith(
-      targetRuntime,
-      socket,
-      expect.objectContaining({ connectionId: "conn-1" }),
-      expect.any(Function),
-    );
+    expect(scheduleQueuePumpMock).not.toHaveBeenCalled();
   });
 
   test("abort_message eagerly projects idle interrupted state for active turns", async () => {
@@ -5254,15 +4336,14 @@ describe("listen-client capability-gated approval flow", () => {
       "default",
     );
     const scheduleQueuePumpMock = mock(() => {});
-    const cancelConversationMock = mock(async () => {});
+    const cancelRunMock = mock(async () => {});
 
-    runtime.isProcessing = true;
-    runtime.loopStatus = "PROCESSING_API_RESPONSE";
-    runtime.activeAbortController = new AbortController();
-    runtime.activeRunId = "run-active";
-    runtime.activeRunStartedAt = new Date().toISOString();
-    runtime.activeWorkingDirectory = process.cwd();
-    runtime.activeExecutingToolCallIds = ["tool-1"];
+    beginTestTurn(runtime, {
+      initialStatus: "PROCESSING_API_RESPONSE",
+      runId: "run-active",
+      workingDirectory: process.cwd(),
+      executingToolCallIds: ["tool-1"],
+    });
 
     const handled = await __listenClientTestUtils.handleAbortMessageInput(
       listener,
@@ -5280,7 +4361,7 @@ describe("listen-client capability-gated approval flow", () => {
       },
       {
         scheduleQueuePump: scheduleQueuePumpMock,
-        cancelConversation: cancelConversationMock,
+        cancelRun: cancelRunMock,
       },
     );
 
@@ -5289,7 +4370,7 @@ describe("listen-client capability-gated approval flow", () => {
     expect(runtime.isProcessing).toBe(false);
     expect(runtime.loopStatus as string).toBe("WAITING_ON_INPUT");
     expect(runtime.activeRunId).toBeNull();
-    expect(runtime.activeAbortController).toBeNull();
+    expect(runtime.turnLifecycle.currentLease?.signal.aborted).toBe(true);
     expect(runtime.pendingInterruptedToolCallIds).toEqual(["tool-1"]);
     expect(scheduleQueuePumpMock).toHaveBeenCalledWith(
       runtime,
@@ -5297,7 +4378,7 @@ describe("listen-client capability-gated approval flow", () => {
       expect.objectContaining({ connectionId: "conn-1" }),
       expect.any(Function),
     );
-    expect(cancelConversationMock).toHaveBeenCalledWith("agent-1", "default");
+    expect(cancelRunMock).toHaveBeenCalledWith("agent-1", "run-active");
 
     const outbound = socket.sentPayloads.map((payload) => JSON.parse(payload));
     const interruptedStatus = outbound.find(
@@ -5336,10 +4417,10 @@ describe("listen-client capability-gated approval flow", () => {
       "default",
     );
 
-    runtime.isProcessing = true;
-    runtime.loopStatus = "PROCESSING_API_RESPONSE";
-    runtime.activeAbortController = new AbortController();
-    runtime.activeRunId = "run-active";
+    const turnLease = beginTestTurn(runtime, {
+      initialStatus: "PROCESSING_API_RESPONSE",
+      runId: "run-active",
+    });
 
     const handled = await __listenClientTestUtils.handleAbortMessageInput(
       listener,
@@ -5361,15 +4442,9 @@ describe("listen-client capability-gated approval flow", () => {
     expect(runtime.cancelRequested).toBe(true);
 
     await expect(
-      requestApprovalOverWS(
-        runtime,
-        socket as unknown as WebSocket,
-        "perm-late-after-abort",
-        makeControlRequest("perm-late-after-abort"),
-      ),
+      requestTestApproval(runtime, socket, turnLease, "perm-late-after-abort"),
     ).rejects.toThrow("Cancelled by user");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
-    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
 
     __listenClientTestUtils.setActiveRuntime(null);
   });
@@ -5388,7 +4463,6 @@ describe("listen-client capability-gated approval flow", () => {
     const scheduleQueuePumpMock = mock(() => {});
     const cancelConversationMock = mock(async () => {});
 
-    runtime.loopStatus = "WAITING_ON_APPROVAL";
     runtime.recoveredApprovalState = {
       agentId: "agent-1",
       conversationId: "default",
@@ -5474,12 +4548,14 @@ describe("listen-client capability-gated approval flow", () => {
     const scheduleQueuePumpMock = mock(() => {});
     const cancelConversationMock = mock(async () => {});
 
-    runtime.loopStatus = "WAITING_ON_APPROVAL";
-    const pending = requestApprovalOverWS(
+    const turnLease = beginTestTurn(runtime, {
+      initialStatus: "WAITING_ON_APPROVAL",
+    });
+    const pending = requestTestApproval(
       runtime,
-      socket as unknown as WebSocket,
+      socket,
+      turnLease,
       "perm-live",
-      makeControlRequest("perm-live"),
     );
 
     const handled = await __listenClientTestUtils.handleAbortMessageInput(
@@ -5503,9 +4579,18 @@ describe("listen-client capability-gated approval flow", () => {
     );
 
     expect(handled).toBe(true);
-    expect(runtime.cancelRequested).toBe(false);
+    expect(runtime.cancelRequested).toBe(true);
     await expect(pending).rejects.toThrow("Cancelled by user");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
+    __listenClientTestUtils.populateInterruptQueue(runtime, {
+      lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
+      lastNeedsUserInputToolCallIds: ["call-1"],
+      agentId: "agent-1",
+      conversationId: "default",
+    });
+    runtime.turnLifecycle.finish(turnLease, "cancelled");
+    expect(runtime.cancelRequested).toBe(false);
     expect(runtime.pendingInterruptedResults).toEqual([
       {
         type: "approval",
@@ -5664,16 +4749,13 @@ describe("listen-client recoverable status notices", () => {
     );
   });
 
-  test("marks the first transient provider retry as debug-only", () => {
+  test("marks every transient provider retry for the transcript", () => {
     expect(
-      getRecoverableRetryNoticeVisibility("transient_provider_retry", 1),
-    ).toBe("debug_only");
-    expect(
-      getRecoverableRetryNoticeVisibility("transient_provider_retry", 2),
+      getRecoverableRetryNoticeVisibility("transient_provider_retry"),
     ).toBe("transcript");
   });
 
-  test("suppresses only the first transient provider retry from transcript", () => {
+  test("emits the first and later transient provider retries", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const firstSocket = new MockSocket();
     const secondSocket = new MockSocket();
@@ -5724,12 +4806,8 @@ describe("listen-client recoverable status notices", () => {
       }
     }
 
-    expect(firstSocket.sentPayloads).toHaveLength(0);
-    expect(mirroredLines).toHaveLength(1);
-    expect(mirroredLines[0]).toContain(DESKTOP_DEBUG_PANEL_INFO_PREFIX);
-    expect(mirroredLines[0]).toContain(
-      "Anthropic API is overloaded, retrying...",
-    );
+    expect(firstSocket.sentPayloads).toHaveLength(1);
+    expect(mirroredLines).toHaveLength(0);
 
     expect(secondSocket.sentPayloads).toHaveLength(1);
     const payload = JSON.parse(secondSocket.sentPayloads[0] as string) as {
@@ -5757,6 +4835,7 @@ describe("listen-client loop error notices", () => {
       visibility: "debug_only",
       message: "terminated",
     });
+    expect(getTerminalError({ message: "terminated" })).toBeUndefined();
   });
 
   test("normalizes Cloudflare HTML errors to match TUI formatting", () => {
@@ -5772,7 +4851,6 @@ describe("listen-client loop error notices", () => {
         "Cloudflare 520: Web server is returning an unknown error for api.letta.com (Ray ID: abc123). This is usually a temporary edge/origin outage. Please retry in a moment.",
     });
   });
-
   test("normalizes proxy transport errors into a friendly transcript message", () => {
     const error = new APIError(
       504,
@@ -5795,7 +4873,6 @@ describe("listen-client loop error notices", () => {
       message: "Connection to Letta service failed. Please retry.",
     });
   });
-
   test("reuses TUI formatter for structured run errors", () => {
     const apiError = {
       message_type: "error_message" as const,
@@ -6097,31 +5174,14 @@ describe("listen-client post-stop approval recovery policy", () => {
   });
 });
 
-describe("listen-client approval continuation recovery disposition", () => {
-  test("retries the original continuation when recovery handled nothing", () => {
-    expect(
-      __listenClientTestUtils.getApprovalContinuationRecoveryDisposition(null),
-    ).toBe("retry");
-  });
-
-  test("treats drained recovery turns as handled", () => {
-    expect(
-      __listenClientTestUtils.getApprovalContinuationRecoveryDisposition({
-        stopReason: "end_turn",
-        lastRunId: "run-1",
-        apiDurationMs: 0,
-      }),
-    ).toBe("handled");
-  });
-});
-
 describe("listen-client approval continuation run handoff", () => {
   test("clears stale active run ids once an approval continuation is accepted", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    runtime.activeRunId = "run-1";
+    const turnLease = beginTestTurn(runtime, { runId: "run-1" });
 
     __listenClientTestUtils.markAwaitingAcceptedApprovalContinuationRunId(
       runtime,
+      turnLease,
       [{ type: "approval", approvals: [] }],
     );
 
@@ -6130,10 +5190,11 @@ describe("listen-client approval continuation run handoff", () => {
 
   test("preserves active run ids for non-approval sends", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    runtime.activeRunId = "run-1";
+    const turnLease = beginTestTurn(runtime, { runId: "run-1" });
 
     __listenClientTestUtils.markAwaitingAcceptedApprovalContinuationRunId(
       runtime,
+      turnLease,
       [
         {
           role: "user",
@@ -6149,7 +5210,8 @@ describe("listen-client approval continuation run handoff", () => {
 describe("listen-client interrupt persistence normalization", () => {
   test("forces interrupted in-flight tool results to status=error when cancelRequested", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    runtime.cancelRequested = true;
+    beginTestTurn(runtime);
+    runtime.turnLifecycle.requestCancellation();
 
     const normalized =
       __listenClientTestUtils.normalizeExecutionResultsForInterruptParity(
@@ -6177,7 +5239,6 @@ describe("listen-client interrupt persistence normalization", () => {
 
   test("leaves tool status unchanged when not in cancel flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    runtime.cancelRequested = false;
 
     const normalized =
       __listenClientTestUtils.normalizeExecutionResultsForInterruptParity(

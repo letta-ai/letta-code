@@ -3,6 +3,10 @@ import { apiRequest } from "./request";
 export interface ForkConversationOptions {
   agentId?: string;
   hidden?: boolean;
+  messageId?: string;
+  /** Extra headers forwarded on the request (e.g. acting-user echo). */
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
 }
 
 export type ConversationDescriptionUpdateBody = Record<string, unknown> & {
@@ -25,13 +29,18 @@ export async function forkConversation(
   const query = {
     ...(options.agentId ? { agent_id: options.agentId } : {}),
     ...(options.hidden !== undefined ? { hidden: options.hidden } : {}),
+    ...(options.messageId ? { message_id: options.messageId } : {}),
   };
 
   return apiRequest<{ id: string }>(
     "POST",
     `/v1/conversations/${encodeURIComponent(conversationId)}/fork`,
     undefined,
-    { query },
+    {
+      query,
+      ...(options.headers ? { headers: options.headers } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+    },
   );
 }
 

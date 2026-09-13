@@ -3,6 +3,8 @@
  * Owns the HTTP request contract and error handling; callers own UX strings and logging.
  */
 
+import { createHash } from "node:crypto";
+import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { getSelfUpdateStatus } from "@/updater/auto-update";
 import { getVersion } from "@/version.ts";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener/listener-constants";
@@ -11,6 +13,7 @@ export interface RegisterResult {
   connectionId: string;
   wsUrl: string;
   supportsSplitStatusChannels: boolean;
+  supportsPairedListenerGenerations: boolean;
 }
 
 export interface RegisterOptions {
@@ -18,6 +21,35 @@ export interface RegisterOptions {
   apiKey: string;
   deviceId: string;
   connectionName: string;
+  /**
+   * Stable identifier for this listener process, so multiple listeners on
+   * one device (e.g. `letta server` in a terminal plus the in-app /listen
+   * command) get separate Cloud environment rows instead of contesting a
+   * single per-device row and rotating each other's connection lease.
+   * Optional: servers that predate the field ignore it.
+   */
+  listenerInstanceId?: string;
+}
+
+/**
+ * Derive a stable listener instance id from the listener surface and its
+ * connection name. Deterministic (no stored state): the same surface + name
+ * maps to the same instance across restarts, while a rename creates a new
+ * instance (the old row ages out server-side via lastSeenAt).
+ *
+ * Surfaces:
+ * - "server": `letta server` CLI process
+ * - "listen": in-app /listen command
+ */
+export function deriveListenerInstanceId(
+  surface: "server" | "listen",
+  connectionName: string,
+): string {
+  const nameHash = createHash("sha256")
+    .update(connectionName)
+    .digest("hex")
+    .slice(0, 16);
+  return `${surface}-${nameHash}`;
 }
 
 type FetchImpl = typeof fetch;
@@ -85,16 +117,21 @@ export async function registerWithCloud(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${opts.apiKey}`,
+      Authorization: `Bearer ${getDesktopAccessToken() ?? opts.apiKey}`,
       "X-Letta-Source": "letta-code",
     },
     body: JSON.stringify({
       deviceId: opts.deviceId,
+      ...(opts.listenerInstanceId
+        ? { listenerInstanceId: opts.listenerInstanceId }
+        : {}),
       connectionName: opts.connectionName,
       metadata: {
         lettaCodeVersion: getVersion(),
         os: process.platform,
         nodeVersion: process.version,
+        environmentMessageProtocol: "v2-input",
+        supportsPairedListenerGenerations: true,
         supported_commands: SUPPORTED_REMOTE_COMMANDS,
         self_update: getSelfUpdateStatus(),
       },
@@ -159,6 +196,8 @@ export async function registerWithCloud(
     connectionId: result.connectionId,
     wsUrl: result.wsUrl,
     supportsSplitStatusChannels: result.supportsSplitStatusChannels === true,
+    supportsPairedListenerGenerations:
+      result.supportsPairedListenerGenerations === true,
   };
 }
 

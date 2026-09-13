@@ -1,0 +1,128 @@
+import type WebSocket from "ws";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
+import type { RuntimeScope } from "@/types/protocol_v2";
+import { isDebugEnabled } from "@/utils/debug";
+import { getOrCreateProcessTransport } from "./connection";
+import { replaySubscribedConnectionState } from "./connection-state-sync";
+import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import {
+  type RecoveredContinuationDependencies,
+  startRecoveredApprovalContinuation,
+} from "./recovery";
+import { recoverApprovalStateForSync } from "./recovery-sync";
+import { isInboundTeleportExpected } from "./teleport";
+import { handleIncomingMessage } from "./turn";
+import type {
+  ConversationRuntime,
+  ListenerRuntime,
+  StartListenerOptions,
+} from "./types";
+import { scheduleListenerWarmupsAfterSync } from "./warmup";
+
+/**
+ * Everything the listener does when a connection sends `sync` (or a
+ * `runtime_start` asks for the same replay): recover backend approval state
+ * for the scope, resume an interrupted turn when nothing waits on a human,
+ * replay the scope's state to the connection, and schedule warmups.
+ */
+export async function replaySyncStateForRuntime(
+  listenerRuntime: ListenerRuntime,
+  socket: WebSocket,
+  scope: RuntimeScope<string | null>,
+  opts?: {
+    recoverApprovals?: boolean;
+    recoverApprovalStateForSync?: (
+      runtime: ConversationRuntime,
+      scope: RuntimeScope<string | null>,
+    ) => Promise<void>;
+    /** Turn processor for a recovered continuation; defaults to the real turn. */
+    processIncomingMessage?: typeof handleIncomingMessage;
+    recoveredContinuationDependencies?: RecoveredContinuationDependencies;
+    scheduleWarmupsAfterSync?: (
+      runtime: ListenerRuntime,
+      scope: RuntimeScope<string | null>,
+    ) => void;
+    forceDeviceStatus?: boolean;
+    onStatusChange?: StartListenerOptions["onStatusChange"];
+    connectionId?: string;
+  },
+): Promise<void> {
+  const syncScopedRuntime = getOrCreateScopedRuntime(
+    listenerRuntime,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  const recoverFn =
+    opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
+  // The first sync for a scope in this process always recovers: cloud-api's
+  // readiness probes and activity claims send recover_approvals=false, and a
+  // relaunched sandbox listener may never see a true from an ADE. Later syncs
+  // honor the flag as the cheap idle-ping path it was meant for.
+  if (
+    (opts?.recoverApprovals ?? true) ||
+    !syncScopedRuntime.syncApprovalRecoveryCompleted
+  ) {
+    try {
+      await recoverFn(syncScopedRuntime, scope);
+      syncScopedRuntime.syncApprovalRecoveryCompleted = true;
+    } catch (error) {
+      trackBoundaryError({
+        errorType: "listener_sync_recovery_failed",
+        error,
+        context: "listener_sync_recovery",
+      });
+      if (isDebugEnabled()) {
+        console.warn("[Listen] Sync approval recovery failed:", error);
+      }
+    }
+  }
+
+  // Recovery found only replay-unsafe pending approvals: nothing waits on a
+  // human, so finish the interrupted turn now. The continuation takes the
+  // turn lease synchronously, so the status replay below already reports it.
+  //
+  // Not when this scope is a teleport destination: the pending approvals are
+  // the source's yielded tool calls, and the cloud's `teleport_continue`
+  // delivers their results as the next turn. Starting a stale-denial turn here
+  // would both misreport tools that ran and make the destination reject that
+  // continuation as "already processing". The continuation turn clears the
+  // recovered state when it starts.
+  if (
+    !isInboundTeleportExpected(syncScopedRuntime) &&
+    syncScopedRuntime.recoveredApprovalState &&
+    syncScopedRuntime.recoveredApprovalState.pendingRequestIds.size === 0 &&
+    (syncScopedRuntime.recoveredApprovalState.autoDecisions?.length ?? 0) > 0
+  ) {
+    void startRecoveredApprovalContinuation(
+      syncScopedRuntime,
+      getOrCreateProcessTransport(listenerRuntime),
+      opts?.processIncomingMessage ?? handleIncomingMessage,
+      {
+        onStatusChange: opts?.onStatusChange,
+        connectionId: opts?.connectionId,
+        dependencies: opts?.recoveredContinuationDependencies,
+      },
+    ).catch((error) => {
+      trackBoundaryError({
+        errorType: "listener_startup_approval_recovery_failed",
+        error,
+        context: "listener_startup_approval_recovery",
+      });
+      if (isDebugEnabled()) {
+        console.error("[Listen] startup approval recovery failed:", error);
+      }
+    });
+  }
+
+  await replaySubscribedConnectionState(
+    listenerRuntime,
+    socket,
+    syncScopedRuntime,
+    scope,
+    opts,
+  );
+  (opts?.scheduleWarmupsAfterSync ?? scheduleListenerWarmupsAfterSync)(
+    listenerRuntime,
+    scope,
+  );
+}

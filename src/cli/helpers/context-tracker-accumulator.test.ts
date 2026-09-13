@@ -232,6 +232,47 @@ describe("accumulator usage statistics", () => {
     expect(tracker.pendingConversationDescriptionRegeneration).toBe(true);
   });
 
+  test("ignores user message echoes without an optimistic row", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "user_message",
+      id: "untracked-user-message-1",
+      otid: "untracked-user-otid-1",
+      content: "Harness-injected context",
+    } as unknown as LettaStreamingResponse);
+
+    expect(buffers.byId.get("untracked-user-message-1")).toBeUndefined();
+    expect(buffers.byId.get("untracked-user-otid-1")).toBeUndefined();
+    expect(buffers.order).toHaveLength(0);
+  });
+
+  test("keeps optimistic user text when its echo includes synthetic context", () => {
+    const buffers = createBuffers();
+    buffers.byId.set("user-local-skill-1", {
+      kind: "user",
+      id: "user-local-skill-1",
+      text: "Review PR 123",
+      otid: "user-skill-otid-1",
+    });
+    buffers.userLineIdByOtid.set("user-skill-otid-1", "user-local-skill-1");
+    buffers.order.push("user-local-skill-1");
+
+    onChunk(buffers, {
+      message_type: "user_message",
+      id: "message-user-skill-1",
+      otid: "user-skill-otid-1",
+      content:
+        '<skill_content name="review-pr">\nInstructions\n</skill_content>\n\nReview PR 123',
+    } as unknown as LettaStreamingResponse);
+
+    expect(buffers.byId.get("user-local-skill-1")).toMatchObject({
+      kind: "user",
+      text: "Review PR 123",
+      messageId: "message-user-skill-1",
+    });
+  });
+
   test("accumulates assistant messages when otid is missing but id is present", () => {
     const buffers = createBuffers();
 
@@ -519,6 +560,33 @@ describe("accumulator usage statistics", () => {
     expect(line && "text" in line ? line.text : "").toBe(
       "**Calculating math problems**\n\nFirst section.\n\n**Computing with Python**\n\nSecond section.",
     );
+  });
+
+  test("separates adjacent final reasoning headings before finalization", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-final-heading",
+      otid: "reasoning-otid-final-heading",
+      reasoning: "**Planning protocol build error handling**",
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-final-heading",
+      otid: "reasoning-otid-final-heading",
+      reasoning: "**Evaluating event sequence handling**",
+    } as unknown as LettaStreamingResponse);
+
+    markCurrentLineAsFinished(buffers);
+
+    const line = buffers.byId.get("reasoning-msg-final-heading");
+    expect(line?.kind).toBe("reasoning");
+    expect(line && "text" in line ? line.text : "").toBe(
+      "**Planning protocol build error handling**\n\n**Evaluating event sequence handling**",
+    );
+    expect(line && "phase" in line ? line.phase : "").toBe("finished");
   });
 
   test("retrofits a blank line when a streamed reasoning heading spans multiple chunks", () => {

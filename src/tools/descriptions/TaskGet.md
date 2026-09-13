@@ -6,8 +6,7 @@ Returns the full task record, including `subject`, `description`, `status`, `own
 
 ## Notes
 
-- Works on soft-deleted tasks (`status: "deleted"`) too — `TaskGet` returns the record even though `TaskList` hides it by default.
-- Errors if the task ID doesn't exist.
+- Errors if the task ID doesn't exist or was deleted.
 
 ## Example
 

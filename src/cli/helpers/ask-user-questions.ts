@@ -7,7 +7,7 @@ export type AskUserQuestion = {
   question: string;
   header: string;
   options: AskUserQuestionOption[];
-  multiSelect: boolean;
+  multiSelect?: boolean;
   allowOther?: boolean;
 };
 
@@ -60,7 +60,12 @@ function isWellFormedQuestion(q: unknown): boolean {
   const question = q as Record<string, unknown>;
   if (typeof question.question !== "string") return false;
   if (typeof question.header !== "string") return false;
-  if (typeof question.multiSelect !== "boolean") return false;
+  if (
+    question.multiSelect !== undefined &&
+    typeof question.multiSelect !== "boolean"
+  ) {
+    return false;
+  }
   if (
     question.allowOther !== undefined &&
     typeof question.allowOther !== "boolean"

@@ -40,15 +40,15 @@ export function parseFrontmatter(content: string): {
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n");
 
-  const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
+  const frontmatterRegex = /^---\n([\s\S]*?)\n---(?:\n([\s\S]*))?$/;
   const match = normalized.match(frontmatterRegex);
 
-  if (!match || !match[1] || !match[2]) {
+  if (!match || match[1] === undefined) {
     return { frontmatter: {}, body: normalized };
   }
 
   const frontmatterText = match[1];
-  const body = match[2];
+  const body = match[2] ?? "";
   const frontmatter: Record<string, string | string[]> = {};
 
   // Parse YAML-like frontmatter (simple key: value pairs and arrays)
@@ -56,42 +56,47 @@ export function parseFrontmatter(content: string): {
   let currentKey: string | null = null;
   let currentArray: string[] = [];
 
+  const savePendingKey = () => {
+    if (!currentKey) return;
+    frontmatter[currentKey] = currentArray.length > 0 ? currentArray : "";
+    currentKey = null;
+    currentArray = [];
+  };
+
   for (const line of lines) {
-    // Check if this is an array item
-    if (line.trim().startsWith("-") && currentKey) {
-      const value = line.trim().slice(1).trim();
-      currentArray.push(value);
+    const trimmedLine = line.trim();
+    const indentation = line.length - line.trimStart().length;
+
+    if (indentation > 0) {
+      // Preserve the existing top-level string-array support without flattening
+      // nested YAML objects into the frontmatter record.
+      if (indentation <= 2 && trimmedLine.startsWith("-") && currentKey) {
+        const value = trimmedLine.slice(1).trim();
+        currentArray.push(value);
+      }
       continue;
     }
 
-    // If we were building an array, save it
-    if (currentKey && currentArray.length > 0) {
-      frontmatter[currentKey] = currentArray;
-      currentKey = null;
-      currentArray = [];
-    }
+    savePendingKey();
 
     const colonIndex = line.indexOf(":");
     if (colonIndex > 0) {
       const key = line.slice(0, colonIndex).trim();
       const value = line.slice(colonIndex + 1).trim();
-      currentKey = key;
 
       if (value) {
         // Simple key: value pair
         frontmatter[key] = value;
-        currentKey = null;
       } else {
-        // Might be starting an array
+        // Might be starting an array. If no array items follow, this is an
+        // explicit empty scalar field.
+        currentKey = key;
         currentArray = [];
       }
     }
   }
 
-  // Save any remaining array
-  if (currentKey && currentArray.length > 0) {
-    frontmatter[currentKey] = currentArray;
-  }
+  savePendingKey();
 
   return { frontmatter, body: body.trim() };
 }

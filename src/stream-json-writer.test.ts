@@ -107,4 +107,58 @@ describe("writeWireMessage", () => {
     await pending;
     expect(resolved).toBe(true);
   });
+
+  test("async writer resolves true when the write lands", async () => {
+    const stdoutWrite = mock(
+      (
+        _chunk: string | Uint8Array,
+        callback?: (error?: Error | null) => void,
+      ) => {
+        callback?.();
+        return true;
+      },
+    );
+    process.stdout.write =
+      stdoutWrite as unknown as typeof process.stdout.write;
+
+    const msg: ControlRequest = {
+      type: "control_request",
+      request_id: "req-written",
+      request: { subtype: "interrupt" },
+    };
+
+    await expect(writeWireMessageAsync(msg)).resolves.toBe(true);
+    expect(stdoutWrite).toHaveBeenCalledTimes(1);
+  });
+
+  test("async writer resolves false without writing when stdout is destroyed", async () => {
+    const stdoutWrite = mock(
+      (
+        _chunk: string | Uint8Array,
+        callback?: (error?: Error | null) => void,
+      ) => {
+        callback?.();
+        return true;
+      },
+    );
+    process.stdout.write =
+      stdoutWrite as unknown as typeof process.stdout.write;
+    Object.defineProperty(process.stdout, "destroyed", {
+      value: true,
+      configurable: true,
+    });
+
+    try {
+      const msg: ControlRequest = {
+        type: "control_request",
+        request_id: "req-dropped",
+        request: { subtype: "interrupt" },
+      };
+
+      await expect(writeWireMessageAsync(msg)).resolves.toBe(false);
+      expect(stdoutWrite).not.toHaveBeenCalled();
+    } finally {
+      Reflect.deleteProperty(process.stdout, "destroyed");
+    }
+  });
 });

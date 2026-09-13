@@ -4,10 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OAuthSelectPrompt } from "@earendil-works/pi-ai/oauth";
 import {
+  clearAvailableModelsCache,
+  getAvailableModelHandles,
+  getAvailableModelsCacheInfo,
+} from "@/agent/available-models";
+import { __testSetBackend } from "@/backend";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
+import {
   clearRegisteredPiProviders,
   type PiProviderOAuthLoginCallbacks,
   registerPiProvider,
 } from "@/backend/dev/pi-provider-mod-registry";
+import { getLocalProviderRecordByName } from "@/backend/local/local-provider-auth-store";
 import { runLocalOAuthConnectFlow } from "@/cli/commands/connect-local-oauth";
 import type { ByokProvider } from "@/providers/byok-providers";
 
@@ -77,6 +85,8 @@ describe("runLocalOAuthConnectFlow select prompts", () => {
   });
 
   afterEach(async () => {
+    clearAvailableModelsCache();
+    __testSetBackend(null);
     clearRegisteredPiProviders();
     if (previousStorageDir === undefined) {
       delete process.env.LETTA_LOCAL_BACKEND_DIR;
@@ -108,5 +118,35 @@ describe("runLocalOAuthConnectFlow select prompts", () => {
 
     expect(selectedMethod).toBe("device_code");
     expect(result.providerName).toBe(FAKE_PROVIDER_ID);
+  });
+
+  test("persists proxy connection options with OAuth credentials", async () => {
+    await runLocalOAuthConnectFlow(FAKE_BYOK_PROVIDER, {
+      onStatus: () => {},
+      openBrowser: async () => {},
+      baseURL: "http://proxy.example.test",
+      timeout: 30_000,
+    });
+
+    expect(
+      getLocalProviderRecordByName(FAKE_PROVIDER_ID, storageDir),
+    ).toMatchObject({
+      base_url: "http://proxy.example.test",
+      timeout: 30_000,
+      auth: { type: "oauth" },
+    });
+  });
+
+  test("invalidates the available model cache after OAuth login", async () => {
+    __testSetBackend(new FakeHeadlessBackend());
+    await getAvailableModelHandles();
+    expect(getAvailableModelsCacheInfo().hasCache).toBe(true);
+
+    await runLocalOAuthConnectFlow(FAKE_BYOK_PROVIDER, {
+      onStatus: () => {},
+      openBrowser: async () => {},
+    });
+
+    expect(getAvailableModelsCacheInfo().hasCache).toBe(false);
   });
 });

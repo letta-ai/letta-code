@@ -9,6 +9,7 @@ import type {
 } from "@/mods/types";
 import { attachDeprecatedGetContextTrap } from "./deprecated-api";
 import { areModsDisabled } from "./disable";
+import { runWithModInvocationContext } from "./invocation-context";
 
 const MOD_TOOLS_KEY = Symbol.for("@letta/modTools");
 
@@ -38,13 +39,14 @@ function getMutableModToolsRegistry(): Map<string, ModToolDefinition> {
   return global[MOD_TOOLS_KEY];
 }
 
-export function getAvailableModToolsRegistry(
+export function filterAvailableModToolsRegistry(
+  registry: Map<string, ModToolDefinition>,
   context?: ModContext | null,
 ): Map<string, ModToolDefinition> {
   if (areModsDisabled()) return new Map();
 
   return new Map(
-    Array.from(getMutableModToolsRegistry().entries()).filter(([, tool]) => {
+    Array.from(registry.entries()).filter(([, tool]) => {
       if (tool.activationSignal.aborted) return false;
       try {
         return context
@@ -66,6 +68,12 @@ export function getAvailableModToolsRegistry(
       }
     }),
   );
+}
+
+export function getAvailableModToolsRegistry(
+  context?: ModContext | null,
+): Map<string, ModToolDefinition> {
+  return filterAvailableModToolsRegistry(getMutableModToolsRegistry(), context);
 }
 
 export function registerModTool(tool: ModToolDefinition): void {
@@ -133,5 +141,5 @@ export async function runModTool(
   if (tool.activationSignal.aborted) {
     throw new Error(`Mod tool '${tool.name}' is no longer available`);
   }
-  return tool.run(context);
+  return runWithModInvocationContext(context, () => tool.run(context));
 }

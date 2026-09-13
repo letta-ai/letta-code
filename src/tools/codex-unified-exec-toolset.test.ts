@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import ShellDescription from "@/tools/descriptions/Shell.md";
-import { OPENAI_DEFAULT_TOOLS, OPENAI_PASCAL_TOOLS } from "@/tools/manager";
 import ExecCommandSchema from "@/tools/schemas/ExecCommand.json";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
+import {
+  OPENAI_DEFAULT_TOOLS,
+  OPENAI_PASCAL_TOOLS,
+} from "@/tools/toolset-defaults";
 
 function extractCommitGuidance(description: string): string {
   const start = description.indexOf("# Committing changes with git");
@@ -21,12 +24,14 @@ describe("Codex unified exec toolset", () => {
 
     expect(OPENAI_PASCAL_TOOLS).toContain("exec_command");
     expect(OPENAI_PASCAL_TOOLS).toContain("write_stdin");
+    expect(OPENAI_PASCAL_TOOLS).toContain("Monitor");
     expect(OPENAI_PASCAL_TOOLS).not.toContain("ShellCommand");
   });
 
   test("documents LC-specific omission of upstream sandbox fields", () => {
     const properties = Object.keys(ExecCommandSchema.properties);
 
+    expect(properties).toContain("description");
     expect(properties).not.toContain("sandbox_permissions");
     expect(properties).not.toContain("justification");
     expect(properties).not.toContain("prefix_rule");
@@ -38,6 +43,10 @@ describe("Codex unified exec toolset", () => {
       "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
       "",
       "For ordinary one-shot commands, omit `yield_time_ms` and let the default wait for completion; set `yield_time_ms` only when intentionally returning early from a long-running or interactive command.",
+      "",
+      "If a command is still running when this tool yields, you will receive a notification when it completes. Do not poll the session just to check whether it has finished. Use `write_stdin` only when you need to send input, interrupt the process, or obtain output before you can continue.",
+      "",
+      "Provide the required `description` field as a clear, concise user-facing status label for what the command does. It may be shown directly in chat with no prefix, so make it grammatical by itself and avoid tense-dependent wording. Use an imperative or purpose phrase like `Find debug log entries` or `Search recent logs for errors`. Describe the command's purpose, not its shell syntax. Keep it brief for simple commands; add only enough context to clarify commands that are hard to parse at a glance.",
       "",
       extractCommitGuidance(ShellDescription),
     ].join("\n");
@@ -54,8 +63,8 @@ describe("Codex unified exec toolset", () => {
           ].join("\n")
         : execCommandDescription,
     );
-    expect(TOOL_DEFINITIONS.write_stdin.description).toBe(
-      "Writes characters to an existing unified exec session and returns recent output.",
+    expect(TOOL_DEFINITIONS.write_stdin.description).toContain(
+      "create a one-shot scheduled check instead of blocking or polling",
     );
   });
 });

@@ -86,4 +86,39 @@ describe("backfill system-reminder handling", () => {
     expect(line?.kind).toBe("user");
     expect(line && "text" in line ? line.text : "").toBe("hello :D");
   });
+
+  test("hides injected skill content from backfill", () => {
+    const buffers = createBuffers();
+    const history = [
+      userMessage(
+        "u5",
+        '<skill_content name="review-pr">\n---\ndescription: Review a PR\n---\nInstructions\n</skill_content>',
+      ),
+    ];
+
+    backfillBuffers(buffers, history);
+
+    expect(buffers.byId.get("u5")).toBeUndefined();
+    expect(buffers.order).toHaveLength(0);
+  });
+
+  test("preserves user text alongside injected skill content in backfill", () => {
+    const buffers = createBuffers();
+    const history = [
+      userMessage("u6", [
+        {
+          type: "text",
+          text: '<skill_content name="review-pr">Instructions</skill_content>',
+        },
+        { type: "text", text: "Review PR 123" },
+      ]),
+    ];
+
+    backfillBuffers(buffers, history);
+
+    expect(buffers.byId.get("u6")).toMatchObject({
+      kind: "user",
+      text: "Review PR 123",
+    });
+  });
 });

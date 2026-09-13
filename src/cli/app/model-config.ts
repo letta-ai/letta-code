@@ -2,7 +2,10 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getModelInfo, type ModelReasoningEffort } from "@/agent/model";
-import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import {
+  mapModelHandleToLlmConfigPatch,
+  resolveModelHandleFromLlmConfig,
+} from "@/agent/model-handles";
 import { ERROR_FEEDBACK_HINT, PROVIDER_STATUS_PAGES } from "./constants";
 
 /**
@@ -20,20 +23,25 @@ export function deriveReasoningEffort(
       (providerType === "openai" ||
         providerType === "openai-codex" ||
         providerType === "chatgpt_oauth") &&
-      "reasoning" in modelSettings &&
-      modelSettings.reasoning
+      "reasoning" in modelSettings
     ) {
-      const re = (modelSettings.reasoning as { reasoning_effort?: string })
-        .reasoning_effort;
-      if (
-        re === "none" ||
-        re === "minimal" ||
-        re === "low" ||
-        re === "medium" ||
-        re === "high" ||
-        re === "xhigh"
-      )
-        return re;
+      const reasoning = modelSettings.reasoning;
+      if (reasoning === null) return null;
+      if (typeof reasoning === "object" && "reasoning_effort" in reasoning) {
+        const re = (reasoning as { reasoning_effort?: string | null })
+          .reasoning_effort;
+        if (re === null) return null;
+        if (
+          re === "none" ||
+          re === "minimal" ||
+          re === "low" ||
+          re === "medium" ||
+          re === "high" ||
+          re === "xhigh" ||
+          re === "max"
+        )
+          return re;
+      }
     }
 
     // Anthropic/Bedrock: effort field
@@ -65,6 +73,24 @@ export function deriveReasoningEffort(
   return null;
 }
 
+export function reasoningEffortLlmConfigPatch(
+  modelSettings: AgentState["model_settings"] | null | undefined,
+  llmConfig: LlmConfig | null | undefined,
+): { reasoning_effort?: ModelReasoningEffort | null } {
+  const effort = deriveReasoningEffort(modelSettings, llmConfig);
+  if (typeof effort === "string") {
+    return { reasoning_effort: effort };
+  }
+  if (
+    modelSettings?.provider_type === "openai" &&
+    Object.hasOwn(modelSettings, "reasoning") &&
+    modelSettings.reasoning === null
+  ) {
+    return { reasoning_effort: null };
+  }
+  return {};
+}
+
 export function inferReasoningEffortFromModelPreset(
   modelId: string | null | undefined,
   modelHandle: string | null | undefined,
@@ -94,11 +120,7 @@ export function inferReasoningEffortFromModelPreset(
 export function buildModelHandleFromLlmConfig(
   llmConfig: LlmConfig | null | undefined,
 ): string | null {
-  if (!llmConfig) return null;
-  if (llmConfig.model_endpoint_type && llmConfig.model) {
-    return `${llmConfig.model_endpoint_type}/${llmConfig.model}`;
-  }
-  return llmConfig.model ?? null;
+  return resolveModelHandleFromLlmConfig(llmConfig);
 }
 
 export function getPreferredAgentModelHandle(
@@ -111,24 +133,40 @@ export function getPreferredAgentModelHandle(
   return buildModelHandleFromLlmConfig(agent.llm_config);
 }
 
+export function providerTypeFromModelSettings(
+  modelSettings: unknown,
+): string | null {
+  if (
+    typeof modelSettings !== "object" ||
+    modelSettings === null ||
+    !("provider_type" in modelSettings)
+  ) {
+    return null;
+  }
+  const providerType = (modelSettings as { provider_type?: unknown })
+    .provider_type;
+  return typeof providerType === "string" && providerType.length > 0
+    ? providerType
+    : null;
+}
+
+export function providerTypeFromUpdateArgs(
+  updateArgs: Record<string, unknown> | undefined | null,
+): string | null {
+  const providerType = updateArgs?.provider_type;
+  return typeof providerType === "string" && providerType.length > 0
+    ? providerType
+    : null;
+}
+
 export function mapHandleToLlmConfigPatch(
   modelHandle: string,
+  providerType?: string | null,
 ): Partial<LlmConfig> {
-  const [provider, ...modelParts] = modelHandle.split("/");
-  const modelName = modelParts.join("/");
-  if (!provider || !modelName) {
-    return {
-      model: modelHandle,
-    };
-  }
-  const endpointType =
-    provider === OPENAI_CODEX_PROVIDER_NAME || provider === "openai-codex"
-      ? "chatgpt_oauth"
-      : provider;
-  return {
-    model: modelName,
-    model_endpoint_type: endpointType as LlmConfig["model_endpoint_type"],
-  };
+  return mapModelHandleToLlmConfigPatch(
+    modelHandle,
+    providerType,
+  ) as Partial<LlmConfig>;
 }
 
 // Helper to get appropriate error hint based on stop reason and current model
@@ -151,26 +189,11 @@ export function getErrorHintForStopReason(
       ? PROVIDER_STATUS_PAGES[modelEndpointType]
       : undefined;
 
-  // Build the /model swap suggestion -- mention Bedrock Opus if applicable.
-  const bedrockOpusSuggestion =
-    modelEndpointType === "anthropic" &&
-    currentModelId?.startsWith("opus-4.7") &&
-    getModelInfo("bedrock-opus-4.7")
-      ? "Opus 4.7 via Amazon Bedrock"
-      : modelEndpointType === "anthropic" &&
-          currentModelId?.startsWith("opus-4.6") &&
-          getModelInfo("bedrock-opus-4.6")
-        ? "Opus 4.6 via Amazon Bedrock"
-        : null;
-  const modelSwapSuffix = bedrockOpusSuggestion
-    ? ` (e.g. ${bedrockOpusSuggestion})`
-    : "";
-
   if (statusInfo) {
     return [
       `Downstream provider (${statusInfo.name}) is experiencing errors — check ${statusInfo.url} for additional information`,
       `(note that the official status page may not be reliable / up-to-date).`,
-      `Use /model to swap to a model from a different provider${modelSwapSuffix}, or try again later.`,
+      `Use /model to swap to a model from a different provider, or try again later.`,
     ].join(" ");
   }
 

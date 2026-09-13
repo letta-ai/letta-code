@@ -84,7 +84,7 @@ export interface MessageEnvelope {
   /** Monotonic per-session event sequence. Optional for backward compatibility. */
   event_seq?: number;
   /** Agent that triggered this event. Used with default conversation scoping. */
-  agent_id?: string;
+  agent_id?: string | null;
   /** Conversation that triggered this event. Used for conversation-scoped filtering. */
   conversation_id?: string;
 }
@@ -96,7 +96,7 @@ export interface MessageEnvelope {
 export interface SystemInitMessage extends MessageEnvelope {
   type: "system";
   subtype: "init";
-  agent_id: string;
+  agent_id: string | null;
   conversation_id: string;
   model: string;
   tools: string[];
@@ -322,7 +322,7 @@ export type UsageStatistics = LettaStreamingResponse.LettaUsageStatistics;
 export interface ResultMessage extends MessageEnvelope {
   type: "result";
   subtype: ResultSubtype;
-  agent_id: string;
+  agent_id: string | null;
   conversation_id: string;
   duration_ms: number;
   duration_api_ms: number;
@@ -366,13 +366,15 @@ export type QueueItemSource =
  * - task_notification: Background task completed notification
  * - approval_result: Tool approval/denial result
  * - overlay_action: AskUserQuestion or other overlay action
+ * - mod_continue: Follow-up turn injected by a mod's turn_end { continue }
  */
 export type QueueItemKind =
   | "message"
   | "task_notification"
   | "cron_prompt"
   | "approval_result"
-  | "overlay_action";
+  | "overlay_action"
+  | "mod_continue";
 
 /**
  * Canonical queue item wire shape used by listener state snapshots
@@ -389,6 +391,8 @@ export interface QueueRuntimeItemWire {
   content: MessageCreate["content"] | string;
   /** ISO8601 UTC enqueue timestamp. */
   enqueued_at: string;
+  /** User input held by interrupt until resume or the next user message. */
+  paused?: boolean;
 }
 
 /**
@@ -445,6 +449,8 @@ export interface QueueBatchDequeuedEvent extends MessageEnvelope {
  * - command_running: Slash command is executing
  * - interrupt_in_progress: User interrupt (Esc) is being processed
  * - runtime_busy: Generic busy state (e.g., listen-client turn in flight)
+ * - paused_by_user: Only user messages parked by an interrupt remain; they
+ *   wait for an explicit resume or the user's next message
  */
 export type QueueBlockedReason =
   | "streaming"
@@ -452,7 +458,8 @@ export type QueueBlockedReason =
   | "overlay_open"
   | "command_running"
   | "interrupt_in_progress"
-  | "runtime_busy";
+  | "runtime_busy"
+  | "paused_by_user";
 
 /**
  * Emitted only on blocked-reason state transitions (not on every dequeue
@@ -749,7 +756,7 @@ export interface CanUseToolResponseAllow {
 export interface CanUseToolResponseDeny {
   behavior: "deny";
   message: string;
-  /** TODO: Not wired up yet - infrastructure exists in TUI */
+  /** Whether this denial should interrupt the active turn. */
   interrupt?: boolean;
 }
 

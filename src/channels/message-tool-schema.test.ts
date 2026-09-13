@@ -3,13 +3,16 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   buildDynamicMessageChannelSchema,
   buildDynamicMessageChannelToolDefinition,
-  clearDynamicMessageChannelToolCache,
+  clearMessageChannelDiscoveryErrors,
 } from "@/channels/message-tool";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import type { ChannelAdapter } from "@/channels/types";
 
+const SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX =
+  "For Slack requests that require nontrivial work or several tool calls";
+
 function createRunningAdapter(
-  channelId: "slack" | "telegram",
+  channelId: string,
   accountId: string,
 ): ChannelAdapter {
   return {
@@ -31,7 +34,7 @@ describe("buildDynamicMessageChannelSchema", () => {
     if (registry) {
       await registry.stopAll();
     }
-    clearDynamicMessageChannelToolCache();
+    clearMessageChannelDiscoveryErrors();
   });
 
   test("injects active channel enum and plugin-owned actions", async () => {
@@ -55,9 +58,12 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(properties.action?.enum).toEqual([
       "send",
       "react",
+      "list-custom-emojis",
       "upload-file",
+      "download-file",
       "send-rich",
     ]);
+    expect(properties.attachmentId).toBeDefined();
   });
 
   test("keeps Telegram-only tool actions narrowed to Telegram-supported actions", async () => {
@@ -83,6 +89,7 @@ describe("buildDynamicMessageChannelSchema", () => {
       "react",
       "upload-file",
     ]);
+    expect(properties.attachmentId).toBeUndefined();
   });
 
   test("builds description from the same discovery result as the schema", async () => {
@@ -112,13 +119,33 @@ describe("buildDynamicMessageChannelSchema", () => {
       "Currently active channels: Slack, Telegram.",
     );
     expect(resolved.description).toContain(
-      "Available actions across the active channels: send, react, upload-file, send-rich.",
+      "Available actions across the active channels: send, react, list-custom-emojis, upload-file, download-file, send-rich.",
+    );
+    expect(resolved.description).not.toContain(
+      "finish with only `Sent.` as the internal confirmation",
+    );
+    expect(resolved.description).toContain(
+      SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX,
+    );
+    expect(resolved.description).toContain(
+      'On Slack, this tool also supports action="react"',
+    );
+    expect(resolved.description).toContain(
+      'action="list-custom-emojis" to discover the workspace custom emoji names',
+    );
+    expect(resolved.description).toContain(
+      'Use action="download-file" with channel, chat_id, attachmentId, and messageId',
+    );
+    expect(resolved.description).toContain(
+      "TaskOutput (block: true, timeout: 600000)",
     );
     expect(properties.channel?.enum).toEqual(["slack", "telegram"]);
     expect(properties.action?.enum).toEqual([
       "send",
       "react",
+      "list-custom-emojis",
       "upload-file",
+      "download-file",
       "send-rich",
     ]);
   });
@@ -157,6 +184,12 @@ describe("buildDynamicMessageChannelSchema", () => {
       "If a user-visible reply is appropriate, your final action for the turn must be one MessageChannel call",
     );
     expect(resolved.description).toContain(
+      "After that final send succeeds, do not repeat or paraphrase the sent message in assistant text; finish with only `Sent.` as the internal confirmation.",
+    );
+    expect(resolved.description).toContain(
+      "This does not apply to a short acknowledgement sent before continuing substantive work.",
+    );
+    expect(resolved.description).toContain(
       "If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement.",
     );
     expect(resolved.description).toContain(
@@ -165,8 +198,93 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(resolved.description).toContain(
       "If the useful response belongs later, schedule the follow-up instead of sending a placeholder.",
     );
+    expect(resolved.description).toContain(
+      SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX,
+    );
+    expect(resolved.description).toContain(
+      "Replies to routed Slack threads stay in the current thread automatically.",
+    );
     expect(resolved.description).not.toContain("Telegram");
     expect(properties.channel?.enum).toEqual(["slack"]);
-    expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
+    expect(properties.action?.enum).toEqual([
+      "send",
+      "react",
+      "list-custom-emojis",
+      "upload-file",
+      "download-file",
+    ]);
+  });
+
+  test("moves channel-specific reply guidance into the tool description", async () => {
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createRunningAdapter("discord", "acct-discord"));
+    registry.registerAdapter(createRunningAdapter("whatsapp", "acct-whatsapp"));
+    registry.registerAdapter(createRunningAdapter("signal", "acct-signal"));
+
+    const resolved = await buildDynamicMessageChannelToolDefinition(
+      "Base MessageChannel description.",
+      {
+        type: "object",
+        properties: {
+          action: { type: "string" },
+          channel: { type: "string" },
+          chat_id: { type: "string" },
+        },
+        required: ["action", "channel", "chat_id"],
+        additionalProperties: false,
+      },
+    );
+
+    expect(resolved.description).toContain(
+      "Discord reactions accept native Unicode emoji",
+    );
+    expect(resolved.description).toContain(
+      "Voice memo/audio uploads must be Ogg/Opus",
+    );
+    expect(resolved.description).toContain(
+      "Replies are sent as the linked Signal account",
+    );
+  });
+
+  test("does not add Slack work acknowledgement guidance to Telegram-only scoped descriptions", async () => {
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createRunningAdapter("slack", "acct-slack"));
+    registry.registerAdapter(createRunningAdapter("telegram", "acct-telegram"));
+
+    const resolved = await buildDynamicMessageChannelToolDefinition(
+      "Base MessageChannel description.",
+      {
+        type: "object",
+        properties: {
+          action: { type: "string" },
+          channel: { type: "string" },
+          chat_id: { type: "string" },
+        },
+        required: ["action", "channel", "chat_id"],
+        additionalProperties: false,
+      },
+      {
+        channels: [{ channelId: "telegram", accountId: "acct-telegram" }],
+      },
+    );
+
+    const properties = resolved.schema.properties as Record<
+      string,
+      { enum?: string[] }
+    >;
+    expect(resolved.description).toContain(
+      "Currently active channels: Telegram.",
+    );
+    expect(resolved.description).not.toContain(
+      SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX,
+    );
+    expect(resolved.description).not.toContain('action="download-file"');
+    expect(properties.channel?.enum).toEqual(["telegram"]);
+    expect(properties.action?.enum).toEqual([
+      "send",
+      "send-rich",
+      "react",
+      "upload-file",
+    ]);
   });
 });

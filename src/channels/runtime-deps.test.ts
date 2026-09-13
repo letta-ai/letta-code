@@ -271,16 +271,21 @@ test("installChannelRuntime uses pnpm add for pnpm installs", async () => {
   ]);
 });
 
-test("installChannelRuntime uses cmd shims for npm on Windows", async () => {
+test("installChannelRuntime uses the npm cmd shim on Windows without shell", async () => {
   const spawnCalls: Array<{
     cmd: string;
     args: string[];
     cwd?: string;
+    shell?: boolean | string;
   }> = [];
 
   const spawnImpl = mock(
-    (cmd: string, args: string[], opts?: { cwd?: string }) => {
-      spawnCalls.push({ cmd, args, cwd: opts?.cwd });
+    (
+      cmd: string,
+      args: string[],
+      opts?: { cwd?: string; shell?: boolean | string },
+    ) => {
+      spawnCalls.push({ cmd, args, cwd: opts?.cwd, shell: opts?.shell });
       const proc = new EventEmitter();
       queueMicrotask(() => {
         proc.emit("exit", 0);
@@ -303,20 +308,26 @@ test("installChannelRuntime uses cmd shims for npm on Windows", async () => {
       cmd: "npm.cmd",
       args: ["install", "--no-save", "--no-bin-links", "grammy@1.42.0"],
       cwd: getChannelRuntimeDir("telegram"),
+      shell: undefined,
     },
   ]);
 });
 
-test("installChannelRuntime uses cmd shims for pnpm on Windows", async () => {
+test("installChannelRuntime uses the pnpm cmd shim on Windows without shell", async () => {
   const spawnCalls: Array<{
     cmd: string;
     args: string[];
     cwd?: string;
+    shell?: boolean | string;
   }> = [];
 
   const spawnImpl = mock(
-    (cmd: string, args: string[], opts?: { cwd?: string }) => {
-      spawnCalls.push({ cmd, args, cwd: opts?.cwd });
+    (
+      cmd: string,
+      args: string[],
+      opts?: { cwd?: string; shell?: boolean | string },
+    ) => {
+      spawnCalls.push({ cmd, args, cwd: opts?.cwd, shell: opts?.shell });
       const proc = new EventEmitter();
       queueMicrotask(() => {
         proc.emit("exit", 0);
@@ -339,6 +350,7 @@ test("installChannelRuntime uses cmd shims for pnpm on Windows", async () => {
       cmd: "pnpm.cmd",
       args: ["add", "--no-bin-links", "grammy@1.42.0"],
       cwd: getChannelRuntimeDir("telegram"),
+      shell: undefined,
     },
   ]);
 });

@@ -23,12 +23,17 @@ describe("subcommand router", () => {
     }
   });
 
+  test("routes steps help with early backend selection", async () => {
+    expect(subcommandNeedsEarlyBackendMode("steps")).toBe(true);
+    expect(await runSubcommand(["steps", "--help"])).toBe(0);
+  });
+
   test("routes connect subcommand", async () => {
     const exitCode = await runSubcommand(["connect", "help"]);
     expect(exitCode).toBe(0);
   });
 
-  test("routes app-server help without starting the server", async () => {
+  test("routes feedback help before TUI startup", async () => {
     const messages: string[] = [];
     const originalLog = console.log;
     console.log = (message?: unknown) => {
@@ -36,10 +41,154 @@ describe("subcommand router", () => {
     };
 
     try {
+      const exitCode = await runSubcommand(["feedback", "--help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain("letta feedback --message <text>");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("routes unified MCP help before TUI startup", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      const exitCode = await runSubcommand(["mcp", "--help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain("letta mcp tools");
+      expect(messages.join("\n")).toContain("letta mcp call");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("shows unified server help without starting a server", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      const exitCode = await runSubcommand(["server", "--help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain("letta server [remote options]");
+      expect(messages.join("\n")).toContain(
+        "letta server --listen [url] [App Server options]",
+      );
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("keeps app-server as a deprecated alias", async () => {
+    const messages: string[] = [];
+    const warnings: string[] = [];
+    const originalLog = console.log;
+    const originalError = console.error;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+    console.error = (message?: unknown) => {
+      warnings.push(String(message));
+    };
+
+    try {
       const exitCode = await runSubcommand(["app-server", "--help"]);
 
       expect(exitCode).toBe(0);
-      expect(messages.join("\n")).toContain("Usage: letta app-server");
+      expect(messages.join("\n")).toContain(
+        "letta server --listen [url] [App Server options]",
+      );
+      expect(warnings).toEqual([
+        "Warning: `letta app-server` is deprecated. Use `letta server --listen` instead.",
+      ]);
+    } finally {
+      console.log = originalLog;
+      console.error = originalError;
+    }
+  });
+
+  test("routes mods help", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      const exitCode = await runSubcommand(["mods", "help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain("Usage:");
+      expect(messages.join("\n")).toContain("letta mods list");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("does not register the removed dream subcommand", async () => {
+    expect(await runSubcommand(["dream", "--help"])).toBeNull();
+  });
+
+  test("routes computers help and keeps environment aliases", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      const exitCode = await runSubcommand(["computers", "help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain("letta computers list");
+      expect(await runSubcommand(["environments", "help"])).toBe(0);
+      expect(await runSubcommand(["envs", "help"])).toBe(0);
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("routes sandbox help", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      const exitCode = await runSubcommand(["sandbox", "help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain("letta sandbox upload");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("routes teleport help", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      const exitCode = await runSubcommand(["teleport", "help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain("letta teleport list");
+      expect(messages.join("\n")).toContain("letta teleport cloud");
+      expect(messages.join("\n")).toContain("letta teleport local");
+      expect(messages.join("\n")).not.toContain("letta teleport back");
     } finally {
       console.log = originalLog;
     }
@@ -48,8 +197,18 @@ describe("subcommand router", () => {
   test("identifies backend-aware subcommands for early backend selection", () => {
     expect(subcommandNeedsEarlyBackendMode("app-server")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("connect")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("dream")).toBe(false);
     expect(subcommandNeedsEarlyBackendMode("server")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("computers")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("environments")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("envs")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("memory")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("mcp")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("model")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("models")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("mods")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("sandbox")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("teleport")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("version")).toBe(false);
     expect(subcommandNeedsEarlyBackendMode("backend")).toBe(false);
     expect(subcommandNeedsEarlyBackendMode(undefined)).toBe(false);

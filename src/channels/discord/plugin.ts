@@ -1,5 +1,6 @@
 import type { ChannelPlugin } from "@/channels/plugin-types";
 import type { ChannelAccount, DiscordChannelAccount } from "@/channels/types";
+import { resolveDiscordAccountDisplayName } from "./account-display";
 import { createDiscordAdapter } from "./adapter";
 import { discordMessageActions } from "./message-actions";
 import { runDiscordSetup } from "./setup";
@@ -15,6 +16,11 @@ export const discordChannelPlugin: ChannelPlugin = {
   },
   createAdapter(account: ChannelAccount) {
     return createDiscordAdapter(account as DiscordChannelAccount);
+  },
+  resolveAccountDisplayName(account: ChannelAccount) {
+    const discord = account as DiscordChannelAccount;
+    if (!discord.token.trim()) return undefined;
+    return resolveDiscordAccountDisplayName(discord.token);
   },
   messageActions: discordMessageActions,
   runSetup() {

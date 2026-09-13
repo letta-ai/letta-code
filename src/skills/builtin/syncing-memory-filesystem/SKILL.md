@@ -1,277 +1,179 @@
 ---
 name: syncing-memory-filesystem
-description: Manage git-backed memory repos. Load this skill when working with git-backed agent memory, setting up remote memory repos, resolving sync conflicts, or managing memory via git workflows.
+description: Diagnose and repair MemFS repository setup, remote sync, authentication failures, optional backup remotes, or merge/rebase conflicts. Do not load for routine memory reads or edits.
 ---
 
-# Git-Backed Memory Repos
+# MemFS Repository Repair
 
-Agents with the `git-memory-enabled` tag have their memory blocks stored in git repositories accessible via the Letta API. This enables version control, collaboration, and external editing of agent memory.
+Use this skill only when the Git repository behind an agent's memory is not
+setting up or syncing correctly. For ordinary memory reads and edits, use the
+memory files or the memory tools without loading this skill.
 
-**Features:**
-- Stored in cloud (GCS)
-- Accessible via `$LETTA_BASE_URL/v1/git/<agent-id>/state.git`
-- Bidirectional sync: API <-> Git (webhook-triggered, ~2-3s delay)
-- Structure: `memory/system/*.md` for system blocks
+## Current Model
 
-## What the CLI Harness Does Automatically
+MemFS is a Git repository projected onto the computer where the agent is
+running. `$MEMORY_DIR` is the repository root. There is no second `memory/`
+directory inside it.
 
-When memfs is enabled, the Letta Code CLI automatically:
+The repository can use either memory layout. Inspect its current tree and the
+memory rules in the system prompt before editing files:
 
-1. Adds the `git-memory-enabled` tag to the agent (triggers backend to create the git repo)
-2. Clones the repo into `~/.letta/agents/<agent-id>/memory/` (git root is the memory directory)
-3. Configures a **local** credential helper in `memory/.git/config` (so `git push`/`git pull` work without auth ceremony)
-4. Installs a **pre-commit hook** that validates frontmatter before each commit (see below)
-5. Installs a **post-commit hook** that pushes commits to an optional additional remote (see "Additional memory-repository remote" below)
-6. Sets canonical local git identity (`letta.agentId`, `user.name`, `user.email`) so direct `git commit` from the agent's shell attributes correctly to the agent — not the operator's global git identity
-7. On subsequent startups: pulls latest changes, reconfigures credentials, hooks, and identity (self-healing)
-8. During sessions: periodically checks `git status` and reminds you (the agent) to commit/push if dirty
-
-If any of these steps fail, you can replicate them manually using the sections below.
-
-## Authentication (Preferred: Repo-Local)
-
-The harness configures a **per-repo** credential helper during clone and refreshes it on pull/startup.
-This local setup is the default and recommended approach.
-
-Why this matters: host-level **global** credential helpers (e.g. installed by other tooling) can conflict with memfs auth and cause confusing failures.
-
-**Important:** Always use **single-line** format for credential helpers. Multi-line helpers can break tools that parse `git config --list` line-by-line.
-
-```bash
-cd ~/.letta/agents/<agent-id>/memory
-
-# Check local helper(s)
-git config --local --get-regexp '^credential\..*\.helper$'
-
-# Reconfigure local helper (e.g. after API key rotation) - SINGLE LINE
-git config --local credential.$LETTA_BASE_URL.helper '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
+```text
+Root layout                         Existing layout
+$MEMORY_DIR/                        $MEMORY_DIR/
+├── MEMORY.md     # root index      ├── system/     # in-context memory
+├── persona.md    # core memory     ├── reference/  # deferred memory
+├── <topic>/                        └── skills/     # agent-owned skills
+│   └── MEMORY.md # child index
+└── skills/       # agent-owned skills
 ```
 
-If you suspect global helper conflicts, inspect and clear host-specific global entries:
+Cloud-backed agents have a hosted MemFS remote. Local-backend agents keep a
+local-only Git repository and do not need a remote or cloud credentials.
 
-```bash
-# Inspect Letta-related global helpers
-git config --global --get-regexp '^credential\..*letta\.com.*\.helper$'
+The memory tools commit their changes. After each turn, the harness pushes
+clean committed changes for cloud-backed agents. Local-backend commits remain
+on the current machine. Do not run `git push` for normal MemFS sync; let the
+harness push after the turn.
 
-# Example: clear a conflicting host-specific helper
-git config --global --unset-all credential.https://api.letta.com.helper
+Committed memory changes do not alter the current compiled prompt immediately.
+Use `/recompile` when the current conversation must see changed core memory
+right away. Otherwise, the next prompt compilation or conversation will use
+the committed revision.
+
+## Start With the Harness
+
+Prefer the harness commands over manual API calls, remote construction, or
+credential-helper edits:
+
+```text
+/memfs status    # show whether MemFS is enabled and its path
+/memfs enable    # initialize or repair MemFS setup
+/memfs sync      # pull the hosted repository
 ```
 
-For cloning a *different* agent's repo, prefer a one-off auth header over global credential changes:
+From a shell, the standalone status and pull commands are:
 
 ```bash
-AUTH_HEADER="Authorization: Basic $(printf 'letta:%s' "$LETTA_API_KEY" | base64 | tr -d '\n')"
-git -c "http.extraHeader=$AUTH_HEADER" clone "$LETTA_BASE_URL/v1/git/<agent-id>/state.git" ~/my-agent-memory
+letta memory status --agent "$AGENT_ID"
+letta memory pull --agent "$AGENT_ID"
 ```
 
-## Pre-Commit Hook (Frontmatter Validation)
+`letta memory pull` is a no-op for a local-backend agent because there is no
+hosted remote.
 
-The harness installs a git pre-commit hook that validates `.md` files under `memory/` before each commit. This prevents pushes that the server would reject.
+Do not reproduce `/memfs enable` by PATCHing agent tags or constructing a Git
+remote by hand. The enable flow also updates the system prompt mode, recompiles
+the agent, persists local settings, detaches legacy memory tools, preserves and
+adds tags, initializes the checkout, installs hooks, configures identity, and
+seeds default memory files.
 
-**Rules:**
-- Every `.md` file must have YAML frontmatter (`---` header and closing `---`)
-- Required fields: `description` (non-empty string)
-- `read_only` is a **protected field**: you (the agent) cannot add, remove, or change it. Files with `read_only: true` cannot be modified at all. Only the server/user sets this field.
-- Unknown frontmatter keys are rejected
+## Inspect a Broken Checkout
 
-**Valid file format:**
+Use `$MEMORY_DIR` instead of a hard-coded `~/.letta/agents/...` path. Local and
+cloud-backed agents use different parent directories.
+
+```bash
+git -C "$MEMORY_DIR" status --short --branch
+git -C "$MEMORY_DIR" remote get-url origin | sed -E 's#(https?://)[^/@]+@#\1<redacted>@#'
+git -C "$MEMORY_DIR" log -5 --oneline
+```
+
+Do not print credential-helper values or tokens. Do not change global Git
+configuration. The harness installs or refreshes repository-local auth during
+clone and pull when the active transport supports a persistent helper. Desktop
+may instead use a temporary Git transport proxy and intentionally omit the
+persistent helper.
+
+If the checkout is missing `.git/`, use `/memfs enable`. If it exists but is
+behind, use `/memfs sync` or `letta memory pull --agent "$AGENT_ID"`. Pull also
+repairs recognized stale MemFS origin URLs and refreshes repository-local hooks,
+auth, branch tracking, and agent identity.
+
+## Uncommitted Changes
+
+Raw file edits must preserve the active layout's rules:
+
+- In the root layout, root and child `MEMORY.md` indexes have no frontmatter.
+  Every other memory Markdown file has exactly `name` and `description`.
+- In the existing layout, Markdown files under `system/` and `reference/` need
+  a non-empty `description`. `read_only` is protected and cannot be added,
+  removed, or changed by the agent.
+
 ```markdown
 ---
-description: What this block contains
+description: What this memory file contains
 ---
 
-Block content goes here.
+Memory content goes here.
 ```
 
-If the hook rejects a commit, read the error message — it tells you exactly which file and which rule was violated. Fix the file and retry.
+Review the complete diff before committing. Stage named memory files only and
+create a new commit. Once the repository is clean, the harness will push a
+cloud-backed agent's pending commits after the turn.
 
-## Additional Memory-Repository Remote
+## Merge or Rebase Conflicts
 
-In addition to pushing to the Letta server, you can push every commit to a second git remote — e.g. a private GitHub repo — so you have a backup or a copy you can browse with regular tools.
+The harness first tries a fast-forward pull. When a remote push is rejected
+because the remote moved, post-turn sync tries `git pull --rebase` and retries
+the push. If that rebase conflicts, the harness leaves the repository for
+manual resolution and reports the affected files.
 
-**Via the slash command (recommended):**
+Start by reading the current Git operation and every conflicted file:
+
+```bash
+git -C "$MEMORY_DIR" status
+git -C "$MEMORY_DIR" diff --name-only --diff-filter=U
 ```
+
+Resolve the conflict markers without deleting required frontmatter, then stage
+the resolved files by name. Finish the operation Git reports:
+
+```bash
+git -C "$MEMORY_DIR" add <resolved-memory-path>
+
+# If git status says a rebase is in progress:
+GIT_EDITOR=true git -C "$MEMORY_DIR" rebase --continue
+
+# If git status says a merge is in progress:
+git -C "$MEMORY_DIR" commit
+```
+
+Do not start a new merge when a rebase is already in progress. Do not reset,
+abort, or discard either side without the user's approval. When the repository
+is clean and the merge or rebase is complete, the harness retries the hosted
+push after a future turn.
+
+## Optional Backup Remote
+
+`/memory-repository` mirrors the agent's `main` branch to an additional Git
+URL. This is separate from the hosted MemFS origin.
+
+```text
 /memory-repository set git@github.com:you/my-memory.git
 /memory-repository status
-/memory-repository push        # force a push now, e.g. after a network failure
-/memory-repository unset       # stop pushing
+/memory-repository push
+/memory-repository unset
 ```
 
-**How it works:**
-- `/memory-repository set <url>` writes the URL to `letta.memoryRepository.url` in the memfs repo's local `.git/config` and installs a `post-commit` hook.
-- After every commit, the hook reads `letta.memoryRepository.url` and asynchronously pushes to it in the background. Commits are never blocked by push failures.
-- Push output and exit codes are appended to `.git/memory-repository-push.log` — visible via `/memory-repository status`.
-- The setting is **per-repo**, so each agent on a machine has its own independent configuration.
+`set` stores `letta.memoryRepository.url` in the MemFS repository's local Git
+config, installs the post-commit hook, and attempts an initial push. Later
+commits on `main` start a background mirror push. Mirror failures do not block
+the commit; `/memory-repository status` shows the recent push log.
 
-**Auth:** uses your existing git credentials — SSH keys, credential helpers, or tokens in the URL. Letta does not store tokens for this feature. If you're pushing to GitHub, SSH is easiest.
+Use normal SSH or Git credential handling for the backup URL. Avoid embedding a
+token in the URL because the URL is stored in `.git/config`. Use
+`/memory-repository push` only for this optional backup remote, not for normal
+MemFS synchronization.
 
-**Manual equivalent (without the slash command):**
-```bash
-cd ~/.letta/agents/<agent-id>/memory
-git config --local letta.memoryRepository.url git@github.com:you/my-memory.git
-# Hook is installed automatically by the CLI on startup; no manual install needed.
-```
+## Failure Checklist
 
-## Clone Agent Memory
-
-```bash
-# Clone agent's memory repo
-git clone "$LETTA_BASE_URL/v1/git/<agent-id>/state.git" ~/my-agent-memory
-
-# View memory blocks
-ls ~/my-agent-memory/memory/system/
-cat ~/my-agent-memory/memory/system/human.md
-```
-
-## Enabling Git Memory (Manual)
-
-If the harness `/memfs enable` failed, you can replicate it:
-
-```bash
-AGENT_ID="<your-agent-id>"
-AGENT_DIR=~/.letta/agents/$AGENT_ID
-MEMORY_REPO_DIR="$AGENT_DIR/memory"
-
-# 1. Add git-memory-enabled tag (IMPORTANT: preserve existing tags!)
-# First GET the agent to read current tags, then PATCH with the new tag appended.
-# The harness code does: tags = [...existingTags, "git-memory-enabled"]
-curl -X PATCH "$LETTA_BASE_URL/v1/agents/$AGENT_ID" \
-  -H "Authorization: Bearer $LETTA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"tags": ["origin:letta-code", "git-memory-enabled"]}'
-
-# 2. Clone the repo into memory/
-mkdir -p "$MEMORY_REPO_DIR"
-git clone "$LETTA_BASE_URL/v1/git/$AGENT_ID/state.git" "$MEMORY_REPO_DIR"
-
-# 3. Configure local credential helper (single-line format required)
-cd "$MEMORY_REPO_DIR"
-git config --local credential.$LETTA_BASE_URL.helper '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
-```
-
-## Bidirectional Sync
-
-### API Edit -> Git Pull
-
-```bash
-# 1. Edit block via API (or use memory tools)
-# 2. Pull to get changes (webhook creates commit automatically)
-cd ~/.letta/agents/<agent-id>/memory
-git pull
-```
-
-Changes made via the API are automatically committed to git within 2-3 seconds.
-
-### Git Push -> API Update
-
-```bash
-cd ~/.letta/agents/<agent-id>/memory
-
-# 1. Edit files locally
-echo "Updated info" > system/human.md
-
-# 2. Commit and push
-git add system/human.md
-git commit -m "fix: update human block"
-git push
-
-# 3. API automatically reflects changes (webhook-triggered, ~2-3s delay)
-```
-
-## Conflict Resolution
-
-When both API and git have diverged:
-
-```bash
-cd ~/.letta/agents/<agent-id>/memory
-
-# 1. Try to push (will be rejected)
-git push  # -> "fetch first"
-
-# 2. Pull to create merge conflict
-git pull --no-rebase
-# -> CONFLICT in system/human.md
-
-# 3. View conflict markers
-cat system/human.md
-# <<<<<<< HEAD
-# your local changes
-# =======
-# server changes
-# >>>>>>> <commit>
-
-# 4. Resolve
-echo "final resolved content" > system/human.md
-git add system/human.md
-git commit -m "fix: resolved conflict in human block"
-
-# 5. Push resolution
-git push
-# -> API automatically updates with resolved content
-```
-
-## Block Management
-
-### Create New Block
-
-```bash
-# Create file in system/ directory (automatically attached to agent)
-echo "My new block content" > system/new-block.md
-git add system/new-block.md
-git commit -m "feat: add new block"
-git push
-# -> Block automatically created and attached to agent
-```
-
-### Delete/Detach Block
-
-```bash
-# Remove file from system/ directory
-git rm system/persona.md
-git commit -m "chore: remove persona block"
-git push
-# -> Block automatically detached from agent
-```
-
-## Directory Structure
-
-```
-~/.letta/agents/<agent-id>/
-├── .letta/
-│   └── config.json              # Agent metadata
-└── memory/                      # Git repo root
-    ├── .git/                    # Git repo data
-    └── system/                  # System blocks (attached to agent)
-        ├── human.md
-        └── persona.md
-```
-
-**System blocks** (`memory/system/`) are attached to the agent and appear in the agent's system prompt.
-
-## Requirements
-
-- Agent must have `git-memory-enabled` tag
-- Valid API key with agent access
-- Git installed locally
-
-## Troubleshooting
-
-**Clone fails with "Authentication failed":**
-- Check local helper(s): `git -C ~/.letta/agents/<agent-id>/memory config --local --get-regexp '^credential\..*\.helper$'`
-- Check for conflicting global helper(s): `git config --global --get-regexp '^credential\..*letta\.com.*\.helper$'`
-- Reconfigure local helper: see Authentication section above
-- Verify the endpoint is reachable: `curl -u letta:$LETTA_API_KEY $LETTA_BASE_URL/v1/git/<agent-id>/state.git/info/refs?service=git-upload-pack`
-
-**Push/pull doesn't update API:**
-- Wait 2-3 seconds for webhook processing
-- Verify agent has `git-memory-enabled` tag
-- Check if you have write access to the agent
-
-**Harness setup failed (no .git/ after /memfs enable):**
-- Check debug logs (`LETTA_DEBUG=1`)
-- Follow "Enabling Git Memory (Manual)" steps above
-
-**Can't see changes immediately:**
-- Bidirectional sync has a 2-3 second delay for webhook processing
-- Use `git pull` to get latest API changes
-- Use `git fetch` to check remote without merging
+1. Confirm `$MEMORY_DIR` points to the active agent's repository.
+2. Check whether the backend is cloud-backed or local-only.
+3. Inspect `git status`, the origin URL, and the current Git operation.
+4. Use `/memfs enable` for a missing checkout and `/memfs sync` for a pull.
+5. Preserve the active layout's indexes and frontmatter, then finish any
+   existing merge or rebase.
+6. Leave hosted pushes to post-turn sync once the repository is clean.
+7. If the command still fails, rerun it with `LETTA_DEBUG=1` and report the
+   redacted error. Never print or copy credential-helper values.

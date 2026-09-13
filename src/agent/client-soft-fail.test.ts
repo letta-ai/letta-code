@@ -114,7 +114,7 @@ describe("getClient soft failures", () => {
   test("throws when credentials are missing instead of exiting the process", async () => {
     const result = await runIsolatedClientScript(
       `
-        import { getClient } from "./src/agent/client";
+        import { getClient } from "./src/backend/api/client";
         import { settingsManager } from "./src/settings-manager";
 
         settingsManager.isKeychainAvailable = async () => false;
@@ -148,7 +148,7 @@ describe("getClient soft failures", () => {
   test("throws when token refresh fails instead of exiting the process", async () => {
     const result = await runIsolatedClientScript(
       `
-        import { getClient } from "./src/agent/client";
+        import { getClient } from "./src/backend/api/client";
         import { settingsManager } from "./src/settings-manager";
         import { telemetry } from "./src/telemetry";
 
@@ -224,7 +224,7 @@ describe("getClient soft failures", () => {
   test("refresh token in keychain remains usable after one failed read", async () => {
     const result = await runIsolatedClientScript(
       `
-        import { getClient } from "./src/agent/client";
+        import { getClient } from "./src/backend/api/client";
         import { settingsManager } from "./src/settings-manager";
         import {
           __resetSecretWarningStateForTests,

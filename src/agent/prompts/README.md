@@ -9,7 +9,8 @@ Selectable via the `/system` command. Each preset is a complete system prompt. P
 | File | Used | Description |
 |------|------|-------------|
 | `letta_no_memfs.md` | Default for non-memfs agents | Letta-tuned system prompt for standard memory blocks |
-| `letta.md` | Default for memfs agents, including local backend memfs agents | Letta-tuned system prompt for git-backed MemFS memory |
+| `letta.md` | Default for hosted memfs agents | Letta-tuned system prompt for git-backed MemFS memory, including shared memory |
+| `letta_local_memfs.md` | Default for local backend memfs agents | Letta-tuned system prompt for local-only git-backed MemFS memory |
 | `source_claude.md` | `/system source-claude` | Near-verbatim Claude Code prompt for benchmarking |
 | `source_codex.md` | `/system source-codex` | Near-verbatim OpenAI Codex prompt for benchmarking |
 | `source_gemini.md` | `/system source-gemini` | Near-verbatim Gemini CLI prompt for benchmarking |
@@ -29,7 +30,7 @@ Selectable via the `/system` command. Each preset is a complete system prompt. P
 - **Version:** Extracted from `codex-rs/models-manager/models.json` @ openai/codex `main` (May 2026)
 - **Reference:** https://github.com/openai/codex
 - **Notes:** gpt-5.5 uses `model_messages.instructions_template` with a `{{ personality }}` placeholder; this snapshot renders the template substituted with `personality_pragmatic` (the default). Major drift from the prior gpt-5.3-codex snapshot: new senior-engineer framing, expanded engineering judgment guidance, substantially expanded frontend guidance, softer dirty-worktree handling, updated autonomy/compaction instructions, revised formatting/file-link rules, and new anti-creature-language guidance.
-- **Automation:** `.github/workflows/codex-release-watch.yml` polls stable `openai/codex` releases and files a `codex-watch` issue when upstream tool/schema fields or tool implementation paths change.
+- **Automation:** `.github/workflows/codex-agent-watch.yml` checks stable `openai/codex` releases, records terminal outcomes in the central tracker, and dispatches Amelia when watched tool surfaces change.
 
 #### source_gemini.md
 

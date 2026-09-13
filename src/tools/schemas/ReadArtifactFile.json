@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "Path relative to ~/.letta/artifacts, e.g. todo-app/ui/index.html. The aliases artifacts/... and external/artifacts/... are accepted."
+    },
+    "encoding": {
+      "type": "string",
+      "enum": ["utf8", "base64"],
+      "description": "Encoding for the returned content. Defaults to utf8."
+    }
+  },
+  "required": ["path"],
+  "additionalProperties": false
+}

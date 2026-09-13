@@ -15,7 +15,7 @@ interface TaskUpdateArgs {
   owner?: string;
   addBlocks?: string[];
   addBlockedBy?: string[];
-  metadata?: Record<string, string>;
+  metadata?: Record<string, unknown>;
 }
 
 const VALID_STATUSES: readonly TaskStatus[] = [
@@ -64,13 +64,6 @@ export async function task_update(args: TaskUpdateArgs): Promise<TaskRecord> {
       Array.isArray(args.metadata)
     ) {
       throw new Error("TaskUpdate: 'metadata' must be an object");
-    }
-    for (const [k, v] of Object.entries(args.metadata)) {
-      if (typeof v !== "string") {
-        throw new Error(
-          `TaskUpdate: metadata['${k}'] must be a string, received ${typeof v}`,
-        );
-      }
     }
   }
 

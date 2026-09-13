@@ -3,6 +3,7 @@ import { Readable, Writable } from "node:stream";
 import { render } from "ink";
 import type { ComponentProps } from "react";
 import stripAnsi from "strip-ansi";
+import { ApprovalSwitch } from "./ApprovalSwitch";
 import { InlineQuestionApproval } from "./InlineQuestionApproval";
 
 class CaptureStream extends Writable {
@@ -32,21 +33,40 @@ function createInputStream(): NodeJS.ReadStream {
 
 type QuestionsProp = ComponentProps<typeof InlineQuestionApproval>["questions"];
 
-async function renderWithQuestions(questions: QuestionsProp): Promise<string> {
+async function renderWithQuestions(
+  questions: QuestionsProp,
+  throughApproval = false,
+  onSubmit: (answers: Record<string, string>) => void = () => {},
+): Promise<string> {
   const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
+  const stdin = createInputStream();
   const originalWrite = process.stdout.write;
   process.stdout.write = (() => true) as typeof process.stdout.write;
 
   try {
     const instance = render(
-      <InlineQuestionApproval
-        questions={questions}
-        onSubmit={() => {}}
-        isFocused={false}
-      />,
+      throughApproval ? (
+        <ApprovalSwitch
+          approval={{
+            toolName: "AskUserQuestion",
+            toolCallId: "tc-1",
+            toolArgs: JSON.stringify({ questions }),
+          }}
+          onApprove={() => {}}
+          onApproveAlways={() => {}}
+          onDeny={() => {}}
+          onQuestionSubmit={onSubmit}
+        />
+      ) : (
+        <InlineQuestionApproval
+          questions={questions}
+          onSubmit={onSubmit}
+          isFocused={false}
+        />
+      ),
       {
         stdout,
-        stdin: createInputStream(),
+        stdin,
         debug: false,
         patchConsole: false,
         exitOnCtrlC: false,
@@ -54,6 +74,10 @@ async function renderWithQuestions(questions: QuestionsProp): Promise<string> {
     );
 
     await new Promise((resolve) => setTimeout(resolve, 20));
+    if (throughApproval) {
+      stdin.push("\r");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     instance.unmount();
     instance.cleanup();
     return stripAnsi(stdout.chunks.join(""));
@@ -111,7 +135,9 @@ test("InlineQuestionApproval coerces non-array `options` instead of throwing (de
 
   for (const bad of [undefined, null, { a: 1 }, 42, "nope"]) {
     const output = await renderWithOptions(bad);
-    expect(typeof output).toBe("string");
+    expect(output).toContain("Q?");
+    expect(output).toContain("Type something.");
+    expect(output).not.toContain("ERROR");
   }
 
   // An `options` array containing null/non-object entries must not throw when
@@ -148,6 +174,47 @@ test("InlineQuestionApproval coerces non-array `options` instead of throwing (de
     ],
   ]) {
     const output = await renderWithEntries(badEntries);
-    expect(typeof output).toBe("string");
+    expect(output).toContain("Q?");
+    expect(output).toContain("Type something.");
+    expect(output).not.toContain("ERROR");
+  }
+});
+
+test("ApprovalSwitch renders and submits a single choice when multiSelect is omitted", async () => {
+  let answers: Record<string, string> | undefined;
+  const output = await renderWithQuestions(
+    [
+      {
+        question: "Choose?",
+        header: "Choice",
+        options: [
+          { label: "A", description: "First" },
+          { label: "B", description: "Second" },
+        ],
+      },
+    ],
+    true,
+    (value) => {
+      answers = value;
+    },
+  );
+  expect(output).toContain("Choose?");
+  expect(output).not.toContain("Run AskUserQuestion?");
+  expect(output).not.toContain("ERROR");
+  expect(answers).toEqual({ "Choose?": "A" });
+});
+
+test("ApprovalSwitch renders generic approval for malformed questions", async () => {
+  for (const questions of [
+    '[{"question":"Choose?"}]',
+    [{ question: "Choose?", header: "Choice" }],
+    [{ question: "Choose?", header: "Choice", options: null }],
+  ]) {
+    const output = await renderWithQuestions(
+      questions as unknown as QuestionsProp,
+      true,
+    );
+    expect(output).toContain("Run AskUserQuestion?");
+    expect(output).not.toContain("ERROR");
   }
 });

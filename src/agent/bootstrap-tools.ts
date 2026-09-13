@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { debugLog, debugWarn } from "@/utils/debug";
-import { addBaseToolsToServer } from "./create";
+import { type AddBaseToolsOptions, addBaseToolsToServer } from "./create";
 
 const MARKER_PATH = join(homedir(), ".letta", ".bootstrapped");
 
@@ -20,13 +20,15 @@ const MARKER_PATH = join(homedir(), ".letta", ".bootstrapped");
  * Call add-base-tools once, then write a marker so future launches skip it.
  * Fire-and-forget — failures are logged but don't block startup.
  */
-export async function bootstrapBaseToolsIfNeeded(): Promise<void> {
+export async function bootstrapBaseToolsIfNeeded(
+  options: AddBaseToolsOptions = {},
+): Promise<void> {
   if (existsSync(MARKER_PATH)) return;
 
   debugLog("bootstrap", "No marker found, bootstrapping base tools...");
 
   try {
-    const success = await addBaseToolsToServer();
+    const success = await addBaseToolsToServer(options);
     if (success) {
       mkdirSync(join(homedir(), ".letta"), { recursive: true });
       writeFileSync(MARKER_PATH, new Date().toISOString(), "utf-8");

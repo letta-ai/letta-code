@@ -13,6 +13,20 @@ describe("Bash Windows tool description", () => {
     expect(buildBashDescriptionForPlatform("linux")).toBe(baseDescription);
   });
 
+  test("explains how to persist working directory changes", () => {
+    const description = buildBashDescriptionForPlatform("linux");
+
+    expect(description).toContain(
+      "Each Bash call starts from the conversation's current working directory",
+    );
+    expect(description).toContain(
+      "A `cd` affects only that command and does not change the directory used by later tool calls",
+    );
+    expect(description).toContain(
+      "To change the working directory for later tool calls, use `SetWorkingDirectory`",
+    );
+  });
+
   test("appends Windows shell semantics and safety guidance on Windows", () => {
     const description = buildBashDescriptionForPlatform("win32");
 

@@ -1,8 +1,9 @@
 export type ExperimentId =
+  | "artifacts"
   | "conversation_titles"
   | "desktop_conversation_bootstrap"
   | "diffs"
-  | "node"
+  | "reflection_arena"
   | "tui_cron";
 
 export type ExperimentSource = "override" | "env" | "default";

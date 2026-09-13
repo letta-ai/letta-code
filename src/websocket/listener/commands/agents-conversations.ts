@@ -1,5 +1,11 @@
 import type WebSocket from "ws";
-import { getBackend } from "@/backend";
+import { actingUserRequestOptions } from "@/agent/acting-user";
+import {
+  type Backend,
+  type ConversationMessageListBody,
+  DEFAULT_CONVERSATION_MESSAGE_ORDER,
+  getBackend,
+} from "@/backend";
 import type {
   AgentCreateCommand,
   AgentDeleteCommand,
@@ -15,6 +21,7 @@ import type {
   ConversationRetrieveCommand,
   ConversationUpdateCommand,
 } from "@/types/protocol_v2";
+import { isConversationForkCommand } from "@/websocket/listener/management-protocol-inbound";
 import {
   isAgentCreateCommand,
   isAgentDeleteCommand,
@@ -23,7 +30,6 @@ import {
   isAgentUpdateCommand,
   isConversationCompactCommand,
   isConversationCreateCommand,
-  isConversationForkCommand,
   isConversationListCommand,
   isConversationMessagesListCommand,
   isConversationRecompileCommand,
@@ -72,6 +78,57 @@ function getPageItems<T>(page: unknown): T[] {
     }
   }
   return [];
+}
+
+type ConversationMessagePage = {
+  messages: unknown[];
+  nextBefore: string | null;
+  hasMore: boolean;
+};
+
+function messageId(message: unknown): string | null {
+  if (!message || typeof message !== "object") return null;
+  const id = (message as { id?: unknown }).id;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+export async function listConversationMessagePage(
+  backend: Pick<Backend, "listConversationMessages">,
+  conversationId: string,
+  query: ConversationMessageListBody = {},
+): Promise<ConversationMessagePage> {
+  const normalizedQuery = query ?? {};
+  const limit = normalizedQuery.limit ?? 50;
+  const order = normalizedQuery.order ?? DEFAULT_CONVERSATION_MESSAGE_ORDER;
+  const page = await backend.listConversationMessages(
+    conversationId,
+    normalizedQuery,
+  );
+  const untrimmedMessages = getPageItems(page);
+  const messages = untrimmedMessages.slice(0, limit);
+  const oldestMessage =
+    order === "asc" ? messages[0] : messages[messages.length - 1];
+  const nextBefore = messageId(oldestMessage);
+
+  if (!nextBefore || messages.length < limit) {
+    return { messages, nextBefore, hasMore: false };
+  }
+  if (untrimmedMessages.length > limit) {
+    return { messages, nextBefore, hasMore: true };
+  }
+
+  const probe = await backend.listConversationMessages(conversationId, {
+    ...normalizedQuery,
+    after: undefined,
+    before: nextBefore,
+    order: "desc",
+    limit: 1,
+  });
+  return {
+    messages,
+    nextBefore,
+    hasMore: getPageItems(probe).length > 0,
+  };
 }
 
 export async function handleAgentConversationManagementCommand(
@@ -145,7 +202,14 @@ export async function handleAgentConversationManagementCommand(
 
   if (parsed.type === "agent_create") {
     try {
-      const agent = await backend.createAgent(parsed.body);
+      const { prepareRawCreateAgentBodyForMemfs, enableMemfsIfCloud } =
+        await import("@/agent/memory-filesystem");
+      const body = await prepareRawCreateAgentBodyForMemfs(parsed.body);
+      const agent = await backend.createAgent(body);
+      // Finish memfs setup (settings, repo clone, legacy tool detach) without
+      // blocking the response. The tag is already stamped at creation, so
+      // lazy sync paths can complete this even if the process dies here.
+      void enableMemfsIfCloud(agent.id);
       safeSocketSend(
         socket,
         {
@@ -302,7 +366,10 @@ export async function handleAgentConversationManagementCommand(
 
   if (parsed.type === "conversation_create") {
     try {
-      const conversation = await backend.createConversation(parsed.body);
+      const conversation = await backend.createConversation(
+        parsed.body,
+        actingUserRequestOptions(parsed.acting_user_id),
+      );
       safeSocketSend(
         socket,
         {
@@ -410,6 +477,10 @@ export async function handleAgentConversationManagementCommand(
           ...(typeof parsed.body?.hidden === "boolean"
             ? { hidden: parsed.body.hidden }
             : {}),
+          ...(typeof parsed.body?.message_id === "string"
+            ? { messageId: parsed.body.message_id }
+            : {}),
+          ...(actingUserRequestOptions(parsed.acting_user_id) ?? {}),
         },
       );
       safeSocketSend(
@@ -442,7 +513,8 @@ export async function handleAgentConversationManagementCommand(
 
   if (parsed.type === "conversation_messages_list") {
     try {
-      const page = await backend.listConversationMessages(
+      const page = await listConversationMessagePage(
+        backend,
         parsed.conversation_id,
         parsed.query,
       );
@@ -452,7 +524,9 @@ export async function handleAgentConversationManagementCommand(
           type: "conversation_messages_list_response",
           request_id: parsed.request_id,
           success: true,
-          messages: getPageItems(page),
+          messages: page.messages,
+          next_before: page.nextBefore,
+          has_more: page.hasMore,
         },
         "listener_conversation_management_send_failed",
         "listener_conversation_management",
@@ -465,6 +539,8 @@ export async function handleAgentConversationManagementCommand(
           request_id: parsed.request_id,
           success: false,
           messages: [],
+          next_before: null,
+          has_more: false,
           error: getErrorMessage(error, "Failed to list conversation messages"),
         },
         "listener_conversation_management_send_failed",

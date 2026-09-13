@@ -1,0 +1,210 @@
+name: Release Cascade
+
+run-name: Cascade @letta-ai/letta-code ${{ inputs.letta_code_version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      letta_code_version:
+        description: "Stable @letta-ai/letta-code version to cascade, without v prefix"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-cascade-v${{ inputs.letta_code_version }}
+  cancel-in-progress: false
+
+jobs:
+  cascade:
+    name: Cascade to Agent SDK and ACP
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Derive Code release
+        id: code
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          raw_version="${{ inputs.letta_code_version }}"
+          version="${raw_version#v}"
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected a stable semver version without prerelease metadata, got '$raw_version'."
+            exit 1
+          fi
+
+          npm_visible=false
+          for _ in {1..30}; do
+            if npm view "@letta-ai/letta-code@$version" version >/dev/null 2>&1; then
+              npm_visible=true
+              break
+            fi
+
+            sleep 10
+          done
+
+          if [ "$npm_visible" != true ]; then
+            echo "::error::@letta-ai/letta-code@$version is not visible on npm yet."
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "cascade_id=letta-code-v$version-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+          echo "should_cascade=true" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch downstream release chain
+        if: steps.code.outputs.should_cascade == 'true'
+        id: cascade
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          LETTA_CODE_VERSION: ${{ steps.code.outputs.version }}
+          CASCADE_ID: ${{ steps.code.outputs.cascade_id }}
+        run: |
+          set -euo pipefail
+
+          dispatch_and_wait() {
+            local repo="$1"
+            shift
+            local workflow="$1"
+            shift
+            local title="$1"
+            shift
+
+            local dispatched_at
+            dispatched_at="$(date -u -d "2 minutes ago" +"%Y-%m-%dT%H:%M:%SZ")"
+
+            gh workflow run "$workflow" \
+              --repo "$repo" \
+              --ref main \
+              "$@"
+
+            local run_id=""
+            for _ in {1..60}; do
+              local runs_json
+              runs_json="$(gh api "/repos/$repo/actions/workflows/$workflow/runs?branch=main&event=workflow_dispatch&per_page=50")"
+              run_id="$(jq -r --arg title "$title" --arg dispatched_at "$dispatched_at" '
+                .workflow_runs
+                | map(select(.display_title == $title and .created_at >= $dispatched_at))
+                | sort_by(.created_at)
+                | last
+                | .id // empty
+              ' <<< "$runs_json")"
+
+              if [ -n "$run_id" ]; then
+                break
+              fi
+
+              sleep 5
+            done
+
+            if [ -z "$run_id" ]; then
+              echo "::error::Could not find dispatched $repo $workflow run named '$title'."
+              exit 1
+            fi
+
+            local html_url=""
+            while true; do
+              local run_json status conclusion
+              run_json="$(gh api "/repos/$repo/actions/runs/$run_id")"
+              status="$(jq -r '.status' <<< "$run_json")"
+              conclusion="$(jq -r '.conclusion // ""' <<< "$run_json")"
+              html_url="$(jq -r '.html_url' <<< "$run_json")"
+
+              echo "$repo $workflow run $run_id: $status ${conclusion:-}"
+              echo "$html_url"
+
+              if [ "$status" = "completed" ]; then
+                if [ "$conclusion" = "success" ]; then
+                  return 0
+                fi
+
+                echo "::error::$repo $workflow run $run_id finished with conclusion '$conclusion': $html_url"
+                exit 1
+              fi
+
+              sleep 30
+            done
+          }
+
+          read_package_json() {
+            local repo="$1"
+            gh api "/repos/$repo/contents/package.json?ref=main" --jq '.content' | base64 -d
+          }
+
+          wait_for_npm_version() {
+            local package_name="$1"
+            local package_version="$2"
+
+            for _ in {1..30}; do
+              if npm view "$package_name@$package_version" version >/dev/null 2>&1; then
+                return 0
+              fi
+
+              sleep 10
+            done
+
+            echo "::error::$package_name@$package_version is not visible on npm."
+            exit 1
+          }
+
+          sdk_title="Release @letta-ai/letta-agent-sdk ($CASCADE_ID)"
+          dispatch_and_wait \
+            "letta-ai/letta-agent-sdk" \
+            "release.yml" \
+            "$sdk_title" \
+            -f version_type=patch \
+            -f prerelease= \
+            -f letta_code_version="$LETTA_CODE_VERSION" \
+            -f cascade_id="$CASCADE_ID"
+
+          sdk_package="$(read_package_json "letta-ai/letta-agent-sdk")"
+          sdk_version="$(jq -r '.version' <<< "$sdk_package")"
+          sdk_code_dependency="$(jq -r '.dependencies["@letta-ai/letta-code"]' <<< "$sdk_package")"
+
+          if [ "$sdk_code_dependency" != "$LETTA_CODE_VERSION" ]; then
+            echo "::error::Agent SDK main depends on @letta-ai/letta-code@$sdk_code_dependency, expected $LETTA_CODE_VERSION."
+            exit 1
+          fi
+
+          wait_for_npm_version "@letta-ai/letta-agent-sdk" "$sdk_version"
+
+          acp_title="Release @letta-ai/letta-acp ($CASCADE_ID)"
+          dispatch_and_wait \
+            "letta-ai/letta-acp" \
+            "release.yml" \
+            "$acp_title" \
+            -f version_type=patch \
+            -f prerelease= \
+            -f letta_agent_sdk_version="$sdk_version" \
+            -f letta_code_version="$LETTA_CODE_VERSION" \
+            -f cascade_id="$CASCADE_ID"
+
+          acp_package="$(read_package_json "letta-ai/letta-acp")"
+          acp_version="$(jq -r '.version' <<< "$acp_package")"
+          acp_sdk_dependency="$(jq -r '.dependencies["@letta-ai/letta-agent-sdk"]' <<< "$acp_package")"
+          acp_code_dependency="$(jq -r '.dependencies["@letta-ai/letta-code"]' <<< "$acp_package")"
+
+          if [ "$acp_sdk_dependency" != "^$sdk_version" ]; then
+            echo "::error::ACP main depends on @letta-ai/letta-agent-sdk@$acp_sdk_dependency, expected ^$sdk_version."
+            exit 1
+          fi
+
+          if [ "$acp_code_dependency" != "$LETTA_CODE_VERSION" ]; then
+            echo "::error::ACP main depends on @letta-ai/letta-code@$acp_code_dependency, expected $LETTA_CODE_VERSION."
+            exit 1
+          fi
+
+          wait_for_npm_version "@letta-ai/letta-acp" "$acp_version"
+
+          echo "sdk_version=$sdk_version" >> "$GITHUB_OUTPUT"
+          echo "acp_version=$acp_version" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize cascade
+        if: steps.code.outputs.should_cascade == 'true'
+        run: |
+          echo "Cascaded @letta-ai/letta-code@${{ steps.code.outputs.version }} to @letta-ai/letta-agent-sdk@${{ steps.cascade.outputs.sdk_version }} and @letta-ai/letta-acp@${{ steps.cascade.outputs.acp_version }}."

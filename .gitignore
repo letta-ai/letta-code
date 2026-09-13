@@ -8,6 +8,9 @@
 # Letta Code file index exclusions (auto-created per-project, not for repo)
 .lettaignore
 
+# Generated Husky hook machinery (including worktree hook links)
+/.husky/_
+
 .idea
 node_modules
 bun.lockb
@@ -15,6 +18,8 @@ package-lock.json
 bin/
 letta.js
 letta.js.map
+image-resize-worker.js
+image-resize-worker.js.map
 /skills/
 .DS_Store
 

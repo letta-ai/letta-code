@@ -11,7 +11,7 @@ import type {
   ApprovalResult,
 } from "@/agent/approval-execution";
 import type { AgentProvenance } from "@/agent/create";
-import type { PersonalityId } from "@/agent/personality";
+import type { PersonalityId } from "@/agent/personality-presets";
 import type { CommandHandle, createCommandRunner } from "@/cli/commands/runner";
 import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
 import type { Line } from "@/cli/helpers/accumulator";
@@ -24,7 +24,6 @@ import type { ToolsetPreference } from "@/tools/toolset";
 
 export type AppLoadingState =
   | "assembling"
-  | "importing"
   | "initializing"
   | "checking"
   | "ready";
@@ -39,6 +38,7 @@ export type AppProps = {
   startupApprovals?: ApprovalRequest[];
   messageHistory?: Message[];
   resumedExistingConversation?: boolean; // True if we explicitly resumed via --resume
+  startupConversationTitleEligible?: boolean;
   tokenStreaming?: boolean;
   reasoningTabCycleEnabled?: boolean;
   showCompactions?: boolean;
@@ -71,7 +71,6 @@ export type ActiveOverlay =
   | "memfs-sync"
   | "pin"
   | "mcp"
-  | "mcp-connect"
   | "install-github-app"
   | "help"
   | "hooks"

@@ -23,7 +23,7 @@ For complex command-driven mods with panels, timers, local state, or background 
 | Command needs transient UI while doing local work | Mod command + panel |
 | Command needs model output while the main agent is busy | `runWhenBusy: true` command + forked `ctx.conversation` |
 
-If the command represents a durable agent workflow (for example `/goal`), put the workflow instructions in a skill and keep the command as a small launcher/prompt.
+If the command represents a reusable agent workflow (for example `/goal`), put the workflow instructions in a skill and keep the command as a small launcher/prompt.
 
 ## Command IDs
 
@@ -96,9 +96,10 @@ export default function activate(letta) {
         return { type: "output", output: `hello ${ctx.args || "there"}` };
       }
 
+      const greeting = `hello ${ctx.args || "there"}`;
       const panel = letta.ui.openPanel({
         id: "hello-panel",
-        content: [`hello ${ctx.args || "there"}`],
+        render: () => greeting,
       });
       setTimeout(() => panel.close(), 5_000);
       return { type: "handled" };
@@ -111,7 +112,7 @@ export default function activate(letta) {
 
 For commands with `runWhenBusy: true`, do not return `prompt` while the agent is running. Use the scoped conversation handle directly, update a panel/status if available, and return `{ type: "handled" }` quickly.
 
-Use `ctx.conversation` for conversation operations that should work across local and Constellation backends. The handle is bound to the active conversation and backend for that command invocation, so composed flows like fork-then-send stay on the same backend. Use `letta.client` only for server-specific API calls.
+Use `ctx.conversation` for conversation operations that should work across local and Letta Cloud backends. The handle is bound to the active conversation and backend for that command invocation, so composed flows like fork-then-send stay on the same backend. Use `letta.client` only for server-specific API calls.
 
 Common pattern:
 

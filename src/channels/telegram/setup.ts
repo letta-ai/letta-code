@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { upsertChannelAccountWithSecrets } from "@/channels/accounts";
 import type { DmPolicy, TelegramChannelAccount } from "@/channels/types";
-import { validateTelegramToken } from "./adapter";
+import { validateTelegramToken } from "./account-display";
 import { ensureTelegramRuntimeInstalled } from "./runtime";
 
 export async function runTelegramSetup(): Promise<boolean> {

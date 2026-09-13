@@ -1,18 +1,27 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  ApprovalCreate,
+  LettaStreamingResponse,
+} from "@letta-ai/letta-client/resources/agents/messages";
+import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
+import sharp from "sharp";
+import type { Backend } from "@/backend";
 import { translatePasteForImages } from "@/cli/helpers/clipboard";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
 } from "@/cli/helpers/paste-registry";
+import { MAX_IMAGE_HEIGHT, MAX_IMAGE_WIDTH } from "@/utils/image-resize";
 import {
   assertSupportedBase64ImageMediaTypes,
   normalizeMessageImageParts,
 } from "@/utils/message-image-normalization";
+import { sendMessageStreamWithBackend } from "./message";
 
 const TEST_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";
@@ -41,6 +50,48 @@ function getFirstImageMediaType(message: MessageCreate): string | null {
   );
 
   return imagePart?.source.media_type ?? null;
+}
+
+async function sendThroughRecordingBackend(
+  messages: Array<MessageCreate | ApprovalCreate>,
+  options: {
+    imageFailureModesByMessageOtid?: Record<string, "strict" | "drop">;
+  } = {},
+): Promise<ConversationMessageCreateParams> {
+  let recordedBody: ConversationMessageCreateParams | undefined;
+  const stream = {
+    async *[Symbol.asyncIterator]() {},
+  } as unknown as Stream<LettaStreamingResponse>;
+  const backend = {
+    createConversationMessageStream: async (
+      _conversationId: string,
+      body: ConversationMessageCreateParams,
+    ) => {
+      recordedBody = body;
+      return stream;
+    },
+  } as unknown as Backend;
+
+  await sendMessageStreamWithBackend(
+    backend,
+    "conv-image-normalization",
+    messages,
+    {
+      streamTokens: true,
+      background: true,
+      preparedToolContext: {
+        contextId: "ctx-image-normalization",
+        clientTools: [],
+        loadedToolNames: [],
+      },
+      ...options,
+    },
+  );
+
+  if (!recordedBody) {
+    throw new Error("Expected the backend request body to be recorded");
+  }
+  return recordedBody;
 }
 
 describe("outbound image normalization", () => {
@@ -171,20 +222,202 @@ describe("outbound image normalization", () => {
     ];
 
     await expect(
-      normalizeMessageImageParts(rawMessages, async () => {
-        throw new Error("codec unavailable");
+      normalizeMessageImageParts(rawMessages, {
+        resize: async () => {
+          throw new Error("codec unavailable");
+        },
       }),
     ).rejects.toThrow(/Failed to prepare image for model: codec unavailable/);
   });
 
-  test("sendMessageStream has an explicit skip option for pre-normalized images", () => {
-    const source = readFileSync(
-      fileURLToPath(new URL("../agent/message.ts", import.meta.url)),
-      "utf-8",
+  test("normalizes oversized images in the serialized backend request", async () => {
+    const oversized = await sharp({
+      create: {
+        width: 3200,
+        height: 1800,
+        channels: 3,
+        background: { r: 220, g: 110, b: 30 },
+      },
+    })
+      .png()
+      .toBuffer();
+    const requestBody = await sendThroughRecordingBackend(
+      [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "please inspect this screenshot" },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: oversized.toString("base64"),
+              },
+            },
+          ],
+          otid: "cm-oversized",
+        },
+      ],
+      // Guard the invariant at runtime: even a stale caller that passes the
+      // deleted option cannot bypass the authoritative send-boundary pass.
+      { skipImageNormalization: true } as never,
+    );
+    if (!requestBody.messages) {
+      throw new Error("Expected backend request messages");
+    }
+    const message = requestBody.messages[0];
+    if (
+      !message ||
+      !("content" in message) ||
+      typeof message.content === "string"
+    ) {
+      throw new Error("Expected a multimodal backend request message");
+    }
+    const imagePart = message.content.find((part) => part.type === "image");
+    if (
+      !imagePart ||
+      imagePart.type !== "image" ||
+      imagePart.source.type !== "base64"
+    ) {
+      throw new Error("Expected a normalized base64 image");
+    }
+
+    const metadata = await sharp(
+      Buffer.from(imagePart.source.data, "base64"),
+    ).metadata();
+    expect(metadata.width).toBeLessThanOrEqual(MAX_IMAGE_WIDTH);
+    expect(metadata.height).toBeLessThanOrEqual(MAX_IMAGE_HEIGHT);
+  });
+
+  test("applies drop policy by message otid at the send boundary", async () => {
+    const requestBody = await sendThroughRecordingBackend(
+      [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "channel attachment" },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/heic",
+                data: Buffer.from("not-an-image").toString("base64"),
+              },
+            },
+          ],
+          otid: "cm-channel-image",
+        },
+      ],
+      {
+        imageFailureModesByMessageOtid: {
+          "cm-channel-image": "drop",
+        },
+      },
     );
 
-    expect(source).toContain("skipImageNormalization?: boolean;");
-    expect(source).toContain("opts.skipImageNormalization");
-    expect(source).toContain(": await normalizeMessageImageParts(messages)");
+    if (!requestBody.messages) {
+      throw new Error("Expected backend request messages");
+    }
+    expect(requestBody.messages[0]).toMatchObject({
+      role: "user",
+      content: [{ type: "text", text: "channel attachment" }],
+      otid: "cm-channel-image",
+    });
+  });
+
+  test("normalizes images nested in approval tool returns before persistence", async () => {
+    const oversized = await sharp({
+      create: {
+        width: 3200,
+        height: 1800,
+        channels: 3,
+        background: { r: 40, g: 90, b: 180 },
+      },
+    })
+      .png()
+      .toBuffer();
+    const requestBody = await sendThroughRecordingBackend([
+      {
+        type: "approval",
+        otid: "approval-with-image",
+        approvals: [
+          {
+            type: "tool",
+            tool_call_id: "tool-image",
+            status: "success",
+            tool_return: [
+              { type: "text", text: "tool screenshot" },
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/tiff",
+                  data: oversized.toString("base64"),
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const message = requestBody.messages?.[0];
+    if (!message || !("approvals" in message)) {
+      throw new Error("Expected an approval backend request message");
+    }
+    const approval = message.approvals?.[0];
+    if (
+      !approval ||
+      !("tool_return" in approval) ||
+      typeof approval.tool_return === "string"
+    ) {
+      throw new Error("Expected a multimodal approval tool return");
+    }
+    const imagePart = approval.tool_return.find(
+      (part) => part.type === "image",
+    );
+    if (
+      !imagePart ||
+      imagePart.type !== "image" ||
+      imagePart.source.type !== "base64"
+    ) {
+      throw new Error("Expected a normalized approval image");
+    }
+
+    const metadata = await sharp(
+      Buffer.from(imagePart.source.data, "base64"),
+    ).metadata();
+    expect(imagePart.source.media_type).toBe("image/png");
+    expect(metadata.width).toBeLessThanOrEqual(MAX_IMAGE_WIDTH);
+    expect(metadata.height).toBeLessThanOrEqual(MAX_IMAGE_HEIGHT);
+  });
+
+  test("canonicalizes legacy approval tool returns before image traversal", async () => {
+    const requestBody = await sendThroughRecordingBackend([
+      {
+        type: "approval",
+        otid: "approval-with-legacy-null",
+        approvals: [
+          {
+            type: "approval",
+            approve: true,
+            tool_call_id: "tool-legacy-null",
+            tool_return: null,
+          },
+        ],
+      } as unknown as ApprovalCreate,
+    ]);
+
+    const message = requestBody.messages?.[0];
+    if (!message || !("approvals" in message)) {
+      throw new Error("Expected a canonical approval backend request message");
+    }
+    expect(message.approvals?.[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "tool-legacy-null",
+      tool_return: "",
+      status: "success",
+    });
   });
 });

@@ -46,6 +46,25 @@ if ! node scripts/check-filename-casing.js --staged 2>/dev/null; then
   exit 1
 fi
 
+# Keep source modules small and prevent ownership entrypoints from becoming barrels.
+if ! node scripts/check-source-file-size.js 2>/dev/null; then
+  echo ""
+  echo "❌ Source file size limit failed — run 'bun run check:file-size' for details."
+  exit 1
+fi
+if ! node scripts/check-module-ownership.js 2>/dev/null; then
+  echo ""
+  echo "❌ Module ownership failed — run 'bun run check:module-ownership' for details."
+  exit 1
+fi
+
+# Check staged skill metadata for required name headers
+if ! node scripts/check-skill-frontmatter.js --staged; then
+  echo ""
+  echo "❌ Invalid skill metadata — run 'bun run check:skill-frontmatter' for details."
+  exit 1
+fi
+
 # Lint staged files only (fast)
 # Guard: lint-staged v16 exits code 1 when no files match, which would
 # fail the hook even on empty commits. Only run if lintable files are staged.

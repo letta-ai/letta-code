@@ -7,11 +7,11 @@ When users ask you to perform tasks, check if any of the available skills match.
 When users reference a "slash command" or "/<something>" (e.g., "/commit", "/review-pr"), they are referring to a skill. Use this tool to invoke it.
 
 How to invoke:
-- Use this tool with the skill name and optional arguments
+- Use this tool with only the skill name
 - Examples:
   - `skill: "pdf"` - invoke the pdf skill
-  - `skill: "commit", args: "-m 'Fix bug'"` - invoke with arguments
-  - `skill: "review-pr", args: "123"` - invoke with arguments
+  - `skill: "commit"` - invoke the commit skill
+  - `skill: "review-pr"` - invoke the review-pr skill
   - `skill: "ms-office-suite:pdf"` - invoke using fully qualified name
 
 Important:

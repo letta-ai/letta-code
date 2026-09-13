@@ -15,7 +15,7 @@ describe("local no-model synthetic response", () => {
   test("logged-in copy omits /login guidance", () => {
     const message = buildLocalNoModelResponse(true);
     expect(message).toContain("/connect");
-    expect(message).toContain("models hosted on Constellation");
+    expect(message).toContain("models available through Letta Cloud");
     expect(message).not.toContain("/login");
   });
 

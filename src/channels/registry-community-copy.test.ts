@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { buildChannelHelpMessage } from "@/channels/commands";
-
-const { buildPairingInstructions, buildUnboundRouteInstructions } =
-  await import("@/channels/registry");
+import {
+  buildPairingInstructions,
+  buildUnboundRouteInstructions,
+} from "@/channels/registry-presentation";
 
 describe("registry copy: first-party channels", () => {
   test("pairing instructions point at both desktop UI and CLI for telegram", () => {
@@ -81,14 +82,13 @@ describe("registry copy: first-party channels", () => {
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).toContain("Send a normal message");
     expect(text).toContain("connected agent will reply in this chat");
-    expect(text).toContain("react");
-    expect(text).toContain("upload a file");
+    expect(text).not.toContain("MessageChannel");
     expect(text).not.toContain("open Channels >");
   });
 });
 
 describe("registry copy: community channels", () => {
-  // Any channel id that isn't telegram/slack/discord/whatsapp is a community plugin.
+  // Any channel id that isn't telegram/slack/discord/whatsapp/signal is a community plugin.
   // We don't need a real plugin installed — `isFirstPartyChannelPlugin` only
   // checks the FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS map.
 
@@ -142,8 +142,8 @@ describe("registry copy: community channels", () => {
   });
 
   test("community unbound copy embeds the channel id and chat id in the CLI command", () => {
-    const text = buildUnboundRouteInstructions("signal", "+15551234567");
-    expect(text).toContain("--channel signal");
+    const text = buildUnboundRouteInstructions("custom-signal", "+15551234567");
+    expect(text).toContain("--channel custom-signal");
     expect(text).toContain("--chat-id +15551234567");
     expect(text).toContain("--agent <agent-id>");
   });

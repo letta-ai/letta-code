@@ -88,6 +88,8 @@ function getBashInfo(approval: ApprovalRequest): BashInfo | null {
 
     if (t === "exec_command") {
       command = typeof args.cmd === "string" ? args.cmd : "(no command)";
+      description =
+        typeof args.description === "string" ? args.description : "";
     } else if (t === "write_stdin") {
       const sessionId =
         typeof args.session_id === "string" ||
@@ -128,6 +130,16 @@ function getBashInfo(approval: ApprovalRequest): BashInfo | null {
     };
   } catch {
     return null;
+  }
+}
+
+function isCommandMonitorApproval(approval: ApprovalRequest): boolean {
+  if (approval.toolName !== "Monitor") return false;
+  try {
+    const args = JSON.parse(approval.toolArgs || "{}");
+    return typeof args.command === "string";
+  } catch {
+    return false;
   }
 }
 
@@ -175,7 +187,7 @@ function getTaskInfo(approval: ApprovalRequest): TaskInfo | null {
           : "(no description)",
       prompt: typeof args.prompt === "string" ? args.prompt : "(no prompt)",
       model: typeof args.model === "string" ? args.model : undefined,
-      isBackground: args.run_in_background === true,
+      isBackground: true,
     };
   } catch {
     return {
@@ -388,7 +400,7 @@ export const ApprovalSwitch = memo(
     }
 
     // Shell/Bash tools → InlineBashApproval
-    if (isShellTool(toolName)) {
+    if (isShellTool(toolName) || isCommandMonitorApproval(approval)) {
       const bashInfo = getBashInfo(approval);
       if (bashInfo) {
         return (

@@ -1,14 +1,26 @@
+import { isAppServerInfoResponseMessage } from "./types/app-server-info";
+
+export type { AppServerInfoResponseMessage } from "./types/app-server-info";
+export { isAppServerInfoResponseMessage } from "./types/app-server-info";
+
 import type {
   AbortMessageCommand,
   AbortMessageResponseMessage,
+  AppServerInfoResponseMessage,
+  ConversationListCommand,
+  ConversationListResponseMessage,
   ExternalToolCallRequestMessage,
   ExternalToolCallResult,
+  InputAcceptedResponseMessage,
   InputCommand,
-  LoopStatusUpdateMessage,
-  RuntimeScope,
+  MonitorStopCommand,
+  MonitorStopResponse,
+  ResumeQueueCommand,
+  ResumeQueueResponseMessage,
+  RuntimeExternalToolsUpdateCommand,
+  RuntimeExternalToolsUpdateResponseMessage,
   RuntimeStartCommand,
   RuntimeStartResponseMessage,
-  StreamDeltaMessage,
   SyncCommand,
   SyncResponseMessage,
   WsProtocolCommand,
@@ -17,19 +29,36 @@ import type {
 
 export type AppServerChannel = "control" | "stream";
 
-/**
- * Receives every parsed protocol frame from both app-server websocket channels.
- * Treat this as the primary event stream: app-server may emit replay or turn
- * updates on the same channel that sent the triggering command, not only on the
- * stream channel. The channel argument is diagnostic/routing context.
- */
+export type AppServerRawCommand = Record<string, unknown> & {
+  type: string;
+  request_id?: string;
+};
+
+export type AppServerRawResponse = Record<string, unknown> & {
+  type: string;
+  request_id?: string;
+};
+
+export type AppServerSendCommand = WsProtocolCommand | AppServerRawCommand;
+
+/** Receives every parsed protocol frame from the app-server WebSocket. */
 export type AppServerMessageHandler = (
   message: WsProtocolMessage,
   channel: AppServerChannel,
 ) => void;
 
-/** Called synchronously before a protocol command is written to the control socket. */
-export type AppServerSendHandler = (command: WsProtocolCommand) => void;
+/** Called synchronously before a typed or raw command is written to the socket. */
+export type AppServerSendHandler = (command: AppServerSendCommand) => void;
+
+export interface AppServerDisconnectEvent {
+  channel: AppServerChannel;
+  event: unknown;
+}
+
+/** Called once when the WebSocket closes before client.close(). */
+export type AppServerDisconnectHandler = (
+  disconnect: AppServerDisconnectEvent,
+) => void;
 
 export type AppServerExternalToolCallHandler = (
   request: ExternalToolCallRequestMessage,
@@ -46,13 +75,20 @@ export interface AppServerSocketLike {
   once?(type: string, listener: (event: unknown) => void): void;
 }
 
+export interface AppServerSocketOptions {
+  headers?: Record<string, string>;
+}
+
 export type AppServerSocketConstructor = new (
   url: string,
+  options?: AppServerSocketOptions,
 ) => AppServerSocketLike;
 
 export interface AppServerClientOptions {
   /** Base app-server URL, e.g. ws://127.0.0.1:4500 or http://127.0.0.1:4500. */
   url: string;
+  /** Optional capability token sent as Authorization: Bearer <token>; requires a WebSocket implementation with header support. */
+  authToken?: string;
   /** Optional WebSocket constructor for Node/tests. Browsers use globalThis.WebSocket. */
   WebSocket?: AppServerSocketConstructor;
   /** Default timeout for request_id-correlated control requests. */
@@ -77,35 +113,19 @@ export type AppServerRequestBody = Record<string, unknown> & {
   request_id?: string;
 };
 
+export interface AppServerRawRequestOptions<
+  TResponse extends AppServerRawResponse,
+> {
+  timeoutMs?: number;
+  predicate: (message: unknown) => message is TResponse;
+}
+
 type PendingRequest = {
   resolve: (message: WsProtocolMessage) => void;
   reject: (error: Error) => void;
   predicate?: (message: WsProtocolMessage) => boolean;
   timeout: ReturnType<typeof setTimeout>;
 };
-
-export type AppServerTurnCompletionSource =
-  | "stop_reason"
-  | "loop_status_waiting_fallback";
-
-export interface AppServerTurnResult {
-  runtime: RuntimeScope;
-  stopReason: string | null;
-  runIds: string[];
-  clientMessageIds: string[];
-  completedBy: AppServerTurnCompletionSource;
-  terminalMessage: WsProtocolMessage;
-}
-
-export interface AppServerRunTurnOptions {
-  timeoutMs?: number;
-  /**
-   * Prefer explicit stream terminal events. This fallback is only used after
-   * the client has seen stream/run evidence for this runtime, never from idle
-   * loop status alone.
-   */
-  allowLoopStatusFallback?: boolean;
-}
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const WEBSOCKET_OPEN_STATE = 1;
@@ -127,13 +147,21 @@ function normalizeBaseUrl(url: string): URL {
   return parsed;
 }
 
+export function resolveAppServerUrl(url: string): string {
+  const parsed = normalizeBaseUrl(url);
+  parsed.searchParams.delete("channel");
+  return parsed.toString();
+}
+
+/**
+ * @deprecated App-server uses one bidirectional WebSocket. Both historical
+ * channel names resolve to that same socket URL.
+ */
 export function resolveAppServerChannelUrl(
   url: string,
-  channel: AppServerChannel,
+  _channel: AppServerChannel,
 ): string {
-  const parsed = normalizeBaseUrl(url);
-  parsed.searchParams.set("channel", channel);
-  return parsed.toString();
+  return resolveAppServerUrl(url);
 }
 
 function attachSocketListener(
@@ -225,52 +253,33 @@ function parseProtocolMessage(event: unknown): WsProtocolMessage {
   return JSON.parse(messageDataToString(event)) as WsProtocolMessage;
 }
 
-function sameRuntime(a: RuntimeScope | undefined, b: RuntimeScope): boolean {
-  return a?.agent_id === b.agent_id && a?.conversation_id === b.conversation_id;
-}
-
-function isWaitingLoopStatus(message: LoopStatusUpdateMessage): boolean {
-  return message.loop_status.status === "WAITING_ON_INPUT";
-}
-
-function streamDeltaRunId(message: StreamDeltaMessage): string | null {
-  const runId = (message.delta as { run_id?: unknown }).run_id;
-  return typeof runId === "string" ? runId : null;
-}
-
-function streamDeltaMessageType(message: StreamDeltaMessage): string | null {
-  const messageType = (message.delta as { message_type?: unknown })
-    .message_type;
-  return typeof messageType === "string" ? messageType : null;
-}
-
-function streamDeltaStopReason(message: StreamDeltaMessage): string | null {
-  const stopReason = (message.delta as { stop_reason?: unknown }).stop_reason;
-  return typeof stopReason === "string" ? stopReason : null;
-}
-
-function streamDeltaErrorMessage(message: StreamDeltaMessage): string {
-  const delta = message.delta as {
-    message?: unknown;
-    api_error?: { message?: unknown; detail?: unknown };
-  };
-  const apiMessage = delta.api_error?.message ?? delta.api_error?.detail;
-  if (typeof apiMessage === "string" && apiMessage.length > 0)
-    return apiMessage;
-  if (typeof delta.message === "string" && delta.message.length > 0)
-    return delta.message;
-  return "App-server turn failed";
+function appServerSocketOptions(
+  authToken: string | undefined,
+): AppServerSocketOptions | undefined {
+  if (authToken === undefined) {
+    return undefined;
+  }
+  const token = authToken.trim();
+  if (!token) {
+    throw new Error("app-server auth token must not be empty");
+  }
+  return { headers: { Authorization: `Bearer ${token}` } };
 }
 
 export class AppServerClient {
+  readonly socket: AppServerSocketLike;
+  /** @deprecated Alias for socket. */
   readonly control: AppServerSocketLike;
+  /** @deprecated Alias for socket; no second stream connection is created. */
   readonly stream: AppServerSocketLike;
 
   private readonly requestTimeoutMs: number;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly messageHandlers = new Set<AppServerMessageHandler>();
   private readonly sendHandlers = new Set<AppServerSendHandler>();
-  private readonly activeTurnRuntimes = new Set<string>();
+  private readonly disconnectHandlers = new Set<AppServerDisconnectHandler>();
+  private explicitlyClosed = false;
+  private disconnectNotified = false;
   private nextRequestNumber = 0;
 
   constructor(options: AppServerClientOptions) {
@@ -281,37 +290,32 @@ export class AppServerClient {
 
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-    this.control = new WebSocket(
-      resolveAppServerChannelUrl(options.url, "control"),
+    const socketOptions = appServerSocketOptions(options.authToken);
+    this.socket = new WebSocket(
+      resolveAppServerUrl(options.url),
+      socketOptions,
     );
-    this.stream = new WebSocket(
-      resolveAppServerChannelUrl(options.url, "stream"),
-    );
+    this.control = this.socket;
+    this.stream = this.socket;
 
-    attachSocketListener(this.control, "message", (event) => {
+    attachSocketListener(this.socket, "message", (event) => {
       this.handleMessage(event, "control");
     });
-    attachSocketListener(this.stream, "message", (event) => {
-      this.handleMessage(event, "stream");
+    attachSocketListener(this.socket, "close", (event) => {
+      this.handleDisconnect("control", event);
     });
-    const rejectPending = () =>
-      this.rejectAllPending("App-server socket closed");
-    attachSocketListener(this.control, "close", rejectPending);
-    attachSocketListener(this.stream, "close", rejectPending);
   }
 
   async connect(): Promise<this> {
-    await Promise.all([
-      waitForSocketOpen(this.control),
-      waitForSocketOpen(this.stream),
-    ]);
+    await waitForSocketOpen(this.socket);
     return this;
   }
 
   close(): void {
+    if (this.explicitlyClosed) return;
+    this.explicitlyClosed = true;
     this.rejectAllPending("App-server client closed");
-    this.control.close();
-    this.stream.close();
+    this.socket.close();
   }
 
   onMessage(handler: AppServerMessageHandler): () => void {
@@ -324,16 +328,65 @@ export class AppServerClient {
     return () => this.sendHandlers.delete(handler);
   }
 
+  onDisconnect(handler: AppServerDisconnectHandler): () => void {
+    this.disconnectHandlers.add(handler);
+    return () => this.disconnectHandlers.delete(handler);
+  }
+
   nextRequestId(prefix = "req"): string {
     this.nextRequestNumber += 1;
     return `${prefix}-${this.nextRequestNumber}`;
   }
 
   send(command: WsProtocolCommand): void {
+    this.writeCommand(command);
+  }
+
+  private writeCommand(command: AppServerSendCommand): void {
     for (const handler of this.sendHandlers) {
       handler(command);
     }
-    this.control.send(JSON.stringify(command));
+    this.socket.send(JSON.stringify(command));
+  }
+
+  /**
+   * Send a forward-compatible protocol command from a compatibility adapter.
+   * Prefer the typed wrappers above this boundary for normal product code.
+   */
+  sendRaw(command: AppServerRawCommand): void {
+    this.writeCommand(command);
+  }
+
+  /**
+   * Request a forward-compatible response without mirroring the full protocol
+   * union in a downstream compatibility adapter.
+   */
+  requestRaw<TResponse extends AppServerRawResponse>(
+    command: AppServerRawCommand & { request_id: string },
+    options: AppServerRawRequestOptions<TResponse>,
+  ): Promise<TResponse> {
+    const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(command.request_id);
+        reject(new Error(`Timed out waiting for ${command.request_id}`));
+      }, timeoutMs);
+
+      this.pending.set(command.request_id, {
+        resolve: (message) => resolve(message as unknown as TResponse),
+        reject,
+        predicate: options.predicate,
+        timeout,
+      });
+
+      try {
+        this.sendRaw(command);
+      } catch (error) {
+        clearTimeout(timeout);
+        this.pending.delete(command.request_id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
   }
 
   request<TMessage extends WsProtocolMessage = WsProtocolMessage>(
@@ -397,6 +450,50 @@ export class AppServerClient {
     });
   }
 
+  info(
+    options: Omit<
+      AppServerRequestOptions<AppServerInfoResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<AppServerInfoResponseMessage> {
+    return this.request(
+      {
+        type: "app_server_info",
+        request_id: this.nextRequestId("app-server-info"),
+      },
+      {
+        ...options,
+        predicate: isAppServerInfoResponseMessage,
+      },
+    );
+  }
+
+  stopMonitor(
+    command: Omit<MonitorStopCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<MonitorStopResponse>,
+      "predicate"
+    > = {},
+  ): Promise<MonitorStopResponse> {
+    return this.request(
+      {
+        type: "monitor_stop",
+        ...command,
+        request_id: command.request_id ?? this.nextRequestId("monitor-stop"),
+      },
+      {
+        ...options,
+        predicate: (message): message is MonitorStopResponse =>
+          message.type === "monitor_stop_response" &&
+          message.process_id === command.process_id &&
+          message.runtime.agent_id === command.runtime.agent_id &&
+          message.runtime.conversation_id === command.runtime.conversation_id,
+      },
+    );
+  }
+
   runtimeStart(
     command: Omit<RuntimeStartCommand, "type" | "request_id"> & {
       request_id?: string;
@@ -416,6 +513,32 @@ export class AppServerClient {
         ...options,
         predicate: (message): message is RuntimeStartResponseMessage =>
           message.type === "runtime_start_response",
+      },
+    );
+  }
+
+  runtimeExternalToolsUpdate(
+    command: Omit<RuntimeExternalToolsUpdateCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<RuntimeExternalToolsUpdateResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<RuntimeExternalToolsUpdateResponseMessage> {
+    return this.request(
+      {
+        type: "runtime_external_tools_update",
+        request_id:
+          command.request_id ?? this.nextRequestId("runtime-external-tools"),
+        ...command,
+      },
+      {
+        ...options,
+        predicate: (
+          message,
+        ): message is RuntimeExternalToolsUpdateResponseMessage =>
+          message.type === "runtime_external_tools_update_response",
       },
     );
   }
@@ -464,6 +587,54 @@ export class AppServerClient {
     );
   }
 
+  /** Release queue items parked by `abort()` without sending a new message. */
+  resumeQueue(
+    command: Omit<ResumeQueueCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<ResumeQueueResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<ResumeQueueResponseMessage> {
+    return this.request(
+      {
+        type: "resume_queue",
+        request_id: command.request_id ?? this.nextRequestId("resume-queue"),
+        ...command,
+      },
+      {
+        ...options,
+        predicate: (message): message is ResumeQueueResponseMessage =>
+          message.type === "resume_queue_response",
+      },
+    );
+  }
+
+  conversationList(
+    command: Omit<ConversationListCommand, "type" | "request_id"> & {
+      request_id?: string;
+    } = {},
+    options: Omit<
+      AppServerRequestOptions<ConversationListResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<ConversationListResponseMessage> {
+    return this.request(
+      {
+        type: "conversation_list",
+        request_id:
+          command.request_id ?? this.nextRequestId("conversation-list"),
+        ...command,
+      },
+      {
+        ...options,
+        predicate: (message): message is ConversationListResponseMessage =>
+          message.type === "conversation_list_response",
+      },
+    );
+  }
+
   onExternalToolCall(handler: AppServerExternalToolCallHandler): () => void {
     return this.onMessage((message, channel) => {
       if (
@@ -491,140 +662,39 @@ export class AppServerClient {
     });
   }
 
+  /**
+   * Submit input to a runtime. Observe progress, tool activity, approvals, and
+   * terminal lifecycle events through onMessage().
+   */
   input(command: Omit<InputCommand, "type">): void {
     this.send({ type: "input", ...command });
   }
 
-  runTurn(
-    command: Omit<InputCommand, "type">,
-    options: AppServerRunTurnOptions = {},
-  ): Promise<AppServerTurnResult> {
-    const runtimeKey = `${command.runtime.agent_id}/${command.runtime.conversation_id}`;
-    if (this.activeTurnRuntimes.has(runtimeKey)) {
-      return Promise.reject(
-        new Error(`A turn is already in flight for ${runtimeKey}`),
-      );
-    }
-    this.activeTurnRuntimes.add(runtimeKey);
-    const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
-    const commandWithIds = this.withClientMessageIds(command);
-    const runIds = new Set<string>();
-    let observedTurnEvidence = false;
-
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        cleanup();
-        reject(
-          new Error(
-            `Timed out waiting for app-server turn on ${command.runtime.agent_id}/${command.runtime.conversation_id}`,
-          ),
-        );
-      }, timeoutMs);
-
-      const cleanup = () => {
-        clearTimeout(timeout);
-        this.activeTurnRuntimes.delete(runtimeKey);
-        offMessage();
-      };
-
-      const finish = (
-        completedBy: AppServerTurnCompletionSource,
-        terminalMessage: WsProtocolMessage,
-        stopReason: string | null,
-      ) => {
-        cleanup();
-        resolve({
-          runtime: command.runtime,
-          stopReason,
-          runIds: [...runIds],
-          clientMessageIds: commandWithIds.clientMessageIds,
-          completedBy,
-          terminalMessage,
-        });
-      };
-
-      const fail = (error: Error) => {
-        cleanup();
-        reject(error);
-      };
-
-      const offMessage = this.onMessage((message) => {
-        if (
-          !sameRuntime(
-            (message as { runtime?: RuntimeScope }).runtime,
-            command.runtime,
-          )
-        ) {
-          return;
-        }
-
-        if (message.type === "stream_delta") {
-          observedTurnEvidence = true;
-          const runId = streamDeltaRunId(message);
-          if (runId) runIds.add(runId);
-
-          const messageType = streamDeltaMessageType(message);
-          if (messageType === "loop_error" || messageType === "error_message") {
-            fail(new Error(streamDeltaErrorMessage(message)));
-            return;
-          }
-          if (messageType === "stop_reason") {
-            finish("stop_reason", message, streamDeltaStopReason(message));
-          }
-          return;
-        }
-
-        if (message.type === "update_loop_status") {
-          for (const runId of message.loop_status.active_run_ids) {
-            observedTurnEvidence = true;
-            runIds.add(runId);
-          }
-          if (
-            options.allowLoopStatusFallback === true &&
-            observedTurnEvidence &&
-            isWaitingLoopStatus(message)
-          ) {
-            finish("loop_status_waiting_fallback", message, null);
-          }
-        }
-      });
-
-      try {
-        this.input(commandWithIds.command);
-      } catch (error) {
-        fail(error instanceof Error ? error : new Error(String(error)));
-      }
-    });
-  }
-
-  private withClientMessageIds(command: Omit<InputCommand, "type">): {
-    command: Omit<InputCommand, "type">;
-    clientMessageIds: string[];
-  } {
-    if (command.payload.kind !== "create_message") {
-      return { command, clientMessageIds: [] };
-    }
-
-    const clientMessageIds: string[] = [];
-    const messages = command.payload.messages.map((message) => {
-      if (message.role !== "user") return message;
-      const existing = (message as { client_message_id?: unknown })
-        .client_message_id;
-      const clientMessageId =
-        typeof existing === "string" && existing.length > 0
-          ? existing
-          : this.nextRequestId("client-message");
-      clientMessageIds.push(clientMessageId);
-      return { ...message, client_message_id: clientMessageId };
-    });
-
-    return {
-      command: {
+  /**
+   * Submit an input and wait only until the listener accepts it into the
+   * normal dispatch/queue path. This never waits for turn completion.
+   */
+  submitInput(
+    command: Omit<InputCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<InputAcceptedResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<InputAcceptedResponseMessage> {
+    return this.request(
+      {
+        type: "input",
+        request_id: command.request_id ?? this.nextRequestId("input"),
         ...command,
-        payload: { ...command.payload, messages },
       },
-      clientMessageIds,
-    };
+      {
+        ...options,
+        predicate: (message): message is InputAcceptedResponseMessage =>
+          message.type === "input_accepted",
+      },
+    );
   }
 
   private handleMessage(event: unknown, channel: AppServerChannel): void {
@@ -657,6 +727,15 @@ export class AppServerClient {
       clearTimeout(pending.timeout);
       this.pending.delete(requestId);
       pending.reject(new Error(reason));
+    }
+  }
+
+  private handleDisconnect(channel: AppServerChannel, event: unknown): void {
+    this.rejectAllPending("App-server socket closed");
+    if (this.explicitlyClosed || this.disconnectNotified) return;
+    this.disconnectNotified = true;
+    for (const handler of this.disconnectHandlers) {
+      handler({ channel, event });
     }
   }
 }

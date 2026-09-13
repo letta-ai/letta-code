@@ -1,12 +1,15 @@
-import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
-import { getModel, getModels } from "@earendil-works/pi-ai";
 import {
-  getOAuthProvider,
-  type OAuthCredentials,
-} from "@earendil-works/pi-ai/oauth";
+  type Api,
+  clampThinkingLevel,
+  type Model,
+  type ModelThinkingLevel,
+  type ThinkingLevel,
+} from "@earendil-works/pi-ai";
+import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
+import { localNamesForProviderId } from "@/backend/local/local-pi-credential-store";
 import {
-  getLocalOAuthApiKey,
   getLocalProviderRecordByName,
+  LOCAL_PROVIDER_NO_API_KEY,
   type LocalProviderRecord,
   localProviderApiKeyFromRecord,
 } from "@/backend/local/local-provider-auth-store";
@@ -14,11 +17,11 @@ import {
   type LocalProviderTimeout,
   resolveLocalProviderTimeout,
 } from "@/backend/local/local-provider-timeout";
+import { normalizeReasoningEffortForModel } from "@/utils/openai-reasoning-effort";
 import { isRecord } from "@/utils/type-guards";
+import { LocalPiModelsRuntime } from "./pi-models-runtime";
 import {
   getRegisteredPiProvider,
-  type PiProviderModelRegistration,
-  type PiProviderRegistration,
   resolveRegisteredPiProviderFromModelHandle,
   stripRegisteredProviderHandlePrefix,
 } from "./pi-provider-mod-registry";
@@ -33,11 +36,6 @@ import {
   resolveProviderFromProviderType,
   stripProviderHandlePrefix,
 } from "./pi-provider-registry";
-import {
-  getRegisteredPiProviderLocalNames,
-  listRegisteredPiProviderModels,
-  resolveRegisteredPiProviderRuntimeConnection,
-} from "./registered-pi-provider-runtime";
 
 export const DEFAULT_PI_PROVIDER = "openai" satisfies PiProvider;
 export const UNSELECTED_LOCAL_MODEL_HANDLE = "local/default";
@@ -53,13 +51,32 @@ export function isUnselectedLocalModelHandle(model: unknown): boolean {
   );
 }
 
+function normalizeOpenAICompatibleLocalModelHandle(
+  model: string | undefined,
+): string | undefined {
+  if (!model?.startsWith("openai/")) return model;
+  const nestedHandle = model.slice("openai/".length);
+  const nestedProvider = resolveProviderFromModelHandle(nestedHandle);
+  if (!nestedProvider) return model;
+  return getPiProviderSpec(nestedProvider).localModelDiscovery ===
+    "openai-compatible"
+    ? nestedHandle
+    : model;
+}
+
 function settingString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function thinkingLevelSetting(value: unknown): ThinkingLevel | undefined {
+function thinkingLevelSetting(
+  value: unknown,
+  preserveMax: boolean,
+): ThinkingLevel | undefined {
   const effort = settingString(value);
-  if (effort === "max") return "xhigh";
+  if (effort === "max") return preserveMax ? "max" : "xhigh";
+  // pi-ai's public ThinkingLevel currently omits `none`, but ChatGPT GPT-5.6
+  // accepts it and rejects the legacy `minimal` alias (LET-11064).
+  if (effort === "none") return "none" as ThinkingLevel;
   return effort === "minimal" ||
     effort === "low" ||
     effort === "medium" ||
@@ -69,6 +86,23 @@ function thinkingLevelSetting(value: unknown): ThinkingLevel | undefined {
     : undefined;
 }
 
+function modelIdFromHandle(modelHandle?: string): string | undefined {
+  if (!modelHandle) return undefined;
+  return modelHandle.slice(modelHandle.indexOf("/") + 1);
+}
+
+// zAI GLM-5.3 (and sibling always-on GLM-5 variants) reject
+// `thinking: {type: "disabled"}` with code 1210. pi-ai sends that whenever
+// `options.reasoning` is absent, so these models need a concrete effort even
+// when Letta has no explicit reasoning setting.
+function alwaysOnZaiThinking(modelId?: string): boolean {
+  return (
+    modelId === "glm-5.3" ||
+    modelId === "glm-5-turbo" ||
+    modelId === "glm-5.2-highspeed"
+  );
+}
+
 // Maps Letta model settings to a pi-ai ThinkingLevel. Every pi-ai Anthropic
 // call against a reasoning-capable model must pass this when available:
 // pi-ai sends `thinking: {type: "disabled"}` for reasoning models when
@@ -76,19 +110,44 @@ function thinkingLevelSetting(value: unknown): ThinkingLevel | undefined {
 // claude-fable-5) reject that with a 400 invalid_request_error.
 export function reasoningForSettings(
   modelSettings: Record<string, unknown>,
+  modelHandle?: string,
+  model?: Model<Api>,
 ): ThinkingLevel | undefined {
   const thinking = isRecord(modelSettings.thinking)
     ? modelSettings.thinking
     : undefined;
-  if (thinking?.type === "disabled") return undefined;
+  const modelId = modelIdFromHandle(modelHandle);
+  const preserveMax = modelId?.startsWith("gpt-5.6") === true;
   const nestedReasoning = isRecord(modelSettings.reasoning)
     ? modelSettings.reasoning
     : undefined;
-  return (
-    thinkingLevelSetting(nestedReasoning?.reasoning_effort) ??
-    thinkingLevelSetting(modelSettings.effort) ??
-    thinkingLevelSetting(modelSettings.reasoning_effort)
+  const rawEffort =
+    nestedReasoning?.reasoning_effort ??
+    modelSettings.effort ??
+    modelSettings.reasoning_effort;
+  const explicit = thinkingLevelSetting(
+    normalizeReasoningEffortForModel(
+      modelHandle,
+      typeof rawEffort === "string" ? rawEffort : undefined,
+    ),
+    preserveMax,
   );
+  if (alwaysOnZaiThinking(modelId)) {
+    // API accepts low / high / max; low is the cheapest always-on default.
+    return explicit === "medium" || explicit === "minimal"
+      ? "low"
+      : (explicit ?? "low");
+  }
+  if (
+    model?.provider === "openrouter" &&
+    model.thinkingLevelMap?.off === null
+  ) {
+    if (!explicit || explicit === ("none" as ThinkingLevel)) return undefined;
+    const clamped = clampThinkingLevel(model, explicit as ModelThinkingLevel);
+    return clamped === "off" ? undefined : clamped;
+  }
+  if (thinking?.type === "disabled") return undefined;
+  return explicit;
 }
 
 export interface PiModelSettings {
@@ -103,6 +162,14 @@ export interface PiModelFactoryOptions {
   model?: string;
   localProviderAuthStorageDir?: string;
   preferredProviderType?: string;
+  abortSignal?: AbortSignal;
+  /**
+   * Per-backend pi-ai Models runtime. Runtime-managed providers (local
+   * endpoints and mod registrations) resolve to the complete Model object
+   * published by the provider that discovered it; a call-scoped runtime is
+   * created when omitted. Models are never fabricated from name strings.
+   */
+  modelsRuntime?: LocalPiModelsRuntime;
 }
 
 export interface ResolvedPiModel {
@@ -211,18 +278,15 @@ function localProviderRecord(
 
 function localProviderConnection(
   providerNames: readonly string[],
-  envValue: string | undefined,
   storageDir?: string,
 ): {
   apiKey?: string;
   baseURL?: string;
   timeout: LocalProviderTimeout;
-  headers?: Record<string, string>;
   record?: LocalProviderRecord;
 } {
   const record = localProviderRecord(providerNames, storageDir);
   return {
-    apiKey: localProviderApiKeyFromRecord(record) ?? envValue,
     baseURL: record?.base_url,
     timeout: resolveLocalProviderTimeout({
       configuredTimeout: record?.timeout,
@@ -239,9 +303,19 @@ export interface ZaiConnection {
   timeout: LocalProviderTimeout;
 }
 
+function isZaiCodingBaseURL(baseURL: string | undefined): boolean {
+  return typeof baseURL === "string" && baseURL.includes("/coding/");
+}
+
 export function resolveZaiConnection(options: {
   storageDir?: string;
   preferredProviderType?: "zai" | "zai_coding";
+  /**
+   * Catalog/published model URL. Current GLM models publish the coding-plan
+   * endpoint; a lone stored `zai` key should reuse that instead of being
+   * forced onto pay-as-you-go `/api/paas/v4`.
+   */
+  publishedBaseURL?: string;
 }): ZaiConnection {
   const regularRecord = localProviderRecord(
     ["zai", LOCAL_ZAI_PROVIDER_NAME],
@@ -282,37 +356,33 @@ export function resolveZaiConnection(options: {
       providerIds: [LOCAL_ZAI_CODING_PROVIDER_NAME, "zai-coding"],
     }),
   };
+  const reuseRegularKeyOnCodingEndpoint = (): ZaiConnection => ({
+    ...codingConnection,
+    apiKey: regularKey,
+    timeout: regularConnection.timeout,
+  });
+  const publishedWantsCoding = isZaiCodingBaseURL(options.publishedBaseURL);
+  const hasDedicatedCodingRecord = Boolean(codingKey);
 
   if (options.preferredProviderType === "zai_coding" && codingKey) {
     return codingConnection;
   }
   if (options.preferredProviderType === "zai" && regularKey) {
+    // /model zai/glm-* stores provider_type=zai even for coding-plan models.
+    // Only stay on pay-as-you-go when a dedicated coding record exists or the
+    // catalog model itself is not a coding endpoint.
+    if (!hasDedicatedCodingRecord && publishedWantsCoding) {
+      return reuseRegularKeyOnCodingEndpoint();
+    }
     return regularConnection;
   }
   if (codingKey) return codingConnection;
-  if (regularKey) return regularConnection;
+  if (regularKey) {
+    return publishedWantsCoding
+      ? reuseRegularKeyOnCodingEndpoint()
+      : regularConnection;
+  }
   return codingConnection;
-}
-
-function getCatalogModel(
-  provider: PiProvider,
-  modelId: string,
-  oauthCredentials?: OAuthCredentials,
-): Model<Api> | undefined {
-  const spec = getPiProviderSpec(provider);
-  const piProvider = spec.piProvider;
-  if (!piProvider) return undefined;
-  const catalog = getModels(piProvider);
-  const fallbackModelId = fallbackCatalogModelId(piProvider, modelId);
-  const model = (catalog.find((model) => model.id === modelId) ??
-    catalog.find((model) => model.id === fallbackModelId)) as
-    | Model<Api>
-    | undefined;
-  if (!model || !oauthCredentials) return model;
-
-  const oauthProvider = getOAuthProvider(piProvider);
-  return (oauthProvider?.modifyModels?.([model], oauthCredentials)[0] ??
-    model) as Model<Api>;
 }
 
 function fallbackCatalogModelId(
@@ -322,39 +392,6 @@ function fallbackCatalogModelId(
   if (provider !== "openai") return undefined;
   const withoutReleaseDate = modelId.replace(/-\d{4}-\d{2}-\d{2}$/, "");
   return withoutReleaseDate === modelId ? undefined : withoutReleaseDate;
-}
-
-function customOpenAICompatibleModel(input: {
-  provider: PiProvider;
-  modelId: string;
-  baseURL: string;
-  contextWindow?: number;
-  maxTokens?: number;
-}): Model<"openai-completions"> {
-  return {
-    id: input.modelId,
-    name: input.modelId,
-    api: "openai-completions",
-    provider: input.provider,
-    baseUrl: input.baseURL,
-    reasoning:
-      input.modelId.includes("gpt-oss") ||
-      input.modelId.includes("qwen3") ||
-      input.modelId.includes("deepseek-r1"),
-    input:
-      input.modelId.includes("llava") ||
-      input.modelId.includes("vision") ||
-      input.modelId.includes("vl")
-        ? ["text", "image"]
-        : ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: input.contextWindow ?? 128000,
-    maxTokens: input.maxTokens ?? 32000,
-    compat: {
-      supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
-    },
-  };
 }
 
 function withOverrides(
@@ -379,6 +416,16 @@ function withOverrides(
   };
 }
 
+function nonNullHeaders(
+  headers: Record<string, string | null>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).filter(
+      (entry): entry is [string, string] => entry[1] !== null,
+    ),
+  );
+}
+
 function mergeHeaders(
   ...headers: Array<Record<string, string> | undefined>
 ): Record<string, string> | undefined {
@@ -390,65 +437,10 @@ function mergeHeaders(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-function withAuthHeader(
-  headers: Record<string, string> | undefined,
-  apiKey: string | undefined,
-  authHeader: boolean | undefined,
-): Record<string, string> | undefined {
-  if (!authHeader || !apiKey) return headers;
-  return {
-    ...headers,
-    Authorization: `Bearer ${apiKey}`,
-  };
-}
-
-function registeredModelToPiModel(input: {
-  providerName: string;
-  config: PiProviderRegistration;
-  model: PiProviderModelRegistration;
-  baseURL?: string;
-  headers?: Record<string, string>;
-}): Model<Api> {
-  const api = input.model.api ?? input.config.api;
-  if (!api) {
-    throw new Error(
-      `Provider "${input.providerName}" model "${input.model.id}" is missing an api`,
-    );
-  }
-  return {
-    id: input.model.id,
-    name: input.model.name,
-    api,
-    provider: input.providerName,
-    baseUrl: input.model.baseUrl ?? input.baseURL ?? "",
-    reasoning: input.model.reasoning,
-    ...(input.model.thinkingLevelMap
-      ? { thinkingLevelMap: input.model.thinkingLevelMap }
-      : {}),
-    input: input.model.input,
-    cost: input.model.cost,
-    contextWindow: input.model.contextWindow,
-    maxTokens: input.model.maxTokens,
-    ...(input.headers ? { headers: input.headers } : {}),
-    ...(input.model.compat ? { compat: input.model.compat } : {}),
-  } as Model<Api>;
-}
-
 function numericSetting(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
-}
-
-function normalizeLocalOpenAICompatibleBaseURL(
-  provider: PiProvider,
-  baseURL: string | undefined,
-): string | undefined {
-  if (!baseURL) return undefined;
-  if (!getPiProviderSpec(provider).localModelDiscovery) return baseURL;
-
-  const trimmed = baseURL.replace(/\/+$/, "");
-  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
 }
 
 function bedrockLocalProviderOptions(record: LocalProviderRecord | undefined): {
@@ -489,9 +481,9 @@ export async function resolvePiModelForAgent(
   modelSettings: PiModelSettings = {},
   options: PiModelFactoryOptions = {},
 ): Promise<ResolvedPiModel> {
-  const concreteModelHandle = isUnselectedLocalModelHandle(modelHandle)
-    ? undefined
-    : modelHandle;
+  const concreteModelHandle = normalizeOpenAICompatibleLocalModelHandle(
+    isUnselectedLocalModelHandle(modelHandle) ? undefined : modelHandle,
+  );
   const provider = options.provider
     ? resolvePiProvider(options.provider)
     : resolvePiProviderFromAgent(concreteModelHandle, modelSettings);
@@ -512,31 +504,88 @@ export async function resolvePiModelForAgent(
     process.env.LETTA_CODE_DEV_PI_MODEL ??
     "";
   const storageDir = options.localProviderAuthStorageDir;
+  // Every resolution goes through a pi-ai Models runtime: the backend's
+  // instance when threaded, otherwise a call-scoped one (tests, direct
+  // library use). The runtime owns model lookup and credential resolution;
+  // Models are never fabricated from name strings.
+  const modelsRuntime =
+    options.modelsRuntime ??
+    new LocalPiModelsRuntime({
+      ...(storageDir ? { storageDir } : {}),
+    });
   const preferredProviderType =
     typeof modelSettings.provider_type === "string"
       ? modelSettings.provider_type
       : options.preferredProviderType;
 
-  let connection = registeredProvider
-    ? resolveRegisteredPiProviderRuntimeConnection(
-        registeredProvider,
-        storageDir,
-      )
-    : spec
-      ? localProviderConnection(
-          spec.localProviderNames,
-          spec.apiKeyEnv?.() ?? spec.fallbackApiKey,
-          storageDir,
-        )
-      : {
-          timeout: resolveLocalProviderTimeout({ providerIds: [provider] }),
-        };
+  // Non-credential connection config only: the stored record's base URL and
+  // timeout plus spec defaults. All credential resolution happens in the
+  // runtime below.
+  const localNames = registeredProvider
+    ? localNamesForProviderId(provider)
+    : (spec?.localProviderNames ?? [provider]);
+  let connection = localProviderConnection(localNames, storageDir);
   let baseURL =
-    connection.baseURL ?? spec?.baseUrlEnv?.() ?? spec?.defaultBaseURL;
-  let headers = mergeHeaders(spec?.headers?.(), connection.headers);
+    connection.baseURL ??
+    spec?.baseUrlEnv?.() ??
+    spec?.defaultBaseURL ??
+    registeredProvider?.config.baseUrl;
+  let headers = mergeHeaders(spec?.headers?.());
   let providerOptions: Record<string, unknown> | undefined;
   let envOverrides: Record<string, string | undefined> | undefined;
   let oauthCredentials: OAuthCredentials | undefined;
+
+  if (!modelId) {
+    throw new Error(
+      `No model selected for provider "${provider}". Choose an available model with /model.`,
+    );
+  }
+
+  // One runtime resolution path for every provider class — registered mods,
+  // managed local endpoints, and built-in catalogs. resolveTurn returns the
+  // provider-published Model and the resolved auth from one consistent
+  // provider state (credential-identity invalidation applied first), so no
+  // registered/catalog/auth branching exists here.
+  const runtimeProviderId = registeredProvider
+    ? provider
+    : spec && modelsRuntime.isRuntimeManagedProvider(spec.id)
+      ? spec.id
+      : spec?.piProvider;
+  if (!runtimeProviderId) {
+    throw new Error(
+      `Unknown model "${modelId}" for provider "${provider}". ` +
+        "Register the provider with models before using it.",
+    );
+  }
+  const fallbackModelId =
+    !registeredProvider && spec?.piProvider
+      ? fallbackCatalogModelId(spec.piProvider, modelId)
+      : undefined;
+  const { model: publishedModel, auth: authResult } =
+    await modelsRuntime.resolveTurn(
+      runtimeProviderId,
+      modelId,
+      fallbackModelId,
+      options.abortSignal,
+    );
+  // The runtime is the sole credential source (stored records, ambient env
+  // via the runtime's AuthContext aliases, per-credential OAuth request
+  // auth). The one named exception is zai's dual-record endpoint selection.
+  connection = {
+    ...connection,
+    apiKey:
+      authResult?.auth.apiKey === LOCAL_PROVIDER_NO_API_KEY
+        ? undefined
+        : authResult?.auth.apiKey,
+  };
+  if (authResult?.auth.baseUrl) baseURL = authResult.auth.baseUrl;
+  if (authResult?.auth.headers) {
+    headers = mergeHeaders(headers, nonNullHeaders(authResult.auth.headers));
+  }
+  if (connection.record?.auth.type === "oauth") {
+    const stored = await modelsRuntime.getStoredCredential(runtimeProviderId);
+    oauthCredentials = stored?.type === "oauth" ? stored : undefined;
+  }
 
   if (provider === "zai") {
     const zai = resolveZaiConnection({
@@ -546,6 +595,7 @@ export async function resolvePiModelForAgent(
         preferredProviderType === "zai_coding"
           ? preferredProviderType
           : undefined,
+      publishedBaseURL: publishedModel?.baseUrl,
     });
     connection = {
       apiKey: zai.apiKey,
@@ -555,130 +605,70 @@ export async function resolvePiModelForAgent(
     baseURL = zai.baseURL;
   }
 
-  if (connection.record?.auth.type === "oauth" && spec?.piProvider) {
-    const oauth = await getLocalOAuthApiKey({
-      providerId: spec.piProvider,
-      providerNames: spec.localProviderNames,
-      storageDir,
-    });
-    connection = {
-      ...connection,
-      apiKey: oauth?.apiKey,
-    };
-    oauthCredentials = oauth?.credentials;
-  }
-
-  if (
-    connection.record?.auth.type === "oauth" &&
-    registeredProvider?.config.oauth
-  ) {
-    const oauth = await getLocalOAuthApiKey({
-      providerId: registeredProvider.providerName,
-      providerNames: getRegisteredPiProviderLocalNames(registeredProvider),
-      storageDir,
-    });
-    connection = {
-      ...connection,
-      apiKey: oauth?.apiKey,
-    };
-    oauthCredentials = oauth?.credentials;
-  }
-
   if (provider === "amazon-bedrock") {
     const bedrock = bedrockLocalProviderOptions(connection.record);
     providerOptions = bedrock.providerOptions;
     envOverrides = bedrock.envOverrides;
   }
 
-  const contextWindow = numericSetting(modelSettings.context_window_limit);
-  const maxTokens = numericSetting(modelSettings.max_tokens);
-  headers = withAuthHeader(
-    headers,
-    connection.apiKey,
-    registeredProvider?.config.authHeader,
-  );
-
-  const registeredModels = registeredProvider
-    ? await listRegisteredPiProviderModels(registeredProvider, connection)
-    : undefined;
-  const registeredModel = registeredModels?.find(
-    (model) => model.id === modelId,
-  );
-  if (registeredModels && !registeredModel) {
-    throw new Error(
-      `Unknown model "${modelId}" for registered provider "${provider}".`,
-    );
-  }
-
-  const normalizedBaseURL = spec
-    ? (normalizeLocalOpenAICompatibleBaseURL(spec.id, baseURL) ?? baseURL)
-    : baseURL;
-  let model: Model<Api>;
-  if (registeredModel && registeredProvider) {
-    const baseModel = registeredModelToPiModel({
-      providerName: provider,
-      config: registeredProvider.config,
-      model: registeredModel,
-      baseURL: normalizedBaseURL,
-      headers: mergeHeaders(headers, registeredModel.headers),
-    });
-    const oauthModel =
-      oauthCredentials && registeredProvider.config.oauth?.modifyModels
-        ? (registeredProvider.config.oauth.modifyModels(
-            [baseModel],
-            oauthCredentials,
-          )[0] ?? baseModel)
-        : baseModel;
-    model = withOverrides(oauthModel, {
-      contextWindow,
-      maxTokens,
-    });
-  } else if (!spec) {
+  if (!publishedModel) {
     throw new Error(
       `Unknown model "${modelId}" for provider "${provider}". ` +
-        "Register the provider with models before using it.",
+        "Choose an available model with /model.",
     );
-  } else if (spec.createCustomModel) {
-    if (!modelId) {
-      throw new Error(
-        `No model selected for provider "${provider}". Choose an available model with /model.`,
-      );
-    }
-    model = customOpenAICompatibleModel({
-      provider: spec.id,
-      modelId,
-      baseURL: normalizedBaseURL ?? spec.defaultBaseURL ?? "",
-      contextWindow,
-      maxTokens,
-    });
-  } else {
-    const catalogModel = getCatalogModel(spec.id, modelId, oauthCredentials);
-    if (catalogModel) {
-      model = withOverrides(catalogModel, {
-        baseURL,
-        headers,
-        contextWindow,
-        maxTokens,
-      });
-    } else {
-      const fallback = getModel(
-        spec.piProvider ?? "openai",
-        modelId as never,
-      ) as Model<Api> | undefined;
-      if (!fallback) {
-        throw new Error(
-          `Unknown model "${modelId}" for provider "${provider}". ` +
-            "Check the model handle or update the model catalog.",
-        );
-      }
-      model = withOverrides(fallback, {
-        baseURL,
-        headers,
-        contextWindow,
-        maxTokens,
-      });
-    }
   }
+
+  // Mod product hook: per-credential model transformation. Deep-copied so a
+  // mutating mod cannot corrupt the provider-published instance.
+  const hookedModel =
+    oauthCredentials && registeredProvider?.config.oauth?.modifyModels
+      ? (registeredProvider.config.oauth.modifyModels(
+          [structuredClone(publishedModel)],
+          oauthCredentials,
+        )[0] ?? publishedModel)
+      : publishedModel;
+
+  // Effective-value overrides only: with none, the turn model IS the
+  // runtime-published instance — persisted selection settings that merely
+  // restate the published values never clone. Base URL overrides apply only
+  // to built-in catalog providers (managed endpoints and mods own their
+  // base URLs end-to-end).
+  const configuredContextWindow = numericSetting(
+    modelSettings.context_window_limit,
+  );
+  // Ollama selection persists architectural catalog values into settings.
+  // They must not inflate exact local-daemon serving truth. Other endpoints
+  // retain the existing explicit override escape hatch.
+  const isLocalOllama =
+    modelsRuntime.isBuiltInLocalOllamaProvider(runtimeProviderId);
+  const contextWindow =
+    configuredContextWindow && isLocalOllama
+      ? Math.min(configuredContextWindow, hookedModel.contextWindow)
+      : configuredContextWindow;
+  const configuredMaxTokens = numericSetting(modelSettings.max_tokens);
+  const maxTokens = isLocalOllama
+    ? Math.min(
+        configuredMaxTokens ?? hookedModel.maxTokens,
+        contextWindow ?? hookedModel.contextWindow,
+      )
+    : configuredMaxTokens;
+  const allowBaseUrlOverride =
+    !registeredProvider &&
+    spec !== undefined &&
+    !modelsRuntime.isRuntimeManagedProvider(spec.id);
+  const overrides = {
+    ...(allowBaseUrlOverride && baseURL && baseURL !== hookedModel.baseUrl
+      ? { baseURL }
+      : {}),
+    ...(contextWindow && contextWindow !== hookedModel.contextWindow
+      ? { contextWindow }
+      : {}),
+    ...(maxTokens && maxTokens !== hookedModel.maxTokens ? { maxTokens } : {}),
+  };
+  const model: Model<Api> =
+    Object.keys(overrides).length > 0
+      ? withOverrides(hookedModel, overrides)
+      : hookedModel;
 
   return {
     provider,

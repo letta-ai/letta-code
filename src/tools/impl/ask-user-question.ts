@@ -9,7 +9,7 @@ interface Question {
   question: string;
   header: string;
   options: QuestionOption[];
-  multiSelect: boolean;
+  multiSelect?: boolean;
 }
 
 interface AskUserQuestionArgs {
@@ -48,8 +48,8 @@ export async function ask_user_question(
     ) {
       throw new Error("Each question must have 2-4 options");
     }
-    if (typeof q.multiSelect !== "boolean") {
-      throw new Error("Each question must have a multiSelect boolean");
+    if (q.multiSelect !== undefined && typeof q.multiSelect !== "boolean") {
+      throw new Error("Each question's multiSelect must be a boolean");
     }
     for (const opt of q.options) {
       if (!opt.label || typeof opt.label !== "string") {

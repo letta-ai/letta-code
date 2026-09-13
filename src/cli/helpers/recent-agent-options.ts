@@ -29,38 +29,37 @@ function sortRecentAgents(
   });
 }
 
-export function shouldIncludeConstellationRecentAgents(
-  includeConstellation: boolean,
+export function shouldIncludeCloudRecentAgents(
+  includeCloud: boolean,
   settings: Pick<Settings, "refreshToken" | "env">,
 ): boolean {
   return Boolean(
-    includeConstellation &&
-      (settings.refreshToken || settings.env?.LETTA_API_KEY),
+    includeCloud && (settings.refreshToken || settings.env?.LETTA_API_KEY),
   );
 }
 
 export async function getRecentAgentOptions(options?: {
   includeLocal?: boolean;
-  includeConstellation?: boolean;
+  includeCloud?: boolean;
   limit?: number;
   currentAgentId?: string;
 }): Promise<RecentAgentOption[]> {
   const includeLocal = options?.includeLocal !== false;
-  const includeConstellation = options?.includeConstellation !== false;
+  const includeCloud = options?.includeCloud !== false;
   const limit = options?.limit ?? 5;
-  const settings = includeConstellation
+  const settings = includeCloud
     ? await settingsManager.getSettingsWithSecureTokens()
     : null;
-  const shouldIncludeConstellation =
+  const shouldIncludeCloud =
     settings !== null
-      ? shouldIncludeConstellationRecentAgents(includeConstellation, settings)
+      ? shouldIncludeCloudRecentAgents(includeCloud, settings)
       : false;
 
   const localAgents = includeLocal
     ? listLocalAgentsFromDisk().map((agent) => ({ agent, isLocal: true }))
     : [];
 
-  const constellationAgents = shouldIncludeConstellation
+  const cloudAgents = shouldIncludeCloud
     ? await (async () => {
         try {
           const client = await getClient();
@@ -79,7 +78,7 @@ export async function getRecentAgentOptions(options?: {
 
   const seen = new Set<string>();
   const deduped = sortRecentAgents(
-    [...localAgents, ...constellationAgents].filter((item) => {
+    [...localAgents, ...cloudAgents].filter((item) => {
       if (seen.has(item.agent.id)) return false;
       seen.add(item.agent.id);
       return true;

@@ -5,9 +5,13 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { Box } from "ink";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { pinAgentForCurrentUser } from "@/agent/favorites";
 import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
-import type { ModelReasoningEffort } from "@/agent/model";
-import type { PersonalityId } from "@/agent/personality";
+import type {
+  ModelReasoningEffort,
+  ModelReasoningSelection,
+} from "@/agent/model";
+import type { PersonalityId } from "@/agent/personality-presets";
 import type { SessionStats } from "@/agent/stats";
 import { getBackend } from "@/backend";
 import type { CommandHandle } from "@/cli/commands/runner";
@@ -18,7 +22,6 @@ import { BashCommandMessage } from "@/cli/components/BashCommandMessage";
 import { BtwPane, type BtwState } from "@/cli/components/BtwPane";
 import { CommandMessage } from "@/cli/components/CommandMessage";
 import { CompactionSelector } from "@/cli/components/CompactionSelector";
-import { ConstellationLoginOverlay } from "@/cli/components/ConstellationLoginOverlay";
 import { ConversationSelector } from "@/cli/components/ConversationSelector";
 import { ErrorMessage } from "@/cli/components/ErrorMessageRich";
 import { EventMessage } from "@/cli/components/EventMessage";
@@ -26,9 +29,10 @@ import { ExperimentSelector } from "@/cli/components/ExperimentSelector";
 import { FeedbackDialog } from "@/cli/components/FeedbackDialog";
 import { HelpDialog } from "@/cli/components/HelpDialog";
 import { HooksManager } from "@/cli/components/HooksManager";
+import { InlineQuestionApproval } from "@/cli/components/InlineQuestionApproval";
 import { Input } from "@/cli/components/InputRich";
 import { InstallGithubAppFlow } from "@/cli/components/InstallGithubAppFlow";
-import { McpConnectFlow } from "@/cli/components/McpConnectFlow";
+import { LettaLoginOverlay } from "@/cli/components/LettaLoginOverlay";
 import { McpSelector } from "@/cli/components/McpSelector";
 import { MemfsTreeViewer } from "@/cli/components/MemfsTreeViewer";
 import { MemoryTabViewer } from "@/cli/components/MemoryTabViewer";
@@ -70,7 +74,7 @@ import {
   type ReflectionSettings,
 } from "@/cli/helpers/memory-reminder";
 import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
-import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
+import type { ReflectionArenaChoiceQuestion } from "@/cli/helpers/reflection-arena";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
@@ -80,6 +84,7 @@ import {
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
 import type { WindowTitleData } from "@/cli/helpers/window-title-config";
+import type { ModContext } from "@/cli/mods/types";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
@@ -107,9 +112,9 @@ type ModelSelectorOptions = {
 type ModelReasoningPrompt = {
   modelLabel: string;
   initialModelId: string;
-  initialEffort?: ModelReasoningEffort;
+  initialEffort?: ModelReasoningSelection;
   options: Array<{
-    effort: ModelReasoningEffort;
+    effort: ModelReasoningSelection;
     modelId: string;
     selection?: ModelSelectorSelection;
   }>;
@@ -150,7 +155,6 @@ type AppViewProps = {
   currentModelId: string | null;
   currentModelServiceTier: string | null;
   currentModelProvider: string | null;
-  isLocalBackend: boolean;
   currentPersonalityId: PersonalityId | null;
   currentReasoningEffort: ModelReasoningEffort | null;
   currentSystemPromptId: string | null;
@@ -174,7 +178,7 @@ type AppViewProps = {
       profileName?: string;
       conversationId?: string;
       commandId?: string;
-      backendMode?: import("@/cli/components/AgentSelector").AgentBackendMode;
+      backendMode?: import("@/agent/agent-id").AgentBackendMode;
     },
   ) => Promise<void>;
   handleApproveAlways: (
@@ -196,7 +200,7 @@ type AppViewProps = {
     name: string,
     opts?: {
       commandId?: string;
-      backendMode?: import("@/cli/components/AgentSelector").AgentBackendMode;
+      backendMode?: import("@/agent/agent-id").AgentBackendMode;
     },
   ) => Promise<void>;
   handleCycleReasoningEffort: () => void;
@@ -214,7 +218,7 @@ type AppViewProps = {
     opts?: {
       promptReasoning?: boolean;
       skipReasoningPrompt?: boolean;
-      reasoningEffort?: ModelReasoningEffort;
+      reasoningEffort?: ModelReasoningSelection;
     },
   ) => Promise<void>;
   handlePasteError: (message: string) => void;
@@ -225,7 +229,10 @@ type AppViewProps = {
   ) => Promise<void>;
   handleProfileEscapeCancel: () => void;
   handleQuestionSubmit: (answers: Record<string, string>) => Promise<void>;
-  handleGoalLoopExit: () => void;
+  handleReflectionArenaChoiceCancel: () => void;
+  handleReflectionArenaChoiceSubmit: (
+    answers: Record<string, string>,
+  ) => Promise<void>;
   handleSleeptimeModeSelect: (
     reflectionSettings: ReflectionSettings,
     commandId?: string | null,
@@ -260,7 +267,10 @@ type AppViewProps = {
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: RefObject<ConversationSwitchContext | null>;
   pendingIds: Set<string>;
-  pinDialogLocal: boolean;
+  reflectionArenaChoicePending: {
+    questions: ReflectionArenaChoiceQuestion[];
+    runId: string;
+  } | null;
   precomputedDiffsRef: RefObject<Map<string, AdvancedDiffSuccess>>;
   profileConfirmPending: {
     name: string;
@@ -318,7 +328,7 @@ type AppViewProps = {
   ) => CommandHandle;
   staticItems: StaticItem[];
   staticRenderEpoch: number;
-  statusLinePayload: StatusLinePayload;
+  modContext: ModContext;
   statusLinePrompt: string;
   terminalTitleData: WindowTitleData;
   onTitlePreview: (title: string | null) => void;
@@ -332,7 +342,6 @@ type AppViewProps = {
   usedContextTokens: number;
   contextWindowSize: number | null | undefined;
   uiPermissionMode: PermissionMode;
-  uiGoalLoopActive: boolean;
   updateAgentName: (name: string) => void;
 };
 
@@ -364,7 +373,6 @@ export function AppView(props: AppViewProps) {
     currentModelId,
     currentModelServiceTier,
     currentModelProvider,
-    isLocalBackend,
     currentPersonalityId,
     currentReasoningEffort,
     currentSystemPromptId,
@@ -403,7 +411,8 @@ export function AppView(props: AppViewProps) {
     handlePersonalitySelect,
     handleProfileEscapeCancel,
     handleQuestionSubmit,
-    handleGoalLoopExit,
+    handleReflectionArenaChoiceCancel,
+    handleReflectionArenaChoiceSubmit,
     handleSleeptimeModeSelect,
     handleSystemPromptSelect,
     handleToolsetSelect,
@@ -428,12 +437,12 @@ export function AppView(props: AppViewProps) {
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingIds,
-    pinDialogLocal,
     precomputedDiffsRef,
     profileConfirmPending,
     queueDisplay,
     queuedDecisions,
     queuedIds,
+    reflectionArenaChoicePending,
     reasoningTabCycleEnabled,
     recoverRestoredPendingApprovals,
     refreshDerived,
@@ -446,7 +455,6 @@ export function AppView(props: AppViewProps) {
     sessionStatsRef,
     worktreeDiffSelectorPending,
     setWorktreeDiffSelectorPending,
-    setActiveOverlay,
     setBtwState,
     setCommandRunning,
     setConversationAutoTitleEligibility,
@@ -466,7 +474,7 @@ export function AppView(props: AppViewProps) {
     openOverlay,
     staticItems,
     staticRenderEpoch,
-    statusLinePayload,
+    modContext,
     statusLinePrompt,
     terminalTitleData,
     onTitlePreview,
@@ -479,7 +487,6 @@ export function AppView(props: AppViewProps) {
     usedContextTokens,
     contextWindowSize,
     uiPermissionMode,
-    uiGoalLoopActive,
     updateAgentName,
   } = props;
 
@@ -693,6 +700,19 @@ export function AppView(props: AppViewProps) {
                 );
               })()}
 
+            {/* Reflection arena choice prompt - merges the selected memory worktree */}
+            {reflectionArenaChoicePending && !currentApproval && (
+              <Box marginTop={1} flexDirection="column">
+                <InlineQuestionApproval
+                  key={reflectionArenaChoicePending.runId}
+                  questions={reflectionArenaChoicePending.questions}
+                  onSubmit={handleReflectionArenaChoiceSubmit}
+                  onCancel={handleReflectionArenaChoiceCancel}
+                  isFocused={true}
+                />
+              </Box>
+            )}
+
             {/* /btw ephemeral pane - shows forked conversation response */}
             {btwState.status !== "idle" && (
               <BtwPane
@@ -739,7 +759,6 @@ export function AppView(props: AppViewProps) {
                 agentName={agentName}
                 currentModel={currentModelDisplay}
                 currentModelProvider={currentModelProvider}
-                isLocalBackend={isLocalBackend}
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 currentReasoningEffort={currentReasoningEffort}
                 fileAutocompleteFdPath={fileAutocompleteFdPath}
@@ -750,8 +769,6 @@ export function AppView(props: AppViewProps) {
                 }
                 onEscapeCommandCancel={onEscapeCommandCancel}
                 inputDisabled={btwState.status === "complete"}
-                goalLoopActive={uiGoalLoopActive}
-                onGoalLoopExit={handleGoalLoopExit}
                 conversationId={conversationId}
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
@@ -760,7 +777,7 @@ export function AppView(props: AppViewProps) {
                 executionPhase={executionPhase}
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
-                statusLinePayload={statusLinePayload}
+                modContext={modContext}
                 modAdapter={modAdapter}
                 statusLinePrompt={statusLinePrompt}
                 footerNotification={footerUpdateText}
@@ -945,7 +962,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "connect" && (
               <ProviderSelector
                 onCancel={closeOverlay}
-                onStartOAuth={async (provider, target) => {
+                onStartOAuth={async (provider, target, providerName) => {
                   const overlayCommand = completeOverlay("connect");
                   const cmd =
                     overlayCommand ??
@@ -962,10 +979,10 @@ export function AppView(props: AppViewProps) {
                         refreshDerived,
                         setCommandRunning,
                         target,
-                        onCodexConnected: () => {
+                        onCodexConnected: (providerName) => {
                           markLocalModelsAvailable();
                           setModelSelectorOptions({
-                            filterProvider: "chatgpt-plus-pro",
+                            filterProvider: providerName,
                             forceRefresh: true,
                           });
                           openOverlay(
@@ -976,7 +993,12 @@ export function AppView(props: AppViewProps) {
                           );
                         },
                       },
-                      `/connect ${provider.id === "openai-codex-oauth" ? "chatgpt" : provider.id}`,
+                      `/connect ${
+                        provider.id === "openai-codex-oauth" ||
+                        provider.providerType === "chatgpt_oauth"
+                          ? "chatgpt"
+                          : provider.id
+                      }${providerName ? ` --name ${providerName}` : ""}`,
                     );
                   } finally {
                     setActiveConnectCommandId(null);
@@ -1103,17 +1125,17 @@ export function AppView(props: AppViewProps) {
             )}
 
             {activeOverlay === "login" && (
-              <ConstellationLoginOverlay
+              <LettaLoginOverlay
                 onComplete={() => {
                   const overlayCommand = completeOverlay("login");
                   const cmd =
                     overlayCommand ??
                     commandRunner.start(
                       "/login",
-                      "Signed in to Constellation. Switch to a Constellation agent with /agents.",
+                      "Signed in with Letta. Switch agents with /agents.",
                     );
                   cmd.finish(
-                    "Signed in to Constellation. Switch to a Constellation agent with /agents.",
+                    "Signed in with Letta. Switch agents with /agents.",
                     true,
                   );
                 }}
@@ -1123,10 +1145,10 @@ export function AppView(props: AppViewProps) {
                     overlayCommand ??
                     commandRunner.start(
                       "/login",
-                      "Already signed in to Constellation. Run /logout to sign out.",
+                      "Already signed in with Letta. Run /logout to sign out.",
                     );
                   cmd.finish(
-                    "Already signed in to Constellation. Run /logout to sign out.",
+                    "Already signed in with Letta. Run /logout to sign out.",
                     true,
                   );
                 }}
@@ -1622,29 +1644,14 @@ export function AppView(props: AppViewProps) {
               <McpSelector
                 agentId={agentId}
                 onAdd={() => {
-                  // Switch to the MCP connect flow
-                  setActiveOverlay("mcp-connect");
-                }}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {/* MCP Connect Flow - interactive TUI for OAuth connection */}
-            {activeOverlay === "mcp-connect" && (
-              <McpConnectFlow
-                onComplete={(serverName, serverId, toolCount) => {
-                  const overlayCommand = completeOverlay("mcp-connect");
                   const cmd =
-                    overlayCommand ??
+                    completeOverlay("mcp") ??
                     commandRunner.start(
-                      "/mcp connect",
-                      "Connecting MCP server...",
+                      "/mcp",
+                      "Opening MCP server manager...",
                     );
                   cmd.finish(
-                    `Successfully created MCP server "${serverName}"\n` +
-                      `ID: ${serverId}\n` +
-                      `Discovered ${toolCount} tool${toolCount === 1 ? "" : "s"}\n` +
-                      "Open /mcp to attach or detach tools for this server.",
+                    "Add a client-local server with `/mcp add --transport <stdio|http|sse> <name> <command|url> ...`.",
                     true,
                   );
                 }}
@@ -1669,7 +1676,6 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "pin" && (
               <PinDialog
                 currentName={agentName || ""}
-                local={pinDialogLocal}
                 onSubmit={async (newName) => {
                   const overlayCommand = completeOverlay("pin");
                   setCommandRunning(true);
@@ -1677,14 +1683,11 @@ export function AppView(props: AppViewProps) {
                   const cmd =
                     overlayCommand ??
                     commandRunner.start("/pin", "Pinning agent...");
-                  const scopeText = pinDialogLocal
-                    ? "to this project"
-                    : "globally";
                   const displayName =
                     newName || agentName || agentId.slice(0, 12);
 
                   cmd.update({
-                    output: `Pinning "${displayName}" ${scopeText}...`,
+                    output: `Pinning "${displayName}"...`,
                     phase: "running",
                   });
 
@@ -1697,18 +1700,17 @@ export function AppView(props: AppViewProps) {
                       updateAgentName(newName);
                     }
 
-                    // Pin the agent
-                    if (pinDialogLocal) {
-                      settingsManager.pinLocal(agentId);
-                    } else {
-                      settingsManager.pinGlobal(agentId);
-                    }
+                    const pinStatus = await pinAgentForCurrentUser(agentId);
 
                     if (newName && newName !== agentName) {
                       cmd.agentHint = `Your name is now "${newName}" — acknowledge this and save your new name to memory.`;
                     }
+                    if (pinStatus === "already-pinned") {
+                      cmd.finish("This agent is already pinned.", false);
+                      return;
+                    }
                     cmd.finish(
-                      `Pinned "${newName || agentName || agentId.slice(0, 12)}" ${scopeText}.`,
+                      `Pinned "${newName || agentName || agentId.slice(0, 12)}".`,
                       true,
                     );
                   } catch (error) {
@@ -1725,7 +1727,6 @@ export function AppView(props: AppViewProps) {
             {/* Plan Mode Dialog - NOW RENDERED INLINE with tool call (see liveItems above) */}
 
             {/* AskUserQuestion now rendered inline via InlineQuestionApproval */}
-            {/* ApprovalDialog removed - all approvals now render inline via InlineGenericApproval fallback */}
           </>
         )}
       </Box>

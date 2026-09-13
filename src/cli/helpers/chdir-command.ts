@@ -1,6 +1,4 @@
-import { realpath, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import path from "node:path";
+import { resolveWorkingDirectory } from "@/helpers/working-directory";
 
 export const CHDIR_USAGE = "Usage: /chdir <path> (alias: /cd <path>)";
 
@@ -35,28 +33,9 @@ function stripMatchingQuotes(value: string): string {
   return value;
 }
 
-function expandHome(value: string): string {
-  if (value === "~") {
-    return homedir();
-  }
-  if (value.startsWith(`~${path.sep}`) || value.startsWith("~/")) {
-    return path.join(homedir(), value.slice(2));
-  }
-  return value;
-}
-
 export async function resolveChdirTarget(
   pathArg: string,
   currentWorkingDirectory: string,
 ): Promise<string> {
-  const expanded = expandHome(pathArg);
-  const resolved = path.isAbsolute(expanded)
-    ? expanded
-    : path.resolve(currentWorkingDirectory, expanded);
-  const normalized = await realpath(resolved);
-  const stats = await stat(normalized);
-  if (!stats.isDirectory()) {
-    throw new Error(`Not a directory: ${normalized}`);
-  }
-  return normalized;
+  return resolveWorkingDirectory(pathArg, currentWorkingDirectory);
 }

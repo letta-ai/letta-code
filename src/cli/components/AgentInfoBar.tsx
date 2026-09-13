@@ -4,8 +4,8 @@ import { memo, useMemo } from "react";
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "@/agent/model";
 import {
-  buildAppUrl,
   buildChatUrl,
+  buildChatWebUrl,
   isLocalAgentId,
 } from "@/cli/helpers/app-urls";
 import { shouldHideReasoningForModelDisplay } from "@/cli/helpers/startup-model-display";
@@ -113,9 +113,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
   // Check if current agent is pinned
   const isPinned = useMemo(() => {
     if (!agentId) return false;
-    const localPinned = settingsManager.getLocalPinnedAgents();
-    const globalPinned = settingsManager.getGlobalPinnedAgents();
-    return localPinned.includes(agentId) || globalPinned.includes(agentId);
+    return settingsManager.isAgentPinned(agentId);
   }, [agentId]);
 
   const isCloudUser = serverUrl?.includes("api.letta.com");
@@ -125,7 +123,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
     showCloudLinks && agentId && agentId !== "loading"
       ? buildChatUrl(agentId, { conversationId })
       : "";
-  const usageUrl = buildAppUrl("/settings/organization/usage");
+  const usageUrl = buildChatWebUrl("/preferences/usage");
   const showBottomBar = agentId && agentId !== "loading";
   const reasoningLabel = shouldHideReasoningForModelDisplay(currentModel)
     ? null

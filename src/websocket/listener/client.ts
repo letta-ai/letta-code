@@ -14,19 +14,14 @@ import {
   handleAgentConversationManagementCommand,
   handleAgentConversationManagementProtocolCommand,
 } from "./commands/agents-conversations";
-import {
-  handleChannelRegistryEvent,
-  handleChannelsProtocolCommand,
-  isDetachedChannelsCommand,
-  setChannelsServiceLoaderOverride,
-} from "./commands/channels";
 import { handleCronCommand } from "./commands/cron";
 import { handleListMemoryCommand } from "./commands/memory";
+import { buildListModelsEntries } from "./commands/model-catalog";
 import {
   applyModelUpdateForRuntime,
-  buildListModelsEntries,
   buildListModelsResponse,
   buildModelUpdateStatusMessage,
+  getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
 } from "./commands/model-toolset";
 import {
@@ -50,6 +45,7 @@ import {
 } from "./control-inputs";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
+  getBootWorkingDirectory,
   getConversationWorkingDirectory,
   setConversationWorkingDirectory,
 } from "./cwd";
@@ -65,14 +61,10 @@ import {
 } from "./interrupts";
 import {
   createRuntime,
-  enqueueChannelTurn,
-  recoverPendingChannelControlRequests,
-  replaySyncStateForRuntime,
   runDetachedListenerTask,
   safeSocketSend,
   startConnectedListenerRuntime,
   stopRuntime,
-  wireChannelIngress,
 } from "./lifecycle";
 import {
   buildDeviceStatus,
@@ -84,18 +76,12 @@ import {
   emitRetryDelta,
   emitStateSync,
 } from "./protocol-outbound";
+import { consumeQueuedTurn, scheduleQueuePump } from "./queue";
 import {
-  consumeQueuedTurn,
-  normalizeInboundMessages,
-  normalizeMessageContentImages,
-  scheduleQueuePump,
-} from "./queue";
-import {
-  getApprovalContinuationRecoveryDisposition,
   getApprovalToolCallDesyncErrorText,
-  recoverApprovalStateForSync,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
+import { recoverApprovalStateForSync } from "./recovery-sync";
 import {
   clearRecoveredApprovalStateForScope,
   getListenerStatus,
@@ -107,6 +93,7 @@ import {
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
 } from "./send";
+import { replaySyncStateForRuntime } from "./sync-replay";
 import { handleIncomingMessage } from "./turn";
 import type {
   ConversationRuntime,
@@ -126,6 +113,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   socket: WebSocket | null;
   workingDirectoryByConversation: Map<string, string>;
   permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
+  skillSourcesByConversation: ListenerRuntime["skillSourcesByConversation"];
   reminderStateByConversation: ListenerRuntime["reminderStateByConversation"];
   contextTrackerByConversation: ListenerRuntime["contextTrackerByConversation"];
   systemPromptRecompileByConversation: ListenerRuntime["systemPromptRecompileByConversation"];
@@ -134,6 +122,18 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   connectionId: string | null;
   connectionName: string | null;
   sessionId: string;
+  nextConnectionAttempt: number;
+  nextConnectionOrdinal: number;
+  connections: ListenerRuntime["connections"];
+  connectionIdsByRuntimeKey: ListenerRuntime["connectionIdsByRuntimeKey"];
+  processTransport: ListenerRuntime["processTransport"];
+  processServicesStarted: boolean;
+  processServicesGeneration: number;
+  processServicesReady: Promise<void> | null;
+  processServicesReadyGeneration: number | null;
+  serviceCommandHandler: ListenerRuntime["serviceCommandHandler"];
+  serviceCommandTypes: ListenerRuntime["serviceCommandTypes"];
+  pendingExternalToolCalls: ListenerRuntime["pendingExternalToolCalls"];
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {
@@ -144,11 +144,11 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   reminderState: ListenerRuntime["reminderState"];
   reconnectTimeout: NodeJS.Timeout | null;
   heartbeatInterval: NodeJS.Timeout | null;
+  lastPongAt: number | null;
   intentionallyClosed: boolean;
   hasSuccessfulConnection: boolean;
   everConnected: boolean;
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
-  approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
   memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
   secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
   secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];
@@ -165,6 +165,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     socket: WebSocket | null;
     workingDirectoryByConversation: Map<string, string>;
     permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
+    skillSourcesByConversation: ListenerRuntime["skillSourcesByConversation"];
     reminderStateByConversation: ListenerRuntime["reminderStateByConversation"];
     contextTrackerByConversation: ListenerRuntime["contextTrackerByConversation"];
     systemPromptRecompileByConversation: ListenerRuntime["systemPromptRecompileByConversation"];
@@ -173,6 +174,18 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     connectionId: string | null;
     connectionName: string | null;
     sessionId: string;
+    nextConnectionAttempt: number;
+    nextConnectionOrdinal: number;
+    connections: ListenerRuntime["connections"];
+    connectionIdsByRuntimeKey: ListenerRuntime["connectionIdsByRuntimeKey"];
+    processTransport: ListenerRuntime["processTransport"];
+    processServicesStarted: boolean;
+    processServicesGeneration: number;
+    processServicesReady: Promise<void> | null;
+    processServicesReadyGeneration: number | null;
+    serviceCommandHandler: ListenerRuntime["serviceCommandHandler"];
+    serviceCommandTypes: ListenerRuntime["serviceCommandTypes"];
+    pendingExternalToolCalls: ListenerRuntime["pendingExternalToolCalls"];
     eventSeqCounter: number;
     queueEmitScheduled: boolean;
     pendingQueueEmitScope?: {
@@ -183,11 +196,11 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     reminderState: ListenerRuntime["reminderState"];
     reconnectTimeout: NodeJS.Timeout | null;
     heartbeatInterval: NodeJS.Timeout | null;
+    lastPongAt: number | null;
     intentionallyClosed: boolean;
     hasSuccessfulConnection: boolean;
     everConnected: boolean;
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
-    approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
     memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
     secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
     secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];
@@ -213,6 +226,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.permissionModeByConversation,
       set: (value: ListenerRuntime["permissionModeByConversation"]) => {
         listener.permissionModeByConversation = value;
+      },
+    },
+    skillSourcesByConversation: {
+      get: () => listener.skillSourcesByConversation,
+      set: (value: ListenerRuntime["skillSourcesByConversation"]) => {
+        listener.skillSourcesByConversation = value;
       },
     },
     reminderStateByConversation: {
@@ -242,7 +261,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       },
     },
     bootWorkingDirectory: {
-      get: () => listener.bootWorkingDirectory,
+      get: () => getBootWorkingDirectory(listener),
       set: (value: string) => {
         listener.bootWorkingDirectory = value;
       },
@@ -263,6 +282,78 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.sessionId,
       set: (value: string) => {
         listener.sessionId = value;
+      },
+    },
+    nextConnectionAttempt: {
+      get: () => listener.nextConnectionAttempt,
+      set: (value: number) => {
+        listener.nextConnectionAttempt = value;
+      },
+    },
+    nextConnectionOrdinal: {
+      get: () => listener.nextConnectionOrdinal,
+      set: (value: number) => {
+        listener.nextConnectionOrdinal = value;
+      },
+    },
+    connections: {
+      get: () => listener.connections,
+      set: (value: ListenerRuntime["connections"]) => {
+        listener.connections = value;
+      },
+    },
+    connectionIdsByRuntimeKey: {
+      get: () => listener.connectionIdsByRuntimeKey,
+      set: (value: ListenerRuntime["connectionIdsByRuntimeKey"]) => {
+        listener.connectionIdsByRuntimeKey = value;
+      },
+    },
+    processTransport: {
+      get: () => listener.processTransport,
+      set: (value: ListenerRuntime["processTransport"]) => {
+        listener.processTransport = value;
+      },
+    },
+    processServicesStarted: {
+      get: () => listener.processServicesStarted,
+      set: (value: boolean) => {
+        listener.processServicesStarted = value;
+      },
+    },
+    processServicesGeneration: {
+      get: () => listener.processServicesGeneration,
+      set: (value: number) => {
+        listener.processServicesGeneration = value;
+      },
+    },
+    processServicesReady: {
+      get: () => listener.processServicesReady,
+      set: (value: Promise<void> | null) => {
+        listener.processServicesReady = value;
+      },
+    },
+    processServicesReadyGeneration: {
+      get: () => listener.processServicesReadyGeneration,
+      set: (value: number | null) => {
+        listener.processServicesReadyGeneration = value;
+      },
+    },
+    serviceCommandHandler: {
+      get: () => listener.serviceCommandHandler,
+      set: (value: ListenerRuntime["serviceCommandHandler"]) => {
+        listener.serviceCommandHandler = value;
+      },
+    },
+    serviceCommandTypes: {
+      get: () => listener.serviceCommandTypes,
+      set: (value: ListenerRuntime["serviceCommandTypes"]) => {
+        listener.serviceCommandTypes = value;
+      },
+    },
+    pendingExternalToolCalls: {
+      get: () => listener.pendingExternalToolCalls,
+      set: (value: ListenerRuntime["pendingExternalToolCalls"]) => {
+        listener.pendingExternalToolCalls = value;
       },
     },
     eventSeqCounter: {
@@ -314,6 +405,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
         listener.heartbeatInterval = value;
       },
     },
+    lastPongAt: {
+      get: () => listener.lastPongAt,
+      set: (value: number | null) => {
+        listener.lastPongAt = value;
+      },
+    },
     intentionallyClosed: {
       get: () => listener.intentionallyClosed,
       set: (value: boolean) => {
@@ -336,12 +433,6 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.conversationRuntimes,
       set: (value: ListenerRuntime["conversationRuntimes"]) => {
         listener.conversationRuntimes = value;
-      },
-    },
-    approvalRuntimeKeyByRequestId: {
-      get: () => listener.approvalRuntimeKeyByRequestId,
-      set: (value: ListenerRuntime["approvalRuntimeKeyByRequestId"]) => {
-        listener.approvalRuntimeKeyByRequestId = value;
       },
     },
     memfsSyncedAgents: {
@@ -425,11 +516,6 @@ export { parseServerMessage } from "./protocol-inbound";
 export { emitInterruptedStatusDelta } from "./protocol-outbound";
 
 export const __listenClientTestUtils = {
-  setChannelsServiceLoaderForTests: (
-    loader: Parameters<typeof setChannelsServiceLoaderOverride>[0],
-  ) => {
-    setChannelsServiceLoaderOverride(loader);
-  },
   createRuntime: createLegacyTestRuntime,
   createListenerRuntime: createRuntime,
   startConnectedListenerRuntime: startConnectedListenerRuntime,
@@ -438,6 +524,7 @@ export const __listenClientTestUtils = {
   buildListModelsEntries,
   buildListModelsResponse,
   buildModelUpdateStatusMessage,
+  getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
   applyModelUpdateForRuntime,
   stopRuntime: (
@@ -472,11 +559,8 @@ export const __listenClientTestUtils = {
   normalizeExecutionResultsForInterruptParity,
   getApprovalToolCallDesyncErrorText,
   shouldAttemptPostStopApprovalRecovery,
-  getApprovalContinuationRecoveryDisposition,
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
-  normalizeMessageContentImages,
-  normalizeInboundMessages,
   consumeQueuedTurn,
   handleIncomingMessage,
   handleApprovalResponseInput,
@@ -491,29 +575,6 @@ export const __listenClientTestUtils = {
     socket: WebSocket,
     overrides?: Parameters<typeof handleListMemoryCommand>[3],
   ) => handleListMemoryCommand(parsed, socket, safeSocketSend, overrides),
-  isDetachedChannelsCommand,
-  handleChannelsProtocolCommand: (
-    parsed: Parameters<typeof handleChannelsProtocolCommand>[0],
-    socket: WebSocket,
-    runtime: ListenerRuntime,
-    opts: Parameters<typeof handleChannelsProtocolCommand>[3],
-    processQueuedTurn: Parameters<typeof handleChannelsProtocolCommand>[4],
-  ) =>
-    handleChannelsProtocolCommand(
-      parsed,
-      socket,
-      runtime,
-      opts,
-      processQueuedTurn,
-      runDetachedListenerTask,
-      wireChannelIngress,
-      safeSocketSend,
-    ),
-  handleChannelRegistryEvent: (
-    event: Parameters<typeof handleChannelRegistryEvent>[0],
-    socket: Parameters<typeof handleChannelRegistryEvent>[1],
-    runtime: ListenerRuntime,
-  ) => handleChannelRegistryEvent(event, socket, runtime, safeSocketSend),
   handleAgentConversationManagementCommand: (
     parsed: Parameters<typeof handleAgentConversationManagementCommand>[0],
     socket: WebSocket,
@@ -536,6 +597,7 @@ export const __listenClientTestUtils = {
   ) =>
     handleRuntimeStartCommand(parsed, {
       socket,
+      connectionId: runtime.connectionId ?? "test-connection",
       runtime,
       safeSocketSend,
       runDetachedListenerTask,
@@ -558,6 +620,7 @@ export const __listenClientTestUtils = {
   ) =>
     handleRuntimeStartProtocolCommand(parsed, {
       socket,
+      connectionId: runtime.connectionId ?? "test-connection",
       runtime,
       safeSocketSend,
       runDetachedListenerTask,
@@ -592,21 +655,20 @@ export const __listenClientTestUtils = {
     listener: ListenerRuntime,
   ) =>
     handleReflectionSettingsCommand(parsed, socket, listener, safeSocketSend),
-  enqueueChannelTurn,
   scheduleQueuePump,
   replaySyncStateForRuntime: (
     runtime: ListenerRuntime,
     socket: WebSocket,
-    scope: { agent_id: string; conversation_id: string },
+    scope: { agent_id: string | null; conversation_id: string },
     opts?: {
       recoverApprovals?: boolean;
       recoverApprovalStateForSync?: (
         runtime: ConversationRuntime,
-        scope: { agent_id: string; conversation_id: string },
+        scope: { agent_id: string | null; conversation_id: string },
       ) => Promise<void>;
       scheduleWarmupsAfterSync?: (
         runtime: ListenerRuntime,
-        scope: { agent_id: string; conversation_id: string },
+        scope: { agent_id: string | null; conversation_id: string },
       ) => void;
       forceDeviceStatus?: boolean;
     },
@@ -615,7 +677,6 @@ export const __listenClientTestUtils = {
       ...opts,
       scheduleWarmupsAfterSync: opts?.scheduleWarmupsAfterSync ?? (() => {}),
     }),
-  recoverPendingChannelControlRequests,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (
     runtime: ListenerRuntime | ConversationRuntime,

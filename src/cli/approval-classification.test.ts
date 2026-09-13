@@ -14,7 +14,12 @@ import {
   savePermissionRule,
 } from "@/permissions/loader";
 import { permissionMode } from "@/permissions/mode";
-import { loadTools, prepareCurrentToolExecutionContext } from "@/tools/manager";
+import {
+  loadSpecificTools,
+  loadTools,
+  prepareCurrentToolExecutionContext,
+  prepareToolExecutionContextForSpecificTools,
+} from "@/tools/manager";
 
 describe("classifyApprovals", () => {
   const originalMemoryDir = process.env.MEMORY_DIR;
@@ -77,9 +82,41 @@ describe("classifyApprovals", () => {
     }
   });
 
-  test("reports missing Bash command as validation error before memory-mode denial", async () => {
+  test.each([false, true])(
+    "auto-allows doctor evidence with treatAskAsDeny=%s",
+    async (treatAskAsDeny) => {
+      await loadTools();
+      permissionMode.setMode("standard");
+      const projectDir = await mkdtemp(
+        join(tmpdir(), "letta-doctor-approval-"),
+      );
+      tempDirs.push(projectDir);
+      const approvals = ["local", "api", "cloud"].map((backend) => ({
+        toolCallId: `call_evidence_${backend}`,
+        toolName: "Bash",
+        toolArgs: JSON.stringify({
+          command: `letta --backend ${backend} messages list --agent agent-target --conversation conv-target --limit 30 --include-errors`,
+          description: "Retrieve conversation evidence",
+        }),
+      }));
+
+      const result = await classifyApprovals(approvals, {
+        requireArgsForAutoApprove: true,
+        treatAskAsDeny,
+        workingDirectory: projectDir,
+      });
+
+      expect(result.autoAllowed.map((entry) => entry.approval)).toEqual(
+        approvals,
+      );
+      expect(result.needsUserInput).toEqual([]);
+      expect(result.autoDenied).toEqual([]);
+    },
+  );
+
+  test("reports missing Bash command as validation error before auto-allow", async () => {
     await loadTools();
-    permissionMode.setMode("memory");
+    permissionMode.setMode("unrestricted");
     process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
 
     const result = await classifyApprovals(
@@ -108,6 +145,129 @@ describe("classifyApprovals", () => {
       "Bash tool missing required parameter: command. Received parameters: description",
     );
     expect(denied?.permission.reason).toBe(denied?.denyReason);
+  });
+
+  test("flags empty arguments as dropped in transit, not omitted by the model", async () => {
+    await loadTools();
+    permissionMode.setMode("unrestricted");
+    process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_empty_args",
+          toolName: "Bash",
+          toolArgs: "{}",
+        },
+      ],
+      {
+        requireArgsForAutoApprove: true,
+        workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+      },
+    );
+
+    expect(result.autoDenied).toHaveLength(1);
+    const [denied] = result.autoDenied;
+    expect(denied?.missingRequiredArgs).toEqual(["command", "description"]);
+    expect(denied?.denyReason).toContain("arrived with empty arguments");
+    expect(denied?.denyReason).toContain("Do not resend an identical call");
+  });
+
+  test("flags unparseable arguments as truncated in transit", async () => {
+    await loadTools();
+    permissionMode.setMode("unrestricted");
+    process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+    // Shape of a payload truncated mid-string on the way to the client.
+    const truncated = '{"command":"echo hello';
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_truncated_args",
+          toolName: "Bash",
+          toolArgs: truncated,
+        },
+      ],
+      {
+        requireArgsForAutoApprove: true,
+        workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+      },
+    );
+
+    expect(result.autoDenied).toHaveLength(1);
+    const [denied] = result.autoDenied;
+    expect(denied?.parsedArgs).toEqual({});
+    expect(denied?.denyReason).toContain(
+      `The raw arguments (${truncated.length} chars) were not valid JSON`,
+    );
+    expect(denied?.denyReason).toContain("Do not resend an identical call");
+  });
+
+  test("reports missing exec_command cmd as validation error before auto-allow", async () => {
+    await loadSpecificTools(["exec_command"]);
+    permissionMode.setMode("unrestricted");
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_missing_cmd",
+          toolName: "exec_command",
+          toolArgs: JSON.stringify({
+            description: "Wait for command output",
+          }),
+        },
+      ],
+      {
+        requireArgsForAutoApprove: true,
+        workingDirectory: "/tmp/project",
+      },
+    );
+
+    expect(result.autoAllowed).toHaveLength(0);
+    expect(result.needsUserInput).toHaveLength(0);
+    expect(result.autoDenied).toHaveLength(1);
+
+    const [denied] = result.autoDenied;
+    expect(denied?.missingRequiredArgs).toEqual(["cmd"]);
+    expect(denied?.denyReason).toBe(
+      "exec_command tool missing required parameter: cmd. Received parameters: description",
+    );
+  });
+
+  test("validates required args against the turn-scoped tool context", async () => {
+    await loadTools();
+    const { contextId } = await prepareToolExecutionContextForSpecificTools([
+      "exec_command",
+    ]);
+    permissionMode.setMode("unrestricted");
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_context_missing_cmd",
+          toolName: "exec_command",
+          toolArgs: JSON.stringify({
+            description: "Check diagnostics for broken test mod",
+          }),
+        },
+      ],
+      {
+        requireArgsForAutoApprove: true,
+        toolContextId: contextId,
+        workingDirectory: "/tmp/project",
+      },
+    );
+
+    expect(result.autoAllowed).toHaveLength(0);
+    expect(result.needsUserInput).toHaveLength(0);
+    expect(result.autoDenied).toHaveLength(1);
+
+    const [denied] = result.autoDenied;
+    expect(denied?.missingRequiredArgs).toEqual(["cmd"]);
+    expect(denied?.denyReason).toBe(
+      "exec_command tool missing required parameter: cmd. Received parameters: description",
+    );
   });
 
   test("mod permission overlays deny before unrestricted auto-allow", async () => {

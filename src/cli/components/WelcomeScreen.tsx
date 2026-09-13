@@ -62,7 +62,6 @@ async function getAuthMethod(): Promise<"local" | "url" | "api-key" | "oauth"> {
 type LoadingState =
   | "loading_profiles"
   | "assembling"
-  | "importing"
   | "initializing"
   | "checking"
   | "selecting_global"
@@ -120,7 +119,7 @@ export function WelcomeScreen({
       ? "Local"
       : authMethod === "url"
         ? process.env.LETTA_BASE_URL || "Custom URL"
-        : "Constellation";
+        : "Cloud";
 
   // Check if memfs (context repositories) is enabled for this agent
   const memfsEnabled = agentState?.id
@@ -177,8 +176,6 @@ function getLoadingMessage(
       return continueSession ? "Resuming agent..." : "Creating agent...";
     case "assembling":
       return "Assembling tools...";
-    case "importing":
-      return "Importing agent...";
     case "checking":
       return "Checking for pending approvals...";
     default:

@@ -20,6 +20,7 @@ describe("headless shared reminder wiring", () => {
     const source = readFileSync(headlessPath, "utf-8");
 
     expect(source).toContain("contextTracker: reminderContextTracker");
+    expect(source).toContain("reminderState: sharedReminderState");
   });
 
   test("headless uses the effective runtime cwd for init events and reminders", () => {

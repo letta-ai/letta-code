@@ -63,6 +63,18 @@ describe("test process env helpers", () => {
     expect(env.MEMORY_DIR).toBe("/tmp/explicit-memory");
   });
 
+  test("mirrors an explicit test home across platforms", () => {
+    const env = createIsolatedCliTestEnv({ HOME: "/tmp/test-home" });
+    expect(env.HOME).toBe("/tmp/test-home");
+    expect(env.USERPROFILE).toBe("/tmp/test-home");
+
+    const overridden = createIsolatedCliTestEnv({
+      HOME: "/tmp/posix-home",
+      USERPROFILE: "C:\\windows-home",
+    });
+    expect(overridden.USERPROFILE).toBe("C:\\windows-home");
+  });
+
   test("createAuthenticatedCliTestEnv preserves only explicit API connection env", () => {
     restores.push(
       isolateAmbientLettaTestEnv({

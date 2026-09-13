@@ -1,10 +1,31 @@
 /**
  * Model resolution and handling utilities
  */
-import modelsData from "@/models.json";
-import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-constants";
+import {
+  getDefaultModel,
+  models,
+  resolveCatalogModel,
+  resolveModel,
+} from "./model-catalog";
+import {
+  CHATGPT_OAUTH_LLM_CONFIG_PROVIDER,
+  LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX,
+  LOCAL_MODEL_HANDLE_PREFIXES,
+  type ModelConfigSnapshot,
+  modelPortionFromHandle as modelPortion,
+  normalizeModelHandleForRegistry,
+} from "./model-handles";
 
-export const models = modelsData.models;
+// Pure lookups over the runtime-populated catalog live in model-catalog.ts;
+// re-exported here so CLI code keeps a single import surface for model utilities.
+export { getDefaultModel, models, resolveModel };
+export {
+  mapModelHandleToLlmConfigPatch,
+  normalizeKnownModelHandle,
+  normalizeModelHandleForRegistry,
+  resolveModelHandleFromLlmConfig,
+} from "./model-handles";
 
 export type ModelReasoningEffort =
   | "none"
@@ -15,13 +36,12 @@ export type ModelReasoningEffort =
   | "xhigh"
   | "max";
 
-type ModelConfigSnapshot = {
-  model?: string | null;
-  model_endpoint_type?: string | null;
-  reasoning_effort?: string | null;
-  enable_reasoner?: boolean | null;
-  context_window?: number | null;
-  service_tier?: string | null;
+/** Null means use the upstream provider's default and omit reasoning_effort. */
+export type ModelReasoningSelection = ModelReasoningEffort | null;
+
+type ReasoningCapabilities = {
+  supported_efforts?: ModelReasoningEffort[] | null;
+  mandatory?: boolean;
 };
 
 const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
@@ -41,16 +61,6 @@ const LOCAL_REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "high",
 ];
 
-const LOCAL_MODEL_HANDLE_PREFIXES = [
-  "ollama/",
-  "ollama-cloud/",
-  "lmstudio/",
-  "llama.cpp/",
-  "llama-cpp/",
-];
-
-const LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX = "openai-codex/";
-const CHATGPT_OAUTH_LLM_CONFIG_PROVIDER = "chatgpt_oauth";
 export const CHATGPT_FAST_SERVICE_TIER = "priority";
 
 export function isLocalModelHandle(modelHandle: string): boolean {
@@ -75,31 +85,6 @@ function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
   );
 }
 
-export function normalizeModelHandleForRegistry(
-  modelHandle: string | null | undefined,
-): string | null {
-  if (!modelHandle) return null;
-  const [provider, ...modelParts] = modelHandle.split("/");
-  const model = modelParts.join("/");
-  if (provider === CHATGPT_OAUTH_LLM_CONFIG_PROVIDER && model.length > 0) {
-    return `${OPENAI_CODEX_PROVIDER_NAME}/${model}`;
-  }
-  if (
-    provider === LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1) &&
-    model.length > 0 &&
-    !model.endsWith("-fast")
-  ) {
-    return `${OPENAI_CODEX_PROVIDER_NAME}/${model}`;
-  }
-  return modelHandle;
-}
-
-function modelPortion(modelHandle: string): string | null {
-  const slashIndex = modelHandle.indexOf("/");
-  if (slashIndex === -1) return null;
-  return modelHandle.slice(slashIndex + 1);
-}
-
 export function isLocalChatGptOAuthModelHandle(modelHandle: string): boolean {
   return modelHandle.startsWith(LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX);
 }
@@ -110,7 +95,8 @@ export function getChatGptFastRegistryHandleForModelHandle(
   const [provider] = modelHandle.split("/");
   if (
     provider !== LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1) &&
-    provider !== CHATGPT_OAUTH_LLM_CONFIG_PROVIDER
+    provider !== CHATGPT_OAUTH_LLM_CONFIG_PROVIDER &&
+    provider !== OPENAI_CODEX_PROVIDER_NAME
   ) {
     return null;
   }
@@ -139,18 +125,29 @@ function displayRegistryHandleForServiceTier(
 export function getReasoningTierOptionsForHandle(
   modelHandle: string,
   contextWindow?: number,
+  reasoningCapabilities?: ReasoningCapabilities | null,
 ): Array<{
   effort: ModelReasoningEffort;
   modelId: string;
 }> {
+  const providerOptions = getReasoningTierOptionsFromCapabilities(
+    modelHandle,
+    reasoningCapabilities,
+  );
+  if (providerOptions.length > 0) return providerOptions;
+
   const byEffort = new Map<ModelReasoningEffort, string>();
-  const registryHandle =
+  const normalizedHandle =
     normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
+  const catalogHandle =
+    [...new Set([modelHandle, normalizedHandle])].find((candidate) =>
+      models.some((model) => model.handle === candidate),
+    ) ?? normalizedHandle;
   const effectiveContextWindow =
     contextWindow ??
     (() => {
       const contextWindows = models
-        .filter((model) => model.handle === registryHandle)
+        .filter((model) => model.handle === catalogHandle)
         .map(
           (model) =>
             (model.updateArgs as { context_window?: number } | null)
@@ -164,7 +161,7 @@ export function getReasoningTierOptionsForHandle(
     })();
 
   for (const model of models) {
-    if (model.handle !== registryHandle) continue;
+    if (model.handle !== catalogHandle) continue;
     if (effectiveContextWindow !== undefined) {
       const mCtx = (model.updateArgs as { context_window?: number } | null)
         ?.context_window;
@@ -178,10 +175,10 @@ export function getReasoningTierOptionsForHandle(
     }
   }
 
-  if (byEffort.size === 0 && isLocalModelHandle(registryHandle)) {
+  if (byEffort.size === 0 && isLocalModelHandle(catalogHandle)) {
     return LOCAL_REASONING_EFFORT_ORDER.map((effort) => ({
       effort,
-      modelId: registryHandle,
+      modelId: catalogHandle,
     }));
   }
 
@@ -191,43 +188,76 @@ export function getReasoningTierOptionsForHandle(
   });
 }
 
-/**
- * Resolve a model by ID or handle
- * @param modelIdentifier - Can be either a model ID (e.g., "opus-4.5") or a full handle (e.g., "anthropic/claude-opus-4-5")
- * @returns The model handle if found, null otherwise
- */
-export function resolveModel(modelIdentifier: string): string | null {
-  const byId = models.find((m) => m.id === modelIdentifier);
-  if (byId) return byId.handle;
-
-  const byHandle = models.find((m) => m.handle === modelIdentifier);
-  if (byHandle) return byHandle.handle;
-
-  // For self-hosted servers: if it looks like a handle (contains /), pass it through
-  // This allows using models not in models.json (e.g., from server's /v1/models)
-  if (modelIdentifier.includes("/")) {
-    return modelIdentifier;
-  }
-
-  return null;
+export function getReasoningTierOptionsFromCapabilities(
+  modelHandle: string,
+  capabilities?: ReasoningCapabilities | null,
+): Array<{
+  effort: ModelReasoningEffort;
+  modelId: string;
+}> {
+  if (!capabilities) return [];
+  const supportedEfforts = new Set<ModelReasoningEffort>(
+    capabilities.supported_efforts === null
+      ? REASONING_EFFORT_ORDER
+      : (capabilities.supported_efforts ?? []),
+  );
+  return REASONING_EFFORT_ORDER.filter(
+    (effort) =>
+      supportedEfforts.has(effort) &&
+      !(capabilities.mandatory === true && effort === "none"),
+  ).map((effort) => ({ effort, modelId: modelHandle }));
 }
 
-/**
- * Get the default model handle
- */
-export function getDefaultModel(): string {
-  // Prefer Auto when available in models.json.
-  const autoModel = resolveModel("auto");
-  if (autoModel) return autoModel;
+export function withReasoningEffortUpdateArg(
+  updateArgs: Record<string, unknown> | undefined,
+  reasoningEffort: ModelReasoningSelection | undefined,
+): Record<string, unknown> | undefined {
+  if (reasoningEffort === undefined) return updateArgs;
+  return {
+    ...(updateArgs ?? {}),
+    reasoning_effort: reasoningEffort,
+  };
+}
 
-  const defaultModel = models.find((m) => m.isDefault);
-  if (defaultModel) return defaultModel.handle;
+export function getByokOpenAIReasoningTierOptions(
+  modelHandle: string,
+  options?: {
+    registryHandle?: string;
+    contextWindow?: number;
+    reasoningCapabilities?: ReasoningCapabilities | null;
+  },
+): Array<{
+  effort: ModelReasoningSelection;
+  modelId: string;
+}> {
+  const registryHandle = options?.registryHandle ?? modelHandle;
+  const hasReportedCapabilities = options?.reasoningCapabilities != null;
+  const knownOptions = hasReportedCapabilities
+    ? getReasoningTierOptionsFromCapabilities(
+        registryHandle,
+        options.reasoningCapabilities,
+      )
+    : getReasoningTierOptionsForHandle(registryHandle, options?.contextWindow);
+  const efforts =
+    hasReportedCapabilities || knownOptions.length > 0
+      ? knownOptions.map((option) => option.effort)
+      : REASONING_EFFORT_ORDER;
+  return [null, ...efforts].map((effort) => ({
+    effort,
+    modelId: modelHandle,
+  }));
+}
 
-  const firstModel = models[0];
-  if (!firstModel) {
-    throw new Error("No models available in models.json");
-  }
-  return firstModel.handle;
+export function getPreferredReasoningOption<
+  T extends { effort: ModelReasoningSelection },
+>(options: T[], selectedEffort: unknown): T | undefined {
+  return (
+    (selectedEffort === null || typeof selectedEffort === "string"
+      ? options.find((option) => option.effort === selectedEffort)
+      : undefined) ??
+    options.find((option) => option.effort === "medium") ??
+    options[0]
+  );
 }
 
 /**
@@ -254,14 +284,11 @@ export function formatAvailableModels(): string {
  * @returns The model info if found, null otherwise
  */
 export function getModelInfo(modelIdentifier: string) {
-  const byId = models.find((m) => m.id === modelIdentifier);
-  if (byId) return byId;
+  const direct = resolveCatalogModel(modelIdentifier);
+  if (direct) return direct;
 
   const normalizedHandle = normalizeModelHandleForRegistry(modelIdentifier);
-  const byHandle = models.find((m) => m.handle === normalizedHandle);
-  if (byHandle) return byHandle;
-
-  return null;
+  return normalizedHandle ? resolveCatalogModel(normalizedHandle) : null;
 }
 
 /**
@@ -357,6 +384,44 @@ function buildModelHandleFromConfig(
     return `${config.model_endpoint_type}/${config.model}`;
   }
   return config.model ?? null;
+}
+
+/**
+ * The server's legacy global context-window clamp
+ * (`model_settings.global_max_context_window_limit`, default 128000). Any
+ * model-bearing update that omitted `context_window_limit` historically got
+ * its window clamped to this value regardless of the model's real window
+ * (LET-9786).
+ */
+export const LEGACY_SERVER_CONTEXT_WINDOW_CLAMP = 128000;
+
+/**
+ * Return the current context window if it is safe to preserve across a
+ * model-settings update, or undefined when it looks like the server's legacy
+ * 128k clamp rather than a deliberate value.
+ *
+ * A value of exactly 128000 that matches no registry preset for the handle is
+ * indistinguishable from server-clamp poisoning (LET-9786) — and poisoned
+ * values are self-perpetuating if preserved. Callers should fall back to the
+ * selected preset / catalog value when this returns undefined. Models whose
+ * presets legitimately include 128000 (e.g. Codex Spark tiers) are preserved
+ * normally.
+ */
+export function preservableContextWindow(
+  current: number | null | undefined,
+  modelHandle: string,
+): number | undefined {
+  if (typeof current !== "number" || current <= 0) return undefined;
+  if (current !== LEGACY_SERVER_CONTEXT_WINDOW_CLAMP) return current;
+  const registryHandle =
+    normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
+  const matchesPreset = models.some(
+    (m) =>
+      m.handle === registryHandle &&
+      (m.updateArgs as { context_window?: number } | null)?.context_window ===
+        LEGACY_SERVER_CONTEXT_WINDOW_CLAMP,
+  );
+  return matchesPreset ? current : undefined;
 }
 
 export function shouldPreserveContextWindowForModelSelection(input: {
@@ -483,10 +548,7 @@ export function getModelPresetUpdateForAgent(
  * auto-applied on resume and the comparison logic that decides
  * whether an update is needed.
  */
-const RESUME_REFRESH_FIELDS = [
-  "max_output_tokens",
-  "parallel_tool_calls",
-] as const;
+const RESUME_REFRESH_FIELDS = ["parallel_tool_calls"] as const;
 
 /**
  * Build the subset of preset updateArgs that should be synced on resume,
@@ -510,12 +572,7 @@ export function getResumeRefreshArgs(
   // Extract only the resume-scoped fields from the full preset
   for (const field of RESUME_REFRESH_FIELDS) {
     const value = presetUpdateArgs[field];
-    if (
-      field === "max_output_tokens" &&
-      (typeof value === "number" || value === null)
-    ) {
-      updateArgs[field] = value;
-    } else if (field === "parallel_tool_calls" && typeof value === "boolean") {
+    if (typeof value === "boolean") {
       updateArgs[field] = value;
     }
   }
@@ -525,20 +582,12 @@ export function getResumeRefreshArgs(
   }
 
   // Compare against the agent's current values
-  const currentMaxTokens = agent.llm_config?.max_tokens;
-  const wantMaxTokens = updateArgs.max_output_tokens as
-    | number
-    | null
-    | undefined;
   const currentParallel = agent.model_settings?.parallel_tool_calls;
   const wantParallel = updateArgs.parallel_tool_calls as boolean | undefined;
-
-  const maxTokensMatch =
-    wantMaxTokens === undefined || currentMaxTokens === wantMaxTokens;
   const parallelMatch =
     wantParallel === undefined || currentParallel === wantParallel;
 
-  return { updateArgs, needsUpdate: !(maxTokensMatch && parallelMatch) };
+  return { updateArgs, needsUpdate: !parallelMatch };
 }
 
 /**
@@ -570,13 +619,13 @@ function findModelByHandle(handle: string): (typeof models)[number] | null {
   if (exactMatch) return exactMatch;
 
   // For handles like "bedrock/claude-opus-4-5-20251101" where the API returns without
-  // vendor prefix or version suffix, but models.json has
+  // vendor prefix or version suffix, but the runtime catalog has
   // "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0", try fuzzy matching
   const [provider, ...rest] = registryHandle.split("/");
   if (provider && rest.length > 0) {
     const modelPortion = rest.join("/");
-    // Find models with the same provider where the model portion is contained
-    // in the models.json handle (handles vendor prefixes and version suffixes)
+    // Find catalog entries with the same provider where the model portion is
+    // contained in the catalog handle (handles vendor prefixes and version suffixes)
     const providerMatches = models.filter((m) => {
       if (!m.handle.startsWith(`${provider}/`)) return false;
       const mModelPortion = m.handle.slice(provider.length + 1);
@@ -590,7 +639,7 @@ function findModelByHandle(handle: string): (typeof models)[number] | null {
     if (providerMatch) return providerMatch;
 
     // Cross-provider fallback by model suffix. This helps when llm_config reports
-    // provider_type=openai for BYOK models that are represented in models.json
+    // provider_type=openai for BYOK models represented in the runtime catalog
     // under a different provider prefix (e.g. chatgpt-plus-pro/*).
     const suffixMatches = models.filter((m) =>
       m.handle.endsWith(`/${modelPortion}`),

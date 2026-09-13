@@ -28,7 +28,7 @@ const telemetrySurfaces = [
 ] satisfies TelemetrySurface[];
 
 const telemetryBackends = [
-  "constellation",
+  "cloud",
   "local",
   "docker_deprecated",
   "self_hosted_api",
@@ -54,13 +54,13 @@ describe("telemetry segmentation", () => {
     ).toBe("local");
     expect(
       resolveTelemetryBackend({ env: {}, serverUrl: "https://api.letta.com" }),
-    ).toBe("constellation");
+    ).toBe("cloud");
     expect(
       resolveTelemetryBackend({
         env: { LETTA_DESKTOP_MODE: "1" },
         serverUrl: "http://127.0.0.1:54085",
       }),
-    ).toBe("constellation");
+    ).toBe("cloud");
     expect(
       resolveTelemetryBackend({ env: {}, serverUrl: "http://localhost:8283" }),
     ).toBe("docker_deprecated");
@@ -84,6 +84,7 @@ describe("telemetry flush auth", () => {
   const originalIsCloudUser = telemetryState.isCloudUser;
   const originalLettaApiKey = process.env.LETTA_API_KEY;
   const originalTelemetryDisabled = process.env.LETTA_TELEMETRY_DISABLED;
+  const originalDoNotTrack = process.env.DO_NOT_TRACK;
   const originalLettaBaseUrl = process.env.LETTA_BASE_URL;
   const originalLettaDesktopDebugPanel = process.env.LETTA_DESKTOP_MODE;
   const originalLocalBackendExperimental =
@@ -121,6 +122,7 @@ describe("telemetry flush auth", () => {
     telemetryState.sessionEndTracked = false;
     deleteEnvVarCaseInsensitive("LETTA_API_KEY");
     deleteEnvVarCaseInsensitive("LETTA_TELEMETRY_DISABLED");
+    deleteEnvVarCaseInsensitive("DO_NOT_TRACK");
     deleteEnvVarCaseInsensitive("LETTA_BASE_URL");
     deleteEnvVarCaseInsensitive("LETTA_DESKTOP_MODE");
     deleteEnvVarCaseInsensitive("LETTA_LOCAL_BACKEND_EXPERIMENTAL");
@@ -137,6 +139,7 @@ describe("telemetry flush auth", () => {
     telemetryState.isCloudUser = originalIsCloudUser;
     restoreEnvVar("LETTA_API_KEY", originalLettaApiKey);
     restoreEnvVar("LETTA_TELEMETRY_DISABLED", originalTelemetryDisabled);
+    restoreEnvVar("DO_NOT_TRACK", originalDoNotTrack);
     restoreEnvVar("LETTA_BASE_URL", originalLettaBaseUrl);
     restoreEnvVar("LETTA_DESKTOP_MODE", originalLettaDesktopDebugPanel);
     restoreEnvVar(
@@ -163,6 +166,14 @@ describe("telemetry flush auth", () => {
     expect(telemetryBackends).toContain(
       event.data?.backend as TelemetryBackend,
     );
+  });
+
+  test("DO_NOT_TRACK=1 disables runtime telemetry", () => {
+    setEnvVar("DO_NOT_TRACK", "1");
+
+    telemetry.trackUserInput("hello", "user", "model-1");
+
+    expect(telemetryState.events).toHaveLength(0);
   });
 
   test("flush falls back to secure settings token when env var is absent", async () => {
