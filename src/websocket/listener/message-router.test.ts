@@ -360,6 +360,7 @@ describe("listener message router ownership handoff", () => {
         role: "user",
         content: "do not drop me",
         client_message_id: "cm-input-race",
+        otid: "cm-input-race",
       },
     ]);
     expect(runtime.queuedMessagesByItemId.size).toBe(0);

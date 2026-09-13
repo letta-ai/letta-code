@@ -646,9 +646,7 @@ export function emitDequeuedUserMessage(
   incoming: IncomingMessage,
   batch: DequeuedBatch,
 ): void {
-  // A mod-driven continue turn carries no real user input — suppress the
-  // optimistic echo so the follow-up stays seamless (matches TUI, where the
-  // continue is injected without rendering a user message).
+  // Mod-only continuations do not render optimistic user messages.
   if (
     batch.items.length > 0 &&
     batch.items.every((item) => item.kind === "mod_continue")
@@ -656,60 +654,59 @@ export function emitDequeuedUserMessage(
     return;
   }
 
-  const firstUserPayload = incoming.messages.find(
-    (payload): payload is MessageCreate & { client_message_id?: string } =>
-      "content" in payload,
-  );
-  if (!firstUserPayload) return;
+  for (const payload of incoming.messages) {
+    if (!("content" in payload) || payload.role !== "user") continue;
+    const rawContent = payload.content;
+    let content: MessageCreate["content"];
 
-  const rawContent = firstUserPayload.content;
-  let content: MessageCreate["content"];
-
-  if (typeof rawContent === "string") {
-    content = replaceCronPromptsForDisplay(rawContent, batch)
-      .replace(SYSTEM_REMINDER_RE, "")
-      .trim();
-  } else if (Array.isArray(rawContent)) {
-    content = rawContent.flatMap((part) => {
-      if (isTextContentPart(part)) {
-        const cronDisplay = getCronPromptDisplayForText(part.text, batch);
-        if (cronDisplay !== null) {
-          return [{ ...part, text: cronDisplay }];
+    if (typeof rawContent === "string") {
+      content = replaceCronPromptsForDisplay(rawContent, batch)
+        .replace(SYSTEM_REMINDER_RE, "")
+        .trim();
+    } else if (Array.isArray(rawContent)) {
+      content = rawContent.flatMap((part) => {
+        if (isTextContentPart(part)) {
+          const cronDisplay = getCronPromptDisplayForText(part.text, batch);
+          if (cronDisplay !== null) {
+            return [{ ...part, text: cronDisplay }];
+          }
         }
-      }
-      return isSystemReminderPart(part) ? [] : [part];
-    }) as MessageCreate["content"];
-  } else {
-    return;
+        return isSystemReminderPart(part) ? [] : [part];
+      }) as MessageCreate["content"];
+    } else {
+      continue;
+    }
+
+    const hasContent =
+      typeof content === "string"
+        ? content.length > 0
+        : Array.isArray(content) && content.length > 0;
+    if (!hasContent) continue;
+    // The outgoing request shares this payload; retain the echo's identity.
+    payload.otid ??= payload.client_message_id ?? crypto.randomUUID();
+    const otid = payload.otid;
+
+    emitCanonicalMessageDelta(
+      socket,
+      runtime,
+      {
+        type: "message",
+        id: `user-msg-${crypto.randomUUID()}`,
+        date: new Date().toISOString(),
+        message_type: "user_message",
+        content,
+        otid,
+        created_by_id:
+          payload.attribution === undefined
+            ? incoming.actingUserId
+            : payload.attribution.acting_user_id,
+      } as StreamDelta,
+      {
+        agent_id: incoming.agentId,
+        conversation_id: incoming.conversationId,
+      },
+    );
   }
-
-  const hasContent =
-    typeof content === "string"
-      ? content.length > 0
-      : Array.isArray(content) && content.length > 0;
-  if (!hasContent) return;
-  const otid =
-    firstUserPayload.otid ??
-    firstUserPayload.client_message_id ??
-    batch.batchId;
-
-  emitCanonicalMessageDelta(
-    socket,
-    runtime,
-    {
-      type: "message",
-      id: `user-msg-${crypto.randomUUID()}`,
-      date: new Date().toISOString(),
-      message_type: "user_message",
-      content,
-      otid,
-      created_by_id: incoming.actingUserId,
-    } as StreamDelta,
-    {
-      agent_id: incoming.agentId,
-      conversation_id: incoming.conversationId,
-    },
-  );
 }
 
 export function emitQueueUpdateIfOpen(

@@ -1010,12 +1010,8 @@ describe("listen-client multi-worker concurrency", () => {
           expect.objectContaining({
             role: "user",
             otid: expect.any(String),
-            content: [
-              {
-                type: "text",
-                text: "<task-notification>done</task-notification>",
-              },
-            ],
+            content: "<task-notification>done</task-notification>",
+            attribution: {},
           }),
         ],
       }),
@@ -1087,14 +1083,13 @@ describe("listen-client multi-worker concurrency", () => {
     expect(consumed?.queuedTurn.messages).toEqual([
       {
         role: "user",
-        content: [
-          { type: "text", text: "queued user" },
-          { type: "text", text: "\n" },
-          {
-            type: "text",
-            text: "<task-notification>done</task-notification>",
-          },
-        ],
+        content: "queued user",
+      },
+      {
+        role: "user",
+        content: "<task-notification>done</task-notification>",
+        attribution: {},
+        otid: expect.any(String),
       },
     ]);
     expect(runtime.queueRuntime.length).toBe(1);
@@ -1130,9 +1125,8 @@ describe("listen-client multi-worker concurrency", () => {
       expect.objectContaining({
         role: "user",
         otid: expect.any(String),
-        content: [
-          { type: "text", text: "double-check your work before finishing" },
-        ],
+        content: "double-check your work before finishing",
+        attribution: {},
       }),
     ]);
     expect(runtime.queueRuntime.length).toBe(0);
@@ -1209,7 +1203,7 @@ describe("listen-client multi-worker concurrency", () => {
     const continuationMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
       | Array<Record<string, unknown>>
       | undefined;
-    expect(continuationMessages).toHaveLength(3);
+    expect(continuationMessages).toHaveLength(4);
     expect(continuationMessages?.[0]).toEqual(
       expect.objectContaining({
         type: "approval",
@@ -1226,16 +1220,16 @@ describe("listen-client multi-worker concurrency", () => {
     );
     expect(continuationMessages?.[1]).toEqual({
       role: "user",
-      content: [
-        { type: "text", text: "queued user" },
-        { type: "text", text: "\n" },
-        {
-          type: "text",
-          text: "<task-notification>done</task-notification>",
-        },
-      ],
+      content: "queued user",
+      otid: expect.any(String),
     });
     expect(continuationMessages?.[2]).toEqual({
+      role: "user",
+      content: "<task-notification>done</task-notification>",
+      attribution: {},
+      otid: expect.any(String),
+    });
+    expect(continuationMessages?.[3]).toEqual({
       role: "user",
       content: [
         {

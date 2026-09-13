@@ -356,7 +356,8 @@ describe("listener interrupt queue handoff", () => {
     expect(processedTurns[0]?.messages).toEqual([
       {
         role: "user",
-        content: [{ type: "text", text: "kill the looping subagent" }],
+        content: "kill the looping subagent",
+        otid: expect.any(String),
       },
     ]);
     expect(cancelRun).toHaveBeenCalledTimes(1);
