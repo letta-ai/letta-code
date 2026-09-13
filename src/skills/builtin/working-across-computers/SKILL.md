@@ -1,6 +1,6 @@
 ---
 name: working-across-computers
-description: Guides work across Cloud, local, and other computers, including remote-access setup, teleporting, remote subagents, and file transfers. Use when connecting a new computer, no computers are available, the user's local machine is missing or unreachable, or when moving work and files between computers.
+description: Guides work across Cloud, local, and other available computers, including teleporting the current conversation, orchestrating remote subagents, and uploading or downloading files to Cloud sandboxes. Use when moving between computers (e.g. teleporting between cloud/local) or coordinating work and files across them.
 ---
 
 # Working Across Computers
@@ -22,9 +22,7 @@ Conversation history and agent memory follow the conversation. Files, working di
 
 For remote subagents, set `computer` and pass source paths and destination conversation IDs explicitly. Use the `Agent` tool definition for invocation and resume options.
 
-## Connect a missing computer
-
-If the user wants to connect a new computer, `letta teleport list` has no suitable target, or the requested local machine is missing or unreachable, read [Connect a computer for remote access](references/connect-a-computer-for-remote-access.md). Guide the user through Desktop or CLI setup on that machine; you cannot register an inaccessible laptop by running its setup commands in Cloud. For an existing installation, check that it is running, signed in, awake, and connected before suggesting reinstallation. Verify the computer appears before retrying delegation or teleportation.
+If the user wants to connect a new computer, `letta teleport list` has no suitable target, or the requested local machine is missing or unreachable, read [Connect a computer for remote access](references/connect-a-computer-for-remote-access.md).
 
 ## Move this conversation
 
