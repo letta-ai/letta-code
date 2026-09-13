@@ -142,9 +142,12 @@ describe("Shell Launchers", () => {
           : selectAvailableShellLauncher(shellLaunchers);
         expect(launcher?.[0]?.toLowerCase()).toMatch(/pwsh|powershell/);
         if (!launcher?.[0]) return null;
-        return spawnSync(launcher[0], launcher.slice(1), {
+        const result = spawnSync(launcher[0], launcher.slice(1), {
           encoding: "utf8",
-        }).status;
+          timeout: 25_000,
+        });
+        expect(result.error, result.stderr).toBeUndefined();
+        return result.status;
       }
 
       test("PowerShell is tried before cmd.exe", () => {
@@ -266,11 +269,13 @@ describe("Shell Launchers", () => {
         }
       });
 
+      // The first Windows PowerShell 5.1 launch took 17s on fresh CI runners.
+      // Its cold start must fit inside both the subprocess and test deadlines.
       test("preserves native exit codes on Windows PowerShell 5.1", () => {
         const executable =
           "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
         expect(runPowerShellHook(nativeExitCommand(2), executable)).toBe(2);
-      });
+      }, 30_000);
 
       test("preserves language failures on Windows PowerShell 5.1", () => {
         const executable =
@@ -281,7 +286,7 @@ describe("Shell Launchers", () => {
             executable,
           ),
         ).toBe(1);
-      });
+      }, 30_000);
 
       test("preserves native blocks invoked through a PowerShell alias", () => {
         expect(

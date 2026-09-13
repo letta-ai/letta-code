@@ -169,9 +169,7 @@ async function runStdoutLossScenario(
   );
   const toolResults = toolResultMessages.join("\n");
   const outputFile = toolResults.match(/Output file: ([^\r\n]+)/)?.[1];
-  const taskOutput = outputFile
-    ? await waitForTaskOutput(outputFile, "SUBAGENT-REPORT-OK")
-    : "";
+  const taskOutput = outputFile ? readFileSync(outputFile, "utf-8") : "";
 
   return {
     code,
@@ -252,7 +250,7 @@ process.exit(0);
 /**
  * Minimal OpenAI-compatible SSE provider: the first chat round forces one
  * Agent tool call, later rounds record the tool results the CLI sends back
- * and finish the turn.
+ * and wait for the background report before finishing the turn.
  */
 function startMockProvider(): {
   server: ReturnType<typeof Bun.serve>;
@@ -289,6 +287,19 @@ function startMockProvider(): {
       for (const message of body.messages ?? []) {
         if (message.role === "tool") {
           toolResults.push(JSON.stringify(message.content));
+        }
+      }
+
+      // Agent returns a launch acknowledgement, not the child's report. Keep
+      // the CLI alive to collect that report before sending its final response.
+      // Waiting after CLI exit cannot help: its output collector is gone.
+      if (round > 1) {
+        const outputFile = toolResults
+          .map((result) => JSON.parse(result) as string)
+          .join("\n")
+          .match(/Output file: ([^\r\n]+)/)?.[1];
+        if (outputFile) {
+          await waitForTaskOutput(outputFile, "SUBAGENT-REPORT-OK");
         }
       }
 
@@ -404,7 +415,7 @@ async function waitForTaskOutput(
       content = readFileSync(outputFile, "utf-8");
       if (content.includes(expected)) return content;
     } catch {
-      // The background task may create its transcript after headless exits.
+      // The CLI is still running and may not have created the transcript yet.
     }
     await Bun.sleep(25);
   }
