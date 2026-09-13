@@ -1,6 +1,7 @@
 # SendAgentMessage
 
-Send a message to another Cloud conversation without waiting for its answer.
+Send a message to another conversation without waiting for its answer. Requires
+the Cloud backend; it is unavailable when your agent ID starts with `agent-local-`.
 Use this to coordinate with an agent already working, including an Agent child,
 or to contact any conversation you are authorized to access.
 

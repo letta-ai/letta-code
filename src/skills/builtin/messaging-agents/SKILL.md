@@ -1,307 +1,161 @@
 ---
 name: messaging-agents
-description: Send messages to other agents on your server. Use when you need to communicate with, query, or delegate tasks to another agent.
+description: Send a message to another Letta agent, continue a thread with one, or reply to a message another agent sent you. Use when you need to ask, inform, or coordinate with another agent, or when a message from another agent arrives.
 ---
 
 # Messaging Agents
 
-Use this skill to contact another agent or continue an existing conversation.
+## What you are addressing
 
-An agent has a persistent identity and shared memory. It can have multiple
-conversations, each with its own message history. Use a conversation ID to address
-an existing thread, or an agent ID to start a new thread with that agent.
+An **agent** is a persistent identity: its memory and configuration are shared
+by all of its conversations. A **conversation** is one message thread on an
+agent. Address a conversation ID to continue a thread; address an agent ID to
+open a new thread with that agent. Threads that one agent opens on another are
+created hidden, so they do not clutter the recipient's conversation list.
 
-For Cloud sends, prefer SendAgentMessage to keep working while the recipient
-responds. For local agents, use the local CLI examples below. SendAgentMessage
-and `--no-wait` currently require Cloud, even if the tool appears in your tool list.
+## Two backends
 
-## When to Use This Skill
+Letta Code keeps agent state on one of two backends. The same CLI addresses
+agents on either; what differs is what the backend can do.
 
-- You need to ask another agent a question
-- You want to query an agent that has specialized knowledge
-- You need information that another agent has in their memory
-- You want to coordinate with another agent on a task
+**Cloud backend** (api.letta.com). Agent state lives in Cloud. Each turn of a
+conversation executes on a *computer*: a machine running Letta Code that is
+connected to Cloud, or a Cloud sandbox. Because state and execution are
+separate, Cloud tracks which computers are online and where each conversation
+is active. That is what makes the following possible, and why they exist only
+on this backend:
 
-## Where the Recipient Runs (Cloud)
+- a `computer` selector on sends and on the Agent tool;
+- accepting a message now and delivering it to the recipient's computer while
+  you keep working (`SendAgentMessage`, `letta -p --no-wait`);
+- teleporting a conversation (`letta teleport <computer>`): the same thread,
+  with its history and memory, continues on a different computer. Files and
+  working directories do not move with it.
 
-Send to the recipient's conversation using its existing tools and permissions.
-Omit `computer` to use its active or saved computer, or a Cloud sandbox when needed.
-The recipient can access files on that computer, which may differ from yours.
+**Local backend.** Agent state lives in a store on this machine, and turns run
+in the Letta Code process that holds it. There is no computer concept, so there
+is no `computer` selector, no queue to hand a message to, and no teleport.
+Agent IDs on this backend start with `agent-local-`.
 
-**Need local access?** If you need the target agent to access your local environment (read/write files, run commands), use the Agent tool instead to deploy them as a subagent:
-```typescript
-Agent({
-  agent_id: "agent-xxx",            // Deploy this existing agent
-  subagent_type: "general-purpose", // read-write access to your local tools
-  prompt: "Look at the code in src/ and tell me about the architecture"
-})
-```
-This gives the agent access to your codebase while running as a subagent.
+"Local backend" describes where state is stored. It says nothing about which
+machine a Cloud-backed agent is executing on, and it is unrelated to subagents
+you launch with the Agent tool.
 
-## Finding an Agent to Message
+## Two ways to send
 
-If you don't have a specific agent ID, use these skills to find one:
+Your message reaches the recipient with a system reminder that says how to get
+its answer back to you. Which instruction it gets depends on how you send:
 
-### By Name or Tags
-Load the `finding-agents` skill to search for agents:
-```bash
-letta agents list --query "agent-name"
-letta agents list --tags "origin:letta-code"
-```
+- **Non-waiting send** (`SendAgentMessage`, or `letta -p --no-wait`). Returns a
+  receipt as soon as Cloud accepts the message. The recipient gets your agent
+  and conversation IDs as a return address and must reply with a send of its
+  own; the reply arrives as a new message in your conversation. Cloud backend
+  only.
+- **Waiting send** (`letta -p` without `--no-wait`). The CLI process returns
+  the recipient's final message as its output. The recipient is told to put its
+  answer in that message. Either backend.
 
-### By Topic They Discussed
-Search messages across all agents to find which agent worked on something:
-```bash
-letta messages search --query "topic" --all-agents
-```
-Results include `agent_id` for each matching message.
+A waiting send occupies the CLI process, not necessarily you. Run it in the
+background (your shell tool may already do this for long-running commands) and
+collect the output when it finishes. That keeps you working, but it does not
+change the recipient's instructions: the answer still arrives as process
+output, not as a message to your conversation.
 
-## Local CLI
+For a managed child task with a completion notification, use the Agent tool on
+either backend. `SendAgentMessage` only sends input; it creates no task and does
+not change the recipient's tools or permissions.
 
-Start a new conversation with an existing local agent:
-
-```bash
-letta --backend local -p --from-agent $LETTA_AGENT_ID \
-  --agent <target-agent-id> --output-format json "message text"
-```
-
-Continue that conversation using the returned `conversation_id`:
-
-```bash
-letta --backend local -p --from-agent $LETTA_AGENT_ID \
-  --conversation <target-conversation-id> --output-format json "follow-up"
-```
-
-Use local agent IDs, including the sender's ID, and the local store containing
-those agents. `--backend local` selects the backend for this command without
-changing the saved default.
-
-These commands run the recipient's turn in the CLI process, with its working
-directory and execution flags. They wait for the answer and print it in the JSON
-`result` field. Run the command as a background shell task and collect its output
-to keep working meanwhile, or use Agent for a managed child task with completion
-notifications. Backgrounding the process does not change the reply into a message
-to your conversation.
-
-Do not add `--no-wait` or `--computer` here; both require Cloud. Read local message
-history with `letta --backend local messages list --conversation <id>` rather than
-the Cloud-only `letta messages status` command.
-
-## SendAgentMessage (Cloud only)
-
-For Cloud agents, use SendAgentMessage to send input without waiting for an answer:
+## Non-waiting send (Cloud backend)
 
 ```typescript
-SendAgentMessage({
-  conversation_id: "conv-target",
-  message: "The API change is ready. Please run your integration test.",
-})
+SendAgentMessage({ conversation_id: "conv-…", message: "…" })   // continue a thread
+SendAgentMessage({ agent_id: "agent-…", message: "…" })         // open a new hidden thread
+SendAgentMessage({ agent_id: "agent-…", conversation_id: "default", message: "…" })  // the agent's default thread
 ```
 
-Use `agent_id` alone to start a new hidden conversation. To use an agent's default
-thread, supply its `agent_id` and `conversation_id: "default"`.
-You can message any conversation you are authorized to access, including an Agent
-child that is already working.
+Success means Cloud accepted the message (`status: "queued"`), not that the
+recipient has read it. Keep working. Omit `computer`: the recipient runs on its
+conversation's current computer with its own tools and permissions.
 
-Your agent and conversation IDs are attached automatically. To reply, call
-SendAgentMessage with the supplied return conversation (and agent ID for `default`).
-Ordinary assistant output is not forwarded to the sender.
-
-Successful submission means Cloud accepted the message; the recipient may not have
-read it yet. Continue working rather than waiting for an answer. If delivery cannot
-be confirmed, check the recipient's messages before resending to avoid duplicates.
-The result includes commands for checking activity and reading messages when needed.
-Use Agent to launch or resume a managed child task with completion notifications.
-
-## CLI Sends Without Waiting (Cloud only)
-
-Use `--no-wait` for routine Cloud coordination through the CLI. The additional
-options below remain available when you need different behavior or diagnostics.
-
-### Send without waiting for the answer (Cloud)
+The CLI form behaves the same; use it from scripts or when the tool is absent:
 
 ```bash
-letta -p --conversation <target-conversation-id> --no-wait --output-format json "message text"
+letta -p --conversation <conversation-id> --no-wait --output-format json "message"
+letta -p --agent <agent-id> --no-wait --output-format json "message"
 ```
 
-Keep the returned receipt. `queued` confirms Cloud accepted the message, not that
-the recipient has read it or finished. The CLI uses your `AGENT_ID` and
-`CONVERSATION_ID` as the return address. Reply explicitly to the supplied address;
-ordinary assistant output is not forwarded for a non-waiting send.
-
-When you need to investigate a send, check activity or read the conversation:
+## Waiting send (either backend)
 
 ```bash
-letta messages status --agent <target-agent-id> --conversation <target-conversation-id>
-letta messages list --agent <target-agent-id> --conversation <target-conversation-id>
+letta -p --from-agent $LETTA_AGENT_ID --agent <agent-id> --output-format json "message"
+letta -p --from-agent $LETTA_AGENT_ID --conversation <conversation-id> --output-format json "follow-up"
 ```
 
-The tool and CLI return these ready-to-run commands in `status_command` and
-`messages_command`. A result of `acceptance_unknown` means the request was sent
-but acceptance could not be confirmed, for example after a timeout or lost
-connection. Inspect before resending because it may already have arrived.
+`result` holds the recipient's final message; `conversation_id` is the thread
+to continue. `--from-agent` tells the recipient who is asking and makes a new
+thread hidden.
 
-Compare `latest_super_run.id` with the receipt's `super_run_id`. A different ID
-belongs to another send; an idle conversation alone does not prove completion.
-If waiting fails or times out, inspect before resending. The CLI does not cancel
-remote work when it stops waiting.
+If your agent ID starts with `agent-local-`, add `--backend local` so the
+command uses the local store: `letta --backend local -p …`. The flag applies to
+that command only.
 
-Configure execution tools and permissions on the recipient; Cloud sends do not
-accept local execution flags such as `--tools` or `--permission-mode`.
+On the Cloud backend the recipient still executes on its own computer; if your
+wait times out or is interrupted, the recipient's work continues. On the local
+backend the recipient's turn runs inside the `letta -p` process you launched,
+so the `--tools`, `--permission-mode`, and working directory you give it apply
+to that turn.
 
-### Starting a New Conversation
+## Replying to another agent
+
+A message from another agent arrives with a system reminder naming the
+sender's agent and conversation IDs.
+
+- If it says the sender will only see your final message: answer in your
+  response. Nothing more is needed.
+- If it gives a return address: reply explicitly with
+  `SendAgentMessage({ agent_id, conversation_id, message })`, or
+  `letta -p --agent <sender-agent-id> --conversation <sender-conversation-id> --no-wait "reply"`.
+  Your ordinary output is not forwarded to the sender.
+
+## Finding an agent
 
 ```bash
-letta -p --from-agent $LETTA_AGENT_ID --agent <id> --no-wait "message text"
+letta agents list --query "name"
+letta messages search --query "topic" --all-agents   # results include agent_id
 ```
 
-Omitting `--computer` lets Cloud select the conversation's active or saved computer,
-or start a Cloud sandbox when needed.
+Load the `finding-agents` skill for more search options.
 
-To route the target agent turn through a specific remote/local computer:
+## Gotchas
 
-```bash
-letta -p --from-agent $LETTA_AGENT_ID \
-  --agent <id> \
-  --computer <name-or-device-id> --no-wait \
-  "message text"
-```
+- `SendAgentMessage` may appear in your tool list on any backend, but it and
+  `--no-wait` return an error unless the backend is Cloud. Check your agent ID
+  prefix first.
+- On the Cloud backend, `letta -p --agent <id> "message"` with neither
+  `--from-agent` nor `--no-wait` runs that agent's turn inside your own process
+  on this computer instead of delivering to the agent's computer. Include one
+  of the two.
+- Cloud sends reject execution flags (`--tools`, `--permission-mode`, `--model`,
+  `--system`, and similar). The recipient runs with its own configuration.
+- `letta messages status` is Cloud only. On the local backend, read a thread
+  with `letta --backend local messages list --conversation <id>`.
+- `--conversation default` needs `--agent`; `default` is scoped to an agent.
+- A `computer` selector on a send does not move a conversation that is active
+  on another computer; the send is rejected instead. To move a conversation,
+  teleport it (see the `working-across-computers` skill).
+- A self-hosted Letta server has no computers API and behaves like the local
+  backend for the options above.
+- A receipt means accepted, not delivered. If a send's outcome is unknown,
+  inspect the thread before resending.
 
-Use `--computer cloud` to route through the target agent's cloud sandbox:
+## When you need more
 
-```bash
-letta -p --from-agent $LETTA_AGENT_ID \
-  --agent <id> \
-  --computer cloud --no-wait \
-  "message text"
-```
+Read `references/cli-reference.md` when you need to route a Cloud send to a
+specific computer, interpret receipt fields, investigate a send whose
+acceptance is unknown, inspect hidden conversations, or see every flag.
+`letta --help` lists the rest of the CLI.
 
-**Arguments:**
-| Arg | Required | Description |
-|-----|----------|-------------|
-| `--agent <id>` | Yes | Target agent ID to message |
-| `--from-agent <id>` | Yes, unless using `--no-wait` | Select agent-to-agent delivery when starting a conversation |
-| `--computer <selector>` | No | Route through `cloud` (target agent's cloud sandbox) or an online computer by name or stable device ID |
-| `"message text"` | Yes | Message body (positional after flags) |
-
-**Example:**
-```bash
-letta -p --from-agent $LETTA_AGENT_ID \
-  --agent agent-abc123 \
-  --no-wait \
-  "What do you know about the authentication system?"
-```
-
-**Response (JSON format with `--output-format json`, relevant fields):**
-```json
-{
-  "agent_id": "agent-abc123",
-  "conversation_id": "conv-xyz789",
-  "status": "queued"
-}
-```
-
-### Continuing a Conversation
-
-```bash
-letta -p --from-agent $LETTA_AGENT_ID --conversation <id> --no-wait "message text"
-```
-
-Add `--computer <selector>` to continue the conversation on a specific computer.
-
-### Discovering Computers
-
-```bash
-letta computers list --online-only
-# alias:
-letta envs list --online-only
-```
-
-Use `connectionName` or `deviceId` from the JSON output as the `--computer`
-selector. If a name is ambiguous, use `deviceId`. A device ID identifies the
-registered computer; a connection ID identifies its temporary listener connection.
-The CLI also accepts connection IDs and resolves them to the computer, but prefer
-the stable device ID. In `computers list`, the current local runtime is marked with
-`"isCurrent": true`.
-
-To force the target agent onto the current registered Letta Code computer,
-resolve the current computer and pass its `deviceId`:
-
-```bash
-CURRENT_COMPUTER=$(letta computers current | jq -r .deviceId)
-letta -p --from-agent $LETTA_AGENT_ID \
-  --agent agent-abc123 \
-  --computer "$CURRENT_COMPUTER" --no-wait \
-  "Run on my same computer."
-```
-
-Use `--computer` only when that computer is needed. If the conversation is active
-on another computer, Cloud returns 409 rather than silently moving it. An offline
-computer returns 503. Inspect the error; do not bypass enqueue with a direct send.
-
-**Arguments:**
-| Arg | Required | Description |
-|-----|----------|-------------|
-| `--conversation <id>` | Yes | Existing conversation ID |
-| `--from-agent <id>` | No | Override the sender agent ID; otherwise use the calling agent's environment |
-| `"message text"` | Yes | Follow-up message (positional after flags) |
-
-**Example:**
-```bash
-letta -p --from-agent $LETTA_AGENT_ID \
-  --conversation conv-xyz789 --no-wait \
-  "Can you explain more about the token refresh flow?"
-```
-
-## Understanding the Response
-
-- SendAgentMessage and CLI `--no-wait` sends return an acceptance receipt. The recipient replies explicitly to your return conversation. These sends currently require Cloud.
-- Cloud enqueue receipts include `agent_id`, `conversation_id`, `client_message_id`, `workflow_id`, and `super_run_id`. Waiting JSON results retain these IDs and add the answer and associated `run_ids`.
-- CLI sends without `--no-wait` return the final assistant message through process output, on both Cloud and local backends. Tool calls and reasoning are not included in that answer.
-- To see the full conversation transcript (including tool calls), use `letta messages list --agent <id>` targeting the other agent
-
-## How It Works
-
-For a non-waiting send with a return conversation, the target agent receives this
-reminder as a separate text part alongside your message:
-```
-<system-reminder>
-This message is from agent agent-xxx, conversation conv-xxx.
-To reply to agent agent-xxx, conversation conv-xxx, use SendAgentMessage if available. Otherwise run letta -p --agent agent-xxx --conversation conv-xxx --no-wait "your reply". Ordinary assistant output is not forwarded to the sender.
-</system-reminder>
-```
-
-This helps the target agent understand the context and format their response appropriately.
-
-## Additional CLI Options
-
-Use `letta --help` to inspect the full CLI when the convenience tool does not fit
-your task. For a deliberate synchronous send, such as testing how a script consumes
-an answer, omit `--no-wait`:
-
-```bash
-letta -p --from-agent $LETTA_AGENT_ID --conversation <target-conversation-id> --output-format json "message text"
-```
-
-This waits for the final answer and returns it in `result` on both Cloud and local backends.
-The recipient is told to answer in its final response instead of sending a separate
-reply. On Cloud, interruption or timeout stops your wait, not the recipient's work;
-inspect the conversation before deciding whether to resend. Prefer non-waiting sends
-for routine Cloud coordination, or background the local CLI process, so you can keep
-working while the recipient responds.
-
-## Hidden Conversations
-
-Agent-to-agent conversations (started via `--from-agent`) are created **hidden** on the target agent. They don't appear in the target's default conversation list in the ADE, so automated inter-agent chatter doesn't clutter the UI.
-
-To inspect them:
-- List hidden conversations via the API with `archive_status=archived` (or `all`)
-- Pull the transcript directly with `letta messages transcript --conversation <id>`
-- The `conversation_id` returned when you sent the message is the handle you need
-
-Continuing a hidden conversation with `--conversation <id>` keeps it hidden — only archive status is affected, messaging still works normally.
-
-## Related Skills
-
-- **finding-agents**: Find agents by name, tags, or fuzzy search
-- **dispatching-coding-agents**: Drive Claude Code or Codex through their CLIs, including background execution and collecting results
+To drive a Letta Code instance configured for a different backend, or Claude
+Code or Codex, shell out to that CLI the way the `dispatching-coding-agents`
+skill describes. Inside it, use the waiting-send commands above with
+`--backend` and `--from-agent` values that exist on that backend.
