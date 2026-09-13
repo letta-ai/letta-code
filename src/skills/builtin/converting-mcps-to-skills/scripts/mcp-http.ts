@@ -521,10 +521,15 @@ async function runOAuthLogin(
   authUrl.searchParams.set("code_challenge", challenge);
   authUrl.searchParams.set("code_challenge_method", "S256");
   authUrl.searchParams.set("resource", serverUrl);
-  const scopes = metadata.scopes_supported?.includes("offline_access")
-    ? "openid offline_access"
-    : "openid";
-  authUrl.searchParams.set("scope", scopes);
+  const supported = metadata.scopes_supported;
+  if (supported && supported.length > 0) {
+    const wanted = ["openid", "offline_access"].filter((s) =>
+      supported.includes(s),
+    );
+    if (wanted.length > 0) {
+      authUrl.searchParams.set("scope", wanted.join(" "));
+    }
+  }
 
   process.stderr.write(
     `Opening browser to sign in:\n  ${authUrl.toString()}\n`,
