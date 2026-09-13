@@ -76,7 +76,7 @@ type ModCommandResult =
 
 - Command IDs omit the slash: `id: "review"`, not `"/review"`.
 - Use lowercase slugs with letters, numbers, and hyphens.
-- Do not register built-in command IDs.
+- Overriding built-in command IDs records a warning diagnostic; do this intentionally and keep `--no-mods` or `LETTA_DISABLE_MODS=1` in mind for recovery.
 - `runWhenBusy: true` commands must not return `prompt` while the main agent is busy; use scoped conversation helpers/panels and return `handled`.
 - `showInTranscript: false` commands should usually return `handled`, not `prompt`.
 - Do not import Letta Code app internals.
