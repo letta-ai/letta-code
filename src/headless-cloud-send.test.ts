@@ -137,8 +137,9 @@ test("empty computer never falls through to local execution, and cloud-sandbox r
       false,
       f.deps,
     ),
-  ).toBe(1);
-  expect(f.submissions).toHaveLength(0);
+  ).toBe(0);
+  expect(f.submissions).toHaveLength(1);
+  expect(f.submissions[0]?.computer).toBeUndefined();
   await tryCloudHeadlessSend(
     flags(
       "--conversation",
@@ -152,7 +153,7 @@ test("empty computer never falls through to local execution, and cloud-sandbox r
     false,
     f.deps,
   );
-  expect(f.submissions[0]?.computer).toBe("cloud");
+  expect(f.submissions[1]?.computer).toBe("cloud");
 });
 
 test("non-waiting output waits for HTTP acceptance, not merely the start of the request", async () => {

@@ -10,7 +10,8 @@ import {
   prepareToolExecutionContextForSpecificTools,
 } from "./manager";
 
-test("registered dispatch preserves two captured senders through the HTTP enqueue request", async () => {
+const computers = [undefined, null, "", " \t", "desktop"];
+test.each(computers)("HTTP send: computer %j", async (computer) => {
   const home = process.env.HOME;
   const root = mkdtempSync(join(tmpdir(), "send-agent-message-"));
   process.env.HOME = root;
@@ -88,7 +89,7 @@ test("registered dispatch preserves two captured senders through the HTTP enqueu
           {
             conversation_id: "conv-recipient",
             message: `Message ${index}`,
-            computer: "desktop",
+            computer,
             sender_agent_id: "agent-spoofed",
             parentScope: {
               agentId: "agent-spoofed",
@@ -114,8 +115,12 @@ test("registered dispatch preserves two captured senders through the HTTP enqueu
       );
       expect(request?.body).toMatchObject({
         agent_id: "agent-recipient",
-        computer: "desktop",
       });
+      if (computer?.trim()) {
+        expect(request?.body.computer).toBe(computer.trim());
+      } else {
+        expect(request?.body).not.toHaveProperty("computer");
+      }
       expect(request?.body.messages).toEqual([
         {
           role: "user",

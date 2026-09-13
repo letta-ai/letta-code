@@ -183,7 +183,6 @@ test("agent-only sends create a hidden conversation; default requires its agent"
 test.each([
   { message: "hello" },
   { ...message, message: " " },
-  { ...message, computer: " " },
   { ...message, conversation_id: "conv-target; echo bad" },
   { ...message, agent_id: "agent-wrong" },
 ])(
@@ -199,18 +198,25 @@ test.each([
   },
 );
 
-test.each([undefined, "desktop", "conn-target", " Cloud-Sandbox "])(
-  "computer selection preserves the CLI behavior: %s",
-  async (computer) => {
-    const f = fixture();
-    await runWithRuntimeContext(caller, () =>
-      send_agent_message({ ...message, computer }, f),
-    );
-    expect(f.submissions[0]?.computer).toBe(
-      computer === " Cloud-Sandbox " ? "cloud" : computer,
-    );
-  },
-);
+test.each([
+  undefined,
+  null,
+  "",
+  " \t\n",
+  "desktop",
+  "conn-target",
+  " Cloud-Sandbox ",
+])("computer selection preserves the CLI behavior: %s", async (computer) => {
+  const f = fixture();
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message({ ...message, computer }, f),
+  );
+  expect(result.status).toBe("success");
+  expect(f.submissions).toHaveLength(1);
+  expect(f.submissions[0]?.computer).toBe(
+    computer === " Cloud-Sandbox " ? "cloud" : computer?.trim() || undefined,
+  );
+});
 
 test.each([403, 409, 503, "network"])(
   "delivery errors are surfaced without retries: %s",

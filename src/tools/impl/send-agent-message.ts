@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Backend, getBackend } from "@/backend";
 import {
   buildAgentSendContent,
+  normalizeAgentMessageComputer,
   resolveAgentMessageDestination,
   validateAddress,
 } from "@/backend/api/agent-message";
@@ -13,7 +14,7 @@ interface SendAgentMessageArgs {
   message: string;
   agent_id?: string;
   conversation_id?: string;
-  computer?: string;
+  computer?: string | null;
   signal?: AbortSignal;
 }
 
@@ -38,9 +39,7 @@ export async function send_agent_message(
       throw new Error("SendAgentMessage requires a Cloud backend.");
     }
     if (!args.message?.trim()) throw new Error("Message must not be empty.");
-    if (args.computer !== undefined && !args.computer.trim()) {
-      throw new Error("Computer selector must not be empty.");
-    }
+    const computer = normalizeAgentMessageComputer(args.computer);
     const context = getRuntimeContext();
     const sender = {
       agentId: validateAddress(context?.agentId ?? undefined, "agent"),
@@ -72,17 +71,12 @@ export async function send_agent_message(
     );
     signal.throwIfAborted();
     submissionAttempted = true;
-    const computer = args.computer;
     const receipt = await (deps.enqueue ?? enqueueConversationMessage)(
       {
         ...destination,
         clientMessageId,
         content: buildAgentSendContent(sender, true, args.message),
-        computer:
-          computer &&
-          ["cloud", "cloud-sandbox"].includes(computer.trim().toLowerCase())
-            ? "cloud"
-            : computer,
+        computer,
         actingUserId,
       },
       signal,
