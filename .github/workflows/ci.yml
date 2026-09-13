@@ -299,7 +299,7 @@ jobs:
         shell: pwsh
         run: |
           npm pack
-          npm install -g (Get-Item letta-ai-letta-code-*.tgz).FullName
+          npm install -g (Get-Item letta-ai-letta-code-*.tgz).FullName --timing --loglevel=verbose
           letta --help
 
       - name: Test npm install flow (Unix)
