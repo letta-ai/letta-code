@@ -1,10 +1,13 @@
 const { describe, expect, test } = require("bun:test");
+const { execFileSync } = require("node:child_process");
 const { mkdtempSync, rmSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
+const { pathToFileURL } = require("node:url");
 const {
   ROOT_FAMILY,
   buildFamilyImpactIndex,
+  getGitChangedFiles,
   planUnitTests,
   readPullRequestShas,
 } = require("./unit-test-impact.cjs");
@@ -233,29 +236,58 @@ describe("unit-test impact planning", () => {
     expect(result.reason).toBe("no changed files were provided");
   });
 
-  test("pull request selection compares the base with the tested merge tree", () => {
+  test("selection uses the shallow checkout when the event names a stale merge", () => {
     const directory = mkdtempSync(join(tmpdir(), "unit-impact-event-"));
     const eventPath = join(directory, "event.json");
+    const checkout = join(directory, "checkout");
+    const git = (...args) =>
+      execFileSync("git", args, {
+        cwd: directory,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Test",
+          GIT_AUTHOR_EMAIL: "test@example.com",
+          GIT_COMMITTER_NAME: "Test",
+          GIT_COMMITTER_EMAIL: "test@example.com",
+        },
+      }).trim();
     try {
+      git("init", "-b", "main");
+      writeFileSync(join(directory, "base.txt"), "base");
+      git("add", "base.txt");
+      git("-c", "core.hooksPath=", "commit", "-m", "base");
+      const baseSha = git("rev-parse", "HEAD");
+      git("checkout", "-b", "feature");
+      writeFileSync(join(directory, "changed.txt"), "feature");
+      git("add", "changed.txt");
+      git("-c", "core.hooksPath=", "commit", "-m", "feature");
+      const branchHead = git("rev-parse", "HEAD");
+      git("checkout", "main");
+      git("-c", "core.hooksPath=", "merge", "--no-ff", "feature", "-m", "merge");
+      const headSha = git("rev-parse", "HEAD");
+      git("clone", "--depth=2", pathToFileURL(directory).href, checkout);
       writeFileSync(
         eventPath,
         JSON.stringify({
           pull_request: {
-            base: { sha: "base-sha" },
-            head: { sha: "branch-head-sha" },
-            merge_commit_sha: "tested-merge-sha",
+            base: { sha: baseSha },
+            head: { sha: branchHead },
+            merge_commit_sha: "700fce0cf421cd048f810e40822d608d7c81a2bc",
           },
         }),
       );
 
-      expect(readPullRequestShas(eventPath)).toEqual({
-        baseSha: "base-sha",
-        headSha: "tested-merge-sha",
-      });
+      const shas = readPullRequestShas(eventPath, checkout);
+      expect(shas).toEqual({ baseSha, headSha });
+      expect(getGitChangedFiles(shas.baseSha, shas.headSha, checkout)).toEqual([
+        { status: "A", path: "changed.txt", previousPath: undefined },
+      ]);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
-  });
+  }, 30000);
 });
 
 describe("current repository impact graph", () => {
