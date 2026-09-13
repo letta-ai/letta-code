@@ -1,0 +1,720 @@
+#!/usr/bin/env bun
+/**
+ * designing-an-agent scaffold script.
+ *
+ * Creates a new Letta agent from a design JSON file (schema in
+ * ../references/memory-design.md) using the Letta Agent SDK, then scaffolds
+ * its memfs memory and installs approved skills via the `letta` CLI.
+ *
+ * Usage:
+ *   bun create-agent.ts plan   --design <design.json>
+ *   bun create-agent.ts create --design <design.json> --yes [--agent <id>]
+ *
+ * Guarantees:
+ *   - `plan` makes no changes and needs no network.
+ *   - `create` requires --yes (explicit user confirmation happened in chat).
+ *   - The created agent id is pinned in <design>.state.json; re-running
+ *     `create` resumes scaffolding instead of creating a duplicate.
+ *   - Existing memory files are never overwritten.
+ *   - Backend (local vs Letta Cloud) is decided by the runtime agent
+ *     identity the harness injects (LETTA_AGENT_ID / AGENT_ID), never by
+ *     the base URL: a Cloud Tutor can sit behind a localhost Desktop proxy.
+ */
+
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+// ---------- Types ----------
+
+export interface SystemBlockDesign {
+  label: string;
+  description?: string;
+  value: string;
+}
+
+export interface MemoryFileDesign {
+  path: string;
+  content: string;
+}
+
+export interface AgentDesign {
+  name: string;
+  description?: string;
+  model?: string;
+  persona: string;
+  human?: string;
+  tags?: string[];
+  systemBlocks?: SystemBlockDesign[];
+  memoryFiles?: MemoryFileDesign[];
+  skills?: string[];
+}
+
+export interface BackendPlan {
+  /** SDK backend mode to use ("unknown" when no trustworthy signal exists). */
+  backend: "cloud" | "local" | "unknown";
+  /** Label for where the new agent's state will live. */
+  stateStore: string;
+  /** Human-readable reason for the selection. */
+  reason: string;
+  /** Requirements not met by the current environment/design. */
+  missing: string[];
+}
+
+interface CreateState {
+  agentId: string;
+  backend: string;
+  stateStore: string;
+  createdAt: string;
+}
+
+// ---------- Pure logic (also exercised by tests) ----------
+
+const RESERVED_BLOCK_LABELS = new Set(["persona", "human"]);
+
+/**
+ * MemFS pre-commit hooks reject Markdown files that do not open with a
+ * frontmatter block, so the design must carry it before anything is written.
+ */
+export function hasValidFrontmatter(content: string): boolean {
+  return /^---\r?\n[\s\S]*?\r?\n---(\r?\n|$)/.test(content);
+}
+
+export function isSafeRelativePath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  return (
+    normalized.length > 0 &&
+    !normalized.startsWith("/") &&
+    !/^[A-Za-z]:/.test(normalized) &&
+    segments.length > 0 &&
+    segments.every((segment) => segment !== "." && segment !== "..")
+  );
+}
+
+export function validateDesign(raw: unknown): {
+  design: AgentDesign | null;
+  errors: string[];
+} {
+  const errors: string[] = [];
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return { design: null, errors: ["Design must be a JSON object."] };
+  }
+  const design = raw as AgentDesign;
+
+  if (typeof design.name !== "string" || !design.name.trim()) {
+    errors.push("`name` is required.");
+  }
+  if (typeof design.persona !== "string" || !design.persona.trim()) {
+    errors.push("`persona` is required.");
+  }
+
+  for (const block of design.systemBlocks ?? []) {
+    if (typeof block.label !== "string" || !block.label.trim()) {
+      errors.push("Every systemBlock needs a non-empty `label`.");
+    } else if (RESERVED_BLOCK_LABELS.has(block.label.trim())) {
+      errors.push(
+        `systemBlock label \`${block.label}\` is reserved — use the top-level persona/human fields.`,
+      );
+    }
+    if (typeof block.value !== "string" || !block.value.trim()) {
+      errors.push(`systemBlock \`${block.label}\` needs a non-empty \`value\`.`);
+    }
+  }
+
+  const seenPaths = new Set<string>();
+  for (const file of design.memoryFiles ?? []) {
+    const path = typeof file.path === "string" ? file.path : "";
+    if (!isSafeRelativePath(path)) {
+      errors.push(`memoryFiles path \`${path}\` must be a safe relative path.`);
+      continue;
+    }
+    if (path.replace(/\\/g, "/").startsWith("system/")) {
+      errors.push(
+        `memoryFiles path \`${path}\` is under system/ — use systemBlocks for always-loaded memory.`,
+      );
+    }
+    if (seenPaths.has(path)) {
+      errors.push(`memoryFiles path \`${path}\` is listed twice.`);
+    }
+    seenPaths.add(path);
+    if (typeof file.content !== "string" || !file.content.trim()) {
+      errors.push(`memoryFiles \`${path}\` needs non-empty \`content\`.`);
+    } else if (path.endsWith(".md") && !hasValidFrontmatter(file.content)) {
+      errors.push(
+        `memoryFiles \`${path}\` is Markdown without frontmatter — the MemFS pre-commit hook rejects it. Start the file with a block like \`---\\ndescription: <one line>\\n---\`.`,
+      );
+    }
+  }
+
+  for (const skill of design.skills ?? []) {
+    if (typeof skill !== "string" || !skill.trim()) {
+      errors.push("`skills` entries must be non-empty source strings.");
+    }
+  }
+
+  return { design: errors.length === 0 ? design : null, errors };
+}
+
+const LOCAL_AGENT_ID_PREFIX = "agent-local-";
+
+/**
+ * Decide where the new agent should be created.
+ *
+ * The primary signal is the runtime agent identity the harness exports to
+ * skill shells (LETTA_AGENT_ID / AGENT_ID): `agent-local-*` ids live in the
+ * experimental local backend, any other `agent-*` id lives in Letta Cloud.
+ * The base URL is deliberately ignored — a Cloud Tutor running behind
+ * Desktop sees a localhost LETTA_BASE_URL proxy, so the URL says nothing
+ * about where agent state lives. Without an agent identity, the local
+ * experimental flag is the only fallback; otherwise the plan is ambiguous
+ * and creation must not proceed.
+ */
+export function resolveBackendPlan(
+  design: Pick<AgentDesign, "model">,
+  env: Record<string, string | undefined>,
+): BackendPlan {
+  const agentId = (env.LETTA_AGENT_ID || env.AGENT_ID || "").trim();
+
+  if (agentId.startsWith(LOCAL_AGENT_ID_PREFIX)) {
+    return {
+      backend: "local",
+      stateStore: "local-backend",
+      reason: `Running as local-backend agent ${agentId}.`,
+      missing: [],
+    };
+  }
+
+  if (agentId.startsWith("agent-")) {
+    const missing: string[] = [];
+    if (!env.LETTA_API_KEY?.trim()) {
+      missing.push(
+        "LETTA_API_KEY is not set (required to create a Letta Cloud agent).",
+      );
+    }
+    if (!design.model?.trim()) {
+      missing.push(
+        "Design has no `model` (Cloud agent creation requires an explicit model).",
+      );
+    }
+    return {
+      backend: "cloud",
+      stateStore: "letta-cloud",
+      reason: `Running as Cloud agent ${agentId}; the SDK resolves the Cloud API base itself.`,
+      missing,
+    };
+  }
+
+  const localExperimental =
+    env.LETTA_LOCAL_BACKEND_EXPERIMENTAL === "1" ||
+    env.LETTA_LOCAL_BACKEND_EXPERIMENTAL?.toLowerCase() === "true";
+  if (localExperimental) {
+    return {
+      backend: "local",
+      stateStore: "local-backend",
+      reason:
+        "No agent identity in the environment; falling back to the enabled experimental local backend.",
+      missing: [],
+    };
+  }
+
+  return {
+    backend: "unknown",
+    stateStore: "unknown",
+    reason: "No trustworthy backend signal in the environment.",
+    missing: [
+      "Cannot determine the target backend: no LETTA_AGENT_ID/AGENT_ID identity and LETTA_LOCAL_BACKEND_EXPERIMENTAL is not enabled. Run this from a Letta agent shell (or export the Tutor's agent id) instead of guessing.",
+    ],
+  };
+}
+
+/**
+ * Memfs checkout location for an agent, matching the harness layout.
+ * Keyed off the *created* agent's id: `agent-local-*` ids live under the
+ * local-backend storage dir, all other ids under ~/.letta/agents/.
+ */
+export function resolveMemoryDir(
+  agentId: string,
+  env: Record<string, string | undefined>,
+  homeDir: string = homedir(),
+): string {
+  if (agentId.startsWith(LOCAL_AGENT_ID_PREFIX)) {
+    const storageDir =
+      env.LETTA_LOCAL_BACKEND_DIR ?? join(homeDir, ".letta", "lc-local-backend");
+    return join(storageDir, "memfs", agentId, "memory");
+  }
+  return join(homeDir, ".letta", "agents", agentId, "memory");
+}
+
+/**
+ * Map a validated design onto the SDK's CreateAgentOptions.
+ *
+ * Two SDK constraints shape this:
+ *   - `validateCreateAgentOptions` requires persona/human labels inside
+ *     `memory` whenever `memory` is provided alongside the top-level fields.
+ *   - The app-server adapter rejects preset name strings ("persona") in
+ *     `memory`, and appends blocks for the top-level persona/human fields
+ *     itself — so combining both would either throw or duplicate blocks.
+ *
+ * Therefore: without custom blocks, use only the top-level convenience
+ * fields; with custom blocks, put persona/human in `memory` as explicit
+ * block objects and omit the top-level fields entirely.
+ */
+export function buildSdkCreateAgentOptions(
+  design: AgentDesign,
+): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    name: design.name,
+    ...(design.description ? { description: design.description } : {}),
+    ...(design.model ? { model: design.model } : {}),
+    ...(design.tags?.length ? { tags: design.tags } : {}),
+    memfs: true,
+  };
+
+  const systemBlocks = design.systemBlocks ?? [];
+  if (systemBlocks.length === 0) {
+    return {
+      ...base,
+      persona: design.persona,
+      ...(design.human ? { human: design.human } : {}),
+    };
+  }
+
+  return {
+    ...base,
+    memory: [
+      { label: "persona", value: design.persona },
+      ...(design.human ? [{ label: "human", value: design.human }] : []),
+      ...systemBlocks.map((block) => ({
+        label: block.label,
+        value: block.value,
+        ...(block.description ? { description: block.description } : {}),
+      })),
+    ],
+  };
+}
+
+// ---------- SDK loading ----------
+
+type AgentSdk = typeof import("@letta-ai/letta-agent-sdk");
+
+async function loadSdk(): Promise<AgentSdk> {
+  try {
+    return (await import("@letta-ai/letta-agent-sdk")) as AgentSdk;
+  } catch {
+    // Not resolvable from the script location — bootstrap a scratch install.
+  }
+
+  const workdir =
+    process.env.LETTA_AGENT_SDK_WORKDIR ??
+    join(homedir(), ".letta", "tmp", "designing-an-agent-sdk");
+  const entry = join(
+    workdir,
+    "node_modules",
+    "@letta-ai",
+    "letta-agent-sdk",
+    "dist",
+    "index.js",
+  );
+  if (!existsSync(entry)) {
+    mkdirSync(workdir, { recursive: true });
+    const pkgPath = join(workdir, "package.json");
+    if (!existsSync(pkgPath)) {
+      writeFileSync(
+        pkgPath,
+        `${JSON.stringify({ name: "designing-an-agent-workspace", private: true })}\n`,
+      );
+    }
+    console.error(`Installing @letta-ai/letta-agent-sdk into ${workdir} ...`);
+    execFileSync("bun", ["add", "@letta-ai/letta-agent-sdk"], {
+      cwd: workdir,
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+  }
+  return (await import(pathToFileURL(entry).href)) as AgentSdk;
+}
+
+// ---------- CLI / git helpers ----------
+
+function runLetta(args: string[]): { stdout: string; exitCode: number } {
+  try {
+    const stdout = execFileSync("letta", args, {
+      encoding: "utf-8",
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    return { stdout, exitCode: 0 };
+  } catch (error) {
+    const err = error as { stdout?: string; status?: number };
+    return { stdout: err.stdout ?? "", exitCode: err.status ?? 1 };
+  }
+}
+
+function runGit(cwd: string, args: string[]): string {
+  // Capture stderr so probe failures (e.g. the remote check) stay quiet;
+  // real failures still throw with stderr attached to the error object.
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf-8",
+    maxBuffer: 16 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+// ---------- Steps ----------
+
+function statePath(designPath: string): string {
+  return `${designPath}.state.json`;
+}
+
+function readState(designPath: string): CreateState | null {
+  const path = statePath(designPath);
+  if (!existsSync(path)) return null;
+  try {
+    const state = JSON.parse(readFileSync(path, "utf-8")) as CreateState;
+    return typeof state.agentId === "string" && state.agentId ? state : null;
+  } catch {
+    return null;
+  }
+}
+
+async function createAgentViaSdk(
+  design: AgentDesign,
+  plan: BackendPlan,
+): Promise<string> {
+  if (plan.backend === "unknown") {
+    throw new Error("Backend is ambiguous; refusing to create an agent.");
+  }
+  const sdk = await loadSdk();
+  // Cloud: authenticate with the Tutor's own credentials (LETTA_API_KEY,
+  // injected by the harness). The Cloud API base is resolved by the SDK —
+  // this script never hard-codes a server URL. Local: the SDK spawns a
+  // letta-code app-server whose harness backend defaults to the
+  // experimental local backend, matching agent-local-* state.
+  const client =
+    plan.backend === "cloud"
+      ? new sdk.LettaAgentClient({
+          backend: "cloud",
+          apiKey: process.env.LETTA_API_KEY,
+        })
+      : new sdk.LettaAgentClient({ backend: "local" });
+
+  type SdkCreateAgentOptions = Parameters<typeof client.createAgent>[0];
+  return client.createAgent(
+    buildSdkCreateAgentOptions(design) as SdkCreateAgentOptions,
+  );
+}
+
+/**
+ * Decide what to do with one designed memory file given what is already on
+ * disk. A file whose content exactly matches the design is resumable
+ * scaffold state (a previous run may have written it but failed to commit),
+ * so it is re-staged rather than classified as skipped. A file with
+ * different content is never overwritten.
+ */
+export function classifyMemoryFileWrite(
+  existingContent: string | null,
+  designContent: string,
+): "create" | "stage-existing" | "skip" {
+  if (existingContent === null) return "create";
+  return existingContent === designContent ? "stage-existing" : "skip";
+}
+
+export interface ApplyMemoryFilesResult {
+  created: string[];
+  /** Existing files whose content matched the design; re-staged for commit. */
+  staged: string[];
+  /** Existing files with different content; left untouched. */
+  skipped: string[];
+  committed: boolean;
+}
+
+/**
+ * Write designed files into an existing memfs git checkout, then stage and
+ * commit anything not yet committed. Idempotent: re-running after a partial
+ * failure (e.g. a rejected commit) picks the same files back up.
+ */
+export function applyMemoryFilesToCheckout(
+  memoryDir: string,
+  agentId: string,
+  files: MemoryFileDesign[],
+): ApplyMemoryFilesResult {
+  const created: string[] = [];
+  const staged: string[] = [];
+  const skipped: string[] = [];
+
+  for (const file of files) {
+    const fullPath = join(memoryDir, file.path);
+    const existing = existsSync(fullPath)
+      ? readFileSync(fullPath, "utf-8")
+      : null;
+    const action = classifyMemoryFileWrite(existing, file.content);
+    if (action === "skip") {
+      skipped.push(file.path);
+      continue;
+    }
+    if (action === "create") {
+      mkdirSync(dirname(fullPath), { recursive: true });
+      writeFileSync(fullPath, file.content, "utf-8");
+      created.push(file.path);
+    } else {
+      staged.push(file.path);
+    }
+  }
+
+  const pathspecs = [...created, ...staged];
+  let committed = false;
+  if (pathspecs.length > 0) {
+    runGit(memoryDir, ["add", "--", ...pathspecs]);
+    // Commit only when the files are not already committed (an existing
+    // matching file may just need staging, or may already be in history).
+    const status = runGit(memoryDir, ["status", "--porcelain", "--", ...pathspecs]);
+    if (status.trim()) {
+      runGit(memoryDir, [
+        "-c",
+        "user.name=designing-an-agent",
+        "-c",
+        `user.email=${agentId}@letta.com`,
+        "commit",
+        "-m",
+        "chore(designing-an-agent): scaffold initial memory",
+      ]);
+      committed = true;
+    }
+    // Push only when the checkout has a remote (the experimental local
+    // backend keeps memory in a local-only repo).
+    let hasRemote = true;
+    try {
+      runGit(memoryDir, ["remote", "get-url", "origin"]);
+    } catch {
+      hasRemote = false;
+    }
+    if (committed && hasRemote) {
+      runGit(memoryDir, ["push"]);
+    }
+  }
+
+  return { created, staged, skipped, committed };
+}
+
+function scaffoldMemoryFiles(
+  agentId: string,
+  files: MemoryFileDesign[],
+): ApplyMemoryFilesResult {
+  if (files.length === 0) {
+    return { created: [], staged: [], skipped: [], committed: false };
+  }
+
+  // `letta skills list` materializes the agent's local memfs checkout
+  // (clone + credential setup) as a side effect of resolving its memory dir.
+  const listResult = runLetta(["skills", "list", "--agent", agentId]);
+  if (listResult.exitCode !== 0) {
+    throw new Error(
+      `Could not materialize the memfs checkout for ${agentId} (letta skills list failed).`,
+    );
+  }
+
+  const memoryDir = resolveMemoryDir(agentId, process.env);
+  if (!existsSync(memoryDir)) {
+    throw new Error(`Expected memfs checkout at ${memoryDir}, but it is missing.`);
+  }
+
+  return applyMemoryFilesToCheckout(memoryDir, agentId, files);
+}
+
+function installSkills(
+  agentId: string,
+  sources: string[],
+): { installed: string[]; failed: string[] } {
+  const installed: string[] = [];
+  const failed: string[] = [];
+  for (const source of sources) {
+    const result = runLetta(["skills", "install", source, "--agent", agentId]);
+    if (result.exitCode === 0) {
+      installed.push(source);
+    } else {
+      failed.push(source);
+    }
+  }
+  return { installed, failed };
+}
+
+function verify(agentId: string): Record<string, unknown> {
+  const skills = runLetta(["skills", "list", "--agent", agentId]);
+  const memory = runLetta(["memory", "status", "--agent", agentId]);
+  let skillNames: string[] = [];
+  try {
+    const parsed = JSON.parse(skills.stdout) as {
+      skills?: Array<{ name: string }>;
+    };
+    skillNames = (parsed.skills ?? []).map((skill) => skill.name);
+  } catch {
+    // Non-JSON output; leave names empty and surface the raw exit code.
+  }
+  return {
+    skills: skillNames,
+    // Exit code 2 means dirty/ahead-of-remote, which is a warning, not failure.
+    memoryStatusExitCode: memory.exitCode,
+  };
+}
+
+// ---------- Main ----------
+
+function parseCliArgs(argv: string[]): {
+  mode: string;
+  designPath: string | null;
+  yes: boolean;
+  agentOverride: string | null;
+} {
+  const mode = argv[0] ?? "plan";
+  let designPath: string | null = null;
+  let agentOverride: string | null = null;
+  let yes = false;
+  for (let i = 1; i < argv.length; i++) {
+    if (argv[i] === "--design") designPath = argv[++i] ?? null;
+    else if (argv[i] === "--agent") agentOverride = argv[++i] ?? null;
+    else if (argv[i] === "--yes") yes = true;
+  }
+  return { mode, designPath, yes, agentOverride };
+}
+
+async function main(): Promise<number> {
+  const { mode, designPath, yes, agentOverride } = parseCliArgs(
+    process.argv.slice(2),
+  );
+  if (!["plan", "create"].includes(mode) || !designPath) {
+    console.error(
+      "Usage: bun create-agent.ts plan|create --design <design.json> [--yes] [--agent <id>]",
+    );
+    return 1;
+  }
+  if (!existsSync(designPath)) {
+    console.error(`Design file not found: ${designPath}`);
+    return 1;
+  }
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(designPath, "utf-8"));
+  } catch (error) {
+    console.error(`Design file is not valid JSON: ${String(error)}`);
+    return 1;
+  }
+
+  const { design, errors } = validateDesign(raw);
+  const plan = resolveBackendPlan((raw as AgentDesign) ?? {}, process.env);
+  const existingState = readState(designPath);
+
+  if (mode === "plan" || !design || errors.length > 0 || plan.missing.length > 0) {
+    console.log(
+      JSON.stringify(
+        {
+          mode: "plan",
+          valid: errors.length === 0 && plan.missing.length === 0,
+          errors: [...errors, ...plan.missing],
+          backend: plan.backend,
+          stateStore: plan.stateStore,
+          reason: plan.reason,
+          agent: design
+            ? {
+                name: design.name,
+                model: design.model ?? "(harness default)",
+                systemBlocks: (design.systemBlocks ?? []).map((b) => b.label),
+                memoryFiles: (design.memoryFiles ?? []).map((f) => f.path),
+                skills: design.skills ?? [],
+              }
+            : null,
+          existingAgentId: existingState?.agentId ?? null,
+          note: existingState
+            ? "An agent was already created from this design; `create` will resume scaffolding it."
+            : "No changes made. Review with the user, then re-run with `create --yes`.",
+        },
+        null,
+        2,
+      ),
+    );
+    return mode === "plan" && errors.length === 0 && plan.missing.length === 0
+      ? 0
+      : mode === "plan"
+        ? 2
+        : 1;
+  }
+
+  if (!yes) {
+    console.error(
+      "Refusing to create without --yes. Show the plan to the user and get explicit confirmation first.",
+    );
+    return 1;
+  }
+
+  let agentId = agentOverride ?? existingState?.agentId ?? null;
+  const resumed = agentId !== null;
+  if (!agentId) {
+    agentId = await createAgentViaSdk(design, plan);
+    const state: CreateState = {
+      agentId,
+      backend: plan.backend,
+      stateStore: plan.stateStore,
+      createdAt: new Date().toISOString(),
+    };
+    writeFileSync(statePath(designPath), `${JSON.stringify(state, null, 2)}\n`);
+  }
+
+  try {
+    const files = scaffoldMemoryFiles(agentId, design.memoryFiles ?? []);
+    const skills = installSkills(agentId, design.skills ?? []);
+    const verification = verify(agentId);
+    console.log(
+      JSON.stringify(
+        {
+          mode: "create",
+          agentId,
+          backend: plan.backend,
+          stateStore: plan.stateStore,
+          resumed,
+          memoryFiles: files,
+          skills,
+          verification,
+          nextSteps: [
+            `Talk to the agent: letta --agent ${agentId}`,
+            skills.failed.length > 0
+              ? `Retry failed skill installs: ${skills.failed.join(", ")}`
+              : null,
+            files.skipped.length > 0
+              ? `Reconcile manually (existing content differs from the design; never overwritten): ${files.skipped.join(", ")}`
+              : null,
+          ].filter(Boolean),
+        },
+        null,
+        2,
+      ),
+    );
+    return skills.failed.length > 0 ? 2 : 0;
+  } catch (error) {
+    console.error(
+      JSON.stringify(
+        {
+          mode: "create",
+          agentId,
+          backend: plan.backend,
+          error: String(error),
+          recovery: `The agent exists (${agentId}) and its id is pinned in ${statePath(designPath)}. Fix the issue and re-run the same create command to resume; nothing will be duplicated or overwritten.`,
+        },
+        null,
+        2,
+      ),
+    );
+    return 1;
+  }
+}
+
+if (import.meta.main) {
+  main().then(
+    (code) => process.exit(code),
+    (error) => {
+      console.error(String(error));
+      process.exit(1);
+    },
+  );
+}
