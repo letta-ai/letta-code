@@ -67,6 +67,46 @@ test("active continuation dequeue emits exact message identities", async () => {
   });
 });
 
+test("mid-turn selection leaves skipped message correlations queued", async () => {
+  const listener = __listenClientTestUtils.createListenerRuntime();
+  const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conv-1",
+  );
+  const socket = new MockSocket();
+  listener.socket = socket as unknown as WebSocket;
+  enqueueInboundUserMessage(
+    runtime,
+    queuedMessage("scheduled"),
+    "schedule-user",
+  );
+  enqueueInboundUserMessage(
+    runtime,
+    queuedMessage("reply", "reply-part-2"),
+    "user-a",
+  );
+  const consumed = consumeQueuedTurn(runtime, { actingUserId: "user-a" });
+  expect(
+    runtime.dequeuedClientMessageIdsByBatchId.get(
+      consumed?.dequeuedBatch.batchId ?? "missing",
+    ),
+  ).toEqual(["reply", "reply-part-2"]);
+  await Promise.resolve();
+  const updates = socket.sentPayloads
+    .map((payload) => JSON.parse(payload))
+    .filter((payload) => payload.type === "update_queue");
+  expect(updates).toHaveLength(1);
+  expect(updates[0]).toMatchObject({
+    queue: [{ client_message_id: "scheduled" }],
+    removed: [{ client_message_id: "reply", disposition: "dequeued" }],
+  });
+  const remaining = runtime.queueRuntime.peek()[0];
+  expect(runtime.queuedMessagesByItemId.has(remaining?.id ?? "missing")).toBe(
+    true,
+  );
+});
+
 test("explicit queue removal emits cancellation rather than dequeue", async () => {
   const listener = __listenClientTestUtils.createListenerRuntime();
   const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(

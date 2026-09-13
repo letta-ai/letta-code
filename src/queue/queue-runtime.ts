@@ -357,7 +357,21 @@ export class QueueRuntime {
   consumeItems(n: number): DequeuedBatch | null {
     if (this.store.length === 0 || n <= 0) return null;
     // Paused items are skipped: the first `n` ready items are consumed.
-    const batch = this.store.filter((item) => !item.paused).slice(0, n);
+    return this.consumeSelectedItems(
+      new Set(
+        this.peekReady()
+          .slice(0, n)
+          .map((item) => item.id),
+      ),
+    );
+  }
+
+  /**
+   * Consume caller-selected ready items in queue order, leaving all other
+   * items untouched. Emits one dequeue batch with the selected correlations.
+   */
+  consumeSelectedItems(ids: ReadonlySet<string>): DequeuedBatch | null {
+    const batch = this.store.filter((item) => !item.paused && ids.has(item.id));
     const count = batch.length;
     if (count === 0) return null;
     this.removeAll(batch);

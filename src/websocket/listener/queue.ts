@@ -294,32 +294,34 @@ export function consumeQueuedTurn(
     return null;
   }
 
-  let queueLen = 0;
-  let hasMessage = false;
-  let hasTaskNotification = false;
-  let hasCronPrompt = false;
-  let hasModContinue = false;
+  const selectedItems: QueueItem[] = [];
   let batchConnectionId: string | undefined;
-  let batchActingUserId = firstQueuedItem.actingUserId;
+  let batchActingUserId = continuation
+    ? continuation.actingUserId
+    : firstQueuedItem.actingUserId;
   let batchImageFailureMode: "strict" | "drop" | null = null;
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
     candidate.kind === "message" && candidate.noCoalesce === true;
   for (const item of queuedItems) {
-    // Tool results belong to the active request's sender. Leave a different
-    // sender's input queued for its own turn, including attributed/anonymous
-    // transitions. Idle queue drains do not have an active sender to preserve.
-    if (continuation && item.actingUserId !== continuation.actingUserId) {
-      break;
-    }
     if (
       !isCoalescable(item.kind) ||
       !hasSameQueueScope(firstQueuedItem, item)
     ) {
       break;
     }
+    // Tool results retain the active sender. Other senders wait for their
+    // own turn without blocking eligible input behind them. Do not cross
+    // approval/overlay barriers or conversation scopes to find that input.
+    if (continuation && item.actingUserId !== continuation.actingUserId) {
+      continue;
+    }
     // noCoalesce items run as single-item batches: one never joins an
     // existing batch, and nothing joins a batch it started.
-    if (queueLen > 0 && (isNoCoalesce(item) || isNoCoalesce(firstQueuedItem))) {
+    const firstSelectedItem = selectedItems[0];
+    if (
+      firstSelectedItem &&
+      (isNoCoalesce(item) || isNoCoalesce(firstSelectedItem))
+    ) {
       break;
     }
     if (
@@ -355,32 +357,12 @@ export function consumeQueuedTurn(
     }
 
     batchActingUserId ??= item.actingUserId;
-    queueLen += 1;
-    if (item.kind === "message") {
-      hasMessage = true;
-    }
-    if (item.kind === "task_notification") {
-      hasTaskNotification = true;
-    }
-    if (item.kind === "cron_prompt") {
-      hasCronPrompt = true;
-    }
-    if (item.kind === "mod_continue") {
-      hasModContinue = true;
-    }
+    selectedItems.push(item);
   }
 
-  if (
-    (!hasMessage &&
-      !hasTaskNotification &&
-      !hasCronPrompt &&
-      !hasModContinue) ||
-    queueLen === 0
-  ) {
-    return null;
-  }
-
-  const dequeuedBatch = runtime.queueRuntime.consumeItems(queueLen);
+  const dequeuedBatch = runtime.queueRuntime.consumeSelectedItems(
+    new Set(selectedItems.map((item) => item.id)),
+  );
   if (!dequeuedBatch) {
     return null;
   }

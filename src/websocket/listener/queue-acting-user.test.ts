@@ -40,7 +40,7 @@ describe("listener queue acting-user attribution", () => {
     [undefined, "cloud-user-b"],
     ["cloud-user-a", undefined],
   ])(
-    "continuation stops before a different sender after a matching prefix",
+    "continuation skips a different sender and preserves matching order",
     (activeUser, otherUser) => {
       const runtime = getOrCreateScopedRuntime(
         createRuntime(),
@@ -52,15 +52,20 @@ describe("listener queue acting-user attribution", () => {
       enqueueNotification(runtime, "later same sender", activeUser);
 
       const current = consumeQueuedTurn(runtime, { actingUserId: activeUser });
-      expect(current?.dequeuedBatch.items).toHaveLength(1);
+      expect(current?.dequeuedBatch.items).toHaveLength(2);
+      expect(
+        current?.dequeuedBatch.items.map((item) =>
+          item.kind === "task_notification" ? item.text : null,
+        ),
+      ).toEqual(["same sender", "later same sender"]);
       expect(current?.queuedTurn.actingUserId).toBe(activeUser);
-      expect(runtime.queueRuntime.length).toBe(2);
+      expect(runtime.queueRuntime.length).toBe(1);
       expect(
         consumeQueuedTurn(runtime, { actingUserId: activeUser }),
       ).toBeNull();
       expect(
         runtime.queueRuntime.peekReady().map((item) => item.actingUserId),
-      ).toEqual([otherUser, activeUser]);
+      ).toEqual([otherUser]);
     },
   );
 

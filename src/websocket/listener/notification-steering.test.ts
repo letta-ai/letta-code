@@ -54,13 +54,17 @@ for (const producer of [
   "Monitor",
   "WebSocket",
 ] as const) {
-  for (const [activeUser, owner] of [
-    ["user-a", "user-a"],
-    ["user-a", "user-b"],
-    ["user-a", undefined],
-    [undefined, undefined],
-  ]) {
-    test(`${producer}: ${owner ?? "anonymous"} completion during ${activeUser ?? "anonymous"} turn`, async () => {
+  for (const [activeUser, owner, scheduledFirst] of [
+    ["user-a", "user-a", false],
+    ["user-a", "user-b", false],
+    ["user-a", undefined, false],
+    [undefined, undefined, false],
+    ["user-a", "user-a", true],
+    ["user-a", "user-b", true],
+    ["user-a", undefined, true],
+    [undefined, undefined, true],
+  ] as const) {
+    test(`${producer}: ${owner ?? "anonymous"} completion during ${activeUser ?? "anonymous"} turn, scheduled first=${scheduledFirst}`, async () => {
       const directory = mkdtempSync(join(tmpdir(), "notification-steering-"));
       const releaseFile = join(directory, "release");
       const script = join(directory, "wait.cjs");
@@ -84,6 +88,25 @@ for (const producer of [
         workingDirectory: directory,
         initialStatus: "PROCESSING_API_RESPONSE",
       });
+      // Cloud schedules arrive as ordinary input, under the schedule's author.
+      if (scheduledFirst) {
+        enqueueInboundUserMessage(
+          runtime,
+          {
+            type: "message",
+            ...scope,
+            messages: [
+              {
+                role: "user",
+                content: "Scheduled task is firing.",
+                client_message_id: "scheduled-input",
+              },
+            ],
+          },
+          "schedule-user",
+        );
+      }
+      const queuedSchedule = runtime.queueRuntime.peek()[0];
       const socket = new LocalListenerTransport();
       installProcessEventRouting({
         runtime: listener,
@@ -178,10 +201,12 @@ for (const producer of [
           // Shell monitors emit an event and a terminal notice. Both must steer.
           await waitFor(
             () =>
-              runtime.queueRuntime.length === (producer === "Monitor" ? 2 : 1),
+              runtime.queueRuntime.length ===
+              (producer === "Monitor" ? 2 : 1) + Number(scheduledFirst),
           );
         });
-        const notificationCount = runtime.queueRuntime.length;
+        const notificationCount =
+          runtime.queueRuntime.length - Number(scheduledFirst);
         enqueueInboundUserMessage(
           runtime,
           {
@@ -272,16 +297,31 @@ for (const producer of [
           (requests[0]?.body as { messages: unknown[] }).messages,
         );
         expect(body).toContain("call-next");
+        expect(body).toContain("Change direction now");
+        expect(body).not.toContain("Scheduled task is firing.");
         if (owner === activeUser) {
           expect(body).toContain("background complete");
-          expect(body).toContain("Change direction now");
-          expect(runtime.queueRuntime.length).toBe(0);
         } else {
           expect(body).not.toContain("background complete");
-          expect(body).not.toContain("Change direction now");
-          expect(runtime.queueRuntime.length).toBe(notificationCount + 1);
+        }
+        expect(runtime.queueRuntime.length).toBe(
+          Number(scheduledFirst) +
+            (owner === activeUser ? 0 : notificationCount),
+        );
+        runtime.turnLifecycle.finish(lease, "end_turn");
+        if (scheduledFirst) {
+          expect(runtime.queueRuntime.peek()[0]).toBe(queuedSchedule);
+          expect(
+            runtime.queuedMessagesByItemId.has(queuedSchedule?.id ?? "missing"),
+          ).toBe(true);
+          const scheduled = consumeQueuedTurn(runtime);
+          expect(scheduled?.queuedTurn.actingUserId).toBe("schedule-user");
+          expect(JSON.stringify(scheduled?.queuedTurn.messages)).toContain(
+            "Scheduled task is firing.",
+          );
+        }
+        if (runtime.queueRuntime.length > 0) {
           expect(runtime.queueRuntime.peek()[0]?.actingUserId).toBe(owner);
-          runtime.turnLifecycle.finish(lease, "end_turn");
           const next = consumeQueuedTurn(runtime);
           expect(next?.dequeuedBatch.items[0]?.actingUserId).toBe(owner);
         }
