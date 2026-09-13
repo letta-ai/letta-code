@@ -1,24 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import {
-  type AgentReminderContext,
   buildMcpServersInfoReminderText,
   type McpServersReminderDependencies,
 } from "./engine";
-import { buildListenReminderContext } from "./listen-context";
-import {
-  createSharedReminderState,
-  markPostCompactionContextRemindersPending,
-} from "./state";
+import { createSharedReminderState } from "./state";
 
 const MCP_AGENT_ID = "agent-reminder-mcp";
 
 async function buildReminder(
   state: ReturnType<typeof createSharedReminderState>,
   deps: McpServersReminderDependencies,
-  mcpServers?: AgentReminderContext["mcpServers"],
 ) {
   return await buildMcpServersInfoReminderText(
-    buildListenReminderContext({ agentId: MCP_AGENT_ID, state, mcpServers }),
+    { agent: { id: MCP_AGENT_ID, name: null }, state },
     deps,
   );
 }
@@ -69,86 +63,57 @@ describe("mcp servers info reminder", () => {
     expect(state.hasSentMcpServersInfo).toBe(false);
   });
 
-  test("uses included attachments immediately without discovery or tool-count requests", async () => {
+  test("reports attachments and detachments on the next turn without waiting", async () => {
     const state = createSharedReminderState();
-    const servers = [
-      { id: "mcp-1", server_name: "exa", mcp_server_type: "streamable_http" },
-    ];
-    let discoveryCalls = 0;
+    let servers: Array<{ name: string; toolCount: number }> = [];
     const deps: McpServersReminderDependencies = {
       getLocalServerNames: () => [],
-      listServerSideServers: async () => {
-        discoveryCalls++;
-        throw new Error("Included relationships must not invoke discovery");
-      },
+      listServerSideServers: async () => [...servers],
     };
 
-    expect(await buildReminder(state, deps, [])).toContain(
-      "MCP servers with available tools: None",
-    );
-
-    expect(await buildReminder(state, deps, servers)).toContain(
-      "MCP servers with available tools: exa\n",
-    );
-
-    // Unchanged lists do not add duplicate reminders.
-    expect(await buildReminder(state, deps, servers)).toBeNull();
-    markPostCompactionContextRemindersPending(state);
-    expect(await buildReminder(state, deps, servers)).toContain(
-      "MCP servers with available tools: exa\n",
-    );
-
-    expect(await buildReminder(state, deps, [])).toContain(
-      "MCP servers with available tools: None",
-    );
-    expect(discoveryCalls).toBe(0);
-  });
-
-  test("keeps local servers alongside an explicitly empty cloud relationship", async () => {
-    const text = await buildReminder(
-      createSharedReminderState(),
-      {
-        getLocalServerNames: () => ["filesystem"],
-        listServerSideServers: async () => {
-          throw new Error("Unexpected fallback discovery");
-        },
-      },
-      [],
-    );
-    expect(text).toContain("MCP servers with available tools: filesystem\n");
-  });
-
-  test("retains throttled discovery only when the relationship is absent", async () => {
-    const state = createSharedReminderState();
-    let servers = [{ name: "exa", toolCount: 2 }];
-    let discoveryCalls = 0;
-    const deps: McpServersReminderDependencies = {
-      getLocalServerNames: () => [],
-      listServerSideServers: async () => {
-        discoveryCalls++;
-        return servers;
-      },
-    };
-    expect(await buildReminder(state, deps)).toContain("exa (2 tools)");
-    servers = [];
-    expect(await buildReminder(state, deps)).toBeNull();
-    expect(discoveryCalls).toBe(1);
-    state.lastMcpServersFetchedAtMs = 0;
     expect(await buildReminder(state, deps)).toContain(
       "MCP servers with available tools: None",
     );
-    expect(discoveryCalls).toBe(2);
 
-    // A new-server response bypasses even a just-refreshed compatibility cache.
+    servers = [
+      { name: "exa", toolCount: 2 },
+      { name: "betterstack", toolCount: 111 },
+    ];
+    expect(await buildReminder(state, deps)).toContain(
+      "MCP servers with available tools: exa (2 tools), betterstack (111 tools)",
+    );
+
+    // Unchanged lists do not add duplicate reminders.
+    expect(await buildReminder(state, deps)).toBeNull();
+
+    servers = [];
+    expect(await buildReminder(state, deps)).toContain(
+      "MCP servers with available tools: None",
+    );
+  });
+
+  test("retries discovery next turn after failure without losing the last sent list", async () => {
+    const state = createSharedReminderState();
+    const deps: McpServersReminderDependencies = {
+      getLocalServerNames: () => [],
+      listServerSideServers: async () => [{ name: "exa", toolCount: 2 }],
+    };
+    await buildReminder(state, deps);
+    const lastSent = state.lastSentMcpServerNamesKey;
     expect(
-      await buildReminder(state, deps, [
-        {
-          id: "mcp-2",
-          server_name: "betterstack",
-          mcp_server_type: "streamable_http",
+      await buildReminder(state, {
+        ...deps,
+        listServerSideServers: async () => {
+          throw new Error("api down");
         },
-      ]),
-    ).toContain("MCP servers with available tools: betterstack\n");
-    expect(discoveryCalls).toBe(2);
+      }),
+    ).toBeNull();
+    expect(state.lastSentMcpServerNamesKey).toBe(lastSent);
+    expect(
+      await buildReminder(state, {
+        ...deps,
+        listServerSideServers: async () => [],
+      }),
+    ).toContain("MCP servers with available tools: None");
   });
 });

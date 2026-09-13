@@ -1,5 +1,5 @@
 import type { ShellContext } from "@/utils/shell-context";
-import type { AgentReminderContext, SharedReminderContext } from "./engine";
+import type { SharedReminderContext } from "./engine";
 import type { SessionContextReason, SharedReminderState } from "./state";
 
 interface BuildListenReminderContextParams {
@@ -8,7 +8,6 @@ interface BuildListenReminderContextParams {
   agentName?: string | null;
   agentDescription?: string | null;
   agentLastRunAt?: string | null;
-  mcpServers?: AgentReminderContext["mcpServers"];
   state: SharedReminderState;
   /** Explicit working directory for session context (overrides process.cwd()). */
   workingDirectory?: string;
@@ -29,7 +28,6 @@ export function buildListenReminderContext(
       description: params.agentDescription ?? null,
       lastRunAt: params.agentLastRunAt ?? null,
       conversationId: params.conversationId,
-      mcpServers: params.mcpServers,
     },
     state: params.state,
     systemInfoReminderEnabled: true,
