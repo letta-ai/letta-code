@@ -24,7 +24,6 @@ import {
   clearProcessServices,
   installProcessEventRouting,
 } from "./process-services";
-import { consumeQueuedTurn } from "./queue";
 import { LocalListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 
@@ -181,7 +180,6 @@ for (const producer of [
               runtime.queueRuntime.length === (producer === "Monitor" ? 2 : 1),
           );
         });
-        const notificationCount = runtime.queueRuntime.length;
         enqueueInboundUserMessage(
           runtime,
           {
@@ -272,19 +270,10 @@ for (const producer of [
           (requests[0]?.body as { messages: unknown[] }).messages,
         );
         expect(body).toContain("call-next");
-        if (owner === activeUser) {
-          expect(body).toContain("background complete");
-          expect(body).toContain("Change direction now");
-          expect(runtime.queueRuntime.length).toBe(0);
-        } else {
-          expect(body).not.toContain("background complete");
-          expect(body).not.toContain("Change direction now");
-          expect(runtime.queueRuntime.length).toBe(notificationCount + 1);
-          expect(runtime.queueRuntime.peek()[0]?.actingUserId).toBe(owner);
-          runtime.turnLifecycle.finish(lease, "end_turn");
-          const next = consumeQueuedTurn(runtime);
-          expect(next?.dequeuedBatch.items[0]?.actingUserId).toBe(owner);
-        }
+        expect(body).toContain("background complete");
+        expect(body).toContain("Change direction now");
+        expect(body).toContain('"attribution":{}');
+        expect(runtime.queueRuntime.length).toBe(0);
       } finally {
         clearProcessServices(listener);
         releaseToolExecutionContext(prepared.contextId);

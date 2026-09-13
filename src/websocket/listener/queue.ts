@@ -1,11 +1,13 @@
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import {
+  type AttributedMessageCreate,
+  withMessageAttribution,
+} from "@/agent/message-attribution";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
   QueueItem,
 } from "@/queue/queue-runtime";
 import { isCoalescable } from "@/queue/queue-runtime";
-import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { debugWarn } from "@/utils/debug";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
@@ -67,152 +69,53 @@ function hasSameQueueScope(a: QueueItem, b: QueueItem): boolean {
   );
 }
 
-function mergeDequeuedBatchContent(
-  items: QueueItem[],
-): MessageCreate["content"] | null {
-  const queuedInputs: Array<
-    | { kind: "user"; content: MessageCreate["content"] }
-    | {
-        kind: "task_notification";
-        text: string;
-      }
-    | {
-        kind: "cron_prompt";
-        text: string;
-      }
-  > = [];
-
-  for (const item of items) {
-    if (item.kind === "message") {
-      queuedInputs.push({
-        kind: "user",
-        content: item.content,
-      });
-      continue;
-    }
-    if (item.kind === "task_notification") {
-      queuedInputs.push({
-        kind: "task_notification",
-        text: item.text,
-      });
-      continue;
-    }
-    if (item.kind === "cron_prompt") {
-      queuedInputs.push({
-        kind: "cron_prompt",
-        text: item.text,
-      });
-      continue;
-    }
-    if (item.kind === "mod_continue") {
-      // A continue is plain user text — merge it as user content.
-      queuedInputs.push({
-        kind: "user",
-        content: item.text,
-      });
-    }
-  }
-
-  return mergeQueuedTurnInput(queuedInputs, {
-    normalizeUserContent: (content) => content,
-  });
-}
-
-function getPrimaryQueueMessageItem(items: QueueItem[]): QueueItem | null {
-  for (const item of items) {
-    if (item.kind === "message") {
-      return item;
-    }
-  }
-  return null;
-}
-
-/**
- * Picks an acting cloud user id to attribute the outbound
- * createMessage to. Queue consumers keep different non-empty acting users in
- * separate batches; scanning from the end tolerates unattributed items around
- * the attributed work. Returns undefined when no item in the batch carries an
- * actingUserId (self-hosted / pre-channel-split flow).
- */
-export function pickBatchActingUserId(items: QueueItem[]): string | undefined {
-  for (let i = items.length - 1; i >= 0; i -= 1) {
-    const actingUserId = items[i]?.actingUserId;
-    if (actingUserId) {
-      return actingUserId;
-    }
-  }
-  return undefined;
-}
-
 function buildQueuedTurnMessage(
   runtime: ConversationRuntime,
   batch: DequeuedBatch,
 ): IncomingMessage | null {
-  const actingUserId = pickBatchActingUserId(batch.items);
-  const primaryItem = getPrimaryQueueMessageItem(batch.items);
-  if (!primaryItem) {
-    // No user message in the batch — this is a notification-only batch.
-    // Build a synthetic IncomingMessage to restart the agent loop.
-    for (const item of batch.items) {
-      runtime.queuedMessagesByItemId.delete(item.id);
-    }
-
-    const mergedContent = mergeDequeuedBatchContent(batch.items);
-    if (mergedContent === null) {
-      return null;
-    }
-
-    // Determine scope from the batch items (they all share the same scope)
-    const scopeItem = batch.items[0];
-    return {
-      type: "message",
-      agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
-      conversationId: scopeItem?.conversationId ?? runtime.conversationId,
-      ...(actingUserId ? { actingUserId } : {}),
-      messages: [
-        {
-          role: "user",
-          content: mergedContent,
-          otid: crypto.randomUUID(),
-        } satisfies MessageCreate,
-      ],
-    };
-  }
-
-  const template = runtime.queuedMessagesByItemId.get(primaryItem.id);
+  let template: IncomingMessage | undefined;
+  const messages: IncomingMessage["messages"] = [];
   for (const item of batch.items) {
+    const incoming = runtime.queuedMessagesByItemId.get(item.id);
+    if (item.kind === "message" && incoming) {
+      template ??= {
+        ...incoming,
+        actingUserId: incoming.actingUserId ?? item.actingUserId,
+      };
+      messages.push(
+        ...incoming.messages.map((message) =>
+          "content" in message
+            ? withMessageAttribution(
+                message,
+                item.actingUserId ?? incoming.actingUserId,
+              )
+            : message,
+        ),
+      );
+    } else if (item.kind === "message") {
+      messages.push(
+        withMessageAttribution(
+          { role: "user", content: item.content },
+          item.actingUserId,
+        ),
+      );
+    } else if (isCoalescable(item.kind) && "text" in item) {
+      messages.push({
+        role: "user",
+        content: item.text,
+        otid: crypto.randomUUID(),
+        attribution: {},
+      } satisfies AttributedMessageCreate);
+    }
     runtime.queuedMessagesByItemId.delete(item.id);
   }
-  if (!template) {
-    return null;
-  }
-
-  const mergedContent = mergeDequeuedBatchContent(batch.items);
-  if (mergedContent === null) {
-    return null;
-  }
-
-  const firstMessageIndex = template.messages.findIndex(
-    (payload): payload is MessageCreate & { client_message_id?: string } =>
-      "content" in payload,
-  );
-  if (firstMessageIndex === -1) {
-    return null;
-  }
-
-  const firstMessage = template.messages[firstMessageIndex] as MessageCreate & {
-    client_message_id?: string;
-  };
-  const mergedFirstMessage = {
-    ...firstMessage,
-    content: mergedContent,
-  };
-  const messages = template.messages.slice();
-  messages[firstMessageIndex] = mergedFirstMessage;
-
+  if (messages.length === 0) return null;
+  const scopeItem = batch.items[0];
   return {
+    type: "message",
+    agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
+    conversationId: scopeItem?.conversationId ?? runtime.conversationId,
     ...template,
-    ...(actingUserId ? { actingUserId } : {}),
     messages,
   };
 }
@@ -281,10 +184,7 @@ export function shouldProcessInboundMessageDirectly(
   );
 }
 
-export function consumeQueuedTurn(
-  runtime: ConversationRuntime,
-  continuation?: { actingUserId: string | undefined },
-): {
+export function consumeQueuedTurn(runtime: ConversationRuntime): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;
 } | null {
@@ -300,17 +200,10 @@ export function consumeQueuedTurn(
   let hasCronPrompt = false;
   let hasModContinue = false;
   let batchConnectionId: string | undefined;
-  let batchActingUserId = firstQueuedItem.actingUserId;
   let batchImageFailureMode: "strict" | "drop" | null = null;
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
     candidate.kind === "message" && candidate.noCoalesce === true;
   for (const item of queuedItems) {
-    // Tool results belong to the active request's sender. Leave a different
-    // sender's input queued for its own turn, including attributed/anonymous
-    // transitions. Idle queue drains do not have an active sender to preserve.
-    if (continuation && item.actingUserId !== continuation.actingUserId) {
-      break;
-    }
     if (
       !isCoalescable(item.kind) ||
       !hasSameQueueScope(firstQueuedItem, item)
@@ -320,13 +213,6 @@ export function consumeQueuedTurn(
     // noCoalesce items run as single-item batches: one never joins an
     // existing batch, and nothing joins a batch it started.
     if (queueLen > 0 && (isNoCoalesce(item) || isNoCoalesce(firstQueuedItem))) {
-      break;
-    }
-    if (
-      batchActingUserId &&
-      item.actingUserId &&
-      batchActingUserId !== item.actingUserId
-    ) {
       break;
     }
 
@@ -354,7 +240,6 @@ export function consumeQueuedTurn(
       batchImageFailureMode = itemImageFailureMode;
     }
 
-    batchActingUserId ??= item.actingUserId;
     queueLen += 1;
     if (item.kind === "message") {
       hasMessage = true;

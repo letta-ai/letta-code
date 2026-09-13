@@ -159,6 +159,7 @@ describe("recovered approval lease boundaries", () => {
       "cloud-user-charles",
     );
     let receivedActingUserId: string | undefined;
+    let receivedMessages: unknown;
 
     const handled = await resolveRecoveredApprovalResponse(
       runtime,
@@ -174,6 +175,7 @@ describe("recovered approval lease boundaries", () => {
         turnLease,
       ) => {
         receivedActingUserId = message.actingUserId;
+        receivedMessages = message.messages;
         if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
       },
       {
@@ -187,7 +189,10 @@ describe("recovered approval lease boundaries", () => {
     );
 
     expect(handled).toBe(true);
-    expect(receivedActingUserId).toBe("cloud-user-charles");
+    expect(receivedActingUserId).toBeUndefined();
+    expect(JSON.stringify(receivedMessages)).toContain(
+      '"attribution":{"acting_user_id":"cloud-user-charles"}',
+    );
   });
 
   test("stale recovered tool execution emits nothing into a replacement run", async () => {

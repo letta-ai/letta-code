@@ -358,7 +358,7 @@ describe("listener message router ownership handoff", () => {
     expect(processedTurns[0]?.messages).toEqual([
       {
         role: "user",
-        content: [{ type: "text", text: "do not drop me" }],
+        content: "do not drop me",
         client_message_id: "cm-input-race",
       },
     ]);

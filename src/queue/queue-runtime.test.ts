@@ -264,7 +264,7 @@ describe("dequeue coalescable items", () => {
     expect(q.length).toBe(0);
   });
 
-  test("keeps different acting users in separate billed turns", () => {
+  test("dequeues different acting users in arrival order without author gating", () => {
     const q = new QueueRuntime();
     q.enqueue(makeTask("unattributed"));
     q.enqueue({ ...makeTask("a"), actingUserId: "cloud-user-a" });
@@ -275,15 +275,13 @@ describe("dequeue coalescable items", () => {
 
     expect(
       first?.items.map((item) => ("text" in item ? item.text : undefined)),
-    ).toEqual(["unattributed", "a"]);
+    ).toEqual(["unattributed", "a", "b"]);
     expect(first?.items.map((item) => item.actingUserId)).toEqual([
       undefined,
       "cloud-user-a",
+      "cloud-user-b",
     ]);
-    expect(
-      second?.items.map((item) => ("text" in item ? item.text : undefined)),
-    ).toEqual(["b"]);
-    expect(second?.items[0]?.actingUserId).toBe("cloud-user-b");
+    expect(second).toBeNull();
     expect(q.length).toBe(0);
   });
 

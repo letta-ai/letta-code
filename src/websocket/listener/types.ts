@@ -5,6 +5,7 @@ import type {
   ApprovalDecision,
   ApprovalResult,
 } from "@/agent/approval-execution";
+import type { AttributedMessageCreate } from "@/agent/message-attribution";
 import type { SkillSource } from "@/agent/skill-sources";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
@@ -99,7 +100,7 @@ export interface IncomingMessage {
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
   messages: Array<
-    (MessageCreate & { client_message_id?: string }) | ApprovalCreate
+    (AttributedMessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;
   /**
    * Cloud user id of the human who actually pressed "send", forwarded
