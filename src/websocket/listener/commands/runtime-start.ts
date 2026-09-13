@@ -46,7 +46,11 @@ type ReplaySyncStateForRuntime = (
   listenerRuntime: ListenerRuntime,
   socket: WebSocket,
   scope: RuntimeStartScope,
-  opts?: { recoverApprovals?: boolean; forceDeviceStatus?: boolean },
+  opts?: {
+    recoverApprovals?: boolean;
+    forceDeviceStatus?: boolean;
+    connectionId?: string;
+  },
 ) => Promise<void>;
 
 type RuntimeStartCommandContext = {
@@ -476,6 +480,7 @@ export async function handleRuntimeStartCommand(
         {
           recoverApprovals: parsed.recover_approvals !== false,
           forceDeviceStatus: parsed.force_device_status !== false,
+          connectionId,
         },
       );
     }
@@ -506,6 +511,7 @@ export async function handleRuntimeStartCommand(
       {
         recoverApprovals: parsed.recover_approvals !== false,
         forceDeviceStatus: parsed.force_device_status !== false,
+        connectionId: context.connectionId,
       },
     );
   }

@@ -1400,7 +1400,7 @@ describe("listen-client multi-worker concurrency", () => {
     });
   });
 
-  test("sync replay queues stale denials instead of restoring approval UI", async () => {
+  test("sync replay turns every stale approval into a denial instead of restoring approval UI", async () => {
     const { listener, runtime } = createRuntime(
       "agent-1",
       "conv-mixed-sync",
@@ -1457,32 +1457,30 @@ describe("listen-client multi-worker concurrency", () => {
       conversation_id: "conv-mixed-sync",
     });
 
-    expect(runtime.recoveredApprovalState).toBeNull();
-    expect(runtime.pendingInterruptedResults).toEqual([
-      {
-        type: "approval",
-        tool_call_id: autoAllowedApproval.toolCallId,
-        approve: false,
-        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-      },
-      {
-        type: "approval",
-        tool_call_id: manualApproval.toolCallId,
-        approve: false,
-        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-      },
-      {
-        type: "approval",
-        tool_call_id: autoDeniedApproval.toolCallId,
-        approve: false,
-        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-      },
-    ]);
-    expect(runtime.pendingInterruptedContext).toEqual({
-      agentId: "agent-1",
-      conversationId: "conv-mixed-sync",
-      continuationEpoch: runtime.continuationEpoch,
-    });
+    // Auto-allowable, manual, and auto-deniable tools all become stale
+    // denials: nothing is classified, re-run, or re-asked (#1876). The denials
+    // stay on recovered state with no pending request, and the sync caller
+    // sends them as the next turn instead of parking them for a user message.
+    expect(runtime.pendingInterruptedResults).toBeNull();
+    expect(runtime.pendingInterruptedContext).toBeNull();
+    const recovered = runtime.recoveredApprovalState;
+    expect(recovered?.pendingRequestIds.size).toBe(0);
+    expect(recovered?.approvalsByRequestId.size).toBe(0);
+    expect(
+      recovered?.autoDecisions?.map((decision) => [
+        decision.type,
+        decision.approval.toolCallId,
+        decision.type === "deny" ? decision.reason : null,
+      ]),
+    ).toEqual(
+      [autoAllowedApproval, manualApproval, autoDeniedApproval].map(
+        (approval) => [
+          "deny",
+          approval.toolCallId,
+          STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+        ],
+      ),
+    );
 
     const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
       agent_id: "agent-1",

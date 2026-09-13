@@ -400,37 +400,104 @@ function buildRecoveredAutoDecisions(
   ];
 }
 
+type RecoveredContinuationProcessTurn = (
+  msg: IncomingMessage,
+  socket: ListenerTransport,
+  runtime: ConversationRuntime,
+  onStatusChange?: (
+    status: "idle" | "receiving" | "processing",
+    connectionId: string,
+  ) => void,
+  connectionId?: string,
+  dequeuedBatchId?: string,
+  existingTurnLease?: TurnLease,
+  existingTurnCorrelation?: TurnCorrelation,
+) => Promise<void>;
+
+export type RecoveredContinuationDependencies = {
+  applySuggestedPermissions?: typeof applySuggestedPermissionsForApproval;
+  classifyApprovals?: typeof classifyApprovalsWithSuggestions;
+  ensureSecretsHydrated?: typeof ensureSecretsHydratedForAgent;
+  prepareToolExecutionContext?: typeof prepareToolExecutionContextForScope;
+  executeApprovalBatch?: typeof executeApprovalBatch;
+};
+
+type RecoveredContinuationOptions = {
+  onStatusChange?: (
+    status: "idle" | "receiving" | "processing",
+    connectionId: string,
+  ) => void;
+  connectionId?: string;
+  dependencies?: RecoveredContinuationDependencies;
+};
+
+/**
+ * Restart recovery found pending approvals that are all replay-unsafe (no
+ * interactive tool to re-present), so nothing waits on a human. Finish the
+ * interrupted turn now: send the stale denials as this conversation's next
+ * turn so the model can re-issue the work, instead of parking them until a
+ * user message happens to arrive. Returns false when the recovered state is
+ * not in that shape or another owner holds the conversation.
+ */
+export async function startRecoveredApprovalContinuation(
+  runtime: ConversationRuntime,
+  socket: ListenerTransport,
+  processTurn: RecoveredContinuationProcessTurn,
+  opts?: RecoveredContinuationOptions,
+): Promise<boolean> {
+  const recovered = runtime.recoveredApprovalState;
+  if (
+    !recovered ||
+    recovered.pendingRequestIds.size > 0 ||
+    recovered.approvalsByRequestId.size > 0 ||
+    !recovered.autoDecisions ||
+    recovered.autoDecisions.length === 0
+  ) {
+    return false;
+  }
+  if (runtime.turnLifecycle.kind !== "idle") {
+    return false;
+  }
+  const scope = {
+    agent_id: recovered.agentId,
+    conversation_id: recovered.conversationId,
+  } as const;
+  if (hasInterruptedCacheForScope(runtime.listener, scope)) {
+    clearRecoveredApprovalState(runtime);
+    emitRuntimeStateUpdates(runtime, scope);
+    return true;
+  }
+
+  const workingDirectory = getConversationWorkingDirectory(
+    runtime.listener,
+    recovered.agentId,
+    recovered.conversationId,
+  );
+  const recoveryLease = runtime.turnLifecycle.begin({
+    origin: "approval_recovery",
+    workingDirectory,
+    initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
+  });
+  await executeRecoveredApprovalContinuation({
+    runtime,
+    socket,
+    recovered,
+    decisions: [...recovered.autoDecisions],
+    recoveryLease,
+    workingDirectory,
+    turnId: `batch-recovered-startup-${crypto.randomUUID()}`,
+    processTurn,
+    opts,
+  });
+  return true;
+}
+
 export async function resolveRecoveredApprovalResponse(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
   response: ApprovalResponseBody,
-  processTurn: (
-    msg: IncomingMessage,
-    socket: ListenerTransport,
-    runtime: ConversationRuntime,
-    onStatusChange?: (
-      status: "idle" | "receiving" | "processing",
-      connectionId: string,
-    ) => void,
-    connectionId?: string,
-    dequeuedBatchId?: string,
-    existingTurnLease?: TurnLease,
-    existingTurnCorrelation?: TurnCorrelation,
-  ) => Promise<void>,
-  opts?: {
-    onStatusChange?: (
-      status: "idle" | "receiving" | "processing",
-      connectionId: string,
-    ) => void;
-    connectionId?: string;
-    dependencies?: {
-      applySuggestedPermissions?: typeof applySuggestedPermissionsForApproval;
-      classifyApprovals?: typeof classifyApprovalsWithSuggestions;
-      ensureSecretsHydrated?: typeof ensureSecretsHydratedForAgent;
-      prepareToolExecutionContext?: typeof prepareToolExecutionContextForScope;
-      executeApprovalBatch?: typeof executeApprovalBatch;
-    };
-  },
+  processTurn: RecoveredContinuationProcessTurn,
+  opts?: RecoveredContinuationOptions,
 ): Promise<boolean> {
   const requestId = response.request_id;
   if (typeof requestId !== "string" || requestId.length === 0) {
@@ -447,13 +514,6 @@ export async function resolveRecoveredApprovalResponse(
     applySuggestedPermissionsForApproval;
   const classifyApprovals =
     dependencies?.classifyApprovals ?? classifyApprovalsWithSuggestions;
-  const ensureSecretsHydrated =
-    dependencies?.ensureSecretsHydrated ?? ensureSecretsHydratedForAgent;
-  const prepareToolExecutionContext =
-    dependencies?.prepareToolExecutionContext ??
-    prepareToolExecutionContextForScope;
-  const executeApprovals =
-    dependencies?.executeApprovalBatch ?? executeApprovalBatch;
 
   const workingDirectory = getConversationWorkingDirectory(
     runtime.listener,
@@ -561,70 +621,117 @@ export async function resolveRecoveredApprovalResponse(
           initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
         })
       : null;
-  let continuationFinalized = false;
+  recovered.responsesByRequestId.set(requestId, response);
+  recovered.pendingRequestIds.delete(requestId);
+  if (autoDecisionsToAppend.length > 0) {
+    recovered.autoDecisions = [
+      ...(recovered.autoDecisions ?? []),
+      ...autoDecisionsToAppend,
+    ];
+  }
+  for (const reclassifiedRequestId of reclassifiedRequestIds) {
+    recovered.pendingRequestIds.delete(reclassifiedRequestId);
+    recovered.approvalsByRequestId.delete(reclassifiedRequestId);
+    recovered.responsesByRequestId.delete(reclassifiedRequestId);
+  }
 
-  try {
-    recovered.responsesByRequestId.set(requestId, response);
-    recovered.pendingRequestIds.delete(requestId);
-    if (autoDecisionsToAppend.length > 0) {
-      recovered.autoDecisions = [
-        ...(recovered.autoDecisions ?? []),
-        ...autoDecisionsToAppend,
-      ];
+  if (recovered.pendingRequestIds.size > 0) {
+    emitRuntimeStateUpdates(runtime, {
+      agent_id: recovered.agentId,
+      conversation_id: recovered.conversationId,
+    });
+    return true;
+  }
+  const decisions: ApprovalDecision[] = [...(recovered.autoDecisions ?? [])];
+  for (const [id, entry] of recovered.approvalsByRequestId) {
+    const approvalResponse = recovered.responsesByRequestId.get(id);
+    if (!approvalResponse) {
+      continue;
     }
-    for (const reclassifiedRequestId of reclassifiedRequestIds) {
-      recovered.pendingRequestIds.delete(reclassifiedRequestId);
-      recovered.approvalsByRequestId.delete(reclassifiedRequestId);
-      recovered.responsesByRequestId.delete(reclassifiedRequestId);
-    }
 
-    if (recovered.pendingRequestIds.size > 0) {
-      emitRuntimeStateUpdates(runtime, {
-        agent_id: recovered.agentId,
-        conversation_id: recovered.conversationId,
-      });
-      return true;
-    }
-
-    const decisions: ApprovalDecision[] = [...(recovered.autoDecisions ?? [])];
-    for (const [id, entry] of recovered.approvalsByRequestId) {
-      const approvalResponse = recovered.responsesByRequestId.get(id);
-      if (!approvalResponse) {
-        continue;
-      }
-
-      if ("decision" in approvalResponse) {
-        const decision = approvalResponse.decision;
-        if (decision.behavior === "allow") {
-          decisions.push({
-            type: "approve",
-            approval: decision.updated_input
-              ? {
-                  ...entry.approval,
-                  toolArgs: JSON.stringify(decision.updated_input),
-                }
-              : entry.approval,
-            reason: decision.message,
-          });
-        } else {
-          decisions.push({
-            type: "deny",
-            approval: entry.approval,
-            reason: decision.message || "Denied via WebSocket",
-          });
-        }
+    if ("decision" in approvalResponse) {
+      const decision = approvalResponse.decision;
+      if (decision.behavior === "allow") {
+        decisions.push({
+          type: "approve",
+          approval: decision.updated_input
+            ? {
+                ...entry.approval,
+                toolArgs: JSON.stringify(decision.updated_input),
+              }
+            : entry.approval,
+          reason: decision.message,
+        });
       } else {
         decisions.push({
           type: "deny",
           approval: entry.approval,
-          reason: approvalResponse.error,
+          reason: decision.message || "Denied via WebSocket",
         });
       }
+    } else {
+      decisions.push({
+        type: "deny",
+        approval: entry.approval,
+        reason: approvalResponse.error,
+      });
     }
+  }
 
-    if (!recoveryLease) {
-      throw new Error("Recovered approval continuation has no lifecycle lease");
-    }
+  if (!recoveryLease) {
+    throw new Error("Recovered approval continuation has no lifecycle lease");
+  }
+  await executeRecoveredApprovalContinuation({
+    runtime,
+    socket,
+    recovered,
+    decisions,
+    recoveryLease,
+    workingDirectory,
+    turnId: `batch-recovered-${requestId}`,
+    processTurn,
+    opts,
+  });
+  return true;
+}
+
+async function executeRecoveredApprovalContinuation(params: {
+  runtime: ConversationRuntime;
+  socket: ListenerTransport;
+  recovered: NonNullable<ConversationRuntime["recoveredApprovalState"]>;
+  decisions: ApprovalDecision[];
+  recoveryLease: TurnLease;
+  workingDirectory: string;
+  turnId: string;
+  processTurn: RecoveredContinuationProcessTurn;
+  opts?: RecoveredContinuationOptions;
+}): Promise<void> {
+  const {
+    runtime,
+    socket,
+    recovered,
+    decisions,
+    recoveryLease,
+    workingDirectory,
+    turnId,
+    processTurn,
+    opts,
+  } = params;
+  const dependencies = opts?.dependencies;
+  const ensureSecretsHydrated =
+    dependencies?.ensureSecretsHydrated ?? ensureSecretsHydratedForAgent;
+  const prepareToolExecutionContext =
+    dependencies?.prepareToolExecutionContext ??
+    prepareToolExecutionContextForScope;
+  const executeApprovals =
+    dependencies?.executeApprovalBatch ?? executeApprovalBatch;
+  const scope = {
+    agent_id: recovered.agentId,
+    conversation_id: recovered.conversationId,
+  } as const;
+  let continuationFinalized = false;
+
+  try {
     const approvedDecisions = decisions.filter(
       (decision): decision is Extract<ApprovalDecision, { type: "approve" }> =>
         decision.type === "approve",
@@ -667,14 +774,14 @@ export async function resolveRecoveredApprovalResponse(
       // otherwise leave those lifecycle events orphaned.
       await ensureSecretsHydrated(runtime.listener, recovered.agentId);
       if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-        return true;
+        return;
       }
       const modAdapters = await ensureListenerModAdaptersForAgent(
         runtime.listener,
         recovered.agentId,
       );
       if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-        return true;
+        return;
       }
       const preparedToolContext = await prepareToolExecutionContext({
         agentId: recovered.agentId,
@@ -690,7 +797,7 @@ export async function resolveRecoveredApprovalResponse(
         modEvents: createListenerModEvents(modAdapters),
       });
       if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-        return true;
+        return;
       }
       runtime.currentToolset = preparedToolContext.toolset;
       runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
@@ -735,7 +842,7 @@ export async function resolveRecoveredApprovalResponse(
       emitToolExecutionOutput.flush();
     }
     if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-      return true;
+      return;
     }
 
     emitToolExecutionFinishedEvents(socket, runtime, {
@@ -755,7 +862,7 @@ export async function resolveRecoveredApprovalResponse(
     runtime.turnLifecycle.setExecutingToolCallIds(recoveryLease, []);
     setTurnLoopStatus(runtime, recoveryLease, "SENDING_API_REQUEST", scope);
     if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-      return true;
+      return;
     }
     emitRuntimeStateUpdates(runtime, scope);
 
@@ -793,7 +900,7 @@ export async function resolveRecoveredApprovalResponse(
 
     if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
       runtime.dequeuedClientMessageIdsByBatchId.delete(continuationBatchId);
-      return true;
+      return;
     }
 
     await processTurn(
@@ -819,20 +926,20 @@ export async function resolveRecoveredApprovalResponse(
       throw new Error("Recovered continuation returned without finalizing");
     }
     if (runtime.turnLifecycle.kind !== "idle") {
-      return true;
+      return;
     }
     continuationFinalized = true;
 
     if (runtime.recoveredApprovalState === recovered) {
       clearRecoveredApprovalState(runtime);
     }
-    return true;
+    return;
   } catch (error) {
-    if (!recoveryLease || continuationFinalized) {
+    if (continuationFinalized) {
       throw error;
     }
     if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-      return true;
+      return;
     }
     if (runtime.recoveredApprovalState === recovered) {
       recovered.pendingRequestIds = new Set(
@@ -846,7 +953,7 @@ export async function resolveRecoveredApprovalResponse(
       socket,
       agentId: recovered.agentId,
       conversationId: recovered.conversationId,
-      turnId: `batch-recovered-${requestId}`,
+      turnId,
       error:
         stopReason === "error"
           ? getTranscriptLoopErrorMessage({

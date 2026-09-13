@@ -126,7 +126,12 @@ describe("listener protocol ergonomics", () => {
       runtime,
       expect.anything(),
       { agent_id: "agent-1", conversation_id: "default" },
-      { recoverApprovals: false, forceDeviceStatus: true },
+      {
+        recoverApprovals: false,
+        forceDeviceStatus: true,
+        onStatusChange: undefined,
+        connectionId: "conn-test",
+      },
     );
     expect(sent).toContainEqual({
       type: "sync_response",

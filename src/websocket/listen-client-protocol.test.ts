@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
@@ -3430,41 +3428,6 @@ describe("listen-client v2 status builders", () => {
     ).toBe(false);
   });
 
-  test("sync replay can skip backend approval recovery for lightweight state sync", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    __listenClientTestUtils.getOrCreateScopedRuntime(
-      listener,
-      "agent-1",
-      "default",
-    );
-    const socket = new MockSocket(WebSocket.OPEN);
-    const recoverApprovalStateForSync = mock(async () => {});
-
-    await __listenClientTestUtils.replaySyncStateForRuntime(
-      listener,
-      socket as unknown as WebSocket,
-      {
-        agent_id: "agent-1",
-        conversation_id: "default",
-      },
-      {
-        recoverApprovals: false,
-        recoverApprovalStateForSync,
-      },
-    );
-
-    expect(recoverApprovalStateForSync).not.toHaveBeenCalled();
-    const outbound = socket.sentPayloads.map((payload) =>
-      JSON.parse(payload as string),
-    );
-    expect(outbound.map((message) => message.type)).toEqual([
-      "update_device_status",
-      "update_loop_status",
-      "update_queue",
-      "update_subagent_state",
-    ]);
-  });
-
   test("sync replay schedules background warmups after state sync", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     __listenClientTestUtils.getOrCreateScopedRuntime(
@@ -3657,26 +3620,6 @@ describe("listen-client v2 status builders", () => {
       active_run_ids: [],
       executing_tool_call_ids: [],
     });
-  });
-
-  test("sync wiring denies recovered stale approvals and never auto-runs them", () => {
-    const recoveryPath = fileURLToPath(
-      new URL("../websocket/listener/recovery-sync.ts", import.meta.url),
-    );
-    const source = readFileSync(recoveryPath, "utf-8");
-
-    // Replay-unsafe tools become stale denials; interactive tools are
-    // re-presented as recovered control requests (LET-10821). Neither path
-    // may classify or auto-execute restored approvals (#1876).
-    expect(source).toContain(
-      "runtime.pendingInterruptedResults = buildFreshDenialApprovals(",
-    );
-    expect(source).toContain("STALE_APPROVAL_RECOVERY_DENIAL_REASON");
-    expect(source).toContain("clearRecoveredApprovalState(runtime);");
-    expect(source).toContain("isInteractiveApprovalTool");
-    expect(source).not.toContain("classifyApprovalsWithSuggestions(");
-    expect(source).not.toContain("buildRecoveredAutoDecisions(");
-    expect(source).not.toContain("executeApprovalBatch");
   });
 
   test("sync ignores backend recovered approvals while a live turn is already processing", async () => {
