@@ -12,7 +12,6 @@ import { getStreamToolContextId } from "@/agent/message";
 import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
-  normalizeStreamErrorTypeToStopReason,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
@@ -22,12 +21,10 @@ import {
   toLines,
 } from "@/cli/helpers/accumulator";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
-import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
-import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
-import { debugLog, isDebugEnabled } from "@/utils/debug";
-import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
+import type { StopReasonType } from "@/types/protocol_v2";
+import { isDebugEnabled } from "@/utils/debug";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
@@ -37,16 +34,10 @@ import {
   emitInterruptToolReturnMessage,
   emitToolExecutionFinishedEvents,
   getInterruptApprovalsForEmission,
-  normalizeToolReturnWireMessage,
   populateInterruptQueue,
 } from "./interrupts";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
-import {
-  emitCanonicalMessageDelta,
-  emitLoopStatusUpdate,
-  emitRetryDelta,
-  emitRuntimeStateUpdates,
-} from "./protocol-outbound";
+import { emitRetryDelta, emitRuntimeStateUpdates } from "./protocol-outbound";
 import {
   emitLoopErrorNotice,
   emitRecoverableRetryNotice,
@@ -88,6 +79,7 @@ import { notifyTurnFinished, notifyTurnStarted } from "./turn-observers";
 import { startTurnInput } from "./turn-send";
 import { prepareListenerTurn } from "./turn-setup";
 import { setTurnLoopStatus } from "./turn-status";
+import { drainTurnStreamWithEmission } from "./turn-stream";
 import { buildTurnUsage, finishListenerTurn } from "./turn-terminal";
 import { seedInboundUserTranscriptLines } from "./turn-transcript";
 import type { ConversationRuntime, IncomingMessage } from "./types";
@@ -316,86 +308,25 @@ async function handleIncomingMessageInner(
     turnToolContextId = getStreamToolContextId(
       stream as Stream<LettaStreamingResponse>,
     );
-    let runIdSent = false;
     let runId: string | undefined;
     seedInboundUserTranscriptLines(buffers, inboundUserTranscriptLines);
     while (true) {
-      runIdSent = false;
-      const result = await drainStreamWithResume(
+      const drained = await drainTurnStreamWithEmission(
         stream as Stream<LettaStreamingResponse>,
         buffers,
-        () => {},
-        turnAbortSignal,
-        undefined,
-        ({ chunk, shouldOutput, errorInfo }) => {
-          if (turnAbortSignal.aborted) {
-            return undefined;
-          }
-          const maybeRunId = (chunk as { run_id?: unknown }).run_id;
-          if (typeof maybeRunId === "string") {
-            runId = maybeRunId;
-            runtime.turnLifecycle.setRunId(turnLease, maybeRunId);
-            turnCorrelation.observeRun(maybeRunId);
-            if (!runIdSent) {
-              runIdSent = true;
-              msgRunIds.push(maybeRunId);
-              emitLoopStatusUpdate(socket, runtime, {
-                agent_id: agentId,
-                conversation_id: conversationId,
-              });
-            }
-          }
-          if (errorInfo) {
-            const recoverableApprovalErrorText =
-              getApprovalToolCallDesyncErrorText(errorInfo);
-            if (!recoverableApprovalErrorText) {
-              emitLoopErrorNotice(socket, runtime, {
-                message: errorInfo.message || "Stream error",
-                stopReason: normalizeStreamErrorTypeToStopReason(
-                  errorInfo.error_type,
-                ),
-                isTerminal: false,
-                runId: runId || errorInfo.run_id,
-                agentId,
-                conversationId,
-                errorInfo,
-                cancelRequested: turnAbortSignal.aborted,
-                abortSignal: turnAbortSignal,
-              });
-            } else {
-              debugLog(
-                "recovery",
-                "Suppressing streamed approval conflict while post-stop recovery runs: %s",
-                recoverableApprovalErrorText,
-              );
-            }
-          }
-          if (shouldOutput) {
-            const normalizedChunk =
-              normalizeCloudRetryWireMessage(chunk) ??
-              normalizeToolReturnWireMessage(
-                chunk as unknown as Record<string, unknown>,
-              );
-            if (normalizedChunk) {
-              emitCanonicalMessageDelta(
-                socket,
-                runtime,
-                {
-                  ...normalizedChunk,
-                  type: "message",
-                } as StreamDelta,
-                {
-                  agent_id: agentId,
-                  conversation_id: conversationId,
-                },
-              );
-            }
-          }
-
-          return undefined;
+        socket,
+        runtime,
+        {
+          agentId,
+          conversationId,
+          turnLease,
+          turnCorrelation,
+          msgRunIds,
+          runId,
         },
-        runtime.contextTracker,
       );
+      const result = drained.result;
+      runId = drained.runId;
 
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];

@@ -28,7 +28,10 @@ import {
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
-import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
+import {
+  LISTENER_STREAM_RESUME_POLICY,
+  MAX_POST_STOP_APPROVAL_RECOVERY,
+} from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
@@ -248,6 +251,9 @@ export async function drainRecoveryStreamWithEmission(
 
       return undefined;
     },
+    undefined,
+    undefined,
+    LISTENER_STREAM_RESUME_POLICY,
   );
 }
 
