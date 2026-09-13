@@ -2,6 +2,23 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import { actingUserRequestOptions } from "@/agent/acting-user";
 import type { Backend } from "@/backend";
 
+/** Optional routing values share the same meaning in CLI and tool sends. */
+export function normalizeAgentMessageComputer(
+  value: unknown,
+): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(
+      "computer must be a computer name, or omitted to use the conversation's current destination.",
+    );
+  }
+  const computer = value.trim();
+  if (!computer) return undefined;
+  return ["cloud", "cloud-sandbox"].includes(computer.toLowerCase())
+    ? "cloud"
+    : computer;
+}
+
 export function buildAgentSendContent(
   sender: { agentId?: string; conversationId?: string },
   noWait: boolean,

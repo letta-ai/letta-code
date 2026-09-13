@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Backend } from "@/backend";
 import {
   buildAgentSendContent,
+  normalizeAgentMessageComputer,
   resolveAgentMessageDestination,
   validateAddress,
 } from "@/backend/api/agent-message";
@@ -20,10 +21,7 @@ import {
   EnqueuedWaitError,
   waitForEnqueuedReply,
 } from "./headless-enqueue-wait";
-import {
-  isCloudEnvironmentSelector,
-  resolveEnvironmentMaxWaitMs,
-} from "./headless-environment-response";
+import { resolveEnvironmentMaxWaitMs } from "./headless-environment-response";
 
 type SendValues = ParsedCliArgs["values"];
 type SendBackend = Pick<
@@ -53,9 +51,6 @@ function validateSendOptions(values: SendValues): void {
     throw new Error(
       "--resume is interactive-only; use --conversation <id> in headless mode.",
     );
-  const computer = values.computer ?? values.environment ?? values.env;
-  if (computer !== undefined && !computer.trim())
-    throw new Error("Computer selector must not be empty.");
   if (values["input-format"])
     throw new Error(
       "Cloud message delivery does not support --input-format stream-json.",
@@ -165,6 +160,9 @@ export async function tryCloudHeadlessSend(
     if (!["text", "json", "stream-json"].includes(format))
       throw new Error(`Invalid output format: ${format}`);
     validateSendOptions(values);
+    const computer = normalizeAgentMessageComputer(
+      values.computer ?? values.environment ?? values.env,
+    );
     const explicitSender = values["from-agent"];
     const ambientSender = env.AGENT_ID || env.LETTA_AGENT_ID;
     const sender = {
@@ -235,11 +233,7 @@ export async function tryCloudHeadlessSend(
         conversationId,
         clientMessageId,
         content: buildAgentSendContent(sender, noWait, prompt),
-        computer: isCloudEnvironmentSelector(
-          values.computer ?? values.environment ?? values.env,
-        )
-          ? "cloud"
-          : (values.computer ?? values.environment ?? values.env),
+        computer,
       },
       AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
     );
