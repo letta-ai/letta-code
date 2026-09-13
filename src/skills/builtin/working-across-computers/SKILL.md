@@ -1,6 +1,6 @@
 ---
 name: working-across-computers
-description: Guides access to the user's laptop, desktop, or another computer from the current environment. Load when a request needs files, apps, or tools on another machine, when connecting a computer, or when moving work or files between Cloud and local computers.
+description: Guides work across Cloud, local, and other available computers, including teleporting conversations, running remote subagents, and transferring files. Load when a request needs the user's laptop or another machine's files, apps, or tools; when connecting a computer; or when moving or delegating work between local and Cloud in either direction, including running Cloud subagents from local.
 ---
 
 # Working Across Computers
