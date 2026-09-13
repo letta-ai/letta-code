@@ -19,15 +19,15 @@ recipient's conversation list.
 Letta Code keeps agent state on one of two backends. The same CLI addresses
 agents on either; what differs is what happens after you send.
 
-**Cloud backend** (api.letta.com). Agent state lives in Cloud. Each turn of a
-conversation executes on a *computer*: a machine running Letta Code that is
-connected to Cloud, or a Cloud sandbox. Because state and execution are
+**Cloud backend** (api.letta.com). Agent state lives in Cloud. Cloud can deliver
+messages to a *computer*: a machine running Letta Code connected to Cloud,
+or a Cloud sandbox. Because state and execution are
 separate, Cloud tracks which computers are online and where each conversation
 is active. That is why these exist only on this backend:
 
 - delivering your message to the harness already running the recipient's
-  conversation, or to its saved computer or a Cloud sandbox when none is
-  running, instead of running the recipient's turn in your own process;
+  conversation, or to its saved destination (a computer or Cloud sandbox)
+  when none is active;
 - a `computer` selector on sends and on the Agent tool;
 - teleporting a conversation (`letta teleport <computer>`): the same thread,
   with its history and memory, continues on a different computer. Files and
@@ -47,19 +47,23 @@ you launch with the Agent tool.
 
 For the Cloud CLI sends below, `letta -p` hands the message to Cloud for
 delivery when you pass `--conversation`, `--from-agent`, `--no-wait`, or
-`--computer`. With only `--agent`, it instead selects execution: usually in
-the invoking process, but a command started from a Cloud listener can inherit
-that listener and launch the turn there. Neither uses Cloud's message delivery
-service. `SendAgentMessage` is Cloud delivery as a tool call. Supported
-local-backend CLI sends run the recipient's turn in the launched process.
+`--computer`. These commands leave the recipient's execution settings unchanged.
+`SendAgentMessage` uses the same Cloud delivery endpoint.
+
+With only `--agent`, the CLI chooses the launch settings and normally creates a
+new conversation. It runs the turn in its own process or reuses an inherited
+Cloud listener. The listener path first applies those settings to the
+conversation, then submits its input through the same Cloud delivery endpoint.
+Supported local-backend CLI sends run the turn in the launched process.
 
 `--no-wait` is one of the flags that selects Cloud delivery. On that path,
 waiting and non-waiting sends use the same delivery mechanism, but differ in
 how you receive the answer and what reply instructions the recipient gets.
 
 The recipient learns who is asking only when the send identifies a sender:
-`--from-agent`, or on the Cloud delivery path the `LETTA_AGENT_ID` and
-`LETTA_CONVERSATION_ID` of the agent running the command. `SendAgentMessage`
+`--from-agent`, or for the Cloud messaging recipes below, the caller IDs from
+the agent's shell environment (`AGENT_ID`/`LETTA_AGENT_ID` and
+`CONVERSATION_ID`/`LETTA_CONVERSATION_ID`). `SendAgentMessage`
 always identifies you and your conversation. An identified send attaches a
 system reminder telling the recipient how to get its answer back to you. A
 `letta -p` with neither carries no sender or reply instructions; the recipient
@@ -128,9 +132,9 @@ If your agent ID starts with `agent-local-`, add `--backend local` so the
 command uses the local store: `letta --backend local -p …`. The flag applies to
 that command only.
 
-On the Cloud backend the recipient executes on its own computer; if your wait
-times out or is interrupted, the recipient's work continues. On the local
-backend the recipient's turn runs inside the process you launched, so
+For these Cloud messaging commands, stopping the wait does not cancel accepted
+work on the recipient's computer. On the local backend the recipient's turn
+runs inside the process you launched, so
 `--tools`, `--permission-mode`, and the working directory you give it apply to
 that turn.
 
@@ -154,7 +158,7 @@ respond to it as you would to any input.
 ## Checking on a conversation
 
 Recent messages are the quick progress check on either backend. This command
-selects the latest ten messages and prints them oldest to newest (add
+requests recent messages and prints the returned messages oldest to newest (add
 `--backend local` in the same cases as for sends):
 
 ```bash
@@ -162,13 +166,13 @@ letta messages list --conversation <conversation-id> --limit 10
 ```
 
 `letta messages status --conversation <id>` (Cloud only) reports whether the
-conversation is currently running and identifies its latest run. That is the
-thread's state, not confirmation about your particular message; compare the
-run ID with the `super_run_id` on your receipt, and read the messages to see
-what was processed. Non-waiting receipts include
-ready-to-run `status_command` and `messages_command` values for the thread
-they went to. `letta messages transcript --conversation <id>` exports a whole
-thread. `letta messages --help` lists the options.
+conversation is currently running. When `latest_super_run` is present, compare
+its `id` with the `super_run_id` on your receipt; a different ID belongs to a
+different send. Read the messages to see what was processed. Non-waiting
+receipts include ready-to-run `status_command` and `messages_command` values for the thread
+they went to. `letta messages transcript --conversation <id>` exports the
+thread; check `truncated` before treating it as complete.
+`letta messages --help` lists the options.
 
 ## Finding an agent
 
@@ -191,6 +195,7 @@ letta -p --agent <agent-id> --computer cloud --no-wait "message"   # its Cloud s
 
 If the conversation is active on another computer the send is rejected; to
 move a conversation, teleport it (see the `working-across-computers` skill).
+An offline saved computer does not trigger a Cloud-sandbox fallback.
 `letta computers --help` covers the selectors.
 
 ## Gotchas
@@ -200,9 +205,10 @@ move a conversation, teleport it (see the `working-across-computers` skill).
 - For Cloud coordination, do not rely on `--agent` alone to select message
   delivery. Add `--from-agent $LETTA_AGENT_ID` to deliver and identify yourself;
   pass `--conversation <id>` to reach an existing thread.
-- Cloud delivery rejects execution flags (`--tools`, `--permission-mode`,
-  `--model`, `--system`, and similar); the recipient keeps its own
-  configuration. On the local backend those flags shape the turn you launched.
+- The Cloud messaging recipes above reject execution flags (`--tools`,
+  `--permission-mode`, `--model`, `--system`, and similar); the recipient keeps
+  its own configuration. Those flags configure a launch when using the
+  retained `--agent`-only path or local-backend execution.
 - `--conversation default` needs `--agent`; `default` is scoped to an agent.
 - A receipt means accepted, not delivered. If a send's outcome is unknown
   (`acceptance_unknown`, a timed-out wait), read the thread before resending.
