@@ -1,9 +1,13 @@
 ---
 name: working-across-computers
-description: Guides work across Cloud, local, and other available computers, including teleporting the current conversation, orchestrating remote subagents, and uploading or downloading files to Cloud sandboxes. Use when moving between computers (e.g. teleporting between cloud/local) or coordinating work and files across them.
+description: Guides access to the user's laptop, desktop, or another computer from the current environment. Load when a request needs files, apps, or tools on another machine, when connecting a computer, or when moving work or files between Cloud and local computers.
 ---
 
 # Working Across Computers
+
+## Discover access before declaring a limitation
+
+The current filesystem is not the full set of computers you can use. When a request needs another computer, run `letta teleport list`. If a suitable computer is available, delegate there; otherwise follow the [connection instructions](references/connect-a-computer-for-remote-access.md). Do not infer that another computer is inaccessible merely because you are running in Cloud.
 
 ## Choose where to work
 
