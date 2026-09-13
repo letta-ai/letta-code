@@ -8,10 +8,11 @@ import {
   openListenerConnection,
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
-import { createRuntime } from "./lifecycle";
+import { createRuntime, safeSocketSend } from "./lifecycle";
+import { createListenerMessageHandler } from "./message-router";
 import { recoverApprovalStateForSync } from "./recovery-sync";
-import { getPendingControlRequests } from "./runtime";
-import { replaySyncStateForRuntime } from "./sync-replay";
+import { getPendingControlRequests, setActiveRuntime } from "./runtime";
+import { replaySyncStateForRuntime as replayState } from "./sync-replay";
 import type { LocalTransport } from "./transport";
 import type {
   ConversationRuntime,
@@ -38,6 +39,63 @@ function createScopedRuntime(): ConversationRuntime {
 }
 
 const scope = { agent_id: "agent-1", conversation_id: "conv-1" } as const;
+
+// Exercise startup recovery through the sync wire command. runtime_start
+// shares the replay helper but must not inherit sync's first-start override.
+async function replaySyncStateForRuntime(
+  ...args: Parameters<typeof replayState>
+): Promise<void> {
+  const [listener, socket, runtimeScope, options] = args;
+  setActiveRuntime(listener);
+  const handler = createListenerMessageHandler({
+    runtime: listener,
+    socket,
+    opts: {
+      connectionId: "cloud-relay",
+      wsUrl: "local://cloud-relay",
+      deviceId: "test-device",
+      connectionName: "cloud-relay",
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    },
+    processQueuedTurn: async () => {},
+    processIncomingMessage: async () => {},
+    fileCommandSession: { handle: () => false },
+    getParsedRuntimeScope: () => null,
+    replaySyncStateForRuntime: (owner, transport, recoveredScope, requested) =>
+      replayState(owner, transport, recoveredScope, {
+        ...options,
+        ...requested,
+      }),
+    getOrCreateScopedRuntime,
+    handleApprovalResponseInput: async () => false,
+    handleChangeDeviceStateInput: async () => false,
+    handleAbortMessageInput: async () => false,
+    stampInboundUserMessageOtids: (incoming) => incoming,
+    safeSocketSend,
+    runDetachedListenerTask: (_label, task) => {
+      void task();
+    },
+    trackListenerError: (error) => {
+      throw error;
+    },
+  });
+  try {
+    await handler(
+      Buffer.from(
+        JSON.stringify({
+          type: "sync",
+          runtime: runtimeScope,
+          recover_approvals: options?.recoverApprovals,
+          force_device_status: options?.forceDeviceStatus,
+        }),
+      ),
+    );
+  } finally {
+    setActiveRuntime(null);
+  }
+}
 
 async function waitFor(predicate: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -111,6 +169,44 @@ function connectRuntime(runtime: ConversationRuntime): MockTransport {
 }
 
 describe("recoverApprovalStateForSync restart recovery", () => {
+  test("destination registration can disable recovery before teleport continuation", async () => {
+    const runtime = createScopedRuntime();
+    const transport = connectRuntime(runtime);
+    let recoveryCalls = 0;
+    let releaseRecovery!: () => void;
+    const recoveryGate = new Promise<void>((resolve) => {
+      releaseRecovery = resolve;
+    });
+    await replayState(runtime.listener, transport as never, scope, {
+      recoverApprovals: false,
+      recoverApprovalStateForSync: async (owner, recoveredScope) => {
+        recoveryCalls += 1;
+        await recoverApprovalStateForSync(
+          owner,
+          recoveredScope,
+          createDeps([bashApproval]),
+        );
+      },
+      recoveredContinuationDependencies: {
+        ensureSecretsHydrated: async () => {
+          await recoveryGate;
+          // Cleanup only: on the broken implementation recovery has already
+          // taken the turn lease before teleport_continue can arrive.
+          throw new Error("Unexpected recovery during teleport setup");
+        },
+      },
+      scheduleWarmupsAfterSync: () => {},
+    });
+    try {
+      expect(runtime.isProcessing).toBe(false);
+      expect(recoveryCalls).toBe(0);
+      expect(runtime.syncApprovalRecoveryCompleted).toBe(false);
+      expect(runtime.recoveredApprovalState).toBeNull();
+    } finally {
+      releaseRecovery();
+    }
+  });
+
   test("sync publishes a recovered question as a control request", async () => {
     const runtime = createScopedRuntime();
     const transport = connectRuntime(runtime);

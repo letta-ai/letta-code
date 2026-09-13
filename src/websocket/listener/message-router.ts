@@ -128,6 +128,7 @@ type MessageRouterParams = {
     scope: RuntimeScope,
     opts?: {
       recoverApprovals?: boolean;
+      recoverOnFirstSync?: boolean;
       forceDeviceStatus?: boolean;
       onStatusChange?: StartListenerOptions["onStatusChange"];
       connectionId?: string;
@@ -389,6 +390,7 @@ export function createListenerMessageHandler(
         try {
           await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
             recoverApprovals: parsed.recover_approvals !== false,
+            recoverOnFirstSync: true,
             forceDeviceStatus: parsed.force_device_status === true,
             onStatusChange: opts.onStatusChange,
             connectionId: opts.connectionId,
