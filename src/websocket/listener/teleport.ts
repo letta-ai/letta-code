@@ -9,6 +9,7 @@ import type {
   TeleportRequestCommand,
 } from "@/types/protocol_v2";
 import { toListenerConnection } from "./connection";
+import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitProtocolV2Message,
@@ -336,9 +337,8 @@ export function handleTeleportRequest(params: {
     ? hasAcceptedInputsWaiting(conversationRuntime, true)
     : false;
   if (!conversationRuntime?.isProcessing && !pending.drainAcceptedInputs) {
-    if (sendTeleportReady(listener, pending, { success: true })) {
+    if (emitClaimedTeleportReady(listener, pending)) {
       pending.readyAt = Date.now();
-      retainTeleportForRecovery(listener, pending);
     }
   }
 }
@@ -377,11 +377,28 @@ export function emitClaimedTeleportReady(
   listener: ListenerRuntime,
   pending: PendingTeleport,
 ): boolean {
+  if (listener.connectionId?.startsWith("conn-"))
+    suspendRecordedTeleport(pending, true);
   const sent = sendTeleportReady(listener, pending, { success: true });
   if (sent) {
     retainTeleportForRecovery(listener, pending);
+  } else if (listener.connectionId?.startsWith("conn-")) {
+    suspendRecordedTeleport(pending, false);
   }
   return sent;
+}
+
+function suspendRecordedTeleport(
+  pending: PendingTeleport,
+  suspended: boolean,
+): void {
+  const store = createInterruptedTurnStore();
+  const record = store.read(pending.agentId, pending.conversationId);
+  if (record)
+    store.write({
+      ...record,
+      teleportId: suspended ? pending.teleportId : undefined,
+    });
 }
 
 export function finishTeleport(

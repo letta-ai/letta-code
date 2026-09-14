@@ -2,6 +2,7 @@ import type { Buffers } from "@/cli/helpers/accumulator";
 import type { UsageStatistics } from "@/types/protocol";
 import type { StopReasonType } from "@/types/protocol_v2";
 import { TO_SUBSCRIBERS } from "./connection";
+import { forgetListenerWork } from "./interrupted-turn-record";
 import {
   emitInterruptedStatusDelta,
   emitProtocolV2Message,
@@ -43,6 +44,9 @@ export function finishListenerTurn(
   const transition = runtime.turnLifecycle.finish(lease, options.stopReason);
   if (!transition.finished) {
     return transition;
+  }
+  if (options.stopReason === "end_turn" || options.stopReason === "cancelled") {
+    forgetListenerWork(runtime);
   }
 
   // Explicit abort projects the interrupted state when it moves the lease to
