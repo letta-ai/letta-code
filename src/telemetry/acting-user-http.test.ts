@@ -128,16 +128,22 @@ describe("telemetry acting-user HTTP attribution", () => {
       telemetry.drain(),
     );
 
-    expect(submissions.map((request) => request.actingUserId)).toEqual([
+    expect(submissions.map((request) => request.actingUserId).sort()).toEqual([
       "customer-a",
       "customer-b",
       null,
     ]);
-    expect(
-      submissions.map((request) =>
-        request.body.events.map((event) => event.type),
-      ),
-    ).toEqual([["user_input", "tool_usage"], ["user_input"], ["user_input"]]);
+    // Requests run concurrently: only ordering within an identity is defined.
+    for (const actingUserId of ["customer-a", "customer-b", null]) {
+      const request = submissions.find(
+        (row) => row.actingUserId === actingUserId,
+      );
+      expect(request?.body.events.map((event) => event.type)).toEqual(
+        actingUserId === "customer-a"
+          ? ["user_input", "tool_usage"]
+          : ["user_input"],
+      );
+    }
     for (const { headers, body } of submissions) {
       expect(headers.get("authorization")).toBe("Bearer test-runtime-key");
       expect(headers.get("X-Letta-Source")).toBe("letta-code");
@@ -184,7 +190,7 @@ describe("telemetry acting-user HTTP attribution", () => {
     runOutsideRuntimeContext(() => telemetry.trackToolUsage("Write", true, 1));
     release.resolve();
     await Promise.all([first, concurrent]);
-    expect(submissions.map((request) => request.actingUserId)).toEqual([
+    expect(submissions.map((request) => request.actingUserId).sort()).toEqual([
       "customer-a",
       "customer-b",
     ]);
@@ -193,14 +199,20 @@ describe("telemetry acting-user HTTP attribution", () => {
     await runWithRuntimeContext({ actingUserId: "retry-caller" }, () =>
       telemetry.drain(),
     );
-    expect(submissions.map((request) => request.actingUserId)).toEqual([
+    expect(submissions.map((request) => request.actingUserId).sort()).toEqual([
       "customer-a",
       "customer-b",
       "customer-b",
       "customer-c",
       null,
     ]);
-    expect(submissions[1]?.body.events).toEqual(submissions[2]?.body.events);
+    const failedGroupAttempts = submissions.filter(
+      (request) => request.actingUserId === "customer-b",
+    );
+    expect(failedGroupAttempts).toHaveLength(2);
+    expect(failedGroupAttempts[0]?.body.events).toEqual(
+      failedGroupAttempts[1]?.body.events,
+    );
     expect(submissions.map((request) => request.body.events.length)).toEqual([
       1, 1, 1, 1, 1,
     ]);
@@ -216,10 +228,10 @@ describe("telemetry acting-user HTTP attribution", () => {
     telemetry.trackUserInput("local", "user", "model");
     process.env.LETTA_ACTING_USER_ID = "later-env";
     await telemetry.drain();
-    expect(submissions.map((request) => request.actingUserId)).toEqual([
+    expect(submissions.map((request) => request.actingUserId).sort()).toEqual([
       "headless-customer",
-      "turn-customer",
       null,
+      "turn-customer",
     ]);
   });
 
@@ -237,7 +249,7 @@ describe("telemetry acting-user HTTP attribution", () => {
       );
     });
     await telemetry.drain();
-    expect(submissions.map((request) => request.actingUserId)).toEqual([
+    expect(submissions.map((request) => request.actingUserId).sort()).toEqual([
       "inbound-customer",
       null,
     ]);
@@ -272,9 +284,9 @@ describe("telemetry acting-user HTTP attribution", () => {
       );
       expect(result.status).toBe("success");
       await telemetry.drain();
-      expect(submissions.map((request) => request.actingUserId)).toEqual([
-        "tool-customer",
-      ]);
+      expect(submissions.map((request) => request.actingUserId).sort()).toEqual(
+        ["tool-customer"],
+      );
       expect(submissions[0]?.body.events).toHaveLength(1);
       expect(submissions[0]?.body.events[0]?.data.channel).toBe("slack");
     } finally {
