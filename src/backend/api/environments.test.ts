@@ -22,12 +22,11 @@ test("reads the scoped teleport receipt without starting a handoff", async () =>
     (await getTeleportStatus("agent/1", "conv/1", "teleport/1", request))
       .status,
   ).toBe("completed");
-  expect(calls).toEqual([
-    [
-      "GET",
-      "/v1/environments/runtimes/agent%2F1/conv%2F1/teleports/teleport%2F1",
-    ],
+  expect(calls[0]?.slice(0, 2)).toEqual([
+    "GET",
+    "/v1/environments/runtimes/agent%2F1/conv%2F1/teleports/teleport%2F1",
   ]);
+  expect(calls[0]?.[3]).toMatchObject({ signal: expect.any(AbortSignal) });
 });
 
 function environment(

@@ -271,6 +271,7 @@ test("restart sends saved results with the same request identity, never an unrel
       },
     ],
     requestOtid: "same-request",
+    actingUserId: "user-original",
     workingDirectory: "/project",
   };
   let pendingId = "call-1";
@@ -306,6 +307,7 @@ test("restart sends saved results with the same request identity, never an unrel
     expect(sent[0]?.messages).toEqual([
       { type: "approval", approvals: record.results, otid: "same-request" },
     ]);
+    expect(sent[0]?.actingUserId).toBe("user-original");
     expect(store.read("agent-1", "conv-1")).not.toBeNull();
     pendingId = "call-elsewhere";
     await recoverRecordedTurns(runtime, deps);

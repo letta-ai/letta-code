@@ -283,6 +283,8 @@ export function getTeleportStatus(
   return request<TeleportResponse>(
     "GET",
     `/v1/environments/runtimes/${encodeURIComponent(agentId)}/${encodeURIComponent(conversationId)}/teleports/${encodeURIComponent(teleportId)}`,
+    undefined,
+    { signal: AbortSignal.timeout(5000) },
   );
 }
 

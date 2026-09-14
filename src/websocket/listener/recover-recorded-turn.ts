@@ -197,6 +197,7 @@ export async function recoverRecordedTurns(
             type: "message",
             agentId: record.agentId,
             conversationId: record.conversationId,
+            actingUserId: record.actingUserId,
             messages: [
               { type: "approval", approvals, otid: continuation.requestOtid },
             ],
