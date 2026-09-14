@@ -52,11 +52,15 @@ jobs:
 
       - uses: letta-ai/letta-code-action@244cc9e80c77cfebdb3ec8e146e018a5fe0af027
         id: letta_review
+        env:
+          AMELIA_GITHUB_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
           github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
           agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
-          environment: cloud
+          # Review the CI checkout. Existing Cloud delivery rejects local
+          # execution options such as the action's --yolo and model flags.
+          letta_args: --new
           track_progress: ""
           tracking_comment: "false"
           model: auto
@@ -73,7 +77,7 @@ jobs:
             export PR_NUMBER="${{ env.PR_NUMBER }}"
             ```
 
-            Use `AMELIA_GITHUB_TOKEN` for every GitHub operation. Never use `CAREN_GITHUB_TOKEN`. The action's `github_token` authenticates action-side steps but is not forwarded into the cloud sandbox.
+            Use `AMELIA_GITHUB_TOKEN` for every GitHub operation. Never use `CAREN_GITHUB_TOKEN`. Review runs on the CI runner; use its checkout for source inspection.
 
             ## Your job
 
