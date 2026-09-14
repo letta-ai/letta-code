@@ -75,7 +75,8 @@ render(ctx: {
 ```
 
 - `row`/`columns` measure visible width with ANSI stripped, so chalk-colored segments and links align correctly.
-- The host clips each line to `width` and caps total height; the mod owns layout within that.
+- The host clips each line to `width`; the mod owns layout within that.
+- Above/below panels (order ≠ 0) are height-capped at 8 lines total; order-0 panels render every returned line, so keep them to one line.
 
 ## Render rules
 
