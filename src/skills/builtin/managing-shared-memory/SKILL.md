@@ -87,6 +87,6 @@ letta shared-memory history shared-notes --path docs/plan.md
 
 ## Notes and Limits
 
-- Shared memory is not part of your system prompt. Writing to it does not change your in-context memory — for that, edit your memory blocks or MemFS files.
+- Your system prompt lists each attached repository (its path and top-level files), but that projection only refreshes on recompile. Writing to shared memory does not change your in-context memory — for that, edit your memory blocks or MemFS files.
 - Attaching is asynchronous on the server; `letta shared-memory attach` waits for the attachment to be visible before cloning.
 - SDK/API equivalent for programmatic callers: `@letta-ai/letta-agent-sdk` exposes these operations as `client.repositories` (with `files` and `versions` helpers), and shared memory can be attached for a session's lifetime via `resources: [{ type: "repository", repositoryId }]` on cloud sessions. The REST resource is `/v1/repositories`.
