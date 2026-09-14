@@ -197,3 +197,43 @@ test("dependent access retries a failed background checkout without a mock trans
     "complete memory\n",
   );
 });
+
+test("a failed pull leaves the existing checkout accessible for repair", async () => {
+  const { source, target, agent } = await fixture();
+  await git(["clone", source, target]);
+  await writeFile(join(target, "memory.txt"), "local edit\n");
+  await writeFile(join(source, "memory.txt"), "upstream edit\n");
+  await git(["-C", source, "add", "memory.txt"]);
+  await git([
+    "-C",
+    source,
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.com",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "-m",
+    "upstream edit",
+  ]);
+  let attempts = 0;
+  const sync = () =>
+    withRepositoryCheckout(target, async (directory) => {
+      attempts++;
+      await git(["-C", directory, "pull", "--ff-only"]);
+    });
+  await expect(startCheckout(agent, target, sync)).rejects.toThrow();
+  await waitForToolCheckouts(
+    agent,
+    "Read",
+    { file_path: join(target, "memory.txt") },
+    target,
+  );
+  await waitForToolCheckouts(agent, "Bash", { command: "git diff" }, target);
+  await git(["-C", target, "diff"]);
+  expect(attempts).toBe(1);
+  expect(await readFile(join(target, "memory.txt"), "utf8")).toBe(
+    "local edit\n",
+  );
+});

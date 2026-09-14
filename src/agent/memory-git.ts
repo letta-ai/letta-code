@@ -48,6 +48,7 @@ import {
   installSharedMemoryPreCommitHook,
 } from "./memory-git-hooks";
 import { GIT_DISABLE_COMMIT_SIGNING_ARGS } from "./memory-git-signing";
+import { writeWindowsCredentialHelper } from "./memory-git-windows-credentials";
 
 const execFile = promisify(execFileCb);
 
@@ -122,16 +123,6 @@ export function normalizeCredentialBaseUrl(serverUrl: string): string {
     // Fall back to a conservative slash-trimmed value if URL parsing fails.
     return trimmed;
   }
-}
-
-/**
- * Format an executable helper path for git config values.
- *
- * Git splits helper commands on whitespace, so we must escape any
- * spaces/tabs in absolute paths (common on Windows profile paths).
- */
-export function formatGitCredentialHelperPath(path: string): string {
-  return path.replace(/\\/g, "/").replace(/\s/g, "\\$&");
 }
 
 function normalizeRemoteUrl(url: string): string {
@@ -327,19 +318,24 @@ interface RepositoryMountGitArgs {
   directory: string;
   remoteUrl: string;
   token: string;
+  publishedDirectory?: string;
 }
 
 export async function prepareAttachedRepositoryForGitOps(
   args: RepositoryMountGitArgs,
 ): Promise<void> {
   await maybeUpdateRepositoryRemoteOrigin(args);
-  await configureLocalCredentialHelper(args.directory, args.token);
+  await configureLocalCredentialHelper(
+    args.directory,
+    args.token,
+    args.publishedDirectory,
+  );
   await ensureLocalMemfsGitConfig(args.directory, args.agentId);
 }
 
 async function syncRepoMount(args: RepositoryMountGitArgs): Promise<void> {
   await withRepositoryCheckout(args.directory, async (directory, fresh) => {
-    args = { ...args, directory };
+    args = { ...args, publishedDirectory: args.directory, directory };
     if (fresh) {
       await runGitWithRetry(
         directory,
@@ -707,6 +703,7 @@ export async function runGitWithRetry(
 async function configureLocalCredentialHelper(
   dir: string,
   token: string,
+  publishedDirectory = dir,
 ): Promise<void> {
   const rawBaseUrl = getMemfsServerUrl();
   const normalizedBaseUrl = normalizeCredentialBaseUrl(rawBaseUrl);
@@ -723,15 +720,7 @@ async function configureLocalCredentialHelper(
   let helper: string;
 
   if (platform() === "win32") {
-    // Windows: write a batch script to .git/ and reference it
-    const helperScriptPath = join(dir, ".git", "letta-credential-helper.cmd");
-    const batchScript = `@echo off
-echo username=letta
-echo password=${token}
-`;
-    writeFileSync(helperScriptPath, batchScript, "utf-8");
-    // Use a normalized path and escape whitespace for profiles like "Jane Doe".
-    helper = formatGitCredentialHelperPath(helperScriptPath);
+    helper = writeWindowsCredentialHelper(dir, token, publishedDirectory);
     debugLog("memfs-git", `Wrote Windows credential helper script`);
   } else {
     // Unix/macOS: use inline bash helper
@@ -1658,7 +1647,11 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
 
       // Configure local credential helper so the agent can do plain
       // `git push` / `git pull` without auth prefixes.
-      await configureLocalCredentialHelper(dir, token);
+      await configureLocalCredentialHelper(
+        dir,
+        token,
+        getMemoryRepoDir(agentId),
+      );
 
       // Install commit hooks (pre-commit validates frontmatter; post-commit mirrors)
       installMemoryGitHooks(dir);

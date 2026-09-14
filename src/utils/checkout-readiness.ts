@@ -1,5 +1,6 @@
-import { realpathSync } from "node:fs";
-import { basename, dirname, resolve, sep } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { expandFilePath } from "./file-path";
 
 function resolveCheckoutPath(path: string): string {
   let parent = resolve(path);
@@ -88,6 +89,10 @@ export function startCheckout(
       },
       (error) => {
         entry.pending = undefined;
+        // A failed refresh must leave an existing checkout usable for repair.
+        // Fresh clones are published atomically, so they cannot pass this check.
+        entry.ready = existsSync(join(entry.path, ".git"));
+        if (entry.ready) generation++;
         throw error;
       },
     );
@@ -112,8 +117,12 @@ export async function waitForCheckouts(
   if (!agentId) return;
   const discovery = discoveries.get(agentId);
   if (discovery)
-    await (discovery.pending ??
-      trackCheckoutDiscovery(agentId, discovery.start));
+    await (
+      discovery.pending ?? trackCheckoutDiscovery(agentId, discovery.start)
+    ).catch(() => {
+      // Discovery is best-effort. Keep known checkouts gated below, but an
+      // unavailable repository-list endpoint must not disable local tools.
+    });
   const entries = [...(checkouts.get(agentId)?.values() ?? [])];
   await Promise.all(
     entries
@@ -129,7 +138,11 @@ export async function waitForCheckouts(
             );
           }),
       )
-      .map((entry) => startCheckout(agentId, entry.path, entry.start)),
+      .map((entry) =>
+        startCheckout(agentId, entry.path, entry.start).catch((error) => {
+          if (!entry.ready) throw error;
+        }),
+      ),
   );
 }
 
@@ -140,17 +153,21 @@ export async function waitForToolCheckouts(
   cwd: string,
   arbitraryCode = false,
 ): Promise<void> {
+  // Provider toolsets expose both PascalCase and snake_case spellings.
+  const tool = name.replaceAll("_", "").toLowerCase();
   if (
     arbitraryCode ||
-    /^(bash|exec_command|write_stdin|shell_?command|shell|run_shell_command|monitor|skill)$/i.test(
-      name,
+    /^(bash|execcommand|writestdin|shellcommand|shell|runshellcommand|monitor|skill)$/.test(
+      tool,
     )
   ) {
     await waitForCheckouts(agentId);
     return;
   }
   if (
-    !/read|write|edit|patch|grep|glob|search|list|viewimage|memory/i.test(name)
+    !/read|write|edit|replace|patch|grep|glob|search|list|viewimage|memory|^ls$/.test(
+      tool,
+    )
   )
     return;
   const paths: string[] = [];
@@ -163,7 +180,7 @@ export async function waitForToolCheckouts(
         )) {
           paths.push(resolve(cwd, header[1] ?? ""));
         }
-      } else paths.push(resolve(cwd, value));
+      } else paths.push(expandFilePath(value, cwd));
     } else if (value && typeof value === "object")
       Object.entries(value).forEach(([key, entry]) => {
         if (/path|directory|^dir$|^root$/.test(key) && entry)
@@ -173,6 +190,6 @@ export async function waitForToolCheckouts(
   };
   visit(args);
   // Search tools with no explicit root search the cwd.
-  if (!explicitRoot && /grep|glob|search|list/i.test(name)) paths.push(cwd);
+  if (!explicitRoot && /grep|glob|search|list|^ls$/.test(tool)) paths.push(cwd);
   await waitForCheckouts(agentId, paths);
 }

@@ -7,8 +7,9 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { setImmediate as nextTick } from "node:timers/promises";
 import {
   getCheckoutGeneration,
   isCheckoutPending,
@@ -18,6 +19,126 @@ import {
   waitForCheckouts,
   waitForToolCheckouts,
 } from "./checkout-readiness";
+
+test.each([
+  "RunShellCommand",
+  "run_shell_command",
+  "ShellCommand",
+  "shell_command",
+  "Bash",
+  "exec_command",
+  "write_stdin",
+  "Shell",
+  "shell",
+  "Monitor",
+  "Skill",
+  "Replace",
+  "replace",
+  "view_image",
+  "ViewImage",
+  "LS",
+  "Read",
+  "Write",
+  "ReadFileGemini",
+  "WriteFileGemini",
+  "ReadManyFiles",
+  "ListDirectory",
+  "GlobGemini",
+  "SearchFileContent",
+  "ApplyPatch",
+  "apply_patch",
+])("%s waits for its unpublished checkout", async (name) => {
+  const agent = crypto.randomUUID();
+  const root = join(tmpdir(), agent);
+  let release!: () => void;
+  const clone = startCheckout(
+    agent,
+    root,
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  let completed = false;
+  const access = waitForToolCheckouts(
+    agent,
+    name,
+    {
+      command: "pwd",
+      file_path: join(root, "file.md"),
+      path: root,
+      input: `*** Begin Patch\n*** Add File: ${join(root, "file.md")}\n+hello\n*** End Patch`,
+    },
+    tmpdir(),
+  ).then(() => {
+    completed = true;
+  });
+  try {
+    await nextTick();
+    expect(completed).toBe(false);
+  } finally {
+    release();
+    await Promise.all([clone, access]);
+    retainCheckouts(agent, []);
+  }
+  expect(completed).toBe(true);
+});
+
+test("Read and Write wait after home and environment expansion", async () => {
+  const agent = crypto.randomUUID();
+  const root = join(homedir(), agent);
+  const key = "LETTA_CHECKOUT_TEST_PATH";
+  const previous = process.env[key];
+  process.env[key] = root;
+  let release!: () => void;
+  const clone = startCheckout(
+    agent,
+    root,
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  let completed = 0;
+  const accesses = ["Read", "Write"].flatMap((name) =>
+    [`~/${agent}/file.md`, `$${key}/file.md`, `\${${key}}/file.md`].map(
+      (file_path) =>
+        waitForToolCheckouts(agent, name, { file_path }, tmpdir()).then(() => {
+          completed++;
+        }),
+    ),
+  );
+  try {
+    await nextTick();
+    expect(completed).toBe(0);
+  } finally {
+    release();
+    await Promise.all([clone, ...accesses]);
+    retainCheckouts(agent, []);
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+  }
+  expect(completed).toBe(6);
+});
+
+test("failed optional discovery does not disable local tools and retries later", async () => {
+  const agent = crypto.randomUUID();
+  let attempts = 0;
+  await expect(
+    trackCheckoutDiscovery(agent, async () => {
+      attempts++;
+      if (attempts < 3) throw new Error("repository endpoint unavailable");
+    }),
+  ).rejects.toThrow("repository endpoint unavailable");
+  await waitForToolCheckouts(
+    agent,
+    "Read",
+    { file_path: join(tmpdir(), "project.md") },
+    tmpdir(),
+  );
+  await waitForToolCheckouts(agent, "Bash", { command: "pwd" }, tmpdir());
+  expect(attempts).toBe(3);
+});
 
 test("background checkouts do not gate unrelated file access; repository access waits", async () => {
   const root = await mkdtemp(join(tmpdir(), "checkout-ready-"));
