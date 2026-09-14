@@ -1,13 +1,18 @@
+import { getConversationId } from "@/agent/context";
 import { resolveShellSandboxContext } from "@/permissions/sandbox-gate";
 import {
   buildCrossAgentSandboxPolicy,
+  canonicalizeRoot,
   deriveSelfAgentRootsForTrees,
 } from "@/permissions/sandbox-policy";
 import {
   buildWorkspaceSandboxPolicy,
   resolveWorkspaceSandbox,
 } from "@/permissions/workspace-sandbox";
-import { getRuntimeContext } from "@/runtime-context";
+import {
+  getRuntimeContext,
+  isConversationMemoryReadOnly,
+} from "@/runtime-context";
 import {
   detectSandboxBackend,
   type SandboxAvailability,
@@ -107,6 +112,12 @@ export function applyShellSandbox(
     selfRoots,
     agentsTreeRoots: ctx.agentsTreeRoots,
   });
+  if (isConversationMemoryReadOnly(getConversationId())) {
+    // Reuse the existing opt-in sandbox. Forks never get a writable self carve.
+    policy.writableRoots = [];
+    policy.readonlyRoots = ctx.memoryRoots.map(canonicalizeRoot);
+    policy.deniedRoots.push(...policy.readonlyRoots);
+  }
   const wrapped = wrapLauncher(launcher, policy, {
     backend: ctx.backend,
     bwrapPath: ctx.bwrapPath,

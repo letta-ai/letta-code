@@ -14,9 +14,11 @@ import {
   createEphemeralConversation,
   type EphemeralConversationCreateBody,
 } from "@/backend/api/ephemeral-conversations";
+import { getConversationExecutionAgentId } from "@/backend/conversation-identity";
 import { migratePermissionMode } from "@/permissions/mode";
 import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
+import { setConversationMemoryReadOnly } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
 import { subscribeListenerConnection } from "@/websocket/listener/connection";
@@ -247,7 +249,9 @@ async function resolveRuntimeStartConversation(
       return buildDefaultConversation(agent);
     }
     const conversation = await retrieveConversation(parsed.conversation_id);
-    const conversationAgentId = conversation.agent_id ?? null;
+    const conversationAgentId = agent
+      ? getConversationExecutionAgentId(conversation)
+      : (conversation.agent_id ?? null);
     if (conversationAgentId !== (agent?.id ?? null)) {
       throw new Error(
         agent
@@ -255,6 +259,10 @@ async function resolveRuntimeStartConversation(
           : `Conversation ${conversation.id} is agent-backed; provide agent_id`,
       );
     }
+    setConversationMemoryReadOnly(
+      conversation.id,
+      conversation.agent_id === null,
+    );
     return conversation;
   }
 

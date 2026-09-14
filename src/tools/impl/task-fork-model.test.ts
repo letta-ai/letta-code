@@ -17,6 +17,7 @@ const forkConfig: SubagentConfig = {
 
 function backendFixture(events: string[]) {
   return {
+    capabilities: { localModelCatalog: false },
     forkConversation: async (conversationId: string) => {
       events.push(`fork:${conversationId}`);
       return { id: "conv-fork" };
@@ -28,6 +29,69 @@ function backendFixture(events: string[]) {
 }
 
 describe("forkParentConversation", () => {
+  test("allocates distinct named ephemeral conversations before launching Cloud forks", async () => {
+    const options: Array<
+      import("@/backend/api/conversations").ForkConversationOptions
+    > = [];
+    const backend = {
+      capabilities: { localModelCatalog: false },
+      forkConversation: async (
+        _id: string,
+        option: import("@/backend/api/conversations").ForkConversationOptions,
+      ) => {
+        options.push(option);
+        return { id: `conv-${options.length}` };
+      },
+    } as unknown as Backend;
+    const params = {
+      backend,
+      parentAgentId: "agent-parent",
+      parentConversationId: "default",
+      config: forkConfig,
+    };
+    const dependencies = {
+      resolveModelOverride: async () => null,
+      inheritToolset: async () => undefined,
+    };
+    await forkParentConversation(params, dependencies);
+    await forkParentConversation(params, dependencies);
+    expect(options[0]?.name).not.toBe(options[1]?.name);
+    expect(options[0]).toMatchObject({
+      agentId: "agent-parent",
+      hidden: true,
+      ephemeral: true,
+      isSubagent: true,
+      name: expect.stringMatching(/ \(subagent\)$/),
+    });
+  });
+
+  test("keeps local forks agent-backed while assigning the same conversation metadata", async () => {
+    let options: unknown;
+    const backend = {
+      capabilities: { localModelCatalog: true },
+      forkConversation: async (_id: string, option: unknown) => {
+        options = option;
+        return { id: "conv-local" };
+      },
+    } as unknown as Backend;
+    await forkParentConversation(
+      {
+        backend,
+        parentAgentId: "agent-local-parent",
+        parentConversationId: "default",
+        config: forkConfig,
+      },
+      {
+        resolveModelOverride: async () => null,
+        inheritToolset: async () => undefined,
+      },
+    );
+    expect(options).toMatchObject({
+      ephemeral: false,
+      isSubagent: true,
+      name: expect.any(String),
+    });
+  });
   test("applies the model only to the forked conversation before launch", async () => {
     const events: string[] = [];
     const result = await forkParentConversation(

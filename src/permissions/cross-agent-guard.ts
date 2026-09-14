@@ -30,7 +30,11 @@
 // already kernel-confined as whole processes.
 
 import { homedir } from "node:os";
-import { getRuntimeContext } from "@/runtime-context";
+import { getConversationId } from "@/agent/context";
+import {
+  getRuntimeContext,
+  isConversationMemoryReadOnly,
+} from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 import {
@@ -39,7 +43,11 @@ import {
 } from "@/utils/local-backend-paths";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
-import { deriveAgentId, resolveMemoryTargetPath } from "./memory-paths";
+import {
+  deriveAgentId,
+  resolveAllowedMemoryRoots,
+  resolveMemoryTargetPath,
+} from "./memory-paths";
 import { canonicalizeRoot } from "./sandbox-policy";
 
 // --------------------------------------------------------------------------
@@ -420,6 +428,44 @@ export function evaluateCrossAgentGuard(
 ): CrossAgentGuardResult | null {
   const env = options.env ?? process.env;
   const homeDir = env.HOME ?? homedir();
+
+  if (isConversationMemoryReadOnly(getConversationId())) {
+    const canonical = canonicalToolName(toolName);
+    const isMemoryTool =
+      toolName === "memory" || toolName.startsWith("memory_");
+    const isRead = ["Read", "Glob", "Grep", "ListDir"].includes(canonical);
+    const roots = resolveAllowedMemoryRoots({ env }).roots.map(
+      canonicalizeRoot,
+    );
+    const paths = [
+      extractFilePath(toolArgs),
+      ...extractApplyPatchPaths(String(toolArgs.input ?? "")),
+    ];
+    const targetsMemoryRoot = paths.some((path) => {
+      const resolved = path && resolveMemoryTargetPath(path, workingDirectory);
+      if (!resolved) return false;
+      const real = canonicalizeRoot(resolved);
+      return roots.some((root) => real === root || real.startsWith(`${root}/`));
+    });
+    if (
+      isMemoryTool ||
+      (!isRead &&
+        (targetsMemoryRoot ||
+          extractTargetAgentPaths(
+            toolName,
+            toolArgs,
+            workingDirectory,
+            env,
+            homeDir,
+          ).anyAgentScoped))
+    ) {
+      return {
+        matchedRule: "cross-agent guard",
+        reason: "Ephemeral conversations cannot modify inherited memory.",
+        offendingAgentIds: [],
+      };
+    }
+  }
 
   if (isMemoryGuardDisabled(options)) {
     return null;

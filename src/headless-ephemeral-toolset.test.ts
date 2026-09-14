@@ -8,6 +8,7 @@ import {
   configureEphemeralLocalBackend,
   getBackend,
 } from "@/backend";
+import { setConversationMemoryReadOnly } from "@/runtime-context";
 import { releaseToolExecutionContext } from "@/tools/manager";
 import { __headlessTestUtils } from "./headless";
 
@@ -64,6 +65,7 @@ describe("ephemeral headless toolset selection", () => {
         model,
       });
 
+      setConversationMemoryReadOnly(ephemeral.conversationId, true);
       const ephemeralPrepared =
         await __headlessTestUtils.prepareHeadlessToolExecutionContext({
           agentId: ephemeral.agent.id,
@@ -85,9 +87,16 @@ describe("ephemeral headless toolset selection", () => {
           agentPrepared.preparedToolContext.toolset,
         );
         expect(ephemeralPrepared.availableTools).toEqual(
-          agentPrepared.availableTools,
+          agentPrepared.availableTools.filter(
+            (name) => name !== "memory" && name !== "memory_apply_patch",
+          ),
+        );
+        expect(ephemeralPrepared.availableTools).not.toContain("memory");
+        expect(ephemeralPrepared.availableTools).not.toContain(
+          "memory_apply_patch",
         );
       } finally {
+        setConversationMemoryReadOnly(ephemeral.conversationId, false);
         releaseToolExecutionContext(
           ephemeralPrepared.preparedToolContext.preparedToolContext.contextId,
         );

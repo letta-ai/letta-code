@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type Letta from "@letta-ai/letta-client";
+import { getConversationId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getBackend } from "@/backend";
 import { buildModInvocationContext } from "@/mods/context";
@@ -14,7 +15,10 @@ import type {
   ModEventMap,
   ModEventName,
 } from "@/mods/types";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  isConversationMemoryReadOnly,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { getBootWorkingDirectory } from "./cwd";
 import { ensureMemfsSyncedForAgent } from "./memfs-sync";
@@ -208,6 +212,7 @@ let ensureAgentMemfsSynced = ensureMemfsSyncedForAgent;
 export async function ensureListenerAgentModAdapter(
   runtime: ListenerRuntime,
   agentId: string,
+  conversationId = getConversationId(),
 ): Promise<ModAdapter | null> {
   runtime.agentModAdapters ??= new Map();
   runtime.agentModAdapterLoads ??= new Map();
@@ -222,7 +227,9 @@ export async function ensureListenerAgentModAdapter(
   let load: Promise<ModAdapter | null> | undefined;
   load = (async () => {
     try {
-      const syncSucceeded = await ensureAgentMemfsSynced(runtime, agentId);
+      const syncSucceeded = await (isConversationMemoryReadOnly(conversationId)
+        ? true
+        : ensureAgentMemfsSynced(runtime, agentId));
       if (!syncSucceeded || agentModAdapterLoads.get(agentId) !== load) {
         return null;
       }

@@ -12,12 +12,14 @@ import {
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { INTERRUPT_RECOVERY_ALERT } from "@/agent/prompt-assets";
 import { getBackend } from "@/backend";
+import { retrieveConversationAgent } from "@/backend/conversation-identity";
 import type { Line } from "@/cli/helpers/accumulator";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
+import { isConversationMemoryReadOnly } from "@/runtime-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
@@ -153,22 +155,35 @@ export async function prepareListenerTurn(params: {
   if (!isApprovalMessage && agentId) {
     try {
       try {
-        cachedAgent = (await getBackend().retrieveAgent(agentId, {
-          include: ["agent.tags"],
-        })) as AgentState;
-        const {
-          ensureLettaCodeOriginTag,
-          getMemoryPromptModeForAgent,
-          scheduleManagedSystemPromptUpdate,
-        } = await import("@/agent/system-prompt-versioning");
-        cachedAgent = await ensureLettaCodeOriginTag(cachedAgent);
-        scheduleManagedSystemPromptUpdate({
-          agent: cachedAgent,
-          memoryMode: getMemoryPromptModeForAgent(cachedAgent.id),
-          onUpdated: (updatedAgent) => {
-            cachedAgent = updatedAgent;
-          },
-        });
+        cachedAgent =
+          conversationId === "default"
+            ? await getBackend().retrieveAgent(agentId, {
+                include: ["agent.tags"],
+              })
+            : await retrieveConversationAgent(
+                conversationId,
+                getBackend(),
+                agentId,
+              );
+        if (!isConversationMemoryReadOnly(conversationId)) {
+          const {
+            ensureLettaCodeOriginTag,
+            getMemoryPromptModeForAgent,
+            scheduleManagedSystemPromptUpdate,
+          } = await import("@/agent/system-prompt-versioning");
+          const displayName = cachedAgent.name;
+          cachedAgent = {
+            ...(await ensureLettaCodeOriginTag(cachedAgent)),
+            name: displayName,
+          };
+          scheduleManagedSystemPromptUpdate({
+            agent: cachedAgent,
+            memoryMode: getMemoryPromptModeForAgent(cachedAgent.id),
+            onUpdated: (updatedAgent) => {
+              cachedAgent = { ...updatedAgent, name: displayName };
+            },
+          });
+        }
       } catch (error) {
         debugWarn(
           "listen",
@@ -191,13 +206,13 @@ export async function prepareListenerTurn(params: {
         };
       }
       setCurrentAgentName(
-        listenAgentMetadata?.name ?? cachedAgent?.name ?? null,
+        cachedAgent?.name ?? listenAgentMetadata?.name ?? null,
       );
       const { parts: reminderParts } = await buildSharedReminderParts(
         buildListenReminderContext({
           agentId,
           conversationId,
-          agentName: listenAgentMetadata?.name ?? null,
+          agentName: cachedAgent?.name ?? listenAgentMetadata?.name ?? null,
           agentDescription: listenAgentMetadata?.description ?? null,
           agentLastRunAt: listenAgentMetadata?.lastRunAt ?? null,
           state: runtime.reminderState,

@@ -84,12 +84,16 @@ export async function resolveAgentMessageDestination(
       conversationId,
       options,
     );
-    if (agentId && agentId !== conversation.agent_id) {
+    const { getConversationExecutionAgentId } = await import(
+      "@/backend/conversation-identity"
+    );
+    const conversationAgentId = getConversationExecutionAgentId(conversation);
+    if (agentId && agentId !== conversationAgentId) {
       throw new Error(
         "The conversation does not belong to the requested agent.",
       );
     }
-    agentId = conversation.agent_id ?? undefined;
+    agentId = conversationAgentId ?? undefined;
   }
   if (!agentId) throw new Error("The default conversation requires agent_id.");
   if (!conversationId) {

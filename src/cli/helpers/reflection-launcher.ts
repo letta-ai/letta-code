@@ -44,6 +44,7 @@ import {
   buildReflectionSubagentPrompt,
   getReflectionTranscriptState,
 } from "@/cli/helpers/reflection-transcript";
+import { isConversationMemoryReadOnly } from "@/runtime-context";
 import { type ReflectionWorktreeCleanupOutcome, telemetry } from "@/telemetry";
 import { maybeSendReflectionThresholdFeedback } from "@/telemetry/reflection-threshold-feedback";
 import { debugLog, debugWarn } from "@/utils/debug";
@@ -745,7 +746,7 @@ export async function launchReflectionSubagent(
   const reflectionSettings =
     options.reflectionSettings ?? getReflectionSettings(agentId);
 
-  if (!memfsEnabled) {
+  if (!memfsEnabled || isConversationMemoryReadOnly(conversationId)) {
     return { launched: false, reason: "memfs_disabled" };
   }
 

@@ -3,11 +3,13 @@ import {
   type RepositoryPostTurnSyncResult,
   syncPendingAttachedRepositoryCommitsAfterTurn,
 } from "@/agent/attached-repository-git-sync";
+import { getConversationId } from "@/agent/context";
 import {
   type MemoryPostTurnSyncResult,
   syncPendingMemoryCommitsAfterTurn,
 } from "@/agent/memory-git";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { isConversationMemoryReadOnly } from "@/runtime-context";
 import { debugWarn } from "@/utils/debug";
 
 export interface RunPostTurnMemorySyncParams {
@@ -124,6 +126,7 @@ export async function runPostTurnMemorySync(
   params: RunPostTurnMemorySyncParams,
   dependencies: RunPostTurnMemorySyncDependencies = {},
 ): Promise<void> {
+  if (isConversationMemoryReadOnly(getConversationId())) return;
   const debugLabel = params.debugLabel ?? "Post-turn memory sync";
   const syncMemory =
     dependencies.syncMemory ?? syncPendingMemoryCommitsAfterTurn;

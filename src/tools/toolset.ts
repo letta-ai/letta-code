@@ -12,7 +12,10 @@ import type { ModAdapter } from "@/mods/mod-adapter";
 import type { ModPermissionDefinition } from "@/mods/permission-registry";
 import type { ModToolDefinition } from "@/mods/tool-registry";
 import type { ModContext } from "@/mods/types";
-import type { RuntimeContextSnapshot } from "@/runtime-context";
+import {
+  isConversationMemoryReadOnly,
+  type RuntimeContextSnapshot,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import { toolFilter } from "./filter";
@@ -272,7 +275,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     conversationId,
     toolsetPreference,
     clientToolset,
-    exclude,
+    exclude: inputExclude,
     clientToolAllowlist: inputToolAllowlist,
     externalToolScopeIds,
     workingDirectory,
@@ -283,6 +286,11 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     runtimeContext,
     agent,
   } = params;
+  const exclude: ToolName[] | undefined = isConversationMemoryReadOnly(
+    conversationId,
+  )
+    ? [...(inputExclude ?? []), "memory", "memory_apply_patch"]
+    : inputExclude;
   const launchTools = runtimeContext?.executionSettings?.tools;
   const clientToolAllowlist =
     launchTools === undefined
