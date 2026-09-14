@@ -23,6 +23,7 @@ import {
   type SubagentMemoryScope,
 } from "@/agent/subagents";
 import { spawnSubagent } from "@/agent/subagents/manager";
+import { allocateSubagentName } from "@/agent/subagents/names";
 import {
   type ForkModelOverride,
   getPrimaryAgentModelHandle,
@@ -728,6 +729,9 @@ export async function forkParentConversation(
         ? { agentId: params.parentAgentId }
         : {}),
       hidden: true,
+      ephemeral: !params.backend.capabilities.localModelCatalog,
+      name: allocateSubagentName(),
+      isSubagent: true,
       signal: params.signal,
     },
   );

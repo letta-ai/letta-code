@@ -14,6 +14,7 @@ import {
   createEphemeralConversation,
   type EphemeralConversationCreateBody,
 } from "@/backend/api/ephemeral-conversations";
+import { getConversationExecutionAgentId } from "@/backend/conversation-identity";
 import { migratePermissionMode } from "@/permissions/mode";
 import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
@@ -247,7 +248,9 @@ async function resolveRuntimeStartConversation(
       return buildDefaultConversation(agent);
     }
     const conversation = await retrieveConversation(parsed.conversation_id);
-    const conversationAgentId = conversation.agent_id ?? null;
+    const conversationAgentId = agent
+      ? getConversationExecutionAgentId(conversation)
+      : (conversation.agent_id ?? null);
     if (conversationAgentId !== (agent?.id ?? null)) {
       throw new Error(
         agent

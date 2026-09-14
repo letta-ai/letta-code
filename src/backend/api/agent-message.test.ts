@@ -5,6 +5,28 @@ import {
   resolveAgentMessageDestination,
 } from "./agent-message";
 
+test("addresses ephemeral children through the server-recorded creating agent", async () => {
+  const backend = {
+    retrieveConversation: async () => ({
+      id: "conv-child",
+      agent_id: null,
+      created_by_agent_id: "agent-parent",
+    }),
+  } as unknown as Backend;
+  expect(
+    await resolveAgentMessageDestination(
+      { conversationId: "conv-child" },
+      backend,
+    ),
+  ).toEqual({ agentId: "agent-parent", conversationId: "conv-child" });
+  await expect(
+    resolveAgentMessageDestination(
+      { agentId: "agent-other", conversationId: "conv-child" },
+      backend,
+    ),
+  ).rejects.toThrow("does not belong");
+});
+
 test.each([
   ["agent-current", "conv-current", "agent-current", "conv-current", true],
   ["agent-current", "default", "agent-current", "default", true],

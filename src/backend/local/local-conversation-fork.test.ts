@@ -3,6 +3,26 @@ import type { ConversationMessageCreateBody } from "@/backend";
 import { LocalStore } from "@/backend/local/local-store";
 
 describe("LocalBackend conversation forks", () => {
+  test("keeps each fork name without renaming the parent conversation", () => {
+    const agentId = "agent-local-named-forks";
+    const store = new LocalStore(agentId);
+    const source = store.createConversation({ agent_id: agentId } as never);
+    const fork = store.forkConversation(source.id, {
+      name: "Joi (subagent)",
+      isSubagent: true,
+      hidden: true,
+    });
+    expect(store.retrieveConversation(fork.id)).toMatchObject({
+      agent_id: agentId,
+      name: "Joi (subagent)",
+      is_subagent: true,
+      hidden: true,
+    });
+    expect(store.retrieveConversation(source.id)).not.toHaveProperty("name");
+    expect(() =>
+      store.forkConversation(source.id, { ephemeral: true }),
+    ).toThrow("require the API backend");
+  });
   test("forks through a projected message ID inclusively", () => {
     const agentId = "agent-local-fork-cutoff";
     const store = new LocalStore(agentId);

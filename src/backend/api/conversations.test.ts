@@ -6,6 +6,29 @@ import { forkConversation } from "@/backend/api/conversations";
 import { settingsManager } from "@/settings-manager";
 
 describe("conversation API requests", () => {
+  test("puts ephemeral identity in the fork body and keeps existing query parameters", async () => {
+    let captured: unknown[] = [];
+    await forkConversation(
+      "default",
+      {
+        agentId: "agent-parent",
+        hidden: true,
+        ephemeral: true,
+        name: "Joi (subagent)",
+        isSubagent: true,
+      },
+      async (...args) => {
+        captured = args;
+        return { id: "conv-child" } as never;
+      },
+    );
+    expect(captured).toEqual([
+      "POST",
+      "/v1/conversations/default/fork",
+      { ephemeral: true, name: "Joi (subagent)", is_subagent: true },
+      { query: { agent_id: "agent-parent", hidden: true } },
+    ]);
+  });
   const originalHome = process.env.HOME;
   let testHome: string;
 

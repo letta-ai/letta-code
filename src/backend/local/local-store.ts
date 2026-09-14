@@ -16,6 +16,7 @@ import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
+import type { ForkConversationOptions } from "@/backend/api/conversations";
 import type {
   AgentCreateBody,
   AgentListBody,
@@ -43,6 +44,11 @@ import {
 import { selectLocalMessagesForFork } from "./local-conversation-fork";
 import { listLocalConversations } from "./local-conversation-list";
 import {
+  createLocalConversationRecord,
+  type StoredConversation,
+  updateLocalConversationRecord,
+} from "./local-conversation-record";
+import {
   emptyLocalUsage,
   type LocalAssistantMessage,
   type LocalImageContent,
@@ -66,7 +72,6 @@ import {
 import {
   normalizeLocalModelHandle,
   normalizeStoredLocalModelRecord,
-  supportedConversationModelSettingsFromBody,
   supportedModelSettingsFromBody,
 } from "./local-model-normalization";
 import {
@@ -76,14 +81,6 @@ import {
 import type { LocalAgentRecord, StoredMessage } from "./local-types";
 import type { LocalCompiledSystemPrompt } from "./system-prompt-compilation";
 export type { LocalAgentRecord, StoredMessage };
-
-type StoredConversation = Conversation & {
-  id: string;
-  agent_id: string;
-  in_context_message_ids: string[];
-  hidden?: boolean;
-  tags?: string[];
-};
 
 const DEFAULT_LOCAL_AGENT_NAME = "Letta Code";
 const DEFAULT_LOCAL_MODEL = "local/default";
@@ -100,10 +97,6 @@ function isStringArray(value: unknown): value is string[] {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
-}
-
-function optionalStringOrNull(value: unknown): string | null | undefined {
-  return typeof value === "string" || value === null ? value : undefined;
 }
 
 function currentIsoTimestamp(): string {
@@ -123,99 +116,6 @@ function isSyntheticLocalTimestamp(value: string | null | undefined): boolean {
     parsed >= Date.UTC(2026, 0, 1, 0, 0, 0, 0) &&
     parsed < Date.UTC(2026, 0, 2, 0, 0, 0, 0)
   );
-}
-
-function createLocalConversationRecord(
-  conversationId: string,
-  agentId: string,
-  _sequence: number,
-  body: Partial<ConversationCreateBody> = {},
-): StoredConversation {
-  const bodyRecord = body as Record<string, unknown>;
-  const now = currentIsoTimestamp();
-  const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
-  return {
-    id: conversationId,
-    agent_id: agentId,
-    archived: false,
-    archived_at: null,
-    created_at: now,
-    updated_at: now,
-    last_message_at: null,
-    summary: optionalStringOrNull(bodyRecord.summary) ?? null,
-    in_context_message_ids: [],
-    ...(typeof bodyRecord.model === "string" || bodyRecord.model === null
-      ? {
-          model:
-            bodyRecord.model === null
-              ? null
-              : normalizeLocalModelHandle(
-                  bodyRecord.model,
-                  modelSettings ?? {},
-                ),
-        }
-      : {}),
-    ...(modelSettings !== undefined ? { model_settings: modelSettings } : {}),
-    ...(typeof bodyRecord.context_window_limit === "number"
-      ? { context_window_limit: bodyRecord.context_window_limit }
-      : {}),
-    ...(typeof bodyRecord.hidden === "boolean"
-      ? { hidden: bodyRecord.hidden }
-      : {}),
-    ...(isStringArray(bodyRecord.tags) ? { tags: bodyRecord.tags } : {}),
-  } as StoredConversation;
-}
-
-function updateLocalConversationRecord(
-  current: StoredConversation,
-  body: ConversationUpdateBody,
-  updatedAt: string,
-): StoredConversation {
-  const bodyRecord = body as Record<string, unknown>;
-  const next: StoredConversation = {
-    ...current,
-    updated_at: updatedAt,
-  };
-  const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
-  if (typeof bodyRecord.archived === "boolean") {
-    next.archived = bodyRecord.archived;
-    next.archived_at = bodyRecord.archived
-      ? (current.archived_at ?? updatedAt)
-      : null;
-  }
-  if (bodyRecord.archived === null) {
-    next.archived = false;
-    next.archived_at = null;
-  }
-  if (
-    typeof bodyRecord.last_message_at === "string" ||
-    bodyRecord.last_message_at === null
-  ) {
-    next.last_message_at = bodyRecord.last_message_at;
-  }
-  if (typeof bodyRecord.model === "string" || bodyRecord.model === null) {
-    next.model =
-      bodyRecord.model === null
-        ? null
-        : normalizeLocalModelHandle(bodyRecord.model, modelSettings ?? {});
-  }
-  if (modelSettings !== undefined) {
-    next.model_settings = modelSettings as StoredConversation["model_settings"];
-  }
-  if (typeof bodyRecord.context_window_limit === "number") {
-    (next as unknown as Record<string, unknown>).context_window_limit =
-      bodyRecord.context_window_limit;
-  }
-  if (typeof bodyRecord.hidden === "boolean") {
-    next.hidden = bodyRecord.hidden;
-  }
-  if (typeof bodyRecord.summary === "string" || bodyRecord.summary === null) {
-    next.summary = bodyRecord.summary;
-  }
-  if (isStringArray(bodyRecord.tags)) {
-    next.tags = bodyRecord.tags;
-  }
-  return next;
 }
 
 function textContent(text: string) {
@@ -1390,8 +1290,10 @@ export class LocalStore {
 
   forkConversation(
     conversationId: string,
-    options: { agentId?: string; hidden?: boolean; messageId?: string } = {},
+    options: ForkConversationOptions = {},
   ): { id: string } {
+    if (options.ephemeral)
+      throw new Error("Agent-free conversation forks require the API backend.");
     const source = this.findConversation(
       conversationId,
       conversationId === "default" ? options.agentId : undefined,
@@ -1420,6 +1322,8 @@ export class LocalStore {
       this.conversationSeq,
       {
         summary: source.summary ?? null,
+        name: options.name,
+        is_subagent: options.isSubagent,
         ...(source.model !== undefined ? { model: source.model } : {}),
         ...(source.model_settings !== undefined
           ? { model_settings: source.model_settings }

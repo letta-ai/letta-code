@@ -12,6 +12,7 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import { resolveActingUserId } from "@/agent/acting-user";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
+import { retrieveConversationAgent } from "@/backend/conversation-identity";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import {
   trackBoundaryError,
@@ -830,6 +831,7 @@ export async function handleHeadlessCommand(
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
+  let conversationDisplayName: string | undefined;
   let ephemeralConversationId: string | null = null;
   let autoEnableMemfsForFreshAgent = false;
   const startupBackendMode = backend.capabilities.localModelCatalog
@@ -1108,12 +1110,8 @@ export async function handleHeadlessCommand(
         "conversations",
         `retrieve(${specifiedConversationId}) [headless conv→agent lookup]`,
       );
-      const conversation = await backend.retrieveConversation(
-        specifiedConversationId,
-      );
-      agent = await backend.retrieveAgent(conversation.agent_id, {
-        include: ["agent.tools", "agent.tags"],
-      });
+      agent = await retrieveConversationAgent(specifiedConversationId, backend);
+      conversationDisplayName = agent.name;
     } catch (error) {
       trackHeadlessBoundaryError(
         "headless_conversation_lookup_failed",
@@ -1621,6 +1619,8 @@ export async function handleHeadlessCommand(
   }
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
+  if (conversationDisplayName !== undefined)
+    agent = { ...agent, name: conversationDisplayName };
   setAgentContext(
     agent.id,
     skillsDirectory,

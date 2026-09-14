@@ -3,6 +3,9 @@ import { apiRequest } from "./request";
 export interface ForkConversationOptions {
   agentId?: string;
   hidden?: boolean;
+  ephemeral?: boolean;
+  name?: string;
+  isSubagent?: boolean;
   messageId?: string;
   /** Extra headers forwarded on the request (e.g. acting-user echo). */
   headers?: Record<string, string>;
@@ -25,6 +28,7 @@ export type SummarizeConversationBody = Record<string, unknown> & {
 export async function forkConversation(
   conversationId: string,
   options: ForkConversationOptions = {},
+  request = apiRequest,
 ): Promise<{ id: string }> {
   const query = {
     ...(options.agentId ? { agent_id: options.agentId } : {}),
@@ -32,10 +36,22 @@ export async function forkConversation(
     ...(options.messageId ? { message_id: options.messageId } : {}),
   };
 
-  return apiRequest<{ id: string }>(
+  return request<{ id: string }>(
     "POST",
     `/v1/conversations/${encodeURIComponent(conversationId)}/fork`,
-    undefined,
+    options.ephemeral !== undefined ||
+      options.name !== undefined ||
+      options.isSubagent !== undefined
+      ? {
+          ...(options.ephemeral !== undefined
+            ? { ephemeral: options.ephemeral }
+            : {}),
+          ...(options.name !== undefined ? { name: options.name } : {}),
+          ...(options.isSubagent !== undefined
+            ? { is_subagent: options.isSubagent }
+            : {}),
+        }
+      : undefined,
     {
       query,
       ...(options.headers ? { headers: options.headers } : {}),
