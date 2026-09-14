@@ -6,6 +6,8 @@
 // lower-level backend/runtime/shell helpers and shared subagent types, never
 // back on the subagent manager, so the graph stays acyclic.
 
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { type BackendMode, getLocalBackendStorageDir } from "@/backend";
 import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
@@ -24,6 +26,7 @@ import {
   SUBAGENT_LAUNCH_PROFILE_ENV,
   SUBAGENT_NAME_ENV,
 } from "@/utils/subagent-launch-marker";
+import { TRANSCRIPT_ROOT_ENV } from "@/utils/transcript-paths";
 import type { SubagentLaunchProfile, SubagentMemoryScope } from ".";
 
 interface ResolveSubagentLauncherOptions {
@@ -165,6 +168,21 @@ export interface ComposeSubagentChildEnvOptions {
   subagentName?: string;
 }
 
+function resolveMemorySubagentScratchpad(
+  parentProcessEnv: NodeJS.ProcessEnv,
+): string {
+  const configuredScratchpad = parentProcessEnv.LETTA_SCRATCHPAD;
+  if (configuredScratchpad?.trim()) {
+    return configuredScratchpad;
+  }
+
+  const configuredTranscriptRoot = parentProcessEnv[TRANSCRIPT_ROOT_ENV];
+  const transcriptRoot =
+    configuredTranscriptRoot?.trim() ||
+    join(homedir(), ".letta", "transcripts");
+  return join(transcriptRoot, "background");
+}
+
 /**
  * Compose the env a subagent child process should be spawned with.
  *
@@ -234,6 +252,8 @@ export function composeSubagentChildEnv(
   // at all — their tools will surface resolution errors appropriately.
   if (launchProfile === "memory-subagent") {
     delete childEnv[LISTENER_CONNECTION_ENV];
+    childEnv.LETTA_SCRATCHPAD =
+      resolveMemorySubagentScratchpad(parentProcessEnv);
     const primaryRoot = memoryScope?.primaryRoot ?? inheritedPrimaryRoot;
     if (primaryRoot) {
       childEnv.MEMORY_DIR = primaryRoot;

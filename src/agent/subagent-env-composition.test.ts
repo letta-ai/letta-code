@@ -11,6 +11,7 @@ import {
 } from "@/mods/capabilities";
 import { LETTA_DISABLE_MODS_ENV } from "@/mods/disable";
 import { SUBAGENT_NAME_ENV } from "@/utils/subagent-launch-marker";
+import { TRANSCRIPT_ROOT_ENV } from "@/utils/transcript-paths";
 
 const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
 const PARENT_MEMORY_DIR = `/Users/someone/.letta/agents/${PARENT_ID}/memory`;
@@ -100,6 +101,33 @@ describe("composeSubagentChildEnv", () => {
     expect(env.MEMORY_DIR).toBe(PARENT_MEMORY_DIR);
     expect(env.LETTA_MEMORY_DIR).toBe(PARENT_MEMORY_DIR);
     expect(env.LETTA_CODE_AGENT_ROLE).toBe("subagent");
+  });
+
+  test("memory subagent receives a transcript-scoped scratchpad by default", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: {
+        HOME: "/home/user",
+        [TRANSCRIPT_ROOT_ENV]: "/sandbox/transcripts",
+      },
+      parentAgentId: PARENT_ID,
+      launchProfile: "memory-subagent",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+    });
+
+    expect(env.LETTA_SCRATCHPAD).toBe("/sandbox/transcripts/background");
+  });
+
+  test("memory subagent preserves an explicitly configured scratchpad", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: {
+        LETTA_SCRATCHPAD: "/approved/scratchpad",
+      },
+      parentAgentId: PARENT_ID,
+      launchProfile: "memory-subagent",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+    });
+
+    expect(env.LETTA_SCRATCHPAD).toBe("/approved/scratchpad");
   });
 
   test("memory subagent with no primaryRoot keeps parent marker but clears dir", () => {
