@@ -445,7 +445,9 @@ describe("listener turn lifecycle integration", () => {
 
   test("teleport yields after persisting the current tool result", async () => {
     const listener = createRuntime();
-    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const agentId = "agent-turn-teleport-fixture";
+    const conversationId = "conv-turn-teleport-fixture";
+    const runtime = getOrCreateScopedRuntime(listener, agentId, conversationId);
     const turnLease = runtime.turnLifecycle.begin({
       origin: "message",
       workingDirectory: process.cwd(),
@@ -459,7 +461,7 @@ describe("listener turn lifecycle integration", () => {
         type: "teleport_request",
         request_id: "teleport-1",
         teleport_id: "teleport-1",
-        runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+        runtime: { agent_id: agentId, conversation_id: conversationId },
         target: {
           connection_id: "target-connection",
           device_id: "target-device",
@@ -477,6 +479,8 @@ describe("listener turn lifecycle integration", () => {
     });
 
     const result = await startQuestionApproval(runtime, turnLease, {
+      agentId,
+      conversationId,
       approvals: [approval],
       processOwnedTurn: true,
       dependencies: {
