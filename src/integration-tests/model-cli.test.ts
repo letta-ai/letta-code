@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Letta from "@letta-ai/letta-client";
+import { withTestStage } from "./process-diagnostics";
 
 async function verifyCloudModelCli(verifyInference: boolean) {
   const client = new Letta({
@@ -12,62 +13,75 @@ async function verifyCloudModelCli(verifyInference: boolean) {
   });
   const home = await mkdtemp(join(tmpdir(), "letta-cloud-set-model-"));
   const model = "openai/gpt-5.6-luna";
-  const agent = await client.agents.create({
-    name: "CLI set-model integration",
-    agent_type: "letta_v1_agent",
-    model: "letta/auto",
-    system: "Reply concisely. Do not call tools.",
-    include_base_tools: false,
-    include_base_tool_rules: false,
-    initial_message_sequence: [],
-  });
+  const agent = await withTestStage("agent.create", () =>
+    client.agents.create({
+      name: "CLI set-model integration",
+      agent_type: "letta_v1_agent",
+      model: "letta/auto",
+      system: "Reply concisely. Do not call tools.",
+      include_base_tools: false,
+      include_base_tool_rules: false,
+      initial_message_sequence: [],
+    }),
+  );
   let conversationId: string | undefined;
   try {
-    const conversation = await client.conversations.create({
-      agent_id: agent.id,
-    });
+    const conversation = await withTestStage("conversation.create", () =>
+      client.conversations.create({
+        agent_id: agent.id,
+      }),
+    );
     conversationId = conversation.id;
-    async function cli(args: string[]) {
-      const child = Bun.spawn(
-        [
-          process.execPath,
-          "src/index.ts",
-          "--backend",
-          "cloud",
-          "model",
-          ...args,
-        ],
-        {
-          cwd: resolve(import.meta.dir, "../.."),
-          env: {
-            ...process.env,
-            HOME: home,
-            USERPROFILE: home,
-            AGENT_ID: agent.id,
-            CONVERSATION_ID: conversationId,
-            LETTA_DEBUG: "0",
-            LETTA_DISABLE_MODS: "1",
+    async function cli(stage: string, args: string[]) {
+      return withTestStage(stage, async () => {
+        const child = Bun.spawn(
+          [
+            process.execPath,
+            "src/index.ts",
+            "--backend",
+            "cloud",
+            "model",
+            ...args,
+          ],
+          {
+            cwd: resolve(import.meta.dir, "../.."),
+            env: {
+              ...process.env,
+              HOME: home,
+              USERPROFILE: home,
+              AGENT_ID: agent.id,
+              CONVERSATION_ID: conversationId,
+              LETTA_DEBUG: "0",
+              LETTA_DISABLE_MODS: "1",
+            },
+            stdout: "pipe",
+            stderr: "pipe",
           },
-          stdout: "pipe",
-          stderr: "pipe",
-        },
-      );
-      const [stdout, stderr, code] = await Promise.all([
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-        child.exited,
-      ]);
-      return { stdout, stderr, code };
+        );
+        const [stdout, stderr, code] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ]);
+        return { stdout, stderr, code };
+      });
     }
 
-    const changed = await cli(["set", model, "--reasoning", "high"]);
+    const changed = await cli("cli.set-conversation-model", [
+      "set",
+      model,
+      "--reasoning",
+      "high",
+    ]);
     expect(changed.code, changed.stderr).toBe(0);
     expect(JSON.parse(changed.stdout)).toMatchObject({
       agent: { id: agent.id, model: "letta/auto" },
       conversation: { id: conversationId, agent_id: agent.id, model },
       effective: { scope: "conversation", model },
     });
-    const saved = await client.conversations.retrieve(conversationId);
+    const saved = await withTestStage("conversation.retrieve-initial", () =>
+      client.conversations.retrieve(conversation.id),
+    );
     expect(saved.model).toBe(model);
     expect(saved.model_settings).toMatchObject({
       provider_type: "openai",
@@ -77,16 +91,22 @@ async function verifyCloudModelCli(verifyInference: boolean) {
       JSON.parse(changed.stdout).conversation.context_window_limit,
     ).toBeGreaterThan(0);
 
-    await client.conversations.update(conversationId, {
-      context_window_limit: 64000,
-      model_settings: {
-        ...saved.model_settings,
-        temperature: 0.23,
-        max_output_tokens: 8192,
-        parallel_tool_calls: false,
-      },
-    } as Parameters<typeof client.conversations.update>[1]);
-    const effortOnly = await cli(["set", "--reasoning", "low"]);
+    await withTestStage("conversation.update-settings", () =>
+      client.conversations.update(conversation.id, {
+        context_window_limit: 64000,
+        model_settings: {
+          ...saved.model_settings,
+          temperature: 0.23,
+          max_output_tokens: 8192,
+          parallel_tool_calls: false,
+        },
+      } as Parameters<typeof client.conversations.update>[1]),
+    );
+    const effortOnly = await cli("cli.set-reasoning", [
+      "set",
+      "--reasoning",
+      "low",
+    ]);
     expect(effortOnly.code, effortOnly.stderr).toBe(0);
     const preserved = JSON.parse(effortOnly.stdout).effective;
     expect(preserved.model).toBe(model);
@@ -98,7 +118,7 @@ async function verifyCloudModelCli(verifyInference: boolean) {
       reasoning: { reasoning_effort: "low" },
     });
 
-    const changedDefault = await cli([
+    const changedDefault = await cli("cli.set-agent-model", [
       "set",
       model,
       "--reasoning",
@@ -107,27 +127,52 @@ async function verifyCloudModelCli(verifyInference: boolean) {
       agent.id,
     ]);
     expect(changedDefault.code, changedDefault.stderr).toBe(0);
-    expect(await client.agents.retrieve(agent.id)).toMatchObject({
+    expect(
+      await withTestStage("agent.retrieve", () =>
+        client.agents.retrieve(agent.id),
+      ),
+    ).toMatchObject({
       model,
       model_settings: {
         provider_type: "openai",
         reasoning: { reasoning_effort: "high" },
       },
     });
-    const invalid = await cli(["set", "unknown-provider/does-not-exist"]);
+    const invalid = await cli("cli.reject-unknown-model", [
+      "set",
+      "unknown-provider/does-not-exist",
+    ]);
     expect(invalid.code).toBe(1);
-    expect((await client.conversations.retrieve(conversationId)).model).toBe(
-      model,
-    );
+    expect(
+      (
+        await withTestStage("conversation.retrieve-after-rejection", () =>
+          client.conversations.retrieve(conversation.id),
+        )
+      ).model,
+    ).toBe(model);
 
-    const zai = await cli(["set", "zai/glm-5.3", "--reasoning", "low"]);
+    const zai = await cli("cli.set-alternate-model", [
+      "set",
+      "zai/glm-5.3",
+      "--reasoning",
+      "low",
+    ]);
     expect(zai.code, zai.stderr).toBe(0);
     expect(
-      (await client.conversations.retrieve(conversationId)).model_settings,
+      (
+        await withTestStage("conversation.retrieve-alternate", () =>
+          client.conversations.retrieve(conversation.id),
+        )
+      ).model_settings,
     ).toMatchObject({
       reasoning_effort: "low",
     });
-    const restored = await cli(["set", model, "--reasoning", "high"]);
+    const restored = await cli("cli.restore-model", [
+      "set",
+      model,
+      "--reasoning",
+      "high",
+    ]);
     expect(restored.code, restored.stderr).toBe(0);
 
     if (!verifyInference) return;
@@ -158,9 +203,16 @@ async function verifyCloudModelCli(verifyInference: boolean) {
     const step = await client.steps.retrieve(stepId as string);
     expect(step.model_handle).toBe(model);
   } finally {
-    if (conversationId) await client.conversations.delete(conversationId);
-    await client.agents.delete(agent.id);
-    await rm(home, { recursive: true, force: true });
+    if (conversationId) {
+      const id = conversationId;
+      await withTestStage("conversation.delete", () =>
+        client.conversations.delete(id),
+      );
+    }
+    await withTestStage("agent.delete", () => client.agents.delete(agent.id));
+    await withTestStage("home.remove", () =>
+      rm(home, { recursive: true, force: true }),
+    );
   }
 }
 

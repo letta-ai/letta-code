@@ -16,6 +16,7 @@ import {
   formatAttemptDiagnostics,
   formatCapturedOutput,
   summarizeRecentMessages,
+  summarizeWireFailures,
 } from "./process-diagnostics";
 
 /**
@@ -459,7 +460,7 @@ describe("input-format stream-json", () => {
 
       // Both results should be successful
       for (const result of results) {
-        expect(result.subtype).toBe("success");
+        expect(result.subtype, summarizeWireFailures(objects)).toBe("success");
         expect(result.session_id).toBeDefined();
         expect(result.agent_id).toBeDefined();
       }
