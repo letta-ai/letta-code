@@ -146,7 +146,10 @@ import { detectShellContext } from "@/utils/shell-context";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
-import { shouldSlashCommandBypassQueue } from "./command-routing";
+import {
+  aliasBareExitCommand,
+  shouldSlashCommandBypassQueue,
+} from "./command-routing";
 import { buildTextParts } from "./content-parts";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
 import { saveLastSessionBeforeExit } from "./session";
@@ -713,10 +716,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       const { notifications: taskNotifications, cleanedText } =
         extractTaskNotificationsForDisplay(msg);
       const userTextForInput = cleanedText.trim();
-      const routedUserText =
-        userTextForInput === "exit" || userTextForInput === "quit"
-          ? "/exit"
-          : userTextForInput;
+      const routedUserText = aliasBareExitCommand(userTextForInput);
       const isSystemOnly =
         taskNotifications.length > 0 && userTextForInput.length === 0;
 

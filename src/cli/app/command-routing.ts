@@ -46,6 +46,11 @@ const NON_STATE_COMMANDS = new Set([
   "/dream", // admission-only HTTP request; the server reports unfinished/busy
 ]);
 
+export function aliasBareExitCommand(input: string): string {
+  if (input === "exit" || input === "quit") return "/exit";
+  return input;
+}
+
 // Check if a command is interactive (opens overlay, should not be queued)
 export function isInteractiveCommand(msg: string): boolean {
   const trimmed = msg.trim().toLowerCase();
