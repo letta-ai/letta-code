@@ -6,12 +6,17 @@ import {
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
+import { startRecoveredApprovalContinuation } from "./recovery";
 import { recoverApprovalStateForSync } from "./recovery-sync";
 import { replaySyncStateForRuntime } from "./sync-replay";
 import {
+  claimPendingTeleportAtBoundary,
   clearExpectedInboundTeleport,
   expectInboundTeleport,
+  finishTeleport,
+  handleTeleportRequest,
   isInboundTeleportExpected,
+  isRuntimeTeleportPending,
 } from "./teleport";
 import type { LocalTransport } from "./transport";
 import type {
@@ -91,7 +96,7 @@ async function sync(
     forceDeviceStatus: true,
     connectionId: "cloud-relay",
     recoverApprovalStateForSync: async (scopedRuntime, recoveredScope) => {
-      await recoverApprovalStateForSync(scopedRuntime, recoveredScope, {
+      return recoverApprovalStateForSync(scopedRuntime, recoveredScope, {
         getBackend: (() => ({
           retrieveAgent: async () => ({ id: "agent-1" }),
         })) as never,
@@ -138,6 +143,84 @@ async function sync(
   });
 }
 
+describe("sync replay on a teleport source", () => {
+  test("independent sync callers do not deny the successfully yielded tool", async () => {
+    const { runtime, transport } = connectRuntime();
+    const processed: IncomingMessage[] = [];
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    handleTeleportRequest({
+      listener: runtime.listener,
+      connectionId: "cloud-relay",
+      command: {
+        type: "teleport_request",
+        request_id: "source-teleport",
+        teleport_id: "source-teleport",
+        runtime: scope,
+        target: {
+          connection_id: "target",
+          device_id: "target-device",
+          connection_name: "Target",
+        },
+      },
+    });
+    const pending = claimPendingTeleportAtBoundary({
+      listener: runtime.listener,
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+      activeTurn: true,
+      continuation: {
+        approvals: [
+          {
+            type: "approval",
+            tool_call_id: sourceYieldedApproval.toolCallId,
+            approve: true,
+          },
+        ],
+      },
+    });
+    if (!pending) throw new Error("Expected pending source handoff");
+    finishTeleport(runtime, lease, pending);
+    await sync(runtime, transport, processed);
+    await sync(runtime, transport, processed);
+    await Bun.sleep(20);
+    expect(processed).toHaveLength(0);
+    expect(runtime.recoveredApprovalState).toBeNull();
+    runtime.recoveredApprovalState = {
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+      approvalsByRequestId: new Map(),
+      pendingRequestIds: new Set(),
+      responsesByRequestId: new Map(),
+      autoDecisions: [
+        { type: "deny", approval: sourceYieldedApproval, reason: "stale" },
+      ],
+      allApprovals: [sourceYieldedApproval],
+    };
+    expect(
+      await startRecoveredApprovalContinuation(runtime, transport, async () => {
+        throw new Error("Source must not resume");
+      }),
+    ).toBe(false);
+    runtime.recoveredApprovalState = null;
+    expect(runtime.turnLifecycle.kind).toBe("idle");
+    expect(
+      isRuntimeTeleportPending(
+        runtime.listener,
+        scope.agent_id,
+        scope.conversation_id,
+      ),
+    ).toBe(true);
+    await sync(runtime, transport, processed);
+    await sync(runtime, transport, processed);
+    await Bun.sleep(20);
+    expect(processed).toHaveLength(0);
+    expect(runtime.recoveredApprovalState).toBeNull();
+  });
+});
+
 describe("sync replay on a teleport destination", () => {
   test("does not finish the source's pending approvals while teleport_continue is expected", async () => {
     const { runtime, transport } = connectRuntime();
@@ -152,8 +235,8 @@ describe("sync replay on a teleport destination", () => {
 
     expect(processed).toHaveLength(0);
     expect(runtime.isProcessing).toBe(false);
-    expect(runtime.recoveredApprovalState?.autoDecisions).toHaveLength(1);
-    expect(runtime.syncApprovalRecoveryCompleted).toBe(true);
+    expect(runtime.recoveredApprovalState).toBeNull();
+    expect(runtime.syncApprovalRecoveryCompleted).toBe(false);
     const statusFrames = transport.sent
       .map((payload) => JSON.parse(payload))
       .filter((frame) => frame.type === "update_loop_status");

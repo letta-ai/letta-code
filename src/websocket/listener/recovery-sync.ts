@@ -13,6 +13,7 @@ import { getBackend } from "@/backend";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
 import type { ControlRequest } from "@/types/protocol_v2";
+import { canRecoverConversation } from "./recovery-ownership";
 import {
   clearRecoveredApprovalState,
   hasInterruptedCacheForScope,
@@ -34,7 +35,7 @@ export async function recoverApprovalStateForSync(
     getBackend: typeof getBackend;
     getResumeDataFromBackend: typeof getResumeDataFromBackend;
   }> = {},
-): Promise<void> {
+): Promise<"deferred" | undefined> {
   const resolvedDeps = {
     getBackend,
     getResumeDataFromBackend,
@@ -61,6 +62,11 @@ export async function recoverApprovalStateForSync(
   if (runtime.pendingApprovalResolvers.size > 0 && sameActiveScope) {
     clearRecoveredApprovalState(runtime);
     return;
+  }
+
+  if (!(await canRecoverConversation(runtime))) {
+    clearRecoveredApprovalState(runtime);
+    return "deferred";
   }
 
   // Keep in-flight recovered approvals: periodic syncs arrive every few
@@ -115,6 +121,7 @@ export async function recoverApprovalStateForSync(
 
   // Re-check liveness after the backend awaits: a turn or live approval that
   // started meanwhile owns this conversation's approval state.
+  if (!(await canRecoverConversation(runtime))) return "deferred";
   if (
     hasInterruptedCacheForScope(runtime.listener, scope) ||
     (sameActiveScope &&
@@ -185,4 +192,5 @@ export async function recoverApprovalStateForSync(
     autoDecisions: staleDenialDecisions,
     allApprovals: pendingApprovals,
   };
+  return undefined;
 }

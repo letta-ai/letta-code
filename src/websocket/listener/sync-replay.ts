@@ -10,7 +10,6 @@ import {
   startRecoveredApprovalContinuation,
 } from "./recovery";
 import { recoverApprovalStateForSync } from "./recovery-sync";
-import { isInboundTeleportExpected } from "./teleport";
 import { handleIncomingMessage } from "./turn";
 import type {
   ConversationRuntime,
@@ -34,7 +33,7 @@ export async function replaySyncStateForRuntime(
     recoverApprovalStateForSync?: (
       runtime: ConversationRuntime,
       scope: RuntimeScope<string | null>,
-    ) => Promise<void>;
+    ) => Promise<unknown>;
     /** Turn processor for a recovered continuation; defaults to the real turn. */
     processIncomingMessage?: typeof handleIncomingMessage;
     recoveredContinuationDependencies?: RecoveredContinuationDependencies;
@@ -63,8 +62,9 @@ export async function replaySyncStateForRuntime(
     !syncScopedRuntime.syncApprovalRecoveryCompleted
   ) {
     try {
-      await recoverFn(syncScopedRuntime, scope);
-      syncScopedRuntime.syncApprovalRecoveryCompleted = true;
+      const recovered = await recoverFn(syncScopedRuntime, scope);
+      syncScopedRuntime.syncApprovalRecoveryCompleted =
+        recovered !== "deferred";
     } catch (error) {
       trackBoundaryError({
         errorType: "listener_sync_recovery_failed",
@@ -78,17 +78,10 @@ export async function replaySyncStateForRuntime(
   }
 
   // Recovery found only replay-unsafe pending approvals: nothing waits on a
-  // human, so finish the interrupted turn now. The continuation takes the
-  // turn lease synchronously, so the status replay below already reports it.
-  //
-  // Not when this scope is a teleport destination: the pending approvals are
-  // the source's yielded tool calls, and the cloud's `teleport_continue`
-  // delivers their results as the next turn. Starting a stale-denial turn here
-  // would both misreport tools that ran and make the destination reject that
-  // continuation as "already processing". The continuation turn clears the
-  // recovered state when it starts.
+  // human, so try to finish the interrupted turn. The shared recovery entry
+  // verifies ownership before acquiring the local turn lease; sync must not
+  // start a competing turn during either side of a teleport.
   if (
-    !isInboundTeleportExpected(syncScopedRuntime) &&
     syncScopedRuntime.recoveredApprovalState &&
     syncScopedRuntime.recoveredApprovalState.pendingRequestIds.size === 0 &&
     (syncScopedRuntime.recoveredApprovalState.autoDecisions?.length ?? 0) > 0
