@@ -30,6 +30,10 @@ import {
   setActiveRuntime,
 } from "@/websocket/listener/runtime";
 import type { ListenerRuntime } from "@/websocket/listener/types";
+import {
+  createMissedPongWatchdog,
+  type MissedPongWatchdog,
+} from "@/websocket/pong-watchdog";
 
 const DEFAULT_LISTEN_URL = "ws://127.0.0.1:0";
 const DEFAULT_WS_PATH = "/ws";
@@ -205,10 +209,18 @@ export async function startAppServer(
     });
     return startupReady;
   };
-  // Tracks the last time each connected client responded to a ping. Seeded on
-  // connection so a freshly-accepted socket gets a full grace window before the
-  // watchdog can reap it. WeakMap so entries are GC'd with their sockets.
+  // Track pong responses and actual unanswered probes per socket. Wall time
+  // alone cannot distinguish a dead peer from this process's event loop being
+  // delayed beyond the timeout.
   const lastPongAtBySocket = new WeakMap<WebSocket, number>();
+  const pongWatchdogBySocket = new WeakMap<WebSocket, MissedPongWatchdog>();
+  const heartbeatIntervalMs =
+    options.heartbeatIntervalMs ?? APP_SERVER_HEARTBEAT_INTERVAL_MS;
+  const pongTimeoutMs = options.pongTimeoutMs ?? APP_SERVER_PONG_TIMEOUT_MS;
+  const maxUnansweredPings = Math.max(
+    1,
+    Math.ceil(pongTimeoutMs / heartbeatIntervalMs),
+  );
 
   const handleWebSocketConnection = (socket: WebSocket): void => {
     const connectionId = `app-server-${nextConnectionOrdinal}`;
@@ -216,6 +228,10 @@ export async function startAppServer(
     // The `ws` library auto-replies to ping frames with a pong, so any client
     // whose TCP is still alive refreshes this connection-scoped timestamp.
     lastPongAtBySocket.set(socket, Date.now());
+    pongWatchdogBySocket.set(
+      socket,
+      createMissedPongWatchdog(maxUnansweredPings),
+    );
     socket.on("pong", () => {
       if (options.shouldRecordPong?.(connectionId) !== false) {
         lastPongAtBySocket.set(socket, Date.now());
@@ -340,25 +356,23 @@ export async function startAppServer(
     });
   });
 
-  const heartbeatIntervalMs =
-    options.heartbeatIntervalMs ?? APP_SERVER_HEARTBEAT_INTERVAL_MS;
-  const pongTimeoutMs = options.pongTimeoutMs ?? APP_SERVER_PONG_TIMEOUT_MS;
   const heartbeatInterval = setInterval(() => {
     const now = Date.now();
     for (const client of wss.clients) {
       const lastPongAt = lastPongAtBySocket.get(client) ?? now;
-      if (now - lastPongAt > pongTimeoutMs) {
-        // No pong within the timeout: the socket is half-open. Terminating it
-        // fires the `close` handler that clears activeSession and frees the
-        // control channel for a reconnecting client.
+      const watchdog = pongWatchdogBySocket.get(client);
+      if (watchdog?.shouldTerminate(lastPongAt)) {
+        // The configured number of heartbeat probes went unanswered. Closing
+        // the half-open socket fires its connection-scoped cleanup.
         options.onLog?.(
-          `App-server terminating unresponsive socket (no pong in ${pongTimeoutMs}ms)`,
+          `App-server terminating unresponsive socket (${maxUnansweredPings} unanswered pings)`,
         );
         client.terminate();
         continue;
       }
       if (client.readyState === WebSocket.OPEN) {
         client.ping();
+        watchdog?.recordPing(now);
       }
     }
   }, heartbeatIntervalMs);

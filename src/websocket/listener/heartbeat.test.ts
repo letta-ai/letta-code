@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { createMissedPongWatchdog } from "@/websocket/pong-watchdog";
 import { __listenClientTestUtils } from "./client";
 import { openListenerConnection } from "./connection";
-import {
-  createMissedPongWatchdog,
-  startConnectionHeartbeat,
-} from "./heartbeat";
+import { startConnectionHeartbeat } from "./heartbeat";
 import { clearRuntimeTimers } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import type { StartListenerOptions } from "./types";
