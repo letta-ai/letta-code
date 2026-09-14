@@ -18,10 +18,7 @@ import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
-import {
-  consumeQueuedTurn,
-  shouldProcessInboundMessageDirectly,
-} from "./queue";
+import { shouldProcessInboundMessageDirectly } from "./queue";
 import { finalizeHandledRecoveryTurn } from "./recovery";
 import { clearConversationRuntimeState } from "./runtime";
 import { finishPendingTeleport, handleTeleportRequest } from "./teleport";
@@ -297,7 +294,7 @@ describe("listener turn lifecycle integration", () => {
     ["user-a", "user-a"],
     [undefined, undefined],
   ])(
-    "continuation keeps actor %s with queued actor %s",
+    "reminder and steering keep request actor %s with queued author %s",
     async (activeUser, queuedUser) => {
       const runtime = getOrCreateScopedRuntime(
         createRuntime(),
@@ -308,6 +305,19 @@ describe("listener turn lifecycle integration", () => {
         origin: "message",
         workingDirectory: process.cwd(),
         initialStatus: "PROCESSING_API_RESPONSE",
+      });
+      enqueueInboundUserMessage(runtime, {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        messages: [
+          {
+            role: "user",
+            content: "scheduled reminder",
+            otid: "reminder-otid",
+            attribution: {},
+          },
+        ],
       });
       enqueueInboundUserMessage(
         runtime,
@@ -413,38 +423,19 @@ describe("listener turn lifecycle integration", () => {
         expect(requests).toHaveLength(1);
         expect(requests[0]?.actor).toBe(activeUser);
         expect(JSON.stringify(requests[0]?.body)).toContain("call-monitor");
-        const sameUser = activeUser === queuedUser;
-        expect(JSON.stringify(requests[0]?.body).includes("queued input")).toBe(
-          sameUser,
+        expect(JSON.stringify(requests[0]?.body)).toContain(
+          "scheduled reminder",
         );
-        expect(runtime.queueRuntime.length).toBe(sameUser ? 0 : 1);
-        runtime.turnLifecycle.finish(turnLease, "end_turn");
-        if (!sameUser) {
-          const next = consumeQueuedTurn(runtime);
-          if (!next) throw new Error("Deferred input was lost");
-          expect(next?.queuedTurn.actingUserId).toBe(queuedUser);
-          expect(JSON.stringify(next?.queuedTurn.messages)).toContain(
-            "queued input",
-          );
-          expect(runtime.queueRuntime.length).toBe(0);
-          await expect(
-            sendMessageStreamWithBackend(
-              backend,
-              "conv-1",
-              next.queuedTurn.messages,
-              {
-                actingUserId: next.queuedTurn.actingUserId,
-                preparedToolContext,
-                skillSources: [],
-              },
-            ),
-          ).rejects.toThrow("Conversation not found");
-          expect(requests).toHaveLength(2);
-          expect(requests[1]?.actor).toBe(queuedUser);
-          expect(JSON.stringify(requests[1]?.body)).not.toContain(
-            "call-monitor",
+        expect(JSON.stringify(requests[0]?.body)).toContain('"attribution":{}');
+        expect(JSON.stringify(requests[0]?.body)).toContain("reminder-otid");
+        expect(JSON.stringify(requests[0]?.body)).toContain("queued input");
+        if (queuedUser) {
+          expect(JSON.stringify(requests[0]?.body)).toContain(
+            JSON.stringify({ acting_user_id: queuedUser }),
           );
         }
+        expect(runtime.queueRuntime.length).toBe(0);
+        runtime.turnLifecycle.finish(turnLease, "end_turn");
       } finally {
         server.stop(true);
         releaseToolExecutionContext(preparedToolContext.contextId);
@@ -454,7 +445,9 @@ describe("listener turn lifecycle integration", () => {
 
   test("teleport yields after persisting the current tool result", async () => {
     const listener = createRuntime();
-    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const agentId = "agent-turn-teleport-fixture";
+    const conversationId = "conv-turn-teleport-fixture";
+    const runtime = getOrCreateScopedRuntime(listener, agentId, conversationId);
     const turnLease = runtime.turnLifecycle.begin({
       origin: "message",
       workingDirectory: process.cwd(),
@@ -468,7 +461,7 @@ describe("listener turn lifecycle integration", () => {
         type: "teleport_request",
         request_id: "teleport-1",
         teleport_id: "teleport-1",
-        runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+        runtime: { agent_id: agentId, conversation_id: conversationId },
         target: {
           connection_id: "target-connection",
           device_id: "target-device",
@@ -486,6 +479,8 @@ describe("listener turn lifecycle integration", () => {
     });
 
     const result = await startQuestionApproval(runtime, turnLease, {
+      agentId,
+      conversationId,
       approvals: [approval],
       processOwnedTurn: true,
       dependencies: {

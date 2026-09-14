@@ -887,13 +887,11 @@ async function executeRecoveredApprovalContinuation(params: {
       },
     ]);
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
-    let continuationActingUserId: string | undefined;
     let continuationCorrelation: TurnCorrelation | undefined;
     const consumedQueuedTurn = consumeQueuedTurn(runtime);
     if (consumedQueuedTurn) {
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
       continuationBatchId = dequeuedBatch.batchId;
-      continuationActingUserId = queuedTurn.actingUserId;
       continuationInput = appendQueuedTurnToInput(
         continuationInput,
         queuedTurn,
@@ -921,9 +919,6 @@ async function executeRecoveredApprovalContinuation(params: {
         type: "message",
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
-        ...(continuationActingUserId
-          ? { actingUserId: continuationActingUserId }
-          : {}),
         messages: continuationInput.messages,
       },
       socket,

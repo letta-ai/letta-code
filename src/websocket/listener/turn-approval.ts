@@ -640,9 +640,7 @@ export async function handleApprovalStop(params: {
   ]);
   let continuationBatchId = dequeuedBatchId;
   const sendOptions = buildSendOptions() ?? {};
-  const consumedQueuedTurn = consumeQueuedTurn(runtime, {
-    actingUserId: sendOptions.actingUserId,
-  });
+  const consumedQueuedTurn = consumeQueuedTurn(runtime);
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
     turnCorrelation?.appendDequeuedBatch(dequeuedBatch.batchId);

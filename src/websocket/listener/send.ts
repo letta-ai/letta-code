@@ -406,7 +406,6 @@ export async function resolveStaleApprovals(
           otid: crypto.randomUUID(),
         },
       ]);
-      let continuationActingUserId: string | undefined;
       let recoveryTurnCorrelation: TurnCorrelation | undefined;
       const consumedQueuedTurn = consumeQueuedTurn(runtime);
       if (consumedQueuedTurn) {
@@ -416,7 +415,6 @@ export async function resolveStaleApprovals(
           queuedTurn,
           dequeuedBatch.batchId,
         );
-        continuationActingUserId = queuedTurn.actingUserId;
         continuationInput = appendQueuedTurnToInput(
           continuationInput,
           queuedTurn,
@@ -440,9 +438,6 @@ export async function resolveStaleApprovals(
           agentId: runtime.agentId ?? undefined,
           streamTokens: true,
           background: true,
-          ...(continuationActingUserId
-            ? { actingUserId: continuationActingUserId }
-            : {}),
           workingDirectory: recoveryWorkingDirectory,
           preparedToolContext: preparedToolContext.preparedToolContext,
           ...(continuationInput.imageFailureModesByMessageOtid

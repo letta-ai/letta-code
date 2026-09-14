@@ -139,7 +139,7 @@ for (const busy of [false, true])
       }
       await deliveredPromise;
       expect(delivered).toHaveLength(1);
-      expect(delivered[0]?.actingUserId).toBe("human-a");
+      expect(delivered[0]?.actingUserId).toBe(busy ? "human-a" : undefined);
       expect(delivered[0]?.messages[0]).toMatchObject({ role: "user" });
       const content = JSON.stringify(delivered[0]?.messages);
       expect(content).toContain("The user cancelled this Monitor.");
