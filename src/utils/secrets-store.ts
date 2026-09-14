@@ -225,13 +225,27 @@ function normalizeSecretKey(key: string): string {
   return normalized;
 }
 
+export function isReservedAgentSecretKey(key: string): boolean {
+  return key === "LETTA_API_KEY";
+}
+
+function normalizeWritableSecretKey(key: string): string {
+  const normalized = normalizeSecretKey(key);
+  if (isReservedAgentSecretKey(normalized)) {
+    throw new Error(
+      "LETTA_API_KEY is managed by Letta and cannot be set as an agent secret.",
+    );
+  }
+  return normalized;
+}
+
 function normalizeSecretMutations(options: {
   set?: Record<string, string>;
   unset?: string[];
 }): { set: Record<string, string>; unset: string[] } {
   const set: Record<string, string> = {};
   for (const [rawKey, value] of Object.entries(options.set ?? {})) {
-    set[normalizeSecretKey(rawKey)] = value;
+    set[normalizeWritableSecretKey(rawKey)] = value;
   }
   const unset = (options.unset ?? []).map(normalizeSecretKey);
   return { set, unset };
@@ -484,7 +498,7 @@ export async function setSecretOnServer(
     throw new Error("No agent context set. Agent ID is required.");
   }
 
-  const normalizedKey = normalizeSecretKey(key);
+  const normalizedKey = normalizeWritableSecretKey(key);
 
   if (isLocalAgentId(agentId)) {
     await setLocalAgentSecret(agentId, normalizedKey, value);

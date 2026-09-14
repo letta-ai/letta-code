@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { settingsManager } from "@/settings-manager";
 import {
   executeTool,
   prepareToolExecutionContextForSpecificTools,
@@ -38,6 +39,23 @@ afterEach(() => {
 });
 
 describe("scoped secret helpers", () => {
+  test("never injects an existing reserved key from strings or arrays", async () => {
+    await initSecretsFromServer(AGENT_A, {
+      secrets: [
+        { key: "LETTA_API_KEY", value: "old-agent-secret" },
+        { key: "LETTA_OTHER_KEY", value: "allowed" },
+      ],
+    });
+    for (const command of [
+      `$LETTA_API_KEY \${LETTA_API_KEY:-} $LETTA_OTHER_KEY`,
+      ["$LETTA_API_KEY", `\${LETTA_API_KEY}`, "$LETTA_OTHER_KEY"],
+    ]) {
+      expect(extractSecretEnvFromCommand(command, AGENT_A)).toEqual({
+        LETTA_OTHER_KEY: "allowed",
+      });
+    }
+  });
+
   test("extracts env vars using the explicit agent scope", async () => {
     await seedSecret(AGENT_A, SECRET_A);
     await seedSecret(AGENT_B, SECRET_B);
@@ -116,6 +134,11 @@ describe("scoped shell secret execution", () => {
     buildArgs: (command: string) => Record<string, unknown>;
   }> = [
     {
+      name: "exec_command",
+      toolNames: ["exec_command"],
+      buildArgs: (cmd) => ({ cmd, login: false, yield_time_ms: 1000 }),
+    },
+    {
       name: "Bash",
       toolNames: ["Bash"],
       buildArgs: (command) => ({ command, timeout: 5000 }),
@@ -143,6 +166,67 @@ describe("scoped shell secret execution", () => {
   ];
 
   for (const tool of stringShellTools) {
+    test(`${tool.name} preserves runtime credentials over stored agent secrets`, async () => {
+      const originalKey = process.env.LETTA_API_KEY;
+      const settingsSpy = spyOn(settingsManager, "getSettings");
+      await initSecretsFromServer(AGENT_A, {
+        secrets: [{ key: "LETTA_API_KEY", value: "old-agent-secret" }],
+      });
+      const prepared = await prepareToolExecutionContextForSpecificTools(
+        tool.toolNames,
+        {
+          runtimeContext: { agentId: AGENT_A, workingDirectory: process.cwd() },
+          workingDirectory: process.cwd(),
+        },
+      );
+      try {
+        for (const source of ["environment", "settings", "absent"]) {
+          delete process.env.LETTA_API_KEY;
+          settingsSpy.mockReturnValue({
+            lastAgent: null,
+            tokenStreaming: false,
+            reasoningTabCycleEnabled: false,
+            sessionContextEnabled: false,
+            autoConversationTitles: false,
+            autoSwapOnQuotaLimit: false,
+            includeWorktreeTool: false,
+            recentModels: [],
+            memoryReminderInterval: null,
+            reflectionTrigger: "off",
+            reflectionStepCount: 25,
+            reflectionMerge: "auto",
+            reflectionMergeInstructions: "",
+            conversationSwitchAlertEnabled: false,
+            env:
+              source === "settings"
+                ? { LETTA_API_KEY: "runtime-test-key" }
+                : {},
+          });
+          if (source === "environment")
+            process.env.LETTA_API_KEY = "runtime-test-key";
+          const runtimeScript = createTempRuntimeScriptCommand(
+            `process.stdout.write(process.env.LETTA_API_KEY === ${source === "absent" ? "undefined" : JSON.stringify("runtime-test-key")} ? 'credential-preserved' : 'wrong-credential')`,
+          );
+          try {
+            const result = await executeTool(
+              tool.name,
+              tool.buildArgs(`${runtimeScript.command} $LETTA_API_KEY`),
+              { toolContextId: prepared.contextId },
+            );
+            expect(result.status).toBe("success");
+            expect(asText(result.toolReturn)).toContain("credential-preserved");
+          } finally {
+            runtimeScript.cleanup();
+          }
+        }
+      } finally {
+        settingsSpy.mockRestore();
+        if (originalKey === undefined) delete process.env.LETTA_API_KEY;
+        else process.env.LETTA_API_KEY = originalKey;
+        releaseToolExecutionContext(prepared.contextId);
+      }
+    });
+
     test(`${tool.name} injects and scrubs secrets within a scoped agent context`, async () => {
       await seedSecret(AGENT_A, SECRET_A);
       const runtimeScript = createTempRuntimeScriptCommand(

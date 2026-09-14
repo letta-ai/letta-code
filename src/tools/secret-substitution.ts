@@ -2,7 +2,7 @@
  * Secret handling for shell tool arguments and output.
  */
 
-import { loadSecrets } from "@/utils/secrets-store";
+import { isReservedAgentSecretKey, loadSecrets } from "@/utils/secrets-store";
 
 /**
  * Pattern to match $SECRET_NAME references where SECRET_NAME is uppercase with
@@ -31,7 +31,11 @@ export function extractSecretEnvFromCommand(
   const scan = (text: string) => {
     for (const match of text.matchAll(SECRET_PATTERN)) {
       const name = match[1];
-      if (name !== undefined && secrets[name] !== undefined) {
+      if (
+        name !== undefined &&
+        !isReservedAgentSecretKey(name) &&
+        secrets[name] !== undefined
+      ) {
         env[name] = secrets[name];
       }
     }
