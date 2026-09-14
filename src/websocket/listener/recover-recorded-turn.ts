@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { getBackend } from "@/backend";
+import { getTeleportStatus } from "@/backend/api/environments";
 import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
 import { debugWarn } from "@/utils/debug";
 import { getOrCreateProcessTransport } from "./connection";
@@ -30,6 +31,7 @@ export async function recoverRecordedTurns(
     canRecover: typeof canRecoverConversation;
     processTurn: typeof handleIncomingMessage;
     setCwd: typeof setConversationWorkingDirectory;
+    teleportStatus: typeof getTeleportStatus;
   }> = {},
 ): Promise<void> {
   if (
@@ -52,12 +54,34 @@ export async function recoverRecordedTurns(
         record.agentId,
         record.conversationId,
       );
+      const unchanged = () =>
+        runtime.turnLifecycle.kind === "idle" &&
+        !listener.intentionallyClosed &&
+        store.read(record.agentId, record.conversationId)?.revision ===
+          record.revision;
       if (runtime.turnLifecycle.kind !== "idle") continue;
       if (!(await canRecover(runtime))) {
         deferred = true;
         continue;
       }
       try {
+        if (record.teleportId) {
+          const teleport = await (deps.teleportStatus ?? getTeleportStatus)(
+            record.agentId,
+            record.conversationId,
+            record.teleportId,
+          );
+          if (!unchanged()) continue;
+          if (teleport.status === "completed") {
+            store.remove(record.agentId, record.conversationId);
+          } else if (teleport.status === "failed") {
+            store.write({ ...record, teleportId: undefined });
+            deferred = true;
+          } else {
+            deferred = true;
+          }
+          continue;
+        }
         const backend = deps.backend ?? getBackend();
         const agent = await backend.retrieveAgent(record.agentId);
         const pending = (
@@ -67,10 +91,12 @@ export async function recoverRecordedTurns(
             { includeMessageHistory: false },
           )
         ).pendingApprovals;
+        if (!unchanged()) continue;
         if (!pending.length) {
           const run = record.runId
             ? await backend.retrieveRun(record.runId)
             : null;
+          if (!unchanged()) continue;
           if (run?.status === "running" || run?.status === "created") {
             deferred = true;
             continue;
@@ -80,22 +106,54 @@ export async function recoverRecordedTurns(
         }
         // A run can finish generating its tool call while its listener is down.
         // Require the stored approval message to name the recorded run in that case.
+        let recordedRunId = record.runId;
+        if (
+          record.results.length &&
+          pending.some(
+            (approval) => !record.toolCallIds.includes(approval.toolCallId),
+          )
+        ) {
+          // The result POST may have been accepted just before this process
+          // died, before it received the new run ID. Resolve its exact OTID.
+          const stream = await backend.streamConversationMessages(
+            record.conversationId,
+            {
+              otid: record.requestOtid,
+              starting_after: 0,
+              ...(record.conversationId === "default"
+                ? { agent_id: record.agentId }
+                : {}),
+            },
+            { signal: AbortSignal.timeout(5000), maxRetries: 0 },
+          );
+          try {
+            for await (const chunk of stream) {
+              if ("run_id" in chunk && typeof chunk.run_id === "string") {
+                recordedRunId = chunk.run_id;
+                break;
+              }
+            }
+          } finally {
+            stream.controller.abort();
+          }
+        }
         const owned = [];
         for (const approval of pending) {
           if (record.toolCallIds.includes(approval.toolCallId)) {
             owned.push(approval);
             continue;
           }
-          if (!approval.messageId || !record.runId) continue;
+          if (!approval.messageId || !recordedRunId) continue;
           const messages = await backend.retrieveMessage(approval.messageId);
           if (
             messages.some(
               (message) =>
-                "run_id" in message && message.run_id === record.runId,
+                "run_id" in message && message.run_id === recordedRunId,
             )
           )
             owned.push(approval);
         }
+        if (!unchanged()) continue;
         if (!owned.length) {
           store.remove(record.agentId, record.conversationId);
           continue;
@@ -106,11 +164,8 @@ export async function recoverRecordedTurns(
           owned.some((approval) => isInteractiveApprovalTool(approval.toolName))
         )
           continue;
-        if (
-          runtime.turnLifecycle.kind !== "idle" ||
-          !(await canRecover(runtime))
-        )
-          continue;
+        if (!(await canRecover(runtime))) continue;
+        if (!unchanged()) continue;
         const approvals = recordedToolResults(
           record,
           owned.map((approval) => approval.toolCallId),
@@ -137,7 +192,7 @@ export async function recoverRecordedTurns(
           record.conversationId,
           record.workingDirectory,
         );
-        await (deps.processTurn ?? handleIncomingMessage)(
+        void (deps.processTurn ?? handleIncomingMessage)(
           {
             type: "message",
             agentId: record.agentId,
@@ -148,7 +203,13 @@ export async function recoverRecordedTurns(
           },
           getOrCreateProcessTransport(listener),
           runtime,
-        );
+        ).catch((error) => {
+          debugWarn(
+            "recovery",
+            "Recorded continuation failed; retaining local work",
+            error,
+          );
+        });
       } catch (error) {
         deferred = true;
         debugWarn(

@@ -16,6 +16,8 @@ import type { ConversationRuntime } from "./types";
 
 /** Local execution evidence, never populated by observing another runtime. */
 export interface InterruptedTurnRecord {
+  revision?: string;
+  teleportId?: string;
   agentId: string;
   conversationId: string;
   runId: string | null;
@@ -84,10 +86,14 @@ export function createInterruptedTurnStore(
       const destination = path(record.agentId, record.conversationId);
       const temporary = `${destination}.${randomUUID()}.tmp`;
       try {
-        writeFileSync(temporary, JSON.stringify(record), {
-          mode: 0o600,
-          flush: true,
-        });
+        writeFileSync(
+          temporary,
+          JSON.stringify({ ...record, revision: randomUUID() }),
+          {
+            mode: 0o600,
+            flush: true,
+          },
+        );
         renameSync(temporary, destination);
       } finally {
         rmSync(temporary, { force: true });

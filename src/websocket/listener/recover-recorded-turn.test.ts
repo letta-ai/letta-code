@@ -2,10 +2,196 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getOrCreateScopedRuntime } from "./conversation-runtime";
+
+test("one recovered long-running turn does not block another conversation", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-many-"));
+  const store = createInterruptedTurnStore(directory);
+  const listener = createRuntime();
+  listener.connectionId = "conn-replacement";
+  const sent: string[] = [];
+  try {
+    for (const conversationId of ["conv-a", "conv-b"])
+      store.write({
+        agentId: "agent-1",
+        conversationId,
+        runId: "run-1",
+        toolCallIds: ["call-1"],
+        results: [],
+        requestOtid: conversationId,
+        workingDirectory: "/project",
+      });
+    await recoverRecordedTurns(listener, {
+      store,
+      backend: { retrieveAgent: async () => ({ id: "agent-1" }) } as never,
+      resume: (async () => ({
+        pendingApprovals: [
+          { toolCallId: "call-1", toolName: "Bash", toolArgs: "{}" },
+        ],
+      })) as never,
+      canRecover: async () => true,
+      setCwd: () => {},
+      processTurn: async (message) => {
+        sent.push(message.conversationId ?? "missing");
+        await new Promise(() => {});
+      },
+    });
+    expect(sent.sort()).toEqual(["conv-a", "conv-b"]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a successful teleport receipt retires saved work without sending results", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-teleport-"));
+  const store = createInterruptedTurnStore(directory);
+  const listener = createRuntime();
+  listener.connectionId = "conn-replacement";
+  try {
+    store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-1",
+      toolCallIds: ["call-1"],
+      results: [],
+      requestOtid: "request-1",
+      workingDirectory: "/project",
+      teleportId: "teleport-1",
+    });
+    await recoverRecordedTurns(listener, {
+      store,
+      canRecover: async () => true,
+      teleportStatus: (async () => ({ status: "completed" })) as never,
+      processTurn: async () => {
+        throw new Error("must not resume transferred work");
+      },
+    });
+    expect(store.read("agent-1", "conv-1")).toBeNull();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { recoverRecordedTurns } from "./recover-recorded-turn";
 import type { IncomingMessage } from "./types";
+
+test("accepted result request is found by OTID if the listener died before seeing its new run", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-ack-"));
+  const store = createInterruptedTurnStore(directory);
+  const listener = createRuntime();
+  listener.connectionId = "conn-replacement";
+  const sent: IncomingMessage[] = [];
+  try {
+    store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-old",
+      toolCallIds: ["old-tool"],
+      results: [
+        { tool_call_id: "old-tool", status: "success", tool_return: "output" },
+      ],
+      requestOtid: "accepted-request",
+      workingDirectory: "/project",
+    });
+    await recoverRecordedTurns(listener, {
+      store,
+      backend: {
+        retrieveAgent: async () => ({ id: "agent-1" }),
+        retrieveMessage: async () => [{ run_id: "run-new" }],
+        streamConversationMessages: async (
+          _id: string,
+          body: { otid: string },
+        ) => {
+          expect(body.otid).toBe("accepted-request");
+          return {
+            controller: new AbortController(),
+            async *[Symbol.asyncIterator]() {
+              yield { run_id: "run-new" };
+            },
+          };
+        },
+      } as never,
+      resume: (async () => ({
+        pendingApprovals: [
+          {
+            toolCallId: "new-tool",
+            toolName: "Bash",
+            toolArgs: "{}",
+            messageId: "new-message",
+          },
+        ],
+      })) as never,
+      canRecover: async () => true,
+      setCwd: () => {},
+      processTurn: async (message) => {
+        sent.push(message);
+      },
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.messages?.[0]).toMatchObject({
+      approvals: [{ tool_call_id: "new-tool", approve: false }],
+    });
+    expect(store.read("agent-1", "conv-1")?.requestOtid).not.toBe(
+      "accepted-request",
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("normal delivery during the final ownership lookup keeps its newer work", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-race-"));
+  const store = createInterruptedTurnStore(directory);
+  const listener = createRuntime();
+  listener.connectionId = "conn-replacement";
+  const record = {
+    agentId: "agent-1",
+    conversationId: "conv-1",
+    runId: "run-old",
+    toolCallIds: ["call-old"],
+    results: [],
+    requestOtid: "old-request",
+    workingDirectory: "/project",
+  };
+  let checks = 0,
+    sends = 0;
+  try {
+    store.write(record);
+    await recoverRecordedTurns(listener, {
+      store,
+      backend: { retrieveAgent: async () => ({ id: "agent-1" }) } as never,
+      resume: (async () => ({
+        pendingApprovals: [
+          { toolCallId: "call-old", toolName: "Bash", toolArgs: "{}" },
+        ],
+      })) as never,
+      canRecover: async () => {
+        if (++checks === 2) {
+          getOrCreateScopedRuntime(
+            listener,
+            "agent-1",
+            "conv-1",
+          ).turnLifecycle.begin({
+            origin: "message",
+            workingDirectory: "/new",
+          });
+          store.write({ ...record, requestOtid: "new-request" });
+        }
+        return true;
+      },
+      processTurn: async () => {
+        sends++;
+      },
+      setCwd: () => {},
+    });
+    expect(sends).toBe(0);
+    expect(store.read("agent-1", "conv-1")?.requestOtid).toBe("new-request");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("a tool generated while the listener was down is recovered only from its recorded run", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-model-"));
@@ -90,7 +276,15 @@ test("restart sends saved results with the same request identity, never an unrel
   let pendingId = "call-1";
   const deps = {
     store,
-    backend: { retrieveAgent: async () => ({ id: "agent-1" }) } as never,
+    backend: {
+      retrieveAgent: async () => ({ id: "agent-1" }),
+      streamConversationMessages: async () => ({
+        controller: new AbortController(),
+        async *[Symbol.asyncIterator]() {
+          yield { message_type: "ping", run_id: "run-1" };
+        },
+      }),
+    } as never,
     resume: (async () => ({
       pendingApprovals: [
         { toolCallId: pendingId, toolName: "Bash", toolArgs: "{}" },

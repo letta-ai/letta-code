@@ -274,6 +274,18 @@ export interface TeleportResponse {
   updatedAt: number;
 }
 
+export function getTeleportStatus(
+  agentId: string,
+  conversationId: string,
+  teleportId: string,
+  request: typeof apiRequest = apiRequest,
+): Promise<TeleportResponse> {
+  return request<TeleportResponse>(
+    "GET",
+    `/v1/environments/runtimes/${encodeURIComponent(agentId)}/${encodeURIComponent(conversationId)}/teleports/${encodeURIComponent(teleportId)}`,
+  );
+}
+
 /**
  * Submit a teleport request to Cloud. Returns immediately after the 202
  * acceptance — the harness owns polling/yield after this returns.
