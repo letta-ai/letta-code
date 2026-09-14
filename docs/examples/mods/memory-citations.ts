@@ -196,12 +196,12 @@ function createCitationInstruction(): string {
   return `${SYSTEM_REMINDER_OPEN}\nMemory citation mod is active. If memory materially contributes to your answer, call the memory_citation_snapshot tool before your final response and include a compact "Memory references" footer using only paths returned by that tool. Do not invent memory citations. If the snapshot returns no citations, omit the footer or say that no explicit memory file reads were observed.\n${SYSTEM_REMINDER_CLOSE}`;
 }
 
-function appendSystemMessage(input: unknown[], text: string): unknown[] {
+function appendReminderMessage(input: unknown[], text: string): unknown[] {
   return [
     ...input,
     {
       type: "message",
-      role: "system",
+      role: "user",
       content: text,
     },
   ];
@@ -231,7 +231,7 @@ export function activate(letta) {
           citations: [],
           turnStartedAt: new Date().toISOString(),
         });
-        event.input = appendSystemMessage(
+        event.input = appendReminderMessage(
           event.input,
           createCitationInstruction(),
         );

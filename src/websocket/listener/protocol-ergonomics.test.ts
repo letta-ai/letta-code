@@ -258,14 +258,14 @@ describe("listener protocol ergonomics", () => {
       ],
     });
     expect(incoming?.messages[1]).toEqual({
-      role: "system",
+      role: "user",
       content:
         "<system-reminder>Teleportation to this environment is complete. Continue the existing task from this environment now.</system-reminder>",
       otid: "teleport-1:continue",
     });
     expect(
       incoming?.messages.some(
-        (message) => "role" in message && message.role === "user",
+        (message) => "role" in message && message.role === "system",
       ),
     ).toBe(false);
   });
