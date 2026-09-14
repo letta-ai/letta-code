@@ -112,8 +112,9 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
         let nextCursorWidth = 0;
         let nextKillBuffer = killBuffer;
         if (key.leftArrow || key.rightArrow) {
-            // Skip if meta is pressed - Option+Arrow is handled by parent for word navigation
-            if (key.meta) {
+            // Skip if meta or ctrl is pressed - Option+Arrow and Ctrl+Arrow are handled
+            // by parent for word navigation
+            if (key.meta || key.ctrl) {
                 return;
             }
             if (showCursor) {
