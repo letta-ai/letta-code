@@ -38,15 +38,37 @@ mock.module("@/agent/subagents", () => ({
   discoverSubagents: async () => ({ subagents: [], errors: [] }),
 }));
 
-const spawn = mock((...args: Parameters<typeof spawnSubagent>) => {
-  updateSubagent(args[3] as string, {
-    agentId: "agent-routing-child",
-    agentURL: "https://example.invalid/agent-routing-child",
-  });
-  // Model a still-running child. No timers, completion hooks, or remote calls
-  // are needed to observe the launch contract; afterEach clears its local state.
-  return new Promise<SubagentResult>(() => {});
-});
+let receivedEnvironment: string | undefined;
+const spawn = mock(
+  (
+    ...[
+      _type,
+      _prompt,
+      _userModel,
+      subagentId,
+      _signal,
+      _existingAgentId,
+      _existingConversationId,
+      _maxTurns,
+      _forkedContext,
+      _parentAgentId,
+      _transcriptPath,
+      _parentConversationId,
+      _memoryScope,
+      _systemPromptOverride,
+      environment,
+    ]: Parameters<typeof spawnSubagent>
+  ) => {
+    receivedEnvironment = environment;
+    updateSubagent(subagentId, {
+      agentId: "agent-routing-child",
+      agentURL: "https://example.invalid/agent-routing-child",
+    });
+    // Model a still-running child. No timers, completion hooks, or remote calls
+    // are needed to observe the launch contract; afterEach clears its local state.
+    return new Promise<SubagentResult>(() => {});
+  },
+);
 mock.module("@/agent/subagents/manager", () => ({ spawnSubagent: spawn }));
 
 const { task } = await import("./task");
@@ -60,6 +82,7 @@ let previousScratchpad: string | undefined;
 
 beforeEach(() => {
   spawn.mockClear();
+  receivedEnvironment = undefined;
   forkConversation.mockClear();
   retrieveAgent.mockClear();
   capabilities.environmentRouting = true;
@@ -103,7 +126,7 @@ describe("task computer routing", () => {
 
     expect(result).toContain("Task running in background with task ID:");
     expect(spawn).toHaveBeenCalledTimes(1);
-    expect(spawn.mock.calls[0]?.[14]).toBe("office-mac");
+    expect(receivedEnvironment).toBe("office-mac");
     expect(backgroundTasks.size).toBe(1);
   });
 
@@ -140,7 +163,7 @@ describe("task computer routing", () => {
 
         expect(result).toContain("Task running in background with task ID:");
         expect(spawn).toHaveBeenCalledTimes(1);
-        expect(spawn.mock.calls[0]?.[14]).toBeUndefined();
+        expect(receivedEnvironment).toBeUndefined();
         expect(backgroundTasks.size).toBe(1);
       },
     );
