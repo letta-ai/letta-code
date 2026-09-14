@@ -115,6 +115,15 @@ export const SUBAGENT_NAMES = [
   "The Mule",
   // 2001: A Space Odyssey
   "HAL 9000",
+  // Accelerando
+  "Aineko",
+  // Singularity Sky
+  "Eschaton",
+  // Terra Ignota
+  "Mycroft Canner",
+  "J.E.D.D. Mason",
+  "Sniper",
+  "Eureka Weeksbooth",
 ] as const;
 
 /** Each process keeps its own pool; completed and failed launches do not return names. */
