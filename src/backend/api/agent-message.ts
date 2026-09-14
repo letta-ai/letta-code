@@ -67,6 +67,8 @@ export async function resolveAgentMessageDestination(
     conversationId?: string;
     senderAgentId?: string;
     actingUserId?: string;
+    /** Calling runtime, independent of optional sender attribution overrides. */
+    currentConversation?: { agentId?: string; conversationId?: string };
   },
   backend: Pick<Backend, "retrieveConversation" | "createConversation">,
   signal?: AbortSignal,
@@ -96,6 +98,14 @@ export async function resolveAgentMessageDestination(
       options,
     );
     conversationId = conversation.id;
+  }
+  if (
+    agentId === input.currentConversation?.agentId &&
+    conversationId === input.currentConversation?.conversationId
+  ) {
+    throw new Error(
+      "Cannot message the current conversation. Use a Monitor or schedule for self-invocation.",
+    );
   }
   return { agentId, conversationId };
 }

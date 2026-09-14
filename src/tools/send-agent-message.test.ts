@@ -63,7 +63,10 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
     capabilities: { environmentRouting: true },
     retrieveConversation: async (id: string, options: unknown) => {
       lookups.push(options);
-      return { id, agent_id: "agent-recipient" };
+      return {
+        id,
+        agent_id: id === "conv-first" ? "agent-first" : "agent-recipient",
+      };
     },
   } as unknown as Backend);
   process.env.LETTA_BASE_URL = server.url.toString().replace(/\/$/, "");
@@ -82,6 +85,24 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
         }),
       ),
     );
+    const selfSend = await executeTool(
+      "SendAgentMessage",
+      {
+        conversation_id: "conv-first",
+        message: "Invoke myself",
+        sender_agent_id: "agent-spoofed",
+        parentScope: {
+          agentId: "agent-spoofed",
+          conversationId: "conv-spoofed",
+        },
+      },
+      { toolContextId: contexts[0]?.contextId },
+    );
+    expect(selfSend.status).toBe("error");
+    expect(JSON.parse(String(selfSend.toolReturn)).error).toBe(
+      "Cannot message the current conversation. Use a Monitor or schedule for self-invocation.",
+    );
+    expect(requests).toHaveLength(0);
     const results = await Promise.all(
       contexts.map((context, index) =>
         executeTool(

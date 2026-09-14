@@ -43,6 +43,58 @@ const message = {
   message: "Please check the tests.",
 };
 
+test.each(["conv-caller", "default"])(
+  "rejects the tool's current conversation %s before enqueue",
+  async (conversationId) => {
+    const f = fixture();
+    f.backend.retrieveConversation = async (id) =>
+      ({ id, agent_id: caller.agentId }) as Awaited<
+        ReturnType<Backend["retrieveConversation"]>
+      >;
+    const result = await runWithRuntimeContext(
+      { ...caller, conversationId },
+      () =>
+        send_agent_message(
+          {
+            agent_id: caller.agentId,
+            conversation_id: conversationId,
+            message: "Wake up",
+          },
+          f,
+        ),
+    );
+    expect(result.status).toBe("error");
+    expect(JSON.parse(result.content).error).toBe(
+      "Cannot message the current conversation. Use a Monitor or schedule for self-invocation.",
+    );
+    expect(f.submissions).toHaveLength(0);
+    expect(f.created).toHaveLength(0);
+  },
+);
+
+test.each(["conv-fork", "default", undefined])(
+  "allows the same agent in another tool destination %s",
+  async (conversationId) => {
+    const f = fixture();
+    f.backend.retrieveConversation = async (id) =>
+      ({ id, agent_id: caller.agentId }) as Awaited<
+        ReturnType<Backend["retrieveConversation"]>
+      >;
+    const result = await runWithRuntimeContext(caller, () =>
+      send_agent_message(
+        {
+          agent_id: caller.agentId,
+          conversation_id: conversationId,
+          message: "Hello fork",
+        },
+        f,
+      ),
+    );
+    expect(result.status).toBe("success");
+    expect(f.submissions).toHaveLength(1);
+  },
+);
+
 test("returns acceptance and an explicit return address, with no task or answer", async () => {
   const f = fixture();
   const result = await runWithRuntimeContext(caller, () =>

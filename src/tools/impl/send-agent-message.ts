@@ -65,6 +65,7 @@ export async function send_agent_message(
         conversationId: args.conversation_id,
         senderAgentId: sender.agentId,
         actingUserId,
+        currentConversation: sender,
       },
       backend,
       signal,

@@ -13,6 +13,68 @@ import {
 } from "./headless-cloud-send";
 
 const flags = (...args: string[]) => parseCliArgs(args, true).values;
+
+test.each([
+  ["conv-parent", "conv-parent", []],
+  ["conv-parent", "conv-parent", ["--from-agent", "agent-other"]],
+  ["default", "default", ["--agent", "agent-parent"]],
+  ["default", "agent-parent", []],
+])(
+  "rejects the current CLI conversation %s via %s",
+  async (current, target, extra) => {
+    const f = fixture();
+    f.deps.env.CONVERSATION_ID = current;
+    f.backend.retrieveConversation = async (id) =>
+      ({ id, agent_id: "agent-parent" }) as Awaited<
+        ReturnType<Backend["retrieveConversation"]>
+      >;
+    const result = await tryCloudHeadlessSend(
+      flags(
+        "--conversation",
+        target,
+        ...extra,
+        "--no-wait",
+        "--output-format",
+        "json",
+      ),
+      "Wake up again",
+      f.backend,
+      false,
+      f.deps,
+    );
+    expect(result).toBe(1);
+    expect(JSON.parse(f.stdout.join("")).error).toBe(
+      "Cannot message the current conversation. Use a Monitor or schedule for self-invocation.",
+    );
+    expect(f.submissions).toHaveLength(0);
+  },
+);
+
+test.each([
+  { destination: ["--conversation", "conv-fork"] },
+  { destination: ["--agent", "agent-parent"] },
+  { destination: ["--agent", "agent-parent", "--conversation", "default"] },
+])(
+  "allows same-agent CLI sends to another conversation: %j",
+  async ({ destination }) => {
+    const f = fixture();
+    f.backend.retrieveConversation = async (id) =>
+      ({ id, agent_id: "agent-parent" }) as Awaited<
+        ReturnType<Backend["retrieveConversation"]>
+      >;
+    expect(
+      await tryCloudHeadlessSend(
+        flags(...destination, "--no-wait"),
+        "Hello fork",
+        f.backend,
+        false,
+        f.deps,
+      ),
+    ).toBe(0);
+    expect(f.submissions).toHaveLength(1);
+  },
+);
+
 function fixture() {
   const stdout: string[] = [];
   const stderr: string[] = [];
