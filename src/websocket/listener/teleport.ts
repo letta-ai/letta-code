@@ -9,6 +9,7 @@ import type {
   TeleportRequestCommand,
 } from "@/types/protocol_v2";
 import { toListenerConnection } from "./connection";
+import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitProtocolV2Message,
@@ -337,6 +338,11 @@ export function handleTeleportRequest(params: {
     : false;
   if (!conversationRuntime?.isProcessing && !pending.drainAcceptedInputs) {
     if (sendTeleportReady(listener, pending, { success: true })) {
+      if (listener.connectionId?.startsWith("conn-"))
+        createInterruptedTurnStore().remove(
+          pending.agentId,
+          pending.conversationId,
+        );
       pending.readyAt = Date.now();
       retainTeleportForRecovery(listener, pending);
     }
@@ -379,6 +385,11 @@ export function emitClaimedTeleportReady(
 ): boolean {
   const sent = sendTeleportReady(listener, pending, { success: true });
   if (sent) {
+    if (listener.connectionId?.startsWith("conn-"))
+      createInterruptedTurnStore().remove(
+        pending.agentId,
+        pending.conversationId,
+      );
     retainTeleportForRecovery(listener, pending);
   }
   return sent;

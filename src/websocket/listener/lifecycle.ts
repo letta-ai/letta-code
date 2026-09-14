@@ -64,6 +64,7 @@ import {
   waitForProcessServicesSlot,
 } from "./process-services";
 import { scheduleQueuePump } from "./queue";
+import { recoverRecordedTurns } from "./recover-recorded-turn";
 import {
   clearConversationRuntimeState,
   clearRuntimeTimers,
@@ -844,6 +845,9 @@ async function connectWithRetry(
       for (const frame of pendingStartupFrames.splice(0)) {
         await handleMessage(frame);
       }
+      void recoverRecordedTurns(runtime).catch((error) => {
+        console.error("[Listen] Recorded restart recovery failed:", error);
+      });
     })().catch((error) => {
       handleListenerSocketOpenFailure({
         runtime,
