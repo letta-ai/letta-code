@@ -90,8 +90,10 @@ export async function ensureListenerWarmStateForTurn(
   }
 
   try {
+    // Start primary memory in parallel. The mod loader below owns the only
+    // startup dependency; attached repositories must not be part of that wait.
+    void warmupDeps.ensureMemfsSyncedForAgent(listener, agentId);
     await Promise.all([
-      warmupDeps.ensureMemfsSyncedForAgent(listener, agentId),
       warmupDeps.ensureSecretsHydratedForAgent(listener, agentId),
       agentMetadataPromise,
     ]);

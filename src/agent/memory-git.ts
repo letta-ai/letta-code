@@ -28,7 +28,13 @@ import {
   getMemfsGitProxyRewriteConfig,
   getMemfsServerUrl,
 } from "@/backend/api/memfs-git-proxy";
+import {
+  retainCheckouts,
+  startCheckout,
+  trackCheckoutDiscovery,
+} from "@/utils/checkout-readiness";
 import { debugLog, debugWarn } from "@/utils/debug";
+import { withRepositoryCheckout } from "@/utils/repository-checkout";
 import { getUtf16Bom } from "@/utils/text-files";
 import { GIT_MEMORY_ENABLED_TAG } from "./agent-tags";
 import { listAttachedAgentRepositories } from "./attached-repositories";
@@ -332,11 +338,11 @@ export async function prepareAttachedRepositoryForGitOps(
 }
 
 async function syncRepoMount(args: RepositoryMountGitArgs): Promise<void> {
-  if (!existsSync(args.directory)) {
-    mkdirSync(args.directory, { recursive: true });
-    try {
+  await withRepositoryCheckout(args.directory, async (directory, fresh) => {
+    args = { ...args, directory };
+    if (fresh) {
       await runGitWithRetry(
-        args.directory,
+        directory,
         ["clone", args.remoteUrl, "."],
         args.token,
         {
@@ -344,23 +350,20 @@ async function syncRepoMount(args: RepositoryMountGitArgs): Promise<void> {
           timeoutMs: GIT_CLONE_TIMEOUT_MS,
         },
       );
-    } catch (err) {
-      rmSync(args.directory, { recursive: true, force: true });
-      throw err;
+    } else if (!existsSync(join(directory, ".git"))) {
+      throw new Error(
+        `repository mount path already exists and is not a git repository: ${args.directory}`,
+      );
+    } else {
+      await prepareAttachedRepositoryForGitOps(args);
+      await runGitWithRetry(args.directory, ["pull", "--ff-only"], args.token, {
+        operation: `pull repository ${args.repositoryName}`,
+      });
     }
-  } else if (!existsSync(join(args.directory, ".git"))) {
-    throw new Error(
-      `repository mount path already exists and is not a git repository: ${args.directory}`,
-    );
-  } else {
-    await prepareAttachedRepositoryForGitOps(args);
-    await runGitWithRetry(args.directory, ["pull", "--ff-only"], args.token, {
-      operation: `pull repository ${args.repositoryName}`,
-    });
-  }
 
-  await prepareAttachedRepositoryForGitOps(args);
-  installSharedMemoryPreCommitHook(args.directory);
+    await prepareAttachedRepositoryForGitOps(args);
+    installSharedMemoryPreCommitHook(args.directory);
+  });
 }
 
 /**
@@ -1476,6 +1479,15 @@ export interface SyncAgentRepositoriesResult {
   summaries: string[];
 }
 
+function startAttachedAgentRepositories(agentId: string): void {
+  void syncAttachedAgentRepositories(agentId).catch((error) => {
+    debugWarn(
+      "memfs-git",
+      `Background repository sync failed: ${String(error)}`,
+    );
+  });
+}
+
 async function syncAttachedRepository(args: {
   agentId: string;
   repositoryName: string;
@@ -1485,22 +1497,51 @@ async function syncAttachedRepository(args: {
   const directory = getRepositoryMountDir(args.agentId, repositoryName);
   const remoteUrl = getRepositoryRemoteUrl(args.agentId, repositoryName);
 
-  await syncRepoMount({
-    agentId: args.agentId,
-    repositoryName,
+  await startCheckout(
+    args.agentId,
     directory,
-    remoteUrl,
-    token: args.token,
-  });
+    () =>
+      syncRepoMount({
+        agentId: args.agentId,
+        repositoryName,
+        directory,
+        remoteUrl,
+        token: args.token,
+      }),
+    true,
+  );
   return `${repositoryName}: ${directory}`;
 }
 
 export async function syncAttachedAgentRepositories(
   agentId: string,
 ): Promise<SyncAgentRepositoriesResult> {
-  let repositories: Awaited<ReturnType<typeof listAttachedAgentRepositories>>;
+  let repositories: Awaited<ReturnType<typeof listAttachedAgentRepositories>> =
+    [];
+  let jobs: Promise<string>[] = [];
   try {
-    repositories = await listAttachedAgentRepositories(agentId);
+    const registered = trackCheckoutDiscovery(agentId, async () => {
+      repositories = await listAttachedAgentRepositories(agentId);
+      retainCheckouts(
+        agentId,
+        repositories.map((repository) =>
+          getRepositoryMountDir(
+            agentId,
+            validateAgentRepositoryName(repository.name),
+          ),
+        ),
+      );
+      const token = await getAuthToken();
+      jobs = repositories.map((repository) =>
+        syncAttachedRepository({
+          agentId,
+          repositoryName: repository.name,
+          token,
+        }),
+      );
+      for (const job of jobs) void job.catch(() => {});
+    });
+    await registered;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     debugWarn(
@@ -1519,16 +1560,7 @@ export async function syncAttachedAgentRepositories(
     return { mounted: 0, skipped: 0, failed: 0, summaries: [] };
   }
 
-  const token = await getAuthToken();
-  const results = await Promise.allSettled(
-    repositories.map((repository) =>
-      syncAttachedRepository({
-        agentId,
-        repositoryName: repository.name,
-        token,
-      }),
-    ),
-  );
+  const results = await Promise.allSettled(jobs);
 
   const summaries: string[] = [];
   let mounted = 0;
@@ -1565,75 +1597,76 @@ export async function syncAttachedAgentRepositories(
  * Git root is ~/.letta/agents/{id}/memory/ (not the agent root).
  */
 export async function cloneMemoryRepo(agentId: string): Promise<void> {
+  startAttachedAgentRepositories(agentId);
   const token = await getAuthToken();
   const url = getMemoryRemoteUrl(agentId);
-  const dir = getMemoryRepoDir(agentId);
+  await withRepositoryCheckout(
+    getMemoryRepoDir(agentId),
+    async (dir, fresh) => {
+      if (fresh) {
+        await runGitWithRetry(dir, ["clone", url, "."], token, {
+          operation: "clone memory repo",
+          timeoutMs: GIT_CLONE_TIMEOUT_MS,
+        });
+      } else if (!existsSync(join(dir, ".git"))) {
+        // Directory exists but isn't a git repo (legacy local layout)
+        // Clone to temp, move .git/ into existing dir, then checkout files.
+        const tmpDir = `${dir}-git-clone-tmp`;
+        try {
+          if (existsSync(tmpDir)) {
+            rmSync(tmpDir, { recursive: true, force: true });
+          }
+          mkdirSync(tmpDir, { recursive: true });
+          await runGitWithRetry(tmpDir, ["clone", url, "."], token, {
+            operation: "clone memory repo (tmp migration)",
+            timeoutMs: GIT_CLONE_TIMEOUT_MS,
+          });
 
-  debugLog("memfs-git", `Cloning ${url} → ${dir}`);
+          // Move .git into the existing memory directory
+          renameSync(join(tmpDir, ".git"), join(dir, ".git"));
 
-  if (!existsSync(dir)) {
-    // Fresh clone into new memory directory
-    mkdirSync(dir, { recursive: true });
-    await runGitWithRetry(dir, ["clone", url, "."], token, {
-      operation: "clone memory repo",
-      timeoutMs: GIT_CLONE_TIMEOUT_MS,
-    });
-  } else if (!existsSync(join(dir, ".git"))) {
-    // Directory exists but isn't a git repo (legacy local layout)
-    // Clone to temp, move .git/ into existing dir, then checkout files.
-    const tmpDir = `${dir}-git-clone-tmp`;
-    try {
-      if (existsSync(tmpDir)) {
-        rmSync(tmpDir, { recursive: true, force: true });
+          // Reset to match remote state. Skip when the remote has no HEAD
+          // yet (empty repo, e.g. a freshly-allocated training agent) —
+          // `git checkout -- .` fails with "pathspec '.' did not match any
+          // file(s) known to git" in that case, which is fatal here. When
+          // there's nothing on the remote there's nothing to restore, so
+          // leaving the existing local files in place is the right move.
+          try {
+            await runGit(dir, ["rev-parse", "--verify", "HEAD"], token);
+            await runGit(dir, ["checkout", "--", "."], token);
+          } catch (checkoutErr) {
+            const msg =
+              checkoutErr instanceof Error
+                ? checkoutErr.message
+                : String(checkoutErr);
+            debugLog(
+              "memfs-git",
+              `Skipping checkout (likely empty remote, no HEAD yet): ${msg}`,
+            );
+          }
+
+          debugLog(
+            "memfs-git",
+            "Migrated existing memory directory to git repo",
+          );
+        } finally {
+          if (existsSync(tmpDir)) {
+            rmSync(tmpDir, { recursive: true, force: true });
+          }
+        }
       }
-      mkdirSync(tmpDir, { recursive: true });
-      await runGitWithRetry(tmpDir, ["clone", url, "."], token, {
-        operation: "clone memory repo (tmp migration)",
-        timeoutMs: GIT_CLONE_TIMEOUT_MS,
-      });
 
-      // Move .git into the existing memory directory
-      renameSync(join(tmpDir, ".git"), join(dir, ".git"));
+      // Configure local credential helper so the agent can do plain
+      // `git push` / `git pull` without auth prefixes.
+      await configureLocalCredentialHelper(dir, token);
 
-      // Reset to match remote state. Skip when the remote has no HEAD
-      // yet (empty repo, e.g. a freshly-allocated training agent) —
-      // `git checkout -- .` fails with "pathspec '.' did not match any
-      // file(s) known to git" in that case, which is fatal here. When
-      // there's nothing on the remote there's nothing to restore, so
-      // leaving the existing local files in place is the right move.
-      try {
-        await runGit(dir, ["rev-parse", "--verify", "HEAD"], token);
-        await runGit(dir, ["checkout", "--", "."], token);
-      } catch (checkoutErr) {
-        const msg =
-          checkoutErr instanceof Error
-            ? checkoutErr.message
-            : String(checkoutErr);
-        debugLog(
-          "memfs-git",
-          `Skipping checkout (likely empty remote, no HEAD yet): ${msg}`,
-        );
-      }
+      // Install commit hooks (pre-commit validates frontmatter; post-commit mirrors)
+      installMemoryGitHooks(dir);
 
-      debugLog("memfs-git", "Migrated existing memory directory to git repo");
-    } finally {
-      if (existsSync(tmpDir)) {
-        rmSync(tmpDir, { recursive: true, force: true });
-      }
-    }
-  }
-
-  // Configure local credential helper so the agent can do plain
-  // `git push` / `git pull` without auth prefixes.
-  await configureLocalCredentialHelper(dir, token);
-
-  // Install commit hooks (pre-commit validates frontmatter; post-commit mirrors)
-  installMemoryGitHooks(dir);
-
-  // Set canonical local git identity (letta.agentId, user.email, user.name)
-  await ensureLocalMemfsGitConfig(dir, agentId);
-
-  await syncAttachedAgentRepositories(agentId);
+      // Set canonical local git identity (letta.agentId, user.email, user.name)
+      await ensureLocalMemfsGitConfig(dir, agentId);
+    },
+  );
 }
 
 /**
@@ -1648,6 +1681,7 @@ export async function pullMemory(
   agentId: string,
   options: PullMemoryOptions = {},
 ): Promise<{ updated: boolean; summary: string }> {
+  startAttachedAgentRepositories(agentId);
   const token = await getAuthToken();
   const dir = getMemoryRepoDir(agentId);
 
@@ -1667,7 +1701,6 @@ export async function pullMemory(
     );
     const output = stdout + stderr;
     const updated = !output.includes("Already up to date");
-    await syncAttachedAgentRepositories(agentId);
     return {
       updated,
       summary: updated ? output.trim() : "Already up to date",
@@ -1676,7 +1709,6 @@ export async function pullMemory(
     if (!(await hasMergeBaseWithUpstream(dir))) {
       try {
         const summary = await recoverMemoryPullByResettingToRemote(dir, token);
-        await syncAttachedAgentRepositories(agentId);
         return {
           updated: true,
           summary,
@@ -1700,7 +1732,6 @@ export async function pullMemory(
         token,
         { operation: "pull --rebase" },
       );
-      await syncAttachedAgentRepositories(agentId);
       return { updated: true, summary: (stdout + stderr).trim() };
     } catch (rebaseErr) {
       if (isRecoverableMemoryPullHistoryError(rebaseErr)) {
@@ -1709,7 +1740,6 @@ export async function pullMemory(
             dir,
             token,
           );
-          await syncAttachedAgentRepositories(agentId);
           return {
             updated: true,
             summary,
