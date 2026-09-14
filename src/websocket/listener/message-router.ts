@@ -85,6 +85,7 @@ import type {
   ListenerRuntime,
   ProcessQueuedTurn,
   StartListenerOptions,
+  SyncReplayOptions,
 } from "./types";
 
 type SafeSocketSend = (
@@ -127,12 +128,7 @@ type MessageRouterParams = {
     listenerRuntime: ListenerRuntime,
     socket: WebSocket,
     scope: RuntimeScope,
-    opts?: {
-      recoverApprovals?: boolean;
-      forceDeviceStatus?: boolean;
-      onStatusChange?: StartListenerOptions["onStatusChange"];
-      connectionId?: string;
-    },
+    opts?: SyncReplayOptions,
   ) => Promise<void>;
   getOrCreateScopedRuntime: (
     listener: ListenerRuntime,
@@ -390,6 +386,7 @@ export function createListenerMessageHandler(
         try {
           await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
             recoverApprovals: parsed.recover_approvals !== false,
+            resumeInterruptedTurn: parsed.resume_interrupted_turn === true,
             forceDeviceStatus: parsed.force_device_status === true,
             onStatusChange: opts.onStatusChange,
             connectionId: opts.connectionId,

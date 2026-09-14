@@ -8,7 +8,10 @@ import {
   getResumeDataFromBackend,
   type ResumeData,
 } from "@/agent/check-approval";
-import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
+import {
+  buildFreshDenialApprovals,
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+} from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
@@ -35,6 +38,14 @@ export async function recoverApprovalStateForSync(
     getBackend: typeof getBackend;
     getResumeDataFromBackend: typeof getResumeDataFromBackend;
   }> = {},
+  opts: {
+    /**
+     * The sync came from this conversation's execution owner (see
+     * `SyncCommand.resume_interrupted_turn`): stale denials may start a turn
+     * now instead of waiting for this listener's next user message.
+     */
+    resumeInterruptedTurn?: boolean;
+  } = {},
 ): Promise<"deferred" | undefined> {
   const resolvedDeps = {
     getBackend,
@@ -139,11 +150,17 @@ export async function recoverApprovalStateForSync(
   // control requests. Device status then broadcasts them again and observer
   // UIs can render the dialog after a restart.
   //
-  // When nothing is interactive, no human answer is outstanding: the recovered
-  // state holds only the stale denials (no pending request IDs), and the sync
-  // caller sends them as this conversation's next turn right away so the
-  // model can re-issue the interrupted work instead of waiting for a user
-  // message that may never come (a Slack or cron turn has no browser open).
+  // When nothing is interactive, no human answer is outstanding. What happens
+  // to the stale denials depends on who sent the sync:
+  // - the execution owner (`resume_interrupted_turn`): the recovered state
+  //   holds only the denials (no pending request IDs) and the sync caller
+  //   sends them as this conversation's next turn right away, so the model can
+  //   re-issue the interrupted work instead of waiting for a user message that
+  //   may never come (a Slack or cron turn has no browser open);
+  // - an observer (browser attach, readiness probe): the denials are parked on
+  //   this listener and ride along with its next user message. Another
+  //   process (a TUI, `letta -p`, a different computer) may still be executing
+  //   those tool calls; an observer must not close them.
   const interactivePending = pendingApprovals.filter((approval) =>
     isInteractiveApprovalTool(approval.toolName),
   );
@@ -155,6 +172,21 @@ export async function recoverApprovalStateForSync(
       approval,
       reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
     }));
+
+  if (interactivePending.length === 0 && !opts.resumeInterruptedTurn) {
+    runtime.pendingInterruptedResults = buildFreshDenialApprovals(
+      pendingApprovals,
+      STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+    );
+    runtime.pendingInterruptedContext = {
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+      continuationEpoch: runtime.continuationEpoch,
+    };
+    runtime.pendingInterruptedToolCallIds = null;
+    clearRecoveredApprovalState(runtime);
+    return;
+  }
 
   const approvalsByRequestId = new Map<string, RecoveredPendingApproval>();
   for (const approval of interactivePending) {

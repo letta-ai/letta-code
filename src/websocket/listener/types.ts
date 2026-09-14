@@ -70,6 +70,17 @@ export interface StartListenerOptions {
   ) => void;
 }
 
+/** Options a `sync` command carries into the listener's state replay. */
+export type SyncReplayOptions = {
+  /** `SyncCommand.recover_approvals`: consult the backend for stale approvals. */
+  recoverApprovals?: boolean;
+  /** `SyncCommand.resume_interrupted_turn`: owner-only immediate continuation. */
+  resumeInterruptedTurn?: boolean;
+  forceDeviceStatus?: boolean;
+  onStatusChange?: StartListenerOptions["onStatusChange"];
+  connectionId?: string;
+};
+
 export interface IncomingMessage {
   type: "message";
   /**
@@ -220,14 +231,6 @@ export type ConversationRuntime = {
   acceptedInputDispositions: Map<string, "started" | "queued">;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
-  /**
-   * True once a sync completed a backend approval-recovery pass for this scope
-   * in this process. Until then every sync recovers, even one sent with
-   * `recover_approvals: false` (cloud-api's readiness probes and activity
-   * claims always send false), so a relaunched listener resumes a turn the
-   * previous process left mid-approval without waiting for an ADE sync.
-   */
-  syncApprovalRecoveryCompleted: boolean;
   /**
    * Teleport whose `teleport_continue` this scope is waiting for, set by the
    * cloud's destination `runtime_start`. While it is set (and not expired),

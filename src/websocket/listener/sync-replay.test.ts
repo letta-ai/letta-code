@@ -98,20 +98,32 @@ async function sync(
 ): Promise<void> {
   await replaySyncStateForRuntime(runtime.listener, transport as never, scope, {
     scheduleWarmupsAfterSync: () => {},
-    recoverApprovals: false,
+    // The strongest ask an owner can make; the teleport gate must still win.
+    recoverApprovals: true,
+    resumeInterruptedTurn: true,
     forceDeviceStatus: true,
     connectionId: "cloud-relay",
-    recoverApprovalStateForSync: async (scopedRuntime, recoveredScope) => {
-      return recoverApprovalStateForSync(scopedRuntime, recoveredScope, {
-        getBackend: (() => ({
-          retrieveAgent: async () => ({ id: "agent-sync-teleport-fixture" }),
-        })) as never,
-        getResumeDataFromBackend: (async () => ({
-          pendingApproval: sourceYieldedApproval,
-          pendingApprovals: [sourceYieldedApproval],
-          messageHistory: [],
-        })) as never,
-      });
+    recoverApprovalStateForSync: async (
+      scopedRuntime,
+      recoveredScope,
+      _deps,
+      recoverOpts,
+    ) => {
+      return recoverApprovalStateForSync(
+        scopedRuntime,
+        recoveredScope,
+        {
+          getBackend: (() => ({
+            retrieveAgent: async () => ({ id: "agent-sync-teleport-fixture" }),
+          })) as never,
+          getResumeDataFromBackend: (async () => ({
+            pendingApproval: sourceYieldedApproval,
+            pendingApprovals: [sourceYieldedApproval],
+            messageHistory: [],
+          })) as never,
+        },
+        recoverOpts,
+      );
     },
     recoveredContinuationDependencies: {
       ensureSecretsHydrated: async () => {},
@@ -245,7 +257,6 @@ describe("sync replay on a teleport destination", () => {
     expect(processed).toHaveLength(0);
     expect(runtime.isProcessing).toBe(false);
     expect(runtime.recoveredApprovalState).toBeNull();
-    expect(runtime.syncApprovalRecoveryCompleted).toBe(false);
     const statusFrames = transport.sent
       .map((payload) => JSON.parse(payload))
       .filter((frame) => frame.type === "update_loop_status");

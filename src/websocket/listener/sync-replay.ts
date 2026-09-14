@@ -11,11 +11,7 @@ import {
 } from "./recovery";
 import { recoverApprovalStateForSync } from "./recovery-sync";
 import { handleIncomingMessage } from "./turn";
-import type {
-  ConversationRuntime,
-  ListenerRuntime,
-  StartListenerOptions,
-} from "./types";
+import type { ListenerRuntime, SyncReplayOptions } from "./types";
 import { scheduleListenerWarmupsAfterSync } from "./warmup";
 
 /**
@@ -28,11 +24,9 @@ export async function replaySyncStateForRuntime(
   listenerRuntime: ListenerRuntime,
   socket: WebSocket,
   scope: RuntimeScope<string | null>,
-  opts?: {
-    recoverApprovals?: boolean;
+  opts?: SyncReplayOptions & {
     recoverApprovalStateForSync?: (
-      runtime: ConversationRuntime,
-      scope: RuntimeScope<string | null>,
+      ...args: Parameters<typeof recoverApprovalStateForSync>
     ) => Promise<unknown>;
     /** Turn processor for a recovered continuation; defaults to the real turn. */
     processIncomingMessage?: typeof handleIncomingMessage;
@@ -41,9 +35,6 @@ export async function replaySyncStateForRuntime(
       runtime: ListenerRuntime,
       scope: RuntimeScope<string | null>,
     ) => void;
-    forceDeviceStatus?: boolean;
-    onStatusChange?: StartListenerOptions["onStatusChange"];
-    connectionId?: string;
   },
 ): Promise<void> {
   const syncScopedRuntime = getOrCreateScopedRuntime(
@@ -53,18 +44,14 @@ export async function replaySyncStateForRuntime(
   );
   const recoverFn =
     opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
-  // The first sync for a scope in this process always recovers: cloud-api's
-  // readiness probes and activity claims send recover_approvals=false, and a
-  // relaunched sandbox listener may never see a true from an ADE. Later syncs
-  // honor the flag as the cheap idle-ping path it was meant for.
-  if (
-    (opts?.recoverApprovals ?? true) ||
-    !syncScopedRuntime.syncApprovalRecoveryCompleted
-  ) {
+  // Recovery runs only when the sender asked for it. cloud-api's readiness
+  // probes and activity claims send recover_approvals=false so a prewarmed or
+  // idle sandbox never touches a conversation it merely observes.
+  if (opts?.recoverApprovals ?? true) {
     try {
-      const recovered = await recoverFn(syncScopedRuntime, scope);
-      syncScopedRuntime.syncApprovalRecoveryCompleted =
-        recovered !== "deferred";
+      await recoverFn(syncScopedRuntime, scope, undefined, {
+        resumeInterruptedTurn: opts?.resumeInterruptedTurn === true,
+      });
     } catch (error) {
       trackBoundaryError({
         errorType: "listener_sync_recovery_failed",
@@ -77,10 +64,13 @@ export async function replaySyncStateForRuntime(
     }
   }
 
-  // Recovery found only replay-unsafe pending approvals: nothing waits on a
-  // human, so try to finish the interrupted turn. The shared recovery entry
-  // verifies ownership before acquiring the local turn lease; sync must not
-  // start a competing turn during either side of a teleport.
+  // The execution owner asked to resume and recovery found only replay-unsafe
+  // pending approvals: nothing waits on a human, so try to finish the
+  // interrupted turn. (An observer's sync parked those denials for this
+  // listener's next user message instead and never reaches this state.) The
+  // shared recovery entry verifies ownership before acquiring the local turn
+  // lease; sync must not start a competing turn during either side of a
+  // teleport.
   if (
     syncScopedRuntime.recoveredApprovalState &&
     syncScopedRuntime.recoveredApprovalState.pendingRequestIds.size === 0 &&

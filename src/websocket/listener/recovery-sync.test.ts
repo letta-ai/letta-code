@@ -192,14 +192,19 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     );
   });
 
-  test("stale-only recovery keeps the denials on recovered state with nothing pending", async () => {
+  test("owner sync with only stale denials holds them for an immediate turn", async () => {
     const runtime = createScopedRuntime();
+    // Auto-allowable, manual, and auto-deniable tools all become stale
+    // denials: nothing is classified, re-run, or re-asked (#1876).
+    const stale = [
+      { toolCallId: "call-read-1", toolName: "Read", toolArgs: "{}" },
+      bashApproval,
+      { toolCallId: "call-write-1", toolName: "Write", toolArgs: "{}" },
+    ];
 
-    await recoverApprovalStateForSync(
-      runtime,
-      scope,
-      createDeps([bashApproval]),
-    );
+    await recoverApprovalStateForSync(runtime, scope, createDeps(stale), {
+      resumeInterruptedTurn: true,
+    });
 
     // Nothing parks for a later user message: the sync caller sends these
     // denials as the next turn itself.
@@ -208,17 +213,45 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     const recovered = runtime.recoveredApprovalState;
     expect(recovered?.pendingRequestIds.size).toBe(0);
     expect(recovered?.approvalsByRequestId.size).toBe(0);
-    expect(recovered?.autoDecisions).toEqual([
-      {
+    expect(recovered?.autoDecisions).toEqual(
+      stale.map((approval) => ({
         type: "deny",
-        approval: bashApproval,
+        approval,
         reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-      },
-    ]);
+      })),
+    );
     expect(getPendingControlRequests(runtime.listener, scope)).toHaveLength(0);
   });
 
-  test("a sync that recovers only stale denials sends them as a turn immediately", async () => {
+  test("observer sync with only stale denials parks them for this listener's next user message", async () => {
+    const runtime = createScopedRuntime();
+
+    // A browser attaching or a readiness probe: another process (a TUI,
+    // `letta -p`, a different computer) may still be executing call-bash-1.
+    await recoverApprovalStateForSync(
+      runtime,
+      scope,
+      createDeps([bashApproval]),
+    );
+
+    expect(runtime.recoveredApprovalState).toBeNull();
+    expect(runtime.pendingInterruptedResults).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "call-bash-1",
+        approve: false,
+        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+      },
+    ]);
+    expect(runtime.pendingInterruptedContext).toEqual({
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+      continuationEpoch: runtime.continuationEpoch,
+    });
+    expect(getPendingControlRequests(runtime.listener, scope)).toHaveLength(0);
+  });
+
+  test("an owner sync that recovers only stale denials sends them as a turn immediately", async () => {
     const runtime = createScopedRuntime();
     const transport = connectRuntime(runtime);
     const processed: Array<{
@@ -232,14 +265,21 @@ describe("recoverApprovalStateForSync restart recovery", () => {
       transport as never,
       scope,
       {
-        recoverApprovals: false,
+        recoverApprovals: true,
+        resumeInterruptedTurn: true,
         forceDeviceStatus: true,
         connectionId: "cloud-relay",
-        recoverApprovalStateForSync: async (scopedRuntime, recoveredScope) => {
+        recoverApprovalStateForSync: async (
+          scopedRuntime,
+          recoveredScope,
+          _deps,
+          recoverOpts,
+        ) => {
           await recoverApprovalStateForSync(
             scopedRuntime,
             recoveredScope,
             createDeps([bashApproval]),
+            recoverOpts,
           );
         },
         recoveredContinuationDependencies: {
@@ -309,10 +349,63 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     });
     await waitFor(() => runtime.recoveredApprovalState === null);
     expect(runtime.pendingInterruptedResults).toBeNull();
-    expect(runtime.syncApprovalRecoveryCompleted).toBe(true);
   });
 
-  test("the first sync recovers even when the server sends recover_approvals=false", async () => {
+  test("an observer sync never starts a turn for another process's pending tool call", async () => {
+    const runtime = createScopedRuntime();
+    const transport = connectRuntime(runtime);
+    const processed: IncomingMessage[] = [];
+
+    // A browser attaches to a prewarmed sandbox (recover_approvals=true,
+    // no resume_interrupted_turn) while `letta -p` on another machine is
+    // still running call-bash-1.
+    await replaySyncStateForRuntime(
+      runtime.listener,
+      transport as never,
+      scope,
+      {
+        recoverApprovals: true,
+        forceDeviceStatus: true,
+        connectionId: "cloud-relay",
+        recoverApprovalStateForSync: async (
+          scopedRuntime,
+          recoveredScope,
+          _deps,
+          recoverOpts,
+        ) => {
+          await recoverApprovalStateForSync(
+            scopedRuntime,
+            recoveredScope,
+            createDeps([bashApproval]),
+            recoverOpts,
+          );
+        },
+        processIncomingMessage: async (message) => {
+          processed.push(message);
+        },
+      },
+    );
+    await Bun.sleep(5);
+
+    expect(processed).toHaveLength(0);
+    expect(runtime.isProcessing).toBe(false);
+    expect(runtime.recoveredApprovalState).toBeNull();
+    expect(runtime.pendingInterruptedResults).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "call-bash-1",
+        approve: false,
+        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+      },
+    ]);
+    const statusFrames = transport.sent
+      .map((payload) => JSON.parse(payload))
+      .filter((frame) => frame.type === "update_loop_status");
+    expect(statusFrames.length).toBeGreaterThan(0);
+    expect(statusFrames[0]?.loop_status.status).toBe("WAITING_ON_INPUT");
+  });
+
+  test("recover_approvals=false never consults the backend, even on the first sync", async () => {
     const runtime = createScopedRuntime();
     const transport = connectRuntime(runtime);
     let recoveryCalls = 0;
@@ -320,21 +413,9 @@ describe("recoverApprovalStateForSync restart recovery", () => {
       recoveryCalls += 1;
     };
 
-    // Post-restart readiness probes and activity-claim syncs always send
-    // false; the first one for a scope must still consult the backend.
-    await replaySyncStateForRuntime(
-      runtime.listener,
-      transport as never,
-      scope,
-      {
-        recoverApprovals: false,
-        recoverApprovalStateForSync: recover,
-      },
-    );
-    expect(recoveryCalls).toBe(1);
-    expect(runtime.syncApprovalRecoveryCompleted).toBe(true);
-
-    transport.sent.length = 0;
+    // cloud-api's readiness probes and activity claims send false. A fresh
+    // listener (a prewarmed sandbox) must not touch a conversation it only
+    // observes; the relaunch path asks explicitly with recover_approvals=true.
     await replaySyncStateForRuntime(
       runtime.listener,
       transport as never,
@@ -345,7 +426,7 @@ describe("recoverApprovalStateForSync restart recovery", () => {
         recoverApprovalStateForSync: recover,
       },
     );
-    expect(recoveryCalls).toBe(1);
+    expect(recoveryCalls).toBe(0);
     // The lightweight path still replays in-memory state to the connection.
     expect(transport.sent.map((payload) => JSON.parse(payload).type)).toEqual([
       "update_device_status",
@@ -363,45 +444,10 @@ describe("recoverApprovalStateForSync restart recovery", () => {
         recoverApprovalStateForSync: recover,
       },
     );
-    expect(recoveryCalls).toBe(2);
-  });
-
-  test("a failed first recovery pass retries on the next lightweight sync", async () => {
-    const runtime = createScopedRuntime();
-    const transport = connectRuntime(runtime);
-    let recoveryCalls = 0;
-
-    await replaySyncStateForRuntime(
-      runtime.listener,
-      transport as never,
-      scope,
-      {
-        recoverApprovals: false,
-        recoverApprovalStateForSync: async () => {
-          recoveryCalls += 1;
-          throw new Error("backend unavailable");
-        },
-      },
-    );
     expect(recoveryCalls).toBe(1);
-    expect(runtime.syncApprovalRecoveryCompleted).toBe(false);
-
-    await replaySyncStateForRuntime(
-      runtime.listener,
-      transport as never,
-      scope,
-      {
-        recoverApprovals: false,
-        recoverApprovalStateForSync: async () => {
-          recoveryCalls += 1;
-        },
-      },
-    );
-    expect(recoveryCalls).toBe(2);
-    expect(runtime.syncApprovalRecoveryCompleted).toBe(true);
   });
 
-  test("deferred ownership lookup retries on the next lightweight sync without a timer", async () => {
+  test("deferred ownership lookup retries on the next recovering sync without a timer", async () => {
     const runtime = createScopedRuntime();
     const transport = connectRuntime(runtime);
     let calls = 0;
@@ -413,18 +459,16 @@ describe("recoverApprovalStateForSync restart recovery", () => {
       runtime.listener,
       transport as never,
       scope,
-      { recoverApprovals: false, recoverApprovalStateForSync: recover },
+      { recoverApprovals: true, recoverApprovalStateForSync: recover },
     );
     expect(calls).toBe(1);
-    expect(runtime.syncApprovalRecoveryCompleted).toBe(false);
     await replaySyncStateForRuntime(
       runtime.listener,
       transport as never,
       scope,
-      { recoverApprovals: false, recoverApprovalStateForSync: recover },
+      { recoverApprovals: true, recoverApprovalStateForSync: recover },
     );
     expect(calls).toBe(2);
-    expect(runtime.syncApprovalRecoveryCompleted).toBe(true);
   });
 
   test("mixed batch re-presents interactive tools and stages denials for the rest", async () => {
