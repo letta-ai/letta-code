@@ -1,0 +1,56 @@
+name: Ollama over Tailscale
+
+on:
+  workflow_call:
+    secrets:
+      MODAL_TOKEN_ID:
+        required: true
+      MODAL_TOKEN_SECRET:
+        required: true
+      TAILSCALE_ACCESS_TOKEN:
+        required: true
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ollama:
+    name: Local backend / Qwen 3.5 9B / Tailscale
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      - uses: astral-sh/setup-uv@v6
+      - name: Install dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun install --frozen-lockfile
+      - name: Test fault injection and assertion helpers
+        run: node --test scripts/ollama-e2e/*.test.cjs
+      - name: Build the distributed Node CLI
+        run: bun run build
+      - name: Run local-backend sessions against Modal Ollama over Tailscale
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          TAILSCALE_ACCESS_TOKEN: ${{ secrets.TAILSCALE_ACCESS_TOKEN }}
+        run: |
+          set -o pipefail
+          mkdir -p .cache/ollama-e2e
+          uv run --with modal==1.5.5 python scripts/ollama-e2e/run.py --scenario 2>&1 | tee .cache/ollama-e2e/runner.log
+      - name: Upload diagnostics, including failed attempts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ollama-tailscale-e2e
+          path: .cache/ollama-e2e
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
