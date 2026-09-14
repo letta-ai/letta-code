@@ -158,6 +158,9 @@ export function evictConversationRuntimeIfIdle(
 ): boolean {
   if (
     runtime.turnLifecycle.kind !== "idle" ||
+    (runtime.expectedTeleportId !== null &&
+      (runtime.expectedTeleportExpiresAt === null ||
+        runtime.expectedTeleportExpiresAt > Date.now())) ||
     runtime.queuePumpActive ||
     runtime.queuePumpScheduled ||
     runtime.pendingTurns > 0 ||

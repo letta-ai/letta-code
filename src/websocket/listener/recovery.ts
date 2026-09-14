@@ -59,6 +59,7 @@ import {
   emitLoopErrorNotice,
   getTranscriptLoopErrorMessage,
 } from "./recoverable-notices";
+import { canRecoverConversation } from "./recovery-ownership";
 import {
   clearRecoveredApprovalState,
   hasInterruptedCacheForScope,
@@ -458,6 +459,18 @@ export async function startRecoveredApprovalContinuation(
   if (runtime.turnLifecycle.kind !== "idle") {
     return false;
   }
+  if (!(await canRecoverConversation(runtime))) {
+    if (runtime.recoveredApprovalState === recovered) {
+      clearRecoveredApprovalState(runtime);
+      runtime.syncApprovalRecoveryCompleted = false;
+    }
+    return false;
+  }
+  if (
+    runtime.turnLifecycle.kind !== "idle" ||
+    runtime.recoveredApprovalState !== recovered
+  )
+    return false;
   const scope = {
     agent_id: recovered.agentId,
     conversation_id: recovered.conversationId,
