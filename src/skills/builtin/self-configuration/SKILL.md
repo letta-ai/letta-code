@@ -421,7 +421,7 @@ letta cron list
 letta cron add --name "weekly-review" --description "Weekly project review" --prompt "Ask the user for the weekly project review." --cron "0 9 * * 1" --agent "$AGENT_ID" --conversation "$CONVERSATION_ID"
 ```
 
-Scheduled tasks fire only while a Letta session/listener is running. Cron bindings can target other agents/conversations visible to the account; verify agent and conversation IDs explicitly when exact routing matters.
+Where schedules run depends on the runner. Local-runner schedules (stored in `~/.letta/crons.json`) fire only while a Letta session/listener is running on their computer; cloud schedules fire from the cloud regardless. Load `scheduling-tasks` for the placement rules. Cron bindings can target other agents/conversations visible to the account; verify agent and conversation IDs explicitly when exact routing matters.
 
 ## CLI startup flags
 
