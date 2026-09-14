@@ -20,10 +20,17 @@ import {
   startChannelAccountLive,
 } from "@/channels/service";
 import { clearTargetStores } from "@/channels/targets";
-import { createTelegramAdapter } from "@/channels/telegram/adapter";
-import { MAX_TELEGRAM_DOWNLOAD_BYTES } from "@/channels/telegram/media";
+import {
+  createTelegramAdapter as createTelegramAdapterImpl,
+  type TelegramAdapterOptions,
+} from "@/channels/telegram/adapter";
+import {
+  MAX_TELEGRAM_DOWNLOAD_BYTES,
+  type TelegramFileFetch,
+} from "@/channels/telegram/media";
 import { __testOverrideLoadGrammyModule } from "@/channels/telegram/runtime";
 import { detectTelegramBotMention } from "@/channels/telegram/utils";
+import type { ChannelAdapter, TelegramChannelAccount } from "@/channels/types";
 
 export type FakeBotStartOptions = {
   onStart?: (botInfo: {
@@ -67,6 +74,7 @@ export class FakeBot {
     });
 
   readonly token: string;
+  readonly config?: unknown;
   botInfo = { username: "test_bot", id: 12345 };
   readonly handlers = new Map<string, FakeHandler[]>();
   readonly api = {
@@ -92,8 +100,9 @@ export class FakeBot {
       }) => unknown)
     | null = null;
 
-  constructor(token: string) {
+  constructor(token: string, config?: unknown) {
     this.token = token;
+    this.config = config;
     FakeBot.instances.push(this);
   }
 
@@ -153,6 +162,21 @@ export const telegramAccountDefaults = {
 export const consoleErrorSpy = mock(() => {});
 
 export const consoleWarnSpy = mock(() => {});
+
+const testFileFetch: TelegramFileFetch = async (url, init) =>
+  await globalThis.fetch(url, {
+    signal: init?.signal as AbortSignal | undefined,
+  });
+
+export function createTelegramAdapter(
+  config: TelegramChannelAccount,
+  options: TelegramAdapterOptions = {},
+): ChannelAdapter {
+  return createTelegramAdapterImpl(config, {
+    ...options,
+    fileFetch: options.fileFetch ?? testFileFetch,
+  });
+}
 
 const originalConsoleError = console.error;
 
@@ -274,7 +298,6 @@ export {
   __testOverrideSubmitChannelLifecycleErrorReport,
   bindChannelAccountLive,
   createChannelAccountLive,
-  createTelegramAdapter,
   detectTelegramBotMention,
   getChannelAccountSnapshot,
   getChannelRegistry,

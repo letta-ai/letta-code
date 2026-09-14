@@ -1,3 +1,4 @@
+import { resolveTelegramBotConfig } from "./bot-config";
 import { loadGrammyModule } from "./runtime";
 import { resolveTelegramBotConstructor } from "./utils";
 
@@ -10,7 +11,7 @@ export async function validateTelegramToken(
 ): Promise<{ username: string; id: number }> {
   const grammy = await loadGrammyModule();
   const Bot = resolveTelegramBotConstructor(grammy);
-  const bot = new Bot(token);
+  const bot = new Bot(token, resolveTelegramBotConfig());
   await bot.init();
   const info = bot.botInfo;
   return {
