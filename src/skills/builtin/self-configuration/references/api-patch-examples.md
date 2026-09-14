@@ -81,7 +81,7 @@ curl -sS -X PATCH "$base_url/v1/agents/$AGENT_ID" \
 
 ## TypeScript SDK
 
-SDK calls use the same account token authority as raw API calls. Check IDs before update calls; do not hard-code provider keys or other secrets in the patch body.
+SDK calls use the same account token authority as raw API calls. Check IDs before update calls; do not hard-code provider keys or other secrets in the patch body. SDK request fields are snake_case, matching the raw API.
 
 ```typescript
 import Letta from "@letta-ai/letta-client";
@@ -93,11 +93,11 @@ const client = new Letta({
 
 await client.agents.update(process.env.AGENT_ID!, {
   model: "openai/gpt-5.2",
-  contextWindowLimit: 64000,
-  modelSettings: {
-    providerType: "openai",
-    parallelToolCalls: true,
-    reasoning: { reasoningEffort: "medium" },
+  context_window_limit: 64000,
+  model_settings: {
+    provider_type: "openai",
+    parallel_tool_calls: true,
+    reasoning: { reasoning_effort: "medium" },
   },
 });
 ```
@@ -125,9 +125,11 @@ client.agents.update(
     },
 )
 
+# The Python SDK's conversations.update does not expose context_window_limit
+# as a keyword argument; pass it through extra_body, which the server accepts.
 client.conversations.update(
     conversation_id=os.environ["CONVERSATION_ID"],
-    context_window_limit=64000,
+    extra_body={"context_window_limit": 64000},
 )
 ```
 
