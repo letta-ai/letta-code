@@ -92,6 +92,29 @@ export const SUBAGENT_NAMES = [
   "Sheeana",
   "Shaddam IV",
   "Count Fenring",
+  // Neuromancer
+  "Wintermute",
+  "Neuromancer",
+  "Dixie Flatline",
+  "Molly Millions",
+  "Lady 3Jane",
+  "Armitage",
+  "Maelcum",
+  "Ratz",
+  "The Finn",
+  // Snow Crash
+  "Hiro Protagonist",
+  "Y.T.",
+  "Raven",
+  "Uncle Enzo",
+  // Foundation and Robot novels
+  "R. Daneel Olivaw",
+  "R. Giskard Reventlov",
+  "Hari Seldon",
+  "Dors Venabili",
+  "The Mule",
+  // 2001: A Space Odyssey
+  "HAL 9000",
 ] as const;
 
 /** Each process keeps its own pool; completed and failed launches do not return names. */
