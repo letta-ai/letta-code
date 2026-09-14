@@ -114,7 +114,9 @@ describe("composeSubagentChildEnv", () => {
       inheritedPrimaryRoot: PARENT_MEMORY_DIR,
     });
 
-    expect(env.LETTA_SCRATCHPAD).toBe("/sandbox/transcripts/background");
+    expect(env.LETTA_SCRATCHPAD).toBe(
+      join("/sandbox/transcripts", "background"),
+    );
   });
 
   test("memory subagent preserves an explicitly configured scratchpad", () => {
