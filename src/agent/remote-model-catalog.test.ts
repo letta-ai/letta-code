@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { clearAvailableModelsCache } from "@/agent/available-models";
+import {
+  clearAvailableModelsCache,
+  getAvailableModelHandles,
+} from "@/agent/available-models";
 import { models, resolveModel } from "@/agent/model-catalog";
 import {
   __testResetRemoteModelCatalog,
@@ -17,6 +20,11 @@ import {
 import { __testSetBackend } from "@/backend";
 import { setConfiguredBackendMode } from "@/backend/backend-mode";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
+import {
+  clearRegisteredPiProviders,
+  registerPiProvider,
+} from "@/backend/dev/pi-provider-mod-registry";
+import { LocalBackend } from "@/backend/local/local-backend";
 import { settingsManager } from "@/settings-manager";
 
 await settingsManager.initialize();
@@ -88,6 +96,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   restoreSnapshot();
   clearAvailableModelsCache();
+  clearRegisteredPiProviders();
   __testSetBackend(null);
   setConfiguredBackendMode("api");
   delete process.env.LETTA_MODEL_CATALOG_CACHE_DIR;
@@ -232,6 +241,148 @@ describe("refreshModelCatalog", () => {
     await expect(initializeModelCatalog()).resolves.toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(resolveModel("haiku")).toBe("anthropic/claude-haiku-4-5");
+  });
+
+  test("local runtime inventory includes a static provider registered after backend creation", async () => {
+    setConfiguredBackendMode("local");
+    const storageDir = mkdtempSync(join(tmpdir(), "lc-late-provider-catalog-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        memfsEnabled: false,
+      });
+      __testSetBackend(backend);
+
+      const before = await getAvailableModelHandles({ forceRefresh: true });
+      expect(
+        before.models.some(
+          (model) => model.handle === "late-provider/late-model",
+        ),
+      ).toBe(false);
+
+      registerPiProvider("late-provider", {
+        name: "Late Provider",
+        api: "openai-completions",
+        connect: false,
+        baseUrl: "https://example.invalid/v1",
+        models: [
+          {
+            id: "late-model",
+            name: "Late Model",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            maxTokens: 8192,
+          },
+        ],
+      });
+      clearAvailableModelsCache();
+
+      const inventory = await backend.listModels();
+      expect(inventory).toContainEqual(
+        expect.objectContaining({ handle: "late-provider/late-model" }),
+      );
+      const available = await getAvailableModelHandles({ forceRefresh: true });
+      expect(available.models).toContainEqual(
+        expect.objectContaining({ handle: "late-provider/late-model" }),
+      );
+      expect(await refreshModelCatalog({ force: true })).toBe(true);
+      expect(models).toContainEqual(
+        expect.objectContaining({
+          handle: "late-provider/late-model",
+        }),
+      );
+    } finally {
+      rmSync(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not let a stale local inventory overwrite a provider registration", async () => {
+    setConfiguredBackendMode("local");
+    const storageDir = mkdtempSync(join(tmpdir(), "lc-late-provider-race-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        memfsEnabled: false,
+      });
+      __testSetBackend(backend);
+
+      registerPiProvider("baseline-provider", {
+        name: "Baseline Provider",
+        api: "openai-completions",
+        connect: false,
+        baseUrl: "https://example.invalid/v1",
+        models: [
+          {
+            id: "baseline-model",
+            name: "Baseline Model",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            maxTokens: 8192,
+          },
+        ],
+      });
+
+      let markFirstRequestStarted!: () => void;
+      const firstRequestStarted = new Promise<void>((resolve) => {
+        markFirstRequestStarted = resolve;
+      });
+      let releaseFirstRequest!: () => void;
+      const firstRequestReleased = new Promise<void>((resolve) => {
+        releaseFirstRequest = resolve;
+      });
+      const originalListModels = backend.listModels.bind(backend);
+      let listModelsCallCount = 0;
+      backend.listModels = async () => {
+        const inventory = await originalListModels();
+        if (listModelsCallCount++ === 0) {
+          markFirstRequestStarted();
+          await firstRequestReleased;
+        }
+        return inventory;
+      };
+
+      const staleRefresh = refreshModelCatalog({ force: true });
+      await firstRequestStarted;
+
+      registerPiProvider("late-provider", {
+        name: "Late Provider",
+        api: "openai-completions",
+        connect: false,
+        baseUrl: "https://example.invalid/v1",
+        models: [
+          {
+            id: "late-model",
+            name: "Late Model",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            maxTokens: 8192,
+          },
+        ],
+      });
+      clearAvailableModelsCache();
+
+      const freshRefresh = refreshModelCatalog({ force: true });
+      expect(await freshRefresh).toBe(true);
+      expect(models).toContainEqual(
+        expect.objectContaining({ handle: "late-provider/late-model" }),
+      );
+
+      releaseFirstRequest();
+      expect(await staleRefresh).toBe(false);
+      expect(models).toContainEqual(
+        expect.objectContaining({ handle: "late-provider/late-model" }),
+      );
+    } finally {
+      rmSync(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("custom API startup uses runtime model inventory", async () => {
