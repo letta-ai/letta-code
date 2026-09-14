@@ -9,13 +9,13 @@ test("attached agents take precedence over inherited configuration", () => {
   expect(
     getConversationExecutionAgentId({
       agent_id: "agent-own",
-      created_by_agent_id: "agent-parent",
+      inherit_agent_id_permissions: "agent-parent",
     }),
   ).toBe("agent-own");
   expect(
     getConversationExecutionAgentId({
       agent_id: null,
-      created_by_agent_id: "agent-parent",
+      inherit_agent_id_permissions: "agent-parent",
     }),
   ).toBe("agent-parent");
   expect(getConversationExecutionAgentId({ agent_id: null })).toBeNull();
@@ -32,7 +32,7 @@ test("resuming a named ephemeral child loads parent tools without changing its n
     retrieveConversation: async () => ({
       id: "conv-child",
       agent_id: null,
-      created_by_agent_id: parent.id,
+      inherit_agent_id_permissions: parent.id,
       name: "Joi (subagent)",
       is_subagent: true,
     }),
@@ -60,6 +60,6 @@ test("standalone ephemeral conversations cannot acquire an arbitrary agent's per
   } as unknown as Backend;
   await expect(
     retrieveConversationAgent("conv-child", backend),
-  ).rejects.toThrow("no creating agent");
+  ).rejects.toThrow("does not inherit an agent's permissions");
   expect(retrieveAgent).not.toHaveBeenCalled();
 });

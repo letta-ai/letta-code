@@ -5,12 +5,12 @@ import {
   resolveAgentMessageDestination,
 } from "./agent-message";
 
-test("addresses ephemeral children through the server-recorded creating agent", async () => {
+test("addresses ephemeral children through their stored permission inheritance", async () => {
   const backend = {
     retrieveConversation: async () => ({
       id: "conv-child",
       agent_id: null,
-      created_by_agent_id: "agent-parent",
+      inherit_agent_id_permissions: "agent-parent",
     }),
   } as unknown as Backend;
   expect(

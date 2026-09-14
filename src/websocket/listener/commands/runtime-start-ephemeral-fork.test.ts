@@ -13,7 +13,7 @@ import { handleRuntimeStartCommand } from "./runtime-start";
 
 afterEach(() => __testSetBackend(null));
 
-test("starts a named ephemeral child under its creating agent and rejects a different owner", async () => {
+test("starts a named ephemeral child under its inherited agent and rejects a different owner", async () => {
   const storageDir = await mkdtemp(join(tmpdir(), "runtime-ephemeral-fork-"));
   try {
     const backend = new LocalBackend({
@@ -54,7 +54,7 @@ test("starts a named ephemeral child under its creating agent and rejects a diff
         ({
           id: "conv-ephemeral",
           agent_id: null,
-          created_by_agent_id: creatingAgentId,
+          inherit_agent_id_permissions: creatingAgentId,
           name: "Joi (subagent)",
           is_subagent: true,
         }) as never,
