@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -21,6 +21,12 @@ test("a replacement reads completed results; another sandbox has nothing to reco
       workingDirectory: "/project",
     };
     store.write(record);
+    writeFileSync(
+      join(directory, "original", "agent-bad_conv-bad.json"),
+      "{broken",
+    );
+    expect(store.read("agent-bad", "conv-bad")).toBeNull();
+    expect(store.list()).toHaveLength(1);
     expect(
       createInterruptedTurnStore(join(directory, "prewarm")).read(
         "agent-test",

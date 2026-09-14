@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
 import { getServerUrl } from "@/backend/api/server-url";
+import { debugWarn } from "@/utils/debug";
 import type { ConversationRuntime } from "./types";
 
 /** Local execution evidence, never populated by observing another runtime. */
@@ -42,17 +43,46 @@ export function createInterruptedTurnStore(
       `${encodeURIComponent(agentId)}_${encodeURIComponent(conversationId)}.json`,
     );
   }
+  function readRecord(file: string): InterruptedTurnRecord | null {
+    try {
+      const value = JSON.parse(
+        readFileSync(file, "utf8"),
+      ) as InterruptedTurnRecord;
+      if (
+        !value ||
+        typeof value.agentId !== "string" ||
+        typeof value.conversationId !== "string" ||
+        path(value.agentId, value.conversationId) !== file ||
+        !Array.isArray(value.toolCallIds) ||
+        !value.toolCallIds.every((id) => typeof id === "string") ||
+        !Array.isArray(value.results) ||
+        !value.results.every(
+          (result) => result && typeof result.tool_call_id === "string",
+        ) ||
+        typeof value.requestOtid !== "string" ||
+        typeof value.workingDirectory !== "string"
+      ) {
+        throw new Error("Invalid interrupted-turn record");
+      }
+      return value;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        debugWarn(
+          "recovery",
+          "Ignoring unreadable interrupted-turn record",
+          file,
+        );
+      }
+      return null;
+    }
+  }
   return {
     list(): InterruptedTurnRecord[] {
       try {
         return readdirSync(directory)
           .filter((file) => file.endsWith(".json"))
-          .map(
-            (file) =>
-              JSON.parse(
-                readFileSync(join(directory, file), "utf8"),
-              ) as InterruptedTurnRecord,
-          );
+          .map((file) => readRecord(join(directory, file)))
+          .filter((record): record is InterruptedTurnRecord => record !== null);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
         throw error;
@@ -62,25 +92,7 @@ export function createInterruptedTurnStore(
       agentId: string,
       conversationId: string,
     ): InterruptedTurnRecord | null {
-      try {
-        const value = JSON.parse(
-          readFileSync(path(agentId, conversationId), "utf8"),
-        ) as InterruptedTurnRecord;
-        if (
-          value.agentId !== agentId ||
-          value.conversationId !== conversationId ||
-          !Array.isArray(value.toolCallIds) ||
-          !Array.isArray(value.results) ||
-          typeof value.requestOtid !== "string" ||
-          typeof value.workingDirectory !== "string"
-        ) {
-          throw new Error("Invalid interrupted-turn record");
-        }
-        return value;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-        throw error;
-      }
+      return readRecord(path(agentId, conversationId));
     },
     write(record: InterruptedTurnRecord): void {
       mkdirSync(directory, { recursive: true, mode: 0o700 });
