@@ -116,7 +116,7 @@ export async function prepareListenerTurn(params: {
     onStatusChange?.("processing", connectionId);
   }
 
-  trackListenerUserInput(msg.messages, "unknown");
+  trackListenerUserInput(msg.messages, "unknown", msg.actingUserId);
 
   const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
   let queuedInterruptedToolCallIds: string[] = [];

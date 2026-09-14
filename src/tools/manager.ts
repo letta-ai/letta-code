@@ -750,9 +750,7 @@ export function getExternalToolsAsClientTools(): ClientTool[] {
   }));
 }
 
-/**
- * Execute an external tool via SDK
- */
+/** Execute an external tool via SDK. */
 export async function executeExternalTool(
   toolCallId: string,
   toolName: string,
@@ -2408,12 +2406,14 @@ async function executeToolInner(
         return createModPermissionToolResult(permissionDecision);
       }
     }
-    return executeExternalTool(
-      options?.toolCallId ?? `ext-${Date.now()}`,
-      name,
-      eventArgs as Record<string, unknown>,
-      externalTool?.executor ?? activeExternalExecutor,
-      externalTool,
+    return runWithRuntimeContext(executionScope, () =>
+      executeExternalTool(
+        options?.toolCallId ?? `ext-${Date.now()}`,
+        name,
+        eventArgs as Record<string, unknown>,
+        externalTool?.executor ?? activeExternalExecutor,
+        externalTool,
+      ),
     );
   }
 
