@@ -40,7 +40,10 @@ class MockTransport implements LocalTransport {
   }
 }
 
-const scope = { agent_id: "agent-1", conversation_id: "conv-1" } as const;
+const scope = {
+  agent_id: "agent-sync-teleport-fixture",
+  conversation_id: "conv-sync-teleport-fixture",
+} as const;
 
 // The source's yielded MessageChannel call: replay-unsafe, so sync recovery
 // classifies it as a stale denial with nothing waiting on a human.
@@ -57,8 +60,8 @@ function connectRuntime(): {
   clearPendingMessages();
   const runtime = getOrCreateScopedRuntime(
     createRuntime(),
-    "agent-1",
-    "conv-1",
+    "agent-sync-teleport-fixture",
+    "conv-sync-teleport-fixture",
   );
   const transport = new MockTransport();
   const options: StartListenerOptions = {
@@ -101,7 +104,7 @@ async function sync(
     recoverApprovalStateForSync: async (scopedRuntime, recoveredScope) => {
       return recoverApprovalStateForSync(scopedRuntime, recoveredScope, {
         getBackend: (() => ({
-          retrieveAgent: async () => ({ id: "agent-1" }),
+          retrieveAgent: async () => ({ id: "agent-sync-teleport-fixture" }),
         })) as never,
         getResumeDataFromBackend: (async () => ({
           pendingApproval: sourceYieldedApproval,
