@@ -1,6 +1,10 @@
 // src/cli/commands/registry.ts
 // Registry of available CLI commands
 
+import {
+  type DreamCommandScope,
+  requestReflectionRun,
+} from "@/agent/reflection-runs";
 import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
 
@@ -13,6 +17,7 @@ type CommandHandlerResult =
 
 type CommandHandler = (
   args: string[],
+  scope?: DreamCommandScope,
 ) => Promise<CommandHandlerResult> | CommandHandlerResult;
 
 interface Command {
@@ -67,6 +72,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to trigger memory update
       return "Processing memory request...";
+    },
+  },
+  "/dream": {
+    desc: "Queue a reflection run on Letta Cloud for this conversation",
+    order: 49,
+    noArgs: true,
+    handler: (_args, scope) => {
+      if (!scope) throw new Error("/dream requires an active agent.");
+      return requestReflectionRun(scope);
     },
   },
   "/reflect": {
@@ -664,6 +678,7 @@ function normalizeCommandHandlerResult(result: CommandHandlerResult): {
  */
 export async function executeCommand(
   input: string,
+  scope?: DreamCommandScope,
 ): Promise<CommandExecutionResult> {
   const [command, ...args] = input.trim().split(/\s+/);
 
@@ -691,7 +706,9 @@ export async function executeCommand(
   }
 
   try {
-    const result = normalizeCommandHandlerResult(await handler.handler(args));
+    const result = normalizeCommandHandlerResult(
+      await handler.handler(args, scope),
+    );
     return { success: true, ...result };
   } catch (error) {
     return {

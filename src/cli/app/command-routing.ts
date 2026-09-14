@@ -43,6 +43,7 @@ const NON_STATE_COMMANDS = new Set([
   "/rename", // agent/convo rename
   "/btw",
   "/reload", // runtime surface reload (has its own busy guard)
+  "/dream", // admission-only HTTP request; the server reports unfinished/busy
 ]);
 
 // Check if a command is interactive (opens overlay, should not be queued)
