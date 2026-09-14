@@ -38,8 +38,10 @@ async function fixture() {
   directories.push(directory);
   const source = join(directory, "source");
   await git(["init", "-b", "main", source]);
+  // Clone assertions test publication, not the runner's newline policy.
+  await writeFile(join(source, ".gitattributes"), "memory.txt text eol=lf\n");
   await writeFile(join(source, "memory.txt"), "complete memory\n");
-  await git(["-C", source, "add", "memory.txt"]);
+  await git(["-C", source, "add", ".gitattributes", "memory.txt"]);
   await git([
     "-C",
     source,
