@@ -11,18 +11,16 @@
 import {
   getAvailableModelHandles,
   getCachedAvailableModels,
+  getModelContextWindow,
 } from "@/agent/available-models";
 import { resolveModelHandleFromLlmConfig } from "@/agent/model-handles";
-import {
-  updateAgentLLMConfig,
-  updateConversationLLMConfig,
-} from "@/agent/modify";
 import {
   parseChatGPTUsageLimitDetail,
   selectChatGPTQuotaFailoverHandle,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
 import type { ChatGPTUsageSnapshot } from "@/providers/chatgpt-usage-service";
+import { isRecord } from "@/utils/type-guards";
 
 /** Maximum plan swaps per turn, enforced by each consumer. */
 export const CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN = 3;
@@ -74,38 +72,112 @@ function isChatGPTByokHandleInModels(
   );
 }
 
-async function resolveScopedModelHandle(
+interface ScopedModelState {
+  handle: string | null;
+  modelSettings: Record<string, unknown>;
+  contextWindowLimit: number | null;
+}
+
+function contextWindowFromEntityRecord(entity: unknown): number | null {
+  if (!isRecord(entity)) return null;
+  if (typeof entity.context_window_limit === "number") {
+    return entity.context_window_limit;
+  }
+  const llmConfig = entity.llm_config;
+  if (isRecord(llmConfig) && typeof llmConfig.context_window === "number") {
+    return llmConfig.context_window;
+  }
+  return null;
+}
+
+/**
+ * Read the effective configuration before changing accounts. A different
+ * conversation model does not inherit the agent's model configuration.
+ */
+async function resolveScopedModelState(
   agentId: string,
   conversationId: string,
-): Promise<string | null> {
+): Promise<ScopedModelState | null> {
   try {
+    const agent = await getBackend().retrieveAgent(agentId);
+    const agentRecord = agent as unknown as {
+      model?: unknown;
+      llm_config?: unknown;
+      model_settings?: unknown;
+    };
+    const agentHandle =
+      typeof agentRecord.model === "string" && agentRecord.model.length > 0
+        ? agentRecord.model
+        : resolveModelHandleFromLlmConfig(
+            agentRecord.llm_config as Parameters<
+              typeof resolveModelHandleFromLlmConfig
+            >[0],
+          );
+    const llmConfig = isRecord(agentRecord.llm_config)
+      ? agentRecord.llm_config
+      : {};
+    const savedSettings = isRecord(llmConfig.model_settings)
+      ? llmConfig.model_settings
+      : isRecord(agentRecord.model_settings)
+        ? agentRecord.model_settings
+        : {};
+    const runtimeSettings: Record<string, unknown> = { ...savedSettings };
+    // Cloud also consumes these legacy flat fields. Preserve them when an
+    // inherited conversation becomes an explicit model override on rotation.
+    for (const key of [
+      "temperature",
+      "parallel_tool_calls",
+      "strict",
+      "enable_reasoner",
+      "reasoning_effort",
+      "max_reasoning_tokens",
+      "verbosity",
+      "response_format",
+      "frequency_penalty",
+    ]) {
+      if (Object.hasOwn(llmConfig, key)) runtimeSettings[key] = llmConfig[key];
+    }
+    if (Object.hasOwn(llmConfig, "max_tokens")) {
+      runtimeSettings.max_output_tokens = llmConfig.max_tokens;
+    }
+    const state: ScopedModelState = {
+      handle: agentHandle ?? null,
+      modelSettings: { ...runtimeSettings, ...savedSettings },
+      contextWindowLimit: contextWindowFromEntityRecord(agentRecord),
+    };
+
     if (conversationId !== "default") {
       const conversation =
         await getBackend().retrieveConversation(conversationId);
       const conversationRecord = conversation as unknown as {
         model?: unknown;
+        model_settings?: unknown;
       };
       if (
         typeof conversationRecord.model === "string" &&
         conversationRecord.model.length > 0
       ) {
-        return conversationRecord.model;
+        state.handle = conversationRecord.model;
+        state.modelSettings = runtimeSettings;
+        if (state.handle !== agentHandle) {
+          state.modelSettings = {};
+          state.contextWindowLimit =
+            (await getModelContextWindow(state.handle)) ?? null;
+        }
+        state.modelSettings = {
+          ...state.modelSettings,
+          ...(isRecord(conversationRecord.model_settings)
+            ? conversationRecord.model_settings
+            : {}),
+        };
+      }
+      const conversationWindow =
+        contextWindowFromEntityRecord(conversationRecord);
+      if (typeof conversationWindow === "number") {
+        state.contextWindowLimit = conversationWindow;
       }
     }
-
-    const agent = await getBackend().retrieveAgent(agentId);
-    const record = agent as unknown as {
-      model?: unknown;
-      llm_config?: unknown;
-    };
-    if (typeof record.model === "string" && record.model.length > 0) {
-      return record.model;
-    }
-    return resolveModelHandleFromLlmConfig(
-      record.llm_config as Parameters<
-        typeof resolveModelHandleFromLlmConfig
-      >[0],
-    );
+    return state;
   } catch {
     return null;
   }
@@ -143,13 +215,13 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
   }
   if (!models) return null;
 
-  // Prefer persisted scoped state because a caller's render-time model handle
-  // can be stale after an automatic swap. Fall back to the caller only when
-  // the scoped model cannot be resolved to a ChatGPT BYOK catalog entry.
-  let currentHandle = await resolveScopedModelHandle(agentId, conversationId);
-  if (!currentHandle || !isChatGPTByokHandleInModels(currentHandle, models)) {
-    currentHandle = params.currentHandle;
-  }
+  // The caller's render-time handle can be stale after an automatic swap.
+  // Resolve the handle and configuration together from persisted scoped state.
+  const scopedState = await resolveScopedModelState(agentId, conversationId);
+  // Do not rotate with unknown settings or replace a missing window with the
+  // destination account's maximum. Leave existing error handling in control.
+  if (!scopedState || !scopedState.contextWindowLimit) return null;
+  const currentHandle = scopedState.handle;
   if (!currentHandle || !isChatGPTByokHandleInModels(currentHandle, models)) {
     return null;
   }
@@ -197,19 +269,27 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
   const toProvider = providerFromHandle(toHandle);
   if (!toProvider) return null;
 
+  // This is an account change, not a model selection. Generic model-selection
+  // helpers rebuild settings and derive the destination's maximum window.
+  const backend = getBackend();
+  const payload = {
+    model: toHandle,
+    model_settings: scopedState.modelSettings,
+    context_window_limit: scopedState.contextWindowLimit,
+  };
+
   try {
+    signal?.throwIfAborted();
     if (conversationId === "default") {
-      await updateAgentLLMConfig(
+      await backend.updateAgent(
         agentId,
-        toHandle,
-        { provider_type: "chatgpt_oauth" },
+        payload as Parameters<typeof backend.updateAgent>[1],
         { signal },
       );
     } else {
-      await updateConversationLLMConfig(
+      await backend.updateConversation(
         conversationId,
-        toHandle,
-        { provider_type: "chatgpt_oauth" },
+        payload as Parameters<typeof backend.updateConversation>[1],
         { signal },
       );
     }
