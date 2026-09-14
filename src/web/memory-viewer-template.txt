@@ -1448,9 +1448,14 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     if (pills) metaHtml += '<div class="meta-row">' + pills + '</div>';
     metaHtml += '</div>';
 
+    var isMd = /\.(md|markdown)$/i.test(String(file.path || ''));
+    var renderedContent = isMd
+      ? renderMarkdown(file.content || '')
+      : '<pre><code>' + escHtml(file.content || '') + '</code></pre>';
+
     panel.innerHTML =
       metaHtml +
-      '<article class="file-body" style="' + (rawMode ? 'display:none' : '') + '">' + renderMarkdown(file.content || '') + '</article>' +
+      '<article class="file-body" style="' + (rawMode ? 'display:none' : '') + '">' + renderedContent + '</article>' +
       '<pre class="file-body-raw" style="' + (rawMode ? 'display:block' : '') + '">' + escHtml(file.content || '') + '</pre>';
 
     panel.currentFile = file;
