@@ -6,7 +6,11 @@ import type {
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
 import { canRecoverConversation } from "./recovery-ownership";
-import { expectInboundTeleport } from "./teleport";
+import { evictConversationRuntimeIfIdle } from "./runtime";
+import {
+  clearExpectedInboundTeleport,
+  expectInboundTeleport,
+} from "./teleport";
 
 function runtime() {
   const value = getOrCreateScopedRuntime(createRuntime(), "agent-1", "conv-1");
@@ -34,6 +38,19 @@ function snapshot(
 }
 
 describe("recovery ownership", () => {
+  test("inbound handoff prevents eviction only until cleared or expired", () => {
+    const ordinary = runtime();
+    expect(evictConversationRuntimeIfIdle(ordinary)).toBe(true);
+    const incoming = runtime();
+    expectInboundTeleport(incoming, "handoff");
+    expect(evictConversationRuntimeIfIdle(incoming)).toBe(false);
+    clearExpectedInboundTeleport(incoming);
+    expect(evictConversationRuntimeIfIdle(incoming)).toBe(true);
+    const expired = runtime();
+    expectInboundTeleport(expired, "expired");
+    expired.expectedTeleportExpiresAt = Date.now() - 1;
+    expect(evictConversationRuntimeIfIdle(expired)).toBe(true);
+  });
   test("a freshly prepared or restarted listener cannot recover another active owner", async () => {
     const value = runtime();
     expect(
