@@ -8,7 +8,10 @@ import {
   getDefaultEnvironment,
   StdioClientTransport,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 interface McpServerConfigBase {
@@ -104,19 +107,36 @@ export async function connectMcpServer(
       await client.connect(transport);
     } catch (error) {
       if (
+        config.transport === "http" &&
+        error instanceof StreamableHTTPError &&
+        (error.code === 404 || error.code === 405)
+      ) {
+        // MCP backwards compatibility: a server that only speaks the legacy
+        // HTTP+SSE transport answers POSTs to the streamable endpoint with
+        // 404/405. Fall back to SSE, as the MCP spec describes.
+        await client
+          .close()
+          .catch(() => transport.close().catch(() => undefined));
+        client = new Client(options.clientInfo ?? DEFAULT_CLIENT_INFO);
+        await client.connect(
+          createTransport({ ...config, transport: "sse" }, options),
+        );
+      } else if (
         !(error instanceof UnauthorizedError) ||
         !options.oauth?.waitForAuthorizationCode ||
         !supportsOAuthCompletion(transport)
       ) {
         throw error;
+      } else {
+        const authorizationCode =
+          await options.oauth.waitForAuthorizationCode();
+        await transport.finishAuth(authorizationCode);
+        await client
+          .close()
+          .catch(() => transport.close().catch(() => undefined));
+        client = new Client(options.clientInfo ?? DEFAULT_CLIENT_INFO);
+        await client.connect(createTransport(config, options));
       }
-      const authorizationCode = await options.oauth.waitForAuthorizationCode();
-      await transport.finishAuth(authorizationCode);
-      await client
-        .close()
-        .catch(() => transport.close().catch(() => undefined));
-      client = new Client(options.clientInfo ?? DEFAULT_CLIENT_INFO);
-      await client.connect(createTransport(config, options));
     }
     await options.oauth?.close();
     const response = await client.listTools();
