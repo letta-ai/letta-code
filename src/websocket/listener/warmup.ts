@@ -1,4 +1,8 @@
 import { getBackend } from "@/backend";
+import {
+  isConversationMemoryReadOnly,
+  setConversationMemoryReadOnly,
+} from "@/runtime-context";
 import { debugWarn } from "@/utils/debug";
 import { ensureMemfsSyncedForAgent } from "./memfs-sync";
 import { ensureListenerAgentModAdapter } from "./mod-adapter";
@@ -68,6 +72,16 @@ export async function ensureListenerWarmStateForTurn(
     return null;
   }
 
+  if (scope.conversationId !== "default") {
+    const conversation = await getBackend().retrieveConversation(
+      scope.conversationId,
+    );
+    setConversationMemoryReadOnly(
+      scope.conversationId,
+      conversation.agent_id === null,
+    );
+  }
+
   const agentMetadataPromise =
     getAgentMetadataPromise(listener, agentId) ??
     (async () => {
@@ -91,13 +105,16 @@ export async function ensureListenerWarmStateForTurn(
 
   try {
     await Promise.all([
-      warmupDeps.ensureMemfsSyncedForAgent(listener, agentId),
+      isConversationMemoryReadOnly(scope.conversationId)
+        ? Promise.resolve()
+        : warmupDeps.ensureMemfsSyncedForAgent(listener, agentId),
       warmupDeps.ensureSecretsHydratedForAgent(listener, agentId),
       agentMetadataPromise,
     ]);
     const agentModAdapter = await ensureListenerAgentModAdapter(
       listener,
       agentId,
+      scope.conversationId,
     );
     const transport = listener.transport ?? listener.socket;
     if (agentModAdapter && transport && isListenerTransportOpen(transport)) {

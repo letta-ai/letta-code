@@ -10,7 +10,7 @@ test("addresses ephemeral children through their stored permission inheritance",
     retrieveConversation: async () => ({
       id: "conv-child",
       agent_id: null,
-      inherit_agent_id_permissions: "agent-parent",
+      parent_agent_id: "agent-parent",
     }),
   } as unknown as Backend;
   expect(

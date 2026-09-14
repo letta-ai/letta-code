@@ -18,6 +18,7 @@ import { getConversationExecutionAgentId } from "@/backend/conversation-identity
 import { migratePermissionMode } from "@/permissions/mode";
 import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
+import { setConversationMemoryReadOnly } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
 import { subscribeListenerConnection } from "@/websocket/listener/connection";
@@ -258,6 +259,10 @@ async function resolveRuntimeStartConversation(
           : `Conversation ${conversation.id} is agent-backed; provide agent_id`,
       );
     }
+    setConversationMemoryReadOnly(
+      conversation.id,
+      conversation.agent_id === null,
+    );
     return conversation;
   }
 

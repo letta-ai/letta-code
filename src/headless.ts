@@ -13,6 +13,7 @@ import { resolveActingUserId } from "@/agent/acting-user";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
 import { retrieveConversationAgent } from "@/backend/conversation-identity";
+import { isConversationMemoryReadOnly } from "@/runtime-context";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import {
   trackBoundaryError,
@@ -1299,10 +1300,10 @@ export async function handleHeadlessCommand(
   markMilestone("HEADLESS_AGENT_RESOLVED");
   const publicAgentId = ephemeralFlag ? null : agent.id;
   telemetry.setCurrentAgent(publicAgentId, agent.tags);
+  const readOnlyMemory = isConversationMemoryReadOnly(specifiedConversationId);
   const isResumingAgent = !ephemeralFlag && !!(specifiedAgentId || !forceNew);
-  // Refresh presets before applying optional model/system-prompt overrides.
-
-  if (isResumingAgent) {
+  // Refresh only agent-owned configuration, not inherited fork resources.
+  if (isResumingAgent && !readOnlyMemory) {
     if (model) {
       const modelHandle = resolveModel(model);
       if (typeof modelHandle !== "string") {
@@ -1355,6 +1356,7 @@ export async function handleHeadlessCommand(
 
   if (
     !isStatelessSession &&
+    !readOnlyMemory &&
     backend.capabilities.remoteMemfs &&
     !autoEnableMemfsForFreshAgent
   ) {
@@ -1380,12 +1382,10 @@ export async function handleHeadlessCommand(
       )
     : Promise.resolve();
 
-  // Apply memfs flags and auto-enable from server tag when local settings are missing.
-  // Respects memfsStartupPolicy:
-  //   "blocking"  (default) – await the pull; exit on conflict.
-  //   "background"           – fire pull async; session init proceeds immediately.
-  //   "skip"                 – skip the pull this session.
-  if (isStatelessSession) {
+  // Only agent-backed sessions enable/sync MemFS (blocking, background, or skip).
+  if (readOnlyMemory) {
+    // Reuse existing memory read-only; never clone, sync, or change parent settings.
+  } else if (isStatelessSession) {
     // This is a session launch policy: do not hydrate tags, auto-enable,
     // clone, or pull MemFS. Recording false also keeps downstream client tools,
     // skills, reflection, and init metadata aligned without mutating the
@@ -1484,7 +1484,7 @@ export async function handleHeadlessCommand(
   }
 
   // Apply --system flag after memfs sync so isMemfsEnabled() is up to date.
-  if (isResumingAgent && systemPromptPreset) {
+  if (isResumingAgent && !readOnlyMemory && systemPromptPreset) {
     const result = await updateAgentSystemPrompt(agent.id, systemPromptPreset);
     if (!result.success || !result.agent) {
       trackHeadlessBoundaryError(
@@ -1498,10 +1498,8 @@ export async function handleHeadlessCommand(
     agent = result.agent;
   }
 
-  // Maintain managed system prompt versions without blocking startup.
-  // This updates only agents whose current prompt still matches the stored
-  // managed prompt hash, so custom edits are preserved.
-  if (isResumingAgent && !systemPromptPreset) {
+  // Refresh managed agent prompts, never an ephemeral fork's copied prompt.
+  if (isResumingAgent && !readOnlyMemory && !systemPromptPreset) {
     const {
       ensureLettaCodeOriginTag,
       getMemoryPromptModeForAgent,
@@ -1524,12 +1522,12 @@ export async function handleHeadlessCommand(
     });
   }
 
-  if (!ephemeralFlag) {
+  if (!ephemeralFlag && !readOnlyMemory) {
     clearHeadlessClientToolRules(agent);
   }
 
   try {
-    if (ephemeralFlag) {
+    if (ephemeralFlag || readOnlyMemory) {
       effectiveReflectionSettings = { trigger: "off", stepCount: 0 };
     } else {
       const resolvedReflectionSettings = await applyHeadlessReflectionOverrides(

@@ -3,10 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type WebSocket from "ws";
+import { setConversationMemoryReadOnly } from "@/runtime-context";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import {
   __listenerModAdapterTestUtils,
   disposeListenerModAdapter,
+  ensureListenerAgentModAdapter,
 } from "@/websocket/listener/mod-adapter";
 import { replaySyncStateForRuntime } from "@/websocket/listener/sync-replay";
 import type { ListenerTransport } from "@/websocket/listener/transport";
@@ -104,6 +106,41 @@ describe("listener warmup scheduling", () => {
     expect(memfsWarmupMock).toHaveBeenCalledTimes(2);
     expect(secretsWarmupMock).toHaveBeenCalledTimes(2);
     expect(fetchAgentMetadataMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("ephemeral mod loading skips MemFS sync and releases its pending load", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    let syncCalls = 0;
+    __listenerModAdapterTestUtils.setEnsureMemfsSyncedForAgentForTests(
+      async () => {
+        syncCalls++;
+        return true;
+      },
+    );
+    __listenerModAdapterTestUtils.setAgentModsDirectoryResolverForTests(
+      () => null,
+    );
+    setConversationMemoryReadOnly("conv-mod-fork", true);
+    try {
+      expect(
+        await ensureListenerAgentModAdapter(
+          listener,
+          "agent-mod-parent",
+          "conv-mod-fork",
+        ),
+      ).toBeNull();
+      expect(syncCalls).toBe(0);
+      expect(listener.agentModAdapterLoads?.size).toBe(0);
+      await ensureListenerAgentModAdapter(
+        listener,
+        "agent-mod-parent",
+        "default",
+      );
+      expect(syncCalls).toBe(1);
+    } finally {
+      setConversationMemoryReadOnly("conv-mod-fork", false);
+      disposeListenerModAdapter(listener);
+    }
   });
 
   test("advertises scoped mod commands after background warmup", async () => {

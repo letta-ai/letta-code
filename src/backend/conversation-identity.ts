@@ -1,23 +1,19 @@
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
+import { setConversationMemoryReadOnly } from "@/runtime-context";
 
 /** Conversation identity fields supported by the API before the next SDK release. */
 export type ConversationWithIdentity = Omit<Conversation, "agent_id"> & {
   agent_id: string | null;
-  inherit_agent_id_permissions?: string | null;
+  parent_agent_id?: string | null;
   name?: string | null;
   is_subagent?: boolean;
 };
 
 /** Agent-free conversations execute with their explicitly inherited permissions. */
 export function getConversationExecutionAgentId(
-  conversation: Pick<
-    ConversationWithIdentity,
-    "agent_id" | "inherit_agent_id_permissions"
-  >,
+  conversation: Pick<ConversationWithIdentity, "agent_id" | "parent_agent_id">,
 ): string | null {
-  return (
-    conversation.agent_id ?? conversation.inherit_agent_id_permissions ?? null
-  );
+  return conversation.agent_id ?? conversation.parent_agent_id ?? null;
 }
 
 export async function retrieveConversationAgent(
@@ -37,6 +33,7 @@ export async function retrieveConversationAgent(
     );
   if (expectedAgentId && agentId !== expectedAgentId)
     throw new Error("The conversation does not belong to the requested agent.");
+  setConversationMemoryReadOnly(conversationId, conversation.agent_id === null);
   const agent = await backend.retrieveAgent(agentId, {
     include: ["agent.tools", "agent.tags"],
   });

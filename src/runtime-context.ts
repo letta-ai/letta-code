@@ -45,6 +45,24 @@ export interface RuntimeContextSnapshot {
 
 const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();
 
+// Conversation identity, not agent settings: a parent can run writable and
+// read-only fork conversations concurrently in the same listener.
+const readOnlyMemoryConversations = new Set<string>();
+
+export function setConversationMemoryReadOnly(
+  conversationId: string,
+  readOnly: boolean,
+): void {
+  if (readOnly) readOnlyMemoryConversations.add(conversationId);
+  else readOnlyMemoryConversations.delete(conversationId);
+}
+
+export function isConversationMemoryReadOnly(
+  conversationId = getRuntimeContext()?.conversationId,
+): boolean {
+  return !!conversationId && readOnlyMemoryConversations.has(conversationId);
+}
+
 export function getRuntimeContext(): RuntimeContextSnapshot | undefined {
   return runtimeContextStorage.getStore();
 }

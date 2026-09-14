@@ -19,6 +19,7 @@ import {
   prependReminderPartsToContent,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
+import { isConversationMemoryReadOnly } from "@/runtime-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
@@ -164,23 +165,25 @@ export async function prepareListenerTurn(params: {
                 getBackend(),
                 agentId,
               );
-        const {
-          ensureLettaCodeOriginTag,
-          getMemoryPromptModeForAgent,
-          scheduleManagedSystemPromptUpdate,
-        } = await import("@/agent/system-prompt-versioning");
-        const displayName = cachedAgent.name;
-        cachedAgent = {
-          ...(await ensureLettaCodeOriginTag(cachedAgent)),
-          name: displayName,
-        };
-        scheduleManagedSystemPromptUpdate({
-          agent: cachedAgent,
-          memoryMode: getMemoryPromptModeForAgent(cachedAgent.id),
-          onUpdated: (updatedAgent) => {
-            cachedAgent = { ...updatedAgent, name: displayName };
-          },
-        });
+        if (!isConversationMemoryReadOnly(conversationId)) {
+          const {
+            ensureLettaCodeOriginTag,
+            getMemoryPromptModeForAgent,
+            scheduleManagedSystemPromptUpdate,
+          } = await import("@/agent/system-prompt-versioning");
+          const displayName = cachedAgent.name;
+          cachedAgent = {
+            ...(await ensureLettaCodeOriginTag(cachedAgent)),
+            name: displayName,
+          };
+          scheduleManagedSystemPromptUpdate({
+            agent: cachedAgent,
+            memoryMode: getMemoryPromptModeForAgent(cachedAgent.id),
+            onUpdated: (updatedAgent) => {
+              cachedAgent = { ...updatedAgent, name: displayName };
+            },
+          });
+        }
       } catch (error) {
         debugWarn(
           "listen",
