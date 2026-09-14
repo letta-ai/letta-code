@@ -90,8 +90,9 @@ Returns the raw API response with full agent details. Key fields:
 - `id` - Agent ID (e.g., `agent-abc123`)
 - `name` - Agent name
 - `description` - Agent description
-- `tags` - Agent tags
 - `blocks` - Memory blocks (if `--include-blocks` used)
+
+The `tags` field is returned empty: the server no longer includes tag relationships in list responses, and the CLI does not request them. `--tags` filtering still works server-side, but to see an agent's actual tags, retrieve the agent via the Letta API with `include: ["agent.tags"]`.
 
 ## Related Skills
 
