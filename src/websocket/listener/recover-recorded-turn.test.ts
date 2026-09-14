@@ -77,6 +77,53 @@ import { createRuntime } from "./lifecycle";
 import { recoverRecordedTurns } from "./recover-recorded-turn";
 import type { IncomingMessage } from "./types";
 
+test("an accepted continuation still generating output is retained even with no pending tools", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-generating-"));
+  const store = createInterruptedTurnStore(directory);
+  const listener = createRuntime();
+  listener.connectionId = "conn-replacement";
+  try {
+    store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-old",
+      toolCallIds: ["old-tool"],
+      results: [
+        { tool_call_id: "old-tool", status: "success", tool_return: "output" },
+      ],
+      requestOtid: "accepted-request",
+      workingDirectory: "/project",
+    });
+    await recoverRecordedTurns(listener, {
+      store,
+      backend: {
+        retrieveAgent: async () => ({ id: "agent-1" }),
+        retrieveRun: async (id: string) => {
+          expect(id).toBe("run-new");
+          return { status: "running" };
+        },
+        streamConversationMessages: async () => ({
+          controller: new AbortController(),
+          async *[Symbol.asyncIterator]() {
+            yield { run_id: "run-new" };
+          },
+        }),
+      } as never,
+      resume: (async () => ({ pendingApprovals: [] })) as never,
+      canRecover: async () => true,
+      processTurn: async () => {
+        throw new Error("cannot send while the accepted run is generating");
+      },
+    });
+    expect(store.read("agent-1", "conv-1")?.requestOtid).toBe(
+      "accepted-request",
+    );
+  } finally {
+    listener.intentionallyClosed = true;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("accepted result request is found by OTID if the listener died before seeing its new run", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-ack-"));
   const store = createInterruptedTurnStore(directory);

@@ -92,26 +92,15 @@ export async function recoverRecordedTurns(
           )
         ).pendingApprovals;
         if (!unchanged()) continue;
-        if (!pending.length) {
-          const run = record.runId
-            ? await backend.retrieveRun(record.runId)
-            : null;
-          if (!unchanged()) continue;
-          if (run?.status === "running" || run?.status === "created") {
-            deferred = true;
-            continue;
-          }
-          store.remove(record.agentId, record.conversationId);
-          continue;
-        }
         // A run can finish generating its tool call while its listener is down.
         // Require the stored approval message to name the recorded run in that case.
         let recordedRunId = record.runId;
         if (
           record.results.length &&
-          pending.some(
-            (approval) => !record.toolCallIds.includes(approval.toolCallId),
-          )
+          (!pending.length ||
+            pending.some(
+              (approval) => !record.toolCallIds.includes(approval.toolCallId),
+            ))
         ) {
           // The result POST may have been accepted just before this process
           // died, before it received the new run ID. Resolve its exact OTID.
@@ -136,6 +125,18 @@ export async function recoverRecordedTurns(
           } finally {
             stream.controller.abort();
           }
+        }
+        if (!pending.length) {
+          const run = recordedRunId
+            ? await backend.retrieveRun(recordedRunId)
+            : null;
+          if (!unchanged()) continue;
+          if (run?.status === "running" || run?.status === "created") {
+            deferred = true;
+            continue;
+          }
+          store.remove(record.agentId, record.conversationId);
+          continue;
         }
         const owned = [];
         for (const approval of pending) {
