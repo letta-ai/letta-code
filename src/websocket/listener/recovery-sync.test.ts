@@ -401,6 +401,32 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     expect(runtime.syncApprovalRecoveryCompleted).toBe(true);
   });
 
+  test("deferred ownership lookup retries on the next lightweight sync without a timer", async () => {
+    const runtime = createScopedRuntime();
+    const transport = connectRuntime(runtime);
+    let calls = 0;
+    const recover = async () => {
+      calls += 1;
+      return calls === 1 ? "deferred" : undefined;
+    };
+    await replaySyncStateForRuntime(
+      runtime.listener,
+      transport as never,
+      scope,
+      { recoverApprovals: false, recoverApprovalStateForSync: recover },
+    );
+    expect(calls).toBe(1);
+    expect(runtime.syncApprovalRecoveryCompleted).toBe(false);
+    await replaySyncStateForRuntime(
+      runtime.listener,
+      transport as never,
+      scope,
+      { recoverApprovals: false, recoverApprovalStateForSync: recover },
+    );
+    expect(calls).toBe(2);
+    expect(runtime.syncApprovalRecoveryCompleted).toBe(true);
+  });
+
   test("mixed batch re-presents interactive tools and stages denials for the rest", async () => {
     const runtime = createScopedRuntime();
 

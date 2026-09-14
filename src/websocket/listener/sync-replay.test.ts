@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ApprovalDecision } from "@/agent/approval-execution";
+import { clearPendingMessages } from "@/utils/message-queue-bridge";
 import {
   markListenerConnectionInitialized,
   openListenerConnection,
@@ -53,6 +54,7 @@ function connectRuntime(): {
   runtime: ConversationRuntime;
   transport: MockTransport;
 } {
+  clearPendingMessages();
   const runtime = getOrCreateScopedRuntime(
     createRuntime(),
     "agent-1",
@@ -92,6 +94,7 @@ async function sync(
   processed: IncomingMessage[],
 ): Promise<void> {
   await replaySyncStateForRuntime(runtime.listener, transport as never, scope, {
+    scheduleWarmupsAfterSync: () => {},
     recoverApprovals: false,
     forceDeviceStatus: true,
     connectionId: "cloud-relay",
@@ -233,6 +236,9 @@ describe("sync replay on a teleport destination", () => {
     await sync(runtime, transport, processed);
     await Bun.sleep(5);
 
+    expect(runtime.listener.conversationRuntimes.get(runtime.key)).toBe(
+      runtime,
+    );
     expect(processed).toHaveLength(0);
     expect(runtime.isProcessing).toBe(false);
     expect(runtime.recoveredApprovalState).toBeNull();
