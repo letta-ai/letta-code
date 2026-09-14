@@ -472,23 +472,17 @@ function isSyncCommand(value: unknown): value is SyncCommand {
   if (!value || typeof value !== "object") {
     return false;
   }
-  const candidate = value as {
-    type?: unknown;
-    runtime?: unknown;
-    request_id?: unknown;
-    recover_approvals?: unknown;
-    force_device_status?: unknown;
-    wait_for_replay?: unknown;
-  };
+  const c = value as Partial<Record<keyof SyncCommand, unknown>>;
   return (
-    candidate.type === "sync" &&
-    isRuntimeScope(candidate.runtime) &&
-    (candidate.request_id === undefined ||
-      typeof candidate.request_id === "string") &&
-    (candidate.recover_approvals === undefined ||
-      typeof candidate.recover_approvals === "boolean") &&
-    (candidate.force_device_status === undefined ||
-      typeof candidate.force_device_status === "boolean")
+    c.type === "sync" &&
+    isRuntimeScope(c.runtime) &&
+    (c.request_id === undefined || typeof c.request_id === "string") &&
+    (c.recover_approvals === undefined ||
+      typeof c.recover_approvals === "boolean") &&
+    (c.resume_interrupted_turn === undefined ||
+      typeof c.resume_interrupted_turn === "boolean") &&
+    (c.force_device_status === undefined ||
+      typeof c.force_device_status === "boolean")
   );
 }
 

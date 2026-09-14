@@ -128,6 +128,7 @@ describe("listener protocol ergonomics", () => {
       { agent_id: "agent-1", conversation_id: "default" },
       {
         recoverApprovals: false,
+        resumeInterruptedTurn: false,
         forceDeviceStatus: true,
         onStatusChange: undefined,
         connectionId: "conn-test",

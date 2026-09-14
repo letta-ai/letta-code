@@ -266,7 +266,6 @@ export function createConversationRuntime(
     acceptedInputDispositions: new Map(),
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
-    syncApprovalRecoveryCompleted: false,
     expectedTeleportId: null,
     expectedTeleportExpiresAt: null,
     get lastStopReason() {

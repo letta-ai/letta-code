@@ -462,7 +462,6 @@ export async function startRecoveredApprovalContinuation(
   if (!(await canRecoverConversation(runtime))) {
     if (runtime.recoveredApprovalState === recovered) {
       clearRecoveredApprovalState(runtime);
-      runtime.syncApprovalRecoveryCompleted = false;
     }
     return false;
   }

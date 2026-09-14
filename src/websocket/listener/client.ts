@@ -662,6 +662,7 @@ export const __listenClientTestUtils = {
     scope: { agent_id: string | null; conversation_id: string },
     opts?: {
       recoverApprovals?: boolean;
+      resumeInterruptedTurn?: boolean;
       recoverApprovalStateForSync?: (
         runtime: ConversationRuntime,
         scope: { agent_id: string | null; conversation_id: string },
