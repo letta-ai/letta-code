@@ -28,8 +28,8 @@ describe("listener tool prep metadata reuse", () => {
     );
 
     expect(setupSource).toContain("cachedAgent: AgentState | null = null;");
-    expect(setupSource).toContain(
-      "cachedAgent = (await getBackend().retrieveAgent(",
+    expect(setupSource).toMatch(
+      /cachedAgent\s*=\s*conversationId === "default"\s*\? await getBackend\(\).retrieveAgent\(/,
     );
     expect(listenSource).toContain('skills: { type: "string" }');
     expect(listenSource).toContain("process.env.LETTA_SKILLS_DIRECTORY");
