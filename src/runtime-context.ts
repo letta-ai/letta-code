@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { homedir, tmpdir } from "node:os";
+import { resolveActingUserId } from "@/agent/acting-user";
 import type { SkillSource } from "./agent/skills";
 import { isUsableDirectory } from "./helpers/usable-directory";
 import type { RuntimeExecutionSettings } from "./runtime-execution-settings";
@@ -46,6 +47,11 @@ const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();
 
 export function getRuntimeContext(): RuntimeContextSnapshot | undefined {
   return runtimeContextStorage.getStore();
+}
+
+/** Resolve the current turn's customer, including inherited headless env scope. */
+export function getRuntimeActingUserId(): string | undefined {
+  return resolveActingUserId(undefined, getRuntimeContext()?.actingUserId);
 }
 
 export function runWithRuntimeContext<T>(

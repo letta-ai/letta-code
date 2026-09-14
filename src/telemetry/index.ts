@@ -4,6 +4,7 @@ import { getServerHealth } from "@/backend/api/health";
 import { submitTelemetryMetadata } from "@/backend/api/metadata";
 import { getServerUrl } from "@/backend/api/server-url";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import { getRuntimeActingUserId } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { debugLogFile } from "@/utils/debug";
 import { isLoopbackHostname, parseUrl } from "@/utils/url";
@@ -278,6 +279,8 @@ function isNonActionableError(message: string): boolean {
 
 class TelemetryManager {
   private events: TelemetryEvent[] = [];
+  // Transport-only snapshots: never serialize identity into telemetry JSON.
+  private eventActingUsers = new WeakMap<TelemetryEvent, string | undefined>();
   private sessionId: string;
   private deviceId: string | null = null;
   private currentAgentId: string | null = null;
@@ -488,6 +491,7 @@ class TelemetryManager {
       },
     };
 
+    this.eventActingUsers.set(event, getRuntimeActingUserId());
     this.events.push(event);
 
     // Flush if batch size is reached
@@ -885,21 +889,36 @@ class TelemetryManager {
 
     const deviceId = this.getTelemetryDeviceId();
 
-    try {
-      await submitTelemetryMetadata(
-        apiKey,
-        deviceId,
-        {
-          service: "letta-code",
-          server_version: this.serverVersion || undefined,
-          events: eventsToSend,
-        },
-        { signal: AbortSignal.timeout(5000) },
-      );
-    } catch (_error) {
-      // If flush fails, put events back in queue, but don't throw error
-      this.events.unshift(...eventsToSend);
+    const groups = new Map<string | undefined, TelemetryEvent[]>();
+    for (const event of eventsToSend) {
+      const actingUserId = this.eventActingUsers.get(event);
+      const group = groups.get(actingUserId) ?? [];
+      group.push(event);
+      groups.set(actingUserId, group);
     }
+
+    const failed = new Set<TelemetryEvent>();
+    await Promise.all(
+      [...groups].map(async ([actingUserId, events]) => {
+        try {
+          await submitTelemetryMetadata(
+            apiKey,
+            deviceId,
+            {
+              service: "letta-code",
+              server_version: this.serverVersion || undefined,
+              events,
+            },
+            { signal: AbortSignal.timeout(5000), actingUserId },
+          );
+        } catch {
+          for (const event of events) failed.add(event);
+        }
+      }),
+    );
+    // Keep failed snapshots in their original order, ahead of late arrivals.
+    // Successful groups must not be duplicated when another identity fails.
+    this.events.unshift(...eventsToSend.filter((event) => failed.has(event)));
   }
 
   /** Await in-flight flush and drain remaining queue (bounded by DRAIN_TIMEOUT_MS). Replaces fire-and-forget flush on exit. */

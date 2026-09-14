@@ -1,6 +1,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { telemetry } from "@/telemetry";
 import { extractTelemetryInputText } from "@/telemetry/input";
 import type { InboundMessagePayload } from "./types";
@@ -8,16 +9,20 @@ import type { InboundMessagePayload } from "./types";
 export function trackListenerUserInput(
   messages: InboundMessagePayload[],
   modelId: string,
+  actingUserId?: string,
 ): void {
-  for (const message of messages) {
-    if (!("role" in message) || message.role !== "user") {
-      continue;
+  // Input is tracked before the listener prepares the turn's tool context.
+  runWithRuntimeContext({ actingUserId }, () => {
+    for (const message of messages) {
+      if (!("role" in message) || message.role !== "user") {
+        continue;
+      }
+      const inputText = extractTelemetryInputText(message.content);
+      if (inputText.length > 0) {
+        telemetry.trackUserInput(inputText, "user", modelId);
+      }
     }
-    const inputText = extractTelemetryInputText(message.content);
-    if (inputText.length > 0) {
-      telemetry.trackUserInput(inputText, "user", modelId);
-    }
-  }
+  });
 }
 
 export function buildInboundUserTranscriptLines(
