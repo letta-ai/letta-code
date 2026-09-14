@@ -2173,9 +2173,14 @@ async function main(): Promise<void> {
         }
 
         // Init secrets cache — runs in parallel with memfs sync below.
-        const secretsInitPromise = import("@/utils/secrets-store").then(
-          ({ initSecretsFromServer }) => initSecretsFromServer(agentId),
-        );
+        const secretsInitPromise = import("@/utils/secrets-store")
+          .then(({ initSecretsFromServer }) => initSecretsFromServer(agentId))
+          .catch((error) => {
+            debugLog(
+              "secrets",
+              `Failed to init secrets: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
 
         // Check if we're resuming an existing agent
         // We're resuming if:
@@ -2377,16 +2382,7 @@ async function main(): Promise<void> {
         setFileAutocompleteFdPath(fdPath);
 
         // Ensure secrets cache is populated (non-fatal).
-        try {
-          await secretsInitPromise;
-        } catch (error) {
-          import("@/utils/debug").then(({ debugLog }) =>
-            debugLog(
-              "secrets",
-              `Failed to init secrets: ${error instanceof Error ? error.message : String(error)}`,
-            ),
-          );
-        }
+        await secretsInitPromise;
 
         // Save the session (agent + conversation) to settings
         // Skip for subagents - they shouldn't pollute the LRU settings
