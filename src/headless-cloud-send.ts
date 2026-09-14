@@ -203,7 +203,15 @@ export async function tryCloudHeadlessSend(
         "Choose a destination with --agent or --conversation. Ambient AGENT_ID identifies the sender.",
       );
     ({ agentId, conversationId } = await resolveAgentMessageDestination(
-      { agentId, conversationId, senderAgentId: sender.agentId },
+      {
+        agentId,
+        conversationId,
+        senderAgentId: sender.agentId,
+        currentConversation: {
+          agentId: ambientSender,
+          conversationId: env.CONVERSATION_ID || env.LETTA_CONVERSATION_ID,
+        },
+      },
       backend,
       controller.signal,
     ));
