@@ -12,8 +12,21 @@ import {
   recordedToolResults,
 } from "./interrupted-turn-record";
 import { canRecoverConversation } from "./recovery-ownership";
+import { getActiveRuntime } from "./runtime";
 import { handleIncomingMessage } from "./turn";
 import type { ListenerRuntime } from "./types";
+
+export function scheduleRecordedTurnRecovery(
+  listener: ListenerRuntime,
+  recover = recoverRecordedTurns,
+): void {
+  setImmediate(() => {
+    if (listener !== getActiveRuntime() || listener.intentionallyClosed) return;
+    void recover(listener).catch((error) => {
+      debugWarn("recovery", "Recorded restart recovery failed", error);
+    });
+  });
+}
 
 const recovering = new WeakSet<ListenerRuntime>();
 const retryTimers = new WeakMap<
