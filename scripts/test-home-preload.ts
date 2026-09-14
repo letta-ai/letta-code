@@ -1,4 +1,4 @@
-import { afterAll } from "bun:test";
+import { afterAll, afterEach } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
@@ -56,6 +56,14 @@ process.env.LETTA_CODE_TELEM ??= "0";
 // unrelated suite cannot remove the filesystem boundary. Child processes use
 // the redirected environment before their runtimes initialize.
 os.homedir = () => testHome;
+
+// Load after redirecting home: channel config captures its filesystem root.
+const routes = await import("@/channels/routing");
+afterEach(() => {
+  routes.clearAllRoutes();
+  routes.__testOverrideLoadRoutes(null);
+  routes.__testOverrideSaveRoutes(null);
+});
 
 if (!configuredTestHome) {
   const cleanup = () => {
