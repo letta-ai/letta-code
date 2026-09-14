@@ -20,8 +20,8 @@ import {
   loadRoutes,
   removeRoute,
   removeRoutesForScope,
-  subscribeChannelRoutesChanged,
   saveRoutes,
+  subscribeChannelRoutesChanged,
 } from "@/channels/routing";
 
 describe("routing", () => {
