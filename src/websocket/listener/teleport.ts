@@ -91,7 +91,7 @@ export function buildTeleportContinuationMessages(params: {
       otid: params.teleportId,
     },
     {
-      role: "system",
+      role: "user",
       content:
         "<system-reminder>Teleportation to this environment is complete. Continue the existing task from this environment now.</system-reminder>",
       otid: `${params.teleportId}:continue`,
@@ -120,7 +120,7 @@ function buildTeleportFailureMessages(params: {
     });
   }
   messages.push({
-    role: "system",
+    role: "user",
     content: `<system-reminder>Teleportation failed.\n\nError: ${escapeSystemReminderText(params.error)}\n\nContinue the existing task from this environment now.</system-reminder>`,
     otid: `${params.teleportId}:failed`,
   });

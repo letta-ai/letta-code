@@ -117,7 +117,7 @@ describe("listener message router ownership handoff", () => {
         processIncomingMessage: async (incoming, transport, conversation) => {
           expect(incoming.messages).toEqual([
             expect.objectContaining({ type: "approval" }),
-            expect.objectContaining({ role: "system" }),
+            expect.objectContaining({ role: "user" }),
           ]);
           expect(conversation).toBe(runtime);
           transports.push(transport);
