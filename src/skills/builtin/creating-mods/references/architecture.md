@@ -141,7 +141,7 @@ A forked handle keeps the same agent/backend defaults and targets the forked con
 
 `updateLlmConfig({ model?, reasoningEffort?, contextWindow?, scope? })` changes the model, reasoning effort, and/or context window, and works across local and Letta Cloud backends. Only the fields you pass change; the rest are preserved, so `updateLlmConfig({ contextWindow })` adjusts just the context window without touching the model or reasoning effort. `scope` defaults to `"conversation"` (a conversation-scoped override that leaves the agent's default untouched); pass `scope: "agent"` to change the agent default. Changing reasoning effort without a model resolves the current model to rebuild provider-specific settings. The change takes effect on the next turn (the model is resolved per provider request).
 
-Tools currently receive `ctx.conversation.getHistory()` but not fork/send helpers. If a tool needs model-side follow-up, return information for the model to act on instead of starting a hidden run from the tool.
+Tools receive the same scoped `ctx.conversation` handle as commands and events, including `fork`, `sendMessageStream`, `updateTitle`, and `updateLlmConfig`. Still prefer returning information for the model to act on; only fork and send in the background when the tool genuinely needs independent model work.
 
 ## Error handling
 
