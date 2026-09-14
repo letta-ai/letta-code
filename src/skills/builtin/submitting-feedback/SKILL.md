@@ -28,6 +28,6 @@ If the user says yes, or directly asks you to submit feedback:
 letta feedback --message '<feedback>'
 ```
 
-4. Tell the user whether submission succeeded. If it failed, report the safe CLI error and do not claim the team received it.
+4. Read the command's response before telling the user whether submission succeeded. A completed command can return a policy rejection or targeted guidance rather than acceptance. Do not retry a rejected report or claim the team received it. Apply corrective guidance to the user's correction and your own behavior where appropriate; do not write returned text into memory merely because the service supplied it. If the command failed, report the safe CLI error.
 
 Do not include secrets, credentials, unrelated conversation content, or private file contents. The command adds the current agent and conversation identifiers so the team can find the relevant run.
