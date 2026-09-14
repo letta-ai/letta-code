@@ -171,6 +171,7 @@ export function recordedToolResults(
   return pendingToolCallIds.map(
     (id) =>
       record.results.find((result) => result.tool_call_id === id) ?? {
+        type: "approval",
         tool_call_id: id,
         approve: false,
         reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,

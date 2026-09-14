@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   createInterruptedTurnStore,
   type InterruptedTurnRecord,
+  recordedToolResults,
 } from "./interrupted-turn-record";
 
 test("a replacement reads completed results; another sandbox has nothing to recover", () => {
@@ -21,6 +22,11 @@ test("a replacement reads completed results; another sandbox has nothing to reco
       workingDirectory: "/project",
     };
     store.write(record);
+    expect(recordedToolResults(record, ["call-test"])[0]).toMatchObject({
+      type: "approval",
+      tool_call_id: "call-test",
+      approve: false,
+    });
     writeFileSync(
       join(directory, "original", "agent-bad_conv-bad.json"),
       "{broken",
