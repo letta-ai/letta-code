@@ -31,6 +31,7 @@ export interface ExecutionState {
     stepCount?: number;
   } | null;
   displayedToolCalls: Set<string>;
+  toolCallStatuses: Map<string, "success" | "error">;
 }
 
 /**
@@ -113,6 +114,30 @@ function handleToolCallEvent(
   }
 }
 
+function handleToolReturnEvent(
+  event: {
+    tool_call_id?: string;
+    status?: string;
+    tool_returns?: Array<{
+      tool_call_id?: string;
+      status?: string;
+    }>;
+  },
+  state: ExecutionState,
+): void {
+  const returns = Array.isArray(event.tool_returns)
+    ? event.tool_returns
+    : [event];
+
+  for (const toolReturn of returns) {
+    const toolCallId = toolReturn.tool_call_id;
+    if (!toolCallId) continue;
+    if (toolReturn.status === "success" || toolReturn.status === "error") {
+      state.toolCallStatuses.set(toolCallId, toolReturn.status);
+    }
+  }
+}
+
 /**
  * Handle a result event
  */
@@ -174,6 +199,9 @@ export function processStreamEvent(
         if (event.message_type === "tool_call_message") {
           handleToolCallEvent(event, state, subagentId);
         }
+        if (event.message_type === "tool_return_message") {
+          handleToolReturnEvent(event, state);
+        }
         emitStreamEvent(subagentId, event);
         break;
 
@@ -188,6 +216,24 @@ export function processStreamEvent(
   } catch {
     // Not valid JSON, ignore
   }
+}
+
+/**
+ * 判断是否所有已记录的工具调用都以错误结束。
+ * 未收到每个调用的终态时保持未知，避免把截断或不完整的流误判为失败。
+ */
+export function hasOnlyFailedToolCalls(state: ExecutionState): boolean {
+  if (state.displayedToolCalls.size === 0) return false;
+  if (state.toolCallStatuses.size !== state.displayedToolCalls.size) {
+    return false;
+  }
+
+  for (const toolCallId of state.displayedToolCalls) {
+    if (state.toolCallStatuses.get(toolCallId) !== "error") {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**

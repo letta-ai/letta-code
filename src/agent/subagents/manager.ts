@@ -64,6 +64,7 @@ import {
 } from "./subagent-model";
 import {
   type ExecutionState,
+  hasOnlyFailedToolCalls,
   looksLikeTruncatedStreamJson,
   parseResultFromStdout,
   processStreamEvent,
@@ -462,6 +463,7 @@ async function executeSubagent(
       finalError: null,
       resultStats: null,
       displayedToolCalls: new Set(),
+      toolCallStatuses: new Map(),
     };
 
     // Parse child stdout manually instead of using readline. This keeps the
@@ -590,12 +592,17 @@ async function executeSubagent(
 
     // Return captured result if available
     if (state.finalResult !== null) {
+      const toolFailureError =
+        type === "reflection" && hasOnlyFailedToolCalls(state)
+          ? "Reflection could not complete because every tool call failed."
+          : undefined;
+      const completionError = state.finalError ?? toolFailureError;
       return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: state.finalResult,
-        success: !state.finalError,
-        error: state.finalError || undefined,
+        success: !completionError,
+        error: completionError,
         totalTokens: state.resultStats?.totalTokens,
         stepCount: state.resultStats?.stepCount,
         durationMs: state.resultStats?.durationMs,
