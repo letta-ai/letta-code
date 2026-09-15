@@ -14,6 +14,7 @@ type QuotaBucket = "empty" | "low" | "medium" | "high" | "full";
 
 interface ModelTierQuota {
   bucket: QuotaBucket;
+  dailyBucket?: QuotaBucket;
 }
 
 export interface ModelQuotaMetadata {

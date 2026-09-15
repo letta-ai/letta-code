@@ -55,7 +55,7 @@ test("usage CLI reads live credits and model quota and rejects invalid auth", as
     expect(response.status).toBe(200);
     const authoritative = (await response.json()) as ModelQuotaMetadata;
     expect(result.stdout).toContain(
-      `* Bucket (full/high/medium/low/empty): ${authoritative.lettaTier.bucket}\n`,
+      `* Bucket (full/high/medium/low/empty): ${authoritative.lettaTier.bucket} (daily: ${authoritative.lettaTier.dailyBucket ?? "Unavailable"})\n`,
     );
     expect(result.stdout).toContain(
       `* Quota Window End: ${authoritative.quotaWindowEnd}\n`,

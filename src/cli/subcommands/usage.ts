@@ -20,7 +20,8 @@ export async function runUsageSubcommand(argv: string[]): Promise<number> {
   letta usage
 
 Show a Markdown overview of your plan, credit balance, and letta/* model quota.
-The quota bucket is full, high, medium, low, or empty, not an exact request count.
+Quota buckets are full, high, medium, low, or empty, not exact request counts.
+The bucket line includes daily status; both windows must have quota available.
 Reset timestamps come from the server; an omitted timestamp is unavailable.
 Uses CLI auth and LETTA_API_KEY/LETTA_BASE_URL overrides, not an agent or
 conversation selector. User-scoped quota belongs to the authenticated user,
@@ -52,7 +53,7 @@ Current plan: ${balance.billing_tier}
 * Balance: ${balance.total_balance} credits
 
 ## Usage Quota (\`letta/*\` models)
-* Bucket (full/high/medium/low/empty): ${quota.lettaTier.bucket}
+* Bucket (full/high/medium/low/empty): ${quota.lettaTier.bucket} (daily: ${quota.lettaTier.dailyBucket ?? "Unavailable"})
 * Quota Window End: ${quota.quotaWindowEnd}
 * Daily Quota Window End: ${quota.dailyQuotaWindowEnd ?? "Unavailable"}
 `;
