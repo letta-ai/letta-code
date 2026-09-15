@@ -27,6 +27,33 @@ import type {
   StartListenerOptions,
 } from "@/websocket/listener/types";
 
+function addMockConnection(
+  runtime: ListenerRuntime,
+  connectionId: string,
+  sent: ExternalToolCallRequestMessage[],
+): void {
+  const writer = {
+    readyState: 1,
+    send(data: string) {
+      const request = JSON.parse(data) as ExternalToolCallRequestMessage;
+      sent.push(request);
+      queueMicrotask(() => {
+        handleExternalToolCallResponseCommand(runtime, connectionId, {
+          type: "external_tool_call_response",
+          request_id: request.request_id,
+          result: {
+            content: [{ type: "text", text: `lookup:${request.input.id}` }],
+          },
+        });
+      });
+    },
+  } as unknown as WebSocket;
+  runtime.connections.set(connectionId, {
+    id: connectionId,
+    writer,
+  } as never);
+}
+
 function createMockRuntime(): {
   runtime: ListenerRuntime;
   sent: ExternalToolCallRequestMessage[];
@@ -37,26 +64,7 @@ function createMockRuntime(): {
     pendingExternalToolCalls: new Map(),
     connections: new Map(),
   } as unknown as ListenerRuntime;
-  const writer = {
-    readyState: 1,
-    send(data: string) {
-      const request = JSON.parse(data) as ExternalToolCallRequestMessage;
-      sent.push(request);
-      queueMicrotask(() => {
-        handleExternalToolCallResponseCommand(runtime, "client-1", {
-          type: "external_tool_call_response",
-          request_id: request.request_id,
-          result: {
-            content: [{ type: "text", text: `lookup:${request.input.id}` }],
-          },
-        });
-      });
-    },
-  } as unknown as WebSocket;
-  runtime.connections.set("client-1", {
-    id: "client-1",
-    writer,
-  } as never);
+  addMockConnection(runtime, "client-1", sent);
   return { runtime, sent };
 }
 
@@ -460,6 +468,104 @@ describe("listener runtime_start external tool bridge", () => {
     );
     expect(preparedAfterDisconnect.clientTools).toEqual([
       expect.objectContaining({ description: "Lookup from client A" }),
+    ]);
+  });
+
+  test("prefers the current turn controller for duplicate unscoped tool names", async () => {
+    const { runtime, sent: imessageSent } = createMockRuntime();
+    const slackSent: ExternalToolCallRequestMessage[] = [];
+    addMockConnection(runtime, "local-channels", slackSent);
+    installExternalToolBridge(runtime);
+    const runtimeScope = {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    };
+    const registerMessageChannel = (
+      connectionId: string,
+      description: string,
+      channel: string,
+    ) =>
+      registerRuntimeExternalTools(runtime, connectionId, runtimeScope, [
+        {
+          tools: [
+            {
+              name: "MessageChannel",
+              description,
+              parameters: {
+                type: "object",
+                properties: { channel: { enum: [channel] } },
+              },
+            },
+          ],
+        },
+      ]);
+
+    registerMessageChannel("client-1", "Reply through iMessage", "imessage");
+    registerMessageChannel("local-channels", "Send through Slack", "slack");
+
+    const imessageTurn = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["MessageChannel"],
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+    expect(imessageTurn.clientTools).toEqual([
+      expect.objectContaining({
+        name: "MessageChannel",
+        description: "Reply through iMessage",
+        parameters: expect.objectContaining({
+          properties: { channel: { enum: ["imessage"] } },
+        }),
+      }),
+    ]);
+
+    const result = await executeTool(
+      "MessageChannel",
+      { id: "imessage-reply" },
+      { toolContextId: imessageTurn.contextId, toolCallId: "call-imessage" },
+    );
+    expect(result.status).toBe("success");
+    expect(imessageSent).toHaveLength(1);
+    expect(slackSent).toHaveLength(0);
+
+    const slackTurn = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["MessageChannel"],
+        runtimeContext: {
+          connectionId: "local-channels",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+    expect(slackTurn.clientTools).toEqual([
+      expect.objectContaining({
+        name: "MessageChannel",
+        description: "Send through Slack",
+      }),
+    ]);
+
+    const processTurn = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["MessageChannel"],
+        runtimeContext: {
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+    expect(processTurn.clientTools).toEqual([
+      expect.objectContaining({
+        name: "MessageChannel",
+        description: "Send through Slack",
+      }),
     ]);
   });
 
