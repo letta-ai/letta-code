@@ -114,9 +114,19 @@ export async function tryCloudHeadlessSend(
       isAgentLaunch,
     )
   ) {
-    if (values["no-wait"])
+    // An Agent process launch aimed at a computer submits through the
+    // listener-launch path, which honors --no-wait by exiting with the
+    // enqueue receipt. Every other non-Cloud destination executes locally
+    // and has nothing to hand back early.
+    const agentLaunchTargetsComputer =
+      isAgentLaunch &&
+      backend.capabilities.environmentRouting &&
+      (values.computer !== undefined ||
+        values.environment !== undefined ||
+        values.env !== undefined);
+    if (values["no-wait"] && !agentLaunchTargetsComputer)
       throw new Error(
-        "--no-wait requires a Cloud message destination; it is not supported for local execution or Agent process launches.",
+        "--no-wait requires a Cloud message destination; it is not supported for local execution or same-computer Agent process launches.",
       );
     return undefined;
   }

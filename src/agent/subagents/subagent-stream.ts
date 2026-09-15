@@ -12,6 +12,7 @@ import {
   emitStreamEvent,
   updateSubagent,
 } from "@/agent/subagent-state.js";
+import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
@@ -25,6 +26,12 @@ export interface ExecutionState {
   conversationId: string | null;
   finalResult: string | null;
   finalError: string | null;
+  /**
+   * Set when the child submitted a computer-routed send with `--no-wait` and
+   * exited with the enqueue receipt instead of a reply. The parent tracks the
+   * remote turn from this receipt.
+   */
+  enqueueReceipt: EnqueueReceipt | null;
   resultStats: {
     durationMs: number;
     totalTokens: number;
@@ -116,17 +123,77 @@ function handleToolCallEvent(
 /**
  * Handle a result event
  */
+function isEnqueueReceipt(event: {
+  status?: unknown;
+  agent_id?: unknown;
+  conversation_id?: unknown;
+  client_message_id?: unknown;
+  super_run_id?: unknown;
+  workflow_id?: unknown;
+}): event is EnqueueReceipt {
+  return (
+    event.status === "queued" &&
+    typeof event.agent_id === "string" &&
+    typeof event.conversation_id === "string" &&
+    typeof event.client_message_id === "string" &&
+    typeof event.super_run_id === "string" &&
+    typeof event.workflow_id === "string"
+  );
+}
+
+/**
+ * Error text of a failed result envelope. Cloud-routed sends emit
+ * `{ result: null, error: "<text>" }`; local turns put the text in `result`.
+ */
+export function getResultEnvelopeError(event: {
+  result?: string | null;
+  error?: string | null;
+}): string {
+  return event.error || event.result || "Unknown error";
+}
+
+/**
+ * Handle a result event
+ */
 function handleResultEvent(
   event: {
-    result?: string;
+    subtype?: string;
+    result?: string | null;
+    error?: string | null;
     is_error?: boolean;
     duration_ms?: number;
-    usage?: { total_tokens?: number; step_count?: number };
+    usage?: { total_tokens?: number; step_count?: number } | null;
     num_turns?: number;
+    status?: unknown;
+    agent_id?: unknown;
+    conversation_id?: unknown;
+    client_message_id?: unknown;
+    super_run_id?: unknown;
+    workflow_id?: unknown;
+    connection_id?: unknown;
   },
   state: ExecutionState,
   subagentId: string,
 ): void {
+  if (event.subtype === "queued") {
+    if (isEnqueueReceipt(event)) {
+      state.enqueueReceipt = {
+        status: "queued",
+        agent_id: event.agent_id,
+        conversation_id: event.conversation_id,
+        client_message_id: event.client_message_id,
+        super_run_id: event.super_run_id,
+        workflow_id: event.workflow_id,
+        ...(typeof event.connection_id === "string"
+          ? { connection_id: event.connection_id }
+          : {}),
+      };
+    } else {
+      state.finalError =
+        "Subagent reported a queued remote send without a complete receipt";
+    }
+    return;
+  }
   state.finalResult = event.result || "";
   state.resultStats = {
     durationMs: event.duration_ms || 0,
@@ -138,7 +205,7 @@ function handleResultEvent(
   };
 
   if (event.is_error) {
-    state.finalError = event.result || "Unknown error";
+    state.finalError = getResultEnvelopeError(event);
   }
 
   // Update state store with final stats
@@ -236,7 +303,7 @@ export function parseResultFromStdout(
         agentId: agentId || "",
         report: result.result || "",
         success: !result.is_error,
-        error: result.is_error ? result.result || "Unknown error" : undefined,
+        error: result.is_error ? getResultEnvelopeError(result) : undefined,
         stepCount:
           typeof result.usage?.step_count === "number"
             ? result.usage.step_count
@@ -271,4 +338,30 @@ export function parseResultFromStdout(
       error: `Failed to parse subagent output: ${getErrorMessage(parseError)}`,
     };
   }
+}
+
+const STDERR_TAIL_CHARS = 2_000;
+
+/**
+ * Error text for a child that exited without delivering a result envelope.
+ * Names the exit code or signal first; the stderr tail is supporting detail,
+ * because on a normal startup it holds only progress logging.
+ */
+export function describeSubagentExit(
+  exitCode: number | null,
+  exitSignal: NodeJS.Signals | null,
+  stderr: string,
+): string {
+  const how =
+    exitSignal !== null
+      ? `was killed by ${exitSignal}`
+      : `exited with code ${exitCode ?? "unknown"}`;
+  const head = `Subagent process ${how} before returning a result`;
+  const trimmed = stderr.trim();
+  if (!trimmed) return `${head}.`;
+  const tail =
+    trimmed.length > STDERR_TAIL_CHARS
+      ? `…${trimmed.slice(-STDERR_TAIL_CHARS)}`
+      : trimmed;
+  return `${head}. stderr tail:\n${tail}`;
 }
