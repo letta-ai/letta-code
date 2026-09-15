@@ -558,7 +558,7 @@ export async function sendMessageStreamWithBackend(
   if (actingUserId) {
     extraHeaders[ACTING_USER_ID_HEADER] = actingUserId;
   }
-  if (actingUserAssertion) {
+  if (actingUserId && actingUserAssertion) {
     extraHeaders[ACTING_USER_ASSERTION_HEADER] = actingUserAssertion;
   }
 
