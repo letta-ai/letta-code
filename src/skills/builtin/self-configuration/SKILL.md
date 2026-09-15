@@ -1,6 +1,6 @@
 ---
 name: self-configuration
-description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, agent secrets, and local runtime settings. Use when the user asks how this agent or conversation is configured, asks about account usage or remaining credits, asks you to change how you behave or how the harness runs you, or renames you.
+description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, agent secrets, and local runtime settings. Use when the user asks how this agent or conversation is configured, asks about account usage, remaining credits, or model quota, asks you to change how you behave or how the harness runs you, or renames you.
 license: MIT
 ---
 
@@ -53,11 +53,13 @@ Local settings, server state, and the current process are different sources of t
 - `letta model set [model_handle] [--reasoning <reasoning-option>] [--default]` changes the current conversation's model or reasoning; add `--default` only when the user asks for the agent default.
 - `letta model get [--default]` gets the current model configuration; `--default` gets the agent's default configuration.
 
-### Account usage and credits
+### Account credits and model quota
 
 Run `letta usage` to read the authenticated account's credit balance as JSON (`total_balance`, `monthly_credit_balance`, `purchased_credit_balance`, and `billing_tier`). Amounts are credits, not dollars; preserve negative balances. The command uses CLI auth and respects `LETTA_API_KEY`/`LETTA_BASE_URL`, not agent or conversation selectors. In local mode, use `letta --backend cloud usage` only when the user wants the Cloud account's balance.
 
-Use `letta model list` for available models. Credit balance does not report remaining model quota or prove inference availability. `letta usage` does not include session token statistics; the interactive `/usage` command is a separate surface. Treat a failed request as unavailable data, not a zero balance.
+Read `model_quota` for each tier's `bucket` and optional `dailyBucket` (`full`, `high`, `medium`, `low`, or `empty`), reset timestamps (`quotaWindowEnd`, optional `dailyQuotaWindowEnd`), and optional `seatTier`. Report these server-provided buckets as-is; do not infer exact requests or percentages. `credit_scope` is `organization`; quota `scope` is `user`, `organization`, or `unknown` when the server omits scope. User-scoped quota belongs to the authenticated user, not necessarily the person chatting with the agent.
+
+Use `letta model list` for available models; credits and quota buckets do not guarantee inference availability. `letta usage` does not include session token statistics; the interactive `/usage` command is a separate surface. If either lookup fails, the command exits nonzero without partial usage. Treat that as unavailable data, not zero credits or exhausted quota.
 
 ### Harness and server settings
 

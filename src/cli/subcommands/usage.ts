@@ -1,5 +1,9 @@
 import { parseArgs } from "node:util";
-import { getBalanceMetadata } from "@/backend/api/metadata";
+import { getClient } from "@/backend/api/client";
+import {
+  getBalanceMetadata,
+  getModelQuotaMetadata,
+} from "@/backend/api/metadata";
 import { isLocalBackendEnabled } from "@/backend/backend";
 import { settingsManager } from "@/settings-manager";
 
@@ -15,10 +19,17 @@ export async function runUsageSubcommand(argv: string[]): Promise<number> {
       console.log(`Usage:
   letta usage
 
-Show account credit balance as JSON: total_balance, monthly_credit_balance,
-purchased_credit_balance, and billing_tier. Amounts are credits, not dollars.
+Show account credits and model quota as JSON. Credit fields: total_balance,
+monthly_credit_balance, purchased_credit_balance, billing_tier, credit_scope.
+Amounts are credits, not dollars; credit_scope is organization.
+model_quota contains per-tier bucket/dailyBucket statuses (full, high, medium,
+low, empty), quotaWindowEnd/dailyQuotaWindowEnd reset times, scope, and seatTier
+when provided. Quota scope is user, organization, or unknown if not provided.
+These are server-reported buckets, not exact request counts or percentages.
 Uses CLI auth and LETTA_API_KEY/LETTA_BASE_URL overrides, not an agent or
-conversation selector. Does not report session tokens or remaining model quota.
+conversation selector. User-scoped quota belongs to the authenticated user,
+not necessarily the person chatting with an agent. Does not report session tokens.
+If either lookup fails, exits nonzero without printing partial usage.
 Local mode is unsupported; use letta --backend cloud usage for a Cloud account.
 
 Options:
@@ -27,13 +38,38 @@ Options:
     }
     if (isLocalBackendEnabled()) {
       throw new Error(
-        "Account credit balance is unavailable in local mode. Use letta --backend cloud usage to query your Cloud account.",
+        "Account usage is unavailable in local mode. Use letta --backend cloud usage to query your Cloud account.",
       );
     }
     await settingsManager.initialize();
-    const balance = await getBalanceMetadata();
+    // Reuse CLI OAuth refresh and persist rotated credentials before exiting.
+    await getClient();
+    await settingsManager.flush();
+    const [balance, quota] = await Promise.all([
+      getBalanceMetadata(),
+      getModelQuotaMetadata(),
+    ]);
+    const usage = {
+      ...balance,
+      credit_scope: "organization",
+      model_quota: {
+        scope:
+          quota.isUserScoped === true
+            ? "user"
+            : quota.isUserScoped === false
+              ? "organization"
+              : "unknown",
+        seatTier: quota.seatTier,
+        basic: quota.basic,
+        standard: quota.standard,
+        lettaTier: quota.lettaTier,
+        premium: quota.premium,
+        quotaWindowEnd: quota.quotaWindowEnd,
+        dailyQuotaWindowEnd: quota.dailyQuotaWindowEnd,
+      },
+    };
     await new Promise<void>((resolve, reject) => {
-      process.stdout.write(`${JSON.stringify(balance, null, 2)}\n`, (error) =>
+      process.stdout.write(`${JSON.stringify(usage, null, 2)}\n`, (error) =>
         error ? reject(error) : resolve(),
       );
     });
