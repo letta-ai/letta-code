@@ -14,7 +14,6 @@ import {
   buildGitAuthArgs,
   buildMemfsGitProxyArgs,
   buildNonInteractiveGitEnv,
-  formatGitCredentialHelperPath,
   getAgentRootDir,
   getGitRemoteUrl,
   getMemoryRepoDir,
@@ -27,6 +26,7 @@ import {
   shouldConfigurePersistentMemfsCredentialHelper,
   syncPendingMemoryCommitsAfterTurn,
 } from "@/agent/memory-git";
+import { formatGitCredentialHelperPath } from "@/agent/memory-git-windows-credentials";
 import { __testSetBackend, type Backend } from "@/backend";
 import {
   __testOverrideGetClient,

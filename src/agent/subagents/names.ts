@@ -143,15 +143,16 @@ export function createSubagentNameAllocator(
     const index = Math.floor(random() * available.length);
     const name = available.splice(index, 1)[0];
     const ordinal = `${round}${suffixes[ordinals.select(round)] ?? "th"}`;
-    return `${name}${round === 1 ? "" : ` the ${ordinal}`} (subagent)`;
+    return `${name}${round === 1 ? "" : ` the ${ordinal}`}`;
   };
 }
 
 const nextName = createSubagentNameAllocator();
 
 /** Allocate in the parent before spawning, so sibling CLI processes cannot collide. */
-export function allocateSubagentName(): string {
-  return nextName();
+export function allocateSubagentName(parentName?: string | null): string {
+  const parent = parentName?.trim();
+  return `${nextName()} (${parent ? `${parent}'s shadow` : "shadow"})`;
 }
 
 export function resolveCreatedAgentName(

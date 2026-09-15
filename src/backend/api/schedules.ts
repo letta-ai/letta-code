@@ -11,6 +11,7 @@
  * crons in ~/.letta/crons.json.
  */
 
+import { actingUserRequestOptions } from "@/agent/acting-user";
 import { apiRequest } from "./request";
 
 // ── Wire types (mirror the cloud scheduledMessages contract) ────────
@@ -97,6 +98,7 @@ function schedulePath(agentId: string): string {
 export async function createCloudSchedule(
   agentId: string,
   input: CreateCloudScheduleInput,
+  actingUserId?: string,
 ): Promise<CreateCloudScheduleResponse> {
   return apiRequest<CreateCloudScheduleResponse>(
     "POST",
@@ -109,6 +111,7 @@ export async function createCloudSchedule(
       // The server requires use_sandbox for device targets either way.
       use_sandbox: true,
     },
+    actingUserRequestOptions(actingUserId),
   );
 }
 

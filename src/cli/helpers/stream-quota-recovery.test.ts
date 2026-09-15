@@ -57,6 +57,11 @@ function installBackend(overrides: Partial<Backend> = {}) {
   __testSetBackend({
     capabilities: { localModelCatalog: false },
     retrieveRun,
+    retrieveAgent: async () => ({
+      id: "agent-quota",
+      model: PRIMARY_HANDLE,
+      llm_config: { context_window: 350_000 },
+    }),
     retrieveConversation: async () => conversation,
     updateConversation,
     listModels: async () =>

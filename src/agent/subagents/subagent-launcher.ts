@@ -139,6 +139,7 @@ export interface ComposeSubagentChildEnvOptions {
   /** Parent agent ID. When present, sets LETTA_PARENT_AGENT_ID so prompts,
    * scripts, and the cross-agent guard can identify the immediate parent. */
   parentAgentId: string | undefined;
+  parentConversationId?: string;
   /** Subagent config type, used for type-specific child process isolation. */
   subagentType?: string;
   /** The subagent config's declared launch profile. Subagents with the memory-subagent profile
@@ -212,7 +213,9 @@ export function composeSubagentChildEnv(
     ...(subagentType === "reflection" && {
       [LETTA_MOD_CAPABILITY_PROFILE_ENV]: PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
     }),
-    ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
+    // Replace inherited parent addresses even when the new scope is unknown.
+    LETTA_PARENT_AGENT_ID: parentAgentId,
+    LETTA_PARENT_CONVERSATION_ID: options.parentConversationId,
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
   };
 

@@ -281,6 +281,8 @@ async function executeSubagent(
   systemPromptOverride?: string,
   environment?: string,
   actingUserIdOverride?: string,
+  parentAgentName?: string | null,
+  parentConversationId?: string,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
@@ -383,6 +385,7 @@ async function executeSubagent(
       localBackendStorageDir,
       parentAgentId,
       subagentType: type,
+      parentConversationId,
       launchProfile: effectiveLaunchProfile,
       inheritedPrimaryRoot,
       memoryScope,
@@ -393,7 +396,7 @@ async function executeSubagent(
       subagentName:
         existingAgentId || existingConversationId
           ? undefined
-          : allocateSubagentName(),
+          : allocateSubagentName(parentAgentName),
     });
 
     // Optionally confine subagents with the memory-subagent profile to an OS filesystem sandbox.
@@ -541,6 +544,8 @@ async function executeSubagent(
             systemPromptOverride,
             environment,
             actingUserIdOverride,
+            parentAgentName,
+            parentConversationId,
           );
         }
       }
@@ -570,6 +575,8 @@ async function executeSubagent(
           systemPromptOverride,
           environment,
           actingUserIdOverride,
+          parentAgentName,
+          parentConversationId,
         );
       }
 
@@ -668,6 +675,8 @@ async function executeSubagent(
           systemPromptOverride,
           environment,
           actingUserIdOverride,
+          parentAgentName,
+          parentConversationId,
         );
       }
     }
@@ -915,6 +924,8 @@ async function spawnSubagentInContext(
     effectiveSystemPromptOverride,
     environment,
     launchActingUserId,
+    parentAgent?.name,
+    resolvedParentConversationId,
   );
 
   return result;
