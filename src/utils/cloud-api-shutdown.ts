@@ -25,3 +25,7 @@ export function isCloudApiShutdownRejection(
     payload.retryable === true
   );
 }
+
+export function shouldEmitRetryNotice(error: unknown): boolean {
+  return !isCloudApiShutdownRejection(error);
+}
