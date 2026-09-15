@@ -7,21 +7,12 @@
  * on load — see #3076).
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
 import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
-import {
-  getChannelDir,
-  getChannelRoutingPath,
-  getLegacyChannelRoutingPath,
-} from "./config";
 import { resolveChannelRouteThreadKey } from "./route-thread-key";
+import {
+  readChannelRoutesFromDisk,
+  writeChannelRoutesToDisk,
+} from "./routing-store";
 import { normalizeTelegramChatId } from "./telegram/chat-id";
 import type { ChannelRoute, InboundChannelMessage } from "./types";
 
@@ -65,17 +56,7 @@ export function readRoutes(channelId: string): ChannelRoute[] {
   if (loadRoutesOverride) {
     return loadRoutesOverride(channelId) ?? getRoutesForChannel(channelId);
   }
-  try {
-    const text = readFileSync(getChannelRoutingPath(channelId), "utf-8");
-    const parsed = JSON.parse(text) as { routes?: ChannelRoute[] };
-    return Array.isArray(parsed.routes)
-      ? parsed.routes.filter(
-          (route) => route?.chatId && route.agentId && route.conversationId,
-        )
-      : [];
-  } catch {
-    return [];
-  }
+  return readChannelRoutesFromDisk(channelId);
 }
 
 /**
@@ -118,34 +99,6 @@ export function loadRoutes(channelId: string): void {
     }
     return;
   }
-
-  const path = getChannelRoutingPath(channelId);
-  const legacyPath = getLegacyChannelRoutingPath(channelId);
-
-  // One-time migration from the legacy `routing.yaml` filename to `routing.json`.
-  // The file has always held JSON content; the extension was a misnomer from the
-  // original channels MVP. Validate the content parses BEFORE moving it, so a
-  // corrupted legacy file is left untouched rather than renamed and lost. See #3076.
-  if (!existsSync(path) && existsSync(legacyPath)) {
-    try {
-      const legacyText = readFileSync(legacyPath, "utf-8");
-      JSON.parse(legacyText); // validate before migrating
-      try {
-        // Preferred path: atomic rename.
-        renameSync(legacyPath, path);
-      } catch {
-        // Fallback for cross-device / permission cases: copy then delete.
-        mkdirSync(getChannelDir(channelId), { recursive: true });
-        writeFileSync(path, legacyText, "utf-8");
-        unlinkSync(legacyPath);
-      }
-    } catch {
-      // Legacy file is missing or unparseable — leave it in place rather than
-      // risk data loss. The read below will treat it as corrupted and start fresh.
-    }
-  }
-
-  if (!existsSync(path)) return;
 
   try {
     const routes = readRoutes(channelId);
@@ -202,16 +155,7 @@ export function saveRoutes(channelId: string): void {
     return;
   }
 
-  const dir = getChannelDir(channelId);
-  mkdirSync(dir, { recursive: true });
-
-  const routes = getRoutesForChannel(channelId);
-  const data = { routes };
-  writeFileSync(
-    getChannelRoutingPath(channelId),
-    `${JSON.stringify(data, null, 2)}\n`,
-    "utf-8",
-  );
+  writeChannelRoutesToDisk(channelId, getRoutesForChannel(channelId));
 }
 
 // ── Lookup ────────────────────────────────────────────────────────
