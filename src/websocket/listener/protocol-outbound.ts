@@ -378,13 +378,13 @@ export function emitProtocolV2Message(
       }
     | undefined,
   routing: ListenerMessageRouting,
-): void {
+): boolean {
   const listener = getListenerRuntime(runtime);
   const runtimeScope = resolveRuntimeScope(
     listener,
     getScopeForRuntime(runtime, scope),
   );
-  if (!runtimeScope) return;
+  if (!runtimeScope) return false;
   notifyStreamObservers(listener, message, runtimeScope);
   const frameClass = classifyOutboundFrame(message);
   const targets = resolveListenerConnectionTargets({
@@ -393,9 +393,8 @@ export function emitProtocolV2Message(
     scope: runtimeScope,
     routing,
     streamMessage: isStreamChannelMessage(message.type),
-  });
+  }).filter((target) => isListenerTransportOpen(target.transport));
   for (const { connection, transport: targetSocket } of targets) {
-    if (!isListenerTransportOpen(targetSocket)) continue;
     enqueueOutboundFrame(targetSocket, {
       typeLabel: message.type,
       frameClass,
@@ -450,6 +449,7 @@ export function emitProtocolV2Message(
       },
     });
   }
+  return targets.length > 0;
 }
 
 export function broadcastServiceProtocolMessage(

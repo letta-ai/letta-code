@@ -10,7 +10,7 @@ import {
 } from "./protocol-outbound";
 import type { ListenerTransport } from "./transport";
 import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
-import type { ConversationRuntime } from "./types";
+import type { ConversationRuntime, UndeliveredTurnFinished } from "./types";
 
 export function buildTurnUsage(usage: Buffers["usage"]): UsageStatistics {
   return {
@@ -70,25 +70,31 @@ export function finishListenerTurn(
     });
   }
   if (options.socket && options.turnId) {
-    emitProtocolV2Message(
+    const message: UndeliveredTurnFinished = {
+      type: "turn_finished",
+      turn_id: options.turnId,
+      stop_reason: options.stopReason,
+      ...((options.runId ?? transition.runId)
+        ? { run_id: options.runId ?? transition.runId ?? undefined }
+        : {}),
+      ...(options.error ? { error: options.error } : {}),
+      ...(options.usage ? { usage: options.usage } : {}),
+    };
+    const delivered = emitProtocolV2Message(
       options.socket,
       runtime,
-      {
-        type: "turn_finished",
-        turn_id: options.turnId,
-        stop_reason: options.stopReason,
-        ...((options.runId ?? transition.runId)
-          ? { run_id: options.runId ?? transition.runId ?? undefined }
-          : {}),
-        ...(options.error ? { error: options.error } : {}),
-        ...(options.usage ? { usage: options.usage } : {}),
-      },
+      message,
       {
         agent_id: options.agentId,
         conversation_id: options.conversationId,
       },
       TO_SUBSCRIBERS,
     );
+    // The websocket can close between the last stream delta and this frame.
+    // Subscribers (cloud-api, Desktop, a parent waiting on a remote turn)
+    // treat the missing frame as a turn that never ended, so keep it for the
+    // next connection that syncs or reconnects (see turn-finished-replay.ts).
+    runtime.undeliveredTurnFinished = delivered ? null : message;
   }
   return transition;
 }

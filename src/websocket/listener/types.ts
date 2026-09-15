@@ -31,6 +31,7 @@ import type {
   RuntimeScope,
   StopReasonType,
   TeleportContinuation,
+  TurnFinishedMessage,
   WsProtocolCommand,
 } from "@/types/protocol_v2";
 import type {
@@ -213,6 +214,12 @@ export type RecoveredApprovalState = {
   allApprovals?: ApprovalRequest[];
 };
 
+/** `turn_finished` without the per-connection envelope fields. */
+export type UndeliveredTurnFinished = Omit<
+  TurnFinishedMessage,
+  "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+>;
+
 export type ConversationRuntime = {
   listener: ListenerRuntime;
   key: string;
@@ -231,6 +238,13 @@ export type ConversationRuntime = {
   acceptedInputDispositions: Map<string, "started" | "queued">;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
+  /**
+   * `turn_finished` frame that reached no open connection when its turn
+   * ended (the websocket had already closed). Replayed once to the next
+   * connection that syncs or reconnects for this scope. A later turn's
+   * undelivered frame replaces an earlier one.
+   */
+  undeliveredTurnFinished: UndeliveredTurnFinished | null;
   /**
    * Teleport whose `teleport_continue` this scope is waiting for, set by the
    * cloud's destination `runtime_start`. While it is set (and not expired),

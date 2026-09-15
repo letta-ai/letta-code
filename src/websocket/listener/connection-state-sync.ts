@@ -11,6 +11,7 @@ import {
   refreshDeviceGitContext,
 } from "./protocol-outbound";
 import type { ListenerTransport } from "./transport";
+import { replayUndeliveredTurnFinishedToConnection } from "./turn-finished-replay";
 import type {
   ConversationRuntime,
   ListenerConnectionId,
@@ -55,6 +56,7 @@ export async function replaySubscribedConnectionState(
   const connection = findListenerConnectionByTransport(listener, transport);
   if (connection) {
     replayPendingApprovalRequestsToConnection(runtime, connection.id);
+    replayUndeliveredTurnFinishedToConnection(runtime, connection.id);
   }
   emitStateSync(transport, listener, scope, {
     forceDeviceStatus: options.forceDeviceStatus,

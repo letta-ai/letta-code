@@ -94,6 +94,7 @@ import {
   type ListenerTransport,
   LocalListenerTransport,
 } from "./transport";
+import { replayUndeliveredTurnFinishedToConnection } from "./turn-finished-replay";
 import type {
   IncomingMessage,
   ListenerRuntime,
@@ -357,11 +358,9 @@ export async function startConnectedListenerRuntime(
   await opts.onConnected(opts.connectionId);
 
   await emitInitialState(runtime, transport, opts.connectionId, options);
-  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-    replayPendingApprovalRequestsToConnection(
-      conversationRuntime,
-      opts.connectionId,
-    );
+  for (const scoped of runtime.conversationRuntimes.values()) {
+    replayPendingApprovalRequestsToConnection(scoped, opts.connectionId);
+    replayUndeliveredTurnFinishedToConnection(scoped, opts.connectionId);
   }
 
   if (options.startHeartbeat !== false) {

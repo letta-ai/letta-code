@@ -167,6 +167,7 @@ export function evictConversationRuntimeIfIdle(
     runtime.pendingApprovalResolvers.size > 0 ||
     runtime.pendingApprovalBatchByToolCallId.size > 0 ||
     runtime.recoveredApprovalState !== null ||
+    runtime.undeliveredTurnFinished !== null ||
     runtime.pendingInterruptedResults !== null ||
     runtime.pendingInterruptedContext !== null ||
     (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
@@ -266,6 +267,7 @@ export function createConversationRuntime(
     acceptedInputDispositions: new Map(),
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
+    undeliveredTurnFinished: null,
     expectedTeleportId: null,
     expectedTeleportExpiresAt: null,
     get lastStopReason() {
@@ -373,6 +375,7 @@ export function clearConversationRuntimeState(
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
+  runtime.undeliveredTurnFinished = null;
   runtime.expectedTeleportId = null;
   runtime.expectedTeleportExpiresAt = null;
   runtime.dequeuedClientMessageIdsByBatchId.clear();
