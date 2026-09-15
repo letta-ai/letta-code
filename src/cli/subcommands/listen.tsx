@@ -578,10 +578,32 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log(message);
             if (debugMode) console.log(`[${formatTimestamp()}] ${message}`);
           },
+          onLifecycleEvent: (event) => {
+            telemetry.trackChannelGatewayLifecycle({
+              lifecycle_event: event.kind,
+              restart_attempt: event.restartAttempt,
+              max_restart_attempts: event.maxRestartAttempts,
+              restore_mode: restoreEnabledChannels
+                ? "enabled_accounts"
+                : "explicit_channels",
+              channel_types: channelNames,
+              duration_ms: event.durationMs,
+              delay_ms: event.delayMs,
+              exit_code: event.exitCode,
+              signal: event.signal,
+              reached_ready: event.reachedReady,
+            });
+          },
           onUnexpectedExit: (error) => {
             console.error(`[${formatTimestamp()}] ${error.message}`);
+          },
+          onRestartExhausted: (error) => {
+            console.error(`[${formatTimestamp()}] ${error.message}`);
             if (values.channels) {
-              void exitWithTelemetry(1, "listener_channel_gateway_exited");
+              void exitWithTelemetry(
+                1,
+                "listener_channel_gateway_restart_exhausted",
+              );
             }
           },
           onServiceEvent: (event) => {
