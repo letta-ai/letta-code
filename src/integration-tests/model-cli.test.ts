@@ -169,7 +169,9 @@ async function verifyCloudModelCli(verifyInference: boolean) {
 test.skipIf(!process.env.LETTA_API_KEY)(
   "CLI model configuration and reasoning persist in Cloud",
   () => verifyCloudModelCli(false),
-  60000,
+  // This runs the same six CLI launches and Cloud updates as the inference
+  // test below. Give both the same budget on slower CI runners.
+  180000,
 );
 test.skipIf(!process.env.LETTA_API_KEY)(
   "CLI model changes select the model used for Cloud inference",
