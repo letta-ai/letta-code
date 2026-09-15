@@ -65,6 +65,10 @@ import {
 } from "./process-services";
 import { scheduleQueuePump } from "./queue";
 import {
+  type recoverRecordedTurns,
+  scheduleRecordedTurnRecovery,
+} from "./recover-recorded-turn";
+import {
   clearConversationRuntimeState,
   clearRuntimeTimers,
   getActiveRuntime,
@@ -329,6 +333,7 @@ export async function startConnectedListenerRuntime(
     startProcessServices?: boolean;
     streamTransport?: ListenerTransport | null;
     emitInitialState?: boolean;
+    recoverRecordedWork?: typeof recoverRecordedTurns;
   } = {},
 ): Promise<void> {
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) return;
@@ -385,6 +390,10 @@ export async function startConnectedListenerRuntime(
   }
 
   if (options.startProcessServices === false) return;
+
+  // Managed remote listeners adopt an already-open gateway connection rather
+  // than using connectWithRetry. Both paths must resume their local records.
+  scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
 
   const processTransport = getOrCreateProcessTransport(runtime);
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {

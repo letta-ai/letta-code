@@ -901,6 +901,10 @@ export async function task(args: TaskArgs): Promise<string> {
   );
   const agentId = linkedAgent?.agentId ?? null;
   const agentIdLine = agentId ? `\nAgent ID: ${agentId}` : "";
+  const conversationId = linkedAgent?.conversationId ?? null;
+  const conversationIdLine = conversationId
+    ? `\nConversation ID: ${conversationId}`
+    : "";
 
-  return `Task running in background with task ID: ${taskId}${agentIdLine}\nOutput file: ${outputFile}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll, sleep-wait, or check the output file. Just continue with your current work.`;
+  return `Task running in background with task ID: ${taskId}${agentIdLine}${conversationIdLine}\nOutput file: ${outputFile}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll, sleep-wait, or check the output file. Just continue with your current work.`;
 }

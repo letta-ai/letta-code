@@ -519,7 +519,7 @@ async function handleIncomingMessageInner(
               ...turnInput.messages,
               {
                 type: "message" as const,
-                role: "system" as const,
+                role: "user" as const,
                 content:
                   "<system-reminder>The previous response was empty. Please provide a response with either text content or a tool call.</system-reminder>",
               },

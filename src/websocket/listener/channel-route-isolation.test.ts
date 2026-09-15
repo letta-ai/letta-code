@@ -34,6 +34,12 @@ test("a channel route blocks teleport in the test that registers it", () => {
 });
 
 test("the next test can teleport the same agent and conversation", () => {
+  expect(
+    getLocalChannelTeleportError({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    }),
+  ).toBeNull();
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
   openListenerConnection({

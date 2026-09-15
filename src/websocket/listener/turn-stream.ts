@@ -1,5 +1,6 @@
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import { getStreamRequestContext } from "@/agent/message";
 import { normalizeStreamErrorTypeToStopReason } from "@/agent/turn-recovery-policy";
 import type { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
@@ -7,6 +8,7 @@ import type { StreamDelta } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import { LISTENER_STREAM_RESUME_POLICY } from "./constants";
+import { recordListenerWork } from "./interrupted-turn-record";
 import { normalizeToolReturnWireMessage } from "./interrupts";
 import {
   emitCanonicalMessageDelta,
@@ -73,6 +75,10 @@ export async function drainTurnStreamWithEmission(
         runtime.turnLifecycle.setRunId(turnLease, maybeRunId);
         turnCorrelation.observeRun(maybeRunId);
         if (!runIdSent) {
+          recordListenerWork(runtime, {
+            runId: maybeRunId,
+            actingUserId: getStreamRequestContext(stream)?.actingUserId,
+          });
           runIdSent = true;
           msgRunIds.push(maybeRunId);
           emitLoopStatusUpdate(socket, runtime, {

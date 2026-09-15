@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isCheckoutPending } from "@/utils/checkout-readiness";
 import { isLocalAgentId } from "./agent-id";
 import type { AttachedAgentRepository } from "./attached-repositories";
 import {
@@ -159,6 +160,7 @@ export async function discoverSharedMemorySkills(
 
   for (const dir of skillsDirs) {
     const repositoryMount = dirname(dir);
+    if (isCheckoutPending(repositoryMount)) continue;
     if (!existsSync(repositoryMount)) {
       errors.push({
         path: repositoryMount,
