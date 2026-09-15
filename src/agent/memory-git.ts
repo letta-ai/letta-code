@@ -53,7 +53,7 @@ import { writeWindowsCredentialHelper } from "./memory-git-windows-credentials";
 const execFile = promisify(execFileCb);
 
 const RETRYABLE_GIT_HTTP_ERROR_RE =
-  /(?:\bHTTP\s+(?:520|521|522|523|524)\b|The requested URL returned error:\s*(?:520|521|522|523|524))/i;
+  /(?:\bHTTP\s+(?:503|520|521|522|523|524)\b|The requested URL returned error:\s*(?:503|520|521|522|523|524))/i;
 const RETRYABLE_GIT_NETWORK_ERROR_RE =
   /(remote end hung up unexpectedly|connection reset by peer|operation timed out|timed out|SIGTERM|ETIMEDOUT)/i;
 
@@ -604,7 +604,7 @@ export async function runGit(
 /**
  * Returns true when a git error looks transient/retryable (network/edge).
  *
- * These failures are commonly seen when Cloudflare returns temporary 52x
+ * These failures are commonly seen during HTTP 503 outages or Cloudflare 52x
  * errors during memfs clone/pull operations.
  */
 export function isRetryableGitTransientError(error: unknown): boolean {
