@@ -51,6 +51,7 @@ import {
 } from ".";
 import { buildSubagentPrompt } from "./context-budget";
 import { allocateSubagentName } from "./names";
+import { collectRemoteTurnResult } from "./remote-turn-wait";
 import {
   composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
@@ -63,6 +64,7 @@ import {
   resolveSubagentModel,
 } from "./subagent-model";
 import {
+  describeSubagentExit,
   type ExecutionState,
   looksLikeTruncatedStreamJson,
   parseResultFromStdout,
@@ -152,7 +154,10 @@ export function buildSubagentArgs(
   }
 
   if (options.environment) {
-    args.push("--computer", options.environment);
+    // The child only submits the send and exits with the enqueue receipt;
+    // this process follows the remote turn through Cloud's status APIs
+    // (see remote-turn-wait.ts). No child process waits on the remote turn.
+    args.push("--computer", options.environment, "--no-wait");
   }
 
   if (isDeployingExisting) {
@@ -282,6 +287,7 @@ async function executeSubagent(
   environment?: string,
   actingUserIdOverride?: string,
   parentAgentName?: string | null,
+  parentConversationId?: string,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
@@ -384,6 +390,7 @@ async function executeSubagent(
       localBackendStorageDir,
       parentAgentId,
       subagentType: type,
+      parentConversationId,
       launchProfile: effectiveLaunchProfile,
       inheritedPrimaryRoot,
       memoryScope,
@@ -461,6 +468,7 @@ async function executeSubagent(
       conversationId: existingConversationId || null,
       finalResult: null,
       finalError: null,
+      enqueueReceipt: null,
       resultStats: null,
       displayedToolCalls: new Set(),
     };
@@ -487,9 +495,14 @@ async function executeSubagent(
     });
 
     // Wait for process to complete
-    const exitCode = await new Promise<number | null>((resolve) => {
-      proc.on("close", resolve);
-      proc.on("error", () => resolve(null));
+    const { exitCode, exitSignal } = await new Promise<{
+      exitCode: number | null;
+      exitSignal: NodeJS.Signals | null;
+    }>((resolve) => {
+      proc.on("close", (code, sig) =>
+        resolve({ exitCode: code, exitSignal: sig }),
+      );
+      proc.on("error", () => resolve({ exitCode: null, exitSignal: null }));
     });
 
     // Ensure the trailing partial line is processed before completing.
@@ -544,6 +557,7 @@ async function executeSubagent(
             environment,
             actingUserIdOverride,
             parentAgentName,
+            parentConversationId,
           );
         }
       }
@@ -574,19 +588,33 @@ async function executeSubagent(
           environment,
           actingUserIdOverride,
           parentAgentName,
+          parentConversationId,
         );
       }
 
       const propagatedError = state.finalError?.trim();
-      const fallbackError = stderr || `Subagent exited with code ${exitCode}`;
 
       return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: "",
         success: false,
-        error: propagatedError || fallbackError,
+        error:
+          propagatedError || describeSubagentExit(exitCode, exitSignal, stderr),
       });
+    }
+
+    // The child submitted a computer-routed send and exited with the receipt.
+    // Follow the remote turn from here; the remote listener owns execution.
+    if (state.enqueueReceipt) {
+      return withModel(
+        await collectRemoteTurnResult(
+          state.enqueueReceipt,
+          state,
+          subagentId,
+          signal,
+        ),
+      );
     }
 
     // Return captured result if available
@@ -673,6 +701,7 @@ async function executeSubagent(
           environment,
           actingUserIdOverride,
           parentAgentName,
+          parentConversationId,
         );
       }
     }
@@ -921,6 +950,7 @@ async function spawnSubagentInContext(
     environment,
     launchActingUserId,
     parentAgent?.name,
+    resolvedParentConversationId,
   );
 
   return result;

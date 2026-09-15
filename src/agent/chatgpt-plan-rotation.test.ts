@@ -25,7 +25,6 @@ describe("quota-aware plan rotation over HTTP", () => {
     "all exhausted",
     "unavailable",
     "cancelled",
-    "cancelled during update",
   ] as const) {
     test(`${outcome}: checks quota before updating only the active conversation`, async () => {
       const conversations = new Map([
@@ -41,8 +40,6 @@ describe("quota-aware plan rotation over HTTP", () => {
           const url = new URL(req.url);
           const path = url.pathname.replace(/\/$/, "");
           if (path === "/v1/models") {
-            if (outcome === "cancelled during update" && checked.length > 0)
-              controller.abort();
             return Response.json(
               [PRIMARY_HANDLE, SIBLING_HANDLE, "chatgpt-third/gpt-5.2"].map(
                 (handle) => ({
@@ -58,8 +55,6 @@ describe("quota-aware plan rotation over HTTP", () => {
             const provider = url.searchParams.get("provider_name") ?? "";
             checked.push(provider);
             if (outcome === "cancelled") controller.abort();
-            if (outcome === "cancelled during update")
-              clearAvailableModelsCache();
             if (outcome === "unavailable")
               return new Response("unavailable", { status: 503 });
             return Response.json({
@@ -71,6 +66,13 @@ describe("quota-aware plan rotation over HTTP", () => {
             });
           }
           const id = path.split("/").at(-1) ?? "";
+          if (path === "/v1/agents/agent-rotation") {
+            return Response.json({
+              id,
+              model: PRIMARY_HANDLE,
+              llm_config: { context_window: 272_000 },
+            });
+          }
           if (path.startsWith("/v1/conversations/") && conversations.has(id)) {
             if (req.method === "PATCH") {
               return req.json().then((body) => {
@@ -200,13 +202,28 @@ describe("plan-wide quota evidence", () => {
 });
 
 describe("rotateChatGPTPlanOnQuotaLimit", () => {
-  test("updates only the active conversation and keeps exhausted plans turn-local", async () => {
-    const agent = { id: "agent-rotation", model: PRIMARY_HANDLE };
-    const conversations = new Map([
-      ["conv-first", { id: "conv-first", model: PRIMARY_HANDLE }],
-      ["conv-second", { id: "conv-second", model: PRIMARY_HANDLE }],
-    ]);
-    let agentUpdateCount = 0;
+  interface UpdatePayload {
+    model?: string;
+    model_settings?: {
+      reasoning?: { reasoning_effort?: string };
+      reasoning_effort?: string;
+      verbosity?: string;
+      service_tier?: string | null;
+    };
+    context_window_limit?: number;
+  }
+  type Helpers = {
+    conversationUpdates: { conversationId: string; payload: UpdatePayload }[];
+    agentUpdates: UpdatePayload[];
+  };
+  function mockBackend(
+    agent: { id: string; model: string },
+    conversations: Map<
+      string,
+      { id: string; model: string | null } & Record<string, unknown>
+    >,
+  ) {
+    const helpers: Helpers = { conversationUpdates: [], agentUpdates: [] };
     const backend = {
       capabilities: { localModelCatalog: false },
       async listModels() {
@@ -228,24 +245,36 @@ describe("rotateChatGPTPlanOnQuotaLimit", () => {
       async retrieveAgent() {
         return agent;
       },
-      async updateAgent(_agentId: string, update: { model?: string }) {
-        agentUpdateCount += 1;
+      async updateAgent(_agentId: string, update: UpdatePayload) {
+        helpers.agentUpdates.push(update);
         Object.assign(agent, update);
         return agent;
       },
       async retrieveConversation(conversationId: string) {
         return conversations.get(conversationId);
       },
-      async updateConversation(
-        conversationId: string,
-        update: { model?: string },
-      ) {
+      async updateConversation(conversationId: string, update: UpdatePayload) {
         const conversation = conversations.get(conversationId);
         if (!conversation) throw new Error("conversation not found");
+        helpers.conversationUpdates.push({ conversationId, payload: update });
         Object.assign(conversation, update);
         return conversation;
       },
     };
+    return { backend, helpers };
+  }
+
+  test("updates only the active conversation and keeps exhausted plans turn-local", async () => {
+    const agent = {
+      id: "agent-rotation",
+      model: PRIMARY_HANDLE,
+      llm_config: { context_window: 272_000 },
+    };
+    const conversations = new Map([
+      ["conv-first", { id: "conv-first", model: PRIMARY_HANDLE }],
+      ["conv-second", { id: "conv-second", model: PRIMARY_HANDLE }],
+    ]);
+    const { backend, helpers } = mockBackend(agent, conversations);
     __testSetBackend(backend as never);
     clearAvailableModelsCache();
 
@@ -265,7 +294,7 @@ describe("rotateChatGPTPlanOnQuotaLimit", () => {
       expect(conversations.get("conv-first")?.model).toBe(SIBLING_HANDLE);
       expect(conversations.get("conv-second")?.model).toBe(PRIMARY_HANDLE);
       expect(agent.model).toBe(PRIMARY_HANDLE);
-      expect(agentUpdateCount).toBe(0);
+      expect(helpers.agentUpdates).toHaveLength(0);
       expect(firstTurnExhausted).toEqual(new Set(["chatgpt-caren"]));
       expect(secondTurnExhausted.size).toBe(0);
 
@@ -304,7 +333,176 @@ describe("rotateChatGPTPlanOnQuotaLimit", () => {
 
       expect(defaultRotation?.toHandle).toBe(SIBLING_HANDLE);
       expect(agent.model).toBe(SIBLING_HANDLE);
-      expect(agentUpdateCount).toBe(1);
+      expect(helpers.agentUpdates).toHaveLength(1);
+      expect(helpers.agentUpdates[0]?.context_window_limit).toBe(272_000);
+    } finally {
+      clearAvailableModelsCache();
+      __testSetBackend(null);
+    }
+  });
+
+  for (const contextWindow of [128_000, 350_000, 543_210, 950_000]) {
+    test(`preserves complete settings and the ${contextWindow} window`, async () => {
+      const agent = {
+        id: "agent-rotation",
+        model: PRIMARY_HANDLE,
+        model_settings: {
+          provider_type: "chatgpt_oauth",
+          parallel_tool_calls: true,
+          reasoning: { reasoning_effort: "high" },
+          verbosity: "low",
+        },
+        context_window_limit: 350_000,
+      };
+      const conversations = new Map([
+        [
+          "conv-first",
+          {
+            id: "conv-first",
+            model: PRIMARY_HANDLE,
+            model_settings: {
+              provider_type: "chatgpt_oauth",
+              parallel_tool_calls: false,
+              reasoning: { reasoning_effort: "medium" },
+              verbosity: "low",
+              service_tier: null,
+            },
+            context_window_limit: contextWindow,
+          },
+        ],
+      ]);
+      const { backend, helpers } = mockBackend(agent, conversations);
+      const originalSettings = structuredClone(
+        conversations.get("conv-first")?.model_settings,
+      );
+      __testSetBackend(backend as never);
+      clearAvailableModelsCache();
+
+      try {
+        const rotation = await rotateChatGPTPlanOnQuotaLimit({
+          agentId: "agent-rotation",
+          conversationId: "conv-first",
+          currentHandle: null,
+          error: { error_code: "usage_limit_reached" },
+          exhaustedProviders: new Set(),
+        });
+
+        expect(rotation?.toHandle).toBe(SIBLING_HANDLE);
+        expect(helpers.conversationUpdates).toHaveLength(1);
+        const payload = helpers.conversationUpdates[0]?.payload;
+        expect(payload?.model).toBe(SIBLING_HANDLE);
+        // Account changes must not change the selected settings or window.
+        expect(payload?.model_settings?.reasoning?.reasoning_effort).toBe(
+          "medium",
+        );
+        expect(payload?.model_settings?.verbosity).toBe("low");
+        expect(payload?.model_settings?.service_tier).toBeNull();
+        expect(payload?.model_settings).toEqual(originalSettings);
+        expect(payload?.context_window_limit).toBe(contextWindow);
+      } finally {
+        clearAvailableModelsCache();
+        __testSetBackend(null);
+      }
+    });
+  }
+
+  test("inherits variant settings from the agent when the conversation has no override", async () => {
+    const agent = {
+      id: "agent-rotation",
+      model: PRIMARY_HANDLE,
+      model_settings: {
+        provider_type: "chatgpt_oauth",
+        reasoning: { reasoning_effort: "high" },
+      },
+      context_window_limit: 950_000,
+      llm_config: { verbosity: "low", max_tokens: 4096 },
+    };
+    const conversations = new Map([
+      ["conv-first", { id: "conv-first", model: null }],
+    ]);
+    const { backend, helpers } = mockBackend(agent, conversations);
+    __testSetBackend(backend as never);
+    clearAvailableModelsCache();
+
+    try {
+      const rotation = await rotateChatGPTPlanOnQuotaLimit({
+        agentId: "agent-rotation",
+        conversationId: "conv-first",
+        currentHandle: null,
+        error: { error_code: "usage_limit_reached" },
+        exhaustedProviders: new Set(),
+      });
+
+      expect(rotation?.toHandle).toBe(SIBLING_HANDLE);
+      const payload = helpers.conversationUpdates[0]?.payload;
+      expect(payload?.model_settings?.reasoning?.reasoning_effort).toBe("high");
+      expect(payload?.context_window_limit).toBe(950_000);
+      expect(payload?.model_settings).toMatchObject({
+        verbosity: "low",
+        max_output_tokens: 4096,
+      });
+    } finally {
+      clearAvailableModelsCache();
+      __testSetBackend(null);
+    }
+  });
+
+  test("does not inherit settings from an unrelated agent model", async () => {
+    const agent = {
+      id: "agent-rotation",
+      model: "other/model",
+      model_settings: { provider_type: "anthropic", effort: "high" },
+      llm_config: { context_window: 543_210 },
+    };
+    const conversations = new Map([
+      ["conv-first", { id: "conv-first", model: PRIMARY_HANDLE }],
+    ]);
+    const { backend, helpers } = mockBackend(agent, conversations);
+    __testSetBackend(backend as never);
+    clearAvailableModelsCache();
+    try {
+      expect(
+        await rotateChatGPTPlanOnQuotaLimit({
+          agentId: agent.id,
+          conversationId: "conv-first",
+          currentHandle: null,
+          error: { error_code: "usage_limit_reached" },
+          exhaustedProviders: new Set(),
+        }),
+      ).not.toBeNull();
+      expect(helpers.conversationUpdates[0]?.payload).toEqual({
+        model: SIBLING_HANDLE,
+        model_settings: {},
+        context_window_limit: 128_000,
+      });
+    } finally {
+      clearAvailableModelsCache();
+      __testSetBackend(null);
+    }
+  });
+
+  test("does not rotate from a stale caller handle when state cannot be read", async () => {
+    const { backend, helpers } = mockBackend(
+      { id: "agent-rotation", model: PRIMARY_HANDLE },
+      new Map(),
+    );
+    backend.retrieveAgent = async () => {
+      throw new Error("unavailable");
+    };
+    __testSetBackend(backend as never);
+    clearAvailableModelsCache();
+    try {
+      expect(
+        await rotateChatGPTPlanOnQuotaLimit({
+          agentId: "agent-rotation",
+          conversationId: "conv-first",
+          currentHandle: PRIMARY_HANDLE,
+          error: { error_code: "usage_limit_reached" },
+          exhaustedProviders: new Set(),
+        }),
+      ).toBeNull();
+      expect(helpers.conversationUpdates).toEqual([]);
+      expect(helpers.agentUpdates).toEqual([]);
     } finally {
       clearAvailableModelsCache();
       __testSetBackend(null);

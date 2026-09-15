@@ -310,8 +310,10 @@ export interface CancelAckMessage extends MessageEnvelope {
 /**
  * Result subtypes.
  * For errors, use stop_reason field with StopReasonType from letta-client.
+ * "queued": `--no-wait` on a computer-routed launch; Cloud accepted the send
+ * and the envelope carries the enqueue receipt instead of a reply.
  */
-export type ResultSubtype = "success" | "interrupted" | "error";
+export type ResultSubtype = "success" | "interrupted" | "error" | "queued";
 
 /**
  * Usage statistics from letta-client.

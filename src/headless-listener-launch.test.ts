@@ -17,6 +17,7 @@ import {
   launchListenerConversation,
   listenerControlUrl,
 } from "./headless-listener-launch";
+import { buildHeadlessSenderReminder } from "./headless-message-sender";
 
 const scope: AgentRuntimeScope = {
   agent_id: "agent-child",
@@ -113,14 +114,28 @@ const backend = {
     ({ id, status: "completed", stop_reason: "end_turn" }) as Run,
 };
 
-test("CLI configures the listener before admitted enqueue and preserves output, usage and acting user", async () => {
+test.each([
+  { content: "hello" },
+  {
+    content: [
+      {
+        type: "text" as const,
+        text: buildHeadlessSenderReminder(true, undefined, {
+          LETTA_PARENT_AGENT_ID: "agent-parent",
+          LETTA_PARENT_CONVERSATION_ID: "conv-parent",
+        }),
+      },
+      { type: "text" as const, text: "hello" },
+    ],
+  },
+])("listener enqueue preserves sender: %j", async ({ content }) => {
   const wire = transport();
   const onMessage = mock(() => {});
   const result = await launchListenerConversation(
     {
       connectionId: "conn-target",
       scope,
-      content: "hello",
+      content: typeof content === "string" ? content : [...content],
       backend,
       settings,
       cwd: "/workspace",
@@ -139,7 +154,7 @@ test("CLI configures the listener before admitted enqueue and preserves output, 
           computer: "conn-target",
           actingUserId: "user-parent",
           actingUserAssertion: "assertion-parent",
-          content: "hello",
+          content,
         });
         wire.emit({
           type: "update_loop_status",
@@ -524,3 +539,42 @@ test.each(["run", "messages", "super-run"] as const)(
     }
   },
 );
+
+test("noWait returns the enqueue receipt once Cloud accepts the send and reads nothing else", async () => {
+  // The Agent tool's child uses this: it configures the listener, submits,
+  // and exits. The parent process follows the remote turn from the receipt.
+  const wire = transport();
+  const retrieveRun = mock(backend.retrieveRun);
+  const listRunMessages = mock(async () => [] as Message[]);
+  const result = await launchListenerConversation(
+    {
+      connectionId: "conn-target",
+      scope,
+      content: "hello",
+      backend: { retrieveRun },
+      settings,
+      mode: "standard",
+      noWait: true,
+    },
+    {
+      client: wire.client,
+      enqueue: async (input) => {
+        expect(wire.commands[0]).toMatchObject({
+          type: "runtime_start",
+          execution_settings: settings,
+        });
+        return receipt(input.clientMessageId);
+      },
+      listRunMessages,
+    },
+  );
+  expect(result.status).toBe("queued");
+  if (result.status !== "queued") throw new Error("expected queued");
+  expect(result.receipt).toMatchObject({
+    status: "queued",
+    conversation_id: "conv-child",
+    super_run_id: "sr",
+  });
+  expect(retrieveRun).not.toHaveBeenCalled();
+  expect(listRunMessages).not.toHaveBeenCalled();
+});
