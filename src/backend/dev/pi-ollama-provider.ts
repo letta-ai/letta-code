@@ -247,6 +247,19 @@ function parseOllamaShow(
     vision: capabilities.includes("vision"),
     thinking: capabilities.includes("thinking"),
     ...(contextLength !== undefined ? { contextLength } : {}),
+    // Ollama enables thinking when reasoning_effort is omitted. Map pi-ai's
+    // explicit Off level to Ollama's documented `none` value so disabling
+    // reasoning does not accidentally fall back to that default.
+    ...(capabilities.includes("thinking")
+      ? { thinkingLevelMap: { off: "none" } }
+      : {}),
+    // Ollama's OpenAI-compatible Chat Completions adapter maps
+    // `reasoning_effort` to its native `think` setting. This is deliberately
+    // an Ollama-specific override: other local OpenAI-compatible engines do
+    // not necessarily accept the field even when they report thinking.
+    ...(capabilities.includes("thinking")
+      ? { compat: { supportsReasoningEffort: true } }
+      : {}),
   };
 }
 
