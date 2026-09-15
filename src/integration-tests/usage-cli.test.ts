@@ -46,41 +46,26 @@ test("usage CLI reads live credits and model quota and rejects invalid auth", as
     if (!apiKey) throw new Error("LETTA_API_KEY is required");
     const result = await cli(apiKey);
     expect(result.code, result.stderr).toBe(0);
-    const balance = JSON.parse(result.stdout);
-    expect(typeof balance.total_balance).toBe("number");
-    expect(typeof balance.monthly_credit_balance).toBe("number");
-    expect(typeof balance.purchased_credit_balance).toBe("number");
-    expect(typeof balance.billing_tier).toBe("string");
-    expect(balance.total_balance).toBeCloseTo(
-      balance.monthly_credit_balance + balance.purchased_credit_balance,
-      5,
-    );
-    expect(balance.credit_scope).toBe("organization");
-    const quota = balance.model_quota;
-    const buckets = ["empty", "low", "medium", "high", "full"];
-    for (const tier of ["basic", "standard", "lettaTier", "premium"]) {
-      expect(buckets).toContain(quota[tier].bucket);
-      if (quota[tier].dailyBucket !== undefined) {
-        expect(buckets).toContain(quota[tier].dailyBucket);
-      }
-    }
-    expect(Number.isFinite(Date.parse(quota.quotaWindowEnd))).toBe(true);
-    if (quota.dailyQuotaWindowEnd !== undefined) {
-      expect(Number.isFinite(Date.parse(quota.dailyQuotaWindowEnd))).toBe(true);
-    }
+    expect(result.stdout).toStartWith("# Letta usage overview\nCurrent plan: ");
+    expect(result.stdout).toMatch(/\* Balance: -?\d+(\.\d+)? credits\n/);
+    expect(result.stdout).toContain("## Usage Quota (`letta/*` models)");
     const response = await fetch(`${baseURL}/v1/organizations/self/quotas`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
     expect(response.status).toBe(200);
     const authoritative = (await response.json()) as ModelQuotaMetadata;
-    expect(quota.scope).toBe(
-      authoritative.isUserScoped === true
-        ? "user"
-        : authoritative.isUserScoped === false
-          ? "organization"
-          : "unknown",
+    expect(result.stdout).toContain(
+      `* Bucket (full/high/medium/low/empty): ${authoritative.lettaTier.bucket}\n`,
     );
-    expect(quota.seatTier).toBe(authoritative.seatTier);
+    expect(result.stdout).toContain(
+      `* Quota Window End: ${authoritative.quotaWindowEnd}\n`,
+    );
+    expect(result.stdout).toContain(
+      `* Daily Quota Window End: ${authoritative.dailyQuotaWindowEnd ?? "Unavailable"}\n`,
+    );
+    for (const legacyTier of ["basic", "standard", "premium"]) {
+      expect(result.stdout).not.toContain(legacyTier);
+    }
 
     const denied = await cli("invalid-usage-cli-test-key");
     expect(denied.code).toBe(1);
@@ -105,7 +90,7 @@ test("usage CLI reads live credits and model quota and rejects invalid auth", as
     expect(expired.stderr).toContain("Failed to refresh access token");
     const overridden = await cli(apiKey);
     expect(overridden.code, overridden.stderr).toBe(0);
-    expect(JSON.parse(overridden.stdout).model_quota.scope).toBe(quota.scope);
+    expect(overridden.stdout).toStartWith("# Letta usage overview\n");
   } finally {
     await rm(home, { recursive: true, force: true });
   }

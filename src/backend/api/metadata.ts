@@ -14,18 +14,12 @@ type QuotaBucket = "empty" | "low" | "medium" | "high" | "full";
 
 interface ModelTierQuota {
   bucket: QuotaBucket;
-  dailyBucket?: QuotaBucket;
 }
 
 export interface ModelQuotaMetadata {
-  basic: ModelTierQuota;
-  standard: ModelTierQuota;
   lettaTier: ModelTierQuota;
-  premium: ModelTierQuota;
   quotaWindowEnd: string;
   dailyQuotaWindowEnd?: string;
-  isUserScoped?: boolean;
-  seatTier?: string;
 }
 
 export type FeedbackClientType = "desktop" | "chat.letta.com" | "cli";

@@ -47,7 +47,7 @@ test("usage help exits before account lookup even with local default", async () 
   const result = await cli(["usage", "--help"]);
   expect(result.code, result.stderr).toBe(0);
   expect(result.stdout).toContain("letta usage");
-  expect(result.stdout).toContain("total_balance");
+  expect(result.stdout).toContain("Markdown overview");
 });
 
 test.each([{ prefix: [] }, { prefix: ["--backend", "local"] }])(

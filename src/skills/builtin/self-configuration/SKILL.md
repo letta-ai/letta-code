@@ -55,9 +55,9 @@ Local settings, server state, and the current process are different sources of t
 
 ### Account credits and model quota
 
-Run `letta usage` to read the authenticated account's credit balance as JSON (`total_balance`, `monthly_credit_balance`, `purchased_credit_balance`, and `billing_tier`). Amounts are credits, not dollars; preserve negative balances. The command uses CLI auth and respects `LETTA_API_KEY`/`LETTA_BASE_URL`, not agent or conversation selectors. In local mode, use `letta --backend cloud usage` only when the user wants the Cloud account's balance.
+Run `letta usage` for a Markdown overview of the current plan, credit balance, and `letta/*` model quota (`lettaTier` only). Report the server's bucket (`full`, `high`, `medium`, `low`, or `empty`) and quota/daily reset timestamps as-is; do not infer exact requests or percentages. Amounts are credits, not dollars; preserve negative balances. An omitted daily reset is shown as unavailable.
 
-Read `model_quota` for each tier's `bucket` and optional `dailyBucket` (`full`, `high`, `medium`, `low`, or `empty`), reset timestamps (`quotaWindowEnd`, optional `dailyQuotaWindowEnd`), and optional `seatTier`. Report these server-provided buckets as-is; do not infer exact requests or percentages. `credit_scope` is `organization`; quota `scope` is `user`, `organization`, or `unknown` when the server omits scope. User-scoped quota belongs to the authenticated user, not necessarily the person chatting with the agent.
+The command uses CLI auth and respects `LETTA_API_KEY`/`LETTA_BASE_URL`, not agent or conversation selectors. Credits belong to the organization; user-scoped quota belongs to the authenticated user, not necessarily the person chatting with the agent. In local mode, use `letta --backend cloud usage` only when the user wants Cloud account usage.
 
 Use `letta model list` for available models; credits and quota buckets do not guarantee inference availability. `letta usage` does not include session token statistics; the interactive `/usage` command is a separate surface. If either lookup fails, the command exits nonzero without partial usage. Treat that as unavailable data, not zero credits or exhausted quota.
 
