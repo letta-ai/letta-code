@@ -91,10 +91,9 @@ export async function drainTurnStreamWithEmission(
       if (errorInfo) {
         const recoverableApprovalErrorText =
           getApprovalToolCallDesyncErrorText(errorInfo);
-        if (
-          !recoverableApprovalErrorText &&
-          !isCloudApiDeploymentInterrupted(errorInfo)
-        ) {
+        const deploymentInterrupted =
+          isCloudApiDeploymentInterrupted(errorInfo);
+        if (!recoverableApprovalErrorText && !deploymentInterrupted) {
           emitLoopErrorNotice(socket, runtime, {
             message: errorInfo.message || "Stream error",
             stopReason: normalizeStreamErrorTypeToStopReason(
@@ -114,6 +113,9 @@ export async function drainTurnStreamWithEmission(
             "Suppressing streamed recoverable error while post-stop recovery runs: %s",
             recoverableApprovalErrorText ?? errorInfo.error_code,
           );
+        }
+        if (deploymentInterrupted) {
+          return { shouldOutput: false, shouldAccumulate: false };
         }
       }
       if (shouldOutput) {

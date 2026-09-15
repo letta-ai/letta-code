@@ -251,7 +251,8 @@ describe("listener stream resume policy", () => {
           .filter(
             (payload) =>
               payload.type === "stream_delta" &&
-              payload.delta?.message_type === "loop_error",
+              (payload.delta?.message_type === "loop_error" ||
+                payload.delta?.message_type === "error_message"),
           ),
       ).toEqual([]);
     } finally {
