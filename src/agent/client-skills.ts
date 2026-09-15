@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { AvailableSkillSummary } from "@/types/protocol_v2";
+import { getCheckoutGeneration } from "@/utils/checkout-readiness";
 import type { AttachedAgentRepository } from "./attached-repositories";
 import { ClientSkillsWatcher } from "./client-skills-watcher";
 import { getSkillSources, getSkillsDirectory } from "./context";
@@ -45,6 +46,7 @@ const CLIENT_SKILLS_WATCHER_KEY = Symbol.for("@letta/clientSkillsWatcher");
 interface CacheEntry {
   key: string;
   result: BuildClientSkillsPayloadResult;
+  checkoutGeneration: number;
 }
 
 type ClientSkillsCache = Map<string, CacheEntry>;
@@ -641,12 +643,13 @@ export async function buildClientSkillsPayload(
   if (useCache) {
     const cache = getCache();
     const cached = cache.get(cacheKey);
-    if (cached) {
+    if (cached && cached.checkoutGeneration === getCheckoutGeneration()) {
       return cloneResult(cached.result);
     }
   }
 
   const generationBeforeDiscovery = getCacheGeneration();
+  const checkoutGenerationBeforeDiscovery = getCheckoutGeneration();
   const discovery = await collectClientSideSkills({
     ...options,
     configuredSkillsDirectory,
@@ -689,8 +692,16 @@ export async function buildClientSkillsPayload(
     errors,
   };
 
-  if (useCache && generationBeforeDiscovery === getCacheGeneration()) {
-    getCache().set(cacheKey, { key: cacheKey, result: cloneResult(result) });
+  if (
+    useCache &&
+    generationBeforeDiscovery === getCacheGeneration() &&
+    checkoutGenerationBeforeDiscovery === getCheckoutGeneration()
+  ) {
+    getCache().set(cacheKey, {
+      key: cacheKey,
+      result: cloneResult(result),
+      checkoutGeneration: getCheckoutGeneration(),
+    });
   }
 
   return result;
