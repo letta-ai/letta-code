@@ -62,7 +62,10 @@ import { waitForToolCheckouts } from "@/utils/checkout-readiness";
 import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
-import { serializeClientTools } from "./client-tool-serialization";
+import {
+  selectModelFacingExternalTools,
+  serializeClientTools,
+} from "./client-tool-serialization";
 import { normalizeExternalToolResultContent } from "./external-tool-content";
 import { toolFilter } from "./filter";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
@@ -306,19 +309,6 @@ function filterExternalToolsByScopeIds(
       return selectedScopes.has(tool.scopeId);
     }),
   );
-}
-
-function toModelFacingExternalToolMap(
-  externalTools: Map<string, ExternalToolDefinition>,
-): Map<string, ExternalToolDefinition> {
-  const modelFacingTools = new Map<string, ExternalToolDefinition>();
-  for (const tool of externalTools.values()) {
-    // MVP: if one runtime exposes duplicate model-facing names, the later
-    // registration wins. We keep cross-runtime registrations isolated by using
-    // namespaced internal keys before this final model-facing collapse.
-    modelFacingTools.set(tool.name, tool);
-  }
-  return modelFacingTools;
 }
 
 function filterModToolsByClientAllowlist(
@@ -741,7 +731,7 @@ export function getExternalToolDefinition(
  */
 export function getExternalToolsAsClientTools(): ClientTool[] {
   return Array.from(
-    toModelFacingExternalToolMap(
+    selectModelFacingExternalTools(
       filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
     ).values(),
   ).map((tool) => ({
@@ -815,7 +805,7 @@ export async function executeExternalTool(
 export function getClientToolsFromRegistry(): ClientTool[] {
   return buildClientToolsFromSnapshot(
     toolRegistry,
-    toModelFacingExternalToolMap(
+    selectModelFacingExternalTools(
       filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
     ),
     getAvailableModToolsRegistry(),
@@ -864,7 +854,7 @@ function capturePreparedToolExecutionContext(
   );
   const executionSnapshot: ToolExecutionContextSnapshot = {
     toolRegistry: toolRegistrySnapshot,
-    externalTools: toModelFacingExternalToolMap(
+    externalTools: selectModelFacingExternalTools(
       filterExternalToolsByClientAllowlist(
         filterExternalToolsByScopeIds(
           filterExternalToolsByRuntimeContext(
@@ -875,6 +865,7 @@ function capturePreparedToolExecutionContext(
         ),
         clientToolAllowlist,
       ),
+      runtimeContext.connectionId,
     ),
     externalExecutor: snapshot.externalExecutor,
     modContext: options?.modContext ?? snapshot.modContext,
