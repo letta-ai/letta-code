@@ -25,36 +25,43 @@ function ensureBuiltCli(): string {
 
 const ptyTest = process.platform === "win32" ? test.skip : test;
 
-describe("startup setup PTY", () => {
+function runPtyRunner(filename: string, ...args: string[]): void {
+  const runnerPath = join(projectRoot, `src/test-utils/${filename}`);
+  const result = spawnSync(
+    "node",
+    [runnerPath, ensureBuiltCli(), projectRoot, ...args],
+    {
+      cwd: projectRoot,
+      encoding: "utf-8",
+      timeout: 30000,
+    },
+  );
+
+  if (result.status !== 0 || result.signal !== null || result.stderr) {
+    throw new Error(
+      [
+        `${filename} failed with status ${result.status} signal ${result.signal}`,
+        result.stdout ? `stdout:\n${result.stdout}` : null,
+        result.stderr ? `stderr:\n${result.stderr}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    );
+  }
+}
+
+describe("startup PTY", () => {
   ptyTest(
     "setup menu keeps raw keyboard input after terminal preflight",
-    () => {
-      const runnerPath = join(
-        projectRoot,
-        "src/test-utils/startup-setup-pty-runner.cjs",
-      );
-      const result = spawnSync(
-        "node",
-        [runnerPath, ensureBuiltCli(), projectRoot],
-        {
-          cwd: projectRoot,
-          encoding: "utf-8",
-          timeout: 30000,
-        },
-      );
-
-      if (result.status !== 0 || result.signal !== null || result.stderr) {
-        throw new Error(
-          [
-            `PTY setup runner failed with status ${result.status} signal ${result.signal}`,
-            result.stdout ? `stdout:\n${result.stdout}` : null,
-            result.stderr ? `stderr:\n${result.stderr}` : null,
-          ]
-            .filter(Boolean)
-            .join("\n\n"),
-        );
-      }
-    },
+    () => runPtyRunner("startup-setup-pty-runner.cjs"),
     { timeout: 35000 },
   );
+
+  for (const runtime of ["bun", "node"]) {
+    ptyTest(
+      `${runtime} secrets rejection stays nonfatal before later startup synchronization`,
+      () => runPtyRunner("startup-secrets-pty-runner.cjs", runtime),
+      { timeout: 35000 },
+    );
+  }
 });

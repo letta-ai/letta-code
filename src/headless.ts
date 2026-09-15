@@ -2955,7 +2955,7 @@ ${SYSTEM_REMINDER_CLOSE}
             // Only append a nudge on the last attempt
             if (attempt >= EMPTY_RESPONSE_MAX_RETRIES) {
               const nudgeMessage: MessageCreate = {
-                role: "system",
+                role: "user",
                 content: `<system-reminder>The previous response was empty. Please provide a response with either text content or a tool call.</system-reminder>`,
                 otid: randomUUID(),
               };

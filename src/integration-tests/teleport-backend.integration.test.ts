@@ -13,7 +13,7 @@ import type {
 } from "@/backend/api/environments";
 import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
 
-// Real Cloud relay, model turn, and two real CLIs; no mocks or shared settings.
+// Real Cloud relay, model turn, and two real CLIs; the test owns the tool reply.
 // Optional: LETTA_TEST_CLI_PATH=/absolute/path/to/built/letta.js runs Node.
 const apiKey = process.env.LETTA_API_KEY;
 const baseURL = process.env.LETTA_BASE_URL || "https://api.letta.com";
@@ -105,6 +105,7 @@ testWithAPI.each([
     let destinationAgentNotFound = false;
     const failures: string[] = [];
     const stderrByRole = new Map<string, string>();
+    let releaseTool: (() => void) | undefined;
     try {
       async function listener(role: "source" | "destination") {
         const home = join(root, role, "home");
@@ -227,7 +228,10 @@ testWithAPI.each([
         name: "Teleport backend integration",
         agent_type: "letta_v1_agent",
         model: "openai/gpt-5.6-luna",
-        system: "Reply with exactly TELEPORT_BACKEND_OK. Do not call tools.",
+        system:
+          scenario === "destination lookup"
+            ? "Reply with exactly TELEPORT_BACKEND_OK. Do not call tools."
+            : "Call wait_for_teleport exactly once before replying. After it returns, reply with exactly TELEPORT_BACKEND_OK. Do not call any other tools.",
         include_base_tools: false,
         include_base_tool_rules: false,
         initial_message_sequence: [],
@@ -260,8 +264,44 @@ testWithAPI.each([
         expect(resumed.conversation?.id).toBe(conversation.id);
         expect(resumed.created).toEqual({ agent: false, conversation: false });
       } else {
+        let toolStarted: (() => void) | undefined;
+        const toolEntered = new Promise<void>((resolve) => {
+          toolStarted = resolve;
+        });
+        let toolRequestId: string | undefined;
+        source.client.onMessage((message) => {
+          if (message.type !== "external_tool_call_request") return;
+          toolRequestId = message.request_id;
+          toolStarted?.();
+        });
+        releaseTool = () => {
+          if (!toolRequestId) return;
+          const requestId = toolRequestId;
+          toolRequestId = undefined;
+          source.client.send({
+            type: "external_tool_call_response",
+            request_id: requestId,
+            result: {
+              content: [{ type: "text", text: "Teleport requested." }],
+            },
+          });
+        };
         stage = "source runtime_start";
-        const started = await source.client.runtimeStart(runtimeStart);
+        const started = await source.client.runtimeStart({
+          ...runtimeStart,
+          mode: "unrestricted",
+          external_tools: [
+            {
+              tools: [
+                {
+                  name: "wait_for_teleport",
+                  description: "Wait until the test requests teleport.",
+                  parameters: { type: "object", properties: {} },
+                },
+              ],
+            },
+          ],
+        });
         if (!started.success)
           throw new Error(started.error ?? "Source runtime_start failed");
         expect(started.success).toBe(true);
@@ -284,14 +324,19 @@ testWithAPI.each([
             ? true
             : undefined;
         }
-        // Cloud only attributes an active harness while the conversation runs.
+        // Hold the source in its tool call: a completed reply would drop active
+        // ownership between this test's status read and its teleport request.
         source.client.input({
           runtime: scope,
           payload: {
             kind: "create_message",
-            messages: [{ role: "user", content: "Reply now." }],
+            messages: [
+              { role: "user", content: "Call wait_for_teleport now." },
+            ],
           },
         });
+        stage = "source tool call";
+        await bounded(stage, toolEntered, 60_000);
         stage = "active source ownership";
         await poll(stage, () => ownerIs(source.connectionId));
         stage = "teleport";
@@ -306,6 +351,9 @@ testWithAPI.each([
         expect(teleport.sourceConnectionId).toBe(source.connectionId);
         expect(teleport.targetConnectionId).toBe(destination.connectionId);
         expect(typeof teleport.id).toBe("string");
+        // POST confirms the source has registered teleport before it returns.
+        // Let the tool finish so the listener can reach its normal boundary.
+        releaseTool?.();
         const completed = await poll("teleport completion", async () => {
           // Cloud's GET route is plural, unlike the initiation POST route.
           const result = await request<TeleportResponse>(
@@ -382,6 +430,11 @@ testWithAPI.each([
           .replace(/([?&](?:token|api_key)=)[^\s&]+/g, "$1[REDACTED]"),
       );
     } finally {
+      try {
+        releaseTool?.();
+      } catch {
+        failures.push("held tool response cleanup");
+      }
       for (const client of clients) client.close();
       await Promise.all(
         children.map((child) =>

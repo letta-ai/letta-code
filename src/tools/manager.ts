@@ -58,6 +58,7 @@ import {
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { messageChannelTelemetry } from "@/telemetry/channel";
+import { waitForToolCheckouts } from "@/utils/checkout-readiness";
 import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
@@ -2326,6 +2327,21 @@ async function executeToolInner(
     toolExecutionModContext(executionScope, { workingDirectory });
   const activeModTools =
     context?.modTools ?? getAvailableModToolsRegistry(modContext);
+  try {
+    if (!activeExternalTools.has(name) || activeModTools.has(name))
+      await waitForToolCheckouts(
+        scopedAgentId,
+        name,
+        args,
+        workingDirectory,
+        activeModTools.has(name),
+      );
+  } catch (error) {
+    return {
+      status: "error",
+      toolReturn: `Memory checkout is unavailable: ${String(error)}`,
+    };
+  }
 
   if (activeModTools.has(name)) {
     const modTool = activeModTools.get(name);

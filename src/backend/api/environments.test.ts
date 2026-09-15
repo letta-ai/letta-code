@@ -5,11 +5,29 @@ import type {
 } from "@/backend/api/environments";
 import {
   createAgentSandbox,
+  getTeleportStatus,
   resolveDesktopEnvironmentConnectionId,
   resolveEnvironmentConnectionId,
   teleportToEnvironment,
 } from "@/backend/api/environments";
 import type { apiRequest } from "@/backend/api/request";
+
+test("reads the scoped teleport receipt without starting a handoff", async () => {
+  const calls: unknown[][] = [];
+  const request = (async (...args: unknown[]) => {
+    calls.push(args);
+    return { status: "completed" };
+  }) as typeof apiRequest;
+  expect(
+    (await getTeleportStatus("agent/1", "conv/1", "teleport/1", request))
+      .status,
+  ).toBe("completed");
+  expect(calls[0]?.slice(0, 2)).toEqual([
+    "GET",
+    "/v1/environments/runtimes/agent%2F1/conv%2F1/teleports/teleport%2F1",
+  ]);
+  expect(calls[0]?.[3]).toMatchObject({ signal: expect.any(AbortSignal) });
+});
 
 function environment(
   overrides: Partial<EnvironmentConnection> = {},
