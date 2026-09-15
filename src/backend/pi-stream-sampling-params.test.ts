@@ -28,15 +28,19 @@ test("local sampling overrides reach the real pi-ai request builder", async () =
     );
     const adapter = new PiStreamAdapter({
       localProviderAuthStorageDir: storageDir,
-      stream: (model, context, options) =>
-        streamSimple(model, context, {
+      stream: (model, context, options) => {
+        if (model.api !== "openai-responses") {
+          throw new Error(`Expected OpenAI Responses, received ${model.api}`);
+        }
+        return streamSimple({ ...model, api: model.api }, context, {
           ...options,
           // Stop after real provider conversion, before any network request.
           onPayload: (request) => {
             payload = request;
             throw new Error("captured request without inference");
           },
-        }),
+        });
+      },
     });
     try {
       for await (const _event of adapter.stream({
