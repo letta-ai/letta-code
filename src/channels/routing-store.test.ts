@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { __testOverrideChannelsRoot } from "./config";
 import {
+  addRoute,
   clearAllRoutes,
   getAllRoutes,
   getRoute,
@@ -58,14 +59,28 @@ describe("routing persistence", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  test("direct reads migrate legacy routes without populating the cache", () => {
-    fs.writeFileSync(legacy, legacyText);
-    expect(readRoutes("telegram")).toEqual([route]);
-    expect(getAllRoutes()).toEqual([]);
-    expect(fs.readFileSync(current, "utf8")).toBe(legacyText);
-    expect(fs.existsSync(legacy)).toBe(false);
-    expect(readRoutes("telegram")).toEqual([route]);
+  test("adding the first route creates only routing.json", () => {
+    fs.rmdirSync(dir);
+    addRoute("telegram", route);
+    expect(fs.readdirSync(dir)).toEqual(["routing.json"]);
+    expect(readRoutes("telegram")).toEqual([expect.objectContaining(route)]);
   });
+
+  test.each(["readRoutes", "loadRoutes"])(
+    "%s migrates legacy routes and can reread the current file",
+    (reader) => {
+      fs.writeFileSync(legacy, legacyText);
+      if (reader === "loadRoutes") {
+        loadRoutes("telegram");
+        expect(getRoute("telegram", route.chatId)).toMatchObject(route);
+      }
+      expect(readRoutes("telegram")).toEqual([route]);
+      if (reader === "readRoutes") expect(getAllRoutes()).toEqual([]);
+      expect(fs.readFileSync(current, "utf8")).toBe(legacyText);
+      expect(fs.existsSync(legacy)).toBe(false);
+      expect(readRoutes("telegram")).toEqual([route]);
+    },
+  );
 
   test("teleport is blocked before any cache load on an upgraded install", () => {
     fs.writeFileSync(legacy, legacyText);
@@ -111,6 +126,8 @@ describe("routing persistence", () => {
     (text) => {
       fs.writeFileSync(legacy, text);
       expect(readRoutes("telegram")).toEqual([]);
+      loadRoutes("telegram");
+      expect(getRoute("telegram", route.chatId)).toBeNull();
       expect(fs.readFileSync(legacy, "utf8")).toBe(text);
       expect(fs.existsSync(current)).toBe(false);
     },
@@ -186,6 +203,8 @@ describe("routing persistence", () => {
     });
     writeChannelRoutesToDisk("telegram", [route]);
     expect(readRoutes("telegram")).toEqual([route]);
+    loadRoutes("telegram");
+    expect(getRoute("telegram", route.chatId)).toMatchObject(route);
     expect(fs.readdirSync(dir)).toEqual(["routing.json"]);
   });
 
