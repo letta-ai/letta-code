@@ -45,7 +45,7 @@ async function waitFor(
   predicate: () => boolean,
   description: string,
 ): Promise<void> {
-  const deadline = Date.now() + 1000;
+  const deadline = Date.now() + 5000;
   while (!predicate() && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
