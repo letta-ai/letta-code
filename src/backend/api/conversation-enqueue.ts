@@ -158,41 +158,6 @@ export interface LatestConversationSuperRun {
   errored_at: string | null;
 }
 
-export interface AcceptedSuperRun extends LatestConversationSuperRun {
-  agent_id: string;
-  conversation_id: string;
-  run_ids: string[];
-  turn_finished: { run_id: string; stop_reason: string; error?: string } | null;
-}
-
-/** Read the accepted send, even after another send becomes the latest one. */
-export async function getAcceptedSuperRun(
-  receipt: EnqueueReceipt,
-  signal: AbortSignal,
-): Promise<AcceptedSuperRun> {
-  const result = await apiRequest<AcceptedSuperRun>(
-    "GET",
-    `/v1/conversations/${encodeURIComponent(receipt.conversation_id)}/super-run`,
-    undefined,
-    {
-      signal,
-      query: { super_run_id: receipt.super_run_id, agent_id: receipt.agent_id },
-    },
-  );
-  if (
-    result.id !== receipt.super_run_id ||
-    result.agent_id !== receipt.agent_id ||
-    result.conversation_id !== receipt.conversation_id ||
-    !Array.isArray(result.run_ids) ||
-    !("turn_finished" in result)
-  ) {
-    throw new Error(
-      "Cloud does not support exact Super Run result tracking; upgrade Cloud before launching remote Agent tasks.",
-    );
-  }
-  return result;
-}
-
 export async function getLatestConversationSuperRun(
   conversationId: string,
   signal?: AbortSignal,

@@ -160,7 +160,7 @@ Agent({
 Behavior notes:
 - The remote turn runs with the remote machine's working directory, tools, and skills. Subagent-type tool restrictions (e.g. recall's read-only toolset) travel with the turn on current servers; older servers ignore them.
 - The remote turn's final assistant message is returned as the task result. Token and step statistics are not available for remote runs.
-- Computer-routed tasks are submitted asynchronously and tracked by their exact Cloud Super Run. Temporary status-read failures retry in the background; there is no one-hour execution or tracking ceiling. Stopping a task cancels its queued input or its executing listener run.
+- Computer-routed tasks are submitted asynchronously and tracked through Cloud's existing Super Run status feed. Temporary status-read failures retry in the background; there is no one-hour tracking ceiling. Completion still notifies you if the reply could not be collected; use `letta messages list` to read the conversation rather than launching the task again. Stopping a task cancels its queued input or its executing listener run.
 
 ## Concurrency and Safety:
 
