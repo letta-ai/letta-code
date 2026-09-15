@@ -1,13 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { Readable, Writable } from "node:stream";
+import { Writable } from "node:stream";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { render } from "ink";
-import { type ComponentProps, useState } from "react";
-import stripAnsi from "strip-ansi";
+import type { Dispatch, SetStateAction } from "react";
 import { models } from "@/agent/model";
 import { toRuntimeCatalogModels } from "@/agent/remote-model-catalog";
-import { ModelReasoningSelector } from "@/cli/components/ModelReasoningSelector";
 import {
   type ModelSelectorSelection,
   registryHandleForBackendModel,
@@ -20,10 +18,11 @@ setupRuntimeModelCatalogFixture();
 
 type Handlers = ReturnType<typeof useConfigurationHandlers>;
 type Context = Parameters<typeof useConfigurationHandlers>[0];
-type Prompt = Omit<
-  ComponentProps<typeof ModelReasoningSelector>,
-  "onSelect" | "onCancel"
-> | null;
+type Prompt = Context["setModelReasoningPrompt"] extends Dispatch<
+  SetStateAction<infer T>
+>
+  ? T
+  : never;
 
 class CaptureStream extends Writable {
   columns = 100;
@@ -101,35 +100,24 @@ function createContext(): Context {
   };
 }
 
-async function renderPickerForSelection(selection: ModelSelectorSelection) {
+async function openPickerForSelection(selection: ModelSelectorSelection) {
   const captured: {
     handlers?: Handlers;
     prompt?: Prompt;
   } = {};
   function Harness() {
-    const [prompt, setPrompt] = useState<Prompt>(null);
-    captured.prompt = prompt;
     captured.handlers = useConfigurationHandlers({
       ...createContext(),
-      setModelReasoningPrompt: setPrompt,
+      setModelReasoningPrompt: (next) => {
+        captured.prompt =
+          typeof next === "function" ? next(captured.prompt ?? null) : next;
+      },
     });
-    return prompt ? (
-      <ModelReasoningSelector
-        {...prompt}
-        onSelect={() => {}}
-        onCancel={() => setPrompt(null)}
-      />
-    ) : null;
+    return null;
   }
   const stdout = new CaptureStream();
-  const stdin = new Readable({ read() {} }) as NodeJS.ReadStream;
-  stdin.isTTY = true;
-  stdin.setRawMode = () => stdin;
-  stdin.ref = () => stdin;
-  stdin.unref = () => stdin;
   const instance = render(<Harness />, {
     stdout: stdout as CaptureStream & NodeJS.WriteStream,
-    stdin,
     stderr: stdout as CaptureStream & NodeJS.WriteStream,
     patchConsole: false,
     exitOnCtrlC: false,
@@ -137,27 +125,16 @@ async function renderPickerForSelection(selection: ModelSelectorSelection) {
   try {
     await waitFor(() => captured.handlers !== undefined, "handler mount");
     await captured.handlers?.handleModelSelect(selection);
-    await waitFor(
-      () =>
-        stripAnsi(stdout.chunks.join("")).includes(
-          "Set your model's reasoning settings",
-        ),
-      "reasoning picker",
-    );
-    return {
-      output: stripAnsi(stdout.chunks.join("")),
-      options: captured.prompt?.options ?? [],
-    };
+    return captured.prompt;
   } finally {
     instance.unmount();
     instance.cleanup();
-    stdin.destroy();
     stdout.destroy();
   }
 }
 
 describe("model reasoning picker", () => {
-  test("renders the picker for a local ChatGPT OAuth model", async () => {
+  test("opens the picker for a local ChatGPT OAuth model", async () => {
     const model = getBuiltinModels("openai-codex").find(
       (entry) => entry.id === "gpt-5.6-sol",
     );
@@ -179,7 +156,7 @@ describe("model reasoning picker", () => {
       ]),
     );
 
-    const result = await renderPickerForSelection({
+    const prompt = await openPickerForSelection({
       id: handle,
       handle,
       label: model.name,
@@ -191,8 +168,8 @@ describe("model reasoning picker", () => {
       },
     });
 
-    expect(result.output).toContain("Set your model's reasoning settings");
-    expect(result.options.map((option) => option.effort)).toEqual(
+    expect(prompt).not.toBeNull();
+    expect(prompt?.options.map((option) => option.effort)).toEqual(
       levels.map((level) => (level === "off" ? "none" : level)),
     );
   });
