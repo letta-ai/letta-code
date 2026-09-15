@@ -26,16 +26,16 @@ Uses CLI auth and LETTA_API_KEY/LETTA_BASE_URL overrides, not an agent or
 conversation selector. User-scoped quota belongs to the authenticated user,
 not necessarily the person chatting with an agent. Does not report session tokens.
 If either lookup fails, exits nonzero without printing partial usage.
-Local mode is unsupported; use letta --backend cloud usage for a Cloud account.
+Local mode prints "Running on local backend. Model usage requires BYOK."
+without contacting Cloud.
 
 Options:
   -h, --help   Show this help`);
       return 0;
     }
     if (isLocalBackendEnabled()) {
-      throw new Error(
-        "Account usage is unavailable in local mode. Use letta --backend cloud usage to query your Cloud account.",
-      );
+      console.log("Running on local backend. Model usage requires BYOK.");
+      return 0;
     }
     await settingsManager.initialize();
     // Reuse CLI OAuth refresh and persist rotated credentials before exiting.

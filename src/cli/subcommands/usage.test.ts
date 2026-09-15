@@ -51,12 +51,14 @@ test("usage help exits before account lookup even with local default", async () 
 });
 
 test.each([{ prefix: [] }, { prefix: ["--backend", "local"] }])(
-  "usage rejects local backend selection %j without printing a balance",
+  "usage reports BYOK for local backend selection %j without auth",
   async ({ prefix }) => {
     const result = await cli([...prefix, "usage"]);
-    expect(result.code).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("unavailable in local mode");
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toBe(
+      "Running on local backend. Model usage requires BYOK.\n",
+    );
+    expect(result.stderr).toBe("");
   },
 );
 
@@ -71,6 +73,5 @@ test.each([
     expect(result.code).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain('"error":');
-    expect(result.stderr).not.toContain("unavailable in local mode");
   },
 );
