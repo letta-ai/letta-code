@@ -11,6 +11,7 @@ import {
 import {
   formatAttemptDiagnostics,
   formatCapturedOutput,
+  summarizeCloudSendExit,
 } from "./process-diagnostics";
 
 /**
@@ -456,7 +457,7 @@ describe("Startup Flow - Integration", () => {
         { timeoutMs: 180000 },
       );
 
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode, summarizeCloudSendExit(result.output)).toBe(0);
       const output = result.output;
       expect(output.agent_id).toBe(testAgentId);
       expect(output.conversation_id).toBe(realConversationId);
