@@ -9,6 +9,7 @@ import {
 import { resolvePersonalityId } from "@/agent/personality-presets";
 import { getBackend } from "@/backend";
 import { listSharedAgentsForCurrentUser } from "@/cli/helpers/shared-agent-listing";
+import { getRuntimeActingUserId } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 
 function printUsage(): void {
@@ -208,12 +209,16 @@ async function runListAction(
     }
 
     try {
-      const result = await listSharedAgentsForCurrentUser({
-        limit: parseLimit(values.limit, 20),
-        order: "desc",
-        orderBy: "last_run_completion",
-        queryText: typeof values.query === "string" ? values.query : undefined,
-      });
+      const result = await listSharedAgentsForCurrentUser(
+        {
+          limit: parseLimit(values.limit, 20),
+          order: "desc",
+          orderBy: "last_run_completion",
+          queryText:
+            typeof values.query === "string" ? values.query : undefined,
+        },
+        getRuntimeActingUserId(),
+      );
       console.log(JSON.stringify(result, null, 2));
       return 0;
     } catch (error) {
