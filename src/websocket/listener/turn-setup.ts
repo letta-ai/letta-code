@@ -116,6 +116,18 @@ export async function prepareListenerTurn(params: {
     onStatusChange?.("processing", connectionId);
   }
 
+  const hasAttributedUserMessage = msg.messages.some(
+    (message) =>
+      "role" in message &&
+      message.role === "user" &&
+      message.attribution?.acting_user_id,
+  );
+  if (!msg.actingUserId && hasAttributedUserMessage) {
+    console.warn("[Listen] Attributed input is missing acting user identity", {
+      agentId,
+      conversationId,
+    });
+  }
   trackListenerUserInput(msg.messages, "unknown", msg.actingUserId);
 
   const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];

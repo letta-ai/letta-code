@@ -12,6 +12,7 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import { resolveActingUserId } from "@/agent/acting-user";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
+import { buildHeadlessSenderReminder } from "@/headless-message-sender";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import {
   trackBoundaryError,
@@ -120,7 +121,6 @@ import {
   validateConversationDefaultRequiresAgent,
   validatePrimaryStartupFlagConflicts,
 } from "./cli/startup-flag-validation";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import { tryCloudHeadlessSend } from "./headless-cloud-send";
 import {
   buildEnvironmentLaunchResult,
@@ -668,6 +668,10 @@ export async function handleHeadlessCommand(
 ) {
   const { values, positionals } = parsedArgs;
   const isAgentLaunch = consumeSubagentLaunch(process.env);
+  const senderReminder = buildHeadlessSenderReminder(
+    isAgentLaunch,
+    values["from-agent"],
+  );
   const launchProfile = isAgentLaunch
     ? process.env[SUBAGENT_LAUNCH_PROFILE_ENV]
     : undefined;
@@ -1920,18 +1924,7 @@ export async function handleHeadlessCommand(
     contentParts.push({ type: "text", text });
   };
 
-  if (fromAgentId) {
-    const senderAgentId = fromAgentId;
-    const senderAgent = await backend.retrieveAgent(senderAgentId);
-    const systemReminder = `${SYSTEM_REMINDER_OPEN}
-This message is from "${senderAgent.name}" (agent ID: ${senderAgentId}), an agent currently running inside the Letta Code CLI (docs.letta.com/letta-code).
-The sender will only see the final message you generate (not tool calls or reasoning).
-If you need to share detailed information, include it in your response text.
-${SYSTEM_REMINDER_CLOSE}
-
-`;
-    pushPart(systemReminder);
-  }
+  pushPart(senderReminder);
 
   if (!usesRemoteEnvironment) {
     const lastRunAt = (agent as { last_run_completion?: string })

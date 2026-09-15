@@ -287,6 +287,7 @@ async function executeSubagent(
   environment?: string,
   actingUserIdOverride?: string,
   parentAgentName?: string | null,
+  parentConversationId?: string,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
@@ -389,6 +390,7 @@ async function executeSubagent(
       localBackendStorageDir,
       parentAgentId,
       subagentType: type,
+      parentConversationId,
       launchProfile: effectiveLaunchProfile,
       inheritedPrimaryRoot,
       memoryScope,
@@ -554,6 +556,7 @@ async function executeSubagent(
             environment,
             actingUserIdOverride,
             parentAgentName,
+            parentConversationId,
           );
         }
       }
@@ -584,6 +587,7 @@ async function executeSubagent(
           environment,
           actingUserIdOverride,
           parentAgentName,
+          parentConversationId,
         );
       }
 
@@ -696,6 +700,7 @@ async function executeSubagent(
           environment,
           actingUserIdOverride,
           parentAgentName,
+          parentConversationId,
         );
       }
     }
@@ -944,6 +949,7 @@ async function spawnSubagentInContext(
     environment,
     launchActingUserId,
     parentAgent?.name,
+    resolvedParentConversationId,
   );
 
   return result;

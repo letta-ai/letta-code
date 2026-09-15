@@ -54,6 +54,17 @@ export async function send_agent_message(
       );
     }
     const actingUserId = context?.actingUserId;
+    if (!actingUserId) {
+      console.info(
+        "[SendAgentMessage] Sending without X-Letta-Acting-User-Id",
+        {
+          senderAgentId: sender.agentId,
+          senderConversationId: sender.conversationId,
+          targetAgentId: args.agent_id,
+          targetConversationId: args.conversation_id,
+        },
+      );
+    }
     const signal = AbortSignal.any([
       AbortSignal.timeout(30_000),
       ...(args.signal ? [args.signal] : []),
