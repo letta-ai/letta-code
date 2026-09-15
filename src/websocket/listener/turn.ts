@@ -278,6 +278,7 @@ async function handleIncomingMessageInner(
       preparedToolContext: preparedToolContext.preparedToolContext,
       overrideModel,
       actingUserId: msg.actingUserId,
+      actingUserAssertion: msg.actingUserAssertion,
       getInput: () => turnInput,
       getInterruptedToolCallIds: () =>
         pendingNormalizationInterruptedToolCallIds,

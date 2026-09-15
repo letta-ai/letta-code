@@ -114,6 +114,7 @@ export async function handleExecuteCommand(
         output = await handleClearCommand(socket, conversationRuntime, {
           ...opts,
           actingUserId: command.runtime.acting_user_id,
+          actingUserAssertion: command.runtime.acting_user_assertion,
         });
         break;
 
@@ -121,6 +122,7 @@ export async function handleExecuteCommand(
         output = await handleClearCommand(socket, conversationRuntime, {
           ...opts,
           actingUserId: command.runtime.acting_user_id,
+          actingUserAssertion: command.runtime.acting_user_assertion,
           resetAllAgentMessages: true,
         });
         break;
@@ -141,6 +143,7 @@ export async function handleExecuteCommand(
             agentId,
             conversationId: conversationRuntime.conversationId,
             actingUserId: command.runtime.acting_user_id,
+            actingUserAssertion: command.runtime.acting_user_assertion,
             messages: [
               {
                 type: "message",
@@ -656,6 +659,7 @@ async function handleClearCommand(
     connectionId?: string;
     /** Cloud user id stamped on the relayed frame; echoed on the create call. */
     actingUserId?: string;
+    actingUserAssertion?: string;
     /** Whether to reset the API agent's complete message history. */
     resetAllAgentMessages?: boolean;
   },
@@ -692,7 +696,7 @@ async function handleClearCommand(
     {
       agent_id: agentId,
     },
-    actingUserRequestOptions(opts.actingUserId),
+    actingUserRequestOptions(opts.actingUserId, opts.actingUserAssertion),
   );
 
   // Clear runtime state for the current conversation

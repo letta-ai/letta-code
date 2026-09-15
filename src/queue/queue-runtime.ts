@@ -33,6 +33,8 @@ type QueueItemBase = {
    * flows where cloud doesn't stamp the field.
    */
   actingUserId?: string;
+  /** Cloud-minted proof retained only while this item remains in-process. */
+  actingUserAssertion?: string;
   source: QueueItemSource;
   enqueuedAt: number;
   /**

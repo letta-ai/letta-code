@@ -14,6 +14,7 @@ describe("Monitor stop command parsing", () => {
       agent_id: "agent-a",
       conversation_id: "conv-a",
       acting_user_id: "user-a",
+      acting_user_assertion: "assertion-a",
     },
   };
   test("preserves runtime and relay actor through the wire parser", () => {
@@ -34,6 +35,10 @@ describe("Monitor stop command parsing", () => {
       { ...command, runtime: undefined },
       { ...command, runtime: { agent_id: "agent-a" } },
       { ...command, runtime: { ...command.runtime, acting_user_id: 5 } },
+      {
+        ...command,
+        runtime: { ...command.runtime, acting_user_assertion: 5 },
+      },
       { ...command, process_id: "" },
       { ...command, request_id: "" },
     ])

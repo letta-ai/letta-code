@@ -59,6 +59,7 @@ export function dispatchInboundMessageWhenReady(params: {
   processQueuedTurn: ProcessQueuedTurn;
   processIncomingMessage: typeof handleIncomingMessage;
   actingUserId?: string;
+  actingUserAssertion?: string;
   trackListenerError: (
     errorType: string,
     error: unknown,
@@ -78,6 +79,7 @@ export function dispatchInboundMessageWhenReady(params: {
     processQueuedTurn,
     processIncomingMessage,
     actingUserId,
+    actingUserAssertion,
     trackListenerError,
     onInputAccepted,
   } = params;
@@ -124,6 +126,7 @@ export function dispatchInboundMessageWhenReady(params: {
           runtime,
           incoming,
           actingUserId,
+          actingUserAssertion,
         );
         if (accepted) {
           rememberAcceptedInputDisposition(runtime, clientMessageId, "queued");
@@ -148,8 +151,10 @@ export function dispatchInboundMessageWhenReady(params: {
       // Queued turns store the actor on the queue item. Direct turns skip that
       // item, so carry the actor on the message consumed by turn.ts instead.
       const attributedIncoming =
-        actingUserId && incoming.actingUserId !== actingUserId
-          ? { ...incoming, actingUserId }
+        (actingUserId && incoming.actingUserId !== actingUserId) ||
+        (actingUserAssertion &&
+          incoming.actingUserAssertion !== actingUserAssertion)
+          ? { ...incoming, actingUserId, actingUserAssertion }
           : incoming;
       await processIncomingMessage(
         attributedIncoming,

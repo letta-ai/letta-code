@@ -31,6 +31,8 @@ export function isMonitorStopCommand(
     c.runtime.conversation_id.length > 0 &&
     (c.runtime.acting_user_id === undefined ||
       typeof c.runtime.acting_user_id === "string") &&
+    (c.runtime.acting_user_assertion === undefined ||
+      typeof c.runtime.acting_user_assertion === "string") &&
     typeof c.process_id === "string" &&
     c.process_id.length > 0
   );

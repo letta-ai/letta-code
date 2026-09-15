@@ -48,21 +48,35 @@ test("preserves every input message and author across queue entries", () => {
     runtime,
     { type: "message", ...scope, messages: first },
     "human-a",
+    "assertion-a",
   );
   enqueueInboundUserMessage(
     runtime,
     { type: "message", ...scope, messages: [third] },
     "human-b",
+    "assertion-b",
   );
   const ids = runtime.queueRuntime.peek().map((item) => item.id);
-  const consumed = consumeQueuedTurn(runtime);
-  expect(consumed?.queuedTurn.messages).toEqual([...first, third]);
-  expect(consumed?.dequeuedBatch.items.map((item) => item.id)).toEqual(ids);
+  const firstConsumed = consumeQueuedTurn(runtime);
+  expect(firstConsumed?.queuedTurn.messages).toEqual(first);
+  expect(firstConsumed?.queuedTurn.actingUserId).toBe("human-a");
+  expect(firstConsumed?.queuedTurn.actingUserAssertion).toBe("assertion-a");
+  expect(firstConsumed?.dequeuedBatch.items.map((item) => item.id)).toEqual(
+    ids.slice(0, 1),
+  );
   expect(
     runtime.dequeuedClientMessageIdsByBatchId.get(
-      consumed?.dequeuedBatch.batchId ?? "",
+      firstConsumed?.dequeuedBatch.batchId ?? "",
     ),
-  ).toEqual(["cm-one", "cm-two", "cm-three"]);
+  ).toEqual(["cm-one", "cm-two"]);
+
+  const secondConsumed = consumeQueuedTurn(runtime);
+  expect(secondConsumed?.queuedTurn.messages).toEqual([third]);
+  expect(secondConsumed?.queuedTurn.actingUserId).toBe("human-b");
+  expect(secondConsumed?.queuedTurn.actingUserAssertion).toBe("assertion-b");
+  expect(secondConsumed?.dequeuedBatch.items.map((item) => item.id)).toEqual(
+    ids.slice(1, 2),
+  );
   expect(runtime.queueRuntime.length).toBe(0);
 });
 
@@ -97,15 +111,20 @@ test("a principal reminder never blocks later human steering", () => {
     },
     "human-b",
   );
-  const consumed = consumeQueuedTurn(runtime);
-  expect(consumed?.queuedTurn.messages).toEqual([
-    reminder,
+  const reminderTurn = consumeQueuedTurn(runtime);
+  expect(reminderTurn?.queuedTurn.messages).toEqual([reminder]);
+  expect(reminderTurn?.queuedTurn.actingUserId).toBeUndefined();
+  expect(runtime.queueRuntime.length).toBe(1);
+
+  const humanTurn = consumeQueuedTurn(runtime);
+  expect(humanTurn?.queuedTurn.messages).toEqual([
     {
       role: "user",
       content: "steer",
       attribution: { acting_user_id: "human-b" },
     },
   ]);
+  expect(humanTurn?.queuedTurn.actingUserId).toBe("human-b");
   expect(runtime.queueRuntime.length).toBe(0);
 });
 

@@ -122,6 +122,8 @@ export interface IncomingMessage {
    * self-hosted, single-user, or pre-channel-split flows.
    */
   actingUserId?: string;
+  /** Cloud-minted proof paired with actingUserId; never exported to tool env. */
+  actingUserAssertion?: string;
 }
 
 export type ProcessQueuedTurn = (

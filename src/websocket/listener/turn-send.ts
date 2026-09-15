@@ -34,6 +34,7 @@ export async function startTurnInput(
     preparedToolContext: SendOptions["preparedToolContext"];
     overrideModel: SendOptions["overrideModel"];
     actingUserId?: string;
+    actingUserAssertion?: string;
     getInput: () => TurnInputState;
     getInterruptedToolCallIds: () => string[];
   },
@@ -58,6 +59,9 @@ export async function startTurnInput(
         : {}),
       ...(params.overrideModel ? { overrideModel: params.overrideModel } : {}),
       ...(params.actingUserId ? { actingUserId: params.actingUserId } : {}),
+      ...(params.actingUserAssertion
+        ? { actingUserAssertion: params.actingUserAssertion }
+        : {}),
       ...(params.getInterruptedToolCallIds().length > 0
         ? {
             approvalNormalization: {

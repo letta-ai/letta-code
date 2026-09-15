@@ -598,6 +598,7 @@ export function createListenerMessageHandler(
             processQueuedTurn,
             processIncomingMessage,
             actingUserId: parsed.runtime.acting_user_id,
+            actingUserAssertion: parsed.runtime.acting_user_assertion,
             trackListenerError,
             onInputAccepted: ({ accepted, disposition }) =>
               acknowledgeInput(
@@ -640,6 +641,7 @@ export function createListenerMessageHandler(
             scopedRuntime,
             stampedIncoming,
             parsed.runtime.acting_user_id,
+            parsed.runtime.acting_user_assertion,
           );
           if (enqueued) {
             rememberAcceptedInputDisposition(

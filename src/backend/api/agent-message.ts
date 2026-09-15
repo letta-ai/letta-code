@@ -67,6 +67,7 @@ export async function resolveAgentMessageDestination(
     conversationId?: string;
     senderAgentId?: string;
     actingUserId?: string;
+    actingUserAssertion?: string;
     /** Calling runtime, independent of optional sender attribution overrides. */
     currentConversation?: { agentId?: string; conversationId?: string };
   },
@@ -78,7 +79,10 @@ export async function resolveAgentMessageDestination(
   if (!agentId && !conversationId) {
     throw new Error("Choose a destination with agent_id or conversation_id.");
   }
-  const options = { signal, ...actingUserRequestOptions(input.actingUserId) };
+  const options = {
+    signal,
+    ...actingUserRequestOptions(input.actingUserId, input.actingUserAssertion),
+  };
   if (conversationId && conversationId !== "default") {
     const conversation = await backend.retrieveConversation(
       conversationId,

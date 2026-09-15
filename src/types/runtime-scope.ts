@@ -14,6 +14,7 @@ export interface RuntimeScope<AgentId extends string | null = string> {
   agent_id: AgentId;
   conversation_id: string;
   acting_user_id?: string;
+  acting_user_assertion?: string;
 }
 
 export type AgentRuntimeScope = RuntimeScope<string>;

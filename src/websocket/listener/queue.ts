@@ -63,9 +63,12 @@ export function getQueueItemsScope(items: QueueItem[]): {
 }
 
 function hasSameQueueScope(a: QueueItem, b: QueueItem): boolean {
+  const aActingUserId = a.kind === "message" ? a.actingUserId : undefined;
+  const bActingUserId = b.kind === "message" ? b.actingUserId : undefined;
   return (
     (a.agentId ?? null) === (b.agentId ?? null) &&
-    (a.conversationId ?? null) === (b.conversationId ?? null)
+    (a.conversationId ?? null) === (b.conversationId ?? null) &&
+    (aActingUserId ?? null) === (bActingUserId ?? null)
   );
 }
 
@@ -81,6 +84,8 @@ function buildQueuedTurnMessage(
       template ??= {
         ...incoming,
         actingUserId: incoming.actingUserId ?? item.actingUserId,
+        actingUserAssertion:
+          incoming.actingUserAssertion ?? item.actingUserAssertion,
       };
       messages.push(
         ...incoming.messages.map((message) =>

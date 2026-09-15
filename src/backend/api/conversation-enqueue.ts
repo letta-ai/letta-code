@@ -21,6 +21,7 @@ export interface EnqueueConversationInput {
   content: MessageCreate["content"];
   computer?: string;
   actingUserId?: string;
+  actingUserAssertion?: string;
 }
 
 /** Cloud owns delivery after this request returns 202. Never retry by executing locally. */
@@ -46,7 +47,13 @@ export async function enqueueConversationMessage(
         },
       ],
     },
-    { signal, ...actingUserRequestOptions(input.actingUserId) },
+    {
+      signal,
+      ...actingUserRequestOptions(
+        input.actingUserId,
+        input.actingUserAssertion,
+      ),
+    },
   );
   if (
     accepted.client_message_id !== input.clientMessageId ||
