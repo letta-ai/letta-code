@@ -10,7 +10,7 @@ const managerSource = readFileSync(
 describe("executeSubagent provider fallback wiring", () => {
   test("retries with a new agent, the primary model, and the original memory scope", () => {
     const retryCallMatch = managerSource.match(
-      /return executeSubagent\(\s*type,\s*config,\s*primaryModel,\s*userPrompt,\s*subagentId,\s*true,\s*\/\/ Mark as retry to prevent infinite loops\s*signal,\s*undefined,\s*\/\/ existingAgentId: new agent so --model applies\s*undefined,\s*\/\/ existingConversationId\s*maxTurns,\s*parentAgentIdOverride,\s*transcriptPath,\s*memoryScope,\s*systemPromptOverride,\s*environment,\s*actingUserIdOverride,\s*\);/s,
+      /return executeSubagent\(\s*type,\s*config,\s*primaryModel,\s*userPrompt,\s*subagentId,\s*true,\s*\/\/ Mark as retry to prevent infinite loops\s*signal,\s*undefined,\s*\/\/ existingAgentId: new agent so --model applies\s*undefined,\s*\/\/ existingConversationId\s*maxTurns,\s*parentAgentIdOverride,\s*transcriptPath,\s*memoryScope,\s*systemPromptOverride,\s*environment,\s*actingUserIdOverride,\s*parentAgentName,\s*\);/s,
     );
 
     expect(retryCallMatch).toBeTruthy();
@@ -19,7 +19,7 @@ describe("executeSubagent provider fallback wiring", () => {
 
 describe("executeSubagent lost-output retry wiring", () => {
   const retryCallPattern =
-    /return executeSubagent\(\s*type,\s*config,\s*model,\s*userPrompt,\s*subagentId,\s*true,\s*\/\/ Mark as retry to prevent infinite loops\s*signal,\s*existingAgentId,\s*existingConversationId,\s*maxTurns,\s*parentAgentIdOverride,\s*transcriptPath,\s*memoryScope,\s*systemPromptOverride,\s*environment,\s*actingUserIdOverride,\s*\);/gs;
+    /return executeSubagent\(\s*type,\s*config,\s*model,\s*userPrompt,\s*subagentId,\s*true,\s*\/\/ Mark as retry to prevent infinite loops\s*signal,\s*existingAgentId,\s*existingConversationId,\s*maxTurns,\s*parentAgentIdOverride,\s*transcriptPath,\s*memoryScope,\s*systemPromptOverride,\s*environment,\s*actingUserIdOverride,\s*parentAgentName,\s*\);/gs;
 
   test("retries once with the original payload when the child reports lost stdout or its output looks truncated", () => {
     const retryCalls = managerSource.match(retryCallPattern);

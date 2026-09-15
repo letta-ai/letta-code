@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-
+import {
+  allocateSubagentName,
+  resolveCreatedAgentName,
+} from "@/agent/subagents/names";
 import {
   composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
@@ -16,6 +19,24 @@ const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
 const PARENT_MEMORY_DIR = `/Users/someone/.letta/agents/${PARENT_ID}/memory`;
 
 describe("composeSubagentChildEnv", () => {
+  test("carries the parent's shadow name through child creation", () => {
+    const reservedName = allocateSubagentName("Bob");
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: {},
+      parentAgentId: PARENT_ID,
+      launchProfile: "default",
+      inheritedPrimaryRoot: null,
+      subagentName: reservedName,
+    });
+    const createdName = resolveCreatedAgentName(
+      undefined,
+      true,
+      env[SUBAGENT_NAME_ENV],
+    );
+    expect(createdName).toBe(reservedName);
+    expect(createdName).toEndWith(" (Bob's shadow)");
+  });
+
   test("forwards a reserved name to a fresh child without leaking a parent's name", () => {
     const parentProcessEnv = { [SUBAGENT_NAME_ENV]: "Deckard (subagent)" };
     const options = {

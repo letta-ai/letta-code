@@ -14,16 +14,14 @@ describe("subagent name allocation", () => {
     expect(SUBAGENT_NAMES.length).toBeGreaterThan(0);
     expect(new Set(SUBAGENT_NAMES).size).toBe(SUBAGENT_NAMES.length);
     expect(new Set(names).size).toBe(SUBAGENT_NAMES.length);
-    expect(names.map((name) => name.replace(" (subagent)", ""))).toEqual([
-      ...SUBAGENT_NAMES,
-    ]);
-    expect(allocate()).toBe("Deckard the 2nd (subagent)");
+    expect(names).toEqual([...SUBAGENT_NAMES]);
+    expect(allocate()).toBe("Deckard the 2nd");
   });
 
   test("uses the random choice among names that remain, rather than retrying duplicates", () => {
     const allocate = createSubagentNameAllocator(() => 0.999999);
-    const last = `${SUBAGENT_NAMES.at(-1)} (subagent)`;
-    const penultimate = `${SUBAGENT_NAMES.at(-2)} (subagent)`;
+    const last = `${SUBAGENT_NAMES.at(-1)}`;
+    const penultimate = `${SUBAGENT_NAMES.at(-2)}`;
     expect(allocate()).toBe(last);
     expect(allocate()).toBe(penultimate);
     const rest = Array.from({ length: SUBAGENT_NAMES.length - 2 }, allocate);
@@ -46,7 +44,7 @@ describe("subagent name allocation", () => {
       [23, "23rd"],
     ] as const) {
       expect(names[(round - 1) * SUBAGENT_NAMES.length]).toBe(
-        `Deckard the ${ordinal} (subagent)`,
+        `Deckard the ${ordinal}`,
       );
     }
   });
@@ -56,7 +54,7 @@ describe("subagent name allocation", () => {
     const second = createSubagentNameAllocator(() => 0);
     expect(first()).toBe(second());
     first();
-    expect(second()).toBe(`${SUBAGENT_NAMES[1]} (subagent)`);
+    expect(second()).toBe(SUBAGENT_NAMES[1]);
   });
 
   test("interleaved callers share the process allocator without collisions", async () => {
@@ -68,20 +66,32 @@ describe("subagent name allocation", () => {
     );
     expect(new Set(names).size).toBe(SUBAGENT_NAMES.length);
   });
+
+  test("labels each new agent as its own parent's shadow", () => {
+    expect(allocateSubagentName("Bob")).toEndWith(" (Bob's shadow)");
+    expect(allocateSubagentName("Alice")).toEndWith(" (Alice's shadow)");
+    expect(allocateSubagentName("  Bob  ")).toEndWith(" (Bob's shadow)");
+  });
+
+  test("uses shadow when no parent name is available", () => {
+    for (const parent of [undefined, null, "", "  "]) {
+      expect(allocateSubagentName(parent)).toEndWith(" (shadow)");
+    }
+  });
 });
 
 describe("new agent name selection", () => {
   test("uses the parent's reservation without drawing again in the child", () => {
-    expect(resolveCreatedAgentName(undefined, true, "Joi (subagent)")).toBe(
-      "Joi (subagent)",
+    expect(resolveCreatedAgentName(undefined, true, "Joi (Bob's shadow)")).toBe(
+      "Joi (Bob's shadow)",
     );
   });
 
   test("standalone subagent creation also receives a generated name", () => {
     const first = resolveCreatedAgentName(undefined, true);
     const second = resolveCreatedAgentName(undefined, true);
-    expect(first).toEndWith(" (subagent)");
-    expect(second).toEndWith(" (subagent)");
+    expect(first).toEndWith(" (shadow)");
+    expect(second).toEndWith(" (shadow)");
     expect(first).not.toBe(second);
   });
 
