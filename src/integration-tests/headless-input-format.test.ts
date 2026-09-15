@@ -674,7 +674,9 @@ describe("input-format stream-json", () => {
               },
             }),
           ],
-          [],
+          // Task is the internal name of the model-facing Agent tool.
+          // The child receives its own general-purpose toolset, including Read.
+          ["--tools", "Task", "--base-tools", "none"],
           240000,
           1,
           { USER_CWD: fixture.rootDir },
