@@ -13,8 +13,8 @@ import {
 } from "@/backend/local/local-message";
 import { LocalStore } from "@/backend/local/local-store";
 import {
-  attachLocalContentPrefix,
   attachLocalMessage,
+  attachLocalSegmentIdentity,
   markLocalStateChunkOnly,
 } from "@/backend/local/local-stream-chunks";
 
@@ -109,11 +109,13 @@ describe("local segment identity", () => {
         store.appendStreamChunk(
           "default",
           agentId,
-          attachLocalContentPrefix(
-            delta as LettaStreamingResponse,
-            content,
-            index,
-          ),
+          attachLocalSegmentIdentity(delta as LettaStreamingResponse, {
+            contentStartIndex:
+              index > 0 && content[index - 1]?.type === part.type
+                ? index - 1
+                : index,
+            useSourceMessageId: part.type === "text" && index === 0,
+          }),
         ),
       );
     }

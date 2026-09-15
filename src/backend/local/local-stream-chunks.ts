@@ -1,6 +1,6 @@
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import type { LocalAssistantMessage, LocalMessage } from "./local-message";
+import type { LocalMessage } from "./local-message";
 import { projectLocalMessageToStoredMessages } from "./local-message-projection";
 import type { StoredMessage } from "./local-types";
 
@@ -19,16 +19,20 @@ export function toStoredOutputFields(chunk: Record<string, unknown>) {
 
 const LOCAL_MESSAGE = Symbol.for("@letta/local-provider-message");
 const LOCAL_STATE_CHUNK_ONLY = Symbol.for("@letta/local-state-chunk-only");
-const LOCAL_CONTENT_PREFIX = Symbol.for("@letta/local-content-prefix");
+const LOCAL_SEGMENT_IDENTITY = Symbol.for("@letta/local-segment-identity");
 
-/** Keep provider block indices intact; delta accumulation alone coalesces blocks. */
-export function attachLocalContentPrefix<T extends object>(
+export interface LocalSegmentIdentity {
+  contentStartIndex: number;
+  useSourceMessageId: boolean;
+}
+
+/** Keep the provider segment identity without copying the response-so-far. */
+export function attachLocalSegmentIdentity<T extends object>(
   target: T,
-  content: LocalAssistantMessage["content"],
-  contentIndex: number,
+  identity: LocalSegmentIdentity,
 ): T {
-  Object.defineProperty(target, LOCAL_CONTENT_PREFIX, {
-    value: structuredClone(content.slice(0, contentIndex + 1)),
+  Object.defineProperty(target, LOCAL_SEGMENT_IDENTITY, {
+    value: identity,
     enumerable: false,
   });
   return target;
@@ -47,22 +51,24 @@ export function canonicalizeLocalStreamChunk(
   )
     return stored;
 
-  const prefix = (
-    chunk as unknown as Record<symbol, LocalAssistantMessage["content"]>
-  )[LOCAL_CONTENT_PREFIX];
-  if (prefix) message.content = prefix;
-  const canonical = projectLocalMessageToStoredMessages(
-    message,
-    stored.agent_id,
-    stored.conversation_id,
-    stored.date,
-  ).at(-1);
-  if (!canonical || canonical.message_type !== chunk.message_type)
-    return stored;
+  const identity = (
+    chunk as unknown as Record<symbol, LocalSegmentIdentity | undefined>
+  )[LOCAL_SEGMENT_IDENTITY];
+  const id = identity
+    ? chunk.message_type === "assistant_message" && identity.useSourceMessageId
+      ? message.id
+      : `${message.id}:${chunk.message_type === "assistant_message" ? "assistant" : "reasoning"}:${identity.contentStartIndex}`
+    : projectLocalMessageToStoredMessages(
+        message,
+        stored.agent_id,
+        stored.conversation_id,
+        stored.date,
+      ).at(-1)?.id;
+  if (!id) return stored;
   // Provider OTIDs are transient and are not persisted. Leaving one here would
   // override the canonical envelope identity in assistant/reasoning consumers.
   const { otid: _otid, ...fields } = stored;
-  return { ...fields, id: canonical.id } as StoredMessage;
+  return { ...fields, id } as StoredMessage;
 }
 
 export function attachLocalMessage<T extends object>(
