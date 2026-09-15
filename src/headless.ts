@@ -82,7 +82,6 @@ import {
   getBackend,
 } from "./backend";
 import {
-  type EnvironmentConnection,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
 } from "./backend/api/environments";
@@ -123,13 +122,23 @@ import {
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import { tryCloudHeadlessSend } from "./headless-cloud-send";
-import { isCloudEnvironmentSelector } from "./headless-environment-response";
+import {
+  buildEnvironmentCompletedResult,
+  buildEnvironmentLaunchErrorResult,
+  buildEnvironmentQueuedResult,
+  buildEnvironmentResponseMetadata,
+  isCloudEnvironmentSelector,
+  type ReplyEnvironmentMetadata,
+} from "./headless-environment-response";
 import {
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
   prepareHeadlessEphemeralBackend,
 } from "./headless-ephemeral-startup";
-import { launchListenerConversation } from "./headless-listener-launch";
+import {
+  type ListenerLaunchResult,
+  launchListenerConversation,
+} from "./headless-listener-launch";
 import { resolveHeadlessMemfsPolicy } from "./headless-memfs-policy";
 import {
   createHeadlessModAdapter,
@@ -202,6 +211,7 @@ import type {
   SystemInitMessage,
 } from "./types/protocol";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
+import { getErrorMessage } from "./utils/error";
 import {
   markMilestone,
   measureSinceMilestone,
@@ -650,38 +660,6 @@ async function writeFinalHeadlessStdout(text: string): Promise<void> {
     }
     process.stdout.write(text, () => resolve());
   });
-}
-
-type ReplyEnvironmentMetadata =
-  | {
-      source: "same-environment";
-    }
-  | {
-      source: "explicit" | "cloud-sandbox";
-      input: string;
-      id: string;
-      connection_id: string;
-      device_id: string;
-      name: string;
-    };
-
-function buildEnvironmentResponseMetadata(params: {
-  source: Extract<
-    ReplyEnvironmentMetadata,
-    { source: "explicit" | "cloud-sandbox" }
-  >["source"];
-  input: string;
-  connectionId: string;
-  environment: EnvironmentConnection;
-}): ReplyEnvironmentMetadata {
-  return {
-    source: params.source,
-    input: params.input,
-    id: params.environment.id,
-    connection_id: params.connectionId,
-    device_id: params.environment.deviceId,
-    name: params.environment.connectionName,
-  };
 }
 
 export async function handleHeadlessCommand(
@@ -2033,7 +2011,9 @@ ${SYSTEM_REMINDER_CLOSE}
           environment: environmentRouting.environment,
         })
       : { source: "same-environment" };
-    const environmentResult = await launchListenerConversation({
+    const launchStarted = Date.now();
+    const launchParams: Parameters<typeof launchListenerConversation>[0] = {
+      noWait: Boolean(values["no-wait"]),
       connectionId,
       scope: {
         agent_id: agent.id,
@@ -2090,61 +2070,73 @@ ${SYSTEM_REMINDER_CLOSE}
             }
           : {}),
       },
-    });
-    const stats = sessionStats.getSnapshot();
-
-    if (outputFormat === "json") {
-      await writeFinalHeadlessStdout(
-        `${JSON.stringify(
-          {
-            type: "result",
-            subtype: "success",
-            is_error: false,
-            duration_ms: Math.round(stats.totalWallMs),
-            duration_api_ms: Math.round(stats.totalApiMs),
-            num_turns:
-              environmentResult.usage.step_count ??
-              environmentResult.runIds.length,
-            result: environmentResult.text,
-            agent_id: publicAgentId,
-            conversation_id: conversationId,
-            environment: responseEnvironment,
-            usage: environmentResult.usage,
-            ...(environmentResult.stopReason &&
-            environmentResult.stopReason !== "end_turn"
-              ? { stop_reason: environmentResult.stopReason }
-              : {}),
-          },
-          null,
-          2,
-        )}\n`,
+    };
+    const launchEnvelopeBase = {
+      sessionId,
+      agentId: publicAgentId,
+      internalAgentId: agent.id,
+      conversationId,
+      environment: responseEnvironment,
+      startedAt: launchStarted,
+    };
+    let launchOutcome: ListenerLaunchResult;
+    try {
+      launchOutcome = await launchListenerConversation(launchParams);
+    } catch (error) {
+      // Without this, a launch failure would surface as an unhandled
+      // rejection: the fatal handler exits 1 without printing anything, so a
+      // parent reading stdout sees no result envelope and a stderr that only
+      // holds startup noise (#3735).
+      const detail = getErrorMessage(error);
+      trackHeadlessBoundaryError(
+        "headless_environment_launch_failed",
+        error,
+        "headless_environment_launch",
       );
-    } else if (outputFormat === "stream-json") {
-      const resultEvent: ResultMessage & {
-        environment: ReplyEnvironmentMetadata;
-      } = {
-        type: "result",
-        subtype: "success",
-        session_id: sessionId,
-        duration_ms: Math.round(stats.totalWallMs),
-        duration_api_ms: Math.round(stats.totalApiMs),
-        num_turns:
-          environmentResult.usage.step_count ?? environmentResult.runIds.length,
-        result: environmentResult.text,
-        agent_id: publicAgentId,
-        conversation_id: conversationId,
-        environment: responseEnvironment,
-        run_ids: environmentResult.runIds,
-        usage: environmentResult.usage,
-        uuid: `result-${agent.id}-${Date.now()}`,
-        ...(environmentResult.stopReason &&
-        environmentResult.stopReason !== "end_turn"
-          ? { stop_reason: environmentResult.stopReason }
-          : {}),
-      };
-      writeWireMessage(resultEvent);
+      if (outputFormat === "text") {
+        console.error(`Error: ${detail}`);
+      } else {
+        const errorResult = buildEnvironmentLaunchErrorResult({
+          ...launchEnvelopeBase,
+          error: detail,
+        });
+        if (outputFormat === "json")
+          await writeFinalHeadlessStdout(
+            `${JSON.stringify(errorResult, null, 2)}\n`,
+          );
+        else writeWireMessage(errorResult);
+      }
+      return exitHeadless(1, "headless_environment_launch_failed");
+    }
+    if (launchOutcome.status === "queued") {
+      // --no-wait: Cloud accepted the send; nothing in this process waits for
+      // the remote turn. The caller tracks completion through the receipt.
+      const queued = buildEnvironmentQueuedResult({
+        ...launchEnvelopeBase,
+        receipt: launchOutcome.receipt,
+      });
+      if (outputFormat === "stream-json") writeWireMessage(queued);
+      else
+        await writeFinalHeadlessStdout(
+          `${JSON.stringify(queued, null, outputFormat === "json" ? 2 : 0)}\n`,
+        );
+      return exitHeadless(0, "headless_environment_message_queued");
+    }
+    const stats = sessionStats.getSnapshot();
+    if (outputFormat === "text") {
+      await writeFinalHeadlessStdout(`${launchOutcome.text}\n`);
     } else {
-      await writeFinalHeadlessStdout(`${environmentResult.text}\n`);
+      const completed = buildEnvironmentCompletedResult({
+        ...launchEnvelopeBase,
+        reply: launchOutcome,
+        durationMs: Math.round(stats.totalWallMs),
+        durationApiMs: Math.round(stats.totalApiMs),
+      });
+      if (outputFormat === "json")
+        await writeFinalHeadlessStdout(
+          `${JSON.stringify(completed, null, 2)}\n`,
+        );
+      else writeWireMessage(completed);
     }
 
     await exitHeadless(0, "headless_environment_message_complete");

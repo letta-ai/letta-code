@@ -7,7 +7,10 @@ import type {
   ConversationStatusEvent,
   EnqueueReceipt,
 } from "@/backend/api/conversation-enqueue";
-import { waitForEnqueuedReply } from "./headless-enqueue-wait";
+import {
+  EnqueuedWaitError,
+  waitForEnqueuedReply,
+} from "./headless-enqueue-wait";
 
 const receipt: EnqueueReceipt = {
   status: "queued",
@@ -213,4 +216,60 @@ test("completed run allows the final message to become visible on a later read",
   });
   expect(reply.text).toBe("visible now");
   expect(reads).toBe(2);
+});
+
+test("a completed super run with no run ever mapped ends the wait after a grace period", async () => {
+  // Without this the wait would poll forever once the stream that carried the
+  // run mapping is gone; callers with no wall-clock ceiling rely on it.
+  let now = 0;
+  const error = await waitForEnqueuedReply({
+    ...base,
+    firstEvent: event({}),
+    now: () => now,
+    retrieveRun: async () => {
+      throw new Error("must not guess a run");
+    },
+    listRunMessages: async () => [],
+    latestSuperRun: async () => {
+      now += 6_000;
+      return {
+        id: "sr-1",
+        status: "COM",
+        completed_at: "now",
+        cancelled_at: null,
+        errored_at: null,
+      };
+    },
+  }).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(EnqueuedWaitError);
+  expect((error as EnqueuedWaitError).sendEnded).toBe(true);
+  expect((error as Error).message).toContain(
+    "completed before a run was observed",
+  );
+});
+
+test("a closed stream is transport loss, not the send ending", async () => {
+  const error = await waitForEnqueuedReply({
+    ...base,
+    firstEvent: event({}),
+    events: { next: async () => ({ done: true, value: undefined }) },
+    retrieveRun: async () => ({ id: "run-unexpected", agent_id: "agent-1" }),
+    listRunMessages: async () => [],
+  }).catch((e: unknown) => e);
+  expect((error as EnqueuedWaitError).sendEnded).toBe(false);
+});
+
+test("a caller-provided run set is kept across a reopened stream", async () => {
+  // First connection mapped run-1, then dropped. The reopened stream carries
+  // no mapping, yet the reply must still be located through run-1.
+  const runIds = new Set(["run-1"]);
+  const reply = await waitForEnqueuedReply({
+    ...base,
+    runIds,
+    firstEvent: event({}),
+    retrieveRun: async (id) =>
+      ({ id, status: "completed", stop_reason: "end_turn" }) as Run,
+    listRunMessages: async (id) => [assistant(`from ${id}`, id)],
+  });
+  expect(reply).toMatchObject({ text: "from run-1", runIds: ["run-1"] });
 });

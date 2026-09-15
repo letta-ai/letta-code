@@ -8,6 +8,7 @@ import {
   type AgentRuntimeStatusSnapshot,
   getAgentRuntimeStatus,
 } from "@/backend/api/agents";
+import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import {
   type EnvironmentConnection,
   getEnvironmentConnection,
@@ -16,6 +17,141 @@ import {
 } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
 import { toolFilter } from "@/tools/filter";
+import type { ResultMessage, UsageStatistics } from "@/types/protocol";
+
+export type ReplyEnvironmentMetadata =
+  | {
+      source: "same-environment";
+    }
+  | {
+      source: "explicit" | "cloud-sandbox";
+      input: string;
+      id: string;
+      connection_id: string;
+      device_id: string;
+      name: string;
+    };
+
+export function buildEnvironmentResponseMetadata(params: {
+  source: Extract<
+    ReplyEnvironmentMetadata,
+    { source: "explicit" | "cloud-sandbox" }
+  >["source"];
+  input: string;
+  connectionId: string;
+  environment: EnvironmentConnection;
+}): ReplyEnvironmentMetadata {
+  return {
+    source: params.source,
+    input: params.input,
+    id: params.environment.id,
+    connection_id: params.connectionId,
+    device_id: params.environment.deviceId,
+    name: params.environment.connectionName,
+  };
+}
+
+interface EnvironmentLaunchEnvelopeBase {
+  sessionId: string;
+  agentId: string | null;
+  internalAgentId: string;
+  conversationId: string;
+  environment: ReplyEnvironmentMetadata;
+  startedAt: number;
+}
+
+function environmentLaunchEnvelope(base: EnvironmentLaunchEnvelopeBase): Omit<
+  ResultMessage,
+  "subtype" | "result"
+> & {
+  environment: ReplyEnvironmentMetadata;
+} {
+  return {
+    type: "result",
+    session_id: base.sessionId,
+    duration_ms: Date.now() - base.startedAt,
+    duration_api_ms: 0,
+    num_turns: 0,
+    agent_id: base.agentId,
+    conversation_id: base.conversationId,
+    environment: base.environment,
+    run_ids: [],
+    usage: null,
+    uuid: `result-${base.internalAgentId}-${Date.now()}`,
+  };
+}
+
+/**
+ * Result envelope for a listener launch that threw before the remote turn
+ * produced anything. Same field shape as Cloud-routed send failures
+ * (`result: null`, text in `error`) so parents parse both the same way.
+ */
+export function buildEnvironmentLaunchErrorResult(
+  params: EnvironmentLaunchEnvelopeBase & { error: string },
+): ResultMessage & {
+  is_error: true;
+  error: string;
+  environment: ReplyEnvironmentMetadata;
+} {
+  return {
+    ...environmentLaunchEnvelope(params),
+    subtype: "error",
+    is_error: true,
+    error: params.error,
+    result: null,
+    stop_reason: "error",
+  };
+}
+
+/** Result envelope for a computer-routed turn that returned its reply. */
+export function buildEnvironmentCompletedResult(
+  params: EnvironmentLaunchEnvelopeBase & {
+    reply: {
+      text: string;
+      runIds: string[];
+      usage: UsageStatistics;
+      stopReason: StopReasonType | null;
+    };
+    durationMs: number;
+    durationApiMs: number;
+  },
+): ResultMessage & { is_error: false; environment: ReplyEnvironmentMetadata } {
+  const { reply } = params;
+  return {
+    ...environmentLaunchEnvelope(params),
+    subtype: "success",
+    is_error: false,
+    duration_ms: params.durationMs,
+    duration_api_ms: params.durationApiMs,
+    num_turns: reply.usage.step_count ?? reply.runIds.length,
+    result: reply.text,
+    run_ids: reply.runIds,
+    usage: reply.usage,
+    ...(reply.stopReason && reply.stopReason !== "end_turn"
+      ? { stop_reason: reply.stopReason }
+      : {}),
+  };
+}
+
+/**
+ * Result envelope for `--no-wait` on a computer-routed launch: Cloud accepted
+ * the send and this process stops here. The receipt lets the caller follow
+ * the remote turn.
+ */
+export function buildEnvironmentQueuedResult(
+  params: EnvironmentLaunchEnvelopeBase & { receipt: EnqueueReceipt },
+): ResultMessage &
+  EnqueueReceipt & { is_error: false; environment: ReplyEnvironmentMetadata } {
+  return {
+    ...environmentLaunchEnvelope(params),
+    // The receipt's agent_id/conversation_id win: the parent needs the exact
+    // identifiers Cloud accepted to follow the send.
+    ...params.receipt,
+    subtype: "queued",
+    is_error: false,
+    result: null,
+  };
+}
 
 export function isCloudEnvironmentSelector(
   selector: string | boolean | undefined,

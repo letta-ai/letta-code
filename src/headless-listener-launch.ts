@@ -10,6 +10,7 @@ import {
 import type { Backend } from "@/backend";
 import {
   dequeueConversationMessage,
+  type EnqueueReceipt,
   enqueueConversationMessage,
   getLatestConversationSuperRun,
   listEnqueuedRunMessages,
@@ -92,6 +93,16 @@ export async function cancelListenerInput(params: {
   return response.aborted;
 }
 
+export type ListenerLaunchResult =
+  | {
+      status: "completed";
+      text: string;
+      stopReason: StopReasonType | null;
+      runIds: string[];
+      usage: UsageStatistics;
+    }
+  | { status: "queued"; receipt: EnqueueReceipt };
+
 /** The CLI remains the caller; the existing listener owns model and tool execution. */
 export async function launchListenerConversation(
   params: {
@@ -105,6 +116,12 @@ export async function launchListenerConversation(
     skillSources?: RuntimeStartCommand["skill_sources"];
     onMessage?: (message: MessageDelta) => void;
     signal?: AbortSignal;
+    /**
+     * Return the enqueue receipt as soon as Cloud accepts the send instead of
+     * waiting for the remote turn. The caller tracks completion through the
+     * Cloud super-run status APIs; nothing in this process keeps waiting.
+     */
+    noWait?: boolean;
   },
   deps: {
     client?: AppServerClient;
@@ -115,12 +132,7 @@ export async function launchListenerConversation(
     pollMs?: number;
     waitDeadline?: AbortSignal;
   } = {},
-): Promise<{
-  text: string;
-  stopReason: StopReasonType | null;
-  runIds: string[];
-  usage: UsageStatistics;
-}> {
+): Promise<ListenerLaunchResult> {
   const client =
     deps.client ??
     (await createListenerClient(params.connectionId, params.scope));
@@ -242,6 +254,7 @@ export async function launchListenerConversation(
       },
       AbortSignal.timeout(30_000),
     );
+    if (params.noWait) return { status: "queued", receipt: accepted };
     while (true) {
       if (disconnected)
         throw new Error(
@@ -324,6 +337,7 @@ export async function launchListenerConversation(
                       .join("\n");
               if (text.trim())
                 return {
+                  status: "completed",
                   text,
                   stopReason: run.stop_reason ?? null,
                   runIds: [...runIds],
