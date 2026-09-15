@@ -124,9 +124,19 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
       }
     }, timeoutMs);
 
-    const cleanup = () => {
+    // The promise resolves from the "close" handler, after the CLI's stdio has
+    // closed, so the test-home preload never removes the temp home while the
+    // child still holds files in it (Windows reports EBUSY).
+    let finalResult: {
+      messages: StreamMessage[];
+      success: boolean;
+      errorSeen: boolean;
+    } | null = null;
+    const finish = (success: boolean) => {
+      if (closing) return;
       closing = true;
       clearTimeout(timeout);
+      finalResult = { messages, success, errorSeen };
       setTimeout(() => {
         proc.stdin?.end();
         proc.kill();
@@ -255,8 +265,7 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
             return;
           }
           if (resultCount >= 1 && !approvalSeen) {
-            cleanup();
-            resolve({ messages, success: false, errorSeen });
+            finish(false);
             return;
           }
 
@@ -267,8 +276,7 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
             approvalSeen &&
             (interruptSent || errorSeen)
           ) {
-            cleanup();
-            resolve({ messages, success: true, errorSeen });
+            finish(true);
           }
         }
       } catch {
@@ -298,14 +306,8 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
         processLine(buffer);
       }
 
-      if (!closing) {
-        // If we got here without resolving, check what we have
-        resolve({
-          messages,
-          success: resultCount > 0,
-          errorSeen,
-        });
-      }
+      // A child that exited on its own is judged by what it produced.
+      resolve(finalResult ?? { messages, success: resultCount > 0, errorSeen });
     });
 
     proc.on("error", (err) => {
