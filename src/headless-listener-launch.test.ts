@@ -17,6 +17,7 @@ import {
   launchListenerConversation,
   listenerControlUrl,
 } from "./headless-listener-launch";
+import { buildHeadlessSenderReminder } from "./headless-message-sender";
 
 const scope: AgentRuntimeScope = {
   agent_id: "agent-child",
@@ -112,14 +113,28 @@ const backend = {
     ({ id, status: "completed", stop_reason: "end_turn" }) as Run,
 };
 
-test("CLI configures the listener before admitted enqueue and preserves output, usage and acting user", async () => {
+test.each([
+  { content: "hello" },
+  {
+    content: [
+      {
+        type: "text" as const,
+        text: buildHeadlessSenderReminder(true, undefined, {
+          LETTA_PARENT_AGENT_ID: "agent-parent",
+          LETTA_PARENT_CONVERSATION_ID: "conv-parent",
+        }),
+      },
+      { type: "text" as const, text: "hello" },
+    ],
+  },
+])("listener enqueue preserves sender: %j", async ({ content }) => {
   const wire = transport();
   const onMessage = mock(() => {});
   const result = await launchListenerConversation(
     {
       connectionId: "conn-target",
       scope,
-      content: "hello",
+      content: typeof content === "string" ? content : [...content],
       backend,
       settings,
       cwd: "/workspace",
@@ -137,7 +152,7 @@ test("CLI configures the listener before admitted enqueue and preserves output, 
         expect(input).toMatchObject({
           computer: "conn-target",
           actingUserId: "user-parent",
-          content: "hello",
+          content,
         });
         wire.emit({
           type: "update_loop_status",
