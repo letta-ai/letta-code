@@ -1,6 +1,6 @@
 ---
 name: self-configuration
-description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, agent secrets, and local runtime settings. Use when the user asks how this agent or conversation is configured, asks you to change how you behave or how the harness runs you, or renames you.
+description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, agent secrets, and local runtime settings. Use when the user asks how this agent or conversation is configured, asks about account usage or remaining credits, asks you to change how you behave or how the harness runs you, or renames you.
 license: MIT
 ---
 
@@ -52,6 +52,14 @@ Local settings, server state, and the current process are different sources of t
 - `letta model list [--byok | --hosted]` lists available models.
 - `letta model set [model_handle] [--reasoning <reasoning-option>] [--default]` changes the current conversation's model or reasoning; add `--default` only when the user asks for the agent default.
 - `letta model get [--default]` gets the current model configuration; `--default` gets the agent's default configuration.
+
+### Account usage and credits
+
+Run `letta usage` to read the authenticated account's credit balance as JSON (`total_balance`, `monthly_credit_balance`, `purchased_credit_balance`, and `billing_tier`). Amounts are credits, not dollars; preserve negative balances. The command uses CLI auth and respects `LETTA_API_KEY`/`LETTA_BASE_URL`, not agent or conversation selectors. In local mode, use `letta --backend cloud usage` only when the user wants the Cloud account's balance.
+
+Use `letta model list` for available models. Credit balance does not report remaining model quota or prove inference availability. `letta usage` does not include session token statistics; the interactive `/usage` command is a separate surface. Treat a failed request as unavailable data, not a zero balance.
+
+### Harness and server settings
 
 Use the secret-safe local/runtime report for harness settings, permissions, and backend diagnostics:
 
