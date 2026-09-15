@@ -46,6 +46,7 @@ import {
   mapHandleToLlmConfigPatch,
   providerTypeFromModelSettings,
   providerTypeFromUpdateArgs,
+  resolveModelSelectionReasoningHandle,
 } from "./model-config";
 import { formatReflectionSettings } from "./reflection";
 import type {
@@ -378,9 +379,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               reasoningCapabilities,
             })
           : getReasoningTierOptionsForHandle(
-              models.some((entry) => entry.handle === modelHandle)
-                ? modelHandle
-                : registryHandle,
+              resolveModelSelectionReasoningHandle(modelHandle, registryHandle),
               selectedContextWindow,
               reasoningCapabilities,
             );

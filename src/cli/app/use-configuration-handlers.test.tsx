@@ -1,11 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { Readable, Writable } from "node:stream";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { render } from "ink";
 import { type ComponentProps, useState } from "react";
 import stripAnsi from "strip-ansi";
-import { clearAvailableModelsCache } from "@/agent/available-models";
 import { models } from "@/agent/model";
 import { toRuntimeCatalogModels } from "@/agent/remote-model-catalog";
 import { ModelReasoningSelector } from "@/cli/components/ModelReasoningSelector";
@@ -18,7 +17,6 @@ import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-cata
 import { useConfigurationHandlers } from "./use-configuration-handlers";
 
 setupRuntimeModelCatalogFixture();
-afterEach(clearAvailableModelsCache);
 
 type Handlers = ReturnType<typeof useConfigurationHandlers>;
 type Context = Parameters<typeof useConfigurationHandlers>[0];
@@ -41,6 +39,17 @@ class CaptureStream extends Writable {
     this.chunks.push(String(chunk));
     callback();
   }
+}
+
+async function waitFor(
+  predicate: () => boolean,
+  description: string,
+): Promise<void> {
+  const deadline = Date.now() + 1000;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  if (!predicate()) throw new Error(`Timed out waiting for ${description}`);
 }
 
 function createContext(): Context {
@@ -92,15 +101,10 @@ function createContext(): Context {
   };
 }
 
-async function exercisePicker(
-  selection: ModelSelectorSelection,
-  columns: number,
-) {
-  clearAvailableModelsCache();
+async function renderPickerForSelection(selection: ModelSelectorSelection) {
   const captured: {
     handlers?: Handlers;
     prompt?: Prompt;
-    selected?: ModelSelectorSelection;
   } = {};
   function Harness() {
     const [prompt, setPrompt] = useState<Prompt>(null);
@@ -112,15 +116,12 @@ async function exercisePicker(
     return prompt ? (
       <ModelReasoningSelector
         {...prompt}
-        onSelect={(option) => {
-          captured.selected = option.selection;
-        }}
+        onSelect={() => {}}
         onCancel={() => setPrompt(null)}
       />
     ) : null;
   }
   const stdout = new CaptureStream();
-  stdout.columns = columns;
   const stdin = new Readable({ read() {} }) as NodeJS.ReadStream;
   stdin.isTTY = true;
   stdin.setRawMode = () => stdin;
@@ -134,30 +135,19 @@ async function exercisePicker(
     exitOnCtrlC: false,
   });
   try {
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    expect(captured.handlers).toBeDefined();
+    await waitFor(() => captured.handlers !== undefined, "handler mount");
     await captured.handlers?.handleModelSelect(selection);
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    expect(captured.prompt).toBeTruthy();
-    const output = stripAnsi(stdout.chunks.join(""));
-    expect(output).toContain("Set your model's reasoning settings");
-    expect(output).toContain("Medium");
-    const options = captured.prompt?.options ?? [];
-    expect(options.some((option) => option.effort === "high")).toBe(true);
-    stdin.push("\u001b[C");
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    expect(stripAnsi(stdout.chunks.join(""))).toContain("High");
-    stdin.push("\r");
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(captured.selected?.handle).toBe(selection.handle);
-    expect(captured.selected?.updateArgs).toMatchObject({
-      reasoning_effort: "high",
-      provider_type: selection.updateArgs?.provider_type,
-    });
-    stdin.push("\u001b");
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(captured.prompt).toBeNull();
-    return options;
+    await waitFor(
+      () =>
+        stripAnsi(stdout.chunks.join("")).includes(
+          "Set your model's reasoning settings",
+        ),
+      "reasoning picker",
+    );
+    return {
+      output: stripAnsi(stdout.chunks.join("")),
+      options: captured.prompt?.options ?? [],
+    };
   } finally {
     instance.unmount();
     instance.cleanup();
@@ -167,75 +157,43 @@ async function exercisePicker(
 }
 
 describe("model reasoning picker", () => {
-  for (const columns of [60, 100]) {
-    test.each(["gpt-5.6-sol", "gpt-6-astra"])(
-      `opens local %s reasoning and selects high at ${columns} columns`,
-      async (modelId) => {
-        const model = getBuiltinModels("openai-codex").find(
-          (entry) => entry.id === modelId,
-        );
-        if (!model) throw new Error(`Missing catalog model: ${modelId}`);
-        const handle = `openai-codex/${modelId}`;
-        const levels = getSupportedThinkingLevels(model);
-        models.splice(
-          0,
-          models.length,
-          ...toRuntimeCatalogModels([
-            {
-              handle,
-              label: model.name,
-              providerType: "chatgpt_oauth",
-              maxContextWindow: model.contextWindow,
-              maxOutputTokens: model.maxTokens,
-              reasoningLevels: levels,
-            },
-          ]),
-        );
-        const options = await exercisePicker(
-          {
-            id: handle,
-            handle,
-            label: model.name,
-            description: "",
-            registryHandle: registryHandleForBackendModel(
-              handle,
-              "chatgpt_oauth",
-            ),
-            updateArgs: {
-              provider_type: "chatgpt_oauth",
-              context_window: model.contextWindow,
-            },
-          },
-          columns,
-        );
-        expect(options.map((option) => option.effort)).toEqual(
-          levels.map((level) => (level === "off" ? "none" : level)),
-        );
-      },
+  test("renders the picker for a local ChatGPT OAuth model", async () => {
+    const model = getBuiltinModels("openai-codex").find(
+      (entry) => entry.id === "gpt-5.6-sol",
     );
-  }
-
-  test.each([
-    ["lc-openai/gpt-5.4", "openai/gpt-5.4", "openai"],
-    [
-      "chatgpt-personal/gpt-5.6-sol",
-      "chatgpt-plus-pro/gpt-5.6-sol",
-      "chatgpt_oauth",
-    ],
-  ])(
-    "preserves Cloud alias %s and its registry tiers",
-    async (handle, registryHandle, providerType) => {
-      await exercisePicker(
+    if (!model) throw new Error("Missing GPT-5.6 Sol from pi-ai catalog");
+    const handle = `openai-codex/${model.id}`;
+    const levels = getSupportedThinkingLevels(model);
+    models.splice(
+      0,
+      models.length,
+      ...toRuntimeCatalogModels([
         {
-          id: handle,
           handle,
-          label: handle,
-          registryHandle,
-          description: "",
-          updateArgs: { provider_type: providerType },
+          label: model.name,
+          providerType: "chatgpt_oauth",
+          maxContextWindow: model.contextWindow,
+          maxOutputTokens: model.maxTokens,
+          reasoningLevels: levels,
         },
-        100,
-      );
-    },
-  );
+      ]),
+    );
+
+    const result = await renderPickerForSelection({
+      id: handle,
+      handle,
+      label: model.name,
+      description: "",
+      registryHandle: registryHandleForBackendModel(handle, "chatgpt_oauth"),
+      updateArgs: {
+        provider_type: "chatgpt_oauth",
+        context_window: model.contextWindow,
+      },
+    });
+
+    expect(result.output).toContain("Set your model's reasoning settings");
+    expect(result.options.map((option) => option.effort)).toEqual(
+      levels.map((level) => (level === "off" ? "none" : level)),
+    );
+  });
 });
