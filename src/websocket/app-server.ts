@@ -19,6 +19,7 @@ import {
 } from "@/websocket/app-server-openai";
 import { closeOpenAiBridgeRuntime } from "@/websocket/app-server-openai-turn";
 import { getAppServerInfoResponse } from "@/websocket/listener/commands/app-server-info";
+import { createMissedPongWatchdog } from "@/websocket/listener/heartbeat";
 import {
   attachOpenListenerSocket,
   createRuntime,
@@ -205,17 +206,31 @@ export async function startAppServer(
     });
     return startupReady;
   };
-  // Tracks the last time each connected client responded to a ping. Seeded on
-  // connection so a freshly-accepted socket gets a full grace window before the
-  // watchdog can reap it. WeakMap so entries are GC'd with their sockets.
+  const heartbeatIntervalMs =
+    options.heartbeatIntervalMs ?? APP_SERVER_HEARTBEAT_INTERVAL_MS;
+  const pongTimeoutMs = options.pongTimeoutMs ?? APP_SERVER_PONG_TIMEOUT_MS;
+  const maxUnansweredPings = Math.max(
+    1,
+    Math.ceil(pongTimeoutMs / heartbeatIntervalMs),
+  );
+  // Track heartbeat state per connection. WeakMaps let socket collection clean
+  // up both entries without a separate close-path registry.
   const lastPongAtBySocket = new WeakMap<WebSocket, number>();
+  const heartbeatWatchdogBySocket = new WeakMap<
+    WebSocket,
+    ReturnType<typeof createMissedPongWatchdog>
+  >();
 
   const handleWebSocketConnection = (socket: WebSocket): void => {
     const connectionId = `app-server-${nextConnectionOrdinal}`;
     nextConnectionOrdinal += 1;
-    // The `ws` library auto-replies to ping frames with a pong, so any client
-    // whose TCP is still alive refreshes this connection-scoped timestamp.
-    lastPongAtBySocket.set(socket, Date.now());
+    // The `ws` library auto-replies to ping frames with a pong. Leave the pong
+    // timestamp unset until a probe is actually answered; the missed-probe
+    // budget gives a freshly accepted socket its full grace window.
+    heartbeatWatchdogBySocket.set(
+      socket,
+      createMissedPongWatchdog(maxUnansweredPings),
+    );
     socket.on("pong", () => {
       if (options.shouldRecordPong?.(connectionId) !== false) {
         lastPongAtBySocket.set(socket, Date.now());
@@ -340,25 +355,25 @@ export async function startAppServer(
     });
   });
 
-  const heartbeatIntervalMs =
-    options.heartbeatIntervalMs ?? APP_SERVER_HEARTBEAT_INTERVAL_MS;
-  const pongTimeoutMs = options.pongTimeoutMs ?? APP_SERVER_PONG_TIMEOUT_MS;
   const heartbeatInterval = setInterval(() => {
-    const now = Date.now();
     for (const client of wss.clients) {
-      const lastPongAt = lastPongAtBySocket.get(client) ?? now;
-      if (now - lastPongAt > pongTimeoutMs) {
-        // No pong within the timeout: the socket is half-open. Terminating it
-        // fires the `close` handler that clears activeSession and frees the
-        // control channel for a reconnecting client.
+      const watchdog = heartbeatWatchdogBySocket.get(client);
+      if (
+        watchdog?.shouldTerminate(lastPongAtBySocket.get(client) ?? null) ===
+        true
+      ) {
+        // Consecutive unanswered probes identify a half-open socket without
+        // mistaking a delayed local interval callback for a dead peer.
         options.onLog?.(
-          `App-server terminating unresponsive socket (no pong in ${pongTimeoutMs}ms)`,
+          `App-server terminating unresponsive socket after ${maxUnansweredPings} unanswered pings`,
         );
         client.terminate();
         continue;
       }
       if (client.readyState === WebSocket.OPEN) {
+        const sentAt = Date.now();
         client.ping();
+        watchdog?.recordPing(sentAt);
       }
     }
   }, heartbeatIntervalMs);
