@@ -25,13 +25,22 @@ export function isObjectRecord(
 
 export function isRuntimeScope(value: unknown): value is RuntimeScope {
   if (!value || typeof value !== "object") return false;
-  const candidate = value as { agent_id?: unknown; conversation_id?: unknown };
+  const candidate = value as {
+    agent_id?: unknown;
+    conversation_id?: unknown;
+    acting_user_id?: unknown;
+    acting_user_assertion?: unknown;
+  };
   return (
     (candidate.agent_id === null ||
       (typeof candidate.agent_id === "string" &&
         candidate.agent_id.length > 0)) &&
     typeof candidate.conversation_id === "string" &&
-    candidate.conversation_id.length > 0
+    candidate.conversation_id.length > 0 &&
+    (candidate.acting_user_id === undefined ||
+      typeof candidate.acting_user_id === "string") &&
+    (candidate.acting_user_assertion === undefined ||
+      typeof candidate.acting_user_assertion === "string")
   );
 }
 

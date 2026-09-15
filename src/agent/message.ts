@@ -10,10 +10,17 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
-import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "@/agent/acting-user";
+import {
+  ACTING_USER_ASSERTION_HEADER,
+  ACTING_USER_ID_ENV,
+  ACTING_USER_ID_HEADER,
+} from "@/agent/acting-user";
 import type { SkillSource } from "@/agent/skill-sources";
 import { type Backend, getBackend } from "@/backend";
-import { getRuntimeContext } from "@/runtime-context";
+import {
+  getRuntimeActingUserAssertion,
+  getRuntimeContext,
+} from "@/runtime-context";
 import {
   type ClientTool,
   getExecutionContextById,
@@ -116,6 +123,7 @@ export type StreamRequestContext = {
   resolvedConversationId: string;
   agentId: string | null;
   actingUserId?: string;
+  actingUserAssertion?: string;
   requestStartedAtMs: number;
   otid?: string;
 };
@@ -297,6 +305,8 @@ export type SendMessageStreamOptions = {
    * for self-hosted / single-user / pre-channel-split flows.
    */
   actingUserId?: string;
+  /** Cloud-minted proof for sender-attributed sandbox requests. */
+  actingUserAssertion?: string;
 };
 
 export type SendMessageStreamRequestOptions = {
@@ -519,6 +529,10 @@ export async function sendMessageStreamWithBackend(
     executionRuntimeContext?.actingUserId ??
     getRuntimeContext()?.actingUserId ??
     process.env[ACTING_USER_ID_ENV];
+  const actingUserAssertion =
+    opts.actingUserAssertion ??
+    executionRuntimeContext?.actingUserAssertion ??
+    getRuntimeActingUserAssertion();
   const extraHeaders: Record<string, string> = {};
   if (previousResponseId) {
     extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader({
@@ -543,6 +557,9 @@ export async function sendMessageStreamWithBackend(
   // SendMessageStreamOptions.actingUserId for full context.
   if (actingUserId) {
     extraHeaders[ACTING_USER_ID_HEADER] = actingUserId;
+  }
+  if (actingUserId && actingUserAssertion) {
+    extraHeaders[ACTING_USER_ASSERTION_HEADER] = actingUserAssertion;
   }
 
   const messageSummary = normalizedMessages
@@ -658,6 +675,7 @@ export async function sendMessageStreamWithBackend(
     resolvedConversationId,
     agentId: opts.agentId ?? null,
     ...(actingUserId ? { actingUserId } : {}),
+    ...(actingUserAssertion ? { actingUserAssertion } : {}),
     requestStartedAtMs,
     otid: firstOtid,
   });

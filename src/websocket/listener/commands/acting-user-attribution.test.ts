@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
+  ACTING_USER_ASSERTION_HEADER,
   ACTING_USER_ID_HEADER,
   actingUserRequestOptions,
 } from "@/agent/acting-user";
@@ -26,11 +27,15 @@ import {
 describe("actingUserRequestOptions", () => {
   test("header literal matches the wire contract used by message.ts and cloud-api", () => {
     expect(ACTING_USER_ID_HEADER).toBe("X-Letta-Acting-User-Id");
+    expect(ACTING_USER_ASSERTION_HEADER).toBe("X-Letta-Acting-User-Assertion");
   });
 
   test("builds header options when an acting user is present", () => {
-    expect(actingUserRequestOptions("user-123")).toEqual({
-      headers: { "X-Letta-Acting-User-Id": "user-123" },
+    expect(actingUserRequestOptions("user-123", "assertion-123")).toEqual({
+      headers: {
+        "X-Letta-Acting-User-Id": "user-123",
+        "X-Letta-Acting-User-Assertion": "assertion-123",
+      },
     });
   });
 
@@ -52,22 +57,22 @@ describe("listener conversation-create attribution wiring (contract)", () => {
 
   test("conversation_create echoes the relayed acting user", () => {
     expect(handlerSource).toMatch(
-      /backend\.createConversation\(\s*parsed\.body,\s*actingUserRequestOptions\(parsed\.acting_user_id\),\s*\)/,
+      /backend\.createConversation\(\s*parsed\.body,\s*actingUserRequestOptions\(\s*parsed\.acting_user_id,\s*parsed\.acting_user_assertion,\s*\),\s*\)/,
     );
   });
 
   test("conversation_fork echoes the relayed acting user", () => {
     expect(handlerSource).toMatch(
-      /backend\.forkConversation\([\s\S]*?actingUserRequestOptions\(parsed\.acting_user_id\)/,
+      /backend\.forkConversation\([\s\S]*?actingUserRequestOptions\(\s*parsed\.acting_user_id,\s*parsed\.acting_user_assertion,\s*\)/,
     );
   });
 
   test("/clear passes the frame's acting user into its conversation create", () => {
     expect(commandsSource).toMatch(
-      /handleClearCommand\(socket, conversationRuntime, \{\s*\.\.\.opts,\s*actingUserId: command\.runtime\.acting_user_id,\s*\}\)/,
+      /handleClearCommand\(socket, conversationRuntime, \{\s*\.\.\.opts,\s*actingUserId: command\.runtime\.acting_user_id,\s*actingUserAssertion: command\.runtime\.acting_user_assertion,\s*\}\)/,
     );
     expect(commandsSource).toMatch(
-      /backend\.createConversation\(\s*\{\s*agent_id: agentId,\s*\},\s*actingUserRequestOptions\(opts\.actingUserId\),\s*\)/,
+      /backend\.createConversation\(\s*\{\s*agent_id: agentId,\s*\},\s*actingUserRequestOptions\(opts\.actingUserId, opts\.actingUserAssertion\),\s*\)/,
     );
   });
 });

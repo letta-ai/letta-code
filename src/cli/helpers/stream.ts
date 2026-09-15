@@ -138,7 +138,10 @@ export async function drainStream(
     retrieveRunStatus: async (runId, signal) =>
       (
         await getBackend().retrieveRun(runId, {
-          ...(actingUserRequestOptions(recoveryActingUserId) ?? {}),
+          ...(actingUserRequestOptions(
+            recoveryActingUserId,
+            requestContext?.actingUserAssertion,
+          ) ?? {}),
           signal,
         } as RunRetrieveOptions)
       ).status,
@@ -545,6 +548,7 @@ export async function drainStreamWithResume(
   const streamRequestContext = getStreamRequestContext(stream);
   const recoveryRequestOptions = actingUserRequestOptions(
     streamRequestContext?.actingUserId,
+    streamRequestContext?.actingUserAssertion,
   );
   // Use the message OTID stored in the request context (set from messages[0].otid).
   // This is the real UUID OTID — distinct from the tool execution context ID

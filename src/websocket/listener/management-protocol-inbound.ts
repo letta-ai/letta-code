@@ -37,6 +37,10 @@ export function isConversationForkCommand(
     value.type === "conversation_fork" &&
     typeof value.request_id === "string" &&
     typeof value.conversation_id === "string" &&
-    (value.body === undefined || isConversationForkBody(value.body))
+    (value.body === undefined || isConversationForkBody(value.body)) &&
+    (value.acting_user_id === undefined ||
+      typeof value.acting_user_id === "string") &&
+    (value.acting_user_assertion === undefined ||
+      typeof value.acting_user_assertion === "string")
   );
 }

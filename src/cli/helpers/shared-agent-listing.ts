@@ -1,3 +1,4 @@
+import { actingUserRequestOptions } from "@/agent/acting-user";
 import { apiRequest } from "@/backend/api/request";
 
 export interface SharedAgentCreatorDetails {
@@ -51,11 +52,16 @@ function buildListSharedAgentsQuery(
 
 export async function listSharedAgentsForCurrentUser(
   params: ListSharedAgentsParams,
+  actingUserId?: string,
+  actingUserAssertion?: string,
 ): Promise<ListSharedAgentsResponse> {
   return apiRequest<ListSharedAgentsResponse>(
     "GET",
     "/v1/shared-agents",
     undefined,
-    { query: buildListSharedAgentsQuery(params) },
+    {
+      query: buildListSharedAgentsQuery(params),
+      ...actingUserRequestOptions(actingUserId, actingUserAssertion),
+    },
   );
 }

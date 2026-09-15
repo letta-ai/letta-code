@@ -30,6 +30,7 @@ letta agents list [options]
 | `--tags <tag1,tag2>` | Filter by tags (comma-separated) |
 | `--match-all-tags` | Require ALL tags (default: ANY) |
 | `--include-blocks` | Include agent.blocks in response |
+| `--shared` | List agents shared with the current user |
 | `--limit <n>` | Max results (default: 20) |
 
 ## Common Patterns
@@ -44,13 +45,16 @@ letta agents list --tags "origin:letta-code"
 
 This is useful when the user is looking for agents they've worked with in Letta Code CLI sessions.
 
-### Finding All Agents
+### Finding All Accessible Agents
 
-If the user has agents created outside Letta Code (via ADE, SDK, etc.), search without the tag filter:
+List agents owned by the current user, then list agents shared with them:
 
 ```bash
 letta agents list
+letta agents list --shared
 ```
+
+Use `--query <text>` with either command to search by name.
 
 ## Examples
 

@@ -23,6 +23,7 @@ export function enqueueInboundUserMessage(
   runtime: ConversationRuntime,
   incoming: IncomingMessage,
   actingUserId?: string,
+  actingUserAssertion?: string,
 ): boolean {
   const firstUserPayload = incoming.messages.find(
     (payload): payload is MessageCreate & { client_message_id?: string } =>
@@ -46,6 +47,7 @@ export function enqueueInboundUserMessage(
     ...(incoming.noCoalesce ? { noCoalesce: true } : {}),
     // Forwarded by cloud-api for sender attribution in multi-user sandboxes.
     actingUserId,
+    actingUserAssertion,
   } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
   if (!enqueuedItem) {
     return false;
