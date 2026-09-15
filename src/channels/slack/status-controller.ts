@@ -181,8 +181,7 @@ export function createSlackStatusController(params: {
       // An obsolete clear may still clean its OLD thread, but must never blank
       // newer activity occupying that same Slack thread.
       return (
-        current === revision ||
-        Boolean(active && ownedReplyKey(stateKey) !== replyKey)
+        current === revision || !active || ownedReplyKey(stateKey) !== replyKey
       );
     };
     const signature = `${revision}\n${replyKey}\n${footerText}\n${loadingText}`;

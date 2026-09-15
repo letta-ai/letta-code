@@ -171,6 +171,28 @@ for (const threadId of ["100.1", "200.1"]) {
   });
 }
 
+for (const terminal of ["completion", "reply"] as const) {
+  test(`delayed old-thread cleanup still clears after newer-thread ${terminal}`, async () => {
+    const h = setup();
+    await h.controller.activate(h.source, "is working...", "Inspect A");
+    const gate = holdPreparation(h);
+    const clearing = h.controller.deactivate(h.source);
+    await gate.entered;
+    const next = { ...h.source, threadId: "200.1" };
+    await h.controller.activate(next, "is working...", "Inspect B");
+    if (terminal === "completion") await h.controller.deactivate(next);
+    else {
+      // Slack clears B when its reply posts; local state follows that reply.
+      h.visible.delete("200.1");
+      h.controller.markAutoCleared(next);
+    }
+    gate.release();
+    await clearing;
+    expect(h.visible.get("100.1")?.status).toBe("");
+    expect(h.controller.activeSources()).toEqual([]);
+  });
+}
+
 for (const reply of ["source", "anchored-message"] as const) {
   for (const relinquish of [false, true]) {
     test(`${reply} followed by relinquish=${relinquish} handles an outstanding old HTTP correctly`, async () => {
