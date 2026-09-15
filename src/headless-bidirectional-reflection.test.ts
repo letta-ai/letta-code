@@ -70,7 +70,7 @@ describe("headless bidirectional auto-reflection", () => {
     expect(summary.transcriptLines[0]).toContain("hello one");
     expect(summary.transcriptLines[1]).toContain('"kind":"assistant"');
     expect(summary.transcriptLines[1]).toContain(
-      '"source_message_id":"letta-msg-1"',
+      '"source_message_id":"ui-msg-2"',
     );
 
     // Reflection launches post-turn, so every completed turn gets reflected.
@@ -101,7 +101,7 @@ describe("headless bidirectional auto-reflection", () => {
     expect(
       summary.state?.reflected_through_message_id,
       formatSummary(summary),
-    ).toBe("letta-msg-3");
+    ).toBe("ui-msg-6");
   }, 30_000);
 });
 
