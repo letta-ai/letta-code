@@ -103,6 +103,50 @@ export type ListenerLaunchResult =
     }
   | { status: "queued"; receipt: EnqueueReceipt };
 
+/** Reconnect only for explicit cancellation, never to observe task progress. */
+export async function cancelAcceptedListenerInput(
+  receipt: EnqueueReceipt,
+): Promise<boolean> {
+  const removed = await dequeueConversationMessage(
+    {
+      agentId: receipt.agent_id,
+      conversationId: receipt.conversation_id,
+      clientMessageId: receipt.client_message_id,
+    },
+    AbortSignal.timeout(10_000),
+  );
+  if (removed.status === "dequeued" || removed.status === "already_dequeued")
+    return true;
+  if (!receipt.connection_id) return false;
+  const scope = {
+    agent_id: receipt.agent_id,
+    conversation_id: receipt.conversation_id,
+  };
+  const client = await createListenerClient(receipt.connection_id, scope);
+  let loop: LoopState | undefined;
+  const detach = client.onMessage((message) => {
+    if (
+      message.type === "update_loop_status" &&
+      message.runtime?.agent_id === scope.agent_id &&
+      message.runtime.conversation_id === scope.conversation_id
+    )
+      loop = message.loop_status;
+  });
+  try {
+    await client.connect();
+    return await cancelListenerInput({
+      client,
+      scope,
+      clientMessageId: receipt.client_message_id,
+      dequeue: async () => removed,
+      readState: () => ({ loop, cancelled: false }),
+    });
+  } finally {
+    detach();
+    client.close();
+  }
+}
+
 /** The CLI remains the caller; the existing listener owns model and tool execution. */
 export async function launchListenerConversation(
   params: {
@@ -254,7 +298,11 @@ export async function launchListenerConversation(
       },
       AbortSignal.timeout(30_000),
     );
-    if (params.noWait) return { status: "queued", receipt: accepted };
+    if (params.noWait)
+      return {
+        status: "queued",
+        receipt: { ...accepted, connection_id: params.connectionId },
+      };
     while (true) {
       if (disconnected)
         throw new Error(

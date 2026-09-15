@@ -160,7 +160,7 @@ Agent({
 Behavior notes:
 - The remote turn runs with the remote machine's working directory, tools, and skills. Subagent-type tool restrictions (e.g. recall's read-only toolset) travel with the turn on current servers; older servers ignore them.
 - The remote turn's final assistant message is returned as the task result. Token and step statistics are not available for remote runs.
-- The wait tracks turn liveness (new messages, run activity, device online) with an absolute one-hour ceiling rather than a fixed timeout.
+- Computer-routed tasks are submitted asynchronously and tracked by their exact Cloud Super Run. Temporary status-read failures retry in the background; there is no one-hour execution or tracking ceiling. Stopping a task cancels its queued input or its executing listener run.
 
 ## Concurrency and Safety:
 

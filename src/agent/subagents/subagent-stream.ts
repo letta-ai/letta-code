@@ -170,6 +170,7 @@ function handleResultEvent(
     client_message_id?: unknown;
     super_run_id?: unknown;
     workflow_id?: unknown;
+    connection_id?: unknown;
   },
   state: ExecutionState,
   subagentId: string,
@@ -183,6 +184,9 @@ function handleResultEvent(
         client_message_id: event.client_message_id,
         super_run_id: event.super_run_id,
         workflow_id: event.workflow_id,
+        ...(typeof event.connection_id === "string"
+          ? { connection_id: event.connection_id }
+          : {}),
       };
     } else {
       state.finalError =
