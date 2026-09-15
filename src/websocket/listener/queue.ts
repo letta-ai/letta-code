@@ -63,12 +63,14 @@ export function getQueueItemsScope(items: QueueItem[]): {
 }
 
 function hasSameQueueScope(a: QueueItem, b: QueueItem): boolean {
-  const aActingUserId = a.kind === "message" ? a.actingUserId : undefined;
-  const bActingUserId = b.kind === "message" ? b.actingUserId : undefined;
+  const compatibleSender =
+    a.kind !== "message" ||
+    b.kind !== "message" ||
+    (a.actingUserId ?? null) === (b.actingUserId ?? null);
   return (
     (a.agentId ?? null) === (b.agentId ?? null) &&
     (a.conversationId ?? null) === (b.conversationId ?? null) &&
-    (aActingUserId ?? null) === (bActingUserId ?? null)
+    compatibleSender
   );
 }
 
