@@ -669,8 +669,12 @@ describe("input-format stream-json", () => {
                   "Launch exactly one Agent tool with subagent_type='general-purpose'. " +
                   `Ask the subagent to use Read on ${JSON.stringify(fixture.reportPath)} and return the file's contents verbatim. ` +
                   "Do not read the file yourself or call any other tools. " +
-                  "After launching the agent, end your turn without polling or calling TaskOutput. " +
-                  "When its completion notification arrives, return only the report from the file, with no commentary or formatting.",
+                  "After the Agent tool returns, reply with exactly LAUNCHED and end your turn. " +
+                  "The tool return only confirms launch; it does not contain the report. " +
+                  "Do not invent a task-notification or a report, poll, or call TaskOutput. " +
+                  "On the next user-role task-notification, copy the SUBAGENT-REPORT line from its result exactly, " +
+                  "even if an earlier assistant message claimed to deliver a report. " +
+                  "Return only that line, with no commentary or formatting.",
               },
             }),
           ],
@@ -728,7 +732,7 @@ describe("input-format stream-json", () => {
           ),
         ).toBe(false);
 
-        expect(results[0]?.result ?? "").not.toContain(fixture.expectedReport);
+        expect(results[0]?.result?.trim()).toBe("LAUNCHED");
         expect(result?.result?.trim()).toBe(fixture.expectedReport);
       } finally {
         await rm(fixture.rootDir, { recursive: true, force: true });
