@@ -22,6 +22,7 @@ const scope: AgentRuntimeScope = {
   agent_id: "agent-child",
   conversation_id: "conv-child",
   acting_user_id: "user-parent",
+  acting_user_assertion: "assertion-parent",
 };
 const settings: RuntimeExecutionSettings = {
   parent_agent_id: "agent-parent",
@@ -137,6 +138,7 @@ test("CLI configures the listener before admitted enqueue and preserves output, 
         expect(input).toMatchObject({
           computer: "conn-target",
           actingUserId: "user-parent",
+          actingUserAssertion: "assertion-parent",
           content: "hello",
         });
         wire.emit({

@@ -63,14 +63,9 @@ export function getQueueItemsScope(items: QueueItem[]): {
 }
 
 function hasSameQueueScope(a: QueueItem, b: QueueItem): boolean {
-  const compatibleSender =
-    a.kind !== "message" ||
-    b.kind !== "message" ||
-    (a.actingUserId ?? null) === (b.actingUserId ?? null);
   return (
     (a.agentId ?? null) === (b.agentId ?? null) &&
-    (a.conversationId ?? null) === (b.conversationId ?? null) &&
-    compatibleSender
+    (a.conversationId ?? null) === (b.conversationId ?? null)
   );
 }
 
@@ -83,12 +78,20 @@ function buildQueuedTurnMessage(
   for (const item of batch.items) {
     const incoming = runtime.queuedMessagesByItemId.get(item.id);
     if (item.kind === "message" && incoming) {
-      template ??= {
+      const incomingTemplate = {
         ...incoming,
         actingUserId: incoming.actingUserId ?? item.actingUserId,
         actingUserAssertion:
           incoming.actingUserAssertion ?? item.actingUserAssertion,
       };
+      template ??= incomingTemplate;
+      if (!template.actingUserId && incomingTemplate.actingUserId) {
+        template = {
+          ...template,
+          actingUserId: incomingTemplate.actingUserId,
+          actingUserAssertion: incomingTemplate.actingUserAssertion,
+        };
+      }
       messages.push(
         ...incoming.messages.map((message) =>
           "content" in message
@@ -207,6 +210,7 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasCronPrompt = false;
   let hasModContinue = false;
   let batchConnectionId: string | undefined;
+  let batchActingUserId: string | undefined;
   let batchImageFailureMode: "strict" | "drop" | null = null;
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
     candidate.kind === "message" && candidate.noCoalesce === true;
@@ -222,6 +226,17 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     if (queueLen > 0 && (isNoCoalesce(item) || isNoCoalesce(firstQueuedItem))) {
       break;
     }
+
+    const itemActingUserId =
+      item.kind === "message" ? item.actingUserId : undefined;
+    if (
+      batchActingUserId !== undefined &&
+      itemActingUserId !== undefined &&
+      itemActingUserId !== batchActingUserId
+    ) {
+      break;
+    }
+    batchActingUserId ??= itemActingUserId;
 
     if (item.kind === "message") {
       const itemConnectionId = runtime.queuedMessagesByItemId.get(

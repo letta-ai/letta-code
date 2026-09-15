@@ -9,7 +9,7 @@ import type {
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import { resolveActingUserId } from "@/agent/acting-user";
+import * as actingUser from "@/agent/acting-user";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
@@ -208,10 +208,7 @@ import {
   reportAllMilestones,
 } from "./utils/timing";
 
-// Maximum number of times to retry a turn when the backend
-// reports an `llm_api_error` stop reason. This helps smooth
-// over transient LLM/backend issues without requiring the
-// caller to manually resubmit the prompt.
+// Retry transient backend `llm_api_error` responses without requiring resubmission.
 const LLM_API_ERROR_MAX_RETRIES = 3;
 
 // Retry config for empty response errors (Opus 4.6 SADs)
@@ -2012,7 +2009,6 @@ ${SYSTEM_REMINDER_CLOSE}
     "user",
     agent.llm_config?.model ?? "unknown",
   );
-
   if (usesRemoteEnvironment) {
     const environmentSelector = explicitEnvironmentSelector ?? "";
     const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
@@ -2038,7 +2034,8 @@ ${SYSTEM_REMINDER_CLOSE}
       scope: {
         agent_id: agent.id,
         conversation_id: conversationId,
-        acting_user_id: resolveActingUserId(),
+        acting_user_id: actingUser.resolveActingUserId(),
+        acting_user_assertion: actingUser.resolveActingUserAssertion(),
       },
       content: contentParts,
       backend,

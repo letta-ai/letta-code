@@ -80,7 +80,7 @@ test("preserves every input message and author across queue entries", () => {
   expect(runtime.queueRuntime.length).toBe(0);
 });
 
-test("a principal reminder never blocks later human steering", () => {
+test("a principal reminder coalesces with one sender without merging the next", () => {
   const runtime = getOrCreateScopedRuntime(
     createRuntime(),
     "agent-a",
@@ -110,21 +110,41 @@ test("a principal reminder never blocks later human steering", () => {
       messages: [{ role: "user", content: "steer" }],
     },
     "human-b",
+    "assertion-b",
   );
-  const reminderTurn = consumeQueuedTurn(runtime);
-  expect(reminderTurn?.queuedTurn.messages).toEqual([reminder]);
-  expect(reminderTurn?.queuedTurn.actingUserId).toBeUndefined();
-  expect(runtime.queueRuntime.length).toBe(1);
+  enqueueInboundUserMessage(
+    runtime,
+    {
+      type: "message",
+      agentId: "agent-a",
+      conversationId: "conv-a",
+      messages: [{ role: "user", content: "next sender" }],
+    },
+    "human-c",
+  );
 
-  const humanTurn = consumeQueuedTurn(runtime);
-  expect(humanTurn?.queuedTurn.messages).toEqual([
+  const turn = consumeQueuedTurn(runtime);
+  expect(turn?.queuedTurn.messages).toEqual([
+    reminder,
     {
       role: "user",
       content: "steer",
       attribution: { acting_user_id: "human-b" },
     },
   ]);
-  expect(humanTurn?.queuedTurn.actingUserId).toBe("human-b");
+  expect(turn?.queuedTurn.actingUserId).toBe("human-b");
+  expect(turn?.queuedTurn.actingUserAssertion).toBe("assertion-b");
+  expect(runtime.queueRuntime.length).toBe(1);
+
+  const nextTurn = consumeQueuedTurn(runtime);
+  expect(nextTurn?.queuedTurn.messages).toEqual([
+    {
+      role: "user",
+      content: "next sender",
+      attribution: { acting_user_id: "human-c" },
+    },
+  ]);
+  expect(nextTurn?.queuedTurn.actingUserId).toBe("human-c");
   expect(runtime.queueRuntime.length).toBe(0);
 });
 
