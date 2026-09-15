@@ -52,6 +52,7 @@ interface RemoteCatalogEntry {
   isFeatured?: boolean;
   isDefault?: boolean;
   free?: boolean;
+  billing?: CatalogModel["billing"];
   contextWindow?: number;
   maxOutputTokens?: number;
   config?: Record<string, unknown>;
@@ -90,6 +91,15 @@ function isOptionalBoolean(value: unknown): value is boolean | undefined {
   return value === undefined || typeof value === "boolean";
 }
 
+function isOptionalBilling(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === "free" ||
+    value === "quota" ||
+    value === "credits"
+  );
+}
+
 function isOptionalPositiveFiniteNumber(
   value: unknown,
 ): value is number | undefined {
@@ -122,6 +132,7 @@ function isValidEntry(entry: unknown): entry is RemoteCatalogEntry {
     isOptionalBoolean(candidate.isFeatured) &&
     isOptionalBoolean(candidate.isDefault) &&
     isOptionalBoolean(candidate.free) &&
+    isOptionalBilling(candidate.billing) &&
     isOptionalPositiveFiniteNumber(candidate.contextWindow) &&
     isOptionalPositiveFiniteNumber(candidate.maxOutputTokens) &&
     (candidate.config === undefined || isRecord(candidate.config))
@@ -138,6 +149,7 @@ function isValidCachedModel(entry: unknown): entry is CatalogModel {
     isOptionalBoolean(candidate.isDefault) &&
     isOptionalBoolean(candidate.isFeatured) &&
     isOptionalBoolean(candidate.free) &&
+    isOptionalBilling(candidate.billing) &&
     (candidate.updateArgs === undefined || isRecord(candidate.updateArgs))
   );
 }
@@ -167,6 +179,7 @@ export function toCatalogModel(entry: RemoteCatalogEntry): CatalogModel {
     ...(entry.isDefault ? { isDefault: true } : {}),
     ...(entry.isFeatured ? { isFeatured: true } : {}),
     ...(entry.free ? { free: true } : {}),
+    ...(entry.billing ? { billing: entry.billing } : {}),
     ...(Object.keys(updateArgs).length > 0 ? { updateArgs } : {}),
   };
 }

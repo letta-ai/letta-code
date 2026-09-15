@@ -7,6 +7,7 @@ import {
 } from "@/agent/available-models";
 import { getReasoningTierOptionsFromCapabilities } from "@/agent/model";
 import {
+  type CatalogModel,
   models,
   resolveCatalogModel,
   resolveModel,
@@ -18,6 +19,11 @@ import {
 } from "@/agent/modify";
 import { initializeModelCatalog } from "@/agent/remote-model-catalog";
 import { getBackend } from "@/backend";
+import {
+  type BalanceMetadata,
+  getBalanceMetadata,
+} from "@/backend/api/metadata";
+import { isCloudServerUrl } from "@/backend/api/server-url";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 
@@ -29,6 +35,7 @@ function printUsage(): void {
 
   get   Show the effective model, context limit, and full redacted model_settings.
   list  List the active backend's models, catalog IDs, and reasoning levels.
+        Cloud credit-funded models are omitted when the balance is insufficient.
   set   Select a model handle, catalog ID, or unambiguous alias.
 
 Options:
@@ -121,16 +128,16 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
       // are already projected from their runtime inventory by initialization.
       if (!local) {
         const known = new Set(catalog.map((entry) => entry.handle));
+        const byokHandles = new Set<string>();
         try {
           const available = await getAvailableModelHandles();
+          for (const entry of available.models) {
+            if (entry.providerCategory === "byok")
+              byokHandles.add(entry.handle);
+          }
           // BYOK handles can also have catalog presets (e.g. coding plans).
           // Use only BYOK metadata here, never the inventory's hosted/base rows.
           if (values.byok || values.hosted) {
-            const byokHandles = new Set(
-              available.models
-                .filter((entry) => entry.providerCategory === "byok")
-                .map((entry) => entry.handle),
-            );
             catalog = catalog.filter((entry) =>
               values.byok
                 ? byokHandles.has(entry.handle)
@@ -161,6 +168,39 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
             `Warning: BYOK catalog unavailable: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
+        if (isCloudServerUrl() && !values.byok) {
+          try {
+            const balance = await getBalanceMetadata();
+            const eligible = filterCloudModelsByBalance(
+              catalog,
+              balance,
+              byokHandles,
+            );
+            const hidden = catalog.length - eligible.length;
+            if (hidden > 0) {
+              console.error(
+                `Omitted ${hidden} credit-funded model presets: insufficient credits. Prefer a connected BYOK, free, or quota-backed model.`,
+              );
+            }
+            if (
+              balance.billing_tier !== "enterprise" &&
+              balance.total_balance < 1000 &&
+              catalog.some(
+                (entry) => !entry.billing && !byokHandles.has(entry.handle),
+              )
+            ) {
+              console.error(
+                "Warning: some catalog entries lack billing metadata; their credit eligibility could not be checked.",
+              );
+            }
+            catalog = eligible;
+          } catch {
+            // An unavailable balance is not evidence of insufficient credits.
+            console.error(
+              "Warning: credit balance unavailable; model listing is not filtered by credit eligibility.",
+            );
+          }
+        }
       }
       await printJson(
         catalog.map((entry) => ({
@@ -187,6 +227,20 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
     console.error(error instanceof Error ? error.message : String(error));
     return 1;
   }
+}
+
+export function filterCloudModelsByBalance(
+  catalog: CatalogModel[],
+  balance: Pick<BalanceMetadata, "total_balance" | "billing_tier">,
+  byokHandles: ReadonlySet<string>,
+): CatalogModel[] {
+  // Match Cloud's hosted preflight and chat picker: $1 = 1,000 credits.
+  if (balance.billing_tier === "enterprise" || balance.total_balance >= 1000) {
+    return catalog;
+  }
+  return catalog.filter(
+    (entry) => entry.billing !== "credits" || byokHandles.has(entry.handle),
+  );
 }
 
 function availableModel(handle: string): AvailableModel | undefined {
