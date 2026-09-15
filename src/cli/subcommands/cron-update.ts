@@ -14,7 +14,11 @@ import {
   updateTask,
 } from "@/cron";
 import { formatCloudScheduleOutput } from "./cron-output";
-import { resolveCronRunner, validateTargetDevice } from "./cron-runner";
+import {
+  CLOUD_CRON_UTC_NOTE,
+  resolveCronRunner,
+  validateTargetDevice,
+} from "./cron-runner";
 import {
   resolveCronAddConversationTarget,
   resolveCronAgentId,
@@ -241,6 +245,9 @@ export async function handleCronUpdate(
         if (!validity.ok) throw new Error(validity.error);
       }
       await updateCloudSchedule(agentId, resolved.id, edits.cloud);
+      if (edits.cloud.schedule?.type === "recurring") {
+        console.error(`Note: ${CLOUD_CRON_UTC_NOTE}`);
+      }
       try {
         const updated = await getCloudSchedule(agentId, resolved.id);
         console.log(
