@@ -1,6 +1,6 @@
 ---
 name: scheduling-tasks
-description: Schedules reminders and recurring tasks via the letta cron CLI. Use when the user asks to be reminded of something, wants periodic work or check-ins, or needs to list, inspect, replace, or cancel scheduled tasks.
+description: Schedules reminders and recurring tasks via the letta cron CLI. Use when the user asks to be reminded of something, wants periodic work or check-ins, or needs to list, inspect, update, or cancel scheduled tasks.
 ---
 
 # Scheduling Tasks
@@ -117,7 +117,7 @@ Then verify the binding explicitly:
 letta cron list --agent "$LETTA_AGENT_ID" --conversation self
 ```
 
-### Deleting or Replacing Tasks
+### Deleting Tasks
 
 `delete` accepts an ID or name; `remove` is an alias.
 
@@ -129,7 +129,20 @@ letta cron delete <id-or-name> [--runner local|cloud] [--agent <id>]
 letta cron delete --all --agent "$AGENT_ID"
 ```
 
-In-place editing is not available. To change a schedule, create and verify the replacement before deleting the old one.
+### Updating Tasks In Place
+
+```bash
+letta cron update <id-or-name> --prompt "Updated reminder" [--runner local|cloud] [--agent <id>]
+letta cron update <id-or-name> --cron "0 16 * * *" [--runner local|cloud] [--agent <id>]
+```
+
+Supply at least one of `--name`, `--description`, `--prompt`, `--conversation`, `--computer`, or a schedule (`--every`, `--at`, `--cron`). Only supplied fields change; the task keeps its ID and run history. Omit all schedule flags to keep its next fire time. Schedule flags are mutually exclusive; `--once` requires `--at`. An explicit schedule change rearms a completed one-shot.
+
+Unlike creation, `--runner` only selects the existing store: it never moves a task or changes its execution target. Omitted `--conversation` preserves the existing target, rather than defaulting to `new`. Use `new`, `self`, `default`, or a concrete ID to change it. Cloud tasks accept `--computer <deviceId>` to change execution target or `--computer cloud` to clear the device target and use the Cloud sandbox. Local tasks reject `--computer`. Omitted computer routing is preserved even with `--runner cloud`.
+
+Success returns the full updated task as JSON, in the same shape as `get`. Prefer an ID plus explicit runner and agent for scripts; ambiguous names are rejected. Errors go to stderr with a nonzero exit code. Cloud updates require a server supporting the schedule PATCH endpoint; failures never fall back to delete/recreate or another runner.
+
+Recurring Cloud cron expressions remain UTC. Local recurring edits retain the task's saved timezone; `--at` uses an absolute timestamp parsed in the current process timezone, as on creation. There is no timezone-edit flag.
 
 ## Timezones — Convert Before Writing `--cron`
 

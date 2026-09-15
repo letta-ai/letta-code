@@ -38,6 +38,15 @@ export interface CreateCloudScheduleInput {
   target_device_id?: string;
 }
 
+export interface UpdateCloudScheduleInput {
+  name?: string;
+  description?: string;
+  messages?: CloudScheduleMessage[];
+  conversation_id?: string | null;
+  schedule?: CloudScheduleSpec;
+  target_device_id?: string | null;
+}
+
 export interface CreateCloudScheduleResponse {
   id: string;
   next_scheduled_at?: string;
@@ -127,6 +136,18 @@ export async function getCloudSchedule(
   return apiRequest<CloudSchedule>(
     "GET",
     `${schedulePath(agentId)}/${encodeURIComponent(scheduleId)}`,
+  );
+}
+
+export async function updateCloudSchedule(
+  agentId: string,
+  scheduleId: string,
+  input: UpdateCloudScheduleInput,
+): Promise<CreateCloudScheduleResponse> {
+  return apiRequest<CreateCloudScheduleResponse>(
+    "PATCH",
+    `${schedulePath(agentId)}/${encodeURIComponent(scheduleId)}`,
+    { ...input },
   );
 }
 
