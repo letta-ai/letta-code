@@ -146,7 +146,7 @@ import {
   getIntendedCronOccurrence,
   getTask,
   handleTaskPreflight,
-  isProcessAlive,
+  hasLiveSchedulerOwner,
   readCronFile,
   safeAppendCronRunLogForTask,
   shouldFireTask,
@@ -1470,14 +1470,12 @@ export function App({
         lastMinuteKey = currentMinuteKey;
       }
 
-      // Check if another scheduler (desktop app) is active
+      // Check if another scheduler (desktop app) is active. Scoped Desktop
+      // listeners own scheduler_owners.local|cloud and keep a scheduler_owner
+      // tombstone; treat any of those live rows as an active lease holder.
       const cronData = readCronFile();
-      if (cronData.scheduler_owner) {
-        const { pid } = cronData.scheduler_owner;
-        if (isProcessAlive(pid, cronData.scheduler_owner)) {
-          // Desktop app is running the scheduler — defer
-          return;
-        }
+      if (hasLiveSchedulerOwner(cronData)) {
+        return;
       }
 
       // No active scheduler — process tasks for this agent

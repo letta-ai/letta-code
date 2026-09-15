@@ -19,7 +19,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { isLocalAgentId } from "@/agent/agent-id";
 import { estimatePeriodMs, isValidCron } from "./parse-interval";
+import { captureProcessIdentity, isProcessAlive } from "./process-identity";
+
+export {
+  __testOverrideReadProcessIdentity,
+  isProcessAlive,
+} from "./process-identity";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -207,105 +214,6 @@ interface LockOwner {
   acquired_at: number;
   process_start_ticks?: string | null;
   boot_id?: string | null;
-}
-
-interface ProcessIdentity {
-  startTicks: string | null;
-  bootId: string | null;
-}
-
-let readProcessIdentityOverride:
-  | ((pid: number) => ProcessIdentity | null)
-  | null = null;
-
-function readLinuxProcessIdentity(pid: number): ProcessIdentity | null {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const endCommand = stat.lastIndexOf(")");
-    if (endCommand === -1) {
-      return null;
-    }
-
-    // /proc/<pid>/stat wraps the command name in parentheses as field #2.
-    // Everything after that begins at field #3 ("state"), so starttime
-    // (field #22) is offset 19 in the remaining array.
-    const fields = stat
-      .slice(endCommand + 2)
-      .trim()
-      .split(/\s+/);
-    const startTicks = fields[19] ?? null;
-    if (!startTicks) {
-      return null;
-    }
-
-    let bootId: string | null = null;
-    try {
-      bootId =
-        readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() || null;
-    } catch {
-      // Best effort: boot_id is helpful but not required.
-    }
-
-    return { startTicks, bootId };
-  } catch {
-    return null;
-  }
-}
-
-function readProcessIdentity(pid: number): ProcessIdentity | null {
-  if (readProcessIdentityOverride) {
-    return readProcessIdentityOverride(pid);
-  }
-  return readLinuxProcessIdentity(pid);
-}
-
-function captureProcessIdentity(pid: number): {
-  process_start_ticks: string | null;
-  boot_id: string | null;
-} {
-  const identity = readProcessIdentity(pid);
-  return {
-    process_start_ticks: identity?.startTicks ?? null,
-    boot_id: identity?.bootId ?? null,
-  };
-}
-
-export function isProcessAlive(
-  pid: number,
-  owner?: {
-    process_start_ticks?: string | null;
-    boot_id?: string | null;
-  } | null,
-): boolean {
-  try {
-    process.kill(pid, 0);
-  } catch {
-    return false;
-  }
-
-  // On Linux, compare the persisted process identity as well. This lets us
-  // distinguish "same PID, different process" across container restarts.
-  if (owner) {
-    const identity = readProcessIdentity(pid);
-    if (identity) {
-      if (
-        owner.boot_id &&
-        identity.bootId &&
-        owner.boot_id !== identity.bootId
-      ) {
-        return false;
-      }
-      if (
-        owner.process_start_ticks &&
-        identity.startTicks &&
-        owner.process_start_ticks !== identity.startTicks
-      ) {
-        return false;
-      }
-    }
-  }
-
-  return true;
 }
 
 function readLockOwner(lockDir: string): LockOwner | null {
@@ -575,17 +483,19 @@ export function addTask(input: AddTaskInput): AddTaskResult {
     data.tasks.push(task);
     writeCronFile(data);
 
-    // Check if a scheduler is running
+    // Check if a scheduler is running for this agent's backend.
+    // A mixed-version tombstone in scheduler_owner does not count as an
+    // all-agent lease — only a real all-lease (no live scoped owners) or the
+    // matching scoped owner suppresses the warning.
     let warning: string | undefined;
-    const scopedOwner = input.agent_id.startsWith("agent-local-")
+    const scopedOwner = isLocalAgentId(input.agent_id)
       ? data.scheduler_owners.local
       : data.scheduler_owners.cloud;
-    const hasLiveOwner =
-      Boolean(
-        data.scheduler_owner &&
-          isProcessAlive(data.scheduler_owner.pid, data.scheduler_owner),
-      ) || Boolean(scopedOwner && isProcessAlive(scopedOwner.pid, scopedOwner));
-    if (!hasLiveOwner) {
+    const hasMatchingOwner =
+      (isLiveOwner(data.scheduler_owner) &&
+        liveScopedOwners(data).length === 0) ||
+      isLiveOwner(scopedOwner);
+    if (!hasMatchingOwner) {
       warning =
         "No letta server is currently running. This task will only execute when a WS listener is active.";
     }
@@ -654,58 +564,116 @@ export function deleteAllTasks(agentId: string): number {
 
 // ── Scheduler lease ─────────────────────────────────────────────────
 
+function isLiveOwner(
+  owner: SchedulerOwner | null | undefined,
+): owner is SchedulerOwner {
+  return Boolean(owner && isProcessAlive(owner.pid, owner));
+}
+
+function liveScopedOwners(data: CronFileData): SchedulerOwner[] {
+  return Object.values(data.scheduler_owners).filter(isLiveOwner);
+}
+
+function createSchedulerOwner(token: string): SchedulerOwner {
+  return {
+    pid: process.pid,
+    token,
+    started_at: new Date().toISOString(),
+    ...captureProcessIdentity(process.pid),
+  };
+}
+
+function ownerMatches(
+  owner: SchedulerOwner | null | undefined,
+  token: string,
+): owner is SchedulerOwner {
+  return (
+    owner !== null &&
+    owner !== undefined &&
+    owner.pid === process.pid &&
+    owner.token === token
+  );
+}
+
+/**
+ * True when any all-agent or scoped scheduler lease is held by a live process.
+ * The TUI shadow scheduler uses this to defer to Desktop listeners.
+ */
+export function hasLiveSchedulerOwner(data: {
+  scheduler_owner: SchedulerOwner | null;
+  scheduler_owners?: Partial<
+    Record<Exclude<CronSchedulerScope, "all">, SchedulerOwner>
+  >;
+}): boolean {
+  return (
+    isLiveOwner(data.scheduler_owner) ||
+    isLiveOwner(data.scheduler_owners?.local) ||
+    isLiveOwner(data.scheduler_owners?.cloud)
+  );
+}
+
+function throwIfLiveAllLease(
+  owner: SchedulerOwner | null | undefined,
+  allowSelf: boolean,
+): void {
+  if (!isLiveOwner(owner)) return;
+  if (allowSelf && owner.pid === process.pid) return;
+  throw new Error(
+    `Scheduler lease held by PID ${owner.pid} (token ${owner.token}). Cannot claim.`,
+  );
+}
+
+function throwIfLiveScopedLease(
+  existingOwner: SchedulerOwner | undefined,
+  scope: Exclude<CronSchedulerScope, "all">,
+): void {
+  if (
+    existingOwner &&
+    existingOwner.pid !== process.pid &&
+    isLiveOwner(existingOwner)
+  ) {
+    throw new Error(
+      `${scope} scheduler lease held by PID ${existingOwner.pid} (token ${existingOwner.token}). Cannot claim.`,
+    );
+  }
+}
+
 /**
  * Claim the scheduler lease. Returns the token on success.
  * Throws if another live process holds the lease.
+ *
+ * Scoped claims also write a live `scheduler_owner` tombstone so older
+ * binaries that only inspect that field refuse `claimSchedulerLease()` and
+ * cannot rewrite the file without `scheduler_owners`.
  */
 export function claimSchedulerLease(scope: CronSchedulerScope = "all"): string {
   return withLock(() => {
     const data = readCronFile();
     const token = randomBytes(4).toString("hex");
+    const owner = createSchedulerOwner(token);
+    const liveScoped = liveScopedOwners(data);
+    const liveLegacy = isLiveOwner(data.scheduler_owner)
+      ? data.scheduler_owner
+      : null;
 
-    if (data.scheduler_owner) {
-      const existingOwner = data.scheduler_owner;
-      const { pid, token: existingToken } = existingOwner;
-      if (
-        (scope !== "all" || pid !== process.pid) &&
-        isProcessAlive(pid, existingOwner)
-      ) {
+    if (scope === "all") {
+      for (const existingOwner of liveScoped) {
         throw new Error(
-          `Scheduler lease held by PID ${pid} (token ${existingToken}). Cannot claim.`,
+          `Scoped scheduler lease held by PID ${existingOwner.pid}. Cannot claim all schedules.`,
         );
       }
-      // Stale lease from dead process or self-reclaim — take over
-      data.scheduler_owner = null;
-    }
-
-    const owner = {
-      pid: process.pid,
-      token,
-      started_at: new Date().toISOString(),
-      ...captureProcessIdentity(process.pid),
-    };
-    if (scope === "all") {
-      for (const existingOwner of Object.values(data.scheduler_owners)) {
-        if (isProcessAlive(existingOwner.pid, existingOwner)) {
-          throw new Error(
-            `Scoped scheduler lease held by PID ${existingOwner.pid}. Cannot claim all schedules.`,
-          );
-        }
-      }
+      throwIfLiveAllLease(liveLegacy, true);
       data.scheduler_owners = {};
       data.scheduler_owner = owner;
     } else {
-      const existingOwner = data.scheduler_owners[scope];
-      if (
-        existingOwner &&
-        existingOwner.pid !== process.pid &&
-        isProcessAlive(existingOwner.pid, existingOwner)
-      ) {
-        throw new Error(
-          `${scope} scheduler lease held by PID ${existingOwner.pid} (token ${existingOwner.token}). Cannot claim.`,
-        );
+      // A live scheduler_owner with no live scoped owners is a real all-agent
+      // lease (or a stale tombstone whose scoped row was stripped). Refuse.
+      if (liveScoped.length === 0) {
+        throwIfLiveAllLease(liveLegacy, false);
       }
+      throwIfLiveScopedLease(data.scheduler_owners[scope], scope);
       data.scheduler_owners[scope] = owner;
+      if (!liveLegacy) data.scheduler_owner = owner;
     }
     writeCronFile(data);
     return token;
@@ -722,12 +690,29 @@ export function verifySchedulerLease(
   const data = readCronFile();
   const owner =
     scope === "all" ? data.scheduler_owner : data.scheduler_owners[scope];
-  return (
-    owner !== null &&
-    owner !== undefined &&
-    owner.pid === process.pid &&
-    owner.token === token
-  );
+  return ownerMatches(owner, token);
+}
+
+/**
+ * Confirm we still hold the lease. Scoped holders also refresh the mixed-version
+ * `scheduler_owner` tombstone so a dead sibling cannot let an old binary claim
+ * `all` and strip `scheduler_owners`.
+ */
+export function refreshSchedulerLease(
+  token: string,
+  scope: CronSchedulerScope = "all",
+): boolean {
+  return withLock(() => {
+    const data = readCronFile();
+    const owner =
+      scope === "all" ? data.scheduler_owner : data.scheduler_owners[scope];
+    if (!ownerMatches(owner, token)) return false;
+    if (scope !== "all" && !isLiveOwner(data.scheduler_owner)) {
+      data.scheduler_owner = owner;
+      writeCronFile(data);
+    }
+    return true;
+  });
 }
 
 /**
@@ -741,19 +726,17 @@ export function releaseSchedulerLease(
     const data = readCronFile();
     const owner =
       scope === "all" ? data.scheduler_owner : data.scheduler_owners[scope];
-    if (!owner || owner.pid !== process.pid || owner.token !== token) {
-      return;
+    if (!ownerMatches(owner, token)) return;
+    if (scope === "all") {
+      data.scheduler_owner = null;
+    } else {
+      delete data.scheduler_owners[scope];
+      if (ownerMatches(data.scheduler_owner, token)) {
+        data.scheduler_owner = liveScopedOwners(data)[0] ?? null;
+      }
     }
-    if (scope === "all") data.scheduler_owner = null;
-    else delete data.scheduler_owners[scope];
     writeCronFile(data);
   });
-}
-
-export function __testOverrideReadProcessIdentity(
-  fn: ((pid: number) => ProcessIdentity | null) | null,
-): void {
-  readProcessIdentityOverride = fn;
 }
 
 // ── Task state updates (used by scheduler) ──────────────────────────

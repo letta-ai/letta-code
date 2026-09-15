@@ -14,6 +14,7 @@ import {
 import { cronMatchesTime } from "@/cron/parse-interval";
 import { getCronRunLogPath, readCronRunLogEntries } from "@/cron/run-log";
 import {
+  CRON_SCHEDULER_SCOPE_ENV,
   formatCronPrompt,
   getIntendedCronOccurrence,
   handleMissedOneShot,
@@ -31,6 +32,7 @@ import type { StartListenerOptions } from "@/websocket/listener/types";
 
 const TEST_DIR = path.join(import.meta.dir, "__scheduler_test_tmp__");
 const origHome = process.env.LETTA_HOME;
+const origCronScope = process.env[CRON_SCHEDULER_SCOPE_ENV];
 
 beforeEach(() => {
   if (existsSync(TEST_DIR)) {
@@ -38,6 +40,7 @@ beforeEach(() => {
   }
   mkdirSync(TEST_DIR, { recursive: true });
   process.env.LETTA_HOME = TEST_DIR;
+  delete process.env[CRON_SCHEDULER_SCOPE_ENV];
 });
 
 afterEach(() => {
@@ -47,6 +50,8 @@ afterEach(() => {
   }
   if (origHome) process.env.LETTA_HOME = origHome;
   else delete process.env.LETTA_HOME;
+  if (origCronScope) process.env[CRON_SCHEDULER_SCOPE_ENV] = origCronScope;
+  else delete process.env[CRON_SCHEDULER_SCOPE_ENV];
 });
 
 test("routes scheduler lease failures through the listener logger", () => {
@@ -221,6 +226,65 @@ describe("scheduler backend scope", () => {
     expect(taskMatchesCronSchedulerScope(localTask, "cloud")).toBe(false);
     expect(taskMatchesCronSchedulerScope(cloudTask, "local")).toBe(false);
     expect(taskMatchesCronSchedulerScope(localTask, "local")).toBe(true);
+  });
+
+  test("startScheduler with local scope does not fire a cloud-agent schedule", async () => {
+    const dueAt = new Date(Date.now() - 30_000);
+    const cloud = addTask(
+      makeInput({
+        agent_id: "agent-cloud-001",
+        recurring: false,
+        scheduled_for: dueAt,
+        cron: "0 0 1 1 *",
+      }),
+    ).task;
+    const local = addTask(
+      makeInput({
+        agent_id: "agent-local-abc",
+        recurring: false,
+        scheduled_for: dueAt,
+        cron: "0 0 1 1 *",
+      }),
+    ).task;
+
+    process.env[CRON_SCHEDULER_SCOPE_ENV] = "local";
+    startScheduler(
+      {} as ListenerTransport,
+      {
+        connectionId: "conn-scope",
+        wsUrl: "wss://example.test/ws",
+        deviceId: "device-scope",
+        connectionName: "listener-scope",
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+      },
+      async () => {},
+    );
+
+    expect(getTask(cloud.id)).toMatchObject({
+      status: "active",
+      fire_count: 0,
+      last_run_outcome: null,
+    });
+
+    const deadline = Date.now() + 1000;
+    while (
+      Date.now() < deadline &&
+      getTask(local.id)?.last_run_outcome == null
+    ) {
+      await Bun.sleep(10);
+    }
+
+    expect(getTask(local.id)).toMatchObject({
+      last_run_outcome: "failed",
+      last_run_reason: "runtime_unavailable",
+    });
+    expect(getTask(cloud.id)).toMatchObject({
+      status: "active",
+      fire_count: 0,
+      last_run_outcome: null,
+    });
   });
 });
 

@@ -13,12 +13,16 @@ import {
   garbageCollect,
   getActiveTasks,
   getTask,
+  hasLiveSchedulerOwner,
+  isProcessAlive,
   listTasks,
   pauseTask,
   readCronFile,
   recordTaskQueued,
+  refreshSchedulerLease,
   releaseSchedulerLease,
   resumeTask,
+  type SchedulerOwner,
   updateTask,
   verifySchedulerLease,
   withLock,
@@ -81,6 +85,49 @@ function overwriteTask(taskId: string, patch: Partial<CronTask>): void {
   if (!task) throw new Error("expected persisted cron task");
   Object.assign(task, patch);
   writeFileSync(_CRON_PATH, JSON.stringify(data, null, 2));
+}
+
+function deadSchedulerOwner(token = "dead-token"): SchedulerOwner {
+  return {
+    pid: 999_999_999,
+    token,
+    started_at: "2026-04-15T00:00:00.000Z",
+  };
+}
+
+/**
+ * Mimic an older binary: inspect only `scheduler_owner`, then rewrite the
+ * file without `scheduler_owners`. A live tombstone must make this throw
+ * before the write.
+ */
+function simulateLegacyClaimSchedulerLease(): string {
+  return withLock(() => {
+    const data = readCronFile();
+    const existingOwner = data.scheduler_owner;
+    if (existingOwner && isProcessAlive(existingOwner.pid, existingOwner)) {
+      throw new Error(
+        `Scheduler lease held by PID ${existingOwner.pid} (token ${existingOwner.token}). Cannot claim.`,
+      );
+    }
+    const token = "legacy-token";
+    writeFileSync(
+      _CRON_PATH,
+      JSON.stringify(
+        {
+          version: 1,
+          scheduler_owner: {
+            pid: process.pid,
+            token,
+            started_at: new Date().toISOString(),
+          },
+          tasks: data.tasks,
+        },
+        null,
+        2,
+      ),
+    );
+    return token;
+  });
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
@@ -413,9 +460,23 @@ describe("scheduler lease", () => {
     expect(verifySchedulerLease(localToken, "local")).toBe(true);
     expect(verifySchedulerLease(cloudToken, "local")).toBe(false);
 
+    const owners = readCronFile();
+    expect(owners.scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid }),
+    );
+    expect(
+      isProcessAlive(owners.scheduler_owner?.pid ?? -1, owners.scheduler_owner),
+    ).toBe(true);
+
     releaseSchedulerLease(cloudToken, "cloud");
     expect(verifySchedulerLease(cloudToken, "cloud")).toBe(false);
     expect(verifySchedulerLease(localToken, "local")).toBe(true);
+    expect(readCronFile().scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid, token: localToken }),
+    );
+
+    releaseSchedulerLease(localToken, "local");
+    expect(readCronFile().scheduler_owner).toBeNull();
   });
 
   test("legacy all-schedule leases exclude scoped schedulers", () => {
@@ -426,6 +487,99 @@ describe("scheduler lease", () => {
     const localToken = claimSchedulerLease("local");
     expect(() => claimSchedulerLease()).toThrow("Scoped scheduler lease held");
     releaseSchedulerLease(localToken, "local");
+  });
+
+  test("scoped lease writes a live scheduler_owner tombstone that old writers cannot strip", () => {
+    const localToken = claimSchedulerLease("local");
+    const before = readCronFile();
+    expect(before.scheduler_owners.local?.token).toBe(localToken);
+    expect(before.scheduler_owner?.token).toBe(localToken);
+
+    expect(() => simulateLegacyClaimSchedulerLease()).toThrow(
+      "Scheduler lease held",
+    );
+    const after = readCronFile();
+    expect(after.scheduler_owners.local?.token).toBe(localToken);
+    expect(after.scheduler_owner?.token).toBe(localToken);
+  });
+
+  test("stale scoped lease can be taken over and restores the tombstone", () => {
+    const dead = deadSchedulerOwner();
+    writeFileSync(
+      _CRON_PATH,
+      JSON.stringify(
+        {
+          version: 1,
+          scheduler_owner: dead,
+          scheduler_owners: { local: dead },
+          tasks: [],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const token = claimSchedulerLease("local");
+    const data = readCronFile();
+    expect(data.scheduler_owners.local).toEqual(
+      expect.objectContaining({ pid: process.pid, token }),
+    );
+    expect(data.scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid, token }),
+    );
+  });
+
+  test("refreshSchedulerLease restores a stale mixed-version tombstone", () => {
+    const token = claimSchedulerLease("cloud");
+    const current = readCronFile();
+    writeFileSync(
+      _CRON_PATH,
+      JSON.stringify(
+        {
+          version: 1,
+          scheduler_owner: deadSchedulerOwner(),
+          scheduler_owners: { cloud: current.scheduler_owners.cloud },
+          tasks: [],
+        },
+        null,
+        2,
+      ),
+    );
+
+    expect(refreshSchedulerLease(token, "cloud")).toBe(true);
+    expect(readCronFile().scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid, token }),
+    );
+  });
+
+  test("hasLiveSchedulerOwner treats live scoped owners like scheduler_owner", () => {
+    expect(
+      hasLiveSchedulerOwner({ scheduler_owner: null, scheduler_owners: {} }),
+    ).toBe(false);
+    expect(
+      hasLiveSchedulerOwner({
+        scheduler_owner: null,
+        scheduler_owners: { local: deadSchedulerOwner() },
+      }),
+    ).toBe(false);
+
+    const token = claimSchedulerLease("local");
+    const live = readCronFile();
+    expect(hasLiveSchedulerOwner(live)).toBe(true);
+    expect(
+      hasLiveSchedulerOwner({
+        scheduler_owner: null,
+        scheduler_owners: { local: live.scheduler_owners.local },
+      }),
+    ).toBe(true);
+    expect(
+      hasLiveSchedulerOwner({
+        scheduler_owner: null,
+        scheduler_owners: { cloud: live.scheduler_owners.local },
+      }),
+    ).toBe(true);
+
+    releaseSchedulerLease(token, "local");
   });
 
   test("takes over a stale lease when the same PID belongs to a different process incarnation", () => {

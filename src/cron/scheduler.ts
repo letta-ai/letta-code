@@ -41,9 +41,9 @@ import {
   getCronFileMtime,
   getTask,
   recordTaskQueued,
+  refreshSchedulerLease,
   releaseSchedulerLease,
   updateTask,
-  verifySchedulerLease,
 } from "./cron-file";
 import { cronMatchesTime, isValidCron } from "./parse-interval";
 import {
@@ -522,8 +522,8 @@ function tick(
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
 ): void {
-  // Verify we still hold the lease
-  if (!verifySchedulerLease(state.token, state.scope)) {
+  // Verify we still hold the lease and keep the mixed-version tombstone live.
+  if (!refreshSchedulerLease(state.token, state.scope)) {
     logScheduler(opts, "Scheduler lease lost. Stopping.");
     stopScheduler();
     return;
@@ -687,7 +687,10 @@ export function startScheduler(
     pendingTimers: new Set(),
   };
 
-  // Initial tick
+  schedulerState = state;
+
+  // Initial tick after the process is recorded as running so zero-jitter
+  // fires are not dropped by the `if (!schedulerState) return` revalidation.
   tick(state, socket, opts, processQueuedTurn);
 
   state.tickInterval = setInterval(() => {
@@ -707,8 +710,6 @@ export function startScheduler(
       );
     }
   }, GC_INTERVAL_MS);
-
-  schedulerState = state;
 }
 
 /**
