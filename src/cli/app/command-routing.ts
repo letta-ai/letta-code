@@ -43,7 +43,13 @@ const NON_STATE_COMMANDS = new Set([
   "/rename", // agent/convo rename
   "/btw",
   "/reload", // runtime surface reload (has its own busy guard)
+  "/dream", // admission-only HTTP request; the server reports unfinished/busy
 ]);
+
+export function aliasBareExitCommand(input: string): string {
+  if (input === "exit" || input === "quit") return "/exit";
+  return input;
+}
 
 // Check if a command is interactive (opens overlay, should not be queued)
 export function isInteractiveCommand(msg: string): boolean {

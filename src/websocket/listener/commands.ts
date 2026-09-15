@@ -9,6 +9,7 @@ import {
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getActiveMemoryDirectory } from "@/agent/memory-runtime";
 import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
+import { requestReflectionRun } from "@/agent/reflection-runs";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
 import { refreshCustomCommands } from "@/cli/commands/custom";
@@ -183,6 +184,18 @@ export async function handleExecuteCommand(
         output = await handleReloadCommand(conversationRuntime);
         // Re-advertise so newly (un)registered mod commands reach the client.
         emitDeviceStatusUpdate(socket, conversationRuntime, scope);
+        break;
+
+      case "dream":
+        output = await requestReflectionRun(
+          {
+            agentId: scope.agent_id ?? "",
+            conversationId: scope.conversation_id,
+            actingUserId: command.runtime.acting_user_id,
+            clientRequestId: command.request_id,
+          },
+          trimmedArgs,
+        );
         break;
 
       case "reflect":

@@ -12,6 +12,12 @@ import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
+import {
+  postReflectionRun,
+  REFLECTION_UNSUPPORTED,
+  type ReflectionRunReceipt,
+  type ReflectionRunRequest,
+} from "./api/reflection-runs";
 import { isCloudServerUrl } from "./api/server-url";
 import {
   type BackendMode,
@@ -199,6 +205,13 @@ export interface Backend {
     body: AgentUpdateBody,
     options?: AgentUpdateOptions,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["update"]>>>;
+
+  /** Cloud admission only; unsupported backends must not run local reflection. */
+  enqueueReflectionRun?(
+    agentId: string,
+    request: ReflectionRunRequest,
+    options?: { headers: Record<string, string> },
+  ): Promise<ReflectionRunReceipt>;
 
   /** Optional until every backend supports server-backed agent secrets. */
   listAgentSecrets?(agentId: string): Promise<AgentSecret[]>;
@@ -390,6 +403,18 @@ export class APIBackend implements Backend {
       },
     );
     return request;
+  }
+
+  async enqueueReflectionRun(
+    agentId: string,
+    request: ReflectionRunRequest,
+    options?: { headers: Record<string, string> },
+  ): Promise<ReflectionRunReceipt> {
+    if (!isCloudServerUrl()) throw new Error(REFLECTION_UNSUPPORTED);
+    const body = { ...request };
+    const headers = options ? { headers: { ...options.headers } } : undefined;
+    const client = await this.getClient();
+    return postReflectionRun(client, agentId, body, headers);
   }
 
   async listAgentSecrets(agentId: string): Promise<AgentSecret[]> {

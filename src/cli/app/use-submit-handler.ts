@@ -1,5 +1,3 @@
-// src/cli/app/useSubmitHandler.ts
-
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -148,7 +146,10 @@ import { detectShellContext } from "@/utils/shell-context";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
-import { shouldSlashCommandBypassQueue } from "./command-routing";
+import {
+  aliasBareExitCommand,
+  shouldSlashCommandBypassQueue,
+} from "./command-routing";
 import { buildTextParts } from "./content-parts";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
 import { saveLastSessionBeforeExit } from "./session";
@@ -591,11 +592,6 @@ function parseReflectCommandArgs(input: string): ReflectCommandArgs {
   return { instruction, kind: "single" };
 }
 
-function aliasBareExitCommand(input: string): string {
-  if (input === "exit" || input === "quit") return "/exit";
-  return input;
-}
-
 export function useSubmitHandler(ctx: SubmitHandlerContext) {
   const {
     abortControllerRef,
@@ -707,6 +703,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: moved from AppCoordinator; dependencies are preserved from the original callback.
   const onSubmit = useCallback(
     async (message?: string): Promise<{ submitted: boolean }> => {
+      const commandScope = {
+        agentId: agentIdRef.current,
+        conversationId: conversationIdRef.current,
+      };
       const msg = message?.trim() ?? "";
       const overrideContentParts = overrideContentPartsRef.current;
       const hasOverrideContent = overrideContentParts !== null;
@@ -3632,7 +3632,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         const registryCmd = isRegistryCommand
           ? commandRunner.start(msg, `Running ${registryCommandName}...`)
           : null;
-        const result = await executeCommand(aliasedMsg);
+        const result = await executeCommand(aliasedMsg, commandScope);
 
         // If command not found, try user-invocable skills before falling through.
         if (result.notFound) {
