@@ -42,19 +42,6 @@ export interface EnqueuedReply {
   stopReason: StopReasonType | null;
 }
 
-/**
- * Cloud reports the send is over and no reply will arrive: the run failed or
- * was cancelled, the super run errored/was cancelled, or it completed without
- * an assistant message. Callers that reconnect on transport loss must not
- * retry this.
- */
-export class SendEndedWithoutReplyError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "SendEndedWithoutReplyError";
-  }
-}
-
 export class EnqueuedWaitError extends Error {
   constructor(
     error: unknown,
@@ -64,11 +51,6 @@ export class EnqueuedWaitError extends Error {
       cause: error,
     });
     this.name = "EnqueuedWaitError";
-  }
-
-  /** True when the send itself ended; false for stream/HTTP transport loss. */
-  get sendEnded(): boolean {
-    return this.cause instanceof SendEndedWithoutReplyError;
   }
 }
 
@@ -86,17 +68,10 @@ export async function waitForEnqueuedReply(params: {
   signal: AbortSignal;
   pollMs?: number;
   now?: () => number;
-  /**
-   * Run IDs already mapped to this send. A caller that reopens the status
-   * stream after a drop passes the same set so mappings observed before the
-   * drop are not lost (the reconnect snapshot may omit finished runs).
-   */
-  runIds?: Set<string>;
 }): Promise<EnqueuedReply> {
-  const runIds = params.runIds ?? new Set<string>();
+  const runIds = new Set<string>();
   const now = params.now ?? Date.now;
   let completedWithoutText: { runId: string; at: number } | undefined;
-  let completedWithoutRun: number | undefined;
   let next: Promise<IteratorResult<ConversationStatusEvent>> = Promise.resolve({
     done: false,
     value: params.firstEvent,
@@ -141,26 +116,15 @@ export async function waitForEnqueuedReply(params: {
           latest?.id === params.receipt.super_run_id &&
           (latest.errored_at || latest.cancelled_at)
         ) {
-          throw new SendEndedWithoutReplyError(
+          throw new Error(
             `Accepted send ${latest.id} ${latest.errored_at ? "failed" : "was cancelled"} before a run was observed.`,
           );
-        }
-        // The super run finished but its run never appeared in the status
-        // stream (for example the stream dropped and the reconnect snapshot
-        // no longer lists the conversation). Give the mapping a moment to
-        // arrive, then stop instead of polling forever.
-        if (latest?.id === params.receipt.super_run_id && latest.completed_at) {
-          completedWithoutRun ??= now();
-          if (now() - completedWithoutRun >= 15_000)
-            throw new SendEndedWithoutReplyError(
-              `Accepted send ${latest.id} completed before a run was observed; read the conversation for its reply.`,
-            );
         }
         continue;
       }
       const run = await params.retrieveRun(runId);
       if (run.status === "failed" || run.status === "cancelled") {
-        throw new SendEndedWithoutReplyError(
+        throw new Error(
           `Remote run ${runId} ${run.status}${run.stop_reason ? ` (${run.stop_reason})` : ""}`,
         );
       }
@@ -189,7 +153,7 @@ export async function waitForEnqueuedReply(params: {
         completedWithoutText = { runId, at: now() };
       // Run status and messages can become visible on different reads.
       if (now() - completedWithoutText.at < 15_000) continue;
-      throw new SendEndedWithoutReplyError(
+      throw new Error(
         `Remote run ${runId} completed without an assistant reply (${run.stop_reason ?? "unknown stop reason"})`,
       );
     }

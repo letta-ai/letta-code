@@ -19,10 +19,6 @@ export async function collectRemoteTurnResult(
   state: ExecutionState,
   subagentId: string,
   signal = new AbortController().signal,
-  deps: {
-    wait?: typeof waitForAcceptedSuperRun;
-    cancel?: typeof cancelAcceptedListenerInput;
-  } = {},
 ): Promise<SubagentResult> {
   const startedAt = Date.now();
   updateSubagent(subagentId, {
@@ -33,27 +29,23 @@ export async function collectRemoteTurnResult(
     }),
   });
   try {
-    const reply = await (deps.wait ?? waitForAcceptedSuperRun)(
-      receipt,
-      signal,
-      {
-        open: openConversationStatusStream,
-        latest: getLatestConversationSuperRun,
-        messages: async (runId, readSignal) => {
-          const messages = await listEnqueuedRunMessages(runId, readSignal);
-          for (const message of messages) {
-            if (message.message_type === "tool_call_message") {
-              processStreamEvent(
-                JSON.stringify({ type: "message", ...message }),
-                state,
-                subagentId,
-              );
-            }
+    const reply = await waitForAcceptedSuperRun(receipt, signal, {
+      open: openConversationStatusStream,
+      latest: getLatestConversationSuperRun,
+      messages: async (runId, readSignal) => {
+        const messages = await listEnqueuedRunMessages(runId, readSignal);
+        for (const message of messages) {
+          if (message.message_type === "tool_call_message") {
+            processStreamEvent(
+              JSON.stringify({ type: "message", ...message }),
+              state,
+              subagentId,
+            );
           }
-          return messages;
-        },
+        }
+        return messages;
       },
-    );
+    });
     return {
       agentId: receipt.agent_id,
       conversationId: receipt.conversation_id,
@@ -64,9 +56,9 @@ export async function collectRemoteTurnResult(
   } catch (error) {
     let detail = getErrorMessage(error);
     if (signal.aborted) {
-      const cancelled = await (deps.cancel ?? cancelAcceptedListenerInput)(
-        receipt,
-      ).catch(() => false);
+      const cancelled = await cancelAcceptedListenerInput(receipt).catch(
+        () => false,
+      );
       detail = cancelled
         ? INTERRUPTED_BY_USER
         : `${INTERRUPTED_BY_USER} (could not confirm cancellation of remote Super Run ${receipt.super_run_id})`;

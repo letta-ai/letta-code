@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import WebSocket from "ws";
 import {
   type AppServerClient,
@@ -17,7 +16,6 @@ import {
 } from "@/backend/api/conversation-enqueue";
 import { getApiRequestConfig } from "@/backend/api/request";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
-import type { UsageStatistics } from "@/types/protocol";
 import type {
   AgentRuntimeScope,
   ConversationRuntimeScope,
@@ -26,7 +24,10 @@ import type {
   RuntimeStartCommand,
   TurnFinishedMessage,
 } from "@/types/protocol_v2";
-import { resolveEnvironmentMaxWaitMs } from "./headless-environment-response";
+import {
+  type ListenerLaunchResult,
+  resolveEnvironmentMaxWaitMs,
+} from "./headless-environment-response";
 
 export function listenerControlUrl(
   baseUrl: string,
@@ -92,16 +93,6 @@ export async function cancelListenerInput(params: {
     throw new Error(response.error ?? "Listener rejected cancellation");
   return response.aborted;
 }
-
-export type ListenerLaunchResult =
-  | {
-      status: "completed";
-      text: string;
-      stopReason: StopReasonType | null;
-      runIds: string[];
-      usage: UsageStatistics;
-    }
-  | { status: "queued"; receipt: EnqueueReceipt };
 
 /** Reconnect only for explicit cancellation, never to observe task progress. */
 export async function cancelAcceptedListenerInput(

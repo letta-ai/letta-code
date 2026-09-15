@@ -123,11 +123,10 @@ import {
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import { tryCloudHeadlessSend } from "./headless-cloud-send";
 import {
-  buildEnvironmentCompletedResult,
-  buildEnvironmentLaunchErrorResult,
-  buildEnvironmentQueuedResult,
+  buildEnvironmentLaunchResult,
   buildEnvironmentResponseMetadata,
   isCloudEnvironmentSelector,
+  type ListenerLaunchResult,
   type ReplyEnvironmentMetadata,
 } from "./headless-environment-response";
 import {
@@ -135,10 +134,7 @@ import {
   createHeadlessEphemeralConversation,
   prepareHeadlessEphemeralBackend,
 } from "./headless-ephemeral-startup";
-import {
-  type ListenerLaunchResult,
-  launchListenerConversation,
-} from "./headless-listener-launch";
+import { launchListenerConversation } from "./headless-listener-launch";
 import { resolveHeadlessMemfsPolicy } from "./headless-memfs-policy";
 import {
   createHeadlessModAdapter,
@@ -2011,7 +2007,6 @@ ${SYSTEM_REMINDER_CLOSE}
           environment: environmentRouting.environment,
         })
       : { source: "same-environment" };
-    const launchStarted = Date.now();
     const launchParams: Parameters<typeof launchListenerConversation>[0] = {
       noWait: Boolean(values["no-wait"]),
       connectionId,
@@ -2071,75 +2066,55 @@ ${SYSTEM_REMINDER_CLOSE}
           : {}),
       },
     };
-    const launchEnvelopeBase = {
-      sessionId,
-      agentId: publicAgentId,
-      internalAgentId: agent.id,
-      conversationId,
-      environment: responseEnvironment,
-      startedAt: launchStarted,
-    };
-    let launchOutcome: ListenerLaunchResult;
+    let launchOutcome:
+      | ListenerLaunchResult
+      | { status: "error"; error: string };
     try {
       launchOutcome = await launchListenerConversation(launchParams);
     } catch (error) {
-      // Without this, a launch failure would surface as an unhandled
-      // rejection: the fatal handler exits 1 without printing anything, so a
-      // parent reading stdout sees no result envelope and a stderr that only
-      // holds startup noise (#3735).
-      const detail = getErrorMessage(error);
       trackHeadlessBoundaryError(
         "headless_environment_launch_failed",
         error,
         "headless_environment_launch",
       );
-      if (outputFormat === "text") {
-        console.error(`Error: ${detail}`);
-      } else {
-        const errorResult = buildEnvironmentLaunchErrorResult({
-          ...launchEnvelopeBase,
-          error: detail,
-        });
-        if (outputFormat === "json")
-          await writeFinalHeadlessStdout(
-            `${JSON.stringify(errorResult, null, 2)}\n`,
-          );
-        else writeWireMessage(errorResult);
-      }
-      return exitHeadless(1, "headless_environment_launch_failed");
-    }
-    if (launchOutcome.status === "queued") {
-      // --no-wait: Cloud accepted the send; nothing in this process waits for
-      // the remote turn. The caller tracks completion through the receipt.
-      const queued = buildEnvironmentQueuedResult({
-        ...launchEnvelopeBase,
-        receipt: launchOutcome.receipt,
-      });
-      if (outputFormat === "stream-json") writeWireMessage(queued);
-      else
-        await writeFinalHeadlessStdout(
-          `${JSON.stringify(queued, null, outputFormat === "json" ? 2 : 0)}\n`,
-        );
-      return exitHeadless(0, "headless_environment_message_queued");
+      launchOutcome = { status: "error", error: getErrorMessage(error) };
     }
     const stats = sessionStats.getSnapshot();
-    if (outputFormat === "text") {
+    if (outputFormat === "text" && launchOutcome.status === "error") {
+      console.error(`Error: ${launchOutcome.error}`);
+    } else if (
+      outputFormat === "text" &&
+      launchOutcome.status === "completed"
+    ) {
       await writeFinalHeadlessStdout(`${launchOutcome.text}\n`);
     } else {
-      const completed = buildEnvironmentCompletedResult({
-        ...launchEnvelopeBase,
-        reply: launchOutcome,
-        durationMs: Math.round(stats.totalWallMs),
-        durationApiMs: Math.round(stats.totalApiMs),
-      });
-      if (outputFormat === "json")
+      const result = buildEnvironmentLaunchResult(
+        {
+          sessionId,
+          agentId: publicAgentId,
+          internalAgentId: agent.id,
+          conversationId,
+          environment: responseEnvironment,
+          durationMs: Math.round(stats.totalWallMs),
+          durationApiMs: Math.round(stats.totalApiMs),
+        },
+        launchOutcome,
+      );
+      if (outputFormat === "stream-json") writeWireMessage(result);
+      else
         await writeFinalHeadlessStdout(
-          `${JSON.stringify(completed, null, 2)}\n`,
+          `${JSON.stringify(result, null, outputFormat === "json" ? 2 : 0)}\n`,
         );
-      else writeWireMessage(completed);
     }
 
-    await exitHeadless(0, "headless_environment_message_complete");
+    return exitHeadless(
+      launchOutcome.status === "error" ? 1 : 0,
+      launchOutcome.status === "error"
+        ? "headless_environment_launch_failed"
+        : launchOutcome.status === "queued"
+          ? "headless_environment_message_queued"
+          : "headless_environment_message_complete",
+    );
   }
 
   // Start with the user message

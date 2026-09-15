@@ -4,10 +4,66 @@ import type { EnvironmentConnection } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
 import {
   buildEnvironmentCreateMessageBody,
+  buildEnvironmentLaunchResult,
   resolveEnvironmentMaxWaitMs,
   waitForEnvironmentAssistantMessage,
 } from "@/headless-environment-response";
 import { toolFilter } from "@/tools/filter";
+
+test("launch envelopes preserve queued identity, failure text, and completed usage", () => {
+  const base = {
+    sessionId: "session",
+    agentId: "parent",
+    internalAgentId: "parent",
+    conversationId: "parent-conv",
+    environment: { source: "same-environment" as const },
+    durationMs: 12,
+    durationApiMs: 3,
+  };
+  const receipt = {
+    status: "queued" as const,
+    agent_id: "child",
+    conversation_id: "child-conv",
+    client_message_id: "cm",
+    super_run_id: "sr",
+    workflow_id: "wf",
+  };
+  expect(
+    buildEnvironmentLaunchResult(base, { status: "queued", receipt }),
+  ).toMatchObject({
+    ...receipt,
+    type: "result",
+    subtype: "queued",
+    result: null,
+    is_error: false,
+  });
+  expect(
+    buildEnvironmentLaunchResult(base, {
+      status: "error",
+      error: "launch failed",
+    }),
+  ).toMatchObject({
+    subtype: "error",
+    error: "launch failed",
+    result: null,
+    is_error: true,
+  });
+  expect(
+    buildEnvironmentLaunchResult(base, {
+      status: "completed",
+      text: "done",
+      runIds: ["run"],
+      usage: { step_count: 7 },
+      stopReason: "end_turn",
+    }),
+  ).toMatchObject({
+    subtype: "success",
+    result: "done",
+    num_turns: 7,
+    run_ids: ["run"],
+    duration_ms: 12,
+  });
+});
 
 /** Pins the wait to the run-based fallback (server without the route). */
 const runtimeStatusUnavailable =

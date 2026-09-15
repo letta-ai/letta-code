@@ -19,6 +19,16 @@ import { ApiRequestError } from "@/backend/api/request";
 import { toolFilter } from "@/tools/filter";
 import type { ResultMessage, UsageStatistics } from "@/types/protocol";
 
+export type ListenerLaunchResult =
+  | {
+      status: "completed";
+      text: string;
+      stopReason: StopReasonType | null;
+      runIds: string[];
+      usage: UsageStatistics;
+    }
+  | { status: "queued"; receipt: EnqueueReceipt };
+
 export type ReplyEnvironmentMetadata =
   | {
       source: "same-environment";
@@ -51,105 +61,45 @@ export function buildEnvironmentResponseMetadata(params: {
   };
 }
 
-interface EnvironmentLaunchEnvelopeBase {
-  sessionId: string;
-  agentId: string | null;
-  internalAgentId: string;
-  conversationId: string;
-  environment: ReplyEnvironmentMetadata;
-  startedAt: number;
-}
-
-function environmentLaunchEnvelope(base: EnvironmentLaunchEnvelopeBase): Omit<
-  ResultMessage,
-  "subtype" | "result"
-> & {
-  environment: ReplyEnvironmentMetadata;
-} {
-  return {
-    type: "result",
-    session_id: base.sessionId,
-    duration_ms: Date.now() - base.startedAt,
-    duration_api_ms: 0,
-    num_turns: 0,
-    agent_id: base.agentId,
-    conversation_id: base.conversationId,
-    environment: base.environment,
-    run_ids: [],
-    usage: null,
-    uuid: `result-${base.internalAgentId}-${Date.now()}`,
-  };
-}
-
-/**
- * Result envelope for a listener launch that threw before the remote turn
- * produced anything. Same field shape as Cloud-routed send failures
- * (`result: null`, text in `error`) so parents parse both the same way.
- */
-export function buildEnvironmentLaunchErrorResult(
-  params: EnvironmentLaunchEnvelopeBase & { error: string },
-): ResultMessage & {
-  is_error: true;
-  error: string;
-  environment: ReplyEnvironmentMetadata;
-} {
-  return {
-    ...environmentLaunchEnvelope(params),
-    subtype: "error",
-    is_error: true,
-    error: params.error,
-    result: null,
-    stop_reason: "error",
-  };
-}
-
-/** Result envelope for a computer-routed turn that returned its reply. */
-export function buildEnvironmentCompletedResult(
-  params: EnvironmentLaunchEnvelopeBase & {
-    reply: {
-      text: string;
-      runIds: string[];
-      usage: UsageStatistics;
-      stopReason: StopReasonType | null;
-    };
+/** One wire envelope for accepted, completed, and failed listener launches. */
+export function buildEnvironmentLaunchResult(
+  base: {
+    sessionId: string;
+    agentId: string | null;
+    internalAgentId: string;
+    conversationId: string;
+    environment: ReplyEnvironmentMetadata;
     durationMs: number;
     durationApiMs: number;
   },
-): ResultMessage & { is_error: false; environment: ReplyEnvironmentMetadata } {
-  const { reply } = params;
+  outcome: ListenerLaunchResult | { status: "error"; error: string },
+): ResultMessage & {
+  is_error: boolean;
+  environment: ReplyEnvironmentMetadata;
+} {
+  const reply = outcome.status === "completed" ? outcome : null;
   return {
-    ...environmentLaunchEnvelope(params),
-    subtype: "success",
-    is_error: false,
-    duration_ms: params.durationMs,
-    duration_api_ms: params.durationApiMs,
-    num_turns: reply.usage.step_count ?? reply.runIds.length,
-    result: reply.text,
-    run_ids: reply.runIds,
-    usage: reply.usage,
-    ...(reply.stopReason && reply.stopReason !== "end_turn"
+    type: "result",
+    subtype: outcome.status === "completed" ? "success" : outcome.status,
+    is_error: outcome.status === "error",
+    result: reply?.text ?? null,
+    session_id: base.sessionId,
+    duration_ms: base.durationMs,
+    duration_api_ms: base.durationApiMs,
+    num_turns: reply?.usage.step_count ?? reply?.runIds.length ?? 0,
+    agent_id: base.agentId,
+    conversation_id: base.conversationId,
+    environment: base.environment,
+    run_ids: reply?.runIds ?? [],
+    usage: reply?.usage ?? null,
+    uuid: `result-${base.internalAgentId}-${Date.now()}`,
+    ...(outcome.status === "queued" ? outcome.receipt : {}),
+    ...(outcome.status === "error"
+      ? { error: outcome.error, stop_reason: "error" as const }
+      : {}),
+    ...(reply?.stopReason && reply.stopReason !== "end_turn"
       ? { stop_reason: reply.stopReason }
       : {}),
-  };
-}
-
-/**
- * Result envelope for `--no-wait` on a computer-routed launch: Cloud accepted
- * the send and this process stops here. The receipt lets the caller follow
- * the remote turn.
- */
-export function buildEnvironmentQueuedResult(
-  params: EnvironmentLaunchEnvelopeBase & { receipt: EnqueueReceipt },
-): ResultMessage &
-  EnqueueReceipt & { is_error: false; environment: ReplyEnvironmentMetadata } {
-  return {
-    ...environmentLaunchEnvelope(params),
-    // The receipt's agent_id/conversation_id win: the parent needs the exact
-    // identifiers Cloud accepted to follow the send.
-    ...params.receipt,
-    subtype: "queued",
-    is_error: false,
-    result: null,
   };
 }
 
