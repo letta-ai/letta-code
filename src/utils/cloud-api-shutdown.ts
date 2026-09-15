@@ -7,6 +7,28 @@ export type CloudApiShutdownError = {
   headers?: unknown;
 };
 
+export type CloudApiDeploymentInterruptedError = {
+  error_type: "internal_error";
+  error_code: "cloud_api_deployment_interrupted";
+  status_code: 503;
+  retryable: true;
+  run_id?: string;
+};
+
+export function isCloudApiDeploymentInterrupted(
+  error: unknown,
+): error is CloudApiDeploymentInterruptedError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { error_type?: unknown }).error_type === "internal_error" &&
+    (error as { error_code?: unknown }).error_code ===
+      "cloud_api_deployment_interrupted" &&
+    (error as { status_code?: unknown }).status_code === 503 &&
+    (error as { retryable?: unknown }).retryable === true
+  );
+}
+
 export function isCloudApiShutdownRejection(
   error: unknown,
 ): error is CloudApiShutdownError {

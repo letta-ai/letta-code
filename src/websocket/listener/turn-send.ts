@@ -5,6 +5,10 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { sendMessageStream } from "@/agent/message";
+import { getRetryDelayMs } from "@/agent/turn-recovery-policy";
+import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
+import { LLM_API_ERROR_MAX_RETRIES } from "./constants";
+import { emitRecoverableRetryNotice } from "./recoverable-notices";
 import { finalizeHandledRecoveryTurn } from "./recovery";
 import {
   type ApprovalContinuationSendResult,
@@ -15,6 +19,7 @@ import {
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
 import {
+  refreshTurnInputOtidsForNewRequest,
   type TurnInputState,
   updateTurnInputMessagesPreservingOtids,
 } from "./turn-input-state";
@@ -77,6 +82,42 @@ export async function startTurnInput(
     input: updateTurnInputMessagesPreservingOtids(input, withSkills),
     stream: sender.accept(result),
   };
+}
+
+export async function prepareProviderRetryInput(params: {
+  input: TurnInputState;
+  errorDetail: string | null;
+  attempt: number;
+  socket: ListenerTransport;
+  runtime: ConversationRuntime;
+  turnLease: TurnLease;
+  agentId: string | null;
+  conversationId: string;
+  runId: string | null;
+}): Promise<TurnInputState> {
+  const delayMs = getRetryDelayMs({
+    category: "transient_provider",
+    attempt: params.attempt,
+    detail: params.errorDetail,
+  });
+  emitRecoverableRetryNotice(params.socket, params.runtime, {
+    kind: "transient_provider_retry",
+    message:
+      getRetryStatusMessage(params.errorDetail) ||
+      `LLM API error encountered, retrying (attempt ${params.attempt}/${LLM_API_ERROR_MAX_RETRIES})...`,
+    reason: "llm_api_error",
+    attempt: params.attempt,
+    maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+    delayMs,
+    runId: params.runId ?? undefined,
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+  });
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+  if (params.turnLease.signal.aborted) {
+    throw new Error("Cancelled by user");
+  }
+  return refreshTurnInputOtidsForNewRequest(params.input);
 }
 
 export function createTurnInputSender(params: {

@@ -5,6 +5,7 @@ import { normalizeStreamErrorTypeToStopReason } from "@/agent/turn-recovery-poli
 import type { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import type { StreamDelta } from "@/types/protocol_v2";
+import { isCloudApiDeploymentInterrupted } from "@/utils/cloud-api-shutdown";
 import { debugLog } from "@/utils/debug";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import { LISTENER_STREAM_RESUME_POLICY } from "./constants";
@@ -90,7 +91,10 @@ export async function drainTurnStreamWithEmission(
       if (errorInfo) {
         const recoverableApprovalErrorText =
           getApprovalToolCallDesyncErrorText(errorInfo);
-        if (!recoverableApprovalErrorText) {
+        if (
+          !recoverableApprovalErrorText &&
+          !isCloudApiDeploymentInterrupted(errorInfo)
+        ) {
           emitLoopErrorNotice(socket, runtime, {
             message: errorInfo.message || "Stream error",
             stopReason: normalizeStreamErrorTypeToStopReason(
@@ -107,8 +111,8 @@ export async function drainTurnStreamWithEmission(
         } else {
           debugLog(
             "recovery",
-            "Suppressing streamed approval conflict while post-stop recovery runs: %s",
-            recoverableApprovalErrorText,
+            "Suppressing streamed recoverable error while post-stop recovery runs: %s",
+            recoverableApprovalErrorText ?? errorInfo.error_code,
           );
         }
       }

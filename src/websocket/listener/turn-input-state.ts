@@ -1,5 +1,6 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
+import { APPROVAL_RECOVERY_PROMPT } from "@/agent/prompt-assets";
 import {
   type PendingApprovalInfo,
   rebuildInputWithFreshDenials,
@@ -46,6 +47,17 @@ export function createTurnInputState(
       ? { imageFailureModesByMessageOtid }
       : {}),
   };
+}
+
+export function createDeploymentRecoveryTurnInput(): TurnInputState {
+  return createTurnInputState([
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "text", text: APPROVAL_RECOVERY_PROMPT }],
+      otid: crypto.randomUUID(),
+    },
+  ]);
 }
 
 export function updateTurnInputMessagesPreservingOtids(

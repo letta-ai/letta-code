@@ -10,6 +10,10 @@ import {
 } from "@/cli/helpers/error-formatter";
 import type { ErrorInfo } from "@/cli/helpers/stream-processor";
 import type { StatusMessage, StopReasonType } from "@/types/protocol_v2";
+import {
+  CLOUD_API_UNAVAILABLE_MESSAGE,
+  isCloudApiDeploymentInterrupted,
+} from "@/utils/cloud-api-shutdown";
 import { debugLog } from "@/utils/debug";
 import {
   emitLoopErrorDelta,
@@ -209,6 +213,16 @@ export function getLoopErrorNoticeDecision(params: {
     return {
       visibility: "debug_only",
       message: params.message,
+    };
+  }
+
+  if (
+    isCloudApiDeploymentInterrupted(params.errorInfo) ||
+    isCloudApiDeploymentInterrupted(params.runErrorInfo)
+  ) {
+    return {
+      visibility: "transcript",
+      message: CLOUD_API_UNAVAILABLE_MESSAGE,
     };
   }
 

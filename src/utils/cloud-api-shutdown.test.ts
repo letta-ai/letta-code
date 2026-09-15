@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isCloudApiDeploymentInterrupted,
   isCloudApiShutdownRejection,
   shouldEmitRetryNotice,
 } from "./cloud-api-shutdown";
@@ -16,6 +17,38 @@ function shutdownError(overrides: Record<string, unknown> = {}) {
     },
   };
 }
+
+describe("Cloud API deployment errors", () => {
+  test("classifies only the exact accepted-work interruption code", () => {
+    expect(
+      isCloudApiDeploymentInterrupted({
+        error_type: "internal_error",
+        error_code: "cloud_api_deployment_interrupted",
+        status_code: 503,
+        retryable: true,
+      }),
+    ).toBe(true);
+    expect(isCloudApiDeploymentInterrupted({ error_type: "cancelled" })).toBe(
+      false,
+    );
+    expect(
+      isCloudApiDeploymentInterrupted({
+        error_type: "internal_error",
+        error_code: "cloud_api_deployment_interrupted",
+        status_code: 503,
+        retryable: false,
+      }),
+    ).toBe(false);
+    expect(
+      isCloudApiDeploymentInterrupted({
+        error_type: "internal_error",
+        error_code: "cloud_api_deployment_interrupted",
+        status_code: 500,
+        retryable: true,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("Cloud API shutdown rejection", () => {
   test("keeps exact pre-admission shutdown retries out of the transcript", () => {

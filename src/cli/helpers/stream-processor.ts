@@ -21,12 +21,16 @@ export interface ErrorInfo {
   message: string;
   error_type?: string;
   error_code?: string;
+  status_code?: number;
+  retryable?: boolean;
   detail?: string;
   run_id?: string;
 }
 
 type StructuredLettaErrorMessage = LettaStreamingResponse.LettaErrorMessage & {
   error_code?: string;
+  status_code?: number;
+  retryable?: boolean;
 };
 
 export interface ChunkProcessingResult {
@@ -99,6 +103,8 @@ export class StreamProcessor {
         message: apiError.message,
         error_type: apiError.error_type,
         error_code: apiError.error_code,
+        status_code: apiError.status_code,
+        retryable: apiError.retryable,
         detail: apiError.detail,
         run_id: this.lastRunId || undefined,
       };
