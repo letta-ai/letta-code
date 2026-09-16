@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type ChildProcess, fork } from "node:child_process";
+import { type ChildProcess, fork, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,21 +65,25 @@ function nextMessage(child: ChildProcess): Promise<Record<string, unknown>> {
 }
 
 for (const runtime of [process.execPath, "node"]) {
-  test(`retained SDK renews over real IPC under ${runtime}`, async () => {
+  test(`SDK requests and subagent launches use Desktop IPC credentials under ${runtime}`, async () => {
     const directory = mkdtempSync(join(tmpdir(), "desktop-credentials-"));
     const entry = join(directory, "child.mjs");
-    const build = await Bun.build({
-      entrypoints: [
+    // Keep the fixture's module graph separate from the test worker's imports.
+    const build = spawnSync(
+      process.execPath,
+      [
+        "build",
         join(process.cwd(), "src/test-utils/desktop-credentials-child.ts"),
+        "--target=node",
+        `--outfile=${entry}`,
+        "--loader=.md:text",
+        "--loader=.mdx:text",
+        "--loader=.txt:text",
       ],
-      target: "node",
-      format: "esm",
-      loader: { ".md": "text", ".mdx": "text", ".txt": "text" },
-    });
-    expect(build.success).toBe(true);
-    const artifact = build.outputs[0];
-    if (!artifact) throw new Error("Missing child build output");
-    await Bun.write(entry, artifact);
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    expect(build.stderr).toBe("");
+    expect(build.status).toBe(0);
     const child = fork(entry, [], {
       execPath: runtime,
       stdio: ["ignore", "ignore", "inherit", "ipc"],
@@ -100,6 +104,24 @@ for (const runtime of [process.execPath, "node"]) {
         type: "initialized",
         hasInheritedCredential: false,
         hasIpcMarker: false,
+      });
+      response = nextMessage(child);
+      child.send({ type: "spawn_subagent" });
+      const initialSubagent = await response;
+      expect(initialSubagent.success).toBe(true);
+      expect(JSON.parse(String(initialSubagent.report))).toEqual({
+        apiKey: "first",
+        hasIpcMarker: false,
+        computer: false,
+      });
+      response = nextMessage(child);
+      child.send({ type: "spawn_subagent", missing: true });
+      const withoutCliCredentials = await response;
+      expect(withoutCliCredentials.success).toBe(true);
+      expect(JSON.parse(String(withoutCliCredentials.report))).toEqual({
+        apiKey: "first",
+        hasIpcMarker: false,
+        computer: false,
       });
       response = nextMessage(child);
       child.send({ type: "request" });
@@ -129,6 +151,15 @@ for (const runtime of [process.execPath, "node"]) {
         rawApiToken: "renewed",
         savedCliToken: "unrelated-cli-key",
         pid: child.pid,
+      });
+      response = nextMessage(child);
+      child.send({ type: "spawn_subagent", computer: "cloud" });
+      const renewedSubagent = await response;
+      expect(renewedSubagent.success).toBe(true);
+      expect(JSON.parse(String(renewedSubagent.report))).toEqual({
+        apiKey: "renewed",
+        hasIpcMarker: false,
+        computer: true,
       });
       const exited = new Promise((resolve) => child.once("exit", resolve));
       child.disconnect();

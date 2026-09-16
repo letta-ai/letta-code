@@ -186,6 +186,80 @@ describe("listener stream resume policy", () => {
     }
   });
 
+  test("confirmed deployment interruption stays hidden during run replay", async () => {
+    const transport = new MockTransport();
+    const runtime = createTestRuntime(transport);
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    __testSetBackend({
+      capabilities,
+      streamRunMessages: async () =>
+        stream([
+          {
+            message_type: "error_message",
+            message: "Cloud API deployment interrupted the accepted run",
+            error_type: "internal_error",
+            error_code: "cloud_api_deployment_interrupted",
+            status_code: 503,
+            retryable: true,
+            run_id: "run-1",
+            seq_id: 2,
+          } as never,
+          stop("run-1", 3, "error"),
+        ]),
+      retrieveRun: async () => ({
+        status: "completed",
+        stop_reason: "error",
+        metadata: {
+          error: {
+            error_type: "internal_error",
+            error_code: "cloud_api_deployment_interrupted",
+            status_code: 503,
+            retryable: true,
+          },
+        },
+      }),
+    } as unknown as Backend);
+
+    try {
+      const drained = await drainTurnStreamWithEmission(
+        stream([ping("run-1", 1)], new Error("socket closed unexpectedly")),
+        createBuffers("agent-1"),
+        transport,
+        runtime,
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          turnLease,
+          turnCorrelation: {
+            appendDequeuedBatch: () => {},
+            observeRun: () => {},
+          },
+          msgRunIds: [],
+          runId: undefined,
+        },
+      );
+
+      expect(drained.result.errorInfo?.error_code).toBe(
+        "cloud_api_deployment_interrupted",
+      );
+      expect(
+        transport.sent
+          .map((payload) => JSON.parse(payload))
+          .filter(
+            (payload) =>
+              payload.type === "stream_delta" &&
+              (payload.delta?.message_type === "loop_error" ||
+                payload.delta?.message_type === "error_message"),
+          ),
+      ).toEqual([]);
+    } finally {
+      runtime.turnLifecycle.finish(turnLease, "error");
+    }
+  });
+
   test("recovery drain retries the run stream after the first resume fails", async () => {
     const { startingAfter } = backendThatFailsFirstResume();
     const transport = new MockTransport();

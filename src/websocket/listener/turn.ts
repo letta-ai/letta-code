@@ -20,15 +20,12 @@ import {
   findLastAssistantText,
   toLines,
 } from "@/cli/helpers/accumulator";
-import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { StopReasonType } from "@/types/protocol_v2";
+import { isCloudApiDeploymentInterrupted } from "@/utils/cloud-api-shutdown";
 import { isDebugEnabled } from "@/utils/debug";
-import {
-  EMPTY_RESPONSE_MAX_RETRIES,
-  LLM_API_ERROR_MAX_RETRIES,
-} from "./constants";
+import { EMPTY_RESPONSE_MAX_RETRIES } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
   emitInterruptToolReturnMessage,
@@ -48,7 +45,6 @@ import {
 import {
   finalizeHandledRecoveryTurn,
   getApprovalToolCallDesyncErrorText,
-  isRetriablePostStopError,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
 import {
@@ -70,13 +66,18 @@ import {
   type TurnCorrelation,
 } from "./turn-correlation";
 import {
+  createDeploymentRecoveryTurnInput,
   rebuildTurnInputWithFreshDenials,
   refreshTurnInputOtidsForNewRequest,
   updateTurnInputMessagesPreservingOtids,
 } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { notifyTurnFinished, notifyTurnStarted } from "./turn-observers";
-import { startTurnInput } from "./turn-send";
+import {
+  prepareProviderRetryInput,
+  shouldRetryPostStopTurn,
+  startTurnInput,
+} from "./turn-send";
 import { prepareListenerTurn } from "./turn-setup";
 import { setTurnLoopStatus } from "./turn-status";
 import { drainTurnStreamWithEmission } from "./turn-stream";
@@ -142,6 +143,7 @@ async function handleIncomingMessageInner(
     conversationId,
   );
   let postStopApprovalRecoveryRetries = 0,
+    deploymentRecoveryAttempts = 0,
     llmApiErrorRetries = 0,
     emptyResponseRetries = 0,
     chatgptPlanSwaps = 0,
@@ -277,8 +279,6 @@ async function handleIncomingMessageInner(
       permissionModeState: turnPermissionModeState,
       preparedToolContext: preparedToolContext.preparedToolContext,
       overrideModel,
-      actingUserId: msg.actingUserId,
-      actingUserAssertion: msg.actingUserAssertion,
       getInput: () => turnInput,
       getInterruptedToolCallIds: () =>
         pendingNormalizationInterruptedToolCallIds,
@@ -369,6 +369,20 @@ async function handleIncomingMessageInner(
         break;
       }
       if (stopReason === "end_turn") {
+        const pendingTeleport = agentId
+          ? tp.claimPendingTeleportAtBoundary({
+              listener: runtime.listener,
+              agentId,
+              conversationId,
+              activeTurn: true,
+            })
+          : null;
+        if (pendingTeleport) {
+          noteFinalization(
+            tp.finishTeleport(runtime, turnLease, pendingTeleport),
+          );
+          return;
+        }
         const transcriptLines = toLines(buffers);
         const completion = await completeSuccessfulListenerTurn({
           runtime,
@@ -427,7 +441,11 @@ async function handleIncomingMessageInner(
           fallbackError ||
           null;
         const quotaError = latestErrorInfo ?? runErrorInfo ?? errorDetail;
+        const deploymentInterrupted =
+          isCloudApiDeploymentInterrupted(latestErrorInfo) ||
+          isCloudApiDeploymentInterrupted(runErrorInfo);
         if (
+          !deploymentInterrupted &&
           shouldAttemptPostStopApprovalRecovery({
             stopReason,
             runIdsSeen: msgRunIds.length,
@@ -501,6 +519,7 @@ async function handleIncomingMessageInner(
         }
 
         if (
+          !deploymentInterrupted &&
           isEmptyResponseRetryable(
             stopReason === "llm_api_error" ? "llm_error" : undefined,
             errorDetail,
@@ -580,6 +599,7 @@ async function handleIncomingMessageInner(
         }
 
         if (
+          !deploymentInterrupted &&
           agentId &&
           chatgptPlanSwaps < CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN
         ) {
@@ -644,51 +664,47 @@ async function handleIncomingMessageInner(
             continue;
           }
         }
-
-        const retriable = await isRetriablePostStopError(
-          (stopReason as StopReasonType) || "error",
-          lastRunId,
+        const shouldRetry = await shouldRetryPostStopTurn({
+          deploymentInterrupted,
+          deploymentAttempts: deploymentRecoveryAttempts,
+          providerAttempts: llmApiErrorRetries,
+          stopReason: (stopReason as StopReasonType) || "error",
+          runId: lastRunId,
           errorDetail,
-        );
+        });
         if (finishIfInterrupted(lastRunId || runtime.activeRunId)) {
           break;
         }
-        if (retriable && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
-          llmApiErrorRetries += 1;
-          const attempt = llmApiErrorRetries;
-          const delayMs = getRetryDelayMs({
-            category: "transient_provider",
-            attempt,
-            detail: errorDetail,
-          });
-          const retryMessage =
-            getRetryStatusMessage(errorDetail) ||
-            `LLM API error encountered, retrying (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`;
-          emitRecoverableRetryNotice(socket, runtime, {
-            kind: "transient_provider_retry",
-            message: retryMessage,
-            reason: "llm_api_error",
-            attempt,
-            maxAttempts: LLM_API_ERROR_MAX_RETRIES,
-            delayMs,
-            runId: lastRunId || undefined,
-            agentId,
-            conversationId,
-          });
-
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-          if (turnAbortSignal.aborted) {
-            throw new Error("Cancelled by user");
+        if (shouldRetry) {
+          if (deploymentInterrupted) {
+            deploymentRecoveryAttempts += 1;
+            turnInput = createDeploymentRecoveryTurnInput();
+          } else {
+            llmApiErrorRetries += 1;
+            turnInput = await prepareProviderRetryInput({
+              input: turnInput,
+              errorDetail,
+              attempt: llmApiErrorRetries,
+              socket,
+              runtime,
+              turnLease,
+              agentId,
+              conversationId,
+              runId: lastRunId,
+            });
           }
-          turnInput = refreshTurnInputOtidsForNewRequest(turnInput);
           setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
             agent_id: agentId,
             conversation_id: conversationId,
           });
-          const retryInputWithSkillContent = injectQueuedSkillContent(
-            turnInput.messages,
-            { socket, runtime, agentId, conversationId },
-          );
+          const retryInputWithSkillContent = deploymentInterrupted
+            ? turnInput.messages
+            : injectQueuedSkillContent(turnInput.messages, {
+                socket,
+                runtime,
+                agentId,
+                conversationId,
+              });
           const retrySendResult = await turnInputSender.send(
             retryInputWithSkillContent,
           );
@@ -739,6 +755,7 @@ async function handleIncomingMessageInner(
           message: errorMessage,
           agentId,
           conversationId,
+          errorInfo: latestErrorInfo,
           runErrorInfo: runErrorInfo ?? undefined,
           cancelRequested: turnAbortSignal.aborted,
           abortSignal: turnAbortSignal,

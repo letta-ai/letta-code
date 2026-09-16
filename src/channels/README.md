@@ -14,12 +14,17 @@ the shared `MessageChannel` tool, but they do not get custom Desktop screens.
     channel.json
     plugin.mjs
     accounts.json
-    routing.yaml
+    routing.json
     pairing.yaml
     runtime/
       package.json
       node_modules/
 ```
+
+Routes are stored as JSON. Existing `routing.yaml` files are migrated on read;
+if migration is unavailable, their routes remain readable. When both filenames
+exist, `routing.json` takes precedence, including when it contains no routes.
+Saves replace the current file only after the new snapshot is fully written.
 
 `channel.json` registers the plugin:
 
@@ -124,7 +129,7 @@ routing flow:
 
 1. The adapter receives an inbound message and calls `adapter.onMessage(msg)`.
 2. Letta Code enforces `dmPolicy` / `allowedUsers`.
-3. Letta Code resolves a route from `routing.yaml` or creates a pairing code.
+3. Letta Code resolves a route from `routing.json` or creates a pairing code.
 4. The routed message is delivered to the bound agent/conversation.
 5. ChannelGateway registers `MessageChannel` for the conversation when it has an
    active route on at least one running channel adapter.

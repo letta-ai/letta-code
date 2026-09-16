@@ -59,6 +59,8 @@ export interface BackgroundTask {
   startTime: Date;
   outputFile: string;
   abortController?: AbortController;
+  /** Resolves once the local subagent launcher and its process tree have stopped. */
+  completion?: Promise<void>;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
   /** Authenticated Cloud user responsible for launching this task. */
