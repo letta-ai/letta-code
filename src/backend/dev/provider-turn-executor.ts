@@ -377,6 +377,14 @@ function contiguousContentStartIndex(
   return startIndex;
 }
 
+function projectsLocalOutput(
+  content: LocalAssistantMessage["content"][number],
+): boolean {
+  if (content.type === "text") return true;
+  if (content.type === "thinking") return content.thinking.length > 0;
+  return content.type === "toolCall" && typeof content.id === "string";
+}
+
 interface ProviderSegmentIdentity {
   otid: string;
   contentStartIndex: number;
@@ -389,7 +397,6 @@ function identityForContentSegment(
   contentIndex: number,
   partial: AssistantMessage,
   messageType: StreamedMessageType,
-  useSourceMessageId: boolean,
 ): ProviderSegmentIdentity {
   const contentStartIndex = contiguousContentStartIndex(
     partial,
@@ -401,7 +408,9 @@ function identityForContentSegment(
   const identity = {
     otid: `${prefix}-${contentStartIndex}-${randomUUID()}`,
     contentStartIndex,
-    useSourceMessageId,
+    useSourceMessageId:
+      messageType === "assistant_message" &&
+      !partial.content.slice(0, contentStartIndex).some(projectsLocalOutput),
   };
   identities.set(contentStartIndex, identity);
   return identity;
@@ -420,7 +429,6 @@ function createProviderLettaStream(
       let sawUsageStatistics = false;
       const assistantIdentities = new Map<number, ProviderSegmentIdentity>();
       const reasoningIdentities = new Map<number, ProviderSegmentIdentity>();
-      let sawProjectedOutput = false;
       try {
         for await (const event of events) {
           if (event.type === "error") {
@@ -446,9 +454,7 @@ function createProviderLettaStream(
               part.contentIndex,
               part.partial,
               "assistant_message",
-              !sawProjectedOutput,
             );
-            sawProjectedOutput = true;
             yield attachLocalSegmentIdentity(
               {
                 message_type: "assistant_message",
@@ -467,9 +473,7 @@ function createProviderLettaStream(
               part.contentIndex,
               part.partial,
               "reasoning_message",
-              false,
             );
-            sawProjectedOutput = true;
             yield attachLocalSegmentIdentity(
               {
                 message_type: "reasoning_message",
@@ -483,7 +487,6 @@ function createProviderLettaStream(
 
           if (part.type === "toolcall_end") {
             sawToolCall = true;
-            sawProjectedOutput = true;
             yield {
               message_type: "approval_request_message",
               tool_call: {

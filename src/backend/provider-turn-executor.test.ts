@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { HeadlessTurnExecutorInput } from "@/backend/dev/headless-turn-executor";
 import {
@@ -11,8 +14,9 @@ import {
 } from "@/backend/dev/provider-turn-executor";
 import {
   emptyLocalUsage,
-  type LocalMessage,
+  type LocalAssistantMessage,
 } from "@/backend/local/local-message";
+import { LocalStore } from "@/backend/local/local-store";
 import {
   getAttachedLocalMessage,
   isLocalStateChunkOnly,
@@ -50,7 +54,7 @@ async function collect(
   return chunks;
 }
 
-function assistantMessage(usage = emptyLocalUsage()): LocalMessage {
+function assistantMessage(usage = emptyLocalUsage()): LocalAssistantMessage {
   return {
     id: "local-assistant-final",
     role: "assistant",
@@ -224,6 +228,75 @@ describe("ProviderTurnExecutor", () => {
       .map((chunk) => (chunk as { otid?: string }).otid);
     expect(reasoningOtids[0]).toBe(reasoningOtids[1]);
     expect(reasoningOtids[0]).not.toBe(reasoningOtids[2]);
+  });
+
+  test("matches history identity after start-only redacted reasoning", async () => {
+    const message = {
+      ...assistantMessage(),
+      content: [
+        { type: "thinking" as const, thinking: "[Reasoning redacted]" },
+        { type: "text" as const, text: "done" },
+      ],
+    };
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield providerStreamPart(
+          part({ type: "thinking_start", contentIndex: 0, partial: message }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "text_delta",
+            contentIndex: 1,
+            delta: "done",
+            partial: message,
+          }),
+        );
+        yield providerLocalMessage(message);
+        yield providerStreamPart(
+          part({ type: "done", reason: "stop", message }),
+        );
+      },
+    };
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "letta-redacted-thinking-"),
+    );
+
+    try {
+      const store = new LocalStore(input().agentId, { storageDir });
+      const chunks = await collect(
+        await new ProviderTurnExecutor(adapter).execute(input()),
+      );
+      let liveAssistantId: string | undefined;
+      for (const chunk of chunks) {
+        const stored = store.appendStreamChunk(
+          input().conversationId,
+          input().agentId,
+          chunk,
+        );
+        if (chunk.message_type === "assistant_message" && "id" in stored) {
+          liveAssistantId = stored.id;
+        }
+      }
+
+      const history = new LocalStore(input().agentId, { storageDir })
+        .listConversationMessages(input().conversationId, {
+          agent_id: input().agentId,
+          order: "asc",
+        })
+        .filter(
+          (row) =>
+            row.message_type === "reasoning_message" ||
+            row.message_type === "assistant_message",
+        );
+      expect(history.map((row) => row.message_type)).toEqual([
+        "reasoning_message",
+        "assistant_message",
+      ]);
+      expect(liveAssistantId).toBe(history[1]?.id);
+      expect(liveAssistantId).toEndWith(":assistant:1");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("emits final local assistant messages as state-only chunks before stop_reason", async () => {
