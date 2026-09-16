@@ -119,6 +119,78 @@ test("warm existing thread stays quiet through reasoning and MessageChannel", as
   h.gateway.close();
 });
 
+test("truly queued DM input with an inbound message starts thinking", async () => {
+  const h = await setup();
+  const source = createSlackTurnSource({
+    chatId: "D123",
+    chatType: "direct",
+    messageId: "1712800000.000400",
+    threadId: undefined,
+  });
+  await h.adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source,
+    disposition: "queued",
+  });
+  expect(
+    getSlackWriteClient().assistant.threads.setStatus,
+  ).toHaveBeenCalledWith({
+    channel_id: "D123",
+    thread_ts: "1712800000.000400",
+    status: "is thinking...",
+    loading_messages: ["is thinking..."],
+  });
+  h.gateway.close();
+});
+
+test("started DM input stays quiet before concrete activity", async () => {
+  const h = await setup();
+  await h.adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: createSlackTurnSource({
+      chatId: "D123",
+      chatType: "direct",
+      messageId: "1712800000.000400",
+      threadId: undefined,
+    }),
+    disposition: "started",
+  });
+  expect(h.statuses()).toEqual([]);
+  h.gateway.close();
+});
+
+test("early established input without a disposition stays quiet", async () => {
+  const h = await setup();
+  await h.adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: h.source,
+  });
+  expect(h.statuses()).toEqual([]);
+  h.gateway.close();
+});
+
+test("explicit false keeps established queued input quiet", async () => {
+  const h = await setup();
+  await h.adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: { ...h.source, showStartupStatus: false },
+    disposition: "queued",
+  });
+  expect(h.statuses()).toEqual([]);
+  h.gateway.close();
+});
+
+test("queued source without an inbound message id stays quiet", async () => {
+  const h = await setup();
+  await h.adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: { ...h.source, messageId: undefined },
+    disposition: "queued",
+  });
+  expect(h.statuses()).toEqual([]);
+  h.gateway.close();
+});
+
 test("steering reasserts the current tool title even when it has not changed", async () => {
   const h = await setup();
   await h.submit();
@@ -217,7 +289,7 @@ for (const failure of ["rejected", "throw"] as const) {
   });
 }
 
-test("a reply closes the visibility gate even with another input queued", async () => {
+test("a queued follow-up restarts thinking after an intermediate reply", async () => {
   const h = await setup();
   await h.submit();
   await h.tool();
@@ -239,12 +311,7 @@ test("a reply closes the visibility gate even with another input queued", async 
     ]),
   );
   await h.tool("MessageChannel");
-  expect(
-    h
-      .statuses()
-      .slice(count)
-      .every((status) => status === ""),
-  ).toBe(true);
+  expect(h.statuses().slice(count)).toEqual(["is thinking..."]);
   h.gateway.close();
 });
 
@@ -306,23 +373,48 @@ test("approval continuation retains activity until a reply or terminal event", a
   h.gateway.close();
 });
 
-test("retrying accepted cold input does not restart thinking after a reply", async () => {
+test("known root-shaped retries stay quiet after a visible reply", async () => {
   const h = await setup();
-  const cold = { sources: [{ ...h.source, showStartupStatus: true }] };
-  await h.submit(cold);
+  const source = {
+    ...h.source,
+    messageId: "1712800000.000100",
+    threadId: "1712800000.000100",
+  };
+  await h.adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+  expect(h.statuses()).toEqual(["is thinking..."]);
   await h.adapter.sendMessage({
     channel: "slack",
-    chatId: h.source.chatId,
-    threadId: h.source.threadId,
-    agentId: h.source.agentId,
-    conversationId: h.source.conversationId,
+    chatId: source.chatId,
+    threadId: source.threadId,
+    agentId: source.agentId,
+    conversationId: source.conversationId,
     text: "Hello",
   });
-  h.client.emit(makeTurnFinished("end_turn"));
-  await Bun.sleep(0);
-  const count = h.statuses().length;
-  await h.submit(cold);
-  expect(h.statuses()).toHaveLength(count);
+  await h.adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+  expect(h.statuses()).toEqual(["is thinking..."]);
+  h.gateway.close();
+});
+
+test("explicit startup status wins for a known root-shaped source", async () => {
+  const h = await setup();
+  const source = {
+    ...h.source,
+    messageId: "1712800000.000100",
+    threadId: "1712800000.000100",
+  };
+  await h.adapter.sendMessage({
+    channel: "slack",
+    chatId: source.chatId,
+    threadId: source.threadId,
+    agentId: source.agentId,
+    conversationId: source.conversationId,
+    text: "Hello",
+  });
+  await h.adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: { ...source, showStartupStatus: true },
+  });
+  expect(h.statuses()).toEqual(["is thinking..."]);
   h.gateway.close();
 });
 

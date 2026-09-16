@@ -273,7 +273,11 @@ export class ChannelGateway {
       this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
       for (const source of delivery.sources) {
         void this.enqueueHook(state, () =>
-          this.hooks.onLifecycle({ type: "queued", source }),
+          this.hooks.onLifecycle({
+            type: "queued",
+            source,
+            disposition: response.disposition,
+          }),
         );
       }
       if (response.disposition === "started") {
