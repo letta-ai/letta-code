@@ -2,7 +2,7 @@ import type { Provider } from "@earendil-works/pi-ai";
 import {
   createLocalEndpointPiProvider,
   type LocalEndpointDiscover,
-  modelIdsFromOpenAICompatibleList,
+  openAICompatibleModelMetadata,
 } from "./pi-local-endpoint-provider";
 import { OPENAI_COMPATIBLE_PI_PROVIDER_ID } from "./pi-provider-registry";
 
@@ -15,9 +15,9 @@ export interface OpenAICompatiblePiProviderOptions {
 
 const openAICompatibleDiscover: LocalEndpointDiscover = async (context) => {
   const list = await context.fetchJson(`${context.openAIBaseURL}/models`);
-  return modelIdsFromOpenAICompatibleList(list).map(
-    (modelId) =>
-      context.lastKnown.get(modelId) ?? context.buildModel({ id: modelId }),
+  return openAICompatibleModelMetadata(list).map(
+    (metadata) =>
+      context.lastKnown.get(metadata.id) ?? context.buildModel(metadata),
   );
 };
 
@@ -25,6 +25,8 @@ const openAICompatibleDiscover: LocalEndpointDiscover = async (context) => {
  * Dynamic provider for an arbitrary OpenAI-compatible Chat Completions API.
  * The endpoint's /v1/models response owns model identity; capabilities remain
  * conservative because the OpenAI model-list schema does not report them.
+ * Context/output limits many gateways publish per model are honored when
+ * present (see `openAICompatibleModelMetadata`).
  */
 export function createOpenAICompatiblePiProvider(
   options: OpenAICompatiblePiProviderOptions,
