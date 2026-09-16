@@ -10,6 +10,7 @@ import {
   __setBackgroundRetentionConfigForTests,
   backgroundProcesses,
 } from "@/tools/impl/process_manager";
+import { clearPendingMessages } from "@/utils/message-queue-bridge";
 
 const isWindows = process.platform === "win32";
 
@@ -25,6 +26,8 @@ describe.skipIf(isWindows)("Bash background tools", () => {
       .map((proc) => proc.outputFile)
       .filter((filePath): filePath is string => Boolean(filePath));
     for (const proc of backgroundProcesses.values()) {
+      // A killed fixture can settle after the next test installs its listener.
+      proc.completionNotificationSuppressed = true;
       try {
         proc.process.kill("SIGTERM");
       } catch {
@@ -32,6 +35,7 @@ describe.skipIf(isWindows)("Bash background tools", () => {
       }
     }
     backgroundProcesses.clear();
+    clearPendingMessages();
     for (const outputFile of outputFiles) {
       if (fs.existsSync(outputFile)) {
         fs.rmSync(outputFile, { recursive: true, force: true });
