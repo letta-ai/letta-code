@@ -22,8 +22,9 @@ export async function task_stop(args: TaskStopArgs): Promise<TaskStopResult> {
   if (task) {
     if (task.status === "running" && task.abortController) {
       task.abortController.abort();
-      task.status = "failed";
       task.error = "Aborted by user";
+      await task.completion;
+      task.status = "failed";
       scheduleBackgroundTaskCleanup(task_id);
       return { killed: true };
     }
