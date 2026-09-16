@@ -369,6 +369,104 @@ test("scoped heartbeat does not restore beside a live all-owner", () => {
   }
 });
 
+test("unleased scoped retry clears jitter timers and does not fire", () => {
+  let heartbeat: (() => void) | undefined;
+  let jitterFire: (() => void) | undefined;
+  const armed: ReturnType<typeof setInterval>[] = [];
+  const realSetInterval = globalThis.setInterval;
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  let clearedJitter = false;
+
+  globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+    const handle = realSetInterval(...args);
+    armed.push(handle);
+    if (Number(args[1] ?? 0) === 1_000) {
+      const handler = args[0];
+      if (typeof handler === "function") {
+        heartbeat = handler as () => void;
+      }
+    }
+    return handle;
+  }) as typeof setInterval;
+  globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+    const handle = realSetTimeout(...args);
+    if (Number(args[1] ?? 0) === 30_000) {
+      const handler = args[0];
+      if (typeof handler === "function") {
+        jitterFire = handler as () => void;
+      }
+    }
+    return handle;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((
+    handle: Parameters<typeof realClearTimeout>[0],
+  ) => {
+    if (jitterFire) clearedJitter = true;
+    realClearTimeout(handle);
+  }) as typeof clearTimeout;
+
+  process.env[CRON_SCHEDULER_SCOPE_ENV] = "local";
+  const { task } = addTask(
+    makeInput({
+      agent_id: "agent-local-jitter",
+      cron: "* * * * *",
+    }),
+  );
+  updateTask(task.id, (t) => {
+    t.jitter_offset_ms = 30_000;
+  });
+
+  try {
+    startScheduler(
+      {} as ListenerTransport,
+      {
+        connectionId: "conn-jitter-unleased",
+        wsUrl: "wss://example.test/ws",
+        deviceId: "device-jitter-unleased",
+        connectionName: "listener-jitter-unleased",
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+      },
+      async () => {},
+    );
+
+    expect(isSchedulerRunning()).toBe(true);
+    expect(jitterFire).toBeTypeOf("function");
+    expect(getTask(task.id)?.last_run_outcome).toBeNull();
+
+    const current = readCronFile();
+    writeFileSync(
+      path.join(TEST_DIR, "crons.json"),
+      JSON.stringify({
+        version: 1,
+        scheduler_owner: {
+          pid: process.pid,
+          token: "legacy-all-owner",
+          started_at: new Date().toISOString(),
+        },
+        tasks: current.tasks,
+      }),
+    );
+
+    heartbeat?.();
+    expect(isSchedulerRunning()).toBe(true);
+    expect(clearedJitter).toBe(true);
+
+    jitterFire?.();
+    expect(getTask(task.id)?.last_run_outcome).toBeNull();
+  } finally {
+    stopScheduler();
+    globalThis.setInterval = realSetInterval;
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+    for (const handle of armed) {
+      clearInterval(handle);
+    }
+  }
+});
+
 // ── Helper ──────────────────────────────────────────────────────────
 
 function makeInput(overrides: Partial<AddTaskInput> = {}): AddTaskInput {

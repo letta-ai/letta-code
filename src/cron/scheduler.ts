@@ -166,8 +166,16 @@ function holdSchedulerLease(
       opts,
       `Scheduler lease lost; retrying: ${err instanceof Error ? err.message : String(err)}`,
     );
+    clearPendingFireTimers(state);
     return false;
   }
+}
+
+function clearPendingFireTimers(state: SchedulerState): void {
+  for (const handle of state.pendingTimers) {
+    clearTimeout(handle);
+  }
+  state.pendingTimers.clear();
 }
 
 export function minuteKey(date: Date): string {
@@ -601,6 +609,15 @@ function tick(
         // have been lost, or the task may have been deleted/cancelled during
         // the jitter window.
         if (!schedulerState) return;
+        if (
+          !refreshSchedulerLease(
+            schedulerState.token,
+            schedulerState.scope,
+            schedulerState.tombstoneToken,
+          )
+        ) {
+          return;
+        }
         const freshTask = getTask(taskId);
         if (!freshTask || freshTask.status !== "active") return;
 
@@ -776,11 +793,7 @@ export function stopScheduler(): void {
     clearInterval(schedulerState.tombstoneInterval);
   }
 
-  // Cancel all jitter-delayed fires that haven't executed yet.
-  for (const handle of schedulerState.pendingTimers) {
-    clearTimeout(handle);
-  }
-  schedulerState.pendingTimers.clear();
+  clearPendingFireTimers(schedulerState);
 
   try {
     releaseSchedulerLease(schedulerState.token, schedulerState.scope);
