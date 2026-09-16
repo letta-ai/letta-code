@@ -605,17 +605,24 @@ function tick(
       const jitterMs = task.recurring ? task.jitter_offset_ms : 0;
       const taskId = task.id;
       const doFire = () => {
-        // Revalidate before firing: scheduler may have stopped, lease may
-        // have been lost, or the task may have been deleted/cancelled during
-        // the jitter window.
+        // Revalidate before firing. Catch lock timeouts so a skipped jitter
+        // fire cannot terminate the listener.
         if (!schedulerState) return;
-        if (
-          !refreshSchedulerLease(
-            schedulerState.token,
-            schedulerState.scope,
-            schedulerState.tombstoneToken,
-          )
-        ) {
+        try {
+          if (
+            !refreshSchedulerLease(
+              schedulerState.token,
+              schedulerState.scope,
+              schedulerState.tombstoneToken,
+            )
+          ) {
+            return;
+          }
+        } catch (err) {
+          logScheduler(
+            opts,
+            `Jitter fire lease check error: ${err instanceof Error ? err.message : String(err)}`,
+          );
           return;
         }
         const freshTask = getTask(taskId);

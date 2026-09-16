@@ -467,6 +467,71 @@ test("unleased scoped retry clears jitter timers and does not fire", () => {
   }
 });
 
+test("jitter fire logs lock errors without terminating the listener", () => {
+  let jitterFire: (() => void) | undefined;
+  const armed: ReturnType<typeof setInterval>[] = [];
+  const realSetInterval = globalThis.setInterval;
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+    const handle = realSetInterval(...args);
+    armed.push(handle);
+    return handle;
+  }) as typeof setInterval;
+  globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+    const handle = realSetTimeout(...args);
+    if (Number(args[1] ?? 0) === 30_000 && typeof args[0] === "function") {
+      jitterFire = args[0] as () => void;
+    }
+    return handle;
+  }) as typeof setTimeout;
+
+  process.env[CRON_SCHEDULER_SCOPE_ENV] = "local";
+  const { task } = addTask(
+    makeInput({ agent_id: "agent-local-jitter-lock", cron: "* * * * *" }),
+  );
+  updateTask(task.id, (t) => {
+    t.jitter_offset_ms = 30_000;
+  });
+  const logged: string[] = [];
+  try {
+    startScheduler(
+      {} as ListenerTransport,
+      {
+        connectionId: "conn-jitter-lock",
+        wsUrl: "wss://example.test/ws",
+        deviceId: "device-jitter-lock",
+        connectionName: "listener-jitter-lock",
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+        onLog: (message: string) => {
+          logged.push(message);
+        },
+      },
+      async () => {},
+    );
+    expect(jitterFire).toBeTypeOf("function");
+    __testThrowNextRefreshSchedulerLease();
+    jitterFire?.();
+    expect(isSchedulerRunning()).toBe(true);
+    expect(
+      logged.some((line) =>
+        line.includes(
+          "Jitter fire lease check error: Failed to acquire crons.lock",
+        ),
+      ),
+    ).toBe(true);
+    expect(getTask(task.id)?.last_run_outcome).toBeNull();
+  } finally {
+    stopScheduler();
+    globalThis.setInterval = realSetInterval;
+    globalThis.setTimeout = realSetTimeout;
+    for (const handle of armed) {
+      clearInterval(handle);
+    }
+  }
+});
+
 // ── Helper ──────────────────────────────────────────────────────────
 
 function makeInput(overrides: Partial<AddTaskInput> = {}): AddTaskInput {
