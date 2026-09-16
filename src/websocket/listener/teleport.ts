@@ -339,6 +339,11 @@ export function handleTeleportRequest(params: {
     ? hasAcceptedInputsWaiting(conversationRuntime, true)
     : false;
   if (!conversationRuntime?.isProcessing && !pending.drainAcceptedInputs) {
+    const connection = listener.connections.get(pending.connectionId);
+    if (!connection || !isListenerTransportOpen(connection.writer)) {
+      pendingTeleports.delete(pending.teleportId);
+      return;
+    }
     if (emitClaimedTeleportReady(listener, pending)) {
       pending.readyAt = Date.now();
     }
@@ -368,7 +373,12 @@ export function claimPendingTeleportAtBoundary(params: {
     if (runtime && hasAcceptedInputsWaiting(runtime, false)) return null;
   }
   const connection = params.listener.connections.get(pending.connectionId);
-  if (!connection || !isListenerTransportOpen(connection.writer)) return null;
+  if (!connection || !isListenerTransportOpen(connection.writer)) {
+    // No readiness was sent and the source still owns its turn and results.
+    // Drop only the handoff request so later input is not blocked forever.
+    params.listener.pendingTeleports?.delete(pending.teleportId);
+    return null;
+  }
   pending.readyAt = Date.now();
   pending.activeTurn = params.activeTurn;
   pending.continuation = params.continuation;
