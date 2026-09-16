@@ -397,6 +397,21 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         .map((s) => s.trim())
         .filter(Boolean)
     : [];
+  const channelTelemetryTypes = restoreEnabledChannels
+    ? await (async (): Promise<string[]> => {
+        try {
+          const { listEnabledChannelIds } = await import("@/channels/service");
+          return listEnabledChannelIds({ restoreAgentScope });
+        } catch (error) {
+          console.warn(
+            `Unable to enumerate enabled channels for telemetry: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return [];
+        }
+      })()
+    : channelNames;
 
   // Determine connection name
   let connectionName: string;
@@ -586,7 +601,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
               restore_mode: restoreEnabledChannels
                 ? "enabled_accounts"
                 : "explicit_channels",
-              channel_types: channelNames,
+              channel_types: channelTelemetryTypes,
               duration_ms: event.durationMs,
               delay_ms: event.delayMs,
               exit_code: event.exitCode,

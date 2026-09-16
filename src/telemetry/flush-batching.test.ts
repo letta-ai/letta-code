@@ -238,6 +238,31 @@ describe("reflection telemetry correlation", () => {
     expect(event.data).not.toHaveProperty("error_message");
   });
 
+  test("restored channel lifecycle events preserve restored channel types", () => {
+    telemetry.setSurface("letta_code_desktop");
+    telemetry.trackChannelGatewayLifecycle({
+      lifecycle_event: "exit",
+      restart_attempt: 0,
+      max_restart_attempts: 5,
+      restore_mode: "enabled_accounts",
+      channel_types: ["telegram", "discord"],
+      exit_code: 1,
+      reached_ready: true,
+    });
+
+    const event = telemetryState.events[0] as {
+      type: string;
+      data: Record<string, unknown>;
+    };
+    expect(event.type).toBe("channel_gateway_lifecycle");
+    expect(event.data).toMatchObject({
+      lifecycle_event: "exit",
+      restore_mode: "enabled_accounts",
+      channel_types: ["telegram", "discord"],
+      surface: "letta_code_desktop",
+    });
+  });
+
   test("reflection_start falls back to undefined subagent_id if wait times out", () => {
     // Worst case: background wait times out before agent ID is assigned. We
     // still emit the event (with undefined subagent_id) rather than dropping
