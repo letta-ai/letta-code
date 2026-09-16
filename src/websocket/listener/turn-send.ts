@@ -7,9 +7,16 @@ import type {
 import type { sendMessageStream } from "@/agent/message";
 import { getRetryDelayMs } from "@/agent/turn-recovery-policy";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
-import { LLM_API_ERROR_MAX_RETRIES } from "./constants";
+import type { StopReasonType } from "@/types/protocol_v2";
+import {
+  CLOUD_API_DEPLOYMENT_RECOVERY_MAX_ATTEMPTS,
+  LLM_API_ERROR_MAX_RETRIES,
+} from "./constants";
 import { emitRecoverableRetryNotice } from "./recoverable-notices";
-import { finalizeHandledRecoveryTurn } from "./recovery";
+import {
+  finalizeHandledRecoveryTurn,
+  isRetriablePostStopError,
+} from "./recovery";
 import {
   type ApprovalContinuationSendResult,
   isApprovalOnlyInput,
@@ -118,6 +125,27 @@ export async function prepareProviderRetryInput(params: {
     throw new Error("Cancelled by user");
   }
   return refreshTurnInputOtidsForNewRequest(params.input);
+}
+
+export async function shouldRetryPostStopTurn(params: {
+  deploymentInterrupted: boolean;
+  deploymentAttempts: number;
+  providerAttempts: number;
+  stopReason: StopReasonType;
+  runId: string | null | undefined;
+  errorDetail: string | null;
+}): Promise<boolean> {
+  if (params.deploymentInterrupted) {
+    return (
+      params.deploymentAttempts < CLOUD_API_DEPLOYMENT_RECOVERY_MAX_ATTEMPTS
+    );
+  }
+  if (params.providerAttempts >= LLM_API_ERROR_MAX_RETRIES) return false;
+  return isRetriablePostStopError(
+    params.stopReason,
+    params.runId,
+    params.errorDetail,
+  );
 }
 
 export function createTurnInputSender(params: {

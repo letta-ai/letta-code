@@ -25,11 +25,7 @@ import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { StopReasonType } from "@/types/protocol_v2";
 import { isCloudApiDeploymentInterrupted } from "@/utils/cloud-api-shutdown";
 import { isDebugEnabled } from "@/utils/debug";
-import {
-  CLOUD_API_DEPLOYMENT_RECOVERY_MAX_ATTEMPTS,
-  EMPTY_RESPONSE_MAX_RETRIES,
-  LLM_API_ERROR_MAX_RETRIES,
-} from "./constants";
+import { EMPTY_RESPONSE_MAX_RETRIES } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
   emitInterruptToolReturnMessage,
@@ -49,7 +45,6 @@ import {
 import {
   finalizeHandledRecoveryTurn,
   getApprovalToolCallDesyncErrorText,
-  isRetriablePostStopError,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
 import {
@@ -78,7 +73,11 @@ import {
 } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { notifyTurnFinished, notifyTurnStarted } from "./turn-observers";
-import { prepareProviderRetryInput, startTurnInput } from "./turn-send";
+import {
+  prepareProviderRetryInput,
+  shouldRetryPostStopTurn,
+  startTurnInput,
+} from "./turn-send";
 import { prepareListenerTurn } from "./turn-setup";
 import { setTurnLoopStatus } from "./turn-status";
 import { drainTurnStreamWithEmission } from "./turn-stream";
@@ -666,23 +665,18 @@ async function handleIncomingMessageInner(
             continue;
           }
         }
-
-        const retriable = deploymentInterrupted
-          ? false
-          : await isRetriablePostStopError(
-              (stopReason as StopReasonType) || "error",
-              lastRunId,
-              errorDetail,
-            );
+        const shouldRetry = await shouldRetryPostStopTurn({
+          deploymentInterrupted,
+          deploymentAttempts: deploymentRecoveryAttempts,
+          providerAttempts: llmApiErrorRetries,
+          stopReason: (stopReason as StopReasonType) || "error",
+          runId: lastRunId,
+          errorDetail,
+        });
         if (finishIfInterrupted(lastRunId || runtime.activeRunId)) {
           break;
         }
-        if (
-          deploymentInterrupted
-            ? deploymentRecoveryAttempts <
-              CLOUD_API_DEPLOYMENT_RECOVERY_MAX_ATTEMPTS
-            : retriable && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES
-        ) {
+        if (shouldRetry) {
           if (deploymentInterrupted) {
             deploymentRecoveryAttempts += 1;
             turnInput = createDeploymentRecoveryTurnInput();
