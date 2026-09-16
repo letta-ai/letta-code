@@ -697,7 +697,6 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // Handle version flag
   if (values.version) {
     const { getVersion } = await import("@/version");
     console.log(`${getVersion()} (Letta Code)`);
