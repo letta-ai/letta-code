@@ -21,8 +21,12 @@ function request(options: SubagentRequest["options"] = {}): SubagentRequest {
   };
 }
 
-function completedQuery(messages: SdkStreamMessage[]): SdkQuery {
+function completedQuery(
+  messages: SdkStreamMessage[],
+  identity: Pick<SdkQuery, "agentId" | "conversationId"> = {},
+): SdkQuery {
   return {
+    ...identity,
     async *[Symbol.asyncIterator]() {
       yield* messages;
     },
@@ -89,6 +93,29 @@ describe("remote structured text", () => {
 });
 
 describe("SdkSubagentPool", () => {
+  test.each([null, "agent-hidden"])(
+    "records worker identity and rejects agent ownership: %s",
+    async (agentId) => {
+      const pool = new SdkSubagentPool(
+        {
+          query: () =>
+            completedQuery(
+              [{ type: "result", success: true, result: "done" }],
+              { conversationId: "conv-worker", agentId },
+            ),
+        },
+        { model: "openai/gpt-5.6-luna", parentAgentId: "agent-parent" },
+      );
+      const outcome = await pool.spawner(
+        request(),
+        new AbortController().signal,
+      );
+      expect(outcome).toMatchObject({
+        conversationIds: ["conv-worker"],
+        failed: agentId !== null,
+      });
+    },
+  );
   test("runs each call as an agent-free query with isolated model settings", async () => {
     const calls: Array<{
       prompt: string;
@@ -104,6 +131,7 @@ describe("SdkSubagentPool", () => {
       },
     };
     const pool = new SdkSubagentPool(client, {
+      parentAgentId: "agent-parent",
       cwd: "/repo",
       model: "openai/gpt-4.1-mini",
     });
@@ -118,6 +146,9 @@ describe("SdkSubagentPool", () => {
     expect(calls[0]).toMatchObject({
       prompt: "inspect the repository",
       options: {
+        parentAgentId: "agent-parent",
+        isSubagent: true,
+        name: "Workflow worker 1",
         model: "openai/gpt-4.1-mini",
         modelSettings: { reasoning_effort: "high" },
         cwd: "/repo",

@@ -27,6 +27,8 @@ import type {
 } from "./types.ts";
 
 export interface SdkSpawnerConfig {
+  /** Invoking agent supplies permissions/resources, never child history ownership. */
+  parentAgentId?: string;
   /** Default tool allowlist for subagents. Keep it read-only by default. */
   allowedTools?: string[];
   /** Default model resolved from the invoking conversation. */
@@ -359,6 +361,9 @@ export class SdkSubagentPool {
 
     const queryOptions: Record<string, unknown> = {
       model,
+      parentAgentId: this.config.parentAgentId,
+      isSubagent: true,
+      name: options.label ?? `Workflow worker ${request.callIndex + 1}`,
       system: appendParts.join("\n\n"),
       permissionMode: "unrestricted",
       allowedTools,
@@ -384,6 +389,7 @@ export class SdkSubagentPool {
     // An early stop may miss the SDK result's cost. Keep it unknown; the
     // workflow must not report a partial or missing bill as zero/free.
     let onCaptured: (() => void) | null = null;
+    const conversationIds = new Set<string>();
     let onRunaway: ((reason: string) => void) | null = null;
     let currentQuery: SdkQuery | null = null;
     let cancellationReject: ((error: Error) => void) | null = null;
@@ -437,10 +443,16 @@ export class SdkSubagentPool {
         // A drained stream that ends after a capture must not lose to the
         // early resolver's stale usage: prefer the full turn when it settles
         // first, otherwise the early stop.
-        return await Promise.race([drained, settledEarly, cancellation]);
+        const turn = await Promise.race([drained, settledEarly, cancellation]);
+        if (query.conversationId && query.agentId !== null) {
+          throw new Error("Workflow worker must be an agent-free conversation");
+        }
+        return turn;
       } finally {
         onCaptured = null;
         onRunaway = null;
+        const conversationId = query.conversationId;
+        if (conversationId) conversationIds.add(conversationId);
         query.close();
         if (currentQuery === query) currentQuery = null;
       }
@@ -484,6 +496,9 @@ export class SdkSubagentPool {
       }
 
       const usage = {
+        ...(conversationIds.size
+          ? { conversationIds: [...conversationIds] }
+          : {}),
         costUsd: turn.costUsd,
         durationMs: turn.durationMs,
         totalTokens: turn.totalTokens,
@@ -518,7 +533,14 @@ export class SdkSubagentPool {
       }
       return { value: turn.finalText, failed: false, ...usage };
     } catch (error) {
-      return { value: null, failed: true, error: String(error) };
+      return {
+        value: null,
+        failed: true,
+        error: String(error),
+        ...(conversationIds.size
+          ? { conversationIds: [...conversationIds] }
+          : {}),
+      };
     } finally {
       clearTimeout(timeout);
       signal.removeEventListener("abort", abort);

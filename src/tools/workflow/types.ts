@@ -74,6 +74,8 @@ export interface SubagentRequest {
 
 /** Outcome of one subagent run. */
 export interface SubagentOutcome {
+  /** Persisted ephemeral conversations, including any structured-output retry. */
+  conversationIds?: string[];
   /** Final text, or the validated object when a schema was given. */
   value: unknown;
   /** True when the subagent failed terminally (value is null). */
@@ -128,7 +130,9 @@ export interface RunWorkflowOptions {
   /** Advisory USD limit; completed reported costs gate new calls, not in-flight spend. */
   budgetUsd?: number;
   /** Resolved backend defaults; included in each call's resume identity. */
-  agentDefaults?: Pick<AgentCallOptions, "model" | "allowedTools" | "cwd">;
+  agentDefaults?: Pick<AgentCallOptions, "model" | "allowedTools" | "cwd"> & {
+    parentAgentId?: string;
+  };
   /** Default existing computer for all calls. Omit for local execution. */
   computer?: WorkflowComputer;
   /** Max concurrently running queries across all computers. Default 16, independent of CPUs. */
@@ -183,6 +187,8 @@ export interface SdkStreamMessage {
 }
 
 export interface SdkQuery extends AsyncIterable<SdkStreamMessage> {
+  readonly agentId?: string | null;
+  readonly conversationId?: string | null;
   interrupt(): Promise<void>;
   close(): void;
 }

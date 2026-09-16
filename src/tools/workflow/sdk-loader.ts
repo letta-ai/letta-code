@@ -83,14 +83,32 @@ export async function loadAgentSdk(): Promise<LoadedSdk> {
         continue;
       }
       return {
-        createClient: (backend, computer) =>
-          new sdk.LettaAgentClient({
+        createClient: (backend, computer) => {
+          const client = new sdk.LettaAgentClient({
             backend,
             ...(computer === undefined ? {} : { computer }),
             ...(backend === "local"
               ? { appServer: { harnessBackend: "api" as const } }
               : {}),
-          }),
+          });
+          return {
+            query(params) {
+              const query = client.query(params);
+              // Queries are lazy. Reject older SDKs before they can create a
+              // parentless worker whose identity cannot be verified.
+              if (!("conversationId" in query) || !("agentId" in query)) {
+                query.close();
+                throw new Error(
+                  "Workflow requires an Agent SDK with ephemeral worker lineage and query identity support. Upgrade the Agent SDK.",
+                );
+              }
+              return query;
+            },
+            async [Symbol.asyncDispose]() {
+              await client[Symbol.asyncDispose]?.();
+            },
+          };
+        },
       };
     } catch (error) {
       attempts.push(`${specifier}: ${String(error)}`);

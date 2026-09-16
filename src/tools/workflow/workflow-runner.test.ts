@@ -31,6 +31,7 @@ describe("runWorkflow", () => {
       () => agent('pinned', {model: 'fixed', allowedTools: [], cwd: '/fixed'})
     ])`);
     const agentDefaults = {
+      parentAgentId: "agent-parent-a",
       model: "model-a",
       allowedTools: ["Read"],
       cwd: "/repo-a",
@@ -61,6 +62,14 @@ describe("runWorkflow", () => {
       expect(resumed.cacheHits).toBe(1);
       expect(resumed.agentsSpawned).toBe(1);
     }
+    const otherParent = await runWorkflow(echoSpawner, {
+      script,
+      executionsDir,
+      agentDefaults: { ...agentDefaults, parentAgentId: "agent-parent-b" },
+      resumeFromExecutionId: first.executionId,
+    });
+    expect(otherParent.cacheHits).toBe(0);
+    expect(otherParent.agentsSpawned).toBe(2);
   });
 
   test("legacy journal keys without effective defaults are not trusted", async () => {

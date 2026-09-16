@@ -151,9 +151,11 @@ describe("Workflow tool (background launch)", () => {
     const handle = await createSdkSpawner({
       model: "openai/gpt-4.1-mini",
       allowedTools: [],
+      parentScope: { agentId: "agent-parent", conversationId: "default" },
     });
     try {
       expect(handle.agentDefaults).toEqual({
+        parentAgentId: "agent-parent",
         model: "openai/gpt-4.1-mini",
         allowedTools: [],
         cwd: process.cwd(),

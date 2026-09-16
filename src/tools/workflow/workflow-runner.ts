@@ -151,10 +151,11 @@ export async function runWorkflow(
     const callIndex = callCounter++;
     const label = opts.label ?? defaultLabel(prompt);
     const phase = opts.phase ?? currentPhase;
-    // Old journals omitted backend defaults, so their identities cannot safely
+    // Old journals omitted parent resources and backend defaults, so they cannot
     // prove equivalence. Version the key rather than falling back to old hits.
     const cacheKey = agentCallCacheKey(prompt, {
-      version: 2,
+      version: 3,
+      parentAgentId: defaults?.parentAgentId,
       options: normalizeOptionsForCache(opts),
     });
     const occurrence = occurrences.get(cacheKey) ?? 0;

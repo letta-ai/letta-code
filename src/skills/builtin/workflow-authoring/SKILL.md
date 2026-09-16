@@ -64,8 +64,12 @@ resume cache identity; changing the default reruns affected calls, not calls
 with unchanged explicit overrides. Cache replay does not recheck remote files;
 change the prompt/input or omit resume when those files have changed.
 
-Resume also compares the effective model, tool allowlist, and local working
-directory. Repeat the intended defaults when resuming. Journals from the older
+Every worker is an agent-free ephemeral conversation linked to the invoking
+parent agent, with `is_subagent: true` and a worker name. The
+parent supplies permissions/resources, not ownership of the worker's history.
+
+Resume also compares the parent agent, effective model, tool allowlist, and local
+working directory. Repeat the intended defaults when resuming. Journals from the older
 cache format remain readable, but their calls rerun: those keys did not record
 enough information to establish equivalent execution settings.
 

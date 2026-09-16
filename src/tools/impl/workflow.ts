@@ -18,8 +18,9 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { getConversationId } from "@/agent/context";
+import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getPrimaryAgentModelHandle } from "@/agent/subagents/subagent-model";
+import { apiRequest } from "@/backend/api/request";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import {
   finishWorkflowExecution,
@@ -103,6 +104,24 @@ const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
 export async function createSdkSpawner(
   args: WorkflowArgs,
 ): Promise<WorkflowSpawnerHandle> {
+  let parentAgentId: string | null | undefined = args.parentScope?.agentId;
+  const conversationId =
+    args.parentScope?.conversationId ?? getConversationId();
+  if (!parentAgentId?.startsWith("agent-")) {
+    if (conversationId && conversationId !== "default") {
+      const conversation = await apiRequest<{
+        agent_id: string | null;
+        parent_agent_id?: string | null;
+      }>("GET", `/v1/conversations/${encodeURIComponent(conversationId)}`);
+      parentAgentId =
+        conversation.agent_id ?? conversation.parent_agent_id ?? null;
+    } else {
+      parentAgentId = getCurrentAgentId();
+    }
+  }
+  if (!parentAgentId?.startsWith("agent-")) {
+    throw new Error("Workflow requires an invoking parent agent.");
+  }
   const sdk = await loadAgentSdk();
   const parentModel = args.model
     ? args.model
@@ -112,6 +131,7 @@ export async function createSdkSpawner(
         })
       ).handle;
   const agentDefaults = {
+    parentAgentId,
     cwd: process.cwd(),
     ...(parentModel ? { model: parentModel } : {}),
     allowedTools: args.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS],
