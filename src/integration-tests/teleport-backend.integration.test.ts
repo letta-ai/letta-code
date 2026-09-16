@@ -11,6 +11,7 @@ import type {
   ListEnvironmentsResponse,
   TeleportResponse,
 } from "@/backend/api/environments";
+import { createCloudFixture } from "@/test-utils/cloud-fixture-retry";
 import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
 
 // Real Cloud relay, model turn, and two real CLIs; the test owns the tool reply.
@@ -224,22 +225,26 @@ testWithAPI.each([
       }
 
       stage = "fixture creation";
-      const agent = await sdk.agents.create({
-        name: "Teleport backend integration",
-        agent_type: "letta_v1_agent",
-        model: "openai/gpt-5.6-luna",
-        system:
-          scenario === "destination lookup"
-            ? "Reply with exactly TELEPORT_BACKEND_OK. Do not call tools."
-            : "Call wait_for_teleport exactly once before replying. After it returns, reply with exactly TELEPORT_BACKEND_OK. Do not call any other tools.",
-        include_base_tools: false,
-        include_base_tool_rules: false,
-        initial_message_sequence: [],
-      });
+      const agent = await createCloudFixture(() =>
+        sdk.agents.create({
+          name: "Teleport backend integration",
+          agent_type: "letta_v1_agent",
+          model: "openai/gpt-5.6-luna",
+          system:
+            scenario === "destination lookup"
+              ? "Reply with exactly TELEPORT_BACKEND_OK. Do not call tools."
+              : "Call wait_for_teleport exactly once before replying. After it returns, reply with exactly TELEPORT_BACKEND_OK. Do not call any other tools.",
+          include_base_tools: false,
+          include_base_tool_rules: false,
+          initial_message_sequence: [],
+        }),
+      );
       agentId = agent.id;
-      const conversation = await sdk.conversations.create({
-        agent_id: agent.id,
-      });
+      const conversation = await createCloudFixture(() =>
+        sdk.conversations.create({
+          agent_id: agent.id,
+        }),
+      );
       conversationId = conversation.id;
       stage = "listener startup";
       const source = await listener("source");
