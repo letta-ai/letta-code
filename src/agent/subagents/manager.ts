@@ -17,6 +17,7 @@ import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
 import { updateSubagent } from "@/agent/subagent-state.js";
 import { wrapSubagentLauncher } from "@/agent/subagents/sandbox";
+import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import {
   type BackendMode,
   getBackend,
@@ -346,7 +347,9 @@ async function executeSubagent(
     // keychain lookups under high parallel fan-out.
     const settings = await settingsManager.getSettingsWithSecureTokens();
     const inheritedApiKey =
-      process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+      getDesktopAccessToken() ||
+      process.env.LETTA_API_KEY ||
+      settings.env?.LETTA_API_KEY;
     const inheritedBaseUrl =
       process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
     const inheritedMemoryRoots = resolveAllowedMemoryRoots({
