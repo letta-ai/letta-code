@@ -210,11 +210,12 @@ export function createSlackAdapter(
       const showStartupStatus =
         event.source.showStartupStatus ??
         (isNonEmptyString(event.source.messageId) &&
-          (!isFlatThreadOpener ||
-            !agentThreadTracker.has(
-              event.source.chatId,
-              event.source.messageId,
-            )));
+          (isFlatThreadOpener
+            ? !agentThreadTracker.has(
+                event.source.chatId,
+                event.source.messageId,
+              )
+            : event.disposition === "queued"));
       await status.handleLifecycle({
         ...event,
         source: { ...event.source, showStartupStatus },

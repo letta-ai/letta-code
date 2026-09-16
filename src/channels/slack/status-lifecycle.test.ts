@@ -103,7 +103,7 @@ test("cold existing thread continues the host's waking status through reasoning 
   h.gateway.close();
 });
 
-test("queued existing-thread input starts thinking and stays generic through reasoning and MessageChannel", async () => {
+test("warm existing thread stays quiet through reasoning and MessageChannel", async () => {
   const h = await setup();
   await h.submit();
   h.client.emit(
@@ -113,14 +113,13 @@ test("queued existing-thread input starts thinking and stays generic through rea
     }),
   );
   await h.tool("MessageChannel");
-  expect(h.statuses()).toEqual(["is thinking..."]);
   h.client.emit(makeTurnFinished("end_turn"));
   await Bun.sleep(0);
-  expect(h.statuses()).toEqual(["is thinking...", ""]);
+  expect(h.statuses().every((status) => status === "")).toBe(true);
   h.gateway.close();
 });
 
-test("queued DM input with an inbound message starts thinking", async () => {
+test("truly queued DM input with an inbound message starts thinking", async () => {
   const h = await setup();
   const source = createSlackTurnSource({
     chatId: "D123",
@@ -128,7 +127,11 @@ test("queued DM input with an inbound message starts thinking", async () => {
     messageId: "1712800000.000400",
     threadId: undefined,
   });
-  await h.adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+  await h.adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source,
+    disposition: "queued",
+  });
   expect(
     getSlackWriteClient().assistant.threads.setStatus,
   ).toHaveBeenCalledWith({
@@ -140,11 +143,38 @@ test("queued DM input with an inbound message starts thinking", async () => {
   h.gateway.close();
 });
 
+test("started DM input stays quiet before concrete activity", async () => {
+  const h = await setup();
+  await h.adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: createSlackTurnSource({
+      chatId: "D123",
+      chatType: "direct",
+      messageId: "1712800000.000400",
+      threadId: undefined,
+    }),
+    disposition: "started",
+  });
+  expect(h.statuses()).toEqual([]);
+  h.gateway.close();
+});
+
+test("early established input without a disposition stays quiet", async () => {
+  const h = await setup();
+  await h.adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: h.source,
+  });
+  expect(h.statuses()).toEqual([]);
+  h.gateway.close();
+});
+
 test("explicit false keeps established queued input quiet", async () => {
   const h = await setup();
   await h.adapter.handleTurnLifecycleEvent?.({
     type: "queued",
     source: { ...h.source, showStartupStatus: false },
+    disposition: "queued",
   });
   expect(h.statuses()).toEqual([]);
   h.gateway.close();
@@ -155,6 +185,7 @@ test("queued source without an inbound message id stays quiet", async () => {
   await h.adapter.handleTurnLifecycleEvent?.({
     type: "queued",
     source: { ...h.source, messageId: undefined },
+    disposition: "queued",
   });
   expect(h.statuses()).toEqual([]);
   h.gateway.close();
@@ -313,7 +344,12 @@ for (const stopReason of ["cancelled", "error", "tool_rule", "end_turn"]) {
     expect(h.statuses().at(-1)).toBe("");
     const count = h.statuses().length;
     await h.submit({ ...h.followup(), clientMessageId: "later" });
-    expect(h.statuses().slice(count)).toEqual(["is thinking..."]);
+    expect(
+      h
+        .statuses()
+        .slice(count)
+        .every((status) => status === ""),
+    ).toBe(true);
     h.gateway.close();
   });
 }
