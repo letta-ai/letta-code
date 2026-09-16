@@ -1503,7 +1503,7 @@ export interface UpdateToolsetCommand {
   request_id: string;
   /** Runtime scope — identifies which conversation this targets. */
   runtime: ConversationRuntimeScope;
-  /** The toolset preference to apply (e.g. "auto", "default", "codex", "gemini") */
+  /** The toolset preference to apply (e.g. "auto", "default", "codex", "letta") */
   toolset_preference: ToolsetPreference;
 }
 

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { LETTA_TOOLS } from "@/tools/letta-toolset";
 import { clearCapturedToolExecutionContexts } from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
+import { LETTA_TOOLS } from "@/tools/toolset-defaults";
 
 describe("request-scoped client toolsets", () => {
   afterEach(() => {

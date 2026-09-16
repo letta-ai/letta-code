@@ -1,4 +1,4 @@
-import type { ToolsetOption } from "./toolset-types";
+import type { ToolsetOption, ToolsetPreference } from "./toolset-types";
 
 /** Toolsets this Letta Code runtime can load and present to clients. */
 export const TOOLSET_OPTIONS: readonly ToolsetOption[] = [
@@ -38,24 +38,24 @@ export const TOOLSET_OPTIONS: readonly ToolsetOption[] = [
     is_featured: true,
   },
   {
-    id: "gemini",
-    display_name: "Gemini",
-    label: "Gemini toolset",
-    description: "Optimized for Google Gemini models",
-    is_featured: true,
-  },
-  {
     id: "codex_snake",
     display_name: "Codex (snake_case)",
     label: "Codex toolset (snake_case)",
     description: "Optimized for GPT/Codex models (snake_case)",
     is_featured: false,
   },
-  {
-    id: "gemini_snake",
-    display_name: "Gemini (snake_case)",
-    label: "Gemini toolset (snake_case)",
-    description: "Optimized for Google Gemini models (snake_case)",
-    is_featured: false,
-  },
 ];
+
+export function isToolsetPreference(
+  value: unknown,
+): value is ToolsetPreference {
+  return TOOLSET_OPTIONS.some((option) => option.id === value);
+}
+
+/** Retired presets only migrate at the persisted-settings boundary. */
+export function resolveStoredToolsetPreference(
+  value: unknown,
+): ToolsetPreference {
+  if (value === "gemini" || value === "gemini_snake") return "default";
+  return isToolsetPreference(value) ? value : "auto";
+}
