@@ -449,7 +449,7 @@ export function spawnBackgroundSubagentTask(
   // is the authoritative value — the listener and App.tsx both derive it
   // from their own closure-captured agentId.
   const parentAgentIdForSpawn = resolvedParentScope?.agentId;
-  spawnSubagentFn(
+  const subagentExecution = spawnSubagentFn(
     subagentType,
     prompt,
     model,
@@ -466,7 +466,12 @@ export function spawnBackgroundSubagentTask(
     systemPromptOverride,
     environment,
     actingUserId,
-  )
+  );
+  bgTask.completion = subagentExecution.then(
+    () => undefined,
+    () => undefined,
+  );
+  subagentExecution
     .then(async (result) => {
       await copyGitHubPullRequestTagsFn(
         result.conversationId,
