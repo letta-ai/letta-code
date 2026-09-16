@@ -610,15 +610,15 @@ describe("scheduler lease", () => {
 
     expect(readCronFile().scheduler_owners).toEqual({});
     expect(refreshSchedulerLease(cloudToken, "cloud")).toBe(true);
-    // Cloud still owns the live tombstone. Restoring local beside it would
-    // dual-fire if that row were a true all-owner instead.
-    expect(refreshSchedulerLease(localToken, "local")).toBe(false);
+    expect(refreshSchedulerLease(localToken, "local", cloudToken)).toBe(true);
 
     const after = readCronFile();
     expect(after.scheduler_owners.cloud).toEqual(
       expect.objectContaining({ pid: process.pid, token: cloudToken }),
     );
-    expect(after.scheduler_owners.local).toBeUndefined();
+    expect(after.scheduler_owners.local).toEqual(
+      expect.objectContaining({ pid: process.pid, token: localToken }),
+    );
     expect(after.scheduler_owner).toEqual(
       expect.objectContaining({ pid: process.pid, token: cloudToken }),
     );
@@ -626,8 +626,6 @@ describe("scheduler lease", () => {
       "Scheduler lease held",
     );
     expect(() => claimSchedulerLease()).toThrow("Scoped scheduler lease held");
-    const reclaimed = claimSchedulerLease("local");
-    expect(verifySchedulerLease(reclaimed, "local")).toBe(true);
   });
 
   test("refresh does not restore a scoped row beside a live all-owner", () => {
@@ -646,7 +644,7 @@ describe("scheduler lease", () => {
     );
 
     const legacyToken = simulateLegacyClaimSchedulerLease();
-    expect(refreshSchedulerLease(localToken, "local")).toBe(false);
+    expect(refreshSchedulerLease(localToken, "local", localToken)).toBe(false);
 
     const after = readCronFile();
     expect(after.scheduler_owners).toEqual({});

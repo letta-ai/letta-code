@@ -709,14 +709,14 @@ export function __testThrowNextRefreshSchedulerLease(shouldThrow = true): void {
 }
 
 /**
- * Confirm we still hold the lease. Scoped holders restore a dead mixed-version
- * tombstone, and a missing row when this process still owns that tombstone.
- * A live `scheduler_owner` we do not own is a true all-agent lease: return
- * false instead of restoring beside it. Heartbeat, not only the 60s tick.
+ * Confirm we still hold the lease. Scoped holders restore a dead tombstone
+ * and a missing row when we own it or it matches `knownTombstoneToken`.
+ * A different live all-owner is lease loss. Heartbeat, not only the 60s tick.
  */
 export function refreshSchedulerLease(
   token: string,
   scope: CronSchedulerScope = "all",
+  knownTombstoneToken?: string,
 ): boolean {
   return withLock(() => {
     if (throwNextRefreshSchedulerLease) {
@@ -740,11 +740,11 @@ export function refreshSchedulerLease(
       return true;
     }
     if (isLiveOwner(owner)) return false;
-    // Live foreign scheduler_owner is a true all-owner (legacy claimed during
-    // the heartbeat window after a strip). Do not restore beside it.
+    const tombstone = data.scheduler_owner;
     if (
-      isLiveOwner(data.scheduler_owner) &&
-      !ownerMatches(data.scheduler_owner, token)
+      isLiveOwner(tombstone) &&
+      tombstone.token !== knownTombstoneToken &&
+      !ownerMatches(tombstone, token)
     ) {
       return false;
     }

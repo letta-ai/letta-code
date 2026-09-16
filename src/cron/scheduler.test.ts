@@ -7,6 +7,7 @@ import {
   type AddTaskInput,
   addTask,
   type CronTask,
+  claimSchedulerLease,
   deleteTask,
   getTask,
   pauseTask,
@@ -231,6 +232,134 @@ test("tombstone heartbeat logs lock errors without treating them as lease loss",
     expect(logged.some((line) => line.includes("Scheduler lease lost"))).toBe(
       false,
     );
+  } finally {
+    stopScheduler();
+    globalThis.setInterval = realSetInterval;
+    for (const handle of armed) {
+      clearInterval(handle);
+    }
+  }
+});
+
+test("scoped heartbeat restores a stripped row beside the sibling tombstone", () => {
+  let heartbeat: (() => void) | undefined;
+  const armed: ReturnType<typeof setInterval>[] = [];
+  const realSetInterval = globalThis.setInterval;
+  globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+    const handle = realSetInterval(...args);
+    armed.push(handle);
+    if (Number(args[1] ?? 0) === 1_000) {
+      const handler = args[0];
+      if (typeof handler === "function") {
+        heartbeat = handler as () => void;
+      }
+    }
+    return handle;
+  }) as typeof setInterval;
+
+  process.env[CRON_SCHEDULER_SCOPE_ENV] = "local";
+  const cloudToken = claimSchedulerLease("cloud");
+  try {
+    startScheduler(
+      {} as ListenerTransport,
+      {
+        connectionId: "conn-sibling-tombstone",
+        wsUrl: "wss://example.test/ws",
+        deviceId: "device-sibling-tombstone",
+        connectionName: "listener-sibling-tombstone",
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+      },
+      async () => {},
+    );
+
+    expect(isSchedulerRunning()).toBe(true);
+    const before = readCronFile();
+    expect(before.scheduler_owner?.token).toBe(cloudToken);
+    writeFileSync(
+      path.join(TEST_DIR, "crons.json"),
+      JSON.stringify({
+        version: 1,
+        scheduler_owner: before.scheduler_owner,
+        tasks: [],
+      }),
+    );
+
+    heartbeat?.();
+
+    expect(isSchedulerRunning()).toBe(true);
+    const after = readCronFile();
+    expect(after.scheduler_owners.local).toEqual(
+      expect.objectContaining({ pid: process.pid }),
+    );
+    expect(after.scheduler_owner?.token).toBe(cloudToken);
+  } finally {
+    stopScheduler();
+    globalThis.setInterval = realSetInterval;
+    for (const handle of armed) {
+      clearInterval(handle);
+    }
+  }
+});
+
+test("scoped heartbeat does not restore beside a live all-owner", () => {
+  let heartbeat: (() => void) | undefined;
+  const armed: ReturnType<typeof setInterval>[] = [];
+  const realSetInterval = globalThis.setInterval;
+  globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+    const handle = realSetInterval(...args);
+    armed.push(handle);
+    if (Number(args[1] ?? 0) === 1_000) {
+      const handler = args[0];
+      if (typeof handler === "function") {
+        heartbeat = handler as () => void;
+      }
+    }
+    return handle;
+  }) as typeof setInterval;
+
+  process.env[CRON_SCHEDULER_SCOPE_ENV] = "local";
+  const logged: string[] = [];
+  try {
+    startScheduler(
+      {} as ListenerTransport,
+      {
+        connectionId: "conn-all-owner",
+        wsUrl: "wss://example.test/ws",
+        deviceId: "device-all-owner",
+        connectionName: "listener-all-owner",
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+        onLog: (message: string) => {
+          logged.push(message);
+        },
+      },
+      async () => {},
+    );
+
+    expect(isSchedulerRunning()).toBe(true);
+    writeFileSync(
+      path.join(TEST_DIR, "crons.json"),
+      JSON.stringify({
+        version: 1,
+        scheduler_owner: {
+          pid: process.pid,
+          token: "legacy-all-owner",
+          started_at: new Date().toISOString(),
+        },
+        tasks: [],
+      }),
+    );
+
+    heartbeat?.();
+
+    expect(isSchedulerRunning()).toBe(true);
+    expect(readCronFile().scheduler_owners).toEqual({});
+    expect(
+      logged.some((line) => line.includes("Scheduler lease lost; retrying")),
+    ).toBe(true);
   } finally {
     stopScheduler();
     globalThis.setInterval = realSetInterval;

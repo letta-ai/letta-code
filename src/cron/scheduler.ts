@@ -40,6 +40,7 @@ import {
   getActiveTasks,
   getCronFileMtime,
   getTask,
+  readCronFile,
   recordTaskQueued,
   refreshSchedulerLease,
   releaseSchedulerLease,
@@ -86,11 +87,9 @@ interface SchedulerState {
   lastMinuteKey: string;
   /** Pending jitter-delayed timers — cleared on stop/lease loss. */
   pendingTimers: Set<NodeJS.Timeout>;
-  /**
-   * Scoped-only heartbeat that restores a mixed-version `scheduler_owner`
-   * tombstone if the sibling named there has died. Independent of the 60s
-   * fire tick so a legacy all-claim cannot sneak in between fires.
-   */
+  /** Last live `scheduler_owner` token, used to recognize a sibling tombstone. */
+  tombstoneToken: string | undefined;
+  /** Scoped-only heartbeat that restores the mixed-version tombstone. */
   tombstoneInterval: NodeJS.Timeout | null;
 }
 
@@ -143,6 +142,32 @@ function logScheduler(opts: StartListenerOptions, message: string): void {
     return;
   }
   debugWarn("Cron", message);
+}
+
+function holdSchedulerLease(
+  state: SchedulerState,
+  opts: StartListenerOptions,
+): boolean {
+  if (refreshSchedulerLease(state.token, state.scope, state.tombstoneToken)) {
+    return true;
+  }
+  if (state.scope === "all") {
+    logScheduler(opts, "Scheduler lease lost. Stopping.");
+    stopScheduler();
+    return false;
+  }
+  try {
+    state.token = claimSchedulerLease(state.scope);
+    state.tombstoneToken = readCronFile().scheduler_owner?.token;
+    logScheduler(opts, "Reclaimed scoped scheduler lease.");
+    return true;
+  } catch (err) {
+    logScheduler(
+      opts,
+      `Scheduler lease lost; retrying: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return false;
+  }
 }
 
 export function minuteKey(date: Date): string {
@@ -530,9 +555,7 @@ function tick(
   processQueuedTurn: ProcessQueuedTurn,
 ): void {
   // Verify we still hold the lease and keep the mixed-version tombstone live.
-  if (!refreshSchedulerLease(state.token, state.scope)) {
-    logScheduler(opts, "Scheduler lease lost. Stopping.");
-    stopScheduler();
+  if (!holdSchedulerLease(state, opts)) {
     return;
   }
 
@@ -692,6 +715,7 @@ export function startScheduler(
     firedThisMinute: new Set(),
     lastMinuteKey: minuteKey(now),
     pendingTimers: new Set(),
+    tombstoneToken: readCronFile().scheduler_owner?.token,
     tombstoneInterval: null,
   };
 
@@ -700,8 +724,9 @@ export function startScheduler(
   // Initial tick after the process is recorded as running so zero-jitter
   // fires are not dropped by the `if (!schedulerState) return` revalidation.
   tick(state, socket, opts, processQueuedTurn);
-  // tick() calls stopScheduler() when the lease is already gone. Do not arm
-  // intervals on that detached state or the failed scheduler wakes forever.
+  // tick() calls stopScheduler() when an all-agent lease is already gone.
+  // Do not arm intervals on that detached state or the failed scheduler wakes
+  // forever. Scoped lease loss keeps this process recorded so heartbeat can retry.
   if (schedulerState !== state) {
     return;
   }
@@ -727,10 +752,7 @@ export function startScheduler(
   if (scope !== "all") {
     state.tombstoneInterval = setInterval(() => {
       try {
-        if (!refreshSchedulerLease(state.token, state.scope)) {
-          logScheduler(opts, "Scheduler lease lost. Stopping.");
-          stopScheduler();
-        }
+        holdSchedulerLease(state, opts);
       } catch (err) {
         logScheduler(
           opts,
