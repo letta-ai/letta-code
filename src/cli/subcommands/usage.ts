@@ -20,15 +20,7 @@ export async function runUsageSubcommand(argv: string[]): Promise<number> {
   letta usage
 
 Show a Markdown overview of your plan, credit balance, and letta/* model quota.
-Quota buckets are full, high, medium, low, or empty, not exact request counts.
-The bucket line includes daily status; both windows must have quota available.
-Reset timestamps come from the server; an omitted timestamp is unavailable.
-Uses CLI auth and LETTA_API_KEY/LETTA_BASE_URL overrides, not an agent or
-conversation selector. User-scoped quota belongs to the authenticated user,
-not necessarily the person chatting with an agent. Does not report session tokens.
-If either lookup fails, exits nonzero without printing partial usage.
-Local mode prints "Running on local backend. Model usage requires BYOK."
-without contacting Cloud.
+Local backend: model usage requires BYOK.
 
 Options:
   -h, --help   Show this help`);
