@@ -711,7 +711,9 @@ export function __testThrowNextRefreshSchedulerLease(shouldThrow = true): void {
 /**
  * Confirm we still hold the lease. Scoped holders restore a dead mixed-version
  * `scheduler_owner` tombstone here so a crashed sibling cannot leave a window
- * for an old binary to claim `all` and strip `scheduler_owners`. Scoped
+ * for an old binary to claim `all` and strip `scheduler_owners`. Older task
+ * writers may drop `scheduler_owners` while keeping that tombstone; restore
+ * this lane instead of treating a missing row as lease loss. Scoped
  * schedulers call this on a heartbeat, not only the 60s fire tick.
  */
 export function refreshSchedulerLease(
@@ -728,13 +730,24 @@ export function refreshSchedulerLease(
       return false;
     }
     const data = readCronFile();
-    const owner =
-      scope === "all" ? data.scheduler_owner : data.scheduler_owners[scope];
-    if (!ownerMatches(owner, token)) return false;
-    if (scope !== "all" && !isLiveOwner(data.scheduler_owner)) {
-      data.scheduler_owner = owner;
-      writeCronFile(data);
+    if (scope === "all") {
+      return ownerMatches(data.scheduler_owner, token);
     }
+    const owner = data.scheduler_owners[scope];
+    if (ownerMatches(owner, token)) {
+      if (!isLiveOwner(data.scheduler_owner)) {
+        data.scheduler_owner = owner;
+        writeCronFile(data);
+      }
+      return true;
+    }
+    if (isLiveOwner(owner)) return false;
+    const restored = createSchedulerOwner(token);
+    data.scheduler_owners[scope] = restored;
+    if (!isLiveOwner(data.scheduler_owner)) {
+      data.scheduler_owner = restored;
+    }
+    writeCronFile(data);
     return true;
   });
 }

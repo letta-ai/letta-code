@@ -589,6 +589,45 @@ describe("scheduler lease", () => {
     expect(readCronFile().scheduler_owners.local?.token).toBe(localToken);
   });
 
+  test("refresh restores scoped rows after a legacy writer strips scheduler_owners", () => {
+    const cloudToken = claimSchedulerLease("cloud");
+    const localToken = claimSchedulerLease("local");
+    const before = readCronFile();
+    expect(before.scheduler_owner?.token).toBe(cloudToken);
+
+    writeFileSync(
+      _CRON_PATH,
+      JSON.stringify(
+        {
+          version: 1,
+          scheduler_owner: before.scheduler_owner,
+          tasks: [],
+        },
+        null,
+        2,
+      ),
+    );
+
+    expect(readCronFile().scheduler_owners).toEqual({});
+    expect(refreshSchedulerLease(cloudToken, "cloud")).toBe(true);
+    expect(refreshSchedulerLease(localToken, "local")).toBe(true);
+
+    const after = readCronFile();
+    expect(after.scheduler_owners.cloud).toEqual(
+      expect.objectContaining({ pid: process.pid, token: cloudToken }),
+    );
+    expect(after.scheduler_owners.local).toEqual(
+      expect.objectContaining({ pid: process.pid, token: localToken }),
+    );
+    expect(after.scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid, token: cloudToken }),
+    );
+    expect(() => simulateLegacyClaimSchedulerLease()).toThrow(
+      "Scheduler lease held",
+    );
+    expect(() => claimSchedulerLease()).toThrow("Scoped scheduler lease held");
+  });
+
   test("hasLiveSchedulerOwner matches a true all-owner or this backend only", () => {
     const empty = { scheduler_owner: null, scheduler_owners: {} };
     expect(hasLiveSchedulerOwner(empty, "local")).toBe(false);
