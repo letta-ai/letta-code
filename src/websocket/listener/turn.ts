@@ -74,6 +74,7 @@ import {
 import type { TurnLease } from "./turn-lifecycle";
 import { notifyTurnFinished, notifyTurnStarted } from "./turn-observers";
 import {
+  getPostStopRetryExhaustion,
   prepareProviderRetryInput,
   shouldRetryPostStopTurn,
   startTurnInput,
@@ -665,14 +666,18 @@ async function handleIncomingMessageInner(
             continue;
           }
         }
-        const shouldRetry = await shouldRetryPostStopTurn({
+        const retryState = {
           deploymentInterrupted,
           deploymentAttempts: deploymentRecoveryAttempts,
           providerAttempts: llmApiErrorRetries,
           stopReason: (stopReason as StopReasonType) || "error",
           runId: lastRunId,
           errorDetail,
-        });
+        };
+        const shouldRetry = await shouldRetryPostStopTurn(retryState);
+        const retryExhaustion = shouldRetry
+          ? undefined
+          : await getPostStopRetryExhaustion(retryState);
         if (finishIfInterrupted(lastRunId || runtime.activeRunId)) {
           break;
         }
@@ -767,6 +772,7 @@ async function handleIncomingMessageInner(
           agentId,
           conversationId,
           error: terminalError,
+          retryExhaustion,
         });
         if (!transition.finished) {
           break;

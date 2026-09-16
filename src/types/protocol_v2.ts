@@ -562,6 +562,11 @@ export interface TurnFinishedMessage extends RuntimeEnvelope {
   error?: string;
   /** Final CLI counters, independent of control/stream socket delivery order. */
   usage?: LettaStreamingResponse.LettaUsageStatistics;
+  retry_exhaustion?: {
+    kind: "provider" | "deployment";
+    attempts: number;
+    max_attempts: number;
+  };
 }
 
 export interface SubagentSnapshotToolCall {
