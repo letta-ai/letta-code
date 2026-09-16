@@ -210,6 +210,26 @@ jobs:
             5. If nothing to flag, respond with exactly: `LGTM`
             6. If you leave inline review comments, respond with exactly: `Left comments`
 
+      - name: Check for an expert question
+        if: steps.letta_review.outcome == 'success' && steps.letta_review.outputs.conversation_id != ''
+        continue-on-error: true
+        env:
+          AMELIA_GITHUB_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          LETTA_API_KEY: ${{ secrets.AMELIA_LETTA_API_KEY }}
+          REVIEW_CONVERSATION_ID: ${{ steps.letta_review.outputs.conversation_id }}
+        run: |
+          OUTPUT_FILE="$RUNNER_TEMP/expert-review.jsonl"
+
+          letta --conversation "$REVIEW_CONVERSATION_ID" \
+            --model auto \
+            --yolo \
+            --prompt "$(cat .github/agent-prompts/expert-review.md)" \
+            --output-format stream-json > "$OUTPUT_FILE"
+
+          RESULT=$(jq -sr '[.[] | select(.type == "result") | .result] | last // ""' "$OUTPUT_FILE")
+          echo "Expert review result: $RESULT"
+
       - name: React based on review outcome
         if: steps.letta_review.outputs.execution_file != ''
         run: |
