@@ -726,9 +726,16 @@ export function startScheduler(
 
   if (scope !== "all") {
     state.tombstoneInterval = setInterval(() => {
-      if (!refreshSchedulerLease(state.token, state.scope)) {
-        logScheduler(opts, "Scheduler lease lost. Stopping.");
-        stopScheduler();
+      try {
+        if (!refreshSchedulerLease(state.token, state.scope)) {
+          logScheduler(opts, "Scheduler lease lost. Stopping.");
+          stopScheduler();
+        }
+      } catch (err) {
+        logScheduler(
+          opts,
+          `Tombstone heartbeat error: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }, TOMBSTONE_HEARTBEAT_MS);
   }

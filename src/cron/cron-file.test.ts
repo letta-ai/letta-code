@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   __testFailNextRefreshSchedulerLease,
   __testOverrideReadProcessIdentity,
+  __testThrowNextRefreshSchedulerLease,
   type AddTaskInput,
   addTask,
   type CronTask,
@@ -56,6 +57,7 @@ beforeEach(() => {
 
 afterEach(() => {
   __testFailNextRefreshSchedulerLease(false);
+  __testThrowNextRefreshSchedulerLease(false);
   __testOverrideReadProcessIdentity(null);
   if (existsSync(TEST_DIR)) {
     rmSync(TEST_DIR, { recursive: true });

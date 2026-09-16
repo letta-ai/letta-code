@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   __testFailNextRefreshSchedulerLease,
+  __testThrowNextRefreshSchedulerLease,
   type AddTaskInput,
   addTask,
   type CronTask,
@@ -47,6 +48,7 @@ beforeEach(() => {
 
 afterEach(() => {
   __testFailNextRefreshSchedulerLease(false);
+  __testThrowNextRefreshSchedulerLease(false);
   stopScheduler();
   if (existsSync(TEST_DIR)) {
     rmSync(TEST_DIR, { recursive: true });
@@ -168,6 +170,67 @@ test("scoped startScheduler heartbeats the mixed-version tombstone between fire 
     expect(isSchedulerRunning()).toBe(true);
     expect(delays).toEqual(expect.arrayContaining([1_000, 60_000]));
     expect(delays).toHaveLength(3);
+  } finally {
+    stopScheduler();
+    globalThis.setInterval = realSetInterval;
+    for (const handle of armed) {
+      clearInterval(handle);
+    }
+  }
+});
+
+test("tombstone heartbeat logs lock errors without treating them as lease loss", () => {
+  let heartbeat: (() => void) | undefined;
+  const armed: ReturnType<typeof setInterval>[] = [];
+  const realSetInterval = globalThis.setInterval;
+  globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+    const handle = realSetInterval(...args);
+    armed.push(handle);
+    if (Number(args[1] ?? 0) === 1_000) {
+      const handler = args[0];
+      if (typeof handler === "function") {
+        heartbeat = handler as () => void;
+      }
+    }
+    return handle;
+  }) as typeof setInterval;
+
+  process.env[CRON_SCHEDULER_SCOPE_ENV] = "local";
+  const logged: string[] = [];
+  try {
+    startScheduler(
+      {} as ListenerTransport,
+      {
+        connectionId: "conn-heartbeat-lock",
+        wsUrl: "wss://example.test/ws",
+        deviceId: "device-heartbeat-lock",
+        connectionName: "listener-heartbeat-lock",
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+        onLog: (message: string) => {
+          logged.push(message);
+        },
+      },
+      async () => {},
+    );
+
+    expect(isSchedulerRunning()).toBe(true);
+    expect(heartbeat).toBeTypeOf("function");
+    __testThrowNextRefreshSchedulerLease();
+    heartbeat?.();
+
+    expect(isSchedulerRunning()).toBe(true);
+    expect(
+      logged.some((line) =>
+        line.includes(
+          "Tombstone heartbeat error: Failed to acquire crons.lock",
+        ),
+      ),
+    ).toBe(true);
+    expect(logged.some((line) => line.includes("Scheduler lease lost"))).toBe(
+      false,
+    );
   } finally {
     stopScheduler();
     globalThis.setInterval = realSetInterval;

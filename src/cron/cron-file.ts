@@ -698,9 +698,14 @@ export function verifySchedulerLease(
 }
 
 let failNextRefreshSchedulerLease = false;
+let throwNextRefreshSchedulerLease = false;
 
 export function __testFailNextRefreshSchedulerLease(fail = true): void {
   failNextRefreshSchedulerLease = fail;
+}
+
+export function __testThrowNextRefreshSchedulerLease(shouldThrow = true): void {
+  throwNextRefreshSchedulerLease = shouldThrow;
 }
 
 /**
@@ -714,6 +719,10 @@ export function refreshSchedulerLease(
   scope: CronSchedulerScope = "all",
 ): boolean {
   return withLock(() => {
+    if (throwNextRefreshSchedulerLease) {
+      throwNextRefreshSchedulerLease = false;
+      throw new Error("Failed to acquire crons.lock — timed out after 5s");
+    }
     if (failNextRefreshSchedulerLease) {
       failNextRefreshSchedulerLease = false;
       return false;
