@@ -483,19 +483,16 @@ export function addTask(input: AddTaskInput): AddTaskResult {
     data.tasks.push(task);
     writeCronFile(data);
 
-    // Check if a scheduler is running for this agent's backend.
     // A mixed-version tombstone in scheduler_owner does not count as an
-    // all-agent lease — only a real all-lease (no live scoped owners) or the
-    // matching scoped owner suppresses the warning.
+    // all-agent lease — only a real all-lease or the matching scoped owner
+    // suppresses the warning.
     let warning: string | undefined;
-    const scopedOwner = isLocalAgentId(input.agent_id)
-      ? data.scheduler_owners.local
-      : data.scheduler_owners.cloud;
-    const hasMatchingOwner =
-      (isLiveOwner(data.scheduler_owner) &&
-        liveScopedOwners(data).length === 0) ||
-      isLiveOwner(scopedOwner);
-    if (!hasMatchingOwner) {
+    if (
+      !hasLiveSchedulerOwner(
+        data,
+        isLocalAgentId(input.agent_id) ? "local" : "cloud",
+      )
+    ) {
       warning =
         "No letta server is currently running. This task will only execute when a WS listener is active.";
     }
@@ -596,20 +593,27 @@ function ownerMatches(
 }
 
 /**
- * True when any all-agent or scoped scheduler lease is held by a live process.
- * The TUI shadow scheduler uses this to defer to Desktop listeners.
+ * True when a live lease would process schedules for `backend`.
+ * A true all-agent owner (live `scheduler_owner`, no live scoped owners)
+ * covers every backend. A scoped owner only covers its own lane. A
+ * mixed-version tombstone in `scheduler_owner` does not count as all-owner
+ * while a scoped row is live.
  */
-export function hasLiveSchedulerOwner(data: {
-  scheduler_owner: SchedulerOwner | null;
-  scheduler_owners?: Partial<
-    Record<Exclude<CronSchedulerScope, "all">, SchedulerOwner>
-  >;
-}): boolean {
-  return (
-    isLiveOwner(data.scheduler_owner) ||
-    isLiveOwner(data.scheduler_owners?.local) ||
-    isLiveOwner(data.scheduler_owners?.cloud)
-  );
+export function hasLiveSchedulerOwner(
+  data: {
+    scheduler_owner: SchedulerOwner | null;
+    scheduler_owners?: Partial<
+      Record<Exclude<CronSchedulerScope, "all">, SchedulerOwner>
+    >;
+  },
+  backend: Exclude<CronSchedulerScope, "all">,
+): boolean {
+  const scoped = data.scheduler_owners ?? {};
+  const hasTrueAllOwner =
+    isLiveOwner(data.scheduler_owner) &&
+    !isLiveOwner(scoped.local) &&
+    !isLiveOwner(scoped.cloud);
+  return hasTrueAllOwner || isLiveOwner(scoped[backend]);
 }
 
 function throwIfLiveAllLease(
@@ -693,6 +697,12 @@ export function verifySchedulerLease(
   return ownerMatches(owner, token);
 }
 
+let failNextRefreshSchedulerLease = false;
+
+export function __testFailNextRefreshSchedulerLease(fail = true): void {
+  failNextRefreshSchedulerLease = fail;
+}
+
 /**
  * Confirm we still hold the lease. Scoped holders also refresh the mixed-version
  * `scheduler_owner` tombstone so a dead sibling cannot let an old binary claim
@@ -703,6 +713,10 @@ export function refreshSchedulerLease(
   scope: CronSchedulerScope = "all",
 ): boolean {
   return withLock(() => {
+    if (failNextRefreshSchedulerLease) {
+      failNextRefreshSchedulerLease = false;
+      return false;
+    }
     const data = readCronFile();
     const owner =
       scope === "all" ? data.scheduler_owner : data.scheduler_owners[scope];

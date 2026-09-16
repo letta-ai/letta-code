@@ -692,6 +692,11 @@ export function startScheduler(
   // Initial tick after the process is recorded as running so zero-jitter
   // fires are not dropped by the `if (!schedulerState) return` revalidation.
   tick(state, socket, opts, processQueuedTurn);
+  // tick() calls stopScheduler() when the lease is already gone. Do not arm
+  // intervals on that detached state or the failed scheduler wakes forever.
+  if (schedulerState !== state) {
+    return;
+  }
 
   state.tickInterval = setInterval(() => {
     tick(state, socket, opts, processQueuedTurn);

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
+  __testFailNextRefreshSchedulerLease,
   type AddTaskInput,
   addTask,
   type CronTask,
@@ -19,6 +20,7 @@ import {
   getIntendedCronOccurrence,
   handleMissedOneShot,
   handleTaskPreflight,
+  isSchedulerRunning,
   resolveCronSchedulerScope,
   startScheduler,
   stopScheduler,
@@ -44,6 +46,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  __testFailNextRefreshSchedulerLease(false);
   stopScheduler();
   if (existsSync(TEST_DIR)) {
     rmSync(TEST_DIR, { recursive: true });
@@ -91,6 +94,48 @@ test("routes scheduler lease failures through the listener logger", () => {
   expect(logged[1]).toBe(
     "[Cron] Another process may hold the lease. Restart Letta Code to retry.",
   );
+});
+
+test("startScheduler does not arm intervals after the initial tick loses the lease", () => {
+  const armed: ReturnType<typeof setInterval>[] = [];
+  const realSetInterval = globalThis.setInterval;
+  globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+    const handle = realSetInterval(...args);
+    armed.push(handle);
+    return handle;
+  }) as typeof setInterval;
+
+  try {
+    __testFailNextRefreshSchedulerLease();
+    const logged: string[] = [];
+    startScheduler(
+      {} as ListenerTransport,
+      {
+        connectionId: "conn-lease-loss",
+        wsUrl: "wss://example.test/ws",
+        deviceId: "device-lease-loss",
+        connectionName: "listener-lease-loss",
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+        onLog: (message: string) => {
+          logged.push(message);
+        },
+      },
+      async () => {},
+    );
+
+    expect(isSchedulerRunning()).toBe(false);
+    expect(armed).toHaveLength(0);
+    expect(logged.some((line) => line.includes("Scheduler lease lost"))).toBe(
+      true,
+    );
+  } finally {
+    globalThis.setInterval = realSetInterval;
+    for (const handle of armed) {
+      clearInterval(handle);
+    }
+  }
 });
 
 // ── Helper ──────────────────────────────────────────────────────────

@@ -1441,12 +1441,9 @@ export function App({
   }, []);
 
   // ── Shadow cron scheduler ──────────────────────────────────────────
-  // When the tui_cron experiment is enabled, run a lightweight scheduler
-  // that fires cron tasks when the desktop app (WS listener) isn't running.
-  // The TUI never claims the scheduler lease — it defers to any active
-  // lease holder (the desktop app always wins, even old versions).
-  // The experiment check is inside tick() so toggling the experiment
-  // takes effect without restarting the TUI.
+  // Lightweight tui_cron scheduler when no matching WS listener is running.
+  // Defers to a live all-owner or this agent's scoped backend owner.
+  // The experiment check is inside tick() so toggling takes effect live.
   useEffect(() => {
     if (!agentId || agentId === "loading") return;
 
@@ -1470,11 +1467,14 @@ export function App({
         lastMinuteKey = currentMinuteKey;
       }
 
-      // Check if another scheduler (desktop app) is active. Scoped Desktop
-      // listeners own scheduler_owners.local|cloud and keep a scheduler_owner
-      // tombstone; treat any of those live rows as an active lease holder.
+      // Defer to a live all-owner or this agent's scoped backend owner.
       const cronData = readCronFile();
-      if (hasLiveSchedulerOwner(cronData)) {
+      if (
+        hasLiveSchedulerOwner(
+          cronData,
+          isLocalAgentId(agentIdRef.current ?? "") ? "local" : "cloud",
+        )
+      ) {
         return;
       }
 
