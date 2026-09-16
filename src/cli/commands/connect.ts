@@ -12,6 +12,7 @@ import {
   checkProviderApiKey,
   createOrUpdateProvider,
   getProviderByName,
+  type ProviderConnectionOptions,
   type ProviderStorageTarget,
   providerStorageTargetLabel,
 } from "@/providers/byok-providers";
@@ -641,7 +642,7 @@ async function handleConnectApiKeyProvider(
   msg: string,
   provider: ResolvedConnectProvider,
   apiKey: string,
-  options: { baseURL?: string; timeout?: LocalProviderTimeout } = {},
+  options: ProviderConnectionOptions = {},
 ): Promise<void> {
   const cmdId = addCommandResult(
     ctx.buffersRef,
@@ -674,7 +675,7 @@ async function handleConnectApiKeyProvider(
       "running",
     );
 
-    if (hasProviderOptions(options)) {
+    if (hasProviderOptions(options) || provider.byokProvider.apiFormat) {
       await createOrUpdateProvider(
         provider.byokProvider.providerType,
         provider.byokProvider.providerName,
@@ -682,7 +683,7 @@ async function handleConnectApiKeyProvider(
         undefined,
         undefined,
         undefined,
-        options,
+        { ...options, apiFormat: provider.byokProvider.apiFormat },
         { target: ctx.target },
       );
     } else {

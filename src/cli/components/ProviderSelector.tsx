@@ -628,7 +628,7 @@ export function ProviderSelector({
           undefined,
           undefined,
           undefined,
-          {},
+          { apiFormat: provider.apiFormat },
           { target: selectedTarget },
         );
         clearAvailableModelsCache();
@@ -720,7 +720,7 @@ export function ProviderSelector({
           accessKey,
           region,
           profile,
-          baseURL ? { baseURL } : {},
+          { ...(baseURL ? { baseURL } : {}), apiFormat: provider.apiFormat },
           { target: selectedTarget },
         );
         clearAvailableModelsCache();

@@ -256,6 +256,7 @@ export function resolveProviderConnectionFields(
     ...(profile ? { profile } : {}),
     options: {
       ...(baseURL ? { baseURL } : {}),
+      ...(provider.apiFormat ? { apiFormat: provider.apiFormat } : {}),
     },
   };
 }

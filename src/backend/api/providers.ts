@@ -1,6 +1,8 @@
 import { debugWarn } from "@/utils/debug";
 import { apiRequest } from "./request";
 
+export type ProviderApiFormat = "responses" | "chat_completions";
+
 export interface ProviderResponse {
   id: string;
   name: string;
@@ -9,6 +11,7 @@ export interface ProviderResponse {
   auth_type?: "api" | "oauth";
   api_key?: string;
   base_url?: string;
+  api_format?: ProviderApiFormat | null;
   timeout?: number | false;
   access_key?: string;
   region?: string;
@@ -55,11 +58,13 @@ export async function createProvider(
   region?: string,
   profile?: string,
   baseURL?: string,
+  apiFormat?: ProviderApiFormat,
 ): Promise<ProviderResponse> {
   return apiRequest<ProviderResponse>("POST", "/v1/providers", {
     name: providerName,
     provider_type: providerType,
     api_key: apiKey,
+    ...(apiFormat ? { api_format: apiFormat } : {}),
     ...(accessKey && { access_key: accessKey }),
     ...(region && { region }),
     ...(profile && { profile }),
@@ -74,9 +79,11 @@ export async function updateProvider(
   region?: string,
   profile?: string,
   baseURL?: string,
+  apiFormat?: ProviderApiFormat,
 ): Promise<ProviderResponse> {
   return apiRequest<ProviderResponse>("PATCH", `/v1/providers/${providerId}`, {
     api_key: apiKey,
+    ...(apiFormat ? { api_format: apiFormat } : {}),
     ...(accessKey && { access_key: accessKey }),
     ...(region && { region }),
     ...(profile && { profile }),
@@ -96,6 +103,7 @@ export async function createOrUpdateProvider(
   region?: string,
   profile?: string,
   baseURL?: string,
+  apiFormat?: ProviderApiFormat,
 ): Promise<ProviderResponse> {
   const existing = await getProviderByName(providerName);
   if (existing) {
@@ -106,6 +114,7 @@ export async function createOrUpdateProvider(
       region,
       profile,
       baseURL,
+      apiFormat,
     );
   }
   return createProvider(
@@ -116,6 +125,7 @@ export async function createOrUpdateProvider(
     region,
     profile,
     baseURL,
+    apiFormat,
   );
 }
 

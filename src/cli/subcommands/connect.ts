@@ -511,7 +511,10 @@ export async function runConnectSubcommand(
       }
 
       io.stdout("Saving provider...");
-      if (hasConnectionOptions(connectionOptions)) {
+      if (
+        hasConnectionOptions(connectionOptions) ||
+        provider.byokProvider.apiFormat
+      ) {
         await io.createOrUpdateProvider(
           provider.byokProvider.providerType,
           provider.byokProvider.providerName,
@@ -519,7 +522,7 @@ export async function runConnectSubcommand(
           undefined,
           undefined,
           undefined,
-          connectionOptions,
+          { ...connectionOptions, apiFormat: provider.byokProvider.apiFormat },
         );
       } else {
         await io.createOrUpdateProvider(

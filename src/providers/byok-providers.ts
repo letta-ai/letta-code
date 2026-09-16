@@ -11,6 +11,7 @@ import {
   deleteProvider as deleteProviderRequest,
   getProviderByName as getProviderByNameRequest,
   listProviders as listApiProviders,
+  type ProviderApiFormat,
   type ProviderResponse,
   removeProviderByName as removeProviderByNameRequest,
   updateProvider as updateProviderRequest,
@@ -45,6 +46,7 @@ export type ProviderStorageTarget = "api" | "local";
 export interface ProviderConnectionOptions {
   baseURL?: string;
   timeout?: LocalProviderTimeout;
+  apiFormat?: ProviderApiFormat;
 }
 
 export interface ProviderOperationOptions {
@@ -75,6 +77,7 @@ export interface ByokProvider {
   description: string;
   providerType: string;
   providerName: string;
+  apiFormat?: ProviderApiFormat;
   providerNames?: readonly string[];
   isOAuth?: boolean;
   oauthProviderId?: string;
@@ -135,6 +138,7 @@ export const CLOUD_BYOK_PROVIDERS: readonly ByokProvider[] = [
     description: "Connect an OpenAI API key",
     providerType: "openai",
     providerName: "lc-openai",
+    apiFormat: "responses",
   },
   {
     id: "openai-compatible",
@@ -142,6 +146,7 @@ export const CLOUD_BYOK_PROVIDERS: readonly ByokProvider[] = [
     description: "Connect an OpenAI-compatible Chat Completions endpoint",
     providerType: "openai",
     providerName: "lc-openai-compatible",
+    apiFormat: "chat_completions",
     fields: [
       { key: "apiKey", label: "API Key", secret: true },
       {
@@ -753,6 +758,7 @@ export async function createProvider(
     region,
     profile,
     options.baseURL,
+    options.apiFormat,
   );
 }
 
@@ -788,6 +794,7 @@ export async function updateProvider(
     region,
     profile,
     options.baseURL,
+    options.apiFormat,
   );
 }
 
@@ -839,6 +846,7 @@ export async function createOrUpdateProvider(
     region,
     profile,
     options.baseURL,
+    options.apiFormat,
   );
 }
 
