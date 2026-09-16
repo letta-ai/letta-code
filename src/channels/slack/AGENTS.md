@@ -31,9 +31,13 @@ state render only through `assistant.threads.setStatus`.
   not overwrite the last concrete title.
 - Messages deactivate local status state because Slack clears status on post.
 - Reactions do not deactivate status.
-- The status controller owns lifecycle visibility. Queued follow-ups in
-  established threads begin with thinking when the controller is idle; known
-  root-shaped retries after a visible reply stay quiet.
+- The status controller owns lifecycle visibility. DM and channel queued
+  follow-ups with inbound message IDs begin with thinking when the controller is
+  idle. An explicit startup flag wins, including `false` to opt out; routed or
+  scheduled sources without message IDs stay quiet.
+- Known root-shaped retries after a visible reply stay quiet while their thread
+  is present in the session-local agent thread tracker; reconnects do not retain
+  that tracker state.
 - Once visible, activity is refreshed on new input without replacing its title,
   so active concrete titles survive queued follow-ups. A host's waking status
   must transition to thinking without an empty write.

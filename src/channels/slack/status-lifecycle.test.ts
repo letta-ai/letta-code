@@ -120,6 +120,46 @@ test("queued existing-thread input starts thinking and stays generic through rea
   h.gateway.close();
 });
 
+test("queued DM input with an inbound message starts thinking", async () => {
+  const h = await setup();
+  const source = createSlackTurnSource({
+    chatId: "D123",
+    chatType: "direct",
+    messageId: "1712800000.000400",
+    threadId: undefined,
+  });
+  await h.adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+  expect(
+    getSlackWriteClient().assistant.threads.setStatus,
+  ).toHaveBeenCalledWith({
+    channel_id: "D123",
+    thread_ts: "1712800000.000400",
+    status: "is thinking...",
+    loading_messages: ["is thinking..."],
+  });
+  h.gateway.close();
+});
+
+test("explicit false keeps established queued input quiet", async () => {
+  const h = await setup();
+  await h.adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: { ...h.source, showStartupStatus: false },
+  });
+  expect(h.statuses()).toEqual([]);
+  h.gateway.close();
+});
+
+test("queued source without an inbound message id stays quiet", async () => {
+  const h = await setup();
+  await h.adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: { ...h.source, messageId: undefined },
+  });
+  expect(h.statuses()).toEqual([]);
+  h.gateway.close();
+});
+
 test("steering reasserts the current tool title even when it has not changed", async () => {
   const h = await setup();
   await h.submit();
