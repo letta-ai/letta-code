@@ -710,11 +710,9 @@ export function __testThrowNextRefreshSchedulerLease(shouldThrow = true): void {
 
 /**
  * Confirm we still hold the lease. Scoped holders restore a dead mixed-version
- * `scheduler_owner` tombstone here so a crashed sibling cannot leave a window
- * for an old binary to claim `all` and strip `scheduler_owners`. Older task
- * writers may drop `scheduler_owners` while keeping that tombstone; restore
- * this lane instead of treating a missing row as lease loss. Scoped
- * schedulers call this on a heartbeat, not only the 60s fire tick.
+ * tombstone, and a missing row when this process still owns that tombstone.
+ * A live `scheduler_owner` we do not own is a true all-agent lease: return
+ * false instead of restoring beside it. Heartbeat, not only the 60s tick.
  */
 export function refreshSchedulerLease(
   token: string,
@@ -742,6 +740,14 @@ export function refreshSchedulerLease(
       return true;
     }
     if (isLiveOwner(owner)) return false;
+    // Live foreign scheduler_owner is a true all-owner (legacy claimed during
+    // the heartbeat window after a strip). Do not restore beside it.
+    if (
+      isLiveOwner(data.scheduler_owner) &&
+      !ownerMatches(data.scheduler_owner, token)
+    ) {
+      return false;
+    }
     const restored = createSchedulerOwner(token);
     data.scheduler_owners[scope] = restored;
     if (!isLiveOwner(data.scheduler_owner)) {
