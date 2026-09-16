@@ -85,6 +85,7 @@ export type DrainResult = {
   approvals?: ApprovalRequest[]; // NEW: supports parallel approvals
   apiDurationMs: number; // time spent in API call
   fallbackError?: string | null; // Error message for when we can't fetch details from server (no run_id)
+  errorInfo?: ErrorInfo; // Structured stream error, including SDK-thrown SSE errors
   terminalEofGuardFired?: boolean; // HTTP body never ended after the terminal SSE sequence; guard aborted the read
   stallReconcilerFired?: boolean; // Stream went silent mid-run; reconciler aborted the dead read to reconnect
 };
@@ -305,10 +306,16 @@ export async function drainStream(
       debugWarn("drainStream", "Stream error stack: %s", e.stack);
     }
 
-    // Try to extract run_id from APIError if we don't have one yet
-    if (!streamProcessor.lastRunId && e instanceof APIError && e.error) {
+    // The SDK throws event:error payloads instead of yielding them as chunks.
+    // Preserve their structured fields before falling back to the message text.
+    if (e instanceof APIError && e.error) {
       const errorObj = e.error as Record<string, unknown>;
-      if ("run_id" in errorObj && typeof errorObj.run_id === "string") {
+      if (errorObj.message_type === "error_message") {
+        streamProcessor.processChunk(
+          errorObj as unknown as LettaStreamingResponse,
+        );
+      }
+      if (!streamProcessor.lastRunId && typeof errorObj.run_id === "string") {
         streamProcessor.lastRunId = errorObj.run_id;
         debugWarn(
           "drainStream",
@@ -501,6 +508,7 @@ export async function drainStream(
     lastSeqId: streamProcessor.lastSeqId,
     apiDurationMs,
     fallbackError,
+    errorInfo: streamProcessor.lastErrorInfo,
     terminalEofGuardFired: terminalEofGuard.fired(),
     stallReconcilerFired: stallReconciler.fired(),
   };
@@ -761,6 +769,7 @@ export async function drainStreamWithResume(
           runIdToResume = candidate.lastRunId ?? runIdToResume;
           result.lastRunId = runIdToResume;
           result.lastSeqId = candidate.lastSeqId;
+          result.errorInfo = candidate.errorInfo ?? result.errorInfo;
 
           if (candidate.stopReason !== "error") {
             resumeResult = candidate;

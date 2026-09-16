@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { getRuntimeEnvironmentDeviceId } from "@/backend/api/client";
 import {
   type EnvironmentConnection,
   listEnvironments,
@@ -19,25 +20,29 @@ function printUsage(): void {
   console.log(
     `
 Usage:
-  letta environments list [options]
-  letta environments current
+  letta computers list [options]
+  letta computers current
 
-Aliases:
+Legacy aliases:
+  letta environments list
+  letta environments current
   letta envs list
   letta envs current
 
 List options:
   --limit <n>       Max results (default: 50)
-  --after <id>      Pagination cursor from a previous environment id
-  --online-only     Only include environments with a fresh active connection
+  --after <id>      Pagination cursor from a previous computer id
+  --online-only     Only include computers with a fresh active connection
 
 Notes:
   - Output is JSON only.
   - Uses CLI auth; override with LETTA_API_KEY/LETTA_BASE_URL if needed.
-  - Use letta environments current to get this machine's connectionId.
-  - Use --environment cloud to route through the target agent's cloud sandbox.
-  - Use --environment <name|device-id|connection-id> with headless messaging
-    to route a message through a specific registered environment.
+  - Use letta computers current to get this computer's stable deviceId.
+  - Prefer deviceId or connectionName for --computer and Agent(computer=...).
+    connectionId is ephemeral; use it only to pin a specific listener.
+  - Use --computer cloud to route through the target agent's cloud sandbox.
+  - Use --computer <name|device-id|connection-id> with headless messaging
+    to route a message through a specific registered computer.
 `.trim(),
   );
 }
@@ -162,7 +167,7 @@ export async function runEnvironmentsSubcommand(
 
   await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
   const list = deps.listEnvironments ?? listEnvironments;
-  const deviceId = settingsManager.getOrCreateDeviceId();
+  const deviceId = getRuntimeEnvironmentDeviceId();
   const savedName = settingsManager.getListenerEnvName();
   const currentVersion = getVersion();
   if (action === "current") {
@@ -174,7 +179,7 @@ export async function runEnvironmentsSubcommand(
     });
     if (!current) {
       console.error(
-        "No online environment found for this device. Start one with `letta server` and try again.",
+        "No online computer found for this device. Start one with `letta server` and try again.",
       );
       return 1;
     }

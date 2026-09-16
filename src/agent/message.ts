@@ -10,8 +10,10 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
+import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "@/agent/acting-user";
 import type { SkillSource } from "@/agent/skill-sources";
 import { type Backend, getBackend } from "@/backend";
+import { getRuntimeContext } from "@/runtime-context";
 import {
   type ClientTool,
   getExecutionContextById,
@@ -20,6 +22,7 @@ import {
   waitForToolsetReady,
 } from "@/tools/manager";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
+import { isCloudApiShutdownRejection } from "@/utils/cloud-api-shutdown";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import {
   assertSupportedBase64ImageMediaTypes,
@@ -32,7 +35,10 @@ import {
   type ApprovalNormalizationOptions,
   normalizeOutgoingApprovalMessages,
 } from "./approval-result-normalization";
-import { buildClientSkillsPayload } from "./client-skills";
+import {
+  buildClientSkillsPayload,
+  buildClientSkillsUpdateReminder,
+} from "./client-skills";
 import { getSkillSources } from "./context";
 import { parseRetryAfterHeaderMs } from "./turn-recovery-policy";
 
@@ -43,31 +49,14 @@ const RESPONSE_STATE_CACHE_SCOPE = "approval_boundary";
 const CLOUD_API_SHUTDOWN_MAX_RETRIES = 3;
 const CLOUD_API_SHUTDOWN_DEFAULT_RETRY_DELAY_MS = 1000;
 const responseStateIdsByScope = new Map<string, string>();
+// Backend identity and agent/default-conversation scope must not share a
+// notification baseline. Discovery cache invalidation must not clear it either.
+const sentClientSkillsByBackend = new WeakMap<
+  Backend,
+  Map<string, NonNullable<ConversationMessageCreateParams["client_skills"]>>
+>();
 
-type APIErrorLike = {
-  status?: unknown;
-  error?: unknown;
-  headers?: unknown;
-};
-
-function isRetryableCloudApiShutdown(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-
-  const candidate = error as APIErrorLike;
-  if (candidate.status !== 503) return false;
-  if (typeof candidate.error !== "object" || candidate.error === null) {
-    return false;
-  }
-
-  const payload = candidate.error as Record<string, unknown>;
-  return (
-    payload.errorCode === "cloud_api_shutting_down" &&
-    payload.admitted === false &&
-    payload.retryable === true
-  );
-}
-
-function getCloudApiShutdownRetryDelayMs(error: APIErrorLike): number {
+function getCloudApiShutdownRetryDelayMs(error: { headers?: unknown }): number {
   const headers = error.headers;
   if (!(headers instanceof Headers)) {
     return CLOUD_API_SHUTDOWN_DEFAULT_RETRY_DELAY_MS;
@@ -426,19 +415,48 @@ export async function sendMessageStreamWithBackend(
     resolvedConversationId,
     opts.agentId ?? null,
   );
+  const skillScope = buildResponseStateScope(
+    resolvedConversationId,
+    conversationId === "default" ? opts.agentId : null,
+  );
+  let sentClientSkills = sentClientSkillsByBackend.get(backend);
+  if (!sentClientSkills) {
+    sentClientSkills = new Map();
+    sentClientSkillsByBackend.set(backend, sentClientSkills);
+  }
+  const skillReminder = buildClientSkillsUpdateReminder(
+    sentClientSkills.get(skillScope),
+    clientSkills,
+  );
+  // Deliver at the next model boundary (including tool continuations), not by
+  // launching an unsolicited run from a filesystem watcher. Keep approvals and
+  // the original input/otid in place, then append the runtime reminder.
+  const requestMessages = skillReminder
+    ? [
+        ...normalizedMessages,
+        {
+          type: "message" as const,
+          role: "user" as const,
+          content: skillReminder,
+        },
+      ]
+    : normalizedMessages;
   const isApprovalContinuation =
     isApprovalContinuationRequest(normalizedMessages);
   // Only reuse cached response state when the approval continuation was fully
   // auto-handled by the client. If a human reviewed any approval, the pause can
   // allow visible agent/conversation state to change, so use the full server path.
+  // A changed skill catalog also needs that path, rather than a cached prompt.
   const canUsePreviousResponseState =
-    isApprovalContinuation && opts.allowResponseStateReuse === true;
+    isApprovalContinuation &&
+    opts.allowResponseStateReuse === true &&
+    !skillReminder;
   const previousResponseId = canUsePreviousResponseState
     ? responseStateIdsByScope.get(responseStateScope)
     : undefined;
   const requestBody = buildRequestBodyFromPreparedMessages(
     conversationId,
-    normalizedMessages,
+    requestMessages,
     opts,
     clientTools,
     clientSkills,
@@ -474,6 +492,11 @@ export async function sendMessageStreamWithBackend(
     }
   }
 
+  const actingUserId =
+    opts.actingUserId ??
+    executionRuntimeContext?.actingUserId ??
+    getRuntimeContext()?.actingUserId ??
+    process.env[ACTING_USER_ID_ENV];
   const extraHeaders: Record<string, string> = {};
   if (previousResponseId) {
     extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader({
@@ -496,8 +519,8 @@ export async function sendMessageStreamWithBackend(
   // Echo the cloud user id back to cloud-api so it can re-attribute
   // credits + rate limits on multi-user sandboxes. See
   // SendMessageStreamOptions.actingUserId for full context.
-  if (opts.actingUserId) {
-    extraHeaders["X-Letta-Acting-User-Id"] = opts.actingUserId;
+  if (actingUserId) {
+    extraHeaders[ACTING_USER_ID_HEADER] = actingUserId;
   }
 
   const messageSummary = normalizedMessages
@@ -547,6 +570,8 @@ export async function sendMessageStreamWithBackend(
           },
         },
       );
+      // A rejected request must not consume the notification; retries need it.
+      sentClientSkills.set(skillScope, clientSkills);
       stream = attachResponseStateTracking(stream, {
         scope: responseStateScope,
         conversationId: resolvedConversationId,
@@ -555,11 +580,11 @@ export async function sendMessageStreamWithBackend(
       break;
     } catch (error) {
       if (
-        isRetryableCloudApiShutdown(error) &&
+        isCloudApiShutdownRejection(error) &&
         cloudApiShutdownRetries < CLOUD_API_SHUTDOWN_MAX_RETRIES
       ) {
         cloudApiShutdownRetries += 1;
-        const delayMs = getCloudApiShutdownRetryDelayMs(error as APIErrorLike);
+        const delayMs = getCloudApiShutdownRetryDelayMs(error);
         debugWarn(
           "send-message-stream",
           "request_retry conversation_id=%s otid=%s reason=cloud_api_shutting_down attempt=%d delay_ms=%d",
@@ -610,7 +635,7 @@ export async function sendMessageStreamWithBackend(
     conversationId,
     resolvedConversationId,
     agentId: opts.agentId ?? null,
-    ...(opts.actingUserId ? { actingUserId: opts.actingUserId } : {}),
+    ...(actingUserId ? { actingUserId } : {}),
     requestStartedAtMs,
     otid: firstOtid,
   });

@@ -21,10 +21,10 @@ import {
 
 type SecretsBackend = {
   capabilities: { serverSecrets: boolean };
-  listAgentSecrets?: (
+  listAgentSecrets: (
     agentId: string,
   ) => Promise<Array<{ key?: string; value?: string }>>;
-  retrieveAgent: (
+  retrieveAgent?: (
     agentId: string,
     options?: { include?: string[] },
   ) => Promise<{ secrets?: Array<{ key?: string; value?: string }> | null }>;
@@ -53,6 +53,13 @@ export function __testOverrideLocalSecretStorage(
   storage: LocalSecretStorage | null,
 ): void {
   testLocalSecretStorageOverride = storage;
+}
+
+export function __testSeedSecretsCache(
+  agentId: string,
+  secrets: Record<string, string>,
+): void {
+  setCache(agentId, secrets);
 }
 
 function getSecretsBackend(): SecretsBackend {
@@ -358,29 +365,18 @@ function resolveSecretsAgentId(explicitAgentId?: string): string | null {
  * Initialize the agent-scoped secrets cache. Cloud agents fetch from the
  * server. Local agents read from OS secure storage through Bun.secrets.
  */
-export async function initSecretsFromServer(
-  agentId: string,
-  cachedAgent?: { secrets?: Array<{ key?: string; value?: string }> | null },
-): Promise<void> {
+export async function initSecretsFromServer(agentId: string): Promise<void> {
   if (isLocalAgentId(agentId)) {
     setCache(agentId, await loadLocalAgentSecrets(agentId));
     return;
   }
 
   const backend = getSecretsBackend();
-  if (!cachedAgent && !backend.capabilities.serverSecrets) {
+  if (!backend.capabilities.serverSecrets) {
     setCache(agentId, {});
     return;
   }
-  const agentSecrets =
-    cachedAgent?.secrets ??
-    (backend.listAgentSecrets
-      ? await backend.listAgentSecrets(agentId)
-      : (
-          await backend.retrieveAgent(agentId, {
-            include: ["agent.secrets"],
-          })
-        ).secrets);
+  const agentSecrets = await backend.listAgentSecrets(agentId);
 
   const secrets: Record<string, string> = {};
   if (Array.isArray(agentSecrets)) {

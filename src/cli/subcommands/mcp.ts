@@ -1,6 +1,8 @@
 import { parseArgs } from "node:util";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { getBackend } from "@/backend";
 import { getClient as getDefaultClient } from "@/backend/api/client";
+import { getServerUrl } from "@/backend/api/server-url";
 import {
   listUnifiedMcpServers,
   listUnifiedMcpTools,
@@ -85,7 +87,21 @@ interface CatalogTool {
 
 interface ToolCatalog {
   tools: CatalogTool[];
+  /** True when hosted Letta Cloud excluded stdio-type cloud servers. */
+  excludedHostedStdioServers: boolean;
   close(): Promise<void>;
+}
+
+/**
+ * Hosted Letta Cloud cannot execute stdio-type cloud-connected servers, so
+ * their synced tools must not surface through tools/schema/search/call.
+ */
+function defaultIsHostedLettaCloud(): boolean {
+  try {
+    return getServerUrl() === LETTA_CLOUD_API_URL;
+  } catch {
+    return !process.env.LETTA_BASE_URL;
+  }
 }
 
 export interface McpSubcommandDependencies {
@@ -95,6 +111,7 @@ export interface McpSubcommandDependencies {
   createOAuthSession?: typeof createMcpOAuthSession;
   getClient?: () => Promise<UnifiedMcpClient>;
   isServerMcpAvailable?: () => boolean;
+  isHostedLettaCloud?: () => boolean;
   readFile?: (path: string) => Promise<string>;
   readStdin?: () => Promise<string>;
   env?: NodeJS.ProcessEnv;
@@ -117,6 +134,7 @@ function parseMcpArgs(argv: string[]) {
       "agent-id": { type: "string" },
       mode: { type: "string" },
       limit: { type: "string" },
+      full: { type: "boolean" },
       args: { type: "string" },
       "args-file": { type: "string" },
     },
@@ -185,19 +203,48 @@ function serverSummary(target: ServerTarget): McpServerSummary {
       };
 }
 
+const SENSITIVE_NAME = /token|key|secret|password|signature|credential|auth/i;
+
 function redactUrl(value: string): string {
   try {
     const url = new URL(value);
     url.username = "";
     url.password = "";
-    const sensitive = /token|key|secret|password|signature|credential/i;
     for (const key of url.searchParams.keys()) {
-      if (sensitive.test(key)) url.searchParams.set(key, "[REDACTED]");
+      if (SENSITIVE_NAME.test(key)) url.searchParams.set(key, "[REDACTED]");
     }
     return url.toString();
   } catch {
     return value;
   }
+}
+
+/** Redact values that follow (or are inline with) sensitive-named flags. */
+function redactArgs(args: string[]): string[] {
+  const redacted: string[] = [];
+  let redactNext = false;
+  for (const arg of args) {
+    if (redactNext) {
+      redacted.push("[REDACTED]");
+      redactNext = false;
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      const equalsIndex = arg.indexOf("=");
+      const flagName = equalsIndex === -1 ? arg : arg.slice(0, equalsIndex);
+      if (SENSITIVE_NAME.test(flagName)) {
+        if (equalsIndex === -1) {
+          redactNext = true;
+          redacted.push(arg);
+        } else {
+          redacted.push(`${flagName}=[REDACTED]`);
+        }
+        continue;
+      }
+    }
+    redacted.push(arg);
+  }
+  return redacted;
 }
 
 function serverDetails(target: ServerTarget): McpServerDetails {
@@ -215,7 +262,7 @@ function serverDetails(target: ServerTarget): McpServerDetails {
       name: config.name,
       transport: "stdio",
       command: config.command,
-      args: config.args ?? [],
+      args: redactArgs(config.args ?? []),
       ...(config.cwd ? { cwd: config.cwd } : {}),
       env: redactValues(config.env),
     };
@@ -230,7 +277,7 @@ function serverDetails(target: ServerTarget): McpServerDetails {
       name: server.serverName,
       transport: "stdio",
       command: server.command ?? server.target.split(" ")[0] ?? "",
-      args: server.args ?? [],
+      args: redactArgs(server.args ?? []),
       env: {},
     };
   }
@@ -387,10 +434,18 @@ async function buildToolCatalog(
   const usedNames = new Set<string>();
 
   try {
-    const serverTargets = activeServers.filter(
+    const hostedLettaCloud = (
+      deps.isHostedLettaCloud ?? defaultIsHostedLettaCloud
+    )();
+    const allServerTargets = activeServers.filter(
       (target): target is Extract<ServerTarget, { kind: "server" }> =>
         target.kind === "server",
     );
+    const serverTargets = hostedLettaCloud
+      ? allServerTargets.filter(({ server }) => server.serverType !== "stdio")
+      : allServerTargets;
+    const excludedHostedStdioServers =
+      serverTargets.length !== allServerTargets.length;
     if (serverTargets.length > 0) {
       const client = await getServerClient(deps);
       const toolLists = await Promise.all(
@@ -469,6 +524,7 @@ async function buildToolCatalog(
 
     return {
       tools: catalog,
+      excludedHostedStdioServers,
       close: async () => {
         await Promise.allSettled(
           connections.map((connection) => connection.close()),
@@ -554,18 +610,59 @@ async function runTools(
   deps: McpSubcommandDependencies,
   agentId: string,
   serverSelector: string | undefined,
+  full: boolean,
   stdout: (message: string) => void,
 ): Promise<number> {
   const catalog = await buildToolCatalog(deps, agentId, { serverSelector });
   try {
     printJson(
       stdout,
-      catalog.tools.map((tool) => tool.schema),
+      catalog.tools.map((tool) =>
+        full
+          ? tool.schema
+          : {
+              name: tool.schema.name,
+              ...(tool.schema.title ? { title: tool.schema.title } : {}),
+              ...(tool.schema.description
+                ? { description: tool.schema.description }
+                : {}),
+            },
+      ),
     );
   } finally {
     await catalog.close();
   }
   return 0;
+}
+
+async function runSchema(
+  deps: McpSubcommandDependencies,
+  agentId: string,
+  toolName: string | undefined,
+  stdout: (message: string) => void,
+): Promise<number> {
+  if (!toolName) {
+    throw new McpCliError(
+      "invalid_arguments",
+      "Usage: letta mcp schema <tool-name>",
+    );
+  }
+  const catalog = await buildToolCatalog(deps, agentId, { toolName });
+  try {
+    const tool = catalog.tools.find(
+      (candidate) => candidate.schema.name === toolName,
+    );
+    if (!tool) {
+      throw new McpCliError(
+        "tool_not_found",
+        `MCP tool '${toolName}' is not available`,
+      );
+    }
+    printJson(stdout, tool.schema);
+    return 0;
+  } finally {
+    await catalog.close();
+  }
 }
 
 async function runSearch(
@@ -614,24 +711,32 @@ async function runSearch(
           catalogPromise,
         ]);
         catalog = resolvedCatalog;
-        const serverResults = searchResults.map((result) => {
+        const serverResults = searchResults.flatMap((result) => {
           const callable = resolvedCatalog.tools.find(
             (tool) =>
               tool.target.kind === "server" &&
               tool.target.toolId === result.toolId,
           );
           if (!callable) {
+            // The server-side index still contains tools from servers the
+            // catalog excluded (stdio-type cloud servers on hosted Letta
+            // Cloud); drop those instead of surfacing uncallable results.
+            if (resolvedCatalog.excludedHostedStdioServers) {
+              return [];
+            }
             throw new Error(
               `MCP search returned unavailable tool '${result.toolId}'`,
             );
           }
-          return {
-            tool:
-              result.jsonSchema === null
-                ? null
-                : { ...result.jsonSchema, name: callable.schema.name },
-            score: result.score,
-          };
+          return [
+            {
+              tool:
+                result.jsonSchema === null
+                  ? null
+                  : { ...result.jsonSchema, name: callable.schema.name },
+              score: result.score,
+            },
+          ];
         });
         if (!includeLocal) return serverResults;
         const localResults = searchLocalMcpTools({
@@ -748,7 +853,15 @@ export async function runMcpSubcommand(
       case "tools":
       case "list-tools":
       case "list_tools":
-        return await runTools(deps, agentId, parsed.target, stdout);
+        return await runTools(
+          deps,
+          agentId,
+          parsed.target,
+          parsed.values.full === true,
+          stdout,
+        );
+      case "schema":
+        return await runSchema(deps, agentId, parsed.target, stdout);
       case "search":
         return await runSearch(parsed, deps, agentId, stdout);
       case "call":

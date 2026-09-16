@@ -1,7 +1,7 @@
 // src/cli/app/useSubmitHandler.ts
 
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -56,9 +56,9 @@ import {
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { resetContextHistory } from "@/cli/helpers/context-tracker";
 import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switch-alert";
+import { buildDoctorMessage } from "@/cli/helpers/doctor-command";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
-  buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
@@ -99,10 +99,6 @@ import {
   buildReflectionSelectorPrompt,
   readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
-import {
-  formatSkillNameFrontmatterRepairReport,
-  repairMissingSkillNameFrontmatter,
-} from "@/cli/helpers/skill-name-frontmatter-repair";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
@@ -747,7 +743,15 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         // Continue processing the new message
       }
 
-      if (!msg && !hasOverrideContent) return { submitted: false };
+      if (!msg && !hasOverrideContent) {
+        // Enter on an empty input resumes a queue parked by Esc (no new message).
+        const paused = tuiQueueRef.current?.pausedCount ?? 0;
+        if (paused === 0) return { submitted: false };
+        tuiQueueRef.current?.resume();
+        userCancelledRef.current = false;
+        setDequeueEpoch((e: number) => e + 1);
+        return { submitted: true };
+      }
 
       // If the user just cycled reasoning tiers, flush the final choice before
       // sending the next message so the upcoming run uses the selected tier.
@@ -811,30 +815,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           .slice(0, 100);
       }
 
-      // Block submission if waiting for explicit user action (approvals)
-      // In this case, input is hidden anyway, so this shouldn't happen
+      // Block submission while approvals are pending (input is hidden anyway).
       if (pendingApprovals.length > 0) {
         return { submitted: false };
       }
 
-      // Queue message if agent is busy (streaming, executing tool, or running command)
-      // This allows messages to queue up while agent is working
-
-      // Reset cancellation flag before queue check - this ensures queued messages
-      // can be dequeued even if the user just cancelled. The dequeue effect checks
-      // userCancelledRef.current, so we must clear it here to prevent blocking.
+      // Release cancellation, but wake dequeue only after the new input is queued.
       userCancelledRef.current = false;
-
-      // If there are queued messages and agent is not busy, bump epoch to trigger
-      // dequeue effect. Without this, the effect won't re-run because refs aren't
-      // in its deps array (only state values are).
-      if (!isAgentBusy() && (tuiQueueRef.current?.length ?? 0) > 0) {
-        debugLog(
-          "queue",
-          `Bumping dequeueEpoch: userCancelledRef was reset, ${tuiQueueRef.current?.length ?? 0} message(s) queued, agent not busy`,
-        );
-        setDequeueEpoch((e: number) => e + 1);
-      }
 
       const isSlashCommand = routedUserText.startsWith("/");
       const parsedModCommand = isSlashCommand
@@ -864,19 +851,21 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         return { submitted: true }; // Clears input
       }
 
-      if (isAgentBusy() && !shouldBypassQueue) {
+      if (
+        !shouldBypassQueue &&
+        (isAgentBusy() ||
+          (!hasOverrideContent && (tuiQueueRef.current?.length ?? 0) > 0))
+      ) {
         // Enqueue via QueueRuntime — onEnqueued callback updates queueDisplay.
         tuiQueueRef.current?.enqueue({
           kind: "message",
           source: "user",
           content: msg,
         } as Parameters<typeof tuiQueueRef.current.enqueue>[0]);
+        if (!hasOverrideContent && !isSystemOnly) tuiQueueRef.current?.resume();
         setDequeueEpoch((e: number) => e + 1);
         return { submitted: true }; // Clears input
       }
-
-      // Note: userCancelledRef.current was already reset above before the queue check
-      // to ensure the dequeue effect isn't blocked by a stale cancellation flag.
 
       const aliasedMsg = routedUserText;
 
@@ -2062,32 +2051,38 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /clear command - reset all agent messages (destructive)
-        if (msg.trim() === "/clear") {
+        const resetAllAgentMessages = trimmed === "/clear-messages";
+
+        if (trimmed === "/clear" || resetAllAgentMessages) {
           const cmd = commandRunner.start(
-            msg.trim(),
-            "Clearing in-context messages...",
+            trimmed,
+            resetAllAgentMessages
+              ? "Resetting agent messages..."
+              : "Clearing in-context messages...",
           );
 
-          // Clearing conversation state should also clear pending reasoning-tier debounce.
           resetPendingReasoningCycle();
           setCommandRunning(true);
 
           const clearPrevConversationId = conversationIdRef.current;
 
-          // Run SessionEnd hooks for current session before clearing
-          await runEndHooks("new");
-
           try {
             const backend = getBackend();
-
-            // Reset all messages on the agent only when in the default API conversation.
-            // Local/headless backends model /clear by switching to a fresh conversation.
-            // For named conversations, clearing just means starting a new conversation —
-            // there is no reason to wipe the agent's entire message history.
             if (
-              conversationIdRef.current === "default" &&
-              !backend.capabilities.localModelCatalog
+              resetAllAgentMessages &&
+              backend.capabilities.localModelCatalog
+            ) {
+              throw new Error(
+                "/clear-messages is unsupported by local backend.",
+              );
+            }
+            await runEndHooks("new");
+
+            // /clear-messages always resets the API agent's message history.
+            // /clear only resets when leaving the default API conversation.
+            if (
+              !backend.capabilities.localModelCatalog &&
+              (resetAllAgentMessages || conversationIdRef.current === "default")
             ) {
               const client = await getClient();
               await client.agents.messages.reset(agentId, {
@@ -2095,7 +2090,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               });
             }
 
-            // Create a new conversation
             const conversation = await backend.createConversation({
               agent_id: agentId,
             });
@@ -2103,7 +2097,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setConversationAutoTitleEligibility(true);
             await maybeCarryOverActiveConversationModel(conversation.id);
             setConversationIdAndRef(conversation.id);
-
             pendingConversationSwitchRef.current = {
               origin: "clear",
               conversationId: conversation.id,
@@ -2111,14 +2104,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             };
 
             settingsManager.persistSession(agentId, conversation.id);
-
-            // Reset context tokens for new conversation
             resetContextHistory(contextTrackerRef.current);
-
-            // Ensure bootstrap reminders are re-injected for the new conversation.
             resetBootstrapReminderState(true);
-
-            // Re-run SessionStart hooks for new conversation
             sessionHooksRanRef.current = false;
             runSessionStartHooks(
               true, // isNewSession
@@ -2145,9 +2132,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               modAdapter.context,
             );
 
-            // Update command with success
             cmd.finish(
-              "Agent's in-context messages cleared & moved to conversation history",
+              resetAllAgentMessages
+                ? "All agent messages reset"
+                : "Agent's in-context messages cleared & moved to conversation history",
               true,
             );
           } catch (error) {
@@ -2604,75 +2592,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           cmd.finish(output, true);
-          return { submitted: true };
-        }
-
-        // Special handling for /export command (also accepts legacy /download)
-        if (msg.trim() === "/export" || msg.trim() === "/download") {
-          const cmd = commandRunner.start(
-            msg.trim(),
-            "Exporting agent file...",
-          );
-
-          if (!getBackend().capabilities.agentFileImportExport) {
-            cmd.fail(
-              "AgentFile export is not supported by the local backend yet.",
-            );
-            return { submitted: true };
-          }
-
-          setCommandRunning(true);
-
-          try {
-            const client = await getClient();
-
-            // Build export parameters (include conversation_id if in specific conversation)
-            const exportParams: { conversation_id?: string } = {};
-            if (conversationId !== "default" && conversationId !== agentId) {
-              exportParams.conversation_id = conversationId;
-            }
-
-            // Package skills from agent/project/global directories
-            const { packageSkills } = await import("@/agent/export");
-            const skills = await packageSkills(agentId);
-
-            // Export agent via SDK (GET endpoint), then embed skills client-side
-            const baseContent = await client.agents.exportFile(
-              agentId,
-              exportParams,
-            );
-
-            // Parse if returned as a string, otherwise use as-is
-            const fileContent: Record<string, unknown> =
-              typeof baseContent === "string"
-                ? JSON.parse(baseContent)
-                : (baseContent as Record<string, unknown>);
-
-            // Embed skills into the .af JSON (client-side, no server support needed)
-            if (skills.length > 0) {
-              fileContent.skills = skills;
-            }
-
-            // Generate filename
-            const fileName = exportParams.conversation_id
-              ? `${exportParams.conversation_id}.af`
-              : `${agentId}.af`;
-
-            writeFileSync(fileName, JSON.stringify(fileContent, null, 2));
-
-            // Build success message
-            let summary = `AgentFile exported to ${fileName}`;
-            if (skills.length > 0) {
-              summary += `\n📦 Included ${skills.length} skill(s): ${skills.map((s) => s.name).join(", ")}`;
-            }
-
-            cmd.finish(summary, true);
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed: ${errorDetails}`);
-          } finally {
-            setCommandRunning(false);
-          }
           return { submitted: true };
         }
 
@@ -3570,10 +3489,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /doctor command
-        if (trimmed === "/doctor") {
-          const cmd = commandRunner.start(msg, "Gathering project context...");
-
+        if (trimmed === "/doctor" || trimmed.startsWith("/doctor ")) {
+          const cmd = commandRunner.start(msg, "Starting doctor...");
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
             cmd.fail(
@@ -3581,39 +3498,26 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
             return { submitted: false };
           }
-
           setCommandRunning(true);
           try {
-            cmd.finish(
-              "Running memory doctor... I'll ask a few questions to refine memory structure.",
-              true,
-            );
-
-            const { context: gitContext } = gatherInitGitContext();
-            const memoryDir = getActiveMemoryDirectory(agentId);
-            const skillNameFrontmatterRepair =
-              await repairMissingSkillNameFrontmatter(memoryDir);
-            const skillNameFrontmatterRepairReport =
-              formatSkillNameFrontmatterRepairReport(
-                skillNameFrontmatterRepair,
-              );
-
             const doctorMessage = buildDoctorMessage({
-              gitContext,
-              memoryDir,
-              skillNameFrontmatterRepairReport,
+              agentId,
+              conversationId: conversationIdRef.current,
+              memoryDir: getActiveMemoryDirectory(agentId),
+              local: getBackend().capabilities.localMemfs,
+              symptom: trimmed.slice("/doctor".length).trim(),
             });
-
+            cmd.finish("", true);
             await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
                 content: buildTextParts(doctorMessage),
+                otid: randomUUID(),
               },
             ]);
           } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed: ${errorDetails}`);
+            cmd.fail(`Doctor failed: ${formatErrorDetails(error, agentId)}`);
           } finally {
             setCommandRunning(false);
           }

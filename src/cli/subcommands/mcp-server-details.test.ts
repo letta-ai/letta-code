@@ -145,4 +145,50 @@ describe("MCP server details", () => {
     });
     expect(posts).toEqual([searchPath, runPath]);
   });
+
+  test("redacts sensitive stdio args and auth-named URL parameters", async () => {
+    const stdout: string[] = [];
+    const deps: McpSubcommandDependencies = {
+      env: { AGENT_ID: "agent-local" },
+      initializeSettings: async () => {},
+      isServerMcpAvailable: () => false,
+      getLocalServers: () => [
+        {
+          name: "argsecret",
+          transport: "stdio",
+          command: "npx",
+          args: [
+            "-y",
+            "some-server",
+            "--token",
+            "sk-secret",
+            "--api-key=sk-inline",
+            "--verbose",
+          ],
+        },
+        {
+          name: "authparam",
+          transport: "http",
+          url: "https://mcp.example.com/mcp?auth=xyz&tenant=letta",
+        },
+      ],
+      stdout: (message) => stdout.push(message),
+    };
+
+    expect(await runMcpSubcommand(["get", "argsecret"], deps)).toBe(0);
+    const details = JSON.parse(stdout[0] ?? "{}");
+    expect(details.args).toEqual([
+      "-y",
+      "some-server",
+      "--token",
+      "[REDACTED]",
+      "--api-key=[REDACTED]",
+      "--verbose",
+    ]);
+
+    expect(await runMcpSubcommand(["get", "authparam"], deps)).toBe(0);
+    expect(JSON.parse(stdout[1] ?? "{}").url).toBe(
+      "https://mcp.example.com/mcp?auth=%5BREDACTED%5D&tenant=letta",
+    );
+  });
 });

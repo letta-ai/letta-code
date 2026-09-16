@@ -488,6 +488,34 @@ test("slack adapter can add reactions to messages", async () => {
   });
 });
 
+test("slack adapter lists sorted workspace custom emoji names", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  const writeClient = FakeSlackWriteClient.instances[0];
+  writeClient?.emoji.list.mockResolvedValueOnce({
+    emoji: {
+      party_parrot: "https://emoji.slack-edge.com/party_parrot.png",
+      blob_wave: "alias:wave",
+    },
+  });
+
+  expect(await adapter.listCustomEmojis()).toEqual([
+    "blob_wave",
+    "party_parrot",
+  ]);
+  expect(writeClient?.emoji.list).toHaveBeenCalledTimes(1);
+});
+
 test("slack adapter uploads local files through Slack's external upload flow", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "letta-slack-upload-"));
   const mediaPath = join(tempDir, "chart.png");

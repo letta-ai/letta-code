@@ -108,29 +108,6 @@ describe("Startup Flow - Flag Conflicts", () => {
     );
   });
 
-  test("--conversation conflicts with --import", async () => {
-    const result = await runCli(
-      ["--conversation", "conv-123", "--import", "test.af"],
-      { expectExit: 1 },
-    );
-    expect(result.stderr).toContain(
-      "--conversation cannot be used with --import",
-    );
-  });
-
-  test("--conversation conflicts with legacy --from-af using canonical --import error text", async () => {
-    const result = await runCli(
-      ["--conversation", "conv-123", "--from-af", "test.af"],
-      { expectExit: 1 },
-    );
-    expect(result.stderr).toContain(
-      "--conversation cannot be used with --import",
-    );
-    expect(result.stderr).not.toContain(
-      "--conversation cannot be used with --from-af",
-    );
-  });
-
   test("--conversation conflicts with --name", async () => {
     const result = await runCli(
       ["--conversation", "conv-123", "--name", "MyAgent"],
@@ -140,26 +117,19 @@ describe("Startup Flow - Flag Conflicts", () => {
       "--conversation cannot be used with --name",
     );
   });
-
-  test("--import conflicts with --name (including legacy --from-af alias)", async () => {
-    const result = await runCli(["--from-af", "test.af", "--name", "MyAgent"], {
-      expectExit: 1,
-    });
-    expect(result.stderr).toContain("--import cannot be used with --name");
-    expect(result.stderr).not.toContain("--from-af cannot be used with --name");
-  });
 });
 
 describe("Startup Flow - Smoke", () => {
-  test("update aliases route to manual update instead of flag parsing errors", async () => {
-    for (const alias of ["update", "upgrade", "--update", "--upgrade"]) {
+  test.each(["update", "upgrade", "--update", "--upgrade"])(
+    "%s routes to manual update instead of flag parsing errors",
+    async (alias) => {
       const result = await runCli([alias], { expectExit: 1 });
       expect(result.stdout).toContain(
         "Manual updates are disabled in development mode",
       );
       expect(result.stderr).not.toContain("Unknown option");
-    }
-  });
+    },
+  );
 
   test("--name conflicts with --new-agent", async () => {
     const result = await runCli(["--name", "MyAgent", "--new-agent"], {
@@ -221,6 +191,15 @@ describe("Startup Flow - Smoke", () => {
     expect(result.stderr).not.toContain("Invalid toolset");
   });
 
+  test("--toolset letta is accepted", async () => {
+    const result = await runCli(
+      ["--new-agent", "--toolset", "letta", "-p", "Say OK"],
+      { expectExit: 1 },
+    );
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Invalid toolset");
+  });
+
   test("--memfs-startup is accepted for headless startup", async () => {
     const result = await runCli(
       ["--new-agent", "-p", "Say OK", "--memfs-startup", "background"],
@@ -273,13 +252,18 @@ describe("Startup Flow - Smoke", () => {
     expect(result.stderr).not.toContain("Unknown option '-C'");
   });
 
-  test("--import handle is accepted in headless mode", async () => {
-    const result = await runCli(["--import", "@author/agent", "-p", "Say OK"], {
-      expectExit: 1,
-    });
-    expect(result.stderr).toContain("Missing LETTA_API_KEY");
-    expect(result.stderr).not.toContain("Invalid registry handle");
-  });
+  test.each(["--import", "--from-af"])(
+    "%s rejects AgentFile paths and registry handles before startup",
+    async (flag) => {
+      for (const value of ["test.af", "@author/agent"]) {
+        const result = await runCli([flag, value, "-p", "Say OK"], {
+          expectExit: 1,
+        });
+        expect(result.stderr).toContain(`Unknown option '${flag}'`);
+        expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
+      }
+    },
+  );
 
   test("--max-turns and --pre-load-skills are accepted in headless mode", async () => {
     const result = await runCli(

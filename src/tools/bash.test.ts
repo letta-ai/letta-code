@@ -149,16 +149,16 @@ describe("Bash tool", () => {
     expect(result.content[0]?.text).toContain("timed out");
   }, 5000);
 
-  test("blocks foreground sleep with guidance toward background waits", async () => {
+  test("automatically yields a foreground sleep", async () => {
     const result = await bash({
       command: "sleep 10",
-      description: "Test foreground sleep block",
+      description: "Test automatic yield",
+      foregroundYieldMs: 50,
     });
 
-    expect(result.status).toBe("error");
-    expect(result.content[0]?.text).toContain("Foreground `sleep` is blocked");
-    expect(result.content[0]?.text).toContain("run_in_background");
-    expect(result.content[0]?.text).toContain("Monitor");
+    expect(result.status).toBe("success");
+    expect(result.content[0]?.text).toContain("still running with task ID:");
+    expect(result.content[0]?.text).toContain("You will be notified");
   });
 
   test("runs command in background mode", async () => {

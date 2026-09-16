@@ -16,6 +16,18 @@ This file explains how to work effectively in this repo. It covers the rules enf
 
 ## Runtime Validation
 
+### Automated notifications use user-role reminders
+
+Never inject `role: "system"` messages into conversation history for harness
+notifications, recovery, teleport, onboarding, or mod instructions. Use
+`role: "user"` with `<system-reminder>...</system-reminder>` content instead.
+The tags identify automated context without requiring API-level system priority;
+the existing transcript echo strips reminder-only content from user bubbles.
+Anthropic can reject a system-role notification after an ordinary assistant
+message, including when a later user message follows it. Keep tool results before
+the reminder and preserve message IDs. This rule does not change the compiled
+system prompt or explicit user-supplied provider/API message roles.
+
 Development and distribution use different runtimes. `bun run dev` runs the
 TypeScript source with Bun, while the published package exposes a Node-targeted
 `letta.js` bundle and requires Node 22.19 or newer. When behavior depends on the
@@ -695,12 +707,22 @@ Sandbox policy must deny BOTH memory trees:
 
 The model catalog is a dynamic runtime service, not a static `models.json` file.
 
-**API mode (cloud):** loads from `GET /v1/models/catalog` at startup. If cloud
-fails and no cache -> startup exits with error. If cache exists -> degraded mode.
+**API mode (Cloud):** hosted selector rows, labels, presets, and capabilities
+come only from `GET /v1/models/catalog`. `GET /v1/models` contributes only
+organization-specific BYOK rows in Cloud mode; never use its base/hosted rows to
+filter, supplement, delay, or provide a fallback for the hosted catalog. If the
+catalog fails and no cache exists, startup exits with an error. If a cache
+exists, startup uses degraded mode.
 
-**Local mode:** projects pi-ai model inventory into `CatalogModel` shape via
-`toLocalCatalogModels()`. If pi-ai unavailable -> empty catalog, continues
-normally.
+**Local and custom App Server mode:** projects the active pi-ai or server
+runtime inventory into `CatalogModel` shape via `toRuntimeCatalogModels()`. If
+pi-ai is unavailable, the local catalog is empty and startup continues.
+
+Cloud BYOK handles may use an organization-specific provider name. Match them
+to catalog metadata through the provider metadata already returned with the
+BYOK row, while retaining the organization-specific handle for selection. Do
+not add provider-name rewrites to make hosted rows from `GET /v1/models` act
+like catalog rows.
 
 Key files: `src/agent/model-catalog.ts`, `src/agent/remote-model-catalog.ts`,
 `src/agent/available-models.ts`, `src/backend/local/local-model-config.ts`.

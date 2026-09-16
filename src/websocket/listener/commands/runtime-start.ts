@@ -27,8 +27,9 @@ import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
-import { isRuntimeStartCommand } from "@/websocket/listener/protocol-inbound";
+import { isRuntimeStartCommand } from "@/websocket/listener/runtime-start-validation";
 import { assertRuntimeWorkspaceSandboxChangeAllowed } from "@/websocket/listener/runtime-workspace-sandbox";
+import { expectInboundTeleport } from "@/websocket/listener/teleport";
 import type {
   ConversationRuntime,
   ListenerConnectionId,
@@ -46,7 +47,11 @@ type ReplaySyncStateForRuntime = (
   listenerRuntime: ListenerRuntime,
   socket: WebSocket,
   scope: RuntimeStartScope,
-  opts?: { recoverApprovals?: boolean; forceDeviceStatus?: boolean },
+  opts?: {
+    recoverApprovals?: boolean;
+    forceDeviceStatus?: boolean;
+    connectionId?: string;
+  },
 ) => Promise<void>;
 
 type RuntimeStartCommandContext = {
@@ -117,6 +122,9 @@ function sendRuntimeStartResponse(
       type: "runtime_start_response",
       request_id: parsed.request_id,
       ...response,
+      ...(response.success && parsed.execution_settings !== undefined
+        ? { execution_settings: parsed.execution_settings }
+        : {}),
     },
     "listener_runtime_start_send_failed",
     "listener_runtime_start",
@@ -328,6 +336,21 @@ async function applyRuntimeStartState(
   scope: RuntimeStartScope,
   scopedRuntime: ConversationRuntime,
 ): Promise<void> {
+  if (parsed.execution_settings !== undefined) {
+    if (
+      (scopedRuntime.turnLifecycle.kind !== "idle" ||
+        scopedRuntime.queueRuntime.length > 0) &&
+      JSON.stringify(scopedRuntime.executionSettings) !==
+        JSON.stringify(parsed.execution_settings)
+    ) {
+      throw new Error(
+        "Cannot change execution settings while the conversation has active or queued work",
+      );
+    }
+    scopedRuntime.executionSettings = structuredClone(
+      parsed.execution_settings,
+    );
+  }
   const workspaceSandbox = parsed.workspace_sandbox
     ? resolveWorkspaceSandbox({
         root: parsed.workspace_sandbox.root,
@@ -441,6 +464,9 @@ export async function handleRuntimeStartCommand(
       runtimeScope.conversation_id,
     );
     await applyRuntimeStartState(parsed, context, runtimeScope, scopedRuntime);
+    if (parsed.teleport_id) {
+      expectInboundTeleport(scopedRuntime, parsed.teleport_id);
+    }
     assertConnectionOpen();
     subscribeListenerConnection(context.runtime, connectionId, runtimeScope);
     registerRuntimeExternalTools(
@@ -458,6 +484,7 @@ export async function handleRuntimeStartCommand(
         {
           recoverApprovals: parsed.recover_approvals !== false,
           forceDeviceStatus: parsed.force_device_status !== false,
+          connectionId,
         },
       );
     }
@@ -488,6 +515,7 @@ export async function handleRuntimeStartCommand(
       {
         recoverApprovals: parsed.recover_approvals !== false,
         forceDeviceStatus: parsed.force_device_status !== false,
+        connectionId: context.connectionId,
       },
     );
   }

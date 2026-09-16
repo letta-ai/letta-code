@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import * as path from "node:path";
 import type { SubagentConfig } from "@/agent/subagents";
 import {
+  buildSubagentPrompt,
   estimateStartupContextTokens,
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
 } from "@/agent/subagents/context-budget";
 import {
   buildSubagentArgs,
-  buildSubagentPrompt,
   recallPromptForBackend,
   shouldPrependDeploySystemReminder,
 } from "@/agent/subagents/manager";
@@ -339,7 +339,7 @@ describe("buildSubagentArgs", () => {
     expect(tagsValue).toBe("type:explore");
   });
 
-  test("threads the environment selector through as --environment", () => {
+  test("threads the computer selector through as --computer", () => {
     const args = buildSubagentArgs(
       "explore",
       baseConfig,
@@ -351,13 +351,16 @@ describe("buildSubagentArgs", () => {
       { environment: "office-mac" },
     );
 
-    expect(args[args.indexOf("--environment") + 1]).toBe("office-mac");
+    expect(args[args.indexOf("--computer") + 1]).toBe("office-mac");
+    // The child submits and exits; the parent follows the remote turn.
+    expect(args).toContain("--no-wait");
   });
 
-  test("omits --environment by default", () => {
+  test("omits --computer and --no-wait by default", () => {
     const args = buildSubagentArgs("explore", baseConfig, null, "hello");
 
-    expect(args).not.toContain("--environment");
+    expect(args).not.toContain("--computer");
+    expect(args).not.toContain("--no-wait");
   });
 
   test("does not tag when deploying an existing agent (fork/recall)", () => {

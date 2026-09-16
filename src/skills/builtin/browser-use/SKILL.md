@@ -19,66 +19,30 @@ Protocol reference: https://chromedevtools.github.io/devtools-protocol/.
 The running browser's exact schema is at `http://127.0.0.1:<port>/json/protocol`;
 tip-of-tree docs can differ from the installed version.
 
-## Managed cloud sandbox default: visible browser
+## Visible by default when a display exists
 
-When running in a cloud sandbox, default every browser task to the visible
-managed desktop, even when the user did not explicitly ask to watch. Most
-browser tasks exist because plain HTTP is not enough; a headless browser is
-more likely to trigger bot protection and gives the user no way to observe or
-take over. This matters especially for clicking or typing, forms, sign-in,
-checkout/payment, CAPTCHAs or bot protection, and user handoff.
+When the computer has a display, prefer a visible (headful) browser for any
+task the user might watch or take over: clicking or typing, forms, sign-in,
+checkout/payment, CAPTCHAs or bot protection, and user handoff. Most browser
+tasks exist because plain HTTP is not enough; a headless browser is more
+likely to trigger bot protection and gives the user no way to observe or step
+in. Visible does not mean pixel-driven: keep operating the page over CDP, and
+the user sees every action in the window.
 
-For the first managed-sandbox browser window, use the skill's launcher instead
-of assembling Chrome, DISPLAY, or Xvfb commands yourself:
-
-```bash
-/root/.letta/cloud-skills/browser-use/scripts/open-visible-browser.sh 'https://example.com'
-```
-
-It starts the managed desktop and launches Chrome through the persistent Cua
-Driver with its required root flag. Then load `computer-use` for visible
-interaction. If protocol-level control is necessary, use Cua Driver's explicit
-`browser_prepare` flow after binding the exact visible window; do not pass
-remote-debugging flags through `launch_app`. The launcher exits zero only
-after Cua Driver reports an on-screen browser window. If it exits nonzero, stop
-and report the launch failure instead of claiming the browser opened.
+Use headless mode only for work the user explicitly wants in the background
+and that cannot require interaction or handoff, such as read-only scraping,
+CI, or screenshot/PDF generation, or when no display exists. A headless page
+does not satisfy a request to open or reopen a site in a browser the user can
+see.
 
 When the user asks to review, watch, or take over, leave that browser window
 open after the task. Do not kill or close it before replying.
 
-1. Run `start-letta-desktop` and use its exit status as the result. Warnings
-   from optional services do not mean startup failed when the command exits 0.
-   If it exits nonzero, stop and report that the managed desktop is
-   unavailable. Never create another Xvfb, VNC server, or private display: the
-   Computer viewer only shows the managed desktop.
-2. Load `computer-use`, inspect the managed desktop, and use Cua Driver to
-   operate an existing Chrome window or launch Chrome there. When launching,
-   round-trip Chrome's `launch_path` from `cua-driver call list_apps '{}'
-   instead of rebuilding it; the managed launch path carries required flags.
-   For forms, sign-in, checkout, CAPTCHA, and bot-protected pages, keep using
-   Cua Driver so the interaction remains visible and available for user
-   takeover.
-3. Use CDP only when protocol-level inspection or deterministic automation is
-   needed. Bind the exact visible browser window with Cua Driver, then use its
-   explicit `browser_prepare` flow. Do not pass remote-debugging flags
-   through `launch_app`. Include `--no-sandbox` when running Chrome as
-   root. Do not add `--headless` or override `DISPLAY`.
-4. Use headless mode only for work the user explicitly wants in the background
-   and that cannot require interaction or handoff, such as read-only scraping,
-   CI, or screenshot/PDF generation.
-5. Verify the result through the managed desktop window (Cua Driver window
-   state or screenshot), not only through DOM output or a screenshot from a
-   separate process.
-
-A headless page does not satisfy a request to open or reopen a site in the
-user-visible browser.
-
 ## Workflow
 
 1. Find a Chromium-based browser (below). If none exists, see "No Chrome installed".
-2. In a managed cloud sandbox, follow the visible-browser default above.
-   Otherwise, launch with a dedicated profile and remote debugging. Never
-   attach to the user's normal profile unless explicitly asked.
+2. Launch with a dedicated profile and remote debugging. Never attach to the
+   user's normal profile unless explicitly asked.
 3. Discover targets via `/json/list`; pick the `"page"` target by URL or title.
 4. Connect to its `webSocketDebuggerUrl` and enable only the domains you need
    (usually `Page`, `Runtime`, `DOM`, `Input`; add `Network`, `Log` when debugging).
@@ -124,7 +88,7 @@ Tell the user that browser use requires Chrome or another Chromium-based
 browser and recommend either:
 
 1. Install Chrome on the current computer, then retry the browser task.
-2. Teleport the conversation back to its Cloud sandbox, where the managed
+2. Teleport the conversation back to its Cloud sandbox, where a
    browser is already installed.
 
 Wait for the user to choose. Do not silently replace the browser task with
@@ -132,9 +96,8 @@ plain HTTP or claim browser automation succeeded.
 
 ## Launching
 
-Outside a managed cloud sandbox, use a disposable profile and a fixed port.
-Chrome refuses to run as root without `--no-sandbox`, so add that flag when
-`id -u` is 0:
+Use a disposable profile and a fixed port. Chrome refuses to run as root
+without `--no-sandbox`, so add that flag when `id -u` is 0:
 
 ```bash
 chrome_args=( \
@@ -149,10 +112,8 @@ chrome_args=( \
 "$CHROME" "${chrome_args[@]}" https://example.com
 ```
 
-Outside a managed cloud sandbox, add `--headless=new` only for explicitly
-invisible work or when no display exists. In a managed cloud sandbox, follow
-the visible-browser rule above and never replace its managed display with a
-private one.
+Add `--headless=new` only for explicitly invisible work or when no display
+exists (see "Visible by default" above).
 With `--remote-debugging-port=0`, read the chosen port from
 `<user-data-dir>/DevToolsActivePort`. Launch in the background and poll
 `http://127.0.0.1:9222/json/version` until it responds.

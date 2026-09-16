@@ -137,7 +137,9 @@ async function addTagToAgent(
   newTag: string,
 ): Promise<void> {
   try {
-    const agent = await backend.retrieveAgent(agentId);
+    const agent = await backend.retrieveAgent(agentId, {
+      include: ["agent.tags"],
+    });
     const currentTags = agent.tags || [];
     if (!currentTags.includes(newTag)) {
       await backend.updateAgent(agentId, {

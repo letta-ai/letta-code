@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 describe("client-local MCP runtime", () => {
-  test("registers namespaced tools that execute through the local process", async () => {
+  test("discovers tools without registering them as model-facing tools", async () => {
     const states = await replaceClientMcpServers("agent-a", [
       {
         name: "everything",
@@ -30,21 +30,11 @@ describe("client-local MCP runtime", () => {
     ]);
 
     expect(states[0]?.status).toBe("connected");
-    const tool = getExternalToolDefinition("mcp__everything__echo");
-    if (!tool?.executor) throw new Error("MCP tool was not registered");
-    const result = await tool.executor(
-      "call-1",
-      "mcp__everything__echo",
-      { message: "local" },
-      { tool },
-    );
-    expect(result).toEqual({
-      content: [{ type: "text", text: "Echo: local" }],
-      isError: false,
-    });
+    expect(states[0]?.tools.some((tool) => tool.name === "echo")).toBe(true);
+    expect(getExternalToolDefinition("mcp__everything__echo")).toBeUndefined();
   });
 
-  test("replaces MCP tools when the selected agent changes", async () => {
+  test("replaces MCP connections when the selected agent changes", async () => {
     await replaceClientMcpServers("agent-a", [
       {
         name: "everything",
@@ -53,10 +43,9 @@ describe("client-local MCP runtime", () => {
         args: [EVERYTHING_SERVER],
       },
     ]);
-    expect(getExternalToolDefinition("mcp__everything__echo")).toBeDefined();
+    expect(getClientMcpServerStates("agent-a")).toHaveLength(1);
 
     await replaceClientMcpServers("agent-b", []);
-    expect(getExternalToolDefinition("mcp__everything__echo")).toBeUndefined();
     expect(getClientMcpServerStates("agent-a")).toHaveLength(0);
     expect(getClientMcpServerStates("agent-b")).toHaveLength(0);
   });
@@ -82,6 +71,6 @@ describe("client-local MCP runtime", () => {
     ]);
     expect(getClientMcpServerStates("agent-a")).toHaveLength(2);
     expect(getClientMcpServerStates("agent-b")).toHaveLength(0);
-    expect(getExternalToolDefinition("mcp__everything__echo")).toBeDefined();
+    expect(getExternalToolDefinition("mcp__everything__echo")).toBeUndefined();
   });
 });

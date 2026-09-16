@@ -7,7 +7,7 @@ import {
   GEMINI_DEFAULT_TOOLS,
   OPENAI_DEFAULT_TOOLS,
   OPENAI_PASCAL_TOOLS,
-} from "@/tools/manager";
+} from "@/tools/toolset-defaults";
 import {
   __resetWorkflowExecutionsForTests,
   getWorkflowExecution,

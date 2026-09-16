@@ -14,8 +14,11 @@ import { markIncompleteToolsAsCancelled } from "@/cli/helpers/accumulator";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { releaseReflectionLaunch } from "@/cli/helpers/reflection-launcher";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
+import { settleTuiInterrupt } from "@/cli/helpers/tui-turn-lifecycle";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import type { ApprovalContext } from "@/permissions/analyzer";
+import type { QueueRuntime } from "@/queue/queue-runtime";
+import { stopMonitorsForScope } from "@/tools/impl/stop-monitor";
 
 import { EAGER_CANCEL, INTERRUPT_MESSAGE } from "./constants";
 import { extractErrorMeta } from "./errors";
@@ -53,6 +56,7 @@ type InterruptHandlerContext = {
   setApprovalResults: Dispatch<SetStateAction<ApprovalDecision[]>>;
   setAutoDeniedApprovals: Dispatch<SetStateAction<AutoDeniedApproval[]>>;
   setAutoHandledResults: Dispatch<SetStateAction<AutoHandledToolResult[]>>;
+  setDequeueEpoch: Dispatch<SetStateAction<number>>;
   setInterruptRequested: Dispatch<SetStateAction<boolean>>;
   setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
   setPendingApprovals: Dispatch<SetStateAction<ApprovalRequest[]>>;
@@ -61,6 +65,7 @@ type InterruptHandlerContext = {
   streaming: boolean;
   toolAbortControllerRef: MutableRefObject<AbortController | null>;
   toolResultsInFlightRef: MutableRefObject<boolean>;
+  tuiQueueRef: MutableRefObject<QueueRuntime | null>;
   userCancelledRef: MutableRefObject<boolean>;
   waitingForQueueCancelRef: MutableRefObject<boolean>;
 };
@@ -107,6 +112,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     setApprovalResults,
     setAutoDeniedApprovals,
     setAutoHandledResults,
+    setDequeueEpoch,
     setInterruptRequested,
     setIsExecutingTool,
     setPendingApprovals,
@@ -115,12 +121,31 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     streaming,
     toolAbortControllerRef,
     toolResultsInFlightRef,
+    tuiQueueRef,
     userCancelledRef,
     waitingForQueueCancelRef,
   } = ctx;
 
+  // The interrupted turn's finally block settles the interrupt once it has
+  // unwound (cancelling -> idle). If no turn is in flight there is no owner to
+  // do so, so the interrupt settles immediately.
+  const settleIfNoTurnInFlight = () => {
+    if (processingConversationRef.current > 0) return;
+    settleTuiInterrupt({
+      userCancelledRef,
+      setInterruptRequested,
+      queueLength: tuiQueueRef.current?.length ?? 0,
+      bumpDequeueEpoch: () => setDequeueEpoch((e) => e + 1),
+    });
+  };
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects; .current is read dynamically when interrupt fires.
   const handleInterrupt = useCallback(async () => {
+    const stopMonitors = () =>
+      stopMonitorsForScope({
+        agentId: agentIdRef.current,
+        conversationId: conversationIdRef.current || "default",
+      });
     // If we're executing client-side tools, abort them AND the main stream
     const hasTrackedTools =
       executingToolCallIdsRef.current.length > 0 ||
@@ -131,12 +156,14 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       hasTrackedTools &&
       !toolResultsInFlightRef.current
     ) {
+      stopMonitors();
       toolAbortControllerRef.current.abort();
 
       // Mark any in-flight conversation as stale, consistent with EAGER_CANCEL.
       // Increment before tagging queued results so they are tied to the post-interrupt state.
+      // The stale turn keeps its processing count and abort controller until its
+      // finally block runs; that block settles the interrupt.
       conversationGenerationRef.current += 1;
-      processingConversationRef.current = 0;
 
       const autoAllowedResults = autoAllowedExecutionRef.current?.results;
       const autoAllowedMetadata = autoAllowedExecutionRef.current
@@ -182,14 +209,14 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
         appendError(INTERRUPT_MESSAGE, true);
       }
 
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
+      // Abort only. The turn's finally block clears the controller so nothing
+      // can dequeue a replacement turn while cancellation unwinds.
+      abortControllerRef.current?.abort();
 
       pendingInterruptRecoveryConversationIdRef.current =
         conversationIdRef.current;
       userCancelledRef.current = true; // Prevent dequeue
+      tuiQueueRef.current?.pause(); // Park queued user messages until resume
       setStreaming(false);
       resetTrajectoryBases();
       setIsExecutingTool(false);
@@ -214,19 +241,14 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
           // Silently ignore - cancellation already happened client-side
         });
 
-      // Delay flag reset to ensure React has flushed state updates before dequeue can fire.
-      // Use setTimeout(50) instead of setTimeout(0) - the longer delay ensures React's
-      // batched state updates have been fully processed before we allow the dequeue effect.
-      setTimeout(() => {
-        userCancelledRef.current = false;
-      }, 50);
-
+      settleIfNoTurnInFlight();
       return;
     }
 
     if (!streaming || interruptRequested) {
       return;
     }
+    stopMonitors();
 
     // If we're in the middle of queue cancel, set flag to restore instead of auto-send
     if (waitingForQueueCancelRef.current) {
@@ -255,24 +277,24 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // that may never fire.
       interruptSubagentsAndReleaseReflection(agentId);
 
-      // NOW abort the stream - interrupted flag is already set
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null; // Clear ref so isAgentBusy() returns false
-      }
+      // NOW abort the stream - interrupted flag is already set. The controller
+      // stays set until the turn's finally block clears it: isAgentBusy() must
+      // report busy while the cancelled turn unwinds.
+      abortControllerRef.current?.abort();
 
       // Set cancellation flag to prevent processConversation from starting
       pendingInterruptRecoveryConversationIdRef.current =
         conversationIdRef.current;
       userCancelledRef.current = true;
+      // Park the user's queued messages: Esc stops the turn and holds them
+      // until Enter on an empty input or the next message. System items
+      // (task notifications, cron, mod continuations) still drain on settle.
+      tuiQueueRef.current?.pause();
 
       // Increment generation to mark any in-flight processConversation as stale.
-      // The stale processConversation will check this and exit quietly without
-      // decrementing the ref (since we reset it here).
+      // The stale turn keeps its processing count until its finally block runs;
+      // that block settles the interrupt (cancelling -> idle) and wakes dequeue.
       conversationGenerationRef.current += 1;
-
-      // Reset the processing guard so the next message can start a new conversation.
-      processingConversationRef.current = 0;
 
       // Stop streaming and show error message (unless tool calls were cancelled,
       // since the tool result will show "Interrupted by user")
@@ -341,15 +363,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
           // Silently ignore - cancellation already happened client-side
         });
 
-      // Reset cancellation flags after cleanup is complete.
-      // Use setTimeout(50) instead of setTimeout(0) to ensure React has fully processed
-      // the streaming=false state before we allow the dequeue effect to start a new conversation.
-      // This prevents the "Maximum update depth exceeded" infinite render loop.
-      setTimeout(() => {
-        userCancelledRef.current = false;
-        setInterruptRequested(false);
-      }, 50);
-
+      settleIfNoTurnInFlight();
       return;
     } else {
       setInterruptRequested(true);
@@ -406,11 +420,13 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     setApprovalResults,
     setAutoDeniedApprovals,
     setAutoHandledResults,
+    setDequeueEpoch,
     setInterruptRequested,
     setIsExecutingTool,
     setPendingApprovals,
     setRestoreQueueOnCancel,
     toolResultsInFlightRef,
+    tuiQueueRef,
     userCancelledRef,
   ]);
 

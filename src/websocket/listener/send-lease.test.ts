@@ -130,6 +130,7 @@ describe("pre-stream recovery lease boundaries", () => {
       toolArgs: '{"command":"pwd"}',
     };
     let sentActingUserId: string | undefined;
+    let sentMessages: unknown;
 
     const result = await resolveStaleApprovals(
       runtime,
@@ -145,10 +146,11 @@ describe("pre-stream recovery lease boundaries", () => {
         prepareToolExecutionContext: async () => createPreparedToolContext(),
         sendApprovalContinuation: async (
           _conversationId,
-          _messages,
+          messages,
           options,
         ) => {
           sentActingUserId = options?.actingUserId;
+          sentMessages = messages;
           return { kind: "stream" as const, stream: {} as never };
         },
         drainRecoveryStream: async (_stream, _socket, _runtime, params) => {
@@ -159,7 +161,10 @@ describe("pre-stream recovery lease boundaries", () => {
     );
 
     expect(result?.stopReason).toBe("end_turn");
-    expect(sentActingUserId).toBe("cloud-user-charles");
+    expect(sentActingUserId).toBeUndefined();
+    expect(JSON.stringify(sentMessages)).toContain(
+      '"attribution":{"acting_user_id":"cloud-user-charles"}',
+    );
     expect(
       runtime.listener.clientMessageIdsByRunIdByConversation
         ?.get(runtime.key)

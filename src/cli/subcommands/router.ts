@@ -1,7 +1,6 @@
 import { runAgentsSubcommand } from "./agents";
 import { runBackendSubcommand } from "./backend";
 import { runChannelsSubcommand } from "./channels";
-import { runCloudMcpSubcommand } from "./cloud-mcp";
 import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
 import { runEnvironmentsSubcommand } from "./environments";
@@ -11,6 +10,7 @@ import { runLocalBackendSubcommand } from "./local-backend";
 import { runMcpSubcommand } from "./mcp";
 import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
+import { runModelSubcommand } from "./model";
 import { runModsSubcommand } from "./mods";
 import { runSandboxSubcommand } from "./sandbox";
 import { runSecretSubcommand } from "./secret";
@@ -18,8 +18,10 @@ import { asLegacyAppServerCommand, runServerSubcommand } from "./server";
 import { runSetupSubcommand } from "./setup";
 import { runSharedMemorySubcommand } from "./shared-memory";
 import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
+import { runStepsSubcommand } from "./steps";
 import { runTeleportSubcommand } from "./teleport";
 import { runTrajectoriesSubcommand } from "./trajectories";
+import { runUsageSubcommand } from "./usage";
 
 async function runUpdateSubcommand(): Promise<number> {
   const { manualUpdate } = await import("@/updater/auto-update");
@@ -42,6 +44,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "channel-gateway":
     case "agents":
     case "connect":
+    case "computers":
     case "environments":
     case "envs":
     case "feedback":
@@ -49,16 +52,19 @@ export function subcommandNeedsEarlyBackendMode(
     case "memfs":
     case "memory":
     case "messages":
+    case "steps":
     case "mcp":
+    case "model":
+    case "models":
     case "mods":
     case "remote":
     case "sandbox":
     case "secret":
     case "server":
-    case "cloud-mcp":
     case "shared-memory":
     case "skills":
     case "teleport":
+    case "usage":
       return true;
     default:
       return false;
@@ -83,6 +89,11 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runMemorySubcommand(rest);
     case "agents":
       return runAgentsSubcommand(rest);
+    case "model":
+    case "models": // alias
+      return runModelSubcommand(rest);
+    case "usage":
+      return runUsageSubcommand(rest);
     case "app-server":
       console.error(
         "Warning: `letta app-server` is deprecated. Use `letta server --listen` instead.",
@@ -90,10 +101,13 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runServerSubcommand(asLegacyAppServerCommand(rest));
     case "messages":
       return runMessagesSubcommand(rest);
+    case "steps":
+      return runStepsSubcommand(rest);
     case "mcp":
       return runMcpSubcommand(rest);
-    case "environments":
-    case "envs":
+    case "computers":
+    case "environments": // legacy alias
+    case "envs": // legacy alias
       return runEnvironmentsSubcommand(rest);
     case "mods":
       return runModsSubcommand(rest);
@@ -105,8 +119,6 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runTeleportSubcommand(rest);
     case "server":
       return runServerSubcommand(rest);
-    case "cloud-mcp":
-      return runCloudMcpSubcommand(rest);
     case "feedback":
       return runFeedbackSubcommand(rest);
     case "remote": // alias

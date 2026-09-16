@@ -1,8 +1,5 @@
 import { isRecord } from "@/utils/type-guards";
 
-// Keep this adapter separate from mcp-servers.ts. That module backs the legacy
-// `letta cloud-mcp` contract, whose request and output shapes stay frozen while
-// the unified `letta mcp` command replaces it.
 /** Structural API surface used only by the unified `letta mcp` command. */
 export interface UnifiedMcpClient {
   get(path: string): Promise<unknown>;

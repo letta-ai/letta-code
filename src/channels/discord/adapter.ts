@@ -15,6 +15,7 @@ import {
   isDiscordGuildChannelAllowed,
   resolveDiscordChannelMode,
 } from "./channel-gating";
+import { resolveDiscordInboundPayload } from "./forwarded-message";
 import type {
   DiscordAttachmentLike,
   DiscordClient,
@@ -397,7 +398,7 @@ export function createDiscordAdapter(
       client.on("messageCreate", async (message: DiscordMessage) => {
         if (!adapter.onMessage) return;
 
-        const content = (message.content ?? "").trim();
+        const envelopeContent = (message.content ?? "").trim();
         const userId = message.author.id;
         if (!userId) return;
 
@@ -423,11 +424,17 @@ export function createDiscordAdapter(
         if (chatType === "direct") {
           if (markIngressMessageSeen(message.id)) return;
 
+          const payload = resolveDiscordInboundPayload(
+            message,
+            envelopeContent,
+          );
           const attachments = await collectAttachments(
-            message.attachments,
+            payload.attachments,
             message.channelId,
           );
-          if (!content && (!attachments || attachments.length === 0)) return;
+          if (!payload.text && (!attachments || attachments.length === 0)) {
+            return;
+          }
 
           const inbound: InboundChannelMessage = {
             channel: "discord",
@@ -435,7 +442,7 @@ export function createDiscordAdapter(
             chatId: message.channelId,
             senderId: userId,
             senderName: resolveDisplayName(message),
-            text: content,
+            text: payload.text,
             timestamp: message.createdTimestamp,
             messageId: message.id,
             threadId: null,
@@ -501,7 +508,7 @@ export function createDiscordAdapter(
           if (shouldAutoThreadOnDiscordMention(config, message.channelId)) {
             const createdThread = await createThreadForMention(
               message,
-              content,
+              envelopeContent,
             );
             if (!createdThread) return;
             effectiveChatId = createdThread.id;
@@ -509,17 +516,21 @@ export function createDiscordAdapter(
           }
         }
 
+        const normalizedEnvelopeText = wasMentioned
+          ? normalizeDiscordMentionText(envelopeContent, botUserId)
+          : envelopeContent;
+        const payload = resolveDiscordInboundPayload(
+          message,
+          normalizedEnvelopeText,
+        );
         const attachments = await collectAttachments(
-          message.attachments,
+          payload.attachments,
           effectiveChatId,
         );
-        const normalizedText = wasMentioned
-          ? normalizeDiscordMentionText(content, botUserId)
-          : content;
         // A bare mention inside a Discord thread can recover a thread whose
         // route provisioning failed. Other empty guild messages stay inert.
         if (
-          !normalizedText &&
+          !payload.text &&
           (!attachments || attachments.length === 0) &&
           (!wasMentioned || !effectiveThreadId)
         )
@@ -535,7 +546,7 @@ export function createDiscordAdapter(
             "name" in message.channel
               ? (message.channel.name ?? undefined)
               : undefined,
-          text: normalizedText,
+          text: payload.text,
           timestamp: message.createdTimestamp,
           messageId: message.id,
           threadId: effectiveThreadId,

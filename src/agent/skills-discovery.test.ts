@@ -24,7 +24,7 @@ test("scopes the memory filesystem skill to repository operations", async () => 
   );
 });
 
-test("bundles the cloud browser-use guidance with a local fallback", async () => {
+test("keeps the bundled browser-use skill environment-neutral", async () => {
   const skills = await getBundledSkills();
   const skill = skills.find((candidate) => candidate.id === "browser-use");
   if (!skill) {
@@ -34,12 +34,25 @@ test("bundles the cloud browser-use guidance with a local fallback", async () =>
   const content = readFileSync(skill.path, "utf8");
 
   expect(skill.description).toContain("Control a real browser");
-  expect(content).toContain(
-    "## Managed cloud sandbox default: visible browser",
-  );
-  expect(content).toContain(
-    "/root/.letta/cloud-skills/browser-use/scripts/open-visible-browser.sh",
-  );
+  expect(content).toContain("## Visible by default when a display exists");
+  expect(content).toContain("Do not kill or close it before replying");
+  // Managed cloud sandboxes ship their own browser-use skill, which takes
+  // precedence over this one; the builtin must not carry sandbox-only
+  // launchers, paths, or GUI-driver fallbacks.
+  for (const cloudOnly of [
+    "/root/.letta/cloud-skills",
+    "open-visible-browser",
+    "start-letta-desktop",
+    "cua-driver",
+    "Cua Driver",
+    "browser_prepare",
+    "computer-use",
+    "managed desktop",
+    "managed cloud sandbox",
+  ]) {
+    expect(content).not.toContain(cloudOnly);
+  }
+  // Local machines: recommend installing Chrome or teleporting, never download.
   expect(content).toContain("Install Chrome on the current computer");
   expect(content).toContain(
     "Teleport the conversation back to its Cloud sandbox",

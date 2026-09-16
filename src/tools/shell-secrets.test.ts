@@ -19,8 +19,8 @@ import {
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
 import {
+  __testSeedSecretsCache,
   clearSecretsCache,
-  initSecretsFromServer,
 } from "@/utils/secrets-store";
 
 const TEST_AGENT_ID = "agent-shell-secrets";
@@ -43,13 +43,8 @@ const secretEnv = {
   TOKEN: seededSecrets.TOKEN,
 };
 
-async function seedSecrets(): Promise<void> {
-  await initSecretsFromServer(TEST_AGENT_ID, {
-    secrets: Object.entries(seededSecrets).map(([key, value]) => ({
-      key,
-      value,
-    })),
-  });
+function seedSecrets(): void {
+  __testSeedSecretsCache(TEST_AGENT_ID, seededSecrets);
 }
 
 function literalSecretCommand(): string {

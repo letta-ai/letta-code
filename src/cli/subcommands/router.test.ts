@@ -23,6 +23,11 @@ describe("subcommand router", () => {
     }
   });
 
+  test("routes steps help with early backend selection", async () => {
+    expect(subcommandNeedsEarlyBackendMode("steps")).toBe(true);
+    expect(await runSubcommand(["steps", "--help"])).toBe(0);
+  });
+
   test("routes connect subcommand", async () => {
     const exitCode = await runSubcommand(["connect", "help"]);
     expect(exitCode).toBe(0);
@@ -133,7 +138,7 @@ describe("subcommand router", () => {
     expect(await runSubcommand(["dream", "--help"])).toBeNull();
   });
 
-  test("routes environments help", async () => {
+  test("routes computers help and keeps environment aliases", async () => {
     const messages: string[] = [];
     const originalLog = console.log;
     console.log = (message?: unknown) => {
@@ -141,10 +146,12 @@ describe("subcommand router", () => {
     };
 
     try {
-      const exitCode = await runSubcommand(["envs", "help"]);
+      const exitCode = await runSubcommand(["computers", "help"]);
 
       expect(exitCode).toBe(0);
-      expect(messages.join("\n")).toContain("letta environments list");
+      expect(messages.join("\n")).toContain("letta computers list");
+      expect(await runSubcommand(["environments", "help"])).toBe(0);
+      expect(await runSubcommand(["envs", "help"])).toBe(0);
     } finally {
       console.log = originalLog;
     }
@@ -192,10 +199,13 @@ describe("subcommand router", () => {
     expect(subcommandNeedsEarlyBackendMode("connect")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("dream")).toBe(false);
     expect(subcommandNeedsEarlyBackendMode("server")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("computers")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("environments")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("envs")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("memory")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("mcp")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("model")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("models")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("mods")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("sandbox")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("teleport")).toBe(true);

@@ -5,6 +5,7 @@ import { getBackend } from "@/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { migratePermissionMode } from "@/permissions/mode";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { stopMonitorsForScope } from "@/tools/impl/stop-monitor";
 import type {
   AbortMessageCommand,
   ApprovalResponseBody,
@@ -482,10 +483,25 @@ export async function handleAbortMessageInput(
   );
   const hasActiveTurn = scopedRuntime.turnLifecycle.kind === "active";
 
+  // A CLI waiter may observe completion just before its abort arrives. Never
+  // apply an old run's cancellation to the replacement conversation turn.
+  if (
+    params.command.run_id &&
+    params.command.run_id !== scopedRuntime.activeRunId
+  ) {
+    return false;
+  }
+
   if (!hasActiveTurn && !hasPendingApprovals) {
     return false;
   }
 
+  if (scope.agent_id) {
+    stopMonitorsForScope({
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+    });
+  }
   const cancellation = scopedRuntime.turnLifecycle.requestCancellation({
     waitForExternalSettlement:
       hasActiveTurn &&
@@ -495,6 +511,10 @@ export async function handleAbortMessageInput(
             scopedRuntime.conversationId !== "default"),
       ),
   });
+  // Interrupt semantics: the current turn stops and the user's queued messages
+  // park until resume_queue or the user's next message. System items (task
+  // notifications, cron, mod continuations) still drain once idle.
+  scopedRuntime.queueRuntime.pause();
   const interruptedRunId = cancellation.runId;
   const pendingRequestsSnapshot = hasPendingApprovals
     ? resolvedDeps.getPendingControlRequests(listener, scope)

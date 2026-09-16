@@ -58,6 +58,7 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(properties.action?.enum).toEqual([
       "send",
       "react",
+      "list-custom-emojis",
       "upload-file",
       "download-file",
       "send-rich",
@@ -118,7 +119,7 @@ describe("buildDynamicMessageChannelSchema", () => {
       "Currently active channels: Slack, Telegram.",
     );
     expect(resolved.description).toContain(
-      "Available actions across the active channels: send, react, upload-file, download-file, send-rich.",
+      "Available actions across the active channels: send, react, list-custom-emojis, upload-file, download-file, send-rich.",
     );
     expect(resolved.description).not.toContain(
       "finish with only `Sent.` as the internal confirmation",
@@ -130,6 +131,9 @@ describe("buildDynamicMessageChannelSchema", () => {
       'On Slack, this tool also supports action="react"',
     );
     expect(resolved.description).toContain(
+      'action="list-custom-emojis" to discover the workspace custom emoji names',
+    );
+    expect(resolved.description).toContain(
       'Use action="download-file" with channel, chat_id, attachmentId, and messageId',
     );
     expect(resolved.description).toContain(
@@ -139,6 +143,7 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(properties.action?.enum).toEqual([
       "send",
       "react",
+      "list-custom-emojis",
       "upload-file",
       "download-file",
       "send-rich",
@@ -204,6 +209,7 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(properties.action?.enum).toEqual([
       "send",
       "react",
+      "list-custom-emojis",
       "upload-file",
       "download-file",
     ]);

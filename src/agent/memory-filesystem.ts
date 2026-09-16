@@ -22,6 +22,7 @@ import {
   getDirectoryLimits,
 } from "@/utils/directory-limits";
 import { getCurrentAgentId } from "./context";
+import { installMemoryGitHooks } from "./memory-git-hooks";
 
 export const MEMORY_FS_ROOT = ".letta";
 export const MEMORY_FS_AGENTS_DIR = "agents";
@@ -267,6 +268,8 @@ export async function ensureLocalMemfsCheckout(
   if (isGitRepo(agentId)) {
     if (options.pullOnExistingRepo) {
       await pullMemory(agentId, { throwOnFailure: true });
+    } else {
+      installMemoryGitHooks(getScopedMemoryFilesystemRoot(agentId));
     }
     return;
   }
@@ -570,6 +573,8 @@ export async function applyMemfsFlags(
     } else if (options?.pullOnExistingRepo) {
       const result = await pullMemory(agentId);
       pullSummary = result.summary;
+    } else {
+      installMemoryGitHooks(getScopedMemoryFilesystemRoot(agentId));
     }
 
     await seedDefaultPersonalityFiles(

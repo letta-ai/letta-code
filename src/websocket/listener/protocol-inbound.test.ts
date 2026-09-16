@@ -194,6 +194,36 @@ describe("teleport protocol-inbound validators", () => {
   });
 });
 
+describe("resume_queue protocol-inbound validators", () => {
+  test("accepts the resume_queue wire shape with and without request_id", () => {
+    const withRequestId = {
+      type: "resume_queue" as const,
+      request_id: "resume-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+    };
+    const withoutRequestId = {
+      type: "resume_queue" as const,
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+    };
+    expect(
+      parseServerMessage(Buffer.from(JSON.stringify(withRequestId))),
+    ).toEqual(withRequestId);
+    expect(
+      parseServerMessage(Buffer.from(JSON.stringify(withoutRequestId))),
+    ).toEqual(withoutRequestId);
+  });
+
+  test("rejects resume_queue without a runtime scope", () => {
+    expect(
+      parseServerMessage(
+        Buffer.from(
+          JSON.stringify({ type: "resume_queue", request_id: "resume-1" }),
+        ),
+      ),
+    ).toBeNull();
+  });
+});
+
 describe("cron pause protocol-inbound validators", () => {
   test("accepts the exact pause and resume wire shapes", () => {
     const pause = {

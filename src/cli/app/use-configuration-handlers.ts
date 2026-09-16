@@ -380,7 +380,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               reasoningCapabilities,
             })
           : getReasoningTierOptionsForHandle(
-              modelHandle,
+              registryHandle,
               selectedContextWindow,
               reasoningCapabilities,
             );

@@ -16,6 +16,14 @@ export type {
 export { ChannelGateway } from "./channels/gateway-core";
 export { formatChannelControlRequestPrompt } from "./channels/interactive";
 export type {
+  ChannelBindingLookup,
+  ChannelBindingSelection,
+  ChannelBindingUpdate,
+  ChannelConversationBinding,
+  ChannelSendBindingInfo,
+  MessageChannelBindingOperations,
+} from "./channels/message-channel-bindings";
+export type {
   ExecuteMessageChannelOptions,
   MessageChannelExecutionResolver,
   MessageChannelExecutionScope,

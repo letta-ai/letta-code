@@ -92,12 +92,6 @@ export function createChannelInboundRouter(deps: {
       return;
     }
 
-    if (
-      deps.commands.shouldDropUnroutedSlackThreadInput(msg, accountId, config)
-    ) {
-      return;
-    }
-
     const getStatusRoute = () => loadRouteForInboundMessage(msg, accountId);
 
     if (
@@ -139,6 +133,12 @@ export function createChannelInboundRouter(deps: {
               })
           : undefined,
       })
+    ) {
+      return;
+    }
+
+    if (
+      deps.commands.shouldDropUnroutedSlackThreadInput(msg, accountId, config)
     ) {
       return;
     }

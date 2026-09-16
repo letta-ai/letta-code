@@ -9,6 +9,10 @@ import type {
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import { resolveActingUserId } from "@/agent/acting-user";
+import { loadPreloadedSkills } from "@/agent/preloaded-skills";
+import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
+import { buildHeadlessSenderReminder } from "@/headless-message-sender";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import {
   trackBoundaryError,
@@ -22,6 +26,11 @@ import {
 } from "@/utils/message-queue-bridge";
 import { detectShellContext } from "@/utils/shell-context";
 import { createSigintAbortSignal } from "@/utils/sigint-abort";
+import {
+  consumeSubagentLaunch,
+  LISTENER_CONNECTION_ENV,
+  SUBAGENT_LAUNCH_PROFILE_ENV,
+} from "@/utils/subagent-launch-marker";
 import { reportSubagentStdoutLoss } from "@/utils/subagent-stdout-failure";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
@@ -46,7 +55,6 @@ import {
   formatPlanRotationNotice,
   rotateChatGPTPlanOnQuotaLimit,
 } from "./agent/chatgpt-plan-rotation";
-import { buildClientSkillsPayload } from "./agent/client-skills";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/list-messages-handler";
@@ -61,7 +69,10 @@ import {
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
 import { resolvePersonalityId } from "./agent/personality-presets";
-import type { MemoryPromptMode } from "./agent/prompt-assets";
+import {
+  INTERRUPT_RECOVERY_ALERT,
+  type MemoryPromptMode,
+} from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
@@ -72,17 +83,14 @@ import {
   getBackend,
 } from "./backend";
 import {
-  type EnvironmentConnection,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
-  sendEnvironmentMessage,
 } from "./backend/api/environments";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
   parsePositiveIntFlag,
-  resolveImportFlagAlias,
 } from "./cli/flag-utils";
 import {
   createBuffers,
@@ -111,20 +119,22 @@ import {
 import { installLocalBackendModEventHooks } from "./cli/mods/local-backend-mod-events";
 import {
   validateConversationDefaultRequiresAgent,
-  validateFlagConflicts,
   validatePrimaryStartupFlagConflicts,
-  validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
+import { tryCloudHeadlessSend } from "./headless-cloud-send";
 import {
-  buildEnvironmentCreateMessageBody,
-  waitForEnvironmentAssistantMessage,
+  buildEnvironmentLaunchResult,
+  buildEnvironmentResponseMetadata,
+  isCloudEnvironmentSelector,
+  type ListenerLaunchResult,
+  type ReplyEnvironmentMetadata,
 } from "./headless-environment-response";
 import {
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
   prepareHeadlessEphemeralBackend,
 } from "./headless-ephemeral-startup";
+import { launchListenerConversation } from "./headless-listener-launch";
 import { resolveHeadlessMemfsPolicy } from "./headless-memfs-policy";
 import {
   createHeadlessModAdapter,
@@ -145,7 +155,7 @@ import {
   emitLocalToolReturns,
 } from "./headless-tool-events";
 import { computeDiffPreviews } from "./helpers/diff-preview";
-import { closeClientMcpServers, replaceClientMcpServers } from "./mcp-runtime";
+import { closeClientMcpServers } from "./mcp-runtime";
 import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import type { ModAdapter } from "./mods/mod-adapter";
 import { getTurnStartCancel } from "./mods/turn-start-cancel";
@@ -169,6 +179,7 @@ import {
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
+import { stopMonitorsForScope } from "./tools/impl/stop-monitor";
 import {
   INTERACTIVE_USER_INPUT_TOOL_NAMES,
   isInteractiveApprovalTool,
@@ -196,6 +207,7 @@ import type {
   SystemInitMessage,
 } from "./types/protocol";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
+import { getErrorMessage } from "./utils/error";
 import {
   markMilestone,
   measureSinceMilestone,
@@ -646,69 +658,6 @@ async function writeFinalHeadlessStdout(text: string): Promise<void> {
   });
 }
 
-type ReplyEnvironmentMetadata =
-  | {
-      source: "same-environment";
-    }
-  | {
-      source: "explicit" | "cloud-sandbox";
-      input: string;
-      id: string;
-      connection_id: string;
-      device_id: string;
-      name: string;
-    };
-
-function buildEnvironmentResponseMetadata(params: {
-  source: Extract<
-    ReplyEnvironmentMetadata,
-    { source: "explicit" | "cloud-sandbox" }
-  >["source"];
-  input: string;
-  connectionId: string;
-  environment: EnvironmentConnection;
-}): ReplyEnvironmentMetadata {
-  return {
-    source: params.source,
-    input: params.input,
-    id: params.environment.id,
-    connection_id: params.connectionId,
-    device_id: params.environment.deviceId,
-    name: params.environment.connectionName,
-  };
-}
-
-function formatAgentReplyMetadata(params: {
-  agentId: string;
-  conversationId: string;
-  environment?: ReplyEnvironmentMetadata;
-}): string {
-  return JSON.stringify({
-    agent_id: params.agentId,
-    conversation_id: params.conversationId,
-    ...(params.environment ? { environment: params.environment } : {}),
-  });
-}
-
-function isCloudEnvironmentSelector(
-  selector: string | boolean | undefined,
-): boolean {
-  if (typeof selector !== "string") return false;
-  const normalized = selector.trim().toLowerCase();
-  return normalized === "cloud" || normalized === "cloud-sandbox";
-}
-
-function getEnvironmentRoutedMessagingUnsupportedReason(
-  environment: EnvironmentConnection,
-): string | null {
-  if (environment.metadata?.environmentMessageProtocol === "v2-input") {
-    return null;
-  }
-  return `Environment ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
-    environment.metadata?.lettaCodeVersion ?? "unknown"
-  } and does not advertise environment-routed headless messaging support. Update that runtime or omit --environment to use same-environment messaging.`;
-}
-
 export async function handleHeadlessCommand(
   parsedArgs: ParsedCliArgs,
   model?: string,
@@ -718,6 +667,15 @@ export async function handleHeadlessCommand(
   startupOptions: { requestedBackendMode?: BackendMode } = {},
 ) {
   const { values, positionals } = parsedArgs;
+  const isAgentLaunch = consumeSubagentLaunch(process.env);
+  const senderReminder = buildHeadlessSenderReminder(
+    isAgentLaunch,
+    values["from-agent"],
+  );
+  const launchProfile = isAgentLaunch
+    ? process.env[SUBAGENT_LAUNCH_PROFILE_ENV]
+    : undefined;
+  delete process.env[SUBAGENT_LAUNCH_PROFILE_ENV];
   telemetry.setSurface(getTerminalTelemetrySurface(true));
   const modsDisabled = shouldDisableMods({
     cliFlag: values["no-mods"],
@@ -809,6 +767,16 @@ export async function handleHeadlessCommand(
   prepareHeadlessEphemeralBackend(Boolean(values.ephemeral));
   const backend = getBackend();
   markMilestone("HEADLESS_CLIENT_READY");
+  const sendExitCode = await tryCloudHeadlessSend(
+    values,
+    prompt,
+    backend,
+    isAgentLaunch,
+    {
+      writeStdout: writeFinalHeadlessStdout,
+    },
+  );
+  if (sendExitCode !== undefined) return flushAndExit(sendExitCode);
   // Check for --resume flag (interactive only)
   if (values.resume) {
     trackHeadlessBoundaryError(
@@ -827,10 +795,16 @@ export async function handleHeadlessCommand(
   // --new: Create a new conversation (for concurrent sessions)
   let forceNewConversation = values.new ?? false;
   const fromAgentId = values["from-agent"];
-  const explicitEnvironmentSelector = values.environment || values.env;
-  const usesRemoteEnvironment =
-    typeof explicitEnvironmentSelector === "string" &&
-    explicitEnvironmentSelector.trim().length > 0;
+  const explicitEnvironmentSelector =
+    values.computer ?? values.environment ?? values.env;
+  const inheritedListenerConnectionId = process.env[LISTENER_CONNECTION_ENV];
+  const usesRemoteEnvironment = shouldLaunchThroughListener({
+    launchProfile,
+    cloudBackend: backend.capabilities.environmentRouting,
+    connectionId: inheritedListenerConnectionId,
+    computer: explicitEnvironmentSelector,
+    ephemeral: values.ephemeral,
+  });
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -842,7 +816,7 @@ export async function handleHeadlessCommand(
   let specifiedAgentId = values.agent;
   const specifiedAgentName = values.name;
   let specifiedConversationId = values.conversation;
-  let specifiedAgentIdFromAmbientBackendSwitch = false;
+  let specifiedAgentIdFromAmbient = false;
   const forceNew = values["new-agent"];
   const ephemeralFlag = values.ephemeral;
   const systemPromptPreset = values.system;
@@ -896,10 +870,6 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
   const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !isStatelessSession;
-  const fromAfFile = resolveImportFlagAlias({
-    importFlagValue: values.import,
-    fromAfFlagValue: values["from-af"],
-  });
   const preLoadSkillsRaw = values["pre-load-skills"];
   const systemInfoReminderEnabled =
     systemInfoReminderEnabledOverride ?? !values["no-system-info-reminder"];
@@ -983,18 +953,18 @@ export async function handleHeadlessCommand(
     process.env.AGENT_ID ||
     ""
   ).trim();
+  // Infer the calling agent (ambient AGENT_ID) for --backend/--computer routes.
   if (
-    startupOptions.requestedBackendMode &&
+    (startupOptions.requestedBackendMode || usesRemoteEnvironment) &&
     ambientAgentId &&
     !specifiedAgentId &&
     !specifiedAgentName &&
     !specifiedConversationId &&
     !forceNew &&
-    !fromAfFile &&
     !fromAgentId
   ) {
     specifiedAgentId = ambientAgentId;
-    specifiedAgentIdFromAmbientBackendSwitch = true;
+    specifiedAgentIdFromAmbient = true;
   }
 
   // Validate --conv default requires --agent (unless --new-agent will create one)
@@ -1042,7 +1012,6 @@ export async function handleHeadlessCommand(
       specifiedAgentName,
       forceNewAgent: forceNew,
       forceNewConversation,
-      importFile: fromAfFile,
       stateless: statelessFlag,
       ephemeral: ephemeralFlag,
       isHeadless: true,
@@ -1063,52 +1032,6 @@ export async function handleHeadlessCommand(
       "--ephemeral supports direct one-shot headless prompts only",
       "headless_startup_flag_conflicts",
     );
-  }
-
-  // Validate --import flag (also accepts legacy --from-af)
-  // Detect if it's a registry handle (e.g., @author/name) or a local file path
-  let isRegistryImport = false;
-  if (fromAfFile) {
-    try {
-      validateFlagConflicts({
-        guard: fromAfFile,
-        checks: [
-          {
-            when: specifiedAgentId,
-            message: "--import cannot be used with --agent",
-          },
-          {
-            when: specifiedAgentName,
-            message: "--import cannot be used with --name",
-          },
-          {
-            when: forceNew,
-            message: "--import cannot be used with --new-agent",
-          },
-        ],
-      });
-    } catch (error) {
-      return reportAndExitHeadless(
-        "headless_import_flag_validation_failed",
-        error,
-        "headless_startup_import_flag_validation",
-      );
-    }
-
-    // Check if this looks like a registry handle (@author/name)
-    if (fromAfFile.startsWith("@")) {
-      // Definitely a registry handle
-      isRegistryImport = true;
-      // Validate handle format
-      try {
-        validateRegistryHandleOrThrow(fromAfFile);
-      } catch {
-        console.error(
-          `Error: Invalid registry handle "${fromAfFile}". Use format: letta --import @author/agentname`,
-        );
-        process.exit(1);
-      }
-    }
   }
 
   // Validate --name flag
@@ -1180,48 +1103,6 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Priority 1: Import from AgentFile template (local file or registry)
-  if (!agent && fromAfFile) {
-    let result: { agent: AgentState; skills?: string[] };
-
-    if (isRegistryImport) {
-      // Import from letta-ai/agent-file registry
-      const { importAgentFromRegistry } = await import("@/agent/import");
-      result = await importAgentFromRegistry({
-        handle: fromAfFile,
-        modelOverride: model,
-        stripMessages: true,
-        stripSkills: false,
-      });
-    } else {
-      // Import from local file
-      const { importAgentFromFile } = await import("@/agent/import");
-      result = await importAgentFromFile({
-        filePath: fromAfFile,
-        modelOverride: model,
-        stripMessages: true,
-        stripSkills: false,
-      });
-    }
-
-    agent = result.agent;
-
-    // Mark imported agents as "custom" to prevent legacy auto-migration
-    // from overwriting their system prompt on resume.
-    if (settingsManager.isReady) {
-      settingsManager.setSystemPromptCustom(agent.id);
-    }
-
-    // Display extracted skills summary
-    if (result.skills && result.skills.length > 0) {
-      const { getAgentSkillsDir } = await import("@/agent/skills");
-      const skillsDir = getAgentSkillsDir(agent.id);
-      console.log(
-        `📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to ${skillsDir}: ${result.skills.join(", ")}`,
-      );
-    }
-  }
-
   // Priority 2: Try to use --agent specified ID
   if (!agent && specifiedAgentId) {
     try {
@@ -1229,16 +1110,15 @@ export async function handleHeadlessCommand(
         include: ["agent.tools", "agent.tags"],
       });
     } catch (_error) {
-      if (specifiedAgentIdFromAmbientBackendSwitch) {
-        console.error(
-          `Active agent ${specifiedAgentId} is not available on the ${startupOptions.requestedBackendMode} backend.`,
-        );
+      if (specifiedAgentIdFromAmbient) {
+        const ambientMissMessage = startupOptions.requestedBackendMode
+          ? `Active agent ${specifiedAgentId} is not available on the ${startupOptions.requestedBackendMode} backend.`
+          : `Active agent ${specifiedAgentId} (inferred from the AGENT_ID environment variable) was not found.`;
+        console.error(ambientMissMessage);
         if (startupOptions.requestedBackendMode === "local") {
           console.error(
-            "--backend local uses the local backend store and will not silently switch to a different cwd-local agent.",
-          );
-          console.error(
-            "Use --new-agent to create a local agent, or pass --agent <local-agent-id> to choose one explicitly.",
+            "--backend local uses the local backend store and will not silently switch to a different cwd-local agent.\n" +
+              "Use --new-agent to create a local agent, or pass --agent <local-agent-id> to choose one explicitly.",
           );
         } else {
           console.error(
@@ -1251,6 +1131,9 @@ export async function handleHeadlessCommand(
       process.exit(1);
     }
   }
+
+  if (usesRemoteEnvironment && !backend.capabilities.environmentRouting)
+    throw new Error("Computer routing requires the Cloud backend");
 
   if (!agent && ephemeralFlag) {
     try {
@@ -1396,16 +1279,7 @@ export async function handleHeadlessCommand(
   markMilestone("HEADLESS_AGENT_RESOLVED");
   const publicAgentId = ephemeralFlag ? null : agent.id;
   telemetry.setCurrentAgent(publicAgentId, agent.tags);
-  if (!ephemeralFlag) {
-    await replaceClientMcpServers(
-      agent.id,
-      settingsManager.getMcpServers(agent.id),
-      { stderr: "pipe" },
-    );
-  }
-
-  const isResumingAgent =
-    !ephemeralFlag && !!(specifiedAgentId || (!forceNew && !fromAfFile));
+  const isResumingAgent = !ephemeralFlag && !!(specifiedAgentId || !forceNew);
   // Refresh presets before applying optional model/system-prompt overrides.
 
   if (isResumingAgent) {
@@ -1482,7 +1356,7 @@ export async function handleHeadlessCommand(
   const secretsAgentId = ephemeralFlag ? undefined : agent?.id;
   const secretsInitPromise = secretsAgentId
     ? import("@/utils/secrets-store").then(({ initSecretsFromServer }) =>
-        initSecretsFromServer(secretsAgentId, agent ?? undefined),
+        initSecretsFromServer(secretsAgentId),
       )
     : Promise.resolve();
 
@@ -1749,7 +1623,7 @@ export async function handleHeadlessCommand(
   }
   if (usesRemoteEnvironment && isBidirectionalMode) {
     console.error(
-      "Error: remote environment routing cannot be used with --input-format stream-json",
+      "Error: remote computer routing cannot be used with --input-format stream-json",
     );
     process.exit(1);
   }
@@ -1763,7 +1637,7 @@ export async function handleHeadlessCommand(
     permissionMode: headlessPermissionMode,
     reflectionSettings: effectiveReflectionSettings,
     sessionStats,
-    disabled: modsDisabled,
+    disabled: modsDisabled || usesRemoteEnvironment,
   });
   const initialHeadlessModContext = createHeadlessModContext({
     agent,
@@ -2050,18 +1924,7 @@ export async function handleHeadlessCommand(
     contentParts.push({ type: "text", text });
   };
 
-  if (fromAgentId) {
-    const senderAgentId = fromAgentId;
-    const senderAgent = await backend.retrieveAgent(senderAgentId);
-    const systemReminder = `${SYSTEM_REMINDER_OPEN}
-This message is from "${senderAgent.name}" (agent ID: ${senderAgentId}), an agent currently running inside the Letta Code CLI (docs.letta.com/letta-code).
-The sender will only see the final message you generate (not tool calls or reasoning).
-If you need to share detailed information, include it in your response text.
-${SYSTEM_REMINDER_CLOSE}
-
-`;
-    pushPart(systemReminder);
-  }
+  pushPart(senderReminder);
 
   if (!usesRemoteEnvironment) {
     const lastRunAt = (agent as { last_run_completion?: string })
@@ -2087,39 +1950,25 @@ ${SYSTEM_REMINDER_CLOSE}
   }
 
   // Pre-load specific skills' full content (used by subagents with skills: field).
-  // Environment-routed turns run in the selected remote runtime, which injects
-  // its own local context and skills, so avoid prepending this process' context.
+  // Remote computer turns inject their own local context and skills.
   if (preLoadSkillsRaw && !usesRemoteEnvironment) {
-    const { readFile: readFileAsync } = await import("node:fs/promises");
-    const { skillPathById } = await buildClientSkillsPayload({
-      agentId: agent.id,
-      skillSources: resolvedSkillSources,
-      logger: (message) => {
-        if (isDebugEnabled()) {
-          console.warn(`[DEBUG] ${message}`);
-        }
-      },
-    });
-    const skillIds = preLoadSkillsRaw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const loadedContents: string[] = [];
-    for (const skillId of skillIds) {
-      const skillPath = skillPathById[skillId];
-      if (!skillPath) continue;
-      try {
-        const content = await readFileAsync(skillPath, "utf-8");
-        loadedContents.push(`<${skillId}>\n${content}\n</${skillId}>`);
-      } catch {
-        // Skill file not readable, skip
-      }
-    }
-    if (loadedContents.length > 0) {
-      pushPart(
-        `<loaded_skills>\n${loadedContents.join("\n\n")}\n</loaded_skills>`,
-      );
-    }
+    pushPart(
+      await loadPreloadedSkills(
+        preLoadSkillsRaw
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean),
+        {
+          agentId: agent.id,
+          skillSources: resolvedSkillSources,
+          logger: (message) => {
+            if (isDebugEnabled()) {
+              console.warn(`[DEBUG] ${message}`);
+            }
+          },
+        },
+      ),
+    );
   }
 
   // Add user prompt
@@ -2132,148 +1981,133 @@ ${SYSTEM_REMINDER_CLOSE}
   );
 
   if (usesRemoteEnvironment) {
-    const environmentSelector = String(explicitEnvironmentSelector);
+    const environmentSelector = explicitEnvironmentSelector ?? "";
     const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
-    const environmentRouting = useCloudSandbox
-      ? await resolveAgentSandboxConnectionId(agent.id, { conversationId })
-      : await resolveEnvironmentConnectionId(environmentSelector);
-    const { connectionId, environment } = environmentRouting;
-    const responseEnvironment = buildEnvironmentResponseMetadata({
-      source: useCloudSandbox ? "cloud-sandbox" : "explicit",
-      input: environmentSelector,
+    const environmentRouting = environmentSelector
+      ? useCloudSandbox
+        ? await resolveAgentSandboxConnectionId(agent.id, { conversationId })
+        : await resolveEnvironmentConnectionId(environmentSelector)
+      : null;
+    const connectionId =
+      environmentRouting?.connectionId ?? inheritedListenerConnectionId;
+    if (!connectionId)
+      throw new Error("No listener connection was resolved for this launch");
+    const responseEnvironment: ReplyEnvironmentMetadata = environmentRouting
+      ? buildEnvironmentResponseMetadata({
+          source: useCloudSandbox ? "cloud-sandbox" : "explicit",
+          input: environmentSelector,
+          connectionId,
+          environment: environmentRouting.environment,
+        })
+      : { source: "same-environment" };
+    const launchParams: Parameters<typeof launchListenerConversation>[0] = {
+      noWait: Boolean(values["no-wait"]),
       connectionId,
-      environment,
-    });
-    const unsupportedReason =
-      getEnvironmentRoutedMessagingUnsupportedReason(environment);
-    if (unsupportedReason) {
-      if (outputFormat === "json") {
-        await writeFinalHeadlessStdout(
-          `${JSON.stringify(
-            {
-              type: "result",
-              subtype: "error",
-              is_error: true,
-              duration_ms: Math.round(sessionStats.getSnapshot().totalWallMs),
-              duration_api_ms: Math.round(
-                sessionStats.getSnapshot().totalApiMs,
-              ),
-              num_turns: 0,
-              result: unsupportedReason,
-              agent_id: publicAgentId,
-              conversation_id: conversationId,
-              environment: responseEnvironment,
-              usage: null,
-              stop_reason: "error",
-            },
-            null,
-            2,
-          )}\n`,
-        );
-      } else if (outputFormat === "stream-json") {
-        const resultEvent: ResultMessage & {
-          environment: ReplyEnvironmentMetadata;
-        } = {
-          type: "result",
-          subtype: "error",
-          session_id: sessionId,
-          duration_ms: Math.round(sessionStats.getSnapshot().totalWallMs),
-          duration_api_ms: Math.round(sessionStats.getSnapshot().totalApiMs),
-          num_turns: 0,
-          result: unsupportedReason,
-          agent_id: publicAgentId,
-          conversation_id: conversationId,
-          environment: responseEnvironment,
-          run_ids: [],
-          usage: null,
-          uuid: `result-${agent.id}-${Date.now()}`,
-          stop_reason: "error",
-        };
-        writeWireMessage(resultEvent);
-      } else {
-        console.error(`Error: ${unsupportedReason}`);
-        await writeFinalHeadlessStdout(
-          `${formatAgentReplyMetadata({
-            agentId: agent.id,
-            conversationId,
-            environment: responseEnvironment,
-          })}\n`,
-        );
-      }
-      await exitHeadless(1, "headless_environment_unsupported");
-    }
-    const otid = randomUUID();
-    await sendEnvironmentMessage(
-      connectionId,
-      buildEnvironmentCreateMessageBody({
-        agentId: agent.id,
-        conversationId,
-        content: contentParts,
-        otid,
-      }),
-    );
-
-    const environmentResult = await waitForEnvironmentAssistantMessage({
-      backend,
-      agentId: agent.id,
-      conversationId,
-      otid,
-      deviceId: environment.deviceId,
-    });
-    const stats = sessionStats.getSnapshot();
-
-    if (outputFormat === "json") {
-      await writeFinalHeadlessStdout(
-        `${JSON.stringify(
-          {
-            type: "result",
-            subtype: "success",
-            is_error: false,
-            duration_ms: Math.round(stats.totalWallMs),
-            duration_api_ms: Math.round(stats.totalApiMs),
-            num_turns: 1,
-            result: environmentResult.text,
-            agent_id: publicAgentId,
-            conversation_id: conversationId,
-            environment: responseEnvironment,
-            usage: null,
-            ...(environmentResult.stopReason &&
-            environmentResult.stopReason !== "end_turn"
-              ? { stop_reason: environmentResult.stopReason }
-              : {}),
-          },
-          null,
-          2,
-        )}\n`,
-      );
-    } else if (outputFormat === "stream-json") {
-      const resultEvent: ResultMessage & {
-        environment: ReplyEnvironmentMetadata;
-      } = {
-        type: "result",
-        subtype: "success",
-        session_id: sessionId,
-        duration_ms: Math.round(stats.totalWallMs),
-        duration_api_ms: Math.round(stats.totalApiMs),
-        num_turns: 1,
-        result: environmentResult.text,
-        agent_id: publicAgentId,
+      scope: {
+        agent_id: agent.id,
         conversation_id: conversationId,
-        environment: responseEnvironment,
-        run_ids: [],
-        usage: null,
-        uuid: `result-${agent.id}-${Date.now()}`,
-        ...(environmentResult.stopReason &&
-        environmentResult.stopReason !== "end_turn"
-          ? { stop_reason: environmentResult.stopReason }
+        acting_user_id: resolveActingUserId(),
+      },
+      content: contentParts,
+      backend,
+      onMessage:
+        outputFormat === "stream-json"
+          ? (message) => {
+              const uuid =
+                Reflect.get(message, "otid") ??
+                Reflect.get(message, "id") ??
+                randomUUID();
+              writeWireMessage(
+                includePartialMessages
+                  ? {
+                      type: "stream_event",
+                      event: message,
+                      session_id: sessionId,
+                      uuid,
+                    }
+                  : { ...message, session_id: sessionId, uuid },
+              );
+            }
+          : undefined,
+      cwd: environmentSelector ? undefined : getCurrentWorkingDirectory(),
+      mode: headlessPermissionMode,
+      skillSources: resolvedSkillSources,
+      settings: {
+        ...(values.tools !== undefined
+          ? {
+              tools: values.tools
+                .split(",")
+                .map((tool) => tool.trim())
+                .filter(Boolean),
+            }
           : {}),
-      };
-      writeWireMessage(resultEvent);
+        allowed_tools: cliPermissions.getAllowedTools(),
+        disallowed_tools: cliPermissions.getDisallowedTools(),
+        disable_memory_guard: cliPermissions.isMemoryGuardDisabled(),
+        max_turns: maxTurns,
+        preload_skills: parseCsvListFlag(preLoadSkillsRaw),
+        parent_agent_id: process.env.LETTA_PARENT_AGENT_ID,
+        ...(process.env.LETTA_CODE_AGENT_ROLE === "subagent"
+          ? { agent_role: "subagent" as const }
+          : {}),
+        ...(!environmentSelector
+          ? {
+              transcript_path: process.env.TRANSCRIPT_PATH,
+              memory_directory:
+                process.env.MEMORY_DIR ?? process.env.LETTA_MEMORY_DIR,
+            }
+          : {}),
+      },
+    };
+    let launchOutcome:
+      | ListenerLaunchResult
+      | { status: "error"; error: string };
+    try {
+      launchOutcome = await launchListenerConversation(launchParams);
+    } catch (error) {
+      trackHeadlessBoundaryError(
+        "headless_environment_launch_failed",
+        error,
+        "headless_environment_launch",
+      );
+      launchOutcome = { status: "error", error: getErrorMessage(error) };
+    }
+    const stats = sessionStats.getSnapshot();
+    if (outputFormat === "text" && launchOutcome.status === "error") {
+      console.error(`Error: ${launchOutcome.error}`);
+    } else if (
+      outputFormat === "text" &&
+      launchOutcome.status === "completed"
+    ) {
+      await writeFinalHeadlessStdout(`${launchOutcome.text}\n`);
     } else {
-      await writeFinalHeadlessStdout(`${environmentResult.text}\n`);
+      const result = buildEnvironmentLaunchResult(
+        {
+          sessionId,
+          agentId: publicAgentId,
+          internalAgentId: agent.id,
+          conversationId,
+          environment: responseEnvironment,
+          durationMs: Math.round(stats.totalWallMs),
+          durationApiMs: Math.round(stats.totalApiMs),
+        },
+        launchOutcome,
+      );
+      if (outputFormat === "stream-json") writeWireMessage(result);
+      else
+        await writeFinalHeadlessStdout(
+          `${JSON.stringify(result, null, outputFormat === "json" ? 2 : 0)}\n`,
+        );
     }
 
-    await exitHeadless(0, "headless_environment_message_complete");
+    return exitHeadless(
+      launchOutcome.status === "error" ? 1 : 0,
+      launchOutcome.status === "error"
+        ? "headless_environment_launch_failed"
+        : launchOutcome.status === "queued"
+          ? "headless_environment_message_queued"
+          : "headless_environment_message_complete",
+    );
   }
 
   // Start with the user message
@@ -2324,14 +2158,13 @@ ${SYSTEM_REMINDER_CLOSE}
     currentInput = initialTurnStartEmission.input;
   }
 
-  // Track lastRunId outside the while loop so it's available in catch block
   let llmApiErrorRetries = 0;
   let emptyResponseRetries = 0;
   let conversationBusyRetries = 0;
   let chatgptPlanSwaps = 0;
+  const chatgptExhaustedProviders = new Set<string>();
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
-
   // Helper to check max turns limit using server-side step count from buffers
   const checkMaxTurns = async (): Promise<void> => {
     if (maxTurns !== undefined && buffers.usage.stepCount >= maxTurns) {
@@ -2355,6 +2188,11 @@ ${SYSTEM_REMINDER_CLOSE}
 
   // One-shot mode has no input loop, so wire SIGINT directly into the turn.
   const sigintSignal = createSigintAbortSignal();
+  sigintSignal.addEventListener(
+    "abort",
+    () => stopMonitorsForScope({ agentId: agent.id, conversationId }),
+    { once: true },
+  );
   const exitInterrupted = async (): Promise<never> => {
     if (outputFormat === "stream-json") {
       const errorMsg: ErrorMessage = {
@@ -2725,6 +2563,7 @@ ${SYSTEM_REMINDER_CLOSE}
         emptyResponseRetries = 0;
         conversationBusyRetries = 0;
         chatgptPlanSwaps = 0;
+        chatgptExhaustedProviders.clear();
 
         // Emit turn_end. A mod may return { continue: "..." } to append a
         // follow-up user message and run another turn. Auto-continues re-enter
@@ -2885,18 +2724,18 @@ ${SYSTEM_REMINDER_CLOSE}
       const runErrorInfo = await fetchRunErrorInfo(lastRunId),
         detailFromRun = runErrorInfo?.detail ?? runErrorInfo?.message;
 
-      // ChatGPT plan rotation: when a chatgpt_oauth BYOK plan hits its usage
-      // limit, swap to the same model on a sibling ChatGPT plan and resend.
       if (chatgptPlanSwaps < CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN) {
         const rotation = await rotateChatGPTPlanOnQuotaLimit({
           agentId: agent.id,
+          conversationId,
           currentHandle: null,
-          error: runErrorInfo ?? detailFromRun ?? latestErrorText,
+          error: result.errorInfo ?? runErrorInfo ?? latestErrorText,
+          exhaustedProviders: chatgptExhaustedProviders,
+          signal: sigintSignal,
         });
         if (rotation) {
           chatgptPlanSwaps += 1;
           const rotationMessage = formatPlanRotationNotice(rotation);
-
           if (outputFormat === "stream-json") {
             const retryMsg: RetryMessage = {
               type: "retry",
@@ -3076,7 +2915,7 @@ ${SYSTEM_REMINDER_CLOSE}
             // Only append a nudge on the last attempt
             if (attempt >= EMPTY_RESPONSE_MAX_RETRIES) {
               const nudgeMessage: MessageCreate = {
-                role: "system",
+                role: "user",
                 content: `<system-reminder>The previous response was empty. Please provide a response with either text content or a tool call.</system-reminder>`,
                 otid: randomUUID(),
               };
@@ -3805,10 +3644,7 @@ async function runBidirectionalMode(
   // Feed lines into queue or resolver
   rl.on("line", (line) => {
     maybeNotifyBlocked(line);
-    // Fast path: handle control_request:interrupt synchronously so we can
-    // abort an in-flight drain without waiting for the main loop to dequeue.
-    // Without this, a runaway thinking turn never sees the interrupt because
-    // `getNextLine()` isn't called until the current drain returns.
+    // Interrupt before dequeue so an in-flight drain can unwind.
     let parsedLine: {
       type?: string;
       request?: { subtype?: string };
@@ -3830,10 +3666,7 @@ async function runBidirectionalMode(
         turnStarting,
       });
       if (action === "abort-active") {
-        // Abort the in-flight turn. Do NOT null the controller here — the
-        // turn's epilogue (line ~4275) reads currentAbortController?.signal.aborted
-        // to classify the result as "interrupted" vs "error". The `finally`
-        // block at the bottom of the user-message branch is what owns nulling.
+        // Preserve the controller until finally so the turn records interruption.
         (currentAbortController as AbortController).abort();
         if (lineResolver) {
           // If the turn is blocked waiting for a permission/external-tool
@@ -3844,10 +3677,7 @@ async function runBidirectionalMode(
           resolve(null);
         }
       } else if (action === "latch") {
-        // Narrow pre-controller race: a user message was just dispatched but
-        // its AbortController isn't created yet. Latch so the imminent turn
-        // aborts. An idle interrupt ("noop") must NOT latch — that would
-        // poison the next user turn.
+        // Latch only for the imminent turn, never for an idle interrupt.
         pendingInterrupt = true;
       }
       const interruptResponse: ControlResponse = {
@@ -4102,11 +3932,7 @@ async function runBidirectionalMode(
         };
         writeWireMessage(initResponse);
       } else if (subtype === "interrupt") {
-        // Abort current operation if any. Do NOT null the controller — the
-        // turn's epilogue (line ~4415) reads currentAbortController?.signal.aborted
-        // to classify the result as "interrupted" vs "error", and the
-        // user-message branch's `finally` is what owns nulling. Mirrors the
-        // fast path in rl.on("line", ...).
+        // Preserve the controller until finally so the turn records interruption.
         if (
           currentAbortController !== null &&
           decideInterruptAction({
@@ -4379,18 +4205,19 @@ async function runBidirectionalMode(
         continue;
       }
 
-      // Create abort controller for this operation.  Drain any latched
-      // interrupt that arrived before the controller existed (race between
-      // the readline 'line' event and the microtask that creates the
-      // controller — see rl.on("line", ...) above).
+      // Drain pre-controller interrupts after installing scoped monitor cleanup.
       currentAbortController = new AbortController();
+      currentAbortController.signal.addEventListener(
+        "abort",
+        () => stopMonitorsForScope({ agentId: agent.id, conversationId }),
+        { once: true },
+      );
       if (pendingInterrupt) {
         pendingInterrupt = false;
         currentAbortController.abort();
       }
       // Controller now exists — close the pre-controller race window.
       turnStarting = false;
-
       turnInProgress = true;
       try {
         const buffers = createBuffers(agent.id);
@@ -4460,14 +4287,14 @@ async function runBidirectionalMode(
         }
         currentInput = turnStartEmission.input;
 
-        // If the previous turn was interrupted mid-tool-call, the agent may be
-        // left in `requires_approval` with a dangling approval. Sending this
-        // fresh turn against that stale state makes the run error (a silent
-        // "refusal" downstream). Clear it first, reusing the same recovery the
-        // resume path uses. Best-effort: a recovery failure must not abort the
-        // new turn. (PR #2631 — handle interrupts.)
+        // Clear dangling approvals before sending fresh input after an interrupt.
         if (priorTurnInterrupted) {
           priorTurnInterrupted = false;
+          currentInput.unshift({
+            role: "user",
+            content: INTERRUPT_RECOVERY_ALERT,
+            otid: randomUUID(),
+          });
           try {
             await resolveAllPendingApprovals();
           } catch (recoveryError) {
@@ -4795,7 +4622,10 @@ async function runBidirectionalMode(
             const executedResults = await executeApprovalBatch(
               decisions,
               undefined,
-              { toolContextId: turnToolContextId ?? undefined },
+              {
+                toolContextId: turnToolContextId ?? undefined,
+                abortSignal: currentAbortController.signal,
+              },
             );
 
             emitLocalToolReturns(executedResults, sessionId);

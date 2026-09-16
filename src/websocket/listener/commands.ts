@@ -7,22 +7,19 @@ import {
   formatSetMaxContextResult,
 } from "@/agent/max-context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getActiveMemoryDirectory } from "@/agent/memory-runtime";
 import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
 import { refreshCustomCommands } from "@/cli/commands/custom";
+import { buildDoctorMessage } from "@/cli/helpers/doctor-command";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
-  buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
-import {
-  formatSkillNameFrontmatterRepairReport,
-  repairMissingSkillNameFrontmatter,
-} from "@/cli/helpers/skill-name-frontmatter-repair";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
@@ -120,9 +117,46 @@ export async function handleExecuteCommand(
         });
         break;
 
-      case "doctor":
-        output = await handleDoctorCommand(socket, conversationRuntime, opts);
+      case "clear-messages":
+        output = await handleClearCommand(socket, conversationRuntime, {
+          ...opts,
+          actingUserId: command.runtime.acting_user_id,
+          resetAllAgentMessages: true,
+        });
         break;
+
+      case "doctor": {
+        const agentId = conversationRuntime.agentId;
+        if (!agentId) throw new Error("Doctor requires an active agent.");
+        const doctorMessage = buildDoctorMessage({
+          agentId,
+          conversationId: conversationRuntime.conversationId,
+          memoryDir: getActiveMemoryDirectory(agentId),
+          local: getBackend().capabilities.localMemfs,
+          symptom: trimmedArgs,
+        });
+        await handleIncomingMessage(
+          {
+            type: "message",
+            agentId,
+            conversationId: conversationRuntime.conversationId,
+            actingUserId: command.runtime.acting_user_id,
+            messages: [
+              {
+                type: "message",
+                role: "user",
+                content: [{ type: "text", text: doctorMessage }],
+              },
+            ],
+          },
+          socket,
+          conversationRuntime,
+          opts.onStatusChange,
+          opts.connectionId,
+        );
+        output = "";
+        break;
+      }
 
       case "init":
         output = await handleInitCommand(socket, conversationRuntime, opts);
@@ -362,7 +396,7 @@ async function handleUpgradeLettaCodeCommand(opts: {
     if (opts.onLog) {
       opts.onLog(line);
     } else {
-      console.log(line);
+      debugLog("upgrade-letta-code", message);
     }
   };
 
@@ -402,15 +436,15 @@ function scheduleRemoteRestart(
     return;
   }
 
-  log(`scheduling remote listener restart for env ${connectionName}`);
+  log(`scheduling remote listener restart for computer ${connectionName}`);
   setTimeout(async () => {
     await flushRemoteSettingsWrites();
     log(
-      `spawning replacement listener: ${process.execPath} ${entrypoint} remote --env-name ${connectionName}`,
+      `spawning replacement listener: ${process.execPath} ${entrypoint} remote --computer-name ${connectionName}`,
     );
     const child = spawn(
       process.execPath,
-      [entrypoint, "remote", "--env-name", connectionName],
+      [entrypoint, "remote", "--computer-name", connectionName],
       {
         cwd: process.cwd(),
         detached: true,
@@ -622,6 +656,8 @@ async function handleClearCommand(
     connectionId?: string;
     /** Cloud user id stamped on the relayed frame; echoed on the create call. */
     actingUserId?: string;
+    /** Whether to reset the API agent's complete message history. */
+    resetAllAgentMessages?: boolean;
   },
 ): Promise<string> {
   const backend = getBackend();
@@ -631,11 +667,17 @@ async function handleClearCommand(
     throw new Error("No agent ID available for /clear command");
   }
 
-  // Reset all messages on the agent only when in the default API conversation.
+  if (opts.resetAllAgentMessages && backend.capabilities.localModelCatalog) {
+    throw new Error("/clear-messages is not supported by the local backend.");
+  }
+
+  // /clear-messages always resets the API agent's message history.
+  // /clear only resets when leaving the default API conversation.
   // Local/headless backends model /clear by switching to a fresh conversation.
   if (
-    conversationRuntime.conversationId === "default" &&
-    !backend.capabilities.localModelCatalog
+    !backend.capabilities.localModelCatalog &&
+    (opts.resetAllAgentMessages ||
+      conversationRuntime.conversationId === "default")
   ) {
     const { getClient } = await import("@/backend/api/client");
     const client = await getClient();
@@ -666,67 +708,9 @@ async function handleClearCommand(
     opts.connectionId,
   );
 
-  return "Agent's in-context messages cleared & moved to conversation history";
-}
-
-/**
- * /doctor — Audit and refine memory structure.
- *
- * Builds the doctor system-reminder message (same as the CLI /doctor)
- * and feeds it through `handleIncomingMessage` so the agent runs a full
- * turn executing the `context-doctor` skill.
- */
-async function handleDoctorCommand(
-  socket: WebSocket,
-  conversationRuntime: ConversationRuntime,
-  opts: {
-    onStatusChange?: StartListenerOptions["onStatusChange"];
-    connectionId?: string;
-  },
-): Promise<string> {
-  const agentId = conversationRuntime.agentId;
-
-  if (!agentId) {
-    throw new Error("No agent ID available for /doctor command");
-  }
-
-  const { context: gitContext } = gatherInitGitContext();
-  const memoryDir = settingsManager.isMemfsEnabled(agentId)
-    ? getScopedMemoryFilesystemRoot(agentId)
-    : undefined;
-  const skillNameFrontmatterRepair =
-    await repairMissingSkillNameFrontmatter(memoryDir);
-  const skillNameFrontmatterRepairReport =
-    formatSkillNameFrontmatterRepairReport(skillNameFrontmatterRepair);
-
-  const doctorMessage = buildDoctorMessage({
-    gitContext,
-    memoryDir,
-    skillNameFrontmatterRepairReport,
-  });
-
-  // Feed the doctor prompt as a user message through the normal turn pipeline.
-  // This triggers a full agent turn whose deltas stream back to the web UI.
-  await handleIncomingMessage(
-    {
-      type: "message",
-      agentId,
-      conversationId: conversationRuntime.conversationId,
-      messages: [
-        {
-          type: "message",
-          role: "user",
-          content: [{ type: "text", text: doctorMessage }],
-        },
-      ],
-    },
-    socket,
-    conversationRuntime,
-    opts.onStatusChange,
-    opts.connectionId,
-  );
-
-  return "Memory doctor completed";
+  return opts.resetAllAgentMessages
+    ? "All agent messages reset"
+    : "Agent's in-context messages cleared & moved to conversation history";
 }
 
 /**

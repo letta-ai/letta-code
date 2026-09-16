@@ -37,7 +37,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.14
 
       - name: Resolve Amelia GitHub identity
         id: github-identity
@@ -86,7 +86,7 @@ jobs:
 
       - name: Ask Amelia to sync tools
         id: letta-sync
-        uses: letta-ai/letta-code-action@4b8e508a523ff576fee09be1432d6f39158c272c
+        uses: letta-ai/letta-code-action@b7e51edb0643e67ae74327a1cdf0c332e549f8fc
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
           github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}

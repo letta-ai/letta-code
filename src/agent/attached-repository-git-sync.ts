@@ -5,8 +5,8 @@ import {
   type AttachedAgentRepository,
   listAttachedAgentRepositories,
 } from "./attached-repositories";
+import { getAuthToken } from "./memory-auth";
 import {
-  getAuthToken,
   getMemoryAheadBehind,
   getMemoryConflictSummary,
   getRepositoryMountDir,

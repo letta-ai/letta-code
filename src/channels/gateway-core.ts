@@ -19,6 +19,12 @@ import type {
   WsProtocolMessage,
 } from "@/types/app-server-protocol";
 import {
+  sourceLifecycleKey,
+  sourceRouteKey,
+  uniqueLifecycleSources,
+  uniqueRoutedSources,
+} from "./gateway-sources";
+import {
   createMessageChannelIdempotencyScope,
   type MessageChannelIdempotencyScope,
 } from "./message-channel-idempotency";
@@ -138,45 +144,6 @@ function hasAgentRuntime<
   return !!value.runtime?.agent_id;
 }
 
-function sourceRouteKey(source: ChannelTurnSource): string {
-  return [
-    source.channel,
-    source.accountId ?? "",
-    source.chatId,
-    source.threadId ?? "",
-  ].join(":");
-}
-
-function sourceLifecycleKey(source: ChannelTurnSource): string {
-  return [
-    sourceRouteKey(source),
-    source.messageId ?? "",
-    source.agentId,
-    source.conversationId,
-  ].join(":");
-}
-
-function uniqueSourcesBy(
-  sources: ChannelTurnSource[],
-  getKey: (source: ChannelTurnSource) => string,
-): ChannelTurnSource[] {
-  const byKey = new Map<string, ChannelTurnSource>();
-  for (const source of sources) byKey.set(getKey(source), source);
-  return [...byKey.values()];
-}
-
-function uniqueRoutedSources(
-  sources: ChannelTurnSource[],
-): ChannelTurnSource[] {
-  return uniqueSourcesBy(sources, sourceRouteKey);
-}
-
-function uniqueLifecycleSources(
-  sources: ChannelTurnSource[],
-): ChannelTurnSource[] {
-  return uniqueSourcesBy(sources, sourceLifecycleKey);
-}
-
 function channelTagsForSources(sources: ChannelTurnSource[]): string[] {
   return [...new Set(sources.map((source) => `channel:${source.channel}`))];
 }
@@ -269,6 +236,8 @@ export class ChannelGateway {
       state.acceptedClientMessageIds.add(delivery.clientMessageId);
       return true;
     }
+    const workAtSubmit =
+      state.active || state.pendingSourcesByClientMessageId.size > 0;
     state.pendingSourcesByClientMessageId.set(delivery.clientMessageId, {
       sources: uniqueLifecycleSources(delivery.sources),
       disposition: "submitting",
@@ -297,6 +266,8 @@ export class ChannelGateway {
       });
       if (!response.accepted) {
         state.pendingSourcesByClientMessageId.delete(delivery.clientMessageId);
+        if (workAtSubmit && !state.active)
+          this.finishRejectedDelivery(state, delivery);
         return false;
       }
       this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
@@ -320,8 +291,36 @@ export class ChannelGateway {
       return true;
     } catch (error) {
       state.pendingSourcesByClientMessageId.delete(delivery.clientMessageId);
+      if (workAtSubmit && !state.active)
+        this.finishRejectedDelivery(state, delivery);
       throw error;
     }
+  }
+
+  private remainingSources(state: GatewayRuntimeState): ChannelTurnSource[] {
+    return uniqueLifecycleSources([
+      ...(state.active?.lifecycleSources ?? []),
+      ...Array.from(state.pendingSourcesByClientMessageId.values()).flatMap(
+        (pending) => pending.sources,
+      ),
+    ]);
+  }
+
+  private finishRejectedDelivery(
+    state: GatewayRuntimeState,
+    delivery: ChannelGatewayDelivery,
+  ): void {
+    const remainingSources = this.remainingSources(state);
+    void this.enqueueHook(state, () =>
+      this.hooks.onLifecycle({
+        type: "finished",
+        batchId: `channel-${delivery.clientMessageId}`,
+        sources: delivery.sources,
+        stopReason: "cancelled",
+        outcome: "cancelled",
+        remainingSources,
+      }),
+    );
   }
 
   adoptQueuedDelivery(delivery: ChannelGatewayHandoffDelivery): void {
@@ -828,6 +827,7 @@ export class ChannelGateway {
       );
     }
     for (const entry of cancelled) {
+      const remainingSources = this.remainingSources(state);
       void this.enqueueHook(state, () =>
         this.hooks.onLifecycle({
           type: "finished",
@@ -835,6 +835,7 @@ export class ChannelGateway {
           sources: entry.sources,
           outcome: "cancelled",
           stopReason: "cancelled",
+          ...(remainingSources.length ? { remainingSources } : {}),
         }),
       );
     }
@@ -937,6 +938,10 @@ export class ChannelGateway {
     if (!active) return;
     state.active = null;
     active.richDraft?.dispose();
+    const remainingSources =
+      lifecycleOutcome(terminal.stopReason) === "completed"
+        ? this.remainingSources(state)
+        : [];
     void this.enqueueHook(state, () =>
       this.hooks.onLifecycle({
         type: "finished",
@@ -944,6 +949,7 @@ export class ChannelGateway {
         sources: active.lifecycleSources,
         outcome: lifecycleOutcome(terminal.stopReason),
         stopReason: terminal.stopReason,
+        ...(remainingSources.length ? { remainingSources } : {}),
         ...((terminal.runId ?? active.runId)
           ? { runId: terminal.runId ?? active.runId }
           : {}),

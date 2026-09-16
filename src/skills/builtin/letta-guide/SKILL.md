@@ -1,9 +1,11 @@
 ---
 name: letta-guide
-description: Read the official Letta documentation (docs.letta.com) through its cached, ETag-checked fetch route. Load before ANY docs.letta.com retrieval — answering how Letta works, what Letta (or you) can do, setting up providers, models, channels, skills, memory, schedules, permissions, self-hosting, pricing, or billing, AND looking up Letta API, Agent SDK, or Letta Code reference while writing code. Do not use fetch_webpage or web_search on docs.letta.com; this skill's helper is the docs route. Never answer Letta product questions from memory alone.
+description: Read the official Letta documentation (docs.letta.com) through its cached, ETag-checked fetch route. Load before ANY docs.letta.com retrieval — answering how Letta works, what Letta (or you) can do, and looking up Letta API, Agent SDK, or Letta Code reference.
 ---
 
 # Letta Guide
+
+Do not use fetch_webpage or web_search on docs.letta.com; this skill's helper is the docs route.
 
 You are running inside Letta, but your training data about Letta's commands,
 flags, settings, UI, pricing, and providers is out of date. Users lose trust
@@ -51,6 +53,12 @@ helper below fetches the live index first, so you pick a URL that exists.
    give your best answer, and clearly mark it as possibly out of date with a
    link to https://docs.letta.com. Never silently fall back to memory.
 
+## Inspect or change your model from the CLI
+
+- `letta model list [--byok | --hosted]` lists available models.
+- `letta model set [model_handle] [--reasoning <reasoning-option>] [--default]` overrides the current conversation's model or reasoning; `--default` overrides the agent's default instead.
+- `letta model get [--default]` gets the current model configuration; `--default` gets the agent's default configuration.
+
 ## Hard rules
 
 - **Never invent CLI commands, flags, slash commands, settings keys, config
@@ -94,4 +102,3 @@ The helper owns the cache. It uses the first writable temporary directory from
 when an explicit location is needed. Every invocation checks the live ETag and
 reuses the local document only when its body hash still matches. Do not create
 or manage a second cache yourself.
-

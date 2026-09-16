@@ -55,12 +55,12 @@ export const commands: Record<string, Command> = {
     },
   },
   "/doctor": {
-    desc: "Audit and refine your memory structure",
+    desc: "Investigate an agent issue in this conversation",
     order: 12.1,
-    noArgs: true,
+    args: "[symptom]",
     handler: () => {
-      // Handled specially in App.tsx to send doctor prompt
-      return "Running memory doctor...";
+      // Handled by the primary-agent turn in the TUI and listener.
+      return "Starting doctor...";
     },
   },
   "/remember": {
@@ -195,6 +195,15 @@ export const commands: Record<string, Command> = {
       return "Clearing in-context messages...";
     },
   },
+  "/clear-messages": {
+    desc: "Reset all agent messages (destructive)",
+    hidden: true,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to reset agent messages
+      return "Resetting agent messages...";
+    },
+  },
   "/chdir": {
     desc: "Change working directory for this TUI session (/chdir <path>)",
     args: "<path>",
@@ -271,15 +280,6 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Updating description...";
-    },
-  },
-  "/export": {
-    desc: "Export AgentFile (.af)",
-    order: 26,
-    noArgs: true,
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
-      return "Exporting agent file...";
     },
   },
   "/toolset": {
@@ -652,14 +652,6 @@ export const commands: Record<string, Command> = {
     noArgs: true,
     handler: () => {
       return "Opening agent browser...";
-    },
-  },
-  "/download": {
-    desc: "Export AgentFile (.af)",
-    hidden: true, // Legacy alias for /export
-    noArgs: true,
-    handler: () => {
-      return "Exporting agent file...";
     },
   },
 };

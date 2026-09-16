@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
@@ -36,6 +37,7 @@ async function runBidirectionalOnce(
   extraArgs: string[] = [],
   timeoutMs = 180000, // 180s timeout - CI can be very slow
   extraEnv: NodeJS.ProcessEnv = {},
+  backgroundResults = 0,
 ): Promise<object[]> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -78,7 +80,8 @@ async function runBidirectionalOnce(
         return "invalid"; // Invalid JSON
       }
     });
-    const expectedUserResults = inputTypes.filter((t) => t === "user").length;
+    const expectedUserResults =
+      inputTypes.filter((t) => t === "user").length + backgroundResults;
     const expectedControlResponses = inputTypes.filter(
       (t) => t === "control_request",
     ).length;
@@ -266,12 +269,19 @@ async function runBidirectionalWithRetry(
   timeoutMs = 180000,
   retryOnTimeouts = 1,
   extraEnv: NodeJS.ProcessEnv = {},
+  backgroundResults = 0,
 ): Promise<object[]> {
   let attempt = 0;
   const failedAttempts: Array<{ attempt: number; message: string }> = [];
   while (true) {
     try {
-      return await runBidirectionalOnce(inputs, extraArgs, timeoutMs, extraEnv);
+      return await runBidirectionalOnce(
+        inputs,
+        extraArgs,
+        timeoutMs,
+        extraEnv,
+        backgroundResults,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       failedAttempts.push({
@@ -303,23 +313,23 @@ async function runBidirectionalWithRetry(
   }
 }
 
-async function createTaskExploreFixture(): Promise<{
+async function createSubagentReportFixture(): Promise<{
   rootDir: string;
-  expectedTsFiles: string[];
-  unexpectedFiles: string[];
+  reportPath: string;
+  expectedReport: string;
 }> {
   const rootDir = await mkdtemp(join(os.tmpdir(), "letta-headless-task-"));
   await mkdir(join(rootDir, "nested"), { recursive: true });
-  await Promise.all([
-    writeFile(join(rootDir, "alpha.ts"), "export const alpha = 1;\n"),
-    writeFile(join(rootDir, "nested", "beta.ts"), "export const beta = 2;\n"),
-    writeFile(join(rootDir, "ignore.js"), "module.exports = 3;\n"),
-  ]);
+  const reportPath = join(rootDir, "nested", "report.txt");
+  // Keep the answer out of the parent prompt: only the child's file read
+  // and completion notification can supply the expected report.
+  const expectedReport = `SUBAGENT-REPORT-${randomUUID()}`;
+  await writeFile(reportPath, `${expectedReport}\n`);
 
   return {
     rootDir,
-    expectedTsFiles: ["alpha.ts", "nested/beta.ts"],
-    unexpectedFiles: ["ignore.js"],
+    reportPath,
+    expectedReport,
   };
 }
 
@@ -646,7 +656,7 @@ describe("input-format stream-json", () => {
   test(
     "Agent tool with general-purpose subagent works",
     async () => {
-      const fixture = await createTaskExploreFixture();
+      const fixture = await createSubagentReportFixture();
 
       try {
         const objects = (await runBidirectionalWithRetry(
@@ -656,22 +666,32 @@ describe("input-format stream-json", () => {
               message: {
                 role: "user",
                 content:
-                  "You MUST use the Agent tool with subagent_type='general-purpose' to recursively find all TypeScript files (*.ts) in the current working directory. " +
-                  "Use a recursive search pattern such as **/*.ts; a top-level-only search is incomplete. " +
-                  "The correct result includes both alpha.ts and nested/beta.ts. " +
-                  "Return only the matching relative file paths, one per line, and do not mention any non-TypeScript files.",
+                  "Launch exactly one Agent tool with subagent_type='general-purpose'. " +
+                  `Ask the subagent to use Read on ${JSON.stringify(fixture.reportPath)} and return the file's contents verbatim. ` +
+                  "Do not read the file yourself or call any other tools. " +
+                  "After the Agent tool returns, reply with exactly LAUNCHED and end your turn. " +
+                  "The tool return only confirms launch; it does not contain the report. " +
+                  "Do not invent a task-notification or a report, poll, or call TaskOutput. " +
+                  "On the next user-role task-notification, copy the SUBAGENT-REPORT line from its result exactly, " +
+                  "even if an earlier assistant message claimed to deliver a report. " +
+                  "Return only that line, with no commentary or formatting.",
               },
             }),
           ],
-          [],
+          // Task is the internal name of the model-facing Agent tool.
+          // The child receives its own general-purpose toolset, including Read.
+          ["--tools", "Task", "--base-tools", "none"],
           240000,
           1,
           { USER_CWD: fixture.rootDir },
+          1, // Keep stdin open for the subagent completion notification's turn.
         )) as WireMessage[];
 
-        const result = objects.find(
+        const results = objects.filter(
           (o): o is ResultMessage => o.type === "result",
         );
+        expect(results).toHaveLength(2);
+        const result = results.at(-1);
         expect(result).toBeDefined();
         expect(result?.subtype).toBe("success");
 
@@ -689,7 +709,16 @@ describe("input-format stream-json", () => {
             m.tool_call?.name === "Agent"
           );
         });
-        expect(agentToolCalls.length).toBeGreaterThan(0);
+        expect(agentToolCalls, JSON.stringify(agentToolCalls)).toHaveLength(1);
+        // The parent must learn the report through the child, not Read it itself.
+        expect(
+          objects.filter(
+            (o) =>
+              o.type === "message" &&
+              "message_type" in o &&
+              o.message_type === "tool_call_message",
+          ),
+        ).toHaveLength(1);
 
         // Approval-flow events are stripped from stream-json output so the
         // stream matches other coding agents.
@@ -703,14 +732,8 @@ describe("input-format stream-json", () => {
           ),
         ).toBe(false);
 
-        const resultText = result?.result ?? "";
-        const normalizedResultText = resultText.replaceAll("\\", "/");
-        for (const path of fixture.expectedTsFiles) {
-          expect(normalizedResultText).toContain(path);
-        }
-        for (const path of fixture.unexpectedFiles) {
-          expect(normalizedResultText).not.toContain(path);
-        }
+        expect(results[0]?.result?.trim()).toBe("LAUNCHED");
+        expect(result?.result?.trim()).toBe(fixture.expectedReport);
       } finally {
         await rm(fixture.rootDir, { recursive: true, force: true });
       }

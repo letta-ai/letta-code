@@ -1,3 +1,4 @@
+import "@/utils/startup-log-boundary";
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 
 // pi-ai keeps Node-only OAuth implementations behind bundler-opaque imports.

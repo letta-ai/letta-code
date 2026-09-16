@@ -623,10 +623,9 @@ export function ProfileSelectionInline({
 export async function shouldShowProfileSelection(
   forceNew: boolean,
   agentIdArg: string | null,
-  fromAfFile: string | undefined,
 ): Promise<{ show: boolean; lruAgentId: string | null }> {
   // Skip for explicit flags
-  if (forceNew || agentIdArg || fromAfFile) {
+  if (forceNew || agentIdArg) {
     return { show: false, lruAgentId: null };
   }
 

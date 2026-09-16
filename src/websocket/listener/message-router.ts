@@ -10,8 +10,9 @@ import type {
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
 } from "@/types/protocol_v2";
-import { isDebugEnabled } from "@/utils/debug";
+import { debugLog, isDebugEnabled } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
+import { sealStartupLogs } from "@/utils/startup-log-boundary";
 import {
   handleTerminalInput,
   handleTerminalKill,
@@ -28,11 +29,15 @@ import { handleCronProtocolCommand } from "./commands/cron";
 import { handleGitBranchCommand } from "./commands/git-branches";
 import { handleMemfsSyncedMemoryProtocolCommand } from "./commands/memory-command-sync";
 import { handleModelToolsetCommand } from "./commands/model-toolset";
+import { handleQueueCommand } from "./commands/queue";
 import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
-import { subscribeListenerConnection } from "./connection";
+import {
+  getOrCreateProcessTransport,
+  subscribeListenerConnection,
+} from "./connection";
 import { getBootWorkingDirectory } from "./cwd";
 import {
   handleExternalToolCallResponseCommand,
@@ -53,10 +58,7 @@ import {
   parseServerMessage,
 } from "./protocol-inbound";
 import { summarizeV2Command } from "./protocol-logging";
-import {
-  emitDeviceStatusUpdate,
-  emitQueueUpdateIfOpen,
-} from "./protocol-outbound";
+import { emitDeviceStatusUpdate } from "./protocol-outbound";
 import {
   scheduleQueuePump,
   shouldProcessInboundMessageDirectly,
@@ -67,6 +69,7 @@ import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import { parseListenerReadyMessage } from "./split-stream-lifecycle";
 import {
   buildTeleportContinuationMessages,
+  clearExpectedInboundTeleport,
   clearPriorReadyTeleports,
   handleTeleportFailure,
   handleTeleportProbe,
@@ -82,6 +85,7 @@ import type {
   ListenerRuntime,
   ProcessQueuedTurn,
   StartListenerOptions,
+  SyncReplayOptions,
 } from "./types";
 
 type SafeSocketSend = (
@@ -124,7 +128,7 @@ type MessageRouterParams = {
     listenerRuntime: ListenerRuntime,
     socket: WebSocket,
     scope: RuntimeScope,
-    opts?: { recoverApprovals?: boolean; forceDeviceStatus?: boolean },
+    opts?: SyncReplayOptions,
   ) => Promise<void>;
   getOrCreateScopedRuntime: (
     listener: ListenerRuntime,
@@ -181,6 +185,14 @@ type MessageRouterParams = {
   processIncomingMessage?: typeof handleIncomingMessage;
 };
 
+function logV2Command(opts: StartListenerOptions, message: string): void {
+  if (opts.onLog) {
+    opts.onLog(`[Listen V2] ${message}`);
+    return;
+  }
+  debugLog("Listen V2", message);
+}
+
 export function createListenerMessageHandler(
   params: MessageRouterParams,
 ): (data: WebSocket.RawData) => Promise<void> {
@@ -206,12 +218,16 @@ export function createListenerMessageHandler(
   const connectionId = explicitConnectionId ?? opts.connectionId;
 
   return async (data: WebSocket.RawData): Promise<void> => {
+    const lifecycleMessage =
+      parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
+    // Legacy relays can deliver input before onConnected. Fail outside the
+    // handler catch so no parsing, logging, or dispatch follows a failed seal.
+    // Only projected pongs are content-free; ready frames retain extra fields.
+    if (lifecycleMessage?.type !== "pong") sealStartupLogs();
     const raw = data.toString();
     let parsedScope: ParsedRuntimeScope = null;
 
     try {
-      const lifecycleMessage =
-        parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
       if (lifecycleMessage) {
         // Record relay pongs so the heartbeat watchdog can detect a half-open
         // socket (no pong within the timeout) and force a reconnect.
@@ -243,7 +259,7 @@ export function createListenerMessageHandler(
         return;
       }
 
-      console.log(`[Listen V2] Received ${summarizeV2Command(parsed)}`);
+      logV2Command(opts, `Received ${summarizeV2Command(parsed)}`);
 
       if (parsedScope) {
         subscribeListenerConnection(runtime, connectionId, parsedScope);
@@ -257,6 +273,20 @@ export function createListenerMessageHandler(
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
         });
+        return;
+      }
+
+      if (parsed.type === "monitor_stop") {
+        const { handleMonitorStopCommand } = await import(
+          "./commands/monitors"
+        );
+        const response = await handleMonitorStopCommand(parsed, runtime);
+        safeSocketSend(
+          socket,
+          response,
+          "monitor_stop_response",
+          "monitor_stop",
+        );
         return;
       }
 
@@ -336,7 +366,7 @@ export function createListenerMessageHandler(
 
       if (parsed.type === "sync") {
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-          console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
+          logV2Command(opts, "Dropping sync: runtime mismatch or closed");
           if (parsed.request_id) {
             safeSocketSend(
               socket,
@@ -356,7 +386,10 @@ export function createListenerMessageHandler(
         try {
           await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
             recoverApprovals: parsed.recover_approvals !== false,
+            resumeInterruptedTurn: parsed.resume_interrupted_turn === true,
             forceDeviceStatus: parsed.force_device_status === true,
+            onStatusChange: opts.onStatusChange,
+            connectionId: opts.connectionId,
           });
           if (parsed.request_id) {
             safeSocketSend(
@@ -414,7 +447,7 @@ export function createListenerMessageHandler(
           );
         };
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-          console.log(`[Listen V2] Dropping input: runtime mismatch or closed`);
+          logV2Command(opts, "Dropping input: runtime mismatch or closed");
           acknowledgeInput(false, "Runtime is no longer active");
           return;
         }
@@ -439,6 +472,9 @@ export function createListenerMessageHandler(
             parsed.runtime.agent_id,
             parsed.runtime.conversation_id,
           );
+          // The continuation this scope's runtime_start announced has arrived;
+          // sync recovery may act on its own again from here.
+          clearExpectedInboundTeleport(scopedRuntime);
           const acceptedKey = `teleport:${teleportId}`;
           const previousDisposition =
             scopedRuntime.acceptedInputDispositions.get(acceptedKey);
@@ -447,10 +483,6 @@ export function createListenerMessageHandler(
             return;
           }
           const approvals = parsed.payload.continuation?.approvals;
-          if (!approvals || approvals.length === 0) {
-            acknowledgeInput(true);
-            return;
-          }
           if (scopedRuntime.isProcessing) {
             acknowledgeInput(
               false,
@@ -472,7 +504,7 @@ export function createListenerMessageHandler(
                   approvals,
                 }),
               },
-              socket,
+              getOrCreateProcessTransport(runtime),
               scopedRuntime,
               opts.onStatusChange,
               connectionId,
@@ -705,31 +737,17 @@ export function createListenerMessageHandler(
         return;
       }
 
-      if (parsed.type === "remove_queue_item") {
-        const scopedRuntime = getOrCreateScopedRuntime(
-          runtime,
-          parsed.runtime.agent_id,
-          parsed.runtime.conversation_id || "default",
-        );
-        const removed = scopedRuntime.queueRuntime.removeItem(parsed.item_id);
-        // Emit a response so the client knows if the item was found/removed
-        safeSocketSend(
+      if (
+        parsed.type === "resume_queue" ||
+        parsed.type === "remove_queue_item"
+      ) {
+        handleQueueCommand(parsed, {
+          listener: runtime,
           socket,
-          {
-            type: "remove_queue_item_response",
-            request_id: parsed.request_id,
-            success: removed !== null,
-            item_id: parsed.item_id,
-          },
-          "remove_queue_item_response",
-          "remove_queue_item",
-        );
-        // Broadcast the authoritative queue snapshot even when the item was
-        // NOT found: a consumer removing an already-drained item is holding
-        // a stale queue copy, and this snapshot repairs it. (LET-11174)
-        emitQueueUpdateIfOpen(runtime, {
-          agent_id: parsed.runtime.agent_id,
-          conversation_id: parsed.runtime.conversation_id,
+          opts,
+          processQueuedTurn,
+          getOrCreateScopedRuntime,
+          safeSocketSend,
         });
         return;
       }

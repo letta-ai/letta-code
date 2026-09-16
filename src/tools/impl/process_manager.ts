@@ -61,6 +61,8 @@ export interface BackgroundTask {
   abortController?: AbortController;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
+  /** Authenticated Cloud user responsible for launching this task. */
+  actingUserId?: string;
 }
 
 export const backgroundProcesses = new Map<string, BackgroundProcess>();
@@ -92,9 +94,8 @@ export function getNextBashId() {
   return `bash_${bashIdCounter++}`;
 }
 
-let monitorIdCounter = 1;
 export function getNextMonitorId() {
-  return `monitor_${monitorIdCounter++}`;
+  return `monitor_${crypto.randomUUID()}`;
 }
 
 let workflowIdCounter = 1;

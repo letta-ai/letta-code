@@ -1,5 +1,4 @@
 import type WebSocket from "ws";
-import { isSkillSourceArray } from "@/agent/skill-sources";
 import type { ExperimentId } from "@/experiments/types";
 import {
   CHANNEL_ACCOUNT_CREATE_FIELDS,
@@ -76,9 +75,7 @@ import type {
   MemoryHistoryCommand,
   ReadFileCommand,
   ReadMemoryFileCommand,
-  RemoveQueueItemCommand,
   RuntimeScope,
-  RuntimeStartCommand,
   SearchBranchesCommand,
   SearchFilesCommand,
   SecretApplyCommand,
@@ -121,6 +118,7 @@ import {
   isGetCwdMapCommand,
   isSetBootWorkingDirectoryCommand,
 } from "./cwd-protocol-inbound";
+import { isResumeQueueCommand } from "./queue-pause-protocol-inbound";
 
 export { isConnectProviderCommand } from "./connect-provider-protocol-inbound";
 
@@ -128,7 +126,6 @@ import { isConnectProviderCommand } from "./connect-provider-protocol-inbound";
 import {
   isExternalToolCallResponseCommand,
   isRuntimeExternalToolsUpdateCommand,
-  isRuntimeStartExternalToolsGroup,
 } from "./external-tool-protocol";
 import {
   isAppServerInfoCommand,
@@ -140,12 +137,7 @@ import {
   isRuntimeScope,
   isStringArray,
 } from "./protocol-validation";
-import {
-  isRuntimeStartClientInfo,
-  isRuntimeStartCreateAgentOptions,
-  isRuntimeStartCreateConversationOptions,
-  isRuntimeStartWorkspaceSandbox,
-} from "./runtime-start-validation";
+import { isRuntimeStartCommand } from "./runtime-start-validation";
 import {
   isTeleportContinuePayload,
   parseTeleportCommand,
@@ -163,9 +155,9 @@ const TOOLSET_PREFERENCES = new Set([
   "default",
   "gemini",
   "gemini_snake",
+  "letta",
   "none",
 ]);
-
 function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
   if (!isObjectRecord(value)) return false;
   return (
@@ -453,9 +445,7 @@ function isChangeDeviceStateCommand(
 }
 
 function isAbortMessageCommand(value: unknown): value is AbortMessageCommand {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+  if (!value || typeof value !== "object") return false;
   const candidate = value as {
     type?: unknown;
     runtime?: unknown;
@@ -482,69 +472,17 @@ function isSyncCommand(value: unknown): value is SyncCommand {
   if (!value || typeof value !== "object") {
     return false;
   }
-  const candidate = value as {
-    type?: unknown;
-    runtime?: unknown;
-    request_id?: unknown;
-    recover_approvals?: unknown;
-    force_device_status?: unknown;
-    wait_for_replay?: unknown;
-  };
+  const c = value as Partial<Record<keyof SyncCommand, unknown>>;
   return (
-    candidate.type === "sync" &&
-    isRuntimeScope(candidate.runtime) &&
-    (candidate.request_id === undefined ||
-      typeof candidate.request_id === "string") &&
-    (candidate.recover_approvals === undefined ||
-      typeof candidate.recover_approvals === "boolean") &&
-    (candidate.force_device_status === undefined ||
-      typeof candidate.force_device_status === "boolean")
-  );
-}
-
-function isDevicePermissionMode(value: unknown): boolean {
-  return (
-    value === "standard" ||
-    value === "acceptEdits" ||
-    value === "unrestricted" ||
-    value === "strict"
-  );
-}
-
-export function isRuntimeStartCommand(
-  value: unknown,
-): value is RuntimeStartCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as Record<string, unknown>;
-  return (
-    c.type === "runtime_start" &&
-    typeof c.request_id === "string" &&
-    (c.agent_id === undefined || typeof c.agent_id === "string") &&
-    (c.create_agent === undefined ||
-      isRuntimeStartCreateAgentOptions(c.create_agent)) &&
-    (c.conversation_id === undefined ||
-      typeof c.conversation_id === "string") &&
-    (c.create_conversation === undefined ||
-      isRuntimeStartCreateConversationOptions(c.create_conversation)) &&
-    (c.conversation_source_tags === undefined ||
-      isStringArray(c.conversation_source_tags)) &&
-    (c.cwd === undefined || c.cwd === null || typeof c.cwd === "string") &&
-    (c.mode === undefined || isDevicePermissionMode(c.mode)) &&
-    (c.workspace_sandbox === undefined ||
-      isRuntimeStartWorkspaceSandbox(c.workspace_sandbox)) &&
-    (c.skill_sources === undefined || isSkillSourceArray(c.skill_sources)) &&
-    (c.preserve_skill_sources === undefined ||
-      typeof c.preserve_skill_sources === "boolean") &&
-    (c.client_info === undefined || isRuntimeStartClientInfo(c.client_info)) &&
+    c.type === "sync" &&
+    isRuntimeScope(c.runtime) &&
+    (c.request_id === undefined || typeof c.request_id === "string") &&
     (c.recover_approvals === undefined ||
       typeof c.recover_approvals === "boolean") &&
+    (c.resume_interrupted_turn === undefined ||
+      typeof c.resume_interrupted_turn === "boolean") &&
     (c.force_device_status === undefined ||
-      typeof c.force_device_status === "boolean") &&
-    (c.wait_for_replay === undefined ||
-      typeof c.wait_for_replay === "boolean") &&
-    (c.external_tools === undefined ||
-      (Array.isArray(c.external_tools) &&
-        c.external_tools.every(isRuntimeStartExternalToolsGroup)))
+      typeof c.force_device_status === "boolean")
   );
 }
 
@@ -2043,23 +1981,13 @@ export function isExecuteCommandCommand(
     hasValidArgs
   );
 }
-export function isRemoveQueueItemCommand(
-  value: unknown,
-): value is RemoveQueueItemCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    runtime?: unknown;
-    item_id?: unknown;
-  };
-  return (
-    c.type === "remove_queue_item" &&
-    typeof c.request_id === "string" &&
-    isAgentRuntimeScope(c.runtime) &&
-    typeof c.item_id === "string"
-  );
-}
+
+import {
+  isMonitorStopCommand,
+  isRemoveQueueItemCommand,
+} from "./task-control-protocol-inbound";
+
+export { isRemoveQueueItemCommand } from "./task-control-protocol-inbound";
 
 export function parseServerLifecycleMessage(
   data: WebSocket.RawData,
@@ -2096,6 +2024,7 @@ export function parseServerMessage(
       isInputCommand(parsed) ||
       isChangeDeviceStateCommand(parsed) ||
       isAbortMessageCommand(parsed) ||
+      isResumeQueueCommand(parsed) ||
       isSyncCommand(parsed) ||
       isRuntimeStartCommand(parsed) ||
       isRuntimeExternalToolsUpdateCommand(parsed) ||
@@ -2184,6 +2113,7 @@ export function parseServerMessage(
       isChannelRouteRemoveCommand(parsed) ||
       isExecuteCommandCommand(parsed) ||
       isRemoveQueueItemCommand(parsed) ||
+      isMonitorStopCommand(parsed) ||
       isSearchBranchesCommand(parsed) ||
       isCheckoutBranchCommand(parsed) ||
       isSecretListCommand(parsed) ||

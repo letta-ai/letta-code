@@ -7,15 +7,12 @@ import {
   attachServerMcpTools,
   describeServerMcpTarget,
   detachServerMcpTools,
-  listAgentConnectedMcpServers,
-  listAgentConnectedMcpTools,
   listAgentMcpAttachments,
   listLiveServerMcpTools,
   listServerMcpServers,
   loadServerMcpEntries,
   planServerMcpToggle,
   registerServerMcpTool,
-  runAgentConnectedMcpTool,
   type ServerMcpClient,
   type ServerMcpEntry,
   type ServerMcpServer,
@@ -205,85 +202,6 @@ describe("listServerMcpServers", () => {
     const client = stubClient({});
     client.mcpServers.list = () => new Promise(() => {});
     await expect(listServerMcpServers(client, 10)).rejects.toThrow(/timed out/);
-  });
-});
-
-describe("agent-connected MCP server API", () => {
-  test("lists servers from the agent-scoped association route", async () => {
-    const client = stubClient({
-      getResponses: {
-        "/v1/agents/agent-1/mcp-servers": [
-          {
-            id: "mcp_server-1",
-            server_name: "exa",
-            mcp_server_type: "streamable_http",
-            server_url: "https://mcp.example.com/mcp",
-          },
-          { invalid: true },
-        ],
-      },
-    });
-
-    await expect(
-      listAgentConnectedMcpServers(client, "agent-1"),
-    ).resolves.toEqual([
-      {
-        id: "mcp_server-1",
-        serverName: "exa",
-        serverType: "streamable_http",
-        target: "https://mcp.example.com/mcp",
-      },
-    ]);
-  });
-
-  test("lists tools for one associated server", async () => {
-    const client = stubClient({
-      getResponses: {
-        "/v1/agents/agent-1/mcp-servers/mcp_server-1/tools": [
-          { id: "tool-1", name: "web_search", description: "Search" },
-        ],
-      },
-    });
-
-    await expect(
-      listAgentConnectedMcpTools(client, "agent-1", "mcp_server-1"),
-    ).resolves.toEqual([
-      { id: "tool-1", name: "web_search", description: "Search" },
-    ]);
-  });
-
-  test("runs an associated MCP tool through the agent route", async () => {
-    const postCalls: string[] = [];
-    const postBodies: unknown[] = [];
-    const client = stubClient({
-      postCalls,
-      postBodies,
-      postResponses: {
-        "/v1/agents/agent-1/mcp-servers/mcp_server-1/tools/tool-1/run": {
-          status: "success",
-          func_return: { result: "ok" },
-        },
-      },
-    });
-
-    await expect(
-      runAgentConnectedMcpTool({
-        client,
-        agentId: "agent-1",
-        mcpServerId: "mcp_server-1",
-        toolId: "tool-1",
-        args: { query: "letta" },
-      }),
-    ).resolves.toEqual({
-      status: "success",
-      funcReturn: { result: "ok" },
-      stderr: undefined,
-      stdout: undefined,
-    });
-    expect(postCalls).toEqual([
-      "/v1/agents/agent-1/mcp-servers/mcp_server-1/tools/tool-1/run",
-    ]);
-    expect(postBodies).toEqual([{ args: { query: "letta" } }]);
   });
 });
 

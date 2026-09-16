@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { AvailableSkillSummary } from "@/types/protocol_v2";
+import { getCheckoutGeneration } from "@/utils/checkout-readiness";
 import type { AttachedAgentRepository } from "./attached-repositories";
 import { ClientSkillsWatcher } from "./client-skills-watcher";
 import { getSkillSources, getSkillsDirectory } from "./context";
@@ -45,6 +46,7 @@ const CLIENT_SKILLS_WATCHER_KEY = Symbol.for("@letta/clientSkillsWatcher");
 interface CacheEntry {
   key: string;
   result: BuildClientSkillsPayloadResult;
+  checkoutGeneration: number;
 }
 
 type ClientSkillsCache = Map<string, CacheEntry>;
@@ -220,6 +222,61 @@ export function invalidateClientSkillsPayloadCacheForAgent(
     }
   }
   invalidateAttachedRepositoriesCache(agentId);
+}
+
+/** Metadata-only reminder for changes since a conversation's last accepted send. */
+export function buildClientSkillsUpdateReminder(
+  previous: BuildClientSkillsPayloadResult["clientSkills"] | undefined,
+  current: BuildClientSkillsPayloadResult["clientSkills"],
+): string | null {
+  // The initial request already supplies the complete catalog in client_skills.
+  if (!previous) return null;
+  const previousByName = new Map(previous.map((skill) => [skill.name, skill]));
+  const currentNames = new Set(current.map((skill) => skill.name));
+  const changed = current.filter((skill) => {
+    const old = previousByName.get(skill.name);
+    return (
+      !old ||
+      old.description !== skill.description ||
+      old.location !== skill.location
+    );
+  });
+  const removed = previous
+    .filter((skill) => !currentNames.has(skill.name))
+    .map((skill) => skill.name);
+  if (changed.length === 0 && removed.length === 0) return null;
+
+  const escapeXml = (text: string): string =>
+    text
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#x27;");
+  // Keep this metadata-only. Skill bodies stay lazy-loaded through Skill.
+  return [
+    "<system-reminder>",
+    ...(changed.length > 0
+      ? [
+          "Additional skills are now available. These supplement the skills already listed in your context:",
+          "<available_skills>",
+          ...changed.flatMap((skill) => [
+            "  <skill>",
+            `    <name>${escapeXml(skill.name)}</name>`,
+            `    <description>${escapeXml(skill.description)}</description>`,
+            "  </skill>",
+          ]),
+          "</available_skills>",
+        ]
+      : []),
+    ...(removed.length > 0
+      ? [
+          "Skills no longer available:",
+          ...removed.map((name) => `- ${escapeXml(name)}`),
+        ]
+      : []),
+    "</system-reminder>",
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -586,12 +643,13 @@ export async function buildClientSkillsPayload(
   if (useCache) {
     const cache = getCache();
     const cached = cache.get(cacheKey);
-    if (cached) {
+    if (cached && cached.checkoutGeneration === getCheckoutGeneration()) {
       return cloneResult(cached.result);
     }
   }
 
   const generationBeforeDiscovery = getCacheGeneration();
+  const checkoutGenerationBeforeDiscovery = getCheckoutGeneration();
   const discovery = await collectClientSideSkills({
     ...options,
     configuredSkillsDirectory,
@@ -634,8 +692,16 @@ export async function buildClientSkillsPayload(
     errors,
   };
 
-  if (useCache && generationBeforeDiscovery === getCacheGeneration()) {
-    getCache().set(cacheKey, { key: cacheKey, result: cloneResult(result) });
+  if (
+    useCache &&
+    generationBeforeDiscovery === getCacheGeneration() &&
+    checkoutGenerationBeforeDiscovery === getCheckoutGeneration()
+  ) {
+    getCache().set(cacheKey, {
+      key: cacheKey,
+      result: cloneResult(result),
+      checkoutGeneration: getCheckoutGeneration(),
+    });
   }
 
   return result;
