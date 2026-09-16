@@ -210,24 +210,36 @@ jobs:
             5. If nothing to flag, respond with exactly: `LGTM`
             6. If you leave inline review comments, respond with exactly: `Left comments`
 
-      - name: Check for an expert question
+      - name: Load expert review prompt
+        id: expert_review_prompt
         if: steps.letta_review.outcome == 'success' && steps.letta_review.outputs.conversation_id != ''
+        run: |
+          {
+            echo 'value<<EXPERT_REVIEW_PROMPT'
+            cat .github/agent-prompts/expert-review.md
+            echo 'EXPERT_REVIEW_PROMPT'
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: letta-ai/letta-code-action@b7e51edb0643e67ae74327a1cdf0c332e549f8fc
+        id: expert_review
+        if: steps.expert_review_prompt.outputs.value != ''
         continue-on-error: true
         env:
           AMELIA_GITHUB_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
-          LETTA_API_KEY: ${{ secrets.AMELIA_LETTA_API_KEY }}
-          REVIEW_CONVERSATION_ID: ${{ steps.letta_review.outputs.conversation_id }}
+        with:
+          letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
+          github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
+          environment: cloud
+          track_progress: ""
+          tracking_comment: "false"
+          prompt: ${{ steps.expert_review_prompt.outputs.value }}
+
+      - name: Report expert review outcome
+        if: always() && steps.expert_review.outputs.execution_file != ''
         run: |
-          OUTPUT_FILE="$RUNNER_TEMP/expert-review.jsonl"
-
-          letta --conversation "$REVIEW_CONVERSATION_ID" \
-            --model auto \
-            --yolo \
-            --prompt "$(cat .github/agent-prompts/expert-review.md)" \
-            --output-format stream-json > "$OUTPUT_FILE"
-
-          RESULT=$(jq -sr '[.[] | select(.type == "result") | .result] | last // ""' "$OUTPUT_FILE")
+          RESULT=$(cat "${{ steps.expert_review.outputs.execution_file }}" \
+            | jq -r '[.[] | select(.type == "result") | .result] | last // ""')
           echo "Expert review result: $RESULT"
 
       - name: React based on review outcome
