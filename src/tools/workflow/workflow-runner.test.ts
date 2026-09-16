@@ -1,7 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ExecutionJournal } from "./journal.ts";
+import { agentCallCacheKey } from "./scheduling.ts";
 import type { SubagentSpawner, WorkflowProgressEvent } from "./types.ts";
 import { runWorkflow } from "./workflow-runner.ts";
 
@@ -22,6 +24,131 @@ const echoSpawner: SubagentSpawner = async (request) => ({
 });
 
 describe("runWorkflow", () => {
+  test("effective defaults invalidate resume while explicit overrides remain reusable", async () => {
+    const executionsDir = tempRunsDir();
+    const script = withMeta(`return await parallel([
+      () => agent('inherited'),
+      () => agent('pinned', {model: 'fixed', allowedTools: [], cwd: '/fixed'})
+    ])`);
+    const agentDefaults = {
+      model: "model-a",
+      allowedTools: ["Read"],
+      cwd: "/repo-a",
+    };
+    const first = await runWorkflow(echoSpawner, {
+      script,
+      executionsDir,
+      agentDefaults,
+    });
+    const equivalent = await runWorkflow(echoSpawner, {
+      script,
+      executionsDir,
+      agentDefaults,
+      resumeFromExecutionId: first.executionId,
+    });
+    expect(equivalent.cacheHits).toBe(2);
+    for (const changed of [
+      { model: "model-b" },
+      { allowedTools: [] },
+      { cwd: "/repo-b" },
+    ]) {
+      const resumed = await runWorkflow(echoSpawner, {
+        script,
+        executionsDir,
+        agentDefaults: { ...agentDefaults, ...changed },
+        resumeFromExecutionId: first.executionId,
+      });
+      expect(resumed.cacheHits).toBe(1);
+      expect(resumed.agentsSpawned).toBe(1);
+    }
+  });
+
+  test("legacy journal keys without effective defaults are not trusted", async () => {
+    const executionsDir = tempRunsDir();
+    const journal = new ExecutionJournal(executionsDir, "wf-legacy");
+    journal.record({
+      kind: "agent",
+      cacheKey: agentCallCacheKey("same", {}),
+      occurrence: 0,
+      label: "same",
+      prompt: "same",
+      outcome: { value: "stale result", failed: false },
+    });
+    const run = await runWorkflow(echoSpawner, {
+      script: withMeta(`return await agent('same')`),
+      executionsDir,
+      resumeFromExecutionId: "wf-legacy",
+    });
+    expect(run.cacheHits).toBe(0);
+    expect(run.result).toBe("echo:same");
+  });
+
+  test("resolves defaults before spawning without forwarding local cwd remotely", async () => {
+    const calls: unknown[] = [];
+    await runWorkflow(
+      async (request) => {
+        calls.push(request.options);
+        return { value: "ok", failed: false };
+      },
+      {
+        script: withMeta(
+          `await agent('local'); await agent('remote', {computer: 'worker'})`,
+        ),
+        executionsDir: tempRunsDir(),
+        agentDefaults: {
+          model: "model-a",
+          allowedTools: [],
+          cwd: "/local-repo",
+        },
+      },
+    );
+    expect(calls).toEqual([
+      { model: "model-a", allowedTools: [], cwd: "/local-repo" },
+      { model: "model-a", allowedTools: [], computer: { name: "worker" } },
+    ]);
+  });
+
+  test("completion clears outstanding sleep timers and the caller's abort listener", async () => {
+    const controller = new AbortController();
+    const added = spyOn(controller.signal, "addEventListener");
+    const removed = spyOn(controller.signal, "removeEventListener");
+    const cleared = spyOn(globalThis, "clearTimeout");
+    try {
+      await runWorkflow(echoSpawner, {
+        script: withMeta(`sleep(10000); return 'done'`),
+        executionsDir: tempRunsDir(),
+        signal: controller.signal,
+      });
+      expect(cleared).toHaveBeenCalled();
+      expect(removed).toHaveBeenCalledWith("abort", added.mock.calls[0]?.[1]);
+    } finally {
+      added.mockRestore();
+      removed.mockRestore();
+      cleared.mockRestore();
+    }
+  });
+
+  test("abort bounds script promises and suppresses subsequent progress", async () => {
+    for (const body of [
+      `await sleep(10000); log('late')`,
+      `await new Promise(() => {})`,
+      `try { await sleep(10000) } catch {} log('caught'); phase('late')`,
+    ]) {
+      const controller = new AbortController();
+      const events: WorkflowProgressEvent[] = [];
+      const pending = runWorkflow(echoSpawner, {
+        script: withMeta(body),
+        executionsDir: tempRunsDir(),
+        signal: controller.signal,
+        onProgress: (event) => events.push(event),
+      });
+      controller.abort();
+      await expect(pending).rejects.toThrow(/abort/i);
+      await Bun.sleep(10);
+      expect(events).toEqual([]);
+    }
+  });
+
   test("effective computer defaults and overrides participate in resume identity", async () => {
     const executionsDir = tempRunsDir();
     const spawner: SubagentSpawner = async (request) => ({

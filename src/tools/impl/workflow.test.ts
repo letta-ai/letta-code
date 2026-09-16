@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runWithRuntimeContext } from "@/runtime-context";
 import {
   ANTHROPIC_DEFAULT_TOOLS,
   GEMINI_DEFAULT_TOOLS,
@@ -21,7 +22,11 @@ import {
 import { backgroundProcesses } from "./process_manager";
 import { task_output } from "./task-output";
 import { task_stop } from "./task-stop";
-import { __setWorkflowSpawnerFactoryForTests, workflow } from "./workflow";
+import {
+  __setWorkflowSpawnerFactoryForTests,
+  createSdkSpawner,
+  workflow,
+} from "./workflow";
 
 async function waitFor(
   predicate: () => boolean,
@@ -139,6 +144,54 @@ describe("Workflow tool (background launch)", () => {
       process.env.HOME = previousHome;
     }
     rmSync(scratchpad, { recursive: true, force: true });
+  });
+
+  test("production spawner preserves an empty tool allowlist and publishes resolved defaults", async () => {
+    // Construction is lazy: use the real SDK without starting a model query.
+    const handle = await createSdkSpawner({
+      model: "openai/gpt-4.1-mini",
+      allowedTools: [],
+    });
+    try {
+      expect(handle.agentDefaults).toEqual({
+        model: "openai/gpt-4.1-mini",
+        allowedTools: [],
+        cwd: process.cwd(),
+      });
+    } finally {
+      await handle.cleanup();
+    }
+  });
+
+  test("retains launch-time acting user through delayed completion", async () => {
+    installSpawner(gatedSpawner());
+    const result = await runWithRuntimeContext(
+      { actingUserId: "cloud-user-a" },
+      () =>
+        workflow({
+          script: SCRIPT,
+          parentScope: {
+            agentId: "agent-parent",
+            conversationId: "conv-parent",
+          },
+        }),
+    );
+    const taskId = /Task ID: (workflow_\d+)/.exec(
+      result.toolReturn,
+    )?.[1] as string;
+    expect(backgroundProcesses.get(taskId)?.runtimeScope).toMatchObject({
+      actingUserId: "cloud-user-a",
+    });
+    runWithRuntimeContext({ actingUserId: "cloud-user-b" }, () =>
+      releaseAgents?.(),
+    );
+    await waitFor(() => cleanupCalls === 1);
+    expect(queuedMessages).toHaveLength(1);
+    expect(queuedMessages[0]).toMatchObject({
+      actingUserId: "cloud-user-a",
+      agentId: "agent-parent",
+      conversationId: "conv-parent",
+    });
   });
 
   test("rejects invalid placement and concurrency before creating a backend", async () => {
@@ -278,6 +331,40 @@ describe("Workflow tool (background launch)", () => {
     expect(queuedMessages).toHaveLength(0);
     const snapshot = getWorkflowExecution(taskId as string);
     expect(snapshot?.agentsFailed).toBe(2);
+  });
+
+  test("TaskStop finishes a sleeping script and releases resources without notification", async () => {
+    installSpawner(gatedSpawner());
+    const launched = await workflow({
+      script: `export const meta = {name: 'sleeping', description: 'sleeping'}
+await sleep(10000); log('late')`,
+    });
+    const taskId = /Task ID: (workflow_\d+)/.exec(
+      launched.toolReturn,
+    )?.[1] as string;
+    expect((await task_stop({ task_id: taskId })).killed).toBe(true);
+    await waitFor(() => cleanupCalls === 1, 500);
+    expect(getWorkflowExecution(taskId)?.status).toBe("failed");
+    expect(getWorkflowExecution(taskId)?.logs).toEqual([]);
+    expect(queuedMessages).toHaveLength(0);
+  });
+
+  test("persists the full final result while bounding the completion notification", async () => {
+    installSpawner(gatedSpawner());
+    const value = `${"x".repeat(40000)}END-OF-RESULT`;
+    const launched = await workflow({
+      script: `export const meta = {name: 'large-result', description: 'large result'}\nreturn args`,
+      args: value,
+    });
+    const taskId = /Task ID: (workflow_\d+)/.exec(
+      launched.toolReturn,
+    )?.[1] as string;
+    await waitFor(() => cleanupCalls === 1);
+    const outputFile = backgroundProcesses.get(taskId)?.outputFile as string;
+    expect(readFileSync(outputFile, "utf8")).toContain(value);
+    expect(queuedMessages[0]?.text).toContain("Workflow result truncated");
+    expect(queuedMessages[0]?.text).not.toContain("END-OF-RESULT");
+    expect(queuedMessages[0]?.text.length).toBeLessThan(32000);
   });
 
   test("a failing script notifies with failed status", async () => {

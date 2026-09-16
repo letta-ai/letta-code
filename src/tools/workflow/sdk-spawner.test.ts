@@ -50,6 +50,24 @@ describe("remote structured text", () => {
     });
   });
 
+  test("enum and const compare nested JSON objects without key-order dependence", () => {
+    const value = { a: [{ x: 1, y: 2 }], b: true };
+    for (const constraint of [{ const: value }, { enum: [value] }]) {
+      expect(
+        parseStructuredText('{"b":true,"a":[{"y":2,"x":1}]}', constraint)
+          .failed,
+      ).toBe(false);
+      for (const text of [
+        '{"b":true,"a":[{"y":3,"x":1}]}',
+        '{"a":[],"b":true}',
+        '{"a":[{"x":1,"y":2}]}',
+      ]) {
+        expect(parseStructuredText(text, constraint).failed).toBe(true);
+      }
+    }
+    expect(parseStructuredText("[2,1]", { const: [1, 2] }).failed).toBe(true);
+  });
+
   test("rejects malformed text, fragments, and schema violations", () => {
     for (const text of [
       "ALPHA",

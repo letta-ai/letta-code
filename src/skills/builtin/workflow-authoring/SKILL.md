@@ -64,6 +64,11 @@ resume cache identity; changing the default reruns affected calls, not calls
 with unchanged explicit overrides. Cache replay does not recheck remote files;
 change the prompt/input or omit resume when those files have changed.
 
+Resume also compares the effective model, tool allowlist, and local working
+directory. Repeat the intended defaults when resuming. Journals from the older
+cache format remain readable, but their calls rerun: those keys did not record
+enough information to establish equivalent execution settings.
+
 `maxConcurrent` is a positive integer tool input (default 16) shared across
 all computers and stages, independent of the orchestrator's CPU count. Select
 existing workers again in later stages to reuse them. Workflows close their

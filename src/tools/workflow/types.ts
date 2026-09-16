@@ -127,6 +127,8 @@ export interface RunWorkflowOptions {
   args?: unknown;
   /** Advisory USD limit; completed reported costs gate new calls, not in-flight spend. */
   budgetUsd?: number;
+  /** Resolved backend defaults; included in each call's resume identity. */
+  agentDefaults?: Pick<AgentCallOptions, "model" | "allowedTools" | "cwd">;
   /** Default existing computer for all calls. Omit for local execution. */
   computer?: WorkflowComputer;
   /** Max concurrently running queries across all computers. Default 16, independent of CPUs. */

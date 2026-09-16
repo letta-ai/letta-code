@@ -38,8 +38,12 @@ import {
   workflowMaxConcurrent,
 } from "@/tools/workflow/placement";
 import { loadAgentSdk } from "@/tools/workflow/sdk-loader";
-import { SdkSubagentPool } from "@/tools/workflow/sdk-spawner";
+import {
+  DEFAULT_ALLOWED_TOOLS,
+  SdkSubagentPool,
+} from "@/tools/workflow/sdk-spawner";
 import type {
+  RunWorkflowOptions,
   SubagentSpawner,
   WorkflowComputer,
   WorkflowExecutionResult,
@@ -87,6 +91,7 @@ interface WorkflowResult {
 
 /** What the tool needs from a subagent backend; the SDK pool in production. */
 export interface WorkflowSpawnerHandle {
+  agentDefaults?: RunWorkflowOptions["agentDefaults"];
   spawner: SubagentSpawner;
   cleanup(): Promise<void>;
 }
@@ -95,7 +100,7 @@ type SpawnerFactory = (args: WorkflowArgs) => Promise<WorkflowSpawnerHandle>;
 
 const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
 
-async function createSdkSpawner(
+export async function createSdkSpawner(
   args: WorkflowArgs,
 ): Promise<WorkflowSpawnerHandle> {
   const sdk = await loadAgentSdk();
@@ -106,16 +111,21 @@ async function createSdkSpawner(
           conversationId: getConversationId(),
         })
       ).handle;
+  const agentDefaults = {
+    cwd: process.cwd(),
+    ...(parentModel ? { model: parentModel } : {}),
+    allowedTools: args.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS],
+  };
   const client = sdk.createClient("local");
   const pool = new SdkSubagentPool(client, {
-    cwd: process.cwd(),
+    ...agentDefaults,
     createCloudClient: (computer) => sdk.createClient("cloud", computer),
-    ...(parentModel ? { model: parentModel } : {}),
-    ...(Array.isArray(args.allowedTools) && args.allowedTools.length > 0
-      ? { allowedTools: args.allowedTools }
-      : {}),
   });
-  return { spawner: pool.spawner, cleanup: () => pool.cleanup() };
+  return {
+    agentDefaults,
+    spawner: pool.spawner,
+    cleanup: () => pool.cleanup(),
+  };
 }
 
 let spawnerFactory: SpawnerFactory = createSdkSpawner;
@@ -155,7 +165,7 @@ export function formatWorkflowProgressLine(
 function truncateResult(text: string): string {
   if (text.length <= MAX_NOTIFICATION_RESULT_CHARS) return text;
   const notice =
-    "\n\n[Workflow result truncated. Read the run's journal.jsonl or the task output file for the full value.]";
+    "\n\n[Workflow result truncated. Read the task output file for the full value.]";
   return `${text.slice(0, MAX_NOTIFICATION_RESULT_CHARS - notice.length)}${notice}`;
 }
 
@@ -229,7 +239,7 @@ function formatCompletionResult(run: WorkflowExecutionResult): string {
     "If the result above is empty or unexpected, read that file BEFORE diagnosing — do not assume agents returned non-empty results.",
     `To re-run with edited post-processing: Workflow({scriptPath: "${join(run.executionDir, "script.js")}", resumeFromExecutionId: "${run.executionId}"}) — unchanged agents replay from cache.`,
   ].join("\n");
-  return truncateResult(`${payload}\n\n${diagnostics}`);
+  return `${payload}\n\n${diagnostics}`;
 }
 
 function queueCompletion(params: {
@@ -268,7 +278,7 @@ function queueCompletion(params: {
       status,
       summary,
       result: run
-        ? formatCompletionResult(run)
+        ? truncateResult(formatCompletionResult(run))
         : `Workflow failed: ${error ?? "unknown error"}`,
       outputFile,
       usage: {
@@ -278,6 +288,7 @@ function queueCompletion(params: {
     }),
     agentId: scope?.agentId,
     conversationId: scope?.conversationId,
+    actingUserId: scope?.actingUserId,
   });
 }
 
@@ -417,6 +428,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     args: normalizeWorkflowArgs(args.args),
     executionId,
     executionsDir,
+    agentDefaults: handle.agentDefaults,
     computer: args.computer,
     maxConcurrent: args.maxConcurrent,
     budgetUsd: typeof args.budgetUsd === "number" ? args.budgetUsd : undefined,

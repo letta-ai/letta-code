@@ -77,19 +77,17 @@ export async function runWorkflow(
     journal.loadReplayCache(executionsDir, options.resumeFromExecutionId);
   }
 
-  const emit = (event: WorkflowProgressEvent) => options.onProgress?.(event);
   const abortController = new AbortController();
   const externalSignal = options.signal;
-  if (externalSignal) {
-    if (externalSignal.aborted) abortController.abort(externalSignal.reason);
-    else
-      externalSignal.addEventListener(
-        "abort",
-        () => abortController.abort(externalSignal.reason),
-        { once: true },
-      );
-  }
+  const forwardAbort = () => abortController.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) forwardAbort();
+  else externalSignal?.addEventListener("abort", forwardAbort, { once: true });
   const signal = abortController.signal;
+  let finished = false;
+  const emit = (event: WorkflowProgressEvent) => {
+    if (!finished && !signal.aborted) options.onProgress?.(event);
+  };
+  const sleepers = new Map<ReturnType<typeof setTimeout>, () => void>();
 
   const maxTotalAgents = options.maxTotalAgents ?? 1000;
   const semaphore = new Semaphore(maxConcurrent);
@@ -143,13 +141,22 @@ export async function runWorkflow(
     const selected = normalizeWorkflowComputer(
       opts.computer === undefined ? computer : opts.computer,
     );
-    // Preserve old local cache keys while including effective remote defaults.
     if (selected === "local") delete opts.computer;
     else opts.computer = selected;
+    const defaults = options.agentDefaults;
+    opts.model ??= defaults?.model;
+    opts.allowedTools ??= defaults?.allowedTools;
+    // The orchestrator's working directory is meaningful only locally.
+    if (selected === "local") opts.cwd ??= defaults?.cwd;
     const callIndex = callCounter++;
     const label = opts.label ?? defaultLabel(prompt);
     const phase = opts.phase ?? currentPhase;
-    const cacheKey = agentCallCacheKey(prompt, normalizeOptionsForCache(opts));
+    // Old journals omitted backend defaults, so their identities cannot safely
+    // prove equivalence. Version the key rather than falling back to old hits.
+    const cacheKey = agentCallCacheKey(prompt, {
+      version: 2,
+      options: normalizeOptionsForCache(opts),
+    });
     const occurrence = occurrences.get(cacheKey) ?? 0;
     occurrences.set(cacheKey, occurrence + 1);
 
@@ -183,6 +190,7 @@ export async function runWorkflow(
         { prompt, options: opts, cacheKey, occurrence, callIndex },
         signal,
       );
+      if (signal.aborted) throw new Error("Workflow aborted.");
       if (outcome.costUsd === undefined || !Number.isFinite(outcome.costUsd)) {
         costUnknown = true;
       } else {
@@ -283,8 +291,22 @@ export async function runWorkflow(
   }
 
   function sleep(ms: unknown): Promise<void> {
+    if (signal.aborted) throw new Error("Workflow aborted.");
     const delay = typeof ms === "number" && ms >= 0 ? ms : 0;
-    return new Promise((resolve) => setTimeout(resolve, delay));
+    const pending = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        sleepers.delete(timer);
+        resolve();
+      }, delay);
+      sleepers.set(timer, () => {
+        clearTimeout(timer);
+        reject(new Error("Workflow aborted."));
+      });
+    });
+    // A script may start a sleep without awaiting it. Cancellation must not
+    // turn that authoring mistake into a process-level unhandled rejection.
+    void pending.catch(() => {});
+    return pending;
   }
 
   function executeScript(
@@ -293,6 +315,7 @@ export async function runWorkflow(
     depth: number,
     scriptName: string,
   ): Promise<unknown> {
+    if (signal.aborted) throw new Error("Workflow aborted.");
     // Child workflows share this run's hooks, semaphore, budget, journal,
     // and abort signal — their agents count toward the same caps and their
     // cached results live in the same journal. Nesting is one level only.
@@ -364,21 +387,41 @@ export async function runWorkflow(
     }
   }
 
-  const result = await executeScript(
-    options.script,
-    options.args,
-    0,
-    meta.name,
-  );
-
-  return {
-    executionId,
-    meta,
-    result,
-    executionDir: journal.executionDir,
-    agentsSpawned,
-    cacheHits,
-    totalCostUsd: costUnknown ? null : spentUsd,
-    totalTokens,
+  let rejectCancellation: (error: Error) => void = () => {};
+  const cancellation = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = reject;
+  });
+  const onAbort = () => {
+    rejectCancellation(new Error("Workflow aborted."));
+    for (const cancelSleep of sleepers.values()) cancelSleep();
+    sleepers.clear();
   };
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    if (signal.aborted) throw new Error("Workflow aborted.");
+    const result = await Promise.race([
+      executeScript(options.script, options.args, 0, meta.name),
+      cancellation,
+    ]);
+    if (signal.aborted) throw new Error("Workflow aborted.");
+    return {
+      executionId,
+      meta,
+      result,
+      executionDir: journal.executionDir,
+      agentsSpawned,
+      cacheHits,
+      totalCostUsd: costUnknown ? null : spentUsd,
+      totalTokens,
+    };
+  } finally {
+    finished = true;
+    signal.removeEventListener("abort", onAbort);
+    externalSignal?.removeEventListener("abort", forwardAbort);
+    // Also stop work a script launched without awaiting before returning or
+    // throwing. Detached continuations cannot publish progress after finish.
+    abortController.abort();
+    for (const cancelSleep of sleepers.values()) cancelSleep();
+    sleepers.clear();
+  }
 }

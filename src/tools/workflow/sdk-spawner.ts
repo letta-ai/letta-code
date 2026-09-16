@@ -39,7 +39,7 @@ export interface SdkSpawnerConfig {
   createCloudClient?: (computer: WorkflowComputer) => SdkClient;
 }
 
-const DEFAULT_ALLOWED_TOOLS = ["Read", "Grep", "Glob"];
+export const DEFAULT_ALLOWED_TOOLS = ["Read", "Grep", "Glob"];
 
 /**
  * Runaway guards. Live runs showed models re-issuing the identical tool call
