@@ -13,6 +13,7 @@ import { useState } from "react";
 import { configureBackendMode } from "@/backend";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import type { ChannelGatewaySupervisor } from "@/channels/gateway-supervisor";
+import { resolveChannelGatewayTelemetryTypes } from "@/channels/gateway-telemetry-types";
 import {
   type ChannelRestoreAgentScope,
   parseChannelRestoreAgentScope,
@@ -397,21 +398,22 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         .map((s) => s.trim())
         .filter(Boolean)
     : [];
-  const channelTelemetryTypes = restoreEnabledChannels
-    ? await (async (): Promise<string[]> => {
-        try {
-          const { listEnabledChannelIds } = await import("@/channels/service");
-          return listEnabledChannelIds({ restoreAgentScope });
-        } catch (error) {
-          console.warn(
-            `Unable to enumerate enabled channels for telemetry: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-          return [];
-        }
-      })()
-    : channelNames;
+  const readChannelGatewayTelemetryTypes = (): string[] => {
+    try {
+      return resolveChannelGatewayTelemetryTypes({
+        restoreEnabledChannels,
+        channelNames,
+        restoreAgentScope,
+      });
+    } catch (error) {
+      console.warn(
+        `Unable to enumerate enabled channels for telemetry: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return [];
+    }
+  };
 
   // Determine connection name
   let connectionName: string;
@@ -601,7 +603,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
               restore_mode: restoreEnabledChannels
                 ? "enabled_accounts"
                 : "explicit_channels",
-              channel_types: channelTelemetryTypes,
+              channel_types: readChannelGatewayTelemetryTypes(),
               duration_ms: event.durationMs,
               delay_ms: event.delayMs,
               exit_code: event.exitCode,

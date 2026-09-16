@@ -346,6 +346,53 @@ test("an in-flight command fails once before the replacement becomes available",
   await supervisor.close();
 });
 
+test("a replacement that ignores SIGTERM is force-killed and consumes the next retry", async () => {
+  let spawnCount = 0;
+  let reportThirdReady: (() => void) | undefined;
+  const thirdReady = new Promise<void>((resolve) => {
+    reportThirdReady = resolve;
+  });
+  const spawnProcess = (() => {
+    spawnCount += 1;
+    const process = createControllableGatewayProcess();
+    const thisSpawn = spawnCount;
+    if (thisSpawn === 2) {
+      Object.assign(process.child, {
+        kill: (signal?: NodeJS.Signals | number) => {
+          if (signal !== "SIGKILL") return true;
+          process.exit(1, "SIGKILL");
+          return true;
+        },
+      });
+    }
+    queueMicrotask(() => {
+      if (thisSpawn === 2) return;
+      process.stdout.write("CHANNEL_GATEWAY_READY\n");
+      if (thisSpawn === 1) setTimeout(() => process.exit(7), 0);
+      if (thisSpawn === 3) reportThirdReady?.();
+    });
+    return process.child;
+  }) as typeof spawn;
+  const supervisor = await startChannelGatewaySupervisor({
+    appServerUrl: "ws://127.0.0.1:1/ws",
+    channelNames: ["telegram"],
+    launcher: { command: "fixture" },
+    spawnProcess,
+    restartPolicy: {
+      maxAttempts: 2,
+      initialDelayMs: 1,
+      maxDelayMs: 1,
+      readyTimeoutMs: 5,
+      shutdownTimeoutMs: 5,
+      stableAfterMs: 1000,
+    },
+  });
+
+  await thirdReady;
+  expect(spawnCount).toBe(3);
+  await supervisor.close();
+});
+
 test("a replacement that never becomes ready consumes the next retry", async () => {
   let spawnCount = 0;
   let reportThirdReady: (() => void) | undefined;

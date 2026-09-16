@@ -27,6 +27,7 @@ export interface ChannelGatewayRestartPolicy {
   maxDelayMs: number;
   stableAfterMs: number;
   readyTimeoutMs: number;
+  shutdownTimeoutMs: number;
 }
 
 export interface ChannelGatewayLifecycleEvent {
@@ -139,6 +140,10 @@ export async function startChannelGatewaySupervisor(
       1,
       options.restartPolicy?.readyTimeoutMs ?? STARTUP_TIMEOUT_MS,
     ),
+    shutdownTimeoutMs: Math.max(
+      1,
+      options.restartPolicy?.shutdownTimeoutMs ?? SHUTDOWN_TIMEOUT_MS,
+    ),
   };
   let child: ChildProcess | null = null;
   let readyChild: ChildProcess | null = null;
@@ -229,12 +234,27 @@ export async function startChannelGatewaySupervisor(
     let terminationHandled = false;
     let forcedTerminationError: Error | null = null;
     let readyTimeout: ReturnType<typeof setTimeout> | null = null;
+    let readyForceKillTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    function clearReadyTimeouts(): void {
+      if (readyTimeout) clearTimeout(readyTimeout);
+      readyTimeout = null;
+      if (readyForceKillTimeout) clearTimeout(readyForceKillTimeout);
+      readyForceKillTimeout = null;
+    }
+
     if (initialReadyCompleted) {
       readyTimeout = setTimeout(() => {
+        if (generationReady || terminationHandled) return;
         forcedTerminationError = new Error(
           `ChannelGateway restart attempt ${launchedRestartAttempt} timed out waiting for ready`,
         );
         terminateChild(launchedChild, "SIGTERM");
+        readyForceKillTimeout = setTimeout(() => {
+          if (generationReady || terminationHandled) return;
+          terminateChild(launchedChild, "SIGKILL");
+        }, restartPolicy.shutdownTimeoutMs);
+        readyForceKillTimeout.unref?.();
       }, restartPolicy.readyTimeoutMs);
       readyTimeout.unref?.();
     }
@@ -245,8 +265,7 @@ export async function startChannelGatewaySupervisor(
     ): void => {
       if (terminationHandled) return;
       terminationHandled = true;
-      if (readyTimeout) clearTimeout(readyTimeout);
-      readyTimeout = null;
+      clearReadyTimeouts();
       clearStableTimer();
       if (child === launchedChild) child = null;
       if (readyChild === launchedChild) readyChild = null;
@@ -286,8 +305,7 @@ export async function startChannelGatewaySupervisor(
         if (line === CHANNEL_GATEWAY_READY_SIGNAL) {
           if (generationReady) continue;
           generationReady = true;
-          if (readyTimeout) clearTimeout(readyTimeout);
-          readyTimeout = null;
+          clearReadyTimeouts();
           readyChild = launchedChild;
           if (!initialReadyCompleted) {
             initialReadyCompleted = true;
