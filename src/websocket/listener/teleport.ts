@@ -82,21 +82,23 @@ export function clearExpectedInboundTeleport(
 
 export function buildTeleportContinuationMessages(params: {
   teleportId: string;
-  approvals: NonNullable<TeleportContinuation["approvals"]>;
+  approvals?: TeleportContinuation["approvals"];
 }): IncomingMessage["messages"] {
-  return [
-    {
+  const messages: IncomingMessage["messages"] = [];
+  if (params.approvals?.length) {
+    messages.push({
       type: "approval",
       approvals: params.approvals,
       otid: params.teleportId,
-    },
-    {
-      role: "user",
-      content:
-        "<system-reminder>Teleportation to this environment is complete. Continue the existing task from this environment now.</system-reminder>",
-      otid: `${params.teleportId}:continue`,
-    },
-  ];
+    });
+  }
+  messages.push({
+    role: "user",
+    content:
+      "<system-reminder>Teleportation to this environment is complete. Continue the existing task from this environment now.</system-reminder>",
+    otid: `${params.teleportId}:continue`,
+  });
+  return messages;
 }
 
 function escapeSystemReminderText(value: string): string {

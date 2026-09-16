@@ -12,6 +12,8 @@ export interface EnqueueReceipt {
   client_message_id: string;
   workflow_id: string;
   super_run_id: string;
+  /** Listener selected for a managed Agent launch, used only for cancellation. */
+  connection_id?: string;
 }
 
 export interface EnqueueConversationInput {

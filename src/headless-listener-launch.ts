@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import WebSocket from "ws";
 import {
   type AppServerClient,
@@ -10,13 +9,13 @@ import {
 import type { Backend } from "@/backend";
 import {
   dequeueConversationMessage,
+  type EnqueueReceipt,
   enqueueConversationMessage,
   getLatestConversationSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
 import { getApiRequestConfig } from "@/backend/api/request";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
-import type { UsageStatistics } from "@/types/protocol";
 import type {
   AgentRuntimeScope,
   ConversationRuntimeScope,
@@ -25,7 +24,10 @@ import type {
   RuntimeStartCommand,
   TurnFinishedMessage,
 } from "@/types/protocol_v2";
-import { resolveEnvironmentMaxWaitMs } from "./headless-environment-response";
+import {
+  type ListenerLaunchResult,
+  resolveEnvironmentMaxWaitMs,
+} from "./headless-environment-response";
 
 export function listenerControlUrl(
   baseUrl: string,
@@ -92,6 +94,50 @@ export async function cancelListenerInput(params: {
   return response.aborted;
 }
 
+/** Reconnect only for explicit cancellation, never to observe task progress. */
+export async function cancelAcceptedListenerInput(
+  receipt: EnqueueReceipt,
+): Promise<boolean> {
+  const removed = await dequeueConversationMessage(
+    {
+      agentId: receipt.agent_id,
+      conversationId: receipt.conversation_id,
+      clientMessageId: receipt.client_message_id,
+    },
+    AbortSignal.timeout(10_000),
+  );
+  if (removed.status === "dequeued" || removed.status === "already_dequeued")
+    return true;
+  if (!receipt.connection_id) return false;
+  const scope = {
+    agent_id: receipt.agent_id,
+    conversation_id: receipt.conversation_id,
+  };
+  const client = await createListenerClient(receipt.connection_id, scope);
+  let loop: LoopState | undefined;
+  const detach = client.onMessage((message) => {
+    if (
+      message.type === "update_loop_status" &&
+      message.runtime?.agent_id === scope.agent_id &&
+      message.runtime.conversation_id === scope.conversation_id
+    )
+      loop = message.loop_status;
+  });
+  try {
+    await client.connect();
+    return await cancelListenerInput({
+      client,
+      scope,
+      clientMessageId: receipt.client_message_id,
+      dequeue: async () => removed,
+      readState: () => ({ loop, cancelled: false }),
+    });
+  } finally {
+    detach();
+    client.close();
+  }
+}
+
 /** The CLI remains the caller; the existing listener owns model and tool execution. */
 export async function launchListenerConversation(
   params: {
@@ -105,6 +151,12 @@ export async function launchListenerConversation(
     skillSources?: RuntimeStartCommand["skill_sources"];
     onMessage?: (message: MessageDelta) => void;
     signal?: AbortSignal;
+    /**
+     * Return the enqueue receipt as soon as Cloud accepts the send instead of
+     * waiting for the remote turn. The caller tracks completion through the
+     * Cloud super-run status APIs; nothing in this process keeps waiting.
+     */
+    noWait?: boolean;
   },
   deps: {
     client?: AppServerClient;
@@ -115,12 +167,7 @@ export async function launchListenerConversation(
     pollMs?: number;
     waitDeadline?: AbortSignal;
   } = {},
-): Promise<{
-  text: string;
-  stopReason: StopReasonType | null;
-  runIds: string[];
-  usage: UsageStatistics;
-}> {
+): Promise<ListenerLaunchResult> {
   const client =
     deps.client ??
     (await createListenerClient(params.connectionId, params.scope));
@@ -242,6 +289,11 @@ export async function launchListenerConversation(
       },
       AbortSignal.timeout(30_000),
     );
+    if (params.noWait)
+      return {
+        status: "queued",
+        receipt: { ...accepted, connection_id: params.connectionId },
+      };
     while (true) {
       if (disconnected)
         throw new Error(
@@ -324,6 +376,7 @@ export async function launchListenerConversation(
                       .join("\n");
               if (text.trim())
                 return {
+                  status: "completed",
                   text,
                   stopReason: run.stop_reason ?? null,
                   runIds: [...runIds],

@@ -301,6 +301,12 @@ export function buildModelSettings(
     (settings as Record<string, unknown>).reasoning_effort =
       updateArgs.reasoning_effort;
   }
+  // pi-ai owns provider-specific request options. Preserve explicit local
+  // overrides for its samplingParams seam; never send these to Cloud's schema.
+  if (localModelCatalog && isRecord(updateArgs?.sampling_params)) {
+    (settings as Record<string, unknown>).sampling_params =
+      updateArgs.sampling_params;
+  }
   return settings;
 }
 

@@ -368,6 +368,20 @@ async function handleIncomingMessageInner(
         break;
       }
       if (stopReason === "end_turn") {
+        const pendingTeleport = agentId
+          ? tp.claimPendingTeleportAtBoundary({
+              listener: runtime.listener,
+              agentId,
+              conversationId,
+              activeTurn: true,
+            })
+          : null;
+        if (pendingTeleport) {
+          noteFinalization(
+            tp.finishTeleport(runtime, turnLease, pendingTeleport),
+          );
+          return;
+        }
         const transcriptLines = toLines(buffers);
         const completion = await completeSuccessfulListenerTurn({
           runtime,
