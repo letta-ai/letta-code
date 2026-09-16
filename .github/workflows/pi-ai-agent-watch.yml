@@ -131,7 +131,7 @@ jobs:
       - name: Ask Amelia to review pi-ai release
         id: review
         if: steps.detect.outputs.should_run_agent == 'true'
-        uses: letta-ai/letta-code-action@244cc9e80c77cfebdb3ec8e146e018a5fe0af027
+        uses: letta-ai/letta-code-action@b7e51edb0643e67ae74327a1cdf0c332e549f8fc
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
           github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
