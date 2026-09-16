@@ -704,9 +704,10 @@ export function __testFailNextRefreshSchedulerLease(fail = true): void {
 }
 
 /**
- * Confirm we still hold the lease. Scoped holders also refresh the mixed-version
- * `scheduler_owner` tombstone so a dead sibling cannot let an old binary claim
- * `all` and strip `scheduler_owners`.
+ * Confirm we still hold the lease. Scoped holders restore a dead mixed-version
+ * `scheduler_owner` tombstone here so a crashed sibling cannot leave a window
+ * for an old binary to claim `all` and strip `scheduler_owners`. Scoped
+ * schedulers call this on a heartbeat, not only the 60s fire tick.
  */
 export function refreshSchedulerLease(
   token: string,

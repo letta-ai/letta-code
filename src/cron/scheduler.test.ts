@@ -138,6 +138,45 @@ test("startScheduler does not arm intervals after the initial tick loses the lea
   }
 });
 
+test("scoped startScheduler heartbeats the mixed-version tombstone between fire ticks", () => {
+  const delays: number[] = [];
+  const armed: ReturnType<typeof setInterval>[] = [];
+  const realSetInterval = globalThis.setInterval;
+  globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+    const handle = realSetInterval(...args);
+    armed.push(handle);
+    delays.push(Number(args[1] ?? 0));
+    return handle;
+  }) as typeof setInterval;
+
+  process.env[CRON_SCHEDULER_SCOPE_ENV] = "local";
+  try {
+    startScheduler(
+      {} as ListenerTransport,
+      {
+        connectionId: "conn-tombstone",
+        wsUrl: "wss://example.test/ws",
+        deviceId: "device-tombstone",
+        connectionName: "listener-tombstone",
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+      },
+      async () => {},
+    );
+
+    expect(isSchedulerRunning()).toBe(true);
+    expect(delays).toEqual(expect.arrayContaining([1_000, 60_000]));
+    expect(delays).toHaveLength(3);
+  } finally {
+    stopScheduler();
+    globalThis.setInterval = realSetInterval;
+    for (const handle of armed) {
+      clearInterval(handle);
+    }
+  }
+});
+
 // ── Helper ──────────────────────────────────────────────────────────
 
 function makeInput(overrides: Partial<AddTaskInput> = {}): AddTaskInput {

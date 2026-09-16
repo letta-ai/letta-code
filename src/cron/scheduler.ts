@@ -86,6 +86,12 @@ interface SchedulerState {
   lastMinuteKey: string;
   /** Pending jitter-delayed timers — cleared on stop/lease loss. */
   pendingTimers: Set<NodeJS.Timeout>;
+  /**
+   * Scoped-only heartbeat that restores a mixed-version `scheduler_owner`
+   * tombstone if the sibling named there has died. Independent of the 60s
+   * fire tick so a legacy all-claim cannot sneak in between fires.
+   */
+  tombstoneInterval: NodeJS.Timeout | null;
 }
 
 let schedulerState: SchedulerState | null = null;
@@ -124,6 +130,7 @@ let listenerFireContext: {
 
 const TICK_INTERVAL_MS = 60_000;
 const GC_INTERVAL_MS = 60 * 60_000; // 1 hour
+const TOMBSTONE_HEARTBEAT_MS = 1_000;
 const LEASE_RETRY_MS = 30_000; // 30 seconds between lease claim retries
 const MAX_LEASE_RETRIES = 3;
 const NEW_CONVERSATION_TARGET = "new";
@@ -685,6 +692,7 @@ export function startScheduler(
     firedThisMinute: new Set(),
     lastMinuteKey: minuteKey(now),
     pendingTimers: new Set(),
+    tombstoneInterval: null,
   };
 
   schedulerState = state;
@@ -715,6 +723,15 @@ export function startScheduler(
       );
     }
   }, GC_INTERVAL_MS);
+
+  if (scope !== "all") {
+    state.tombstoneInterval = setInterval(() => {
+      if (!refreshSchedulerLease(state.token, state.scope)) {
+        logScheduler(opts, "Scheduler lease lost. Stopping.");
+        stopScheduler();
+      }
+    }, TOMBSTONE_HEARTBEAT_MS);
+  }
 }
 
 /**
@@ -726,6 +743,9 @@ export function stopScheduler(): void {
 
   clearInterval(schedulerState.tickInterval);
   clearInterval(schedulerState.gcInterval);
+  if (schedulerState.tombstoneInterval) {
+    clearInterval(schedulerState.tombstoneInterval);
+  }
 
   // Cancel all jitter-delayed fires that haven't executed yet.
   for (const handle of schedulerState.pendingTimers) {

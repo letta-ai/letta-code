@@ -554,6 +554,39 @@ describe("scheduler lease", () => {
     );
   });
 
+  test("surviving scoped owner restores a dead sibling tombstone before a legacy all-claim", () => {
+    const cloudToken = claimSchedulerLease("cloud");
+    const localToken = claimSchedulerLease("local");
+    const current = readCronFile();
+    expect(current.scheduler_owner?.token).toBe(cloudToken);
+
+    writeFileSync(
+      _CRON_PATH,
+      JSON.stringify(
+        {
+          version: 1,
+          scheduler_owner: deadSchedulerOwner(cloudToken),
+          scheduler_owners: {
+            cloud: deadSchedulerOwner(cloudToken),
+            local: current.scheduler_owners.local,
+          },
+          tasks: [],
+        },
+        null,
+        2,
+      ),
+    );
+
+    expect(refreshSchedulerLease(localToken, "local")).toBe(true);
+    expect(readCronFile().scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid, token: localToken }),
+    );
+    expect(() => simulateLegacyClaimSchedulerLease()).toThrow(
+      "Scheduler lease held",
+    );
+    expect(readCronFile().scheduler_owners.local?.token).toBe(localToken);
+  });
+
   test("hasLiveSchedulerOwner matches a true all-owner or this backend only", () => {
     const empty = { scheduler_owner: null, scheduler_owners: {} };
     expect(hasLiveSchedulerOwner(empty, "local")).toBe(false);
