@@ -103,7 +103,7 @@ test("cold existing thread continues the host's waking status through reasoning 
   h.gateway.close();
 });
 
-test("warm existing thread stays quiet through reasoning and MessageChannel", async () => {
+test("queued existing-thread input starts thinking and stays generic through reasoning and MessageChannel", async () => {
   const h = await setup();
   await h.submit();
   h.client.emit(
@@ -113,9 +113,10 @@ test("warm existing thread stays quiet through reasoning and MessageChannel", as
     }),
   );
   await h.tool("MessageChannel");
+  expect(h.statuses()).toEqual(["is thinking..."]);
   h.client.emit(makeTurnFinished("end_turn"));
   await Bun.sleep(0);
-  expect(h.statuses().every((status) => status === "")).toBe(true);
+  expect(h.statuses()).toEqual(["is thinking...", ""]);
   h.gateway.close();
 });
 
@@ -217,7 +218,7 @@ for (const failure of ["rejected", "throw"] as const) {
   });
 }
 
-test("a reply closes the visibility gate even with another input queued", async () => {
+test("a queued follow-up restarts thinking after an intermediate reply", async () => {
   const h = await setup();
   await h.submit();
   await h.tool();
@@ -239,12 +240,7 @@ test("a reply closes the visibility gate even with another input queued", async 
     ]),
   );
   await h.tool("MessageChannel");
-  expect(
-    h
-      .statuses()
-      .slice(count)
-      .every((status) => status === ""),
-  ).toBe(true);
+  expect(h.statuses().slice(count)).toEqual(["is thinking..."]);
   h.gateway.close();
 });
 
@@ -277,12 +273,7 @@ for (const stopReason of ["cancelled", "error", "tool_rule", "end_turn"]) {
     expect(h.statuses().at(-1)).toBe("");
     const count = h.statuses().length;
     await h.submit({ ...h.followup(), clientMessageId: "later" });
-    expect(
-      h
-        .statuses()
-        .slice(count)
-        .every((status) => status === ""),
-    ).toBe(true);
+    expect(h.statuses().slice(count)).toEqual(["is thinking..."]);
     h.gateway.close();
   });
 }
@@ -306,23 +297,26 @@ test("approval continuation retains activity until a reply or terminal event", a
   h.gateway.close();
 });
 
-test("retrying accepted cold input does not restart thinking after a reply", async () => {
+test("known root-shaped retries stay quiet after a visible reply", async () => {
   const h = await setup();
-  const cold = { sources: [{ ...h.source, showStartupStatus: true }] };
-  await h.submit(cold);
+  const source = {
+    ...h.source,
+    messageId: "1712800000.000100",
+    threadId: "1712800000.000100",
+    showStartupStatus: true,
+  };
+  await h.adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+  expect(h.statuses()).toEqual(["is thinking..."]);
   await h.adapter.sendMessage({
     channel: "slack",
-    chatId: h.source.chatId,
-    threadId: h.source.threadId,
-    agentId: h.source.agentId,
-    conversationId: h.source.conversationId,
+    chatId: source.chatId,
+    threadId: source.threadId,
+    agentId: source.agentId,
+    conversationId: source.conversationId,
     text: "Hello",
   });
-  h.client.emit(makeTurnFinished("end_turn"));
-  await Bun.sleep(0);
-  const count = h.statuses().length;
-  await h.submit(cold);
-  expect(h.statuses()).toHaveLength(count);
+  await h.adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+  expect(h.statuses()).toEqual(["is thinking..."]);
   h.gateway.close();
 });
 

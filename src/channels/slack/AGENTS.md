@@ -31,11 +31,12 @@ state render only through `assistant.threads.setStatus`.
   not overwrite the last concrete title.
 - Messages deactivate local status state because Slack clears status on post.
 - Reactions do not deactivate status.
-- The status controller owns lifecycle visibility. Warm existing-thread inputs
-  stay quiet until concrete non-MessageChannel tool activity; top-level mentions
-  and inputs whose host already showed startup status begin with thinking.
-- Once visible, activity is refreshed on new input without replacing its title.
-  A host's waking status must transition to thinking without an empty write.
+- The status controller owns lifecycle visibility. Queued follow-ups in
+  established threads begin with thinking when the controller is idle; known
+  root-shaped retries after a visible reply stay quiet.
+- Once visible, activity is refreshed on new input without replacing its title,
+  so active concrete titles survive queued follow-ups. A host's waking status
+  must transition to thinking without an empty write.
 - `end_turn` and `cancelled` post nothing. Clear status only for sources with no
   remaining work; cancelling queued input must not clear a still-active turn.
 - `requires_approval` is a continuation boundary, not a terminal event.
