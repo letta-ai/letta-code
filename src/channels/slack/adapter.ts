@@ -208,6 +208,7 @@ export function createSlackAdapter(
     if (event.type === "queued") {
       const isFlatThreadOpener = isSlackFlatChannelThreadOpener(event.source);
       const showStartupStatus =
+        event.source.showStartupStatus ||
         !isFlatThreadOpener ||
         (isNonEmptyString(event.source.messageId) &&
           !agentThreadTracker.has(event.source.chatId, event.source.messageId));

@@ -303,7 +303,6 @@ test("known root-shaped retries stay quiet after a visible reply", async () => {
     ...h.source,
     messageId: "1712800000.000100",
     threadId: "1712800000.000100",
-    showStartupStatus: true,
   };
   await h.adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
   expect(h.statuses()).toEqual(["is thinking..."]);
@@ -316,6 +315,29 @@ test("known root-shaped retries stay quiet after a visible reply", async () => {
     text: "Hello",
   });
   await h.adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+  expect(h.statuses()).toEqual(["is thinking..."]);
+  h.gateway.close();
+});
+
+test("explicit startup status wins for a known root-shaped source", async () => {
+  const h = await setup();
+  const source = {
+    ...h.source,
+    messageId: "1712800000.000100",
+    threadId: "1712800000.000100",
+  };
+  await h.adapter.sendMessage({
+    channel: "slack",
+    chatId: source.chatId,
+    threadId: source.threadId,
+    agentId: source.agentId,
+    conversationId: source.conversationId,
+    text: "Hello",
+  });
+  await h.adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: { ...source, showStartupStatus: true },
+  });
   expect(h.statuses()).toEqual(["is thinking..."]);
   h.gateway.close();
 });
