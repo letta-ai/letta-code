@@ -112,6 +112,8 @@ function mount(localModeDisabledReason?: string) {
     {
       stdout: stdout as CaptureStream & NodeJS.WriteStream,
       stdin,
+      // CI otherwise buffers dynamic frames until unmount.
+      debug: true,
       patchConsole: false,
       exitOnCtrlC: false,
     },
