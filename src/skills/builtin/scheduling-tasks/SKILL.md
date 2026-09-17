@@ -1,6 +1,6 @@
 ---
 name: scheduling-tasks
-description: Schedules reminders and recurring tasks via the letta cron CLI. Use when the user asks to be reminded of something, wants periodic work or check-ins, or needs to list, inspect, replace, or cancel scheduled tasks.
+description: Schedules reminders, recurring tasks, and channel-bound outreach via the letta cron CLI. Use when the user asks to be reminded of something, wants periodic work or check-ins, wants a scheduled Slack/iMessage/Teams message, or needs to list, inspect, replace, or cancel scheduled tasks.
 ---
 
 # Scheduling Tasks
@@ -115,6 +115,59 @@ Then verify the binding explicitly:
 
 ```bash
 letta cron list --agent "$LETTA_AGENT_ID" --conversation self
+```
+
+### Preserve Channel Conversation Continuity
+
+If a scheduled turn will send through `MessageChannel` and the recipient may
+reply, run it in the channel route's existing conversation. A fresh scheduled
+conversation can deliver the outbound message, but the recipient's reply returns
+to the route conversation without the scheduled turn or tool result in context.
+
+- When the request arrived in the target Slack, iMessage, or Teams conversation,
+  pass `--conversation self`.
+- Never omit `--conversation` or pass `new` for a scheduled message that should
+  continue an existing channel conversation.
+- Include an explicit `MessageChannel` call in the scheduled prompt. An ordinary
+  assistant response is not a channel delivery.
+
+For scheduled iMessage outreach, resolve the exact paired route without printing
+phone numbers. From an iMessage turn, select the route whose `conversation_id`
+matches the current conversation:
+
+```bash
+route_json="$(
+  curl -fsS "$LETTA_BASE_URL/v1/agents/$AGENT_ID/imessage/connection" \
+    -H "Authorization: Bearer $LETTA_API_KEY" |
+    jq -cer --arg conversation_id "$CONVERSATION_ID" '
+      [.connections[] |
+        select(.conversation_id == $conversation_id and .status == "paired") |
+        {id, conversation_id, integration_id}] |
+      if length == 1 then .[0]
+      else error("expected exactly one paired iMessage route") end
+    '
+)"
+target_route_id="$(jq -r .id <<<"$route_json")"
+target_conversation_id="$(jq -r .conversation_id <<<"$route_json")"
+target_account_id="$(jq -r .integration_id <<<"$route_json")"
+```
+
+When scheduling from another conversation, select by the opaque paired
+connection ID advertised by `MessageChannel` instead: replace the `jq` selector
+with `.id == $route_id`, passing that ID through `--arg route_id`.
+
+Stop instead of guessing when the route is missing or ambiguous. Create the
+schedule with `--conversation "$target_conversation_id"`, and tell the scheduled
+agent to call `MessageChannel` with `channel="imessage"`,
+`chat_id="$target_route_id"`, and `accountId="$target_account_id"`. Never put a
+phone number in the prompt or command.
+
+After creation, verify the stored conversation binding:
+
+```bash
+letta cron list \
+  --agent "$AGENT_ID" \
+  --conversation "$target_conversation_id"
 ```
 
 ### Deleting or Replacing Tasks
