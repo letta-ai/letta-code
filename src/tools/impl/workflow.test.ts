@@ -1,8 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getBackend } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
+import { clearCapturedToolExecutionContexts } from "@/tools/manager";
+import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
 import {
   ANTHROPIC_DEFAULT_TOOLS,
   GEMINI_DEFAULT_TOOLS,
@@ -57,6 +60,26 @@ describe("Workflow tool toolsets", () => {
     expect(OPENAI_PASCAL_TOOLS).toContain("Workflow");
     expect(OPENAI_DEFAULT_TOOLS).not.toContain("Workflow");
     expect(GEMINI_DEFAULT_TOOLS).not.toContain("Workflow");
+  });
+
+  test("Letta exposes Workflow while explicit allowlists can exclude it", async () => {
+    try {
+      const normal = await prepareToolExecutionContextForResolvedTarget({
+        toolsetPreference: "letta",
+      });
+      expect(
+        normal.preparedToolContext.clientTools.some(
+          (tool) => tool.name === "Workflow",
+        ),
+      ).toBe(true);
+      const restricted = await prepareToolExecutionContextForResolvedTarget({
+        toolsetPreference: "letta",
+        clientToolAllowlist: ["Read"],
+      });
+      expect(restricted.preparedToolContext.loadedToolNames).toEqual(["Read"]);
+    } finally {
+      clearCapturedToolExecutionContexts();
+    }
   });
 });
 
@@ -163,6 +186,82 @@ describe("Workflow tool (background launch)", () => {
     } finally {
       await handle.cleanup();
     }
+  });
+
+  test.each([null, "agent-ambient"])(
+    "resolves the captured parent and conversation model with ambient agent %s",
+    async (agentId) => {
+      const backend = getBackend();
+      const retrieveAgent = spyOn(backend, "retrieveAgent").mockResolvedValue({
+        id: "agent-parent",
+        model: "anthropic/claude-sonnet-4-6",
+      } as Awaited<ReturnType<typeof backend.retrieveAgent>>);
+      const retrieveConversation = spyOn(
+        backend,
+        "retrieveConversation",
+      ).mockResolvedValue({
+        id: "conv-child",
+        model: "openai/gpt-4.1-mini",
+      } as Awaited<ReturnType<typeof backend.retrieveConversation>>);
+      try {
+        await runWithRuntimeContext(
+          { agentId, conversationId: "conv-ambient" },
+          async () => {
+            const handle = await createSdkSpawner({
+              parentScope: {
+                agentId: "agent-parent",
+                conversationId: "conv-child",
+              },
+            });
+            try {
+              expect(handle.agentDefaults?.model).toBe("openai/gpt-4.1-mini");
+              expect(retrieveAgent).toHaveBeenCalledWith("agent-parent");
+              expect(retrieveConversation).toHaveBeenCalledWith("conv-child");
+            } finally {
+              await handle.cleanup();
+            }
+          },
+        );
+      } finally {
+        retrieveConversation.mockRestore();
+        retrieveAgent.mockRestore();
+      }
+    },
+  );
+
+  test("local workers inherit the conversation directory rather than the process directory", async () => {
+    await runWithRuntimeContext({ workingDirectory: scratchpad }, async () => {
+      const handle = await createSdkSpawner({
+        model: "openai/gpt-4.1-mini",
+        parentScope: { agentId: "agent-parent", conversationId: "conv-parent" },
+      });
+      try {
+        expect(handle.agentDefaults?.cwd).toBe(scratchpad);
+        expect(process.cwd()).not.toBe(scratchpad);
+      } finally {
+        await handle.cleanup();
+      }
+    });
+  });
+
+  test("reads relative script paths from the conversation directory", async () => {
+    writeFileSync(join(scratchpad, "review.js"), SCRIPT);
+    installSpawner(gatedSpawner());
+    const result = await runWithRuntimeContext(
+      { workingDirectory: scratchpad },
+      () =>
+        workflow({
+          scriptPath: "review.js",
+          parentScope: {
+            agentId: "agent-parent",
+            conversationId: "conv-parent",
+          },
+        }),
+    );
+    expect(result.status).toBe("success");
+    releaseAgents?.();
+    await waitFor(() => cleanupCalls === 1);
+    expect(queuedMessages[0]?.text).toContain('"count": 2');
   });
 
   test("retains launch-time acting user through delayed completion", async () => {

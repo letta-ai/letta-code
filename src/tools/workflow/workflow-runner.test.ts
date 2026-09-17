@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { ExecutionJournal } from "./journal.ts";
 import { agentCallCacheKey } from "./scheduling.ts";
 import type { SubagentSpawner, WorkflowProgressEvent } from "./types.ts";
@@ -24,6 +25,49 @@ const echoSpawner: SubagentSpawner = async (request) => ({
 });
 
 describe("runWorkflow", () => {
+  test.each([
+    `return await pipeline(['A', 'B'], item => agent('prepare ' + item),
+      async (_, item) => ({item, answer: await agent('judge')}))`,
+    `return await pipeline(['A', 'B'], item => agent('prepare ' + item),
+      async (_, item) => ({item, answer: (await parallel([() => agent('judge')]))[0]}))`,
+    `return await parallel(['A', 'B'].map(item => async () => {
+      await agent('prepare ' + item); return {item, answer: await agent('judge')};
+    }))`,
+  ])(
+    "replay keeps identical downstream calls associated with their items: %s",
+    async (body) => {
+      const executionsDir = tempRunsDir();
+      let releaseA!: () => void;
+      const waitForB = new Promise<void>((resolve) => {
+        releaseA = resolve;
+      });
+      let judges = 0;
+      const spawner: SubagentSpawner = async ({ prompt }) => {
+        if (prompt === "prepare A") await waitForB;
+        if (prompt === "judge") {
+          const answer = ++judges;
+          releaseA();
+          return { value: answer, failed: false };
+        }
+        return { value: prompt, failed: false };
+      };
+      const script = withMeta(body);
+      const first = await runWorkflow(spawner, { script, executionsDir });
+      expect(first.result).toEqual([
+        { item: "A", answer: 2 },
+        { item: "B", answer: 1 },
+      ]);
+      const replay = await runWorkflow(spawner, {
+        script,
+        executionsDir,
+        resumeFromExecutionId: first.executionId,
+      });
+      expect(replay.cacheHits).toBe(4);
+      expect(replay.agentsSpawned).toBe(0);
+      expect(replay.result).toEqual(first.result);
+    },
+  );
+
   test("effective defaults invalidate resume while explicit overrides remain reusable", async () => {
     const executionsDir = tempRunsDir();
     const script = withMeta(`return await parallel([
@@ -117,23 +161,20 @@ describe("runWorkflow", () => {
     ]);
   });
 
-  test("completion clears outstanding sleep timers and the caller's abort listener", async () => {
+  test("completion terminates outstanding sleeps and removes the caller's abort listener", async () => {
     const controller = new AbortController();
     const added = spyOn(controller.signal, "addEventListener");
     const removed = spyOn(controller.signal, "removeEventListener");
-    const cleared = spyOn(globalThis, "clearTimeout");
     try {
       await runWorkflow(echoSpawner, {
         script: withMeta(`sleep(10000); return 'done'`),
         executionsDir: tempRunsDir(),
         signal: controller.signal,
       });
-      expect(cleared).toHaveBeenCalled();
       expect(removed).toHaveBeenCalledWith("abort", added.mock.calls[0]?.[1]);
     } finally {
       added.mockRestore();
       removed.mockRestore();
-      cleared.mockRestore();
     }
   });
 
@@ -518,6 +559,22 @@ return r.filter(Boolean).length;`),
     expect(run.result).toBe("echo:from-child:x");
     expect(run.agentsSpawned).toBe(1);
     expect(run.totalCostUsd).toBeCloseTo(0.01);
+  });
+
+  test("relative child scripts use the invoking conversation directory", async () => {
+    const workingDirectory = tempRunsDir();
+    writeFileSync(
+      join(workingDirectory, "child.js"),
+      withMeta(`return await agent(args)`),
+    );
+    const run = await runWithRuntimeContext({ workingDirectory }, () =>
+      runWorkflow(echoSpawner, {
+        script: withMeta(`return await workflow('child.js', 'from child')`),
+        executionsDir: tempRunsDir(),
+      }),
+    );
+    expect(process.cwd()).not.toBe(workingDirectory);
+    expect(run.result).toBe("echo:from child");
   });
 
   test("workflow() nesting is one level only", async () => {

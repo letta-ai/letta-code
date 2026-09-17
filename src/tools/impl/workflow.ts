@@ -17,11 +17,12 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getPrimaryAgentModelHandle } from "@/agent/subagents/subagent-model";
 import { apiRequest } from "@/backend/api/request";
 import { resolveBackendMode } from "@/backend/backend-mode";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   finishWorkflowExecution,
   recordWorkflowProgress,
@@ -104,6 +105,7 @@ const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
 export async function createSdkSpawner(
   args: WorkflowArgs,
 ): Promise<WorkflowSpawnerHandle> {
+  const cwd = getCurrentWorkingDirectory();
   let parentAgentId: string | null | undefined = args.parentScope?.agentId;
   const conversationId =
     args.parentScope?.conversationId ?? getConversationId();
@@ -127,12 +129,13 @@ export async function createSdkSpawner(
     ? args.model
     : (
         await getPrimaryAgentModelHandle({
-          conversationId: getConversationId(),
+          agentId: parentAgentId,
+          conversationId,
         })
       ).handle;
   const agentDefaults = {
     parentAgentId,
-    cwd: process.cwd(),
+    cwd,
     ...(parentModel ? { model: parentModel } : {}),
     allowedTools: args.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS],
   };
@@ -316,7 +319,10 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   let script = typeof args.script === "string" ? args.script : undefined;
   if (typeof args.scriptPath === "string" && args.scriptPath) {
     try {
-      script = readFileSync(args.scriptPath, "utf8");
+      script = readFileSync(
+        resolve(getCurrentWorkingDirectory(), args.scriptPath),
+        "utf8",
+      );
     } catch (error) {
       return {
         toolReturn: `Cannot read scriptPath ${args.scriptPath}: ${String(error)}`,

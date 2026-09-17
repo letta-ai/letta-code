@@ -1,428 +1,124 @@
 /**
- * The workflow engine: parses the meta block, builds the script-facing hooks
- * (agent / parallel / pipeline / phase / log / args / budget), executes the
- * script body inside a node:vm sandbox, and journals every subagent outcome
- * for resume.
- *
- * Scripts are plain JavaScript. Date.now(), argless new Date(), and
- * Math.random() are blocked inside the sandbox because replayed results must
- * be reproducible for resume to work.
+ * Run script code in a worker thread. SDK queries stay in the invoking runtime
+ * so they retain its credentials and scope; TaskStop can terminate a script
+ * even when it blocks its own event loop after an await.
  */
-
-import { readFileSync } from "node:fs";
-import vm from "node:vm";
+import { existsSync } from "node:fs";
+import { Worker } from "node:worker_threads";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   defaultExecutionsDir,
   ExecutionJournal,
   newExecutionId,
 } from "./journal.ts";
-import { parseWorkflowMeta, stripMetaExport } from "./meta.ts";
-import {
-  normalizeWorkflowComputer,
-  rejectUnsupportedPlacement,
-  workflowMaxConcurrent,
-} from "./placement.ts";
-import { agentCallCacheKey, Semaphore } from "./scheduling.ts";
 import type {
-  AgentCallOptions,
   RunWorkflowOptions,
   SubagentSpawner,
-  WorkflowBudget,
   WorkflowExecutionResult,
-  WorkflowProgressEvent,
 } from "./types.ts";
+import type {
+  WorkflowWorkerMessage,
+  WorkflowWorkerOptions,
+  WorkflowWorkerReply,
+} from "./worker-protocol.ts";
 
-const DETERMINISM_PRELUDE = `(() => {
-  const blocked = (name) => () => {
-    throw new Error(name + " is not available in workflow scripts (it would break resume); pass timestamps in via args, and vary prompts by index for randomness.");
-  };
-  Math.random = blocked("Math.random()");
-  const NativeDate = Date;
-  const BlockedDate = new Proxy(NativeDate, {
-    construct(target, argsList, newTarget) {
-      if (argsList.length === 0) blocked("argless new Date()")();
-      return Reflect.construct(target, argsList, newTarget);
-    },
-    apply() { return blocked("Date()")(); },
-  });
-  NativeDate.now = blocked("Date.now()");
-  globalThis.Date = BlockedDate;
-})();`;
-
-function defaultLabel(prompt: string): string {
-  const oneLine = prompt.replace(/\s+/g, " ").trim();
-  return oneLine.length <= 48 ? oneLine : `${oneLine.slice(0, 45)}...`;
-}
-
-function normalizeOptionsForCache(options: AgentCallOptions): unknown {
-  // label and phase are display-only; excluding them lets cosmetic edits
-  // keep cache hits on resume.
-  const { label: _label, phase: _phase, ...rest } = options;
-  return rest;
+function workerUrl(): URL {
+  const source = new URL("./workflow-worker.ts", import.meta.url);
+  return existsSync(source)
+    ? source
+    : new URL("./workflow-worker.js", import.meta.url);
 }
 
 export async function runWorkflow(
   spawner: SubagentSpawner,
   options: RunWorkflowOptions,
 ): Promise<WorkflowExecutionResult> {
-  rejectUnsupportedPlacement(options);
-  const computer = normalizeWorkflowComputer(options.computer);
-  const maxConcurrent = workflowMaxConcurrent(options.maxConcurrent);
-  const meta = parseWorkflowMeta(options.script);
-  const executionId = options.executionId ?? newExecutionId();
-  const executionsDir = options.executionsDir ?? defaultExecutionsDir();
-  const journal = new ExecutionJournal(executionsDir, executionId);
-  journal.persistScript(options.script, options.args);
-  if (options.resumeFromExecutionId) {
-    journal.loadReplayCache(executionsDir, options.resumeFromExecutionId);
-  }
-
-  const abortController = new AbortController();
-  const externalSignal = options.signal;
-  const forwardAbort = () => abortController.abort(externalSignal?.reason);
-  if (externalSignal?.aborted) forwardAbort();
-  else externalSignal?.addEventListener("abort", forwardAbort, { once: true });
-  const signal = abortController.signal;
+  const { signal, onProgress, ...input } = options;
+  if (signal?.aborted) throw new Error("Workflow aborted.");
+  const executionId = input.executionId ?? newExecutionId();
+  const executionsDir = input.executionsDir ?? defaultExecutionsDir();
+  const workerData: WorkflowWorkerOptions = {
+    ...input,
+    executionId,
+    executionsDir,
+    workingDirectory: input.workingDirectory ?? getCurrentWorkingDirectory(),
+  };
+  // The launch response exposes scriptPath immediately, so persist it before
+  // starting the asynchronous worker rather than racing the next file tool.
+  new ExecutionJournal(executionsDir, executionId).persistScript(
+    input.script,
+    input.args,
+  );
+  const worker = new Worker(workerUrl(), { workerData, execArgv: [] });
+  const controller = new AbortController();
   let finished = false;
-  const emit = (event: WorkflowProgressEvent) => {
-    if (!finished && !signal.aborted) options.onProgress?.(event);
-  };
-  const sleepers = new Map<ReturnType<typeof setTimeout>, () => void>();
-
-  const maxTotalAgents = options.maxTotalAgents ?? 1000;
-  const semaphore = new Semaphore(maxConcurrent);
-
-  let currentPhase: string | null = null;
-  let callCounter = 0;
-  let agentsSpawned = 0;
-  let cacheHits = 0;
-  let spentUsd = 0;
-  let costUnknown = false;
-  let totalTokens = 0;
-  const occurrences = new Map<string, number>();
-
-  const budget: WorkflowBudget = {
-    totalUsd: options.budgetUsd ?? null,
-    spentUsd: () => (costUnknown ? null : spentUsd),
-    remainingUsd: () =>
-      costUnknown
-        ? null
-        : options.budgetUsd == null
-          ? Infinity
-          : Math.max(0, options.budgetUsd - spentUsd),
-  };
-
-  async function agent(
-    prompt: unknown,
-    callOptions?: unknown,
-  ): Promise<unknown> {
-    if (typeof prompt !== "string" || !prompt.trim()) {
-      throw new Error("agent() requires a non-empty prompt string.");
-    }
-    if (signal.aborted) throw new Error("Workflow aborted.");
-    if (callCounter >= maxTotalAgents) {
-      throw new Error(`Lifetime agent cap of ${maxTotalAgents} reached.`);
-    }
-    if (options.budgetUsd != null && spentUsd >= options.budgetUsd) {
-      throw new Error(
-        `Budget of $${options.budgetUsd} exhausted ($${spentUsd.toFixed(4)} spent).`,
-      );
-    }
-    if (
-      callOptions !== undefined &&
-      (!callOptions ||
-        typeof callOptions !== "object" ||
-        Array.isArray(callOptions))
-    ) {
-      throw new Error("agent() options must be an object.");
-    }
-    const opts: AgentCallOptions = { ...(callOptions as AgentCallOptions) };
-    rejectUnsupportedPlacement(opts);
-    const selected = normalizeWorkflowComputer(
-      opts.computer === undefined ? computer : opts.computer,
-    );
-    if (selected === "local") delete opts.computer;
-    else opts.computer = selected;
-    const defaults = options.agentDefaults;
-    opts.model ??= defaults?.model;
-    opts.allowedTools ??= defaults?.allowedTools;
-    // The orchestrator's working directory is meaningful only locally.
-    if (selected === "local") opts.cwd ??= defaults?.cwd;
-    const callIndex = callCounter++;
-    const label = opts.label ?? defaultLabel(prompt);
-    const phase = opts.phase ?? currentPhase;
-    // Old journals omitted parent resources and backend defaults, so they cannot
-    // prove equivalence. Version the key rather than falling back to old hits.
-    const cacheKey = agentCallCacheKey(prompt, {
-      version: 3,
-      parentAgentId: defaults?.parentAgentId,
-      options: normalizeOptionsForCache(opts),
-    });
-    const occurrence = occurrences.get(cacheKey) ?? 0;
-    occurrences.set(cacheKey, occurrence + 1);
-
-    const cached = journal.replay(cacheKey, occurrence);
-    if (cached) {
-      cacheHits++;
-      journal.record({
-        kind: "agent",
-        cacheKey,
-        occurrence,
-        label,
-        prompt,
-        outcome: cached,
-      });
-      emit({ kind: "agent", callIndex, label, phase, status: "cached" });
-      return cached.value;
-    }
-
-    emit({ kind: "agent", callIndex, label, phase, status: "queued" });
-    await semaphore.acquire();
-    try {
-      if (signal.aborted) throw new Error("Workflow aborted.");
-      if (options.budgetUsd != null && spentUsd >= options.budgetUsd) {
-        throw new Error(
-          `Budget of $${options.budgetUsd} exhausted while queued.`,
-        );
-      }
-      emit({ kind: "agent", callIndex, label, phase, status: "running" });
-      agentsSpawned++;
-      const outcome = await spawner(
-        { prompt, options: opts, cacheKey, occurrence, callIndex },
-        signal,
-      );
-      if (signal.aborted) throw new Error("Workflow aborted.");
-      if (outcome.costUsd === undefined || !Number.isFinite(outcome.costUsd)) {
-        costUnknown = true;
-      } else {
-        spentUsd += outcome.costUsd;
-      }
-      totalTokens += outcome.totalTokens ?? 0;
-      journal.record({
-        kind: "agent",
-        cacheKey,
-        occurrence,
-        label,
-        prompt,
-        outcome,
-      });
-      emit({
-        kind: "agent",
-        callIndex,
-        label,
-        phase,
-        status: outcome.failed ? "error" : "done",
-        detail: outcome.error,
-        durationMs: outcome.durationMs,
-        totalTokens: outcome.totalTokens,
-        costUsd: outcome.costUsd,
-      });
-      return outcome.failed ? null : outcome.value;
-    } finally {
-      semaphore.release();
-    }
-  }
-
-  async function parallel(thunks: unknown): Promise<unknown[]> {
-    if (!Array.isArray(thunks)) {
-      throw new Error("parallel() takes an array of zero-arg functions.");
-    }
-    if (thunks.length > 4096) {
-      throw new Error(
-        `parallel() accepts at most 4096 items, got ${thunks.length}.`,
-      );
-    }
-    return Promise.all(
-      thunks.map(async (thunk) => {
-        if (typeof thunk !== "function") return null;
-        try {
-          return await thunk();
-        } catch {
-          return null;
-        }
-      }),
-    );
-  }
-
-  async function pipeline(
-    items: unknown,
-    ...stages: unknown[]
-  ): Promise<unknown[]> {
-    if (!Array.isArray(items)) {
-      throw new Error(
-        "pipeline() takes an array of items followed by stage functions.",
-      );
-    }
-    if (items.length > 4096) {
-      throw new Error(
-        `pipeline() accepts at most 4096 items, got ${items.length}.`,
-      );
-    }
-    type StageFn = (prev: unknown, item: unknown, index: number) => unknown;
-    const stageFns = stages.filter(
-      (s): s is StageFn => typeof s === "function",
-    );
-    // No barrier between stages: each item flows through its whole chain
-    // independently, so item A can be in stage 3 while item B is in stage 1.
-    return Promise.all(
-      items.map(async (item, index) => {
-        let value: unknown = item;
-        for (const stage of stageFns) {
-          try {
-            value = await stage(value, item, index);
-          } catch {
-            return null;
-          }
-        }
-        return value;
-      }),
-    );
-  }
-
-  function phase(title: unknown): void {
-    if (typeof title !== "string" || !title) {
-      throw new Error("phase() requires a title string.");
-    }
-    currentPhase = title;
-    emit({ kind: "phase", title });
-  }
-
-  function log(message: unknown): void {
-    emit({ kind: "log", message: String(message) });
-  }
-
-  function sleep(ms: unknown): Promise<void> {
-    if (signal.aborted) throw new Error("Workflow aborted.");
-    const delay = typeof ms === "number" && ms >= 0 ? ms : 0;
-    const pending = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        sleepers.delete(timer);
-        resolve();
-      }, delay);
-      sleepers.set(timer, () => {
-        clearTimeout(timer);
-        reject(new Error("Workflow aborted."));
-      });
-    });
-    // A script may start a sleep without awaiting it. Cancellation must not
-    // turn that authoring mistake into a process-level unhandled rejection.
-    void pending.catch(() => {});
-    return pending;
-  }
-
-  function executeScript(
-    scriptSource: string,
-    scriptArgs: unknown,
-    depth: number,
-    scriptName: string,
-  ): Promise<unknown> {
-    if (signal.aborted) throw new Error("Workflow aborted.");
-    // Child workflows share this run's hooks, semaphore, budget, journal,
-    // and abort signal — their agents count toward the same caps and their
-    // cached results live in the same journal. Nesting is one level only.
-    async function workflowHook(
-      nameOrRef: unknown,
-      childArgs?: unknown,
-    ): Promise<unknown> {
-      if (depth >= 1) {
-        throw new Error("workflow() nesting is one level only.");
-      }
-      const scriptPath =
-        typeof nameOrRef === "string"
-          ? nameOrRef
-          : (nameOrRef as { scriptPath?: string } | null)?.scriptPath;
-      if (!scriptPath) {
-        throw new Error(
-          "workflow() takes a script path string or {scriptPath}.",
-        );
-      }
-      let childScript: string;
-      try {
-        childScript = readFileSync(scriptPath, "utf8");
-      } catch (error) {
-        throw new Error(
-          `workflow(): cannot read ${scriptPath}: ${String(error)}`,
-        );
-      }
-      const childMeta = parseWorkflowMeta(childScript);
-      emit({ kind: "log", message: `▸ child workflow ${childMeta.name}` });
-      return executeScript(childScript, childArgs, depth + 1, childMeta.name);
-    }
-
-    const context = vm.createContext({
-      agent,
-      parallel,
-      pipeline,
-      phase,
-      log,
-      sleep,
-      workflow: workflowHook,
-      args: scriptArgs,
-      budget,
-      console: { log, warn: log, error: log, info: log },
-    });
-    vm.runInContext(DETERMINISM_PRELUDE, context);
-
-    const body = stripMetaExport(scriptSource);
-    const wrapped = `(async () => { "use strict";\n${body}\n})()`;
-    let script: vm.Script;
-    try {
-      script = new vm.Script(wrapped, {
-        filename: `${scriptName}.workflow.js`,
-      });
-    } catch (error) {
-      throw new Error(`Workflow script failed to parse: ${String(error)}`);
-    }
-
-    try {
-      // Under Bun, vm.Script compiles lazily, so syntax errors (e.g.
-      // TypeScript annotations in what must be plain JS) surface here.
-      return script.runInContext(context) as Promise<unknown>;
-    } catch (error) {
-      if ((error as { name?: string }).name === "SyntaxError") {
-        throw new Error(
-          `Workflow script failed to parse (scripts are plain JavaScript, not TypeScript): ${String(error)}`,
-        );
-      }
-      throw error;
-    }
-  }
-
-  let rejectCancellation: (error: Error) => void = () => {};
-  const cancellation = new Promise<never>((_resolve, reject) => {
-    rejectCancellation = reject;
-  });
-  const onAbort = () => {
-    rejectCancellation(new Error("Workflow aborted."));
-    for (const cancelSleep of sleepers.values()) cancelSleep();
-    sleepers.clear();
-  };
-  signal.addEventListener("abort", onAbort, { once: true });
+  let abort: () => void = () => {};
   try {
-    if (signal.aborted) throw new Error("Workflow aborted.");
-    const result = await Promise.race([
-      executeScript(options.script, options.args, 0, meta.name),
-      cancellation,
-    ]);
-    if (signal.aborted) throw new Error("Workflow aborted.");
-    return {
-      executionId,
-      meta,
-      result,
-      executionDir: journal.executionDir,
-      agentsSpawned,
-      cacheHits,
-      totalCostUsd: costUnknown ? null : spentUsd,
-      totalTokens,
-    };
+    return await new Promise<WorkflowExecutionResult>((resolve, reject) => {
+      const finish = (error?: Error, result?: WorkflowExecutionResult) => {
+        if (finished) return;
+        finished = true;
+        controller.abort();
+        if (error) reject(error);
+        else if (result) resolve(result);
+      };
+      abort = () => finish(new Error("Workflow aborted."));
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+
+      const reply = (message: WorkflowWorkerReply) => {
+        if (finished) return;
+        try {
+          worker.postMessage(message);
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error(String(error)));
+        }
+      };
+      worker.on("message", (message: WorkflowWorkerMessage) => {
+        if (finished) return;
+        switch (message.kind) {
+          case "spawn":
+            void Promise.resolve()
+              .then(() => {
+                if (controller.signal.aborted)
+                  throw new Error("Workflow aborted.");
+                return spawner(message.request, controller.signal);
+              })
+              .then(
+                (outcome) => reply({ id: message.id, outcome }),
+                (error: unknown) =>
+                  reply({ id: message.id, error: String(error) }),
+              );
+            break;
+          case "progress":
+            try {
+              onProgress?.(message.event);
+            } catch (error) {
+              finish(error instanceof Error ? error : new Error(String(error)));
+            }
+            break;
+          case "result":
+            finish(undefined, message.result);
+            break;
+          case "error":
+            finish(new Error(message.error));
+            break;
+        }
+      });
+      worker.on("error", (error) => finish(error));
+      worker.on("exit", (code) => {
+        if (!finished)
+          finish(
+            new Error(
+              `Workflow worker exited before returning a result (code ${code}).`,
+            ),
+          );
+      });
+    });
   } finally {
     finished = true;
-    signal.removeEventListener("abort", onAbort);
-    externalSignal?.removeEventListener("abort", forwardAbort);
-    // Also stop work a script launched without awaiting before returning or
-    // throwing. Detached continuations cannot publish progress after finish.
-    abortController.abort();
-    for (const cancelSleep of sleepers.values()) cancelSleep();
-    sleepers.clear();
+    signal?.removeEventListener("abort", abort);
+    controller.abort();
+    await worker.terminate();
   }
 }

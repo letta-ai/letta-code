@@ -127,6 +127,8 @@ export interface RunWorkflowOptions {
   script: string;
   /** Value exposed to the script as the `args` global. */
   args?: unknown;
+  /** Invoking conversation directory for relative child script paths. */
+  workingDirectory?: string;
   /** Advisory USD limit; completed reported costs gate new calls, not in-flight spend. */
   budgetUsd?: number;
   /** Resolved backend defaults; included in each call's resume identity. */

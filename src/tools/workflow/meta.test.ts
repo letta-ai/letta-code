@@ -47,6 +47,39 @@ return 1;`;
     expect(parseWorkflowMeta(script).description).toContain("}");
   });
 
+  test.each([
+    "// user's workflow\n",
+    "// } ignored brace\n",
+    "/* user's workflow */",
+    "/* } ignored brace { */",
+  ])("ignores comment syntax when locating the meta object: %s", (comment) => {
+    const script = `export const meta = {
+      name: 'find-bugs', ${comment}
+      description: 'Review files',
+      phases: [{ title: 'Review' }],
+    };
+    return 1;`;
+    expect(parseWorkflowMeta(script)).toEqual({
+      name: "find-bugs",
+      description: "Review files",
+      phases: [{ title: "Review" }],
+    });
+  });
+
+  test.each(["\n", "\r", "\u2028", "\u2029"])(
+    "ends line comments at JavaScript line terminator %j",
+    (lineTerminator) => {
+      const script = `export const meta = {name: 'find-bugs', // user's workflow${lineTerminator}description: 'Review files'};`;
+      expect(parseWorkflowMeta(script).description).toBe("Review files");
+    },
+  );
+
+  test("preserves comment delimiters inside strings", () => {
+    const description = "user's // workflow /* } */";
+    const script = `export const meta = {name: 'find-bugs', description: ${JSON.stringify(description)}};`;
+    expect(parseWorkflowMeta(script).description).toBe(description);
+  });
+
   test("stripMetaExport removes only the export keyword", () => {
     const stripped = stripMetaExport(VALID);
     expect(stripped).toContain("const meta = {");

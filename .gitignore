@@ -20,6 +20,8 @@ letta.js
 letta.js.map
 image-resize-worker.js
 image-resize-worker.js.map
+workflow-worker.js
+workflow-worker.js.map
 /skills/
 .DS_Store
 

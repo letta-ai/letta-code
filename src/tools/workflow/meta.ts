@@ -23,11 +23,30 @@ function extractMetaLiteral(script: string): { literal: string; end: number } {
   const start = match.index + match[0].length - 1;
   let depth = 0;
   let inString: string | null = null;
+  let comment: "line" | "block" | null = null;
   for (let i = start; i < script.length; i++) {
     const ch = script[i];
+    if (comment === "line") {
+      if (ch === "\n" || ch === "\r" || ch === "\u2028" || ch === "\u2029") {
+        comment = null;
+      }
+      continue;
+    }
+    if (comment === "block") {
+      if (ch === "*" && script[i + 1] === "/") {
+        comment = null;
+        i++;
+      }
+      continue;
+    }
     if (inString) {
       if (ch === "\\") i++;
       else if (ch === inString) inString = null;
+      continue;
+    }
+    if (ch === "/" && (script[i + 1] === "/" || script[i + 1] === "*")) {
+      comment = script[i + 1] === "/" ? "line" : "block";
+      i++;
       continue;
     }
     if (ch === '"' || ch === "'" || ch === "`") inString = ch;
