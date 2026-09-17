@@ -13,6 +13,7 @@ import { useState } from "react";
 import { configureBackendMode } from "@/backend";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import type { ChannelGatewaySupervisor } from "@/channels/gateway-supervisor";
+import { resolveChannelGatewayTelemetryTypes } from "@/channels/gateway-telemetry-types";
 import {
   type ChannelRestoreAgentScope,
   parseChannelRestoreAgentScope,
@@ -397,6 +398,22 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         .map((s) => s.trim())
         .filter(Boolean)
     : [];
+  const readChannelGatewayTelemetryTypes = (): string[] => {
+    try {
+      return resolveChannelGatewayTelemetryTypes({
+        restoreEnabledChannels,
+        channelNames,
+        restoreAgentScope,
+      });
+    } catch (error) {
+      console.warn(
+        `Unable to enumerate enabled channels for telemetry: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return [];
+    }
+  };
 
   // Determine connection name
   let connectionName: string;
@@ -578,10 +595,32 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log(message);
             if (debugMode) console.log(`[${formatTimestamp()}] ${message}`);
           },
+          onLifecycleEvent: (event) => {
+            telemetry.trackChannelGatewayLifecycle({
+              lifecycle_event: event.kind,
+              restart_attempt: event.restartAttempt,
+              max_restart_attempts: event.maxRestartAttempts,
+              restore_mode: restoreEnabledChannels
+                ? "enabled_accounts"
+                : "explicit_channels",
+              channel_types: readChannelGatewayTelemetryTypes(),
+              duration_ms: event.durationMs,
+              delay_ms: event.delayMs,
+              exit_code: event.exitCode,
+              signal: event.signal,
+              reached_ready: event.reachedReady,
+            });
+          },
           onUnexpectedExit: (error) => {
             console.error(`[${formatTimestamp()}] ${error.message}`);
+          },
+          onRestartExhausted: (error) => {
+            console.error(`[${formatTimestamp()}] ${error.message}`);
             if (values.channels) {
-              void exitWithTelemetry(1, "listener_channel_gateway_exited");
+              void exitWithTelemetry(
+                1,
+                "listener_channel_gateway_restart_exhausted",
+              );
             }
           },
           onServiceEvent: (event) => {

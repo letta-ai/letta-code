@@ -40,6 +40,7 @@ export interface TelemetryEvent {
     | "tool_usage"
     | "error"
     | "user_input"
+    | "channel_gateway_lifecycle"
     | "reflection_start"
     | "reflection_end"
     | "reflection_worktree_cleanup"
@@ -108,6 +109,26 @@ export interface UserInputData {
   command_name?: string;
   message_type: string;
   model_id: string;
+}
+
+export interface ChannelGatewayLifecycleData {
+  lifecycle_event:
+    | "exit"
+    | "process_error"
+    | "restart_scheduled"
+    | "restart_ready"
+    | "restart_exhausted";
+  restart_attempt: number;
+  max_restart_attempts: number;
+  restore_mode: "explicit_channels" | "enabled_accounts";
+  channel_types: string[];
+  duration_ms?: number;
+  delay_ms?: number;
+  exit_code?: number | null;
+  signal?: string | null;
+  reached_ready?: boolean;
+  version?: string;
+  platform?: string;
 }
 
 export type ReflectionTriggerSource =
@@ -469,6 +490,7 @@ class TelemetryManager {
       | ToolUsageData
       | ErrorData
       | UserInputData
+      | ChannelGatewayLifecycleData
       | ReflectionStartData
       | ReflectionEndData
       | ReflectionWorktreeCleanupData
@@ -719,6 +741,16 @@ class TelemetryManager {
       ...channelMetadata,
     };
     this.track("tool_usage", data);
+  }
+
+  trackChannelGatewayLifecycle(
+    data: Omit<ChannelGatewayLifecycleData, "version" | "platform">,
+  ) {
+    this.track("channel_gateway_lifecycle", {
+      ...data,
+      version: getVersion(),
+      platform: process.platform,
+    });
   }
 
   /**
