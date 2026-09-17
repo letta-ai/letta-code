@@ -116,8 +116,11 @@ cloud-backed agent's pending commits after the turn.
 
 The harness first tries a fast-forward pull. When a remote push is rejected
 because the remote moved, post-turn sync tries `git pull --rebase` and retries
-the push. If that rebase conflicts, the harness leaves the repository for
-manual resolution and reports the affected files.
+the push. If a conflict remains, the harness starts a hidden conversation with
+the same agent to repair it without interrupting the active conversation. Only
+one repair runs per repository. The repair finishes the merge/rebase without
+pushing; the harness verifies the Git state and retries the push. An unresolved
+repair stays in its own conversation and backs off before a later attempt.
 
 Start by reading the current Git operation and every conflicted file:
 

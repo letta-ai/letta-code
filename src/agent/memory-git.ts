@@ -1848,7 +1848,7 @@ function isUnmergedStatusCode(code: string): boolean {
   return code.includes("U") || code === "AA" || code === "DD";
 }
 
-async function getMemoryGitDir(memoryDir: string): Promise<string> {
+export async function getMemoryGitDir(memoryDir: string): Promise<string> {
   const { stdout } = await runGit(memoryDir, ["rev-parse", "--git-dir"]);
   const gitDir = stdout.trim() || ".git";
   return isAbsolute(gitDir) ? gitDir : join(memoryDir, gitDir);
