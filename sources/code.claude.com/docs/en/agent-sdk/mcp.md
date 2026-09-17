@@ -146,13 +146,24 @@ Create a `.mcp.json` file at your project root. The file is picked up when the `
 
 ## Connection timing
 
-Claude Code registers the servers you pass in `options.mcpServers` at startup and emits the [init message](#error-handling) once the first-turn wait, if any, resolves. Without `options.mcpServers`, Claude Code waits 2 seconds for pending servers before the first turn, so servers loaded from [settings files](#from-a-config-file) such as `.mcp.json` commonly show `pending` at init. When each `options.mcpServers` server connects, and whether it delays the first turn, depends on its type:
+Claude Code registers the servers you pass in `options.mcpServers` at startup and emits the [init message](#error-handling) once the first-turn wait, if any, resolves. Whether each `options.mcpServers` server delays the first turn, and when it connects, depends on its type:
 
 | Server type                                                                            | Delays the first turn?                                 | First-turn wait timeout                                                                     |
 | :------------------------------------------------------------------------------------- | :----------------------------------------------------- | :------------------------------------------------------------------------------------------ |
 | stdio server, or HTTP/SSE server without a cached tool list                            | Yes, until it connects                                 | [`MCP_TIMEOUT`](/docs/en/env-vars), 30 seconds by default; the connection fails at that deadline |
 | Remote server with a cached tool list, saved by Claude Code from a previous connection | No; the cached tools are available from the first turn | None; connects on its first tool call, and that deferred connect has its own timeout        |
 | In-process [SDK server](#sdk-mcp-servers)                                              | Yes, until it connects and lists its tools             | None; the connect and tool listing requests each have their own timeout                     |
+
+Servers loaded from [settings files](#from-a-config-file) such as `.mcp.json` or from plugins commonly show `pending` in the init message. When `options.mcpServers` holds a stdio, HTTP, or SSE server, the first turn waits for these pending servers too, up to `MCP_TIMEOUT`. When `options.mcpServers` is empty or holds only SDK servers, the first turn waits up to 2 seconds instead:
+
+* **With [tool search](/docs/en/agent-sdk/tool-search), the default**: the wait covers still-pending servers configured with [`alwaysLoad: true`](/docs/en/mcp#exempt-a-server-from-deferral) and not the rest. The rest keep connecting in the background. [Tool availability](/docs/en/mcp#tool-availability) describes how Claude reaches their tools once they connect.
+* **Without tool search**: the wait covers every pending server. [Configure tool search](/docs/en/agent-sdk/tool-search#configure-tool-search) covers what turns tool search off. If you exclude the `ToolSearch` tool from the session, for example through `disallowedTools`, the session also runs without tool search.
+
+If you set `permissionPromptToolName`, the first turn also waits for that tool's server in every case, up to `MCP_TIMEOUT`.
+
+To set the first-turn wait yourself, add `CLAUDE_CODE_MCP_STARTUP_WAIT_MS` to the [`env` option](/docs/en/agent-sdk/configuration#set-environment-variables), for example `CLAUDE_CODE_MCP_STARTUP_WAIT_MS: "5000"`. The first turn then waits up to that many milliseconds for every pending server, whether or not tool search is available. This deadline also replaces the `MCP_TIMEOUT` first-turn wait for stdio, HTTP, and SSE servers in `options.mcpServers`. `CLAUDE_CODE_MCP_STARTUP_WAIT_MS` requires Claude Code v2.1.274 or later.
+
+Servers still pending when the wait ends keep connecting in the background. Set the variable to `0` to skip the wait. A `permissionPromptToolName` server keeps its own `MCP_TIMEOUT` wait regardless of the value.
 
 To block startup itself at a separate, earlier phase than the first-turn wait, before the init message is sent:
 
