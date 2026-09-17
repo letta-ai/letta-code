@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getBackend } from "@/backend";
+import type { BackendCapabilities } from "@/backend/backend";
 import {
   type AttachedAgentRepository,
   listAttachedAgentRepositories,
@@ -28,6 +29,13 @@ export interface RepositoryPostTurnSyncResult {
 
 export interface RepositoriesPostTurnSyncResult {
   results: RepositoryPostTurnSyncResult[];
+}
+
+export interface SyncPendingAttachedRepositoriesAfterTurnDependencies {
+  backend?: {
+    capabilities: Pick<BackendCapabilities, "remoteMemfs">;
+  };
+  listRepositories?: typeof listAttachedAgentRepositories;
 }
 
 export interface SyncPendingAttachedRepositoryParams {
@@ -251,11 +259,16 @@ export function syncPendingAttachedRepositoryCommits(
 
 export async function syncPendingAttachedRepositoryCommitsAfterTurn(
   agentId: string,
+  dependencies: SyncPendingAttachedRepositoriesAfterTurnDependencies = {},
 ): Promise<RepositoriesPostTurnSyncResult> {
-  const backend = getBackend();
-  const localOnly =
-    backend.capabilities.localMemfs && !backend.capabilities.remoteMemfs;
-  const repositories = await listAttachedAgentRepositories(agentId);
+  const backend = dependencies.backend ?? getBackend();
+  if (!backend.capabilities.remoteMemfs) {
+    return { results: [] };
+  }
+
+  const listRepositories =
+    dependencies.listRepositories ?? listAttachedAgentRepositories;
+  const repositories = await listRepositories(agentId);
   if (repositories.length === 0) {
     return { results: [] };
   }
@@ -268,7 +281,7 @@ export async function syncPendingAttachedRepositoryCommitsAfterTurn(
         repository,
         token,
         remoteSupported: backend.capabilities.remoteMemfs,
-        localOnly,
+        localOnly: false,
       }),
     ),
   );
