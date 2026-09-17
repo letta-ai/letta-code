@@ -165,6 +165,10 @@ A skill with [`user-invocable: false`](/docs/en/skills#control-who-invokes-a-ski
 
 Send a command by including it in your prompt string, the same way you send regular text. Dispatch doesn't depend on the `skills` option. Sending `/<name>` runs a user-invocable skill even when your `skills` list omits it. Commands that act on conversation history, such as `/compact`, need prior messages to work with.
 
+A `/<name>` that matches neither a command in the session nor a built-in Claude Code command doesn't fail the query. Claude Code sends the prompt to Claude as an ordinary message, with a note that the command didn't run, so the query spends a model turn and returns Claude's reply. Before v2.1.274, a `/<name>` that matched nothing returned `Unknown command: /<name>` as the result without a model turn.
+
+A `/<name>` that matches a built-in Claude Code command that isn't available in the session, such as `/theme`, returns `/theme isn't available in this environment.` as the result without a model turn.
+
 <Note>
   A command can hit the `maxTurns` / `max_turns` limit like any other prompt, ending the query with an error result instead of `success`. For the error-result contract, see [Handle the result](/docs/en/agent-sdk/agent-loop#handle-the-result). If your command might hit the limit, wrap the loop in a `try`/`catch` in TypeScript or `try`/`except` in Python, as shown in [Single Message Input](/docs/en/agent-sdk/streaming-vs-single-mode#single-message-input), or set `maxTurns` high enough for the work to complete.
 </Note>

@@ -363,6 +363,8 @@ The messages take different shapes from the interactive messages in the table:
 
 The refusal ending embedded in each error is shared with the interactive notices, so it still matches its entry under [Claude Code refuses to use a worktree](#claude-code-refuses-to-use-a-worktree).
 
+In the stream-json result, [`startup_failure_reason`](/docs/en/agent-sdk/typescript#startup_failure_reason) is `worktree_unverified` for the `could not verify worktree` error and `worktree_resume_refused` for the `cannot resume into worktree` and `The worktree binding is kept` errors. An application can branch on it instead of matching the error text. Before v2.1.274, the result carried no `startup_failure_reason` field.
+
 ## See also
 
 Worktrees handle file isolation. The related pages below cover delegating work into those isolated checkouts, passing findings between them, and switching between the sessions you create:
