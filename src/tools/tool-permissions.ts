@@ -20,6 +20,8 @@ export const TOOL_PERMISSIONS: Record<
   LS: { requiresApproval: false },
   memory: { requiresApproval: false },
   memory_apply_patch: { requiresApproval: false },
+  propose_memory_patch: { requiresApproval: false },
+  remember: { requiresApproval: false },
   Monitor: { requiresApproval: true },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },

@@ -119,6 +119,9 @@ const GLOBAL_LOCK_TOOLS = new Set([
   "RunShellCommand",
   // Memory tool (file + git side effects)
   "memory",
+  "memory_apply_patch",
+  "remember",
+  "propose_memory_patch",
   "shell_command",
   "exec_command",
   "write_stdin",

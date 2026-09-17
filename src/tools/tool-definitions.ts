@@ -22,12 +22,14 @@ import MemoryApplyPatchV2Description from "./descriptions/MemoryApplyPatchV2.md"
 import MemoryV2Description from "./descriptions/MemoryV2.md";
 import MonitorDescription from "./descriptions/Monitor.md";
 import MultiEditDescription from "./descriptions/MultiEdit.md";
+import ProposeMemoryPatchDescription from "./descriptions/ProposeMemoryPatch.md";
 import ReadDescription from "./descriptions/Read.md";
 import ReadArtifactFileDescription from "./descriptions/ReadArtifactFile.md";
 import ReadFileCodexDescription from "./descriptions/ReadFileCodex.md";
 import ReadFileGeminiDescription from "./descriptions/ReadFileGemini.md";
 import ReadLSPDescription from "./descriptions/ReadLSP.md";
 import ReadManyFilesGeminiDescription from "./descriptions/ReadManyFilesGemini.md";
+import RememberDescription from "./descriptions/Remember.md";
 import ReplaceGeminiDescription from "./descriptions/ReplaceGemini.md";
 import RunShellCommandGeminiDescription from "./descriptions/RunShellCommandGemini.md";
 import SearchFileContentGeminiDescription from "./descriptions/SearchFileContentGemini.md";
@@ -73,11 +75,13 @@ import { memory } from "./impl/memory";
 import { memory_apply_patch } from "./impl/memory-apply-patch";
 import { monitor } from "./impl/monitor";
 import { multi_edit } from "./impl/multi-edit";
+import { propose_memory_patch } from "./impl/propose-memory-patch";
 import { read } from "./impl/read";
 import { read_file } from "./impl/read-file-codex";
 import { read_file_gemini } from "./impl/read-file-gemini";
 import { read_lsp } from "./impl/read-lsp";
 import { read_many_files } from "./impl/read-many-files-gemini";
+import { remember } from "./impl/remember";
 import { replace } from "./impl/replace-gemini";
 import { run_shell_command } from "./impl/run-shell-command-gemini";
 import { search_file_content } from "./impl/search-file-content-gemini";
@@ -122,12 +126,14 @@ import MemoryApplyPatchSchema from "./schemas/MemoryApplyPatch.json";
 import MemoryV2Schema from "./schemas/MemoryV2.json";
 import MonitorSchema from "./schemas/Monitor.json";
 import MultiEditSchema from "./schemas/MultiEdit.json";
+import ProposeMemoryPatchSchema from "./schemas/ProposeMemoryPatch.json";
 import ReadSchema from "./schemas/Read.json";
 import ReadArtifactFileSchema from "./schemas/ReadArtifactFile.json";
 import ReadFileCodexSchema from "./schemas/ReadFileCodex.json";
 import ReadFileGeminiSchema from "./schemas/ReadFileGemini.json";
 import ReadLSPSchema from "./schemas/ReadLSP.json";
 import ReadManyFilesGeminiSchema from "./schemas/ReadManyFilesGemini.json";
+import RememberSchema from "./schemas/Remember.json";
 import ReplaceGeminiSchema from "./schemas/ReplaceGemini.json";
 import RunShellCommandGeminiSchema from "./schemas/RunShellCommandGemini.json";
 import SearchFileContentGeminiSchema from "./schemas/SearchFileContentGemini.json";
@@ -260,6 +266,16 @@ const toolDefinitions = {
     schema: MemoryApplyPatchSchema,
     description: MemoryApplyPatchDescription.trim(),
     impl: memory_apply_patch,
+  }),
+  propose_memory_patch: defineTool({
+    schema: ProposeMemoryPatchSchema,
+    description: ProposeMemoryPatchDescription.trim(),
+    impl: propose_memory_patch,
+  }),
+  remember: defineTool({
+    schema: RememberSchema,
+    description: RememberDescription.trim(),
+    impl: remember,
   }),
   Monitor: defineTool({
     schema: MonitorSchema,

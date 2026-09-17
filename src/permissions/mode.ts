@@ -120,6 +120,8 @@ class PermissionModeManager {
             "Edit",
             "MultiEdit",
             "NotebookEdit",
+            "remember",
+            "propose_memory_patch",
             "memory",
             "apply_patch",
             "ApplyPatch",

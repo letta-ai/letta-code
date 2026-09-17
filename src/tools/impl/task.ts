@@ -7,6 +7,10 @@
 
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import {
+  enqueueMemoryWriterJob,
+  isMemoryWriterSubagentType,
+} from "@/agent/memory-writer-launcher";
 import { updateConversationLLMConfig } from "@/agent/modify";
 import {
   completeSubagent,
@@ -880,6 +884,20 @@ export async function task(args: TaskArgs): Promise<string> {
   const prompt = inputPrompt;
 
   const resolvedParentScope = resolveNotificationScope(args.parentScope);
+
+  if (isMemoryWriterSubagentType(subagent_type)) {
+    const queued = await enqueueMemoryWriterJob(
+      {
+        instruction: prompt,
+        source: "task-memory",
+        sourceId: toolCallId,
+        agentId: resolvedParentScope?.agentId,
+        conversationId: resolvedParentScope?.conversationId,
+      },
+      { spawnBackgroundSubagentTask },
+    );
+    return queued.message;
+  }
 
   const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
     subagentType: subagent_type,

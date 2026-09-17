@@ -66,6 +66,7 @@ describe("built-in subagents", () => {
     expect(configs.reflection?.launchProfile).toBe("memory-subagent");
     expect(configs["history-analyzer"]?.launchProfile).toBe("memory-subagent");
     expect(configs.memory?.launchProfile).toBe("memory-subagent");
+    expect(configs["memory-writer"]?.launchProfile).toBe("memory-subagent");
     expect(configs.init?.launchProfile).toBe("memory-subagent");
   });
 
@@ -93,10 +94,14 @@ Custom prompt body`,
     const hiddenFileTools = ["Read", "Write", "Glob", "Grep"];
 
     expect(configs.reflection?.allowedTools).toContain("Edit");
+    expect(configs.memory?.allowedTools).toContain("propose_memory_patch");
     expect(configs.memory?.allowedTools).not.toContain("Edit");
+    expect(configs.memory?.allowedTools).not.toContain("Bash");
+    expect(configs["memory-writer"]?.allowedTools).toContain(
+      "propose_memory_patch",
+    );
     for (const tool of hiddenFileTools) {
       expect(configs.reflection?.allowedTools).not.toContain(tool);
-      expect(configs.memory?.allowedTools).not.toContain(tool);
     }
   });
 
@@ -110,17 +115,24 @@ Custom prompt body`,
 
     expect(configs.init?.systemPrompt).toContain("Commit (1 bash call)");
     expect(configs.init?.systemPrompt).not.toContain("git push");
-    expect(configs.memory?.systemPrompt).toContain(
+    expect(configs.memory?.systemPrompt).toContain("propose_memory_patch");
+    expect(configs.memory?.systemPrompt).not.toContain("git push");
+    expect(configs.memory?.systemPrompt).not.toContain(
       'WORKTREE_DIR="$MEMORY_DIR-worktrees"',
     );
-    expect(configs.memory?.systemPrompt).not.toContain("git push");
     expect(configs.reflection?.systemPrompt).not.toContain("git push");
   });
 
   test("selects v2 writer prompts only for unchanged API built-ins", async () => {
     const configs = await getAllSubagentConfigs();
 
-    for (const name of ["reflection", "init", "memory", "history-analyzer"]) {
+    for (const name of [
+      "reflection",
+      "init",
+      "memory",
+      "memory-writer",
+      "history-analyzer",
+    ]) {
       const config = configs[name];
       expect(config).toBeDefined();
       if (!config) throw new Error(`Missing ${name} config`);
@@ -145,10 +157,8 @@ Custom prompt body`,
         "feat(init): initialize memory for project",
       ],
       "history-analyzer": ["### 5. Commit", "Do NOT merge into main"],
-      memory: [
-        "### Phase 5: Merge and Clean Up (MANDATORY)",
-        "## Error Handling",
-      ],
+      memory: ["propose_memory_patch", "STATUS: applied"],
+      "memory-writer": ["propose_memory_patch", "STATUS: applied"],
     };
     for (const [name, phrases] of Object.entries(opsPhrases)) {
       const config = configs[name];

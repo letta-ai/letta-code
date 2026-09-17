@@ -169,7 +169,7 @@ export async function memory_apply_patch(
   };
 }
 
-async function applyMemoryPatch(
+export async function applyMemoryPatch(
   memoryDir: string,
   input: string,
   memoryFormat: LocalMemoryFormat,
