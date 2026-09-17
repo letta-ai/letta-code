@@ -17,6 +17,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: pypi-wheels-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   wheel:
     strategy:
@@ -87,7 +91,8 @@ jobs:
           ${{ matrix.python }} -m pip install twine==6.2.0
           ${{ matrix.python }} -m twine check --strict python/dist/*.whl
       - name: Test installed wheel without system Node or npm
-        run: ${{ matrix.python }} scripts/smoke-pypi.py python/dist/*.whl
+        timeout-minutes: 5
+        run: ${{ matrix.python }} -u scripts/smoke-pypi.py python/dist/*.whl
       - uses: actions/upload-artifact@v4
         with:
           name: letta-wheel-${{ matrix.platform }}

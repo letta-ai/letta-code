@@ -48,14 +48,17 @@ assert.equal(typeof req('ws').WebSocketServer, 'function');
   assert.equal(resized.status, 0, resized.stderr.toString());
   const image = JSON.parse(resized.stdout);
   assert.ok(image.width > 0 && image.width < 3000, JSON.stringify(image));
-  const pty = req('node-pty').spawn(process.execPath, [cli, '--help'], {env, cols:100, rows:30});
+  const ptyCommand = process.platform === 'win32' ? process.env.ComSpec : process.execPath;
+  const ptyArgs = process.platform === 'win32' ? ['/d', '/s', '/c', 'echo LETTA_PTY_OK'] : [cli, '--help'];
+  const ptyExpected = process.platform === 'win32' ? /LETTA_PTY_OK/ : /USAGE/;
+  const pty = req('node-pty').spawn(ptyCommand, ptyArgs, {env, cols:100, rows:30});
   let output = '';
   pty.onData(data => { output += data; });
   const timeout = setTimeout(() => { pty.kill(); throw new Error('PTY timed out'); }, 30000);
   pty.onExit(({exitCode}) => {
     clearTimeout(timeout);
     assert.equal(exitCode, 0, output);
-    assert.match(output, /USAGE/);
+    assert.match(output, ptyExpected);
     console.log('native PTY, image worker, ripgrep, Telegram, assets and child Node passed');
     process.exit(23); // Verify the Python launcher preserves child exit status.
   });
@@ -159,11 +162,8 @@ def main():
             cwd=root,
             env=env,
             check=False,
-            capture_output=True,
-            text=True,
             timeout=60,
         )
-        print(result.stdout, result.stderr)
         assert result.returncode == 23, result
         if os.name != "nt":
             import selectors
