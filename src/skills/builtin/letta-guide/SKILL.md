@@ -66,19 +66,11 @@ applies_to:
 ```
 
 - **Backends describe agent state, not the computer running tools.** `cloud`
-  means Letta Cloud; `local` means a user-managed backend. A cloud-hosted agent
-  using a laptop is still `cloud`; CLI or Desktop use does not imply `local`.
-- **Match both backend and interface.** Use context or active configuration;
-  ask only if an unknown value changes the answer. If either is excluded, find
-  matching documentation rather than borrowing that page's setup commands.
-- **Lists describe page scope, not feature parity.** A page covering multiple
-  backends or interfaces can contain different instructions for each. Follow
-  the matching section and its restrictions, not every example on the page.
-- **Treat `status: legacy` as historical guidance.** Prefer current docs for
-  current setup; use legacy pages only for an explicitly legacy system or
-  migration, and label that scope in the answer.
-- **Missing metadata is unknown, not universal support.** Verify applicability
-  in current documentation or the owning runtime before recommending commands.
+  means Letta Cloud; `local` means a user-managed backend.
+- **Interfaces** refer to the user's current interface: chat.letta.com (`web`,
+  cloud-only), CLI, Desktop, or SDK.
+- Do NOT use context from files marked `status: legacy` unless providing
+  historical context.
 
 ## Inspect or change your model from the CLI
 
