@@ -1,6 +1,6 @@
 ---
 name: scheduling-tasks
-description: Schedules reminders, recurring tasks, and channel-bound outreach via the letta cron CLI. Use when the user asks to be reminded of something, wants periodic work or check-ins, wants a scheduled Slack or iMessage message, or needs to list, inspect, replace, or cancel scheduled tasks.
+description: Schedules reminders, recurring tasks, and conversation-bound iMessage outreach via the letta cron CLI. Use when the user asks to be reminded of something, wants periodic work or check-ins, wants a scheduled iMessage message, or needs to list, inspect, replace, or cancel scheduled tasks.
 ---
 
 # Scheduling Tasks
@@ -117,14 +117,14 @@ Then verify the binding explicitly:
 letta cron list --agent "$LETTA_AGENT_ID" --conversation self
 ```
 
-### Preserve Slack and iMessage Conversation Continuity
+### Preserve iMessage Conversation Continuity
 
 If a scheduled turn will send through `MessageChannel` and the recipient may
 reply, run it in the channel route's existing conversation. A fresh scheduled
 conversation can deliver the outbound message, but the recipient's reply returns
 to the route conversation without the scheduled turn or tool result in context.
 
-- When the request arrived in the target Slack or iMessage conversation, pass
+- When the request arrived in the target iMessage conversation, pass
   `--conversation self`.
 - Never omit `--conversation` or pass `new` for a scheduled message that should
   continue an existing channel conversation.
@@ -133,29 +133,34 @@ to the route conversation without the scheduled turn or tool result in context.
 - Include `action="send"` and the actual message in an explicit `MessageChannel`
   call. An ordinary assistant response is not a channel delivery.
 
-For Slack, copy the current routed notification's exact `chat_id`, `account_id`,
-and `thread_id` when present into the stored prompt. At fire time, call
-`MessageChannel` in routed-reply mode with `channel="slack"`, `chat_id` set to
-the exact notification `chat_id`, `accountId` set from `account_id`, `threadId`
-set from `thread_id`, `action="send"`, and the actual message. Do not use
-`target` for a route-bound send: that is the separate proactive/top-level mode
-and can lose the thread.
-
 For scheduled iMessage outreach, resolve and schedule the exact paired route in
 one guarded shell call. This prevents a failed request from becoming an empty
 but apparently successful route and keeps shell-local values available while
 the prompt is constructed. Select by the current conversation and require
 exactly one paired route; do not copy phone-derived fields from the response.
-Replace the message, metadata, and schedule flag in this example:
+Encode the exact message, schedule name, and description as Base64 **outside the
+shell command**, then replace only the three Base64 placeholders and the schedule
+flag below. Never paste raw external text into shell source: `$`, quotes,
+backticks, command substitutions, backslashes, and multiline content must remain
+data rather than becoming Bash syntax.
 
 ```bash
 set -euo pipefail
 
-message="<exact message to send>"
-schedule_name="<short name>"
-schedule_description="<what this scheduled message does>"
+message_b64="<base64 of exact UTF-8 message>"
+schedule_name_b64="<base64 of short name>"
+schedule_description_b64="<base64 of description>"
 agent_id="${AGENT_ID:-${LETTA_AGENT_ID:?missing agent ID}}"
 current_conversation_id="${CONVERSATION_ID:-${LETTA_CONVERSATION_ID:?missing conversation ID}}"
+decode_b64() {
+  node -e 'process.stdout.write(Buffer.from(process.argv[1], "base64").toString("utf8"))' "$1"
+}
+schedule_name="$(decode_b64 "$schedule_name_b64")"
+schedule_description="$(decode_b64 "$schedule_description_b64")"
+if [[ -z "$schedule_name" || -z "$schedule_description" ]]; then
+  echo "schedule name and description must be non-empty" >&2
+  exit 1
+fi
 
 connections_json="$(curl -fsS \
   "$LETTA_BASE_URL/v1/agents/$agent_id/imessage/connection" \
@@ -192,14 +197,24 @@ if [[ -z "$target_route_id" || -z "$target_conversation_id" || -z "$target_accou
   echo "iMessage route contains an empty required field" >&2
   exit 1
 fi
-message_channel_args="$(jq -cn \
-  --arg route_id "$target_route_id" \
-  --arg account_id "$target_account_id" \
-  --arg message "$message" \
-  '{action: "send", channel: "imessage", chat_id: $route_id,
-    accountId: $account_id, message: $message}')"
+message_channel_args="$(node - \
+  "$target_route_id" \
+  "$target_account_id" \
+  "$message_b64" <<'NODE'
+const [routeId, accountId, messageBase64] = process.argv.slice(2);
+const message = Buffer.from(messageBase64, "base64").toString("utf8");
+process.stdout.write(JSON.stringify({
+  action: "send",
+  channel: "imessage",
+  chat_id: routeId,
+  accountId,
+  message,
+}));
+NODE
+)"
 prompt="When this schedule fires, call MessageChannel exactly once with these exact arguments: $message_channel_args. Do not only reply in the conversation."
 
+set +e
 created_json="$(letta cron add \
   --name "$schedule_name" \
   --description "$schedule_description" \
@@ -207,15 +222,24 @@ created_json="$(letta cron add \
   --at "in 30m" \
   --agent "$agent_id" \
   --conversation "$target_conversation_id")"
-if [[ -z "${created_json//[[:space:]]/}" ]]; then
-  echo "cron add returned an empty response; inspect schedules before retrying" >&2
+create_status=$?
+set -e
+if (( create_status != 0 )) || [[ -z "${created_json//[[:space:]]/}" ]]; then
+  echo "cron add had an ambiguous outcome. Inspect schedules by name and conversation before retrying; creation may have committed." >&2
+  letta cron list --agent "$agent_id" --conversation "$target_conversation_id" >&2 || true
   exit 1
 fi
-created_id="$(jq -er \
-  '.id | select(type == "string" and length > 0)' \
-  <<<"$created_json")"
+set +e
+created_id="$(jq -er '.id | select(type == "string" and length > 0)' <<<"$created_json")"
+created_id_status=$?
+set -e
+if (( created_id_status != 0 )) || [[ -z "$created_id" ]]; then
+  echo "cron add returned an unparseable result. Inspect schedules by name and conversation before retrying; creation may have committed." >&2
+  letta cron list --agent "$agent_id" --conversation "$target_conversation_id" >&2 || true
+  exit 1
+fi
 printf 'Created schedule %s. If verification fails, inspect or delete this ID; do not rerun cron add.\n' "$created_id" >&2
-jq -e \
+if ! jq -e \
   --arg id "$created_id" \
   --arg agent_id "$agent_id" \
   --arg conversation_id "$target_conversation_id" '
@@ -223,9 +247,19 @@ jq -e \
   .id == $id and
   .agent_id == $agent_id and
   .conversation_id == $conversation_id
-' <<<"$created_json" >/dev/null
+' <<<"$created_json" >/dev/null; then
+  echo "Created schedule $created_id but its create response did not match the requested scope. Inspect or delete that ID; do not rerun cron add." >&2
+  exit 1
+fi
+set +e
 verified_json="$(letta cron get "$created_id" --agent "$agent_id")"
-jq -e \
+get_status=$?
+set -e
+if (( get_status != 0 )) || [[ -z "${verified_json//[[:space:]]/}" ]]; then
+  echo "Created schedule $created_id but could not verify it. Inspect or delete that ID; do not rerun cron add." >&2
+  exit 1
+fi
+if ! jq -e \
   --arg id "$created_id" \
   --arg conversation_id "$target_conversation_id" \
   --arg prompt "$prompt" '
@@ -233,7 +267,10 @@ jq -e \
   .id == $id and
   .conversation_id == $conversation_id and
   .prompt == $prompt
-' <<<"$verified_json" >/dev/null
+' <<<"$verified_json" >/dev/null; then
+  echo "Created schedule $created_id but its stored scope or prompt did not match. Inspect or delete that ID; do not rerun cron add." >&2
+  exit 1
+fi
 ```
 
 Stop instead of guessing when the route is missing or ambiguous. Route state can
