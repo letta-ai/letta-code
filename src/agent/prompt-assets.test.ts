@@ -99,7 +99,8 @@ describe("buildSystemPrompt", () => {
     expect(result).toBe(preset?.localMemfsContent?.trim() ?? "");
     expect(result).not.toBe(buildSystemPrompt("letta", "memfs"));
     expect(result).toContain("$MEMORY_DIR");
-    expect(result).toContain("git commit");
+    expect(result).toContain("The `remember` tool.");
+    expect(result).not.toContain("git commit");
     expect(result).not.toContain("git push");
     expect(result).not.toContain("Shared memory");
   });

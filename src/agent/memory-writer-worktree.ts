@@ -6,7 +6,6 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { getAuthToken } from "@/agent/memory-auth";
 import {
-  commitMemoryWrite,
   type MemoryCommitAuthor,
   runGit as runMemoryGit,
 } from "@/agent/memory-git";
@@ -29,7 +28,11 @@ interface GitResult {
   stderr: string;
 }
 
-async function runGit(cwd: string, args: string[]): Promise<GitResult> {
+async function runGit(
+  cwd: string,
+  args: string[],
+  extraEnv?: NodeJS.ProcessEnv,
+): Promise<GitResult> {
   try {
     const allArgs = [...GIT_DISABLE_COMMIT_SIGNING_ARGS, ...args];
     const { stdout, stderr } = await execFile("git", allArgs, {
@@ -37,6 +40,7 @@ async function runGit(cwd: string, args: string[]): Promise<GitResult> {
       env: {
         ...process.env,
         ...HARNESS_GIT_ENV,
+        ...extraEnv,
       },
       encoding: "utf-8",
       timeout: GIT_TIMEOUT_MS,
@@ -342,22 +346,35 @@ export async function commitMemoryWriterProposal(options: {
     };
   }
 
-  const commitResult = await commitMemoryWrite({
-    memoryDir: options.worktree.worktreeDir,
-    pathspecs: ["."],
-    reason: buildCommitMessage({
-      reason: options.reason,
-      jobId: options.jobId,
-      writerAgentId: options.writerAgentId,
-      parentAgentId: options.author.agentId,
-    }),
-    author: options.author,
-    syncMode: "local",
-  });
+  const authorName = options.author.authorName.trim() || options.author.agentId;
+  await runGit(options.worktree.worktreeDir, ["add", "-A", "--", "."]);
+  await runGit(
+    options.worktree.worktreeDir,
+    [
+      "-c",
+      `user.name=${authorName}`,
+      "-c",
+      `user.email=${options.author.authorEmail}`,
+      "commit",
+      "-m",
+      buildCommitMessage({
+        reason: options.reason,
+        jobId: options.jobId,
+        writerAgentId: options.writerAgentId,
+        parentAgentId: options.author.agentId,
+      }),
+    ],
+    {
+      GIT_AUTHOR_NAME: authorName,
+      GIT_AUTHOR_EMAIL: options.author.authorEmail,
+      GIT_COMMITTER_NAME: authorName,
+      GIT_COMMITTER_EMAIL: options.author.authorEmail,
+    },
+  );
 
   return {
-    committed: commitResult.committed,
-    sha: commitResult.sha,
+    committed: true,
+    sha: await getHead(options.worktree.worktreeDir),
     affectedPaths,
   };
 }

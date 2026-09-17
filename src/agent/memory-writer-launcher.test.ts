@@ -3,12 +3,11 @@ import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   enqueueMemoryWriterJob,
@@ -18,9 +17,8 @@ import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 
 const AGENT_ID = "agent-memory-writer";
-let tempDir: string;
+let agentRoot: string;
 let memoryDir: string;
-let originalHome: string | undefined;
 let originalIsMemfsEnabled: typeof settingsManager.isMemfsEnabled;
 
 const GIT_ENV = {
@@ -39,13 +37,55 @@ function git(cwd: string, args: string[]): string {
   });
 }
 
+function writerDeps(filename: string, contents: string, taskId: string) {
+  return {
+    spawnBackgroundSubagentTask: ({
+      memoryScope,
+      onComplete,
+    }: {
+      memoryScope?: { primaryRoot: string };
+      onComplete?: (result: {
+        success: boolean;
+        agentId: string;
+        report: string;
+      }) => void;
+    }) => {
+      const root = memoryScope?.primaryRoot;
+      if (!root) throw new Error("missing worktree");
+      writeFileSync(join(root, filename), contents, "utf-8");
+      void onComplete?.({
+        success: true,
+        agentId: "agent-writer",
+        report: `STATUS: applied\n- ${filename}`,
+      });
+      return {
+        taskId,
+        outputFile: join(agentRoot, `${taskId}.txt`),
+        subagentId: `sub-${taskId}`,
+      };
+    },
+    recompileAgentSystemPrompt: async () => "",
+    syncPendingMemoryCommitsAfterTurn: async () =>
+      ({
+        status: "skipped",
+        summary: "test",
+        memoryDir,
+        localOnly: true,
+      }) as never,
+    resolveAuthor: async () => ({
+      agentId: AGENT_ID,
+      authorName: "Parent",
+      authorEmail: `${AGENT_ID}@letta.com`,
+    }),
+  };
+}
+
 beforeEach(() => {
-  tempDir = mkdtempSync(join(tmpdir(), "memory-writer-launcher-"));
-  originalHome = process.env.HOME;
-  process.env.HOME = tempDir;
-  memoryDir = join(tempDir, ".letta", "agents", AGENT_ID, "memory");
+  agentRoot = join(homedir(), ".letta", "agents", AGENT_ID);
+  memoryDir = join(agentRoot, "memory");
+  rmSync(agentRoot, { recursive: true, force: true });
   mkdirSync(memoryDir, { recursive: true });
-  git(tempDir, ["init", "-b", "main", memoryDir]);
+  git(memoryDir, ["init", "-b", "main"]);
   git(memoryDir, ["config", "user.email", "test@test.com"]);
   git(memoryDir, ["config", "user.name", "test"]);
   writeFileSync(
@@ -70,9 +110,7 @@ afterEach(() => {
       isMemfsEnabled: typeof originalIsMemfsEnabled;
     }
   ).isMemfsEnabled = originalIsMemfsEnabled;
-  if (originalHome === undefined) delete process.env.HOME;
-  else process.env.HOME = originalHome;
-  rmSync(tempDir, { recursive: true, force: true });
+  rmSync(agentRoot, { recursive: true, force: true });
 });
 
 describe("memory-writer launcher", () => {
@@ -93,40 +131,11 @@ describe("memory-writer launcher", () => {
             instruction: "Remember that the user prefers bun",
             source: "remember",
           },
-          {
-            spawnBackgroundSubagentTask: ({ memoryScope, onComplete }) => {
-              const root = memoryScope?.primaryRoot;
-              if (!root) throw new Error("missing worktree");
-              writeFileSync(
-                join(root, "human.md"),
-                "---\ndescription: Human\n---\nprefers bun\n",
-                "utf-8",
-              );
-              void onComplete?.({
-                success: true,
-                agentId: "agent-writer",
-                report: "STATUS: applied\n- human.md",
-              });
-              return {
-                taskId: "task-1",
-                outputFile: join(tempDir, "out.txt"),
-                subagentId: "sub-1",
-              };
-            },
-            recompileAgentSystemPrompt: async () => "",
-            syncPendingMemoryCommitsAfterTurn: async () =>
-              ({
-                status: "skipped",
-                summary: "test",
-                memoryDir,
-                localOnly: true,
-              }) as never,
-            resolveAuthor: async () => ({
-              agentId: AGENT_ID,
-              authorName: "Parent",
-              authorEmail: `${AGENT_ID}@letta.com`,
-            }),
-          },
+          writerDeps(
+            "human.md",
+            "---\ndescription: Human\n---\nprefers bun\n",
+            "task-1",
+          ),
         ),
     );
 
@@ -141,40 +150,11 @@ describe("memory-writer launcher", () => {
         source: "remember",
         wait: true,
       },
-      {
-        spawnBackgroundSubagentTask: ({ memoryScope, onComplete }) => {
-          const root = memoryScope?.primaryRoot;
-          if (!root) throw new Error("missing worktree");
-          writeFileSync(
-            join(root, "notes.md"),
-            "---\ndescription: Notes\n---\nqueued wait\n",
-            "utf-8",
-          );
-          void onComplete?.({
-            success: true,
-            agentId: "agent-writer",
-            report: "STATUS: applied",
-          });
-          return {
-            taskId: "task-2",
-            outputFile: join(tempDir, "out2.txt"),
-            subagentId: "sub-2",
-          };
-        },
-        recompileAgentSystemPrompt: async () => "",
-        syncPendingMemoryCommitsAfterTurn: async () =>
-          ({
-            status: "skipped",
-            summary: "test",
-            memoryDir,
-            localOnly: true,
-          }) as never,
-        resolveAuthor: async () => ({
-          agentId: AGENT_ID,
-          authorName: "Parent",
-          authorEmail: `${AGENT_ID}@letta.com`,
-        }),
-      },
+      writerDeps(
+        "notes.md",
+        "---\ndescription: Notes\n---\nqueued wait\n",
+        "task-2",
+      ),
     );
 
     expect(applied.status).toBe("applied");
@@ -182,6 +162,7 @@ describe("memory-writer launcher", () => {
     expect(readFileSync(join(memoryDir, "notes.md"), "utf-8")).toContain(
       "queued wait",
     );
+    expect(existsSync(join(memoryDir, "human.md"))).toBe(true);
   });
 
   test("rejects agents without memfs", async () => {

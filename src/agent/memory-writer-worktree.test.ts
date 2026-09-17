@@ -95,6 +95,7 @@ describe("memory-writer worktrees", () => {
         "Memory-Job-ID: job-apply",
       ),
     ).toBe(true);
+    expect(git(memoryDir, ["log", "-1", "--pretty=%an"]).trim()).toBe("Parent");
   });
 
   test("preserves the proposal when parent has a conflicting edit", async () => {
