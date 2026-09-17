@@ -6,6 +6,11 @@ import {
 } from "@/channels/accounts";
 import { resolveChannelGatewayTelemetryTypes } from "@/channels/gateway-telemetry-types";
 import { createChannelAccountLive } from "@/channels/service";
+import type { ChannelAccount } from "@/channels/types";
+
+// Stands in for the on-disk account files shared by the listener and the
+// ChannelGateway child.
+const disk = new Map<string, ChannelAccount[]>();
 
 function resetAccountStores(): void {
   clearChannelAccountStores();
@@ -15,8 +20,11 @@ function resetAccountStores(): void {
 
 beforeEach(() => {
   resetAccountStores();
-  __testOverrideLoadChannelAccounts(() => []);
-  __testOverrideSaveChannelAccounts(() => {});
+  disk.clear();
+  __testOverrideLoadChannelAccounts((channelId) => disk.get(channelId) ?? []);
+  __testOverrideSaveChannelAccounts((channelId, accounts) => {
+    disk.set(channelId, accounts);
+  });
 });
 
 afterEach(() => {
@@ -64,7 +72,7 @@ test("Desktop restore telemetry enumerates enabled accounts when channelNames is
   ).toEqual(["telegram"]);
 });
 
-test("Desktop restore telemetry re-reads enabled accounts at emit time", () => {
+test("Desktop restore telemetry reflects account changes made by the gateway child", () => {
   createChannelAccountLive(
     "telegram",
     {
@@ -83,15 +91,14 @@ test("Desktop restore telemetry re-reads enabled accounts at emit time", () => {
     }),
   ).toEqual(["telegram"]);
 
-  createChannelAccountLive(
-    "discord",
-    {
-      displayName: "Discord Bot",
-      enabled: true,
-      token: "discord-token",
-      dmPolicy: "pairing",
-    },
-    { accountId: "discord-1" },
+  // The child disables the account: disk changes, but this process's account
+  // cache is never touched.
+  disk.set(
+    "telegram",
+    (disk.get("telegram") ?? []).map((account) => ({
+      ...account,
+      enabled: false,
+    })),
   );
 
   expect(
@@ -99,5 +106,5 @@ test("Desktop restore telemetry re-reads enabled accounts at emit time", () => {
       restoreEnabledChannels: true,
       channelNames: [],
     }),
-  ).toEqual(["telegram", "discord"]);
+  ).toEqual([]);
 });
