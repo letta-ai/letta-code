@@ -124,20 +124,26 @@ def main():
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / path, destination)
     run([str(node), "scripts/stage-pypi-deps.mjs", str(app)], env=env)
-    # Native addon must be built with the Node ABI we ship, not Bun/host Node.
+    # Native addons must be built with the Node ABI we ship, not Bun/host Node.
     npm = shutil.which("npm")
+    native_env = env.copy()
+    native_env["npm_config_build_from_source"] = "true"
     subprocess.run(
-        [npm, "rebuild", "node-pty", "@vscode/ripgrep", "--foreground-scripts"],
+        [npm, "rebuild", "node-pty", "--foreground-scripts"],
+        cwd=app,
+        env=native_env,
+        check=True,
+        shell=os.name == "nt",
+    )
+    subprocess.run(
+        [npm, "rebuild", "@vscode/ripgrep", "--foreground-scripts"],
         cwd=app,
         env=env,
         check=True,
         shell=os.name == "nt",
     )
     pty = app / "node_modules/node-pty"
-    native_target = target.replace("win-", "win32-")
-    for prebuild in (pty / "prebuilds").iterdir():
-        if prebuild.name != native_target:
-            shutil.rmtree(prebuild)
+    shutil.rmtree(pty / "prebuilds", ignore_errors=True)
     for path in ("third_party", "deps", "src", "build/Release/obj.target"):
         shutil.rmtree(pty / path, ignore_errors=True)
     for helper in app.rglob("spawn-helper"):
