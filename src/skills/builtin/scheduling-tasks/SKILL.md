@@ -152,15 +152,6 @@ schedule_name_b64="<base64 of short name>"
 schedule_description_b64="<base64 of description>"
 agent_id="${AGENT_ID:-${LETTA_AGENT_ID:?missing agent ID}}"
 current_conversation_id="${CONVERSATION_ID:-${LETTA_CONVERSATION_ID:?missing conversation ID}}"
-decode_b64() {
-  node -e 'process.stdout.write(Buffer.from(process.argv[1], "base64").toString("utf8"))' "$1"
-}
-schedule_name="$(decode_b64 "$schedule_name_b64")"
-schedule_description="$(decode_b64 "$schedule_description_b64")"
-if [[ -z "$schedule_name" || -z "$schedule_description" ]]; then
-  echo "schedule name and description must be non-empty" >&2
-  exit 1
-fi
 
 connections_json="$(curl -fsS \
   "$LETTA_BASE_URL/v1/agents/$agent_id/imessage/connection" \
@@ -197,22 +188,72 @@ if [[ -z "$target_route_id" || -z "$target_conversation_id" || -z "$target_accou
   echo "iMessage route contains an empty required field" >&2
   exit 1
 fi
-message_channel_args="$(node - \
+decoded_fields_json="$(node - \
+  "$message_b64" \
+  "$schedule_name_b64" \
+  "$schedule_description_b64" \
   "$target_route_id" \
-  "$target_account_id" \
-  "$message_b64" <<'NODE'
-const [routeId, accountId, messageBase64] = process.argv.slice(2);
-const message = Buffer.from(messageBase64, "base64").toString("utf8");
+  "$target_account_id" <<'NODE'
+const [messageBase64, nameBase64, descriptionBase64, routeId, accountId] =
+  process.argv.slice(2);
+const base64Pattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const utf8 = new TextDecoder("utf-8", { fatal: true });
+function decode(label, value) {
+  if (!base64Pattern.test(value)) throw new Error(`${label} is not valid padded Base64`);
+  const bytes = Buffer.from(value, "base64");
+  if (bytes.toString("base64") !== value) throw new Error(`${label} is not canonical Base64`);
+  const text = utf8.decode(bytes);
+  if (text.length === 0) throw new Error(`${label} must be non-empty`);
+  if (text.includes("\0")) throw new Error(`${label} must not contain NUL`);
+  return text;
+}
+const message = decode("message", messageBase64);
+const scheduleName = decode("schedule name", nameBase64);
+const scheduleDescription = decode("schedule description", descriptionBase64);
 process.stdout.write(JSON.stringify({
-  action: "send",
-  channel: "imessage",
-  chat_id: routeId,
-  accountId,
-  message,
+  scheduleName,
+  scheduleDescription,
+  messageChannelArgs: {
+    action: "send",
+    channel: "imessage",
+    chat_id: routeId,
+    accountId,
+    message,
+  },
 }));
 NODE
 )"
+schedule_name="$(jq -er '.scheduleName | select(type == "string" and length > 0)' <<<"$decoded_fields_json")"
+schedule_description="$(jq -er '.scheduleDescription | select(type == "string" and length > 0)' <<<"$decoded_fields_json")"
+message_channel_args="$(jq -cer '.messageChannelArgs' <<<"$decoded_fields_json")"
+unset decoded_fields_json
 prompt="When this schedule fires, call MessageChannel exactly once with these exact arguments: $message_channel_args. Do not only reply in the conversation."
+
+inspect_ambiguous_schedules() {
+  local runner list_json list_status
+  for runner in local cloud; do
+    set +e
+    list_json="$(letta cron list \
+      --runner "$runner" \
+      --agent "$agent_id" \
+      --conversation "$target_conversation_id")"
+    list_status=$?
+    set -e
+    if (( list_status != 0 )); then
+      echo "$runner schedule inspection failed; do not retry cron add." >&2
+    elif [[ -z "${list_json//[[:space:]]/}" ]]; then
+      echo "$runner schedule inspection returned no JSON; do not retry cron add." >&2
+    elif ! jq -cer \
+      --arg runner "$runner" '
+      if type != "array" then error("invalid schedule list response")
+      else map({id, runner: (.runner // $runner), name, conversation_id}) end
+    ' <<<"$list_json" >&2; then
+      echo "$runner schedule inspection was unparseable; do not retry cron add." >&2
+    fi
+    unset list_json
+  done
+  echo "Recovery output can be empty or incomplete and never authorizes retrying cron add; creation may have committed." >&2
+}
 
 set +e
 created_json="$(letta cron add \
@@ -225,8 +266,8 @@ created_json="$(letta cron add \
 create_status=$?
 set -e
 if (( create_status != 0 )) || [[ -z "${created_json//[[:space:]]/}" ]]; then
-  echo "cron add had an ambiguous outcome. Inspect schedules by name and conversation before retrying; creation may have committed." >&2
-  letta cron list --agent "$agent_id" --conversation "$target_conversation_id" >&2 || true
+  echo "cron add had an ambiguous outcome; inspect projected recovery metadata below." >&2
+  inspect_ambiguous_schedules
   exit 1
 fi
 set +e
@@ -234,8 +275,8 @@ created_id="$(jq -er '.id | select(type == "string" and length > 0)' <<<"$create
 created_id_status=$?
 set -e
 if (( created_id_status != 0 )) || [[ -z "$created_id" ]]; then
-  echo "cron add returned an unparseable result. Inspect schedules by name and conversation before retrying; creation may have committed." >&2
-  letta cron list --agent "$agent_id" --conversation "$target_conversation_id" >&2 || true
+  echo "cron add returned an unparseable result; inspect projected recovery metadata below." >&2
+  inspect_ambiguous_schedules
   exit 1
 fi
 printf 'Created schedule %s. If verification fails, inspect or delete this ID; do not rerun cron add.\n' "$created_id" >&2
