@@ -7,7 +7,6 @@
  * - Managing parallel subagent execution
  */
 
-import { spawn } from "node:child_process";
 import { platform } from "node:os";
 import { resolveActingUserId } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
@@ -17,6 +16,7 @@ import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
 import { updateSubagent } from "@/agent/subagent-state.js";
 import { wrapSubagentLauncher } from "@/agent/subagents/sandbox";
+import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import {
   type BackendMode,
   getBackend,
@@ -63,6 +63,7 @@ import {
   getPrimaryAgentModelHandle,
   resolveSubagentModel,
 } from "./subagent-model";
+import { spawnSubagentProcess } from "./subagent-process";
 import {
   describeSubagentExit,
   type ExecutionState,
@@ -346,7 +347,9 @@ async function executeSubagent(
     // keychain lookups under high parallel fan-out.
     const settings = await settingsManager.getSettingsWithSecureTokens();
     const inheritedApiKey =
-      process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+      getDesktopAccessToken() ||
+      process.env.LETTA_API_KEY ||
+      settings.env?.LETTA_API_KEY;
     const inheritedBaseUrl =
       process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
     const inheritedMemoryRoots = resolveAllowedMemoryRoots({
@@ -437,10 +440,12 @@ async function executeSubagent(
     if (!managedCommand) {
       throw new Error("Subagent executable is required");
     }
-    const proc = spawn(managedCommand, managedArgs, {
+    const runningProcess = spawnSubagentProcess(managedCommand, managedArgs, {
       cwd: subagentWorkingDirectory,
       env: spawnEnv,
+      signal,
     });
+    const proc = runningProcess.process;
     proc.stdin.on("error", () => {});
     proc.stdin.end(boundedUserPrompt);
 
@@ -449,14 +454,6 @@ async function executeSubagent(
     proc.once("spawn", () => {
       updateSubagent(subagentId, { status: "running" });
     });
-
-    // Set up abort handler to kill the child process
-    let wasAborted = false;
-    const abortHandler = () => {
-      wasAborted = true;
-      proc.kill("SIGTERM");
-    };
-    signal?.addEventListener("abort", abortHandler);
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -494,15 +491,7 @@ async function executeSubagent(
     });
 
     // Wait for process to complete
-    const { exitCode, exitSignal } = await new Promise<{
-      exitCode: number | null;
-      exitSignal: NodeJS.Signals | null;
-    }>((resolve) => {
-      proc.on("close", (code, sig) =>
-        resolve({ exitCode: code, exitSignal: sig }),
-      );
-      proc.on("error", () => resolve({ exitCode: null, exitSignal: null }));
-    });
+    const { exitCode, exitSignal } = await runningProcess.completion;
 
     // Ensure the trailing partial line is processed before completing.
     // Without this, late tool events can be dropped before Task marks completion.
@@ -510,11 +499,8 @@ async function executeSubagent(
       processStreamEvent(stdoutBuffer, state, subagentId);
     }
 
-    // Clean up abort listener
-    signal?.removeEventListener("abort", abortHandler);
-
     // Check if process was aborted by user
-    if (wasAborted) {
+    if (runningProcess.wasAborted()) {
       return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,

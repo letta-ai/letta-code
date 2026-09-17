@@ -483,10 +483,6 @@ export function createListenerMessageHandler(
             return;
           }
           const approvals = parsed.payload.continuation?.approvals;
-          if (!approvals || approvals.length === 0) {
-            acknowledgeInput(true);
-            return;
-          }
           if (scopedRuntime.isProcessing) {
             acknowledgeInput(
               false,

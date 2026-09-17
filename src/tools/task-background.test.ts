@@ -325,6 +325,10 @@ describe("TaskStop with background tasks", () => {
     const taskId = "task_stop_test";
     const outputFile = createBackgroundOutputFile(taskId);
     const abortController = new AbortController();
+    let resolveCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
 
     const bgTask: BackgroundTask = {
       description: "Test abort",
@@ -335,6 +339,7 @@ describe("TaskStop with background tasks", () => {
       startTime: new Date(),
       outputFile,
       abortController,
+      completion,
     };
 
     backgroundTasks.set(taskId, bgTask);
@@ -344,12 +349,23 @@ describe("TaskStop with background tasks", () => {
     expect(abortController.signal.aborted).toBe(false);
 
     // Stop the task
-    const result = await task_stop({ task_id: taskId });
+    let stopFinished = false;
+    const stopPromise = task_stop({ task_id: taskId }).then((result) => {
+      stopFinished = true;
+      return result;
+    });
+    await Promise.resolve();
+
+    expect(stopFinished).toBe(false);
+    expect(bgTask.status).toBe("running");
+    expect(bgTask.error).toBe("Aborted by user");
+    expect(abortController.signal.aborted).toBe(true);
+
+    resolveCompletion();
+    const result = await stopPromise;
 
     expect(result.killed).toBe(true);
     expect(bgTask.status).toBe("failed");
-    expect(bgTask.error).toBe("Aborted by user");
-    expect(abortController.signal.aborted).toBe(true);
 
     // Clean up
     fs.unlinkSync(outputFile);
