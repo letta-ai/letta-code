@@ -2,17 +2,8 @@ name: Build and test Python wheels
 
 # Artifact-only workflow: publishing requires a separately approved release.
 on:
+  workflow_call:
   pull_request:
-    paths:
-      - python/**
-      - scripts/*pypi*
-      - src/**
-      - build.js
-      - package.json
-      - bun.lock
-      - .github/workflows/pypi-wheels.yml
-  push:
-    branches: [main]
     paths:
       - python/**
       - scripts/*pypi*
