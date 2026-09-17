@@ -13,7 +13,10 @@ afterEach(() => {
   else process.env.LETTA_BASE_URL = originalUrl;
 });
 
-function fixture() {
+function fixture(
+  status = 202,
+  response: unknown = { status: "queued", run_id: "run-fixture" },
+) {
   process.env.LETTA_BASE_URL = "https://api.letta.com";
   const requests: Request[] = [];
   const client = new Letta({
@@ -25,10 +28,7 @@ function fixture() {
           ? new Request(input, init)
           : new Request(String(input), init),
       );
-      return Response.json(
-        { status: "queued", run_id: "run-fixture" },
-        { status: 202 },
-      );
+      return Response.json(response, { status });
     },
   });
   const backend = new APIBackend({ getClient: async () => client });
@@ -36,13 +36,12 @@ function fixture() {
 }
 
 describe("/dream admission command", () => {
-  test("freezes scope and preserves the transport UUID on redelivery", async () => {
+  test("freezes scope and sends only the conversation on repeated requests", async () => {
     const { backend, requests } = fixture();
     const scope = {
       agentId: "agent-original",
       conversationId: "conv-original",
       actingUserId: "user-original",
-      clientRequestId: "12345678-1234-4234-8234-123456789abc",
     };
     const first = requestReflectionRun(scope, "", backend);
     const second = requestReflectionRun({ ...scope }, "", backend);
@@ -58,12 +57,11 @@ describe("/dream admission command", () => {
       );
       expect(await request.json()).toEqual({
         conversation_id: "conv-original",
-        client_request_id: "12345678-1234-4234-8234-123456789abc",
       });
     }
   });
 
-  test("TUI registry executes with explicit scope, default conversation and fresh UUIDs", async () => {
+  test("TUI registry executes with explicit scope and default conversation", async () => {
     const { backend, requests } = fixture();
     __testSetBackend(backend);
     for (let invocation = 0; invocation < 2; invocation++) {
@@ -72,12 +70,11 @@ describe("/dream admission command", () => {
         output: "Reflection queued. Run ID: run-fixture",
       });
     }
-    const bodies = (await Promise.all(
-      requests.map((request) => request.json()),
-    )) as { conversation_id: string; client_request_id: string }[];
-    expect(bodies[0]?.conversation_id).toBe("default");
-    expect(bodies[0]?.client_request_id).toMatch(/^[a-f0-9-]{36}$/);
-    expect(bodies[0]?.client_request_id).not.toBe(bodies[1]?.client_request_id);
+    const bodies = await Promise.all(requests.map((request) => request.json()));
+    expect(bodies).toEqual([
+      { conversation_id: "default" },
+      { conversation_id: "default" },
+    ]);
     expect(shouldSlashCommandBypassQueue("/dream")).toBe(true);
   });
 
@@ -118,14 +115,35 @@ describe("/dream admission command", () => {
     ).rejects.toThrow("Local and custom backends are not supported");
   });
 
-  test("an invalid transport id is replaced with a UUID, not posted verbatim", async () => {
-    const { backend, requests } = fixture();
-    await requestReflectionRun(
-      { agentId: "agent-fixture", clientRequestId: "legacy-request" },
-      "",
-      backend,
-    );
-    const body = (await requests[0]?.json()) as { client_request_id: string };
-    expect(body.client_request_id).toMatch(/^[a-f0-9-]{36}$/);
-  });
+  test.each([
+    {
+      status: 200,
+      response: { status: "no_work" },
+      success: true,
+      output: "No new work to reflect on in this conversation.",
+    },
+    {
+      status: 409,
+      response: {
+        code: "busy",
+        message: "The conversation already has active reflection work",
+      },
+      success: false,
+      output: "HTTP 409, busy",
+    },
+  ])(
+    "TUI displays admission outcome $status without polling",
+    async ({ status, response, success, output }) => {
+      const { backend, requests } = fixture(status, response);
+      __testSetBackend(backend);
+      expect(
+        await executeCommand("/dream", { agentId: "agent-tui" }),
+      ).toMatchObject({
+        success,
+        output: expect.stringContaining(output),
+      });
+      expect(requests).toHaveLength(1);
+      expect(await requests[0]?.json()).toEqual({ conversation_id: "default" });
+    },
+  );
 });

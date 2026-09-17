@@ -4,7 +4,6 @@ import { postReflectionRun } from "./reflection-runs";
 
 const body = {
   conversation_id: "conv-fixture",
-  client_request_id: "12345678-1234-4234-8234-123456789abc",
 };
 
 function fixture(status: number, data: unknown) {
@@ -79,10 +78,9 @@ describe("reflection admission HTTP", () => {
   test.each([
     [409, "source_not_finished"],
     [409, "source_state_unknown"],
-    [409, "agent_busy"],
+    [409, "busy"],
     [409, "blocked_failed_run"],
     [409, "reflection_not_enabled"],
-    [409, "idempotency_conflict"],
     [409, "state_changed"],
     [503, "admission_paused"],
     [503, "unavailable"],

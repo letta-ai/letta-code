@@ -192,7 +192,6 @@ export async function handleExecuteCommand(
             agentId: scope.agent_id ?? "",
             conversationId: scope.conversation_id,
             actingUserId: command.runtime.acting_user_id,
-            clientRequestId: command.request_id,
           },
           trimmedArgs,
         );

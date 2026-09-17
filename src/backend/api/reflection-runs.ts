@@ -4,7 +4,6 @@ import stripAnsi from "strip-ansi";
 
 export interface ReflectionRunRequest {
   conversation_id: string;
-  client_request_id: string;
 }
 
 export type ReflectionRunReceipt =
@@ -63,7 +62,6 @@ export async function postReflectionRun(
           ...options,
           body: {
             conversation_id: request.conversation_id,
-            client_request_id: request.client_request_id,
           },
           // Admission failures are decisions, not transport retry signals. A user
           // can retry explicitly; never silently retry a 409/429/503 or denial.

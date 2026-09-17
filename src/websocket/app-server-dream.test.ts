@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -140,7 +139,8 @@ globalThis.fetch = (input, init) => {
       });
       socket = new WebSocket(url);
       await once(socket, "open");
-      const id = randomUUID();
+      // This ID correlates WebSocket responses only, not backend admission.
+      const id = "dream-transport-request";
       const frame = {
         type: "execute_command",
         command_id: "dream",
@@ -157,8 +157,19 @@ globalThis.fetch = (input, init) => {
         return pending;
       };
       expect(await send()).toMatchObject({
+        request_id: id,
         success: true,
         output: "Reflection queued. Run ID: run-fixture",
+      });
+      status = 409;
+      responseBody = {
+        code: "busy",
+        message: "The conversation already has active reflection work",
+      };
+      expect(await send()).toMatchObject({
+        request_id: id,
+        success: false,
+        output: expect.stringContaining("HTTP 409, busy"),
       });
       status = 200;
       responseBody = { status: "no_work" };
@@ -193,12 +204,12 @@ globalThis.fetch = (input, init) => {
         success: false,
         output: expect.stringContaining("does not accept arguments"),
       });
-      expect(requests).toHaveLength(5);
+      expect(requests).toHaveLength(6);
       for (const request of requests) {
         expect(request).toEqual({
           path: "/v1/agents/agent-fixture/reflection/runs",
           method: "POST",
-          body: { conversation_id: "conv-fixture", client_request_id: id },
+          body: { conversation_id: "conv-fixture" },
           authorization: "Bearer fixture-scoped-key",
           actor: "user-fixture",
         });
