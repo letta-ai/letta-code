@@ -2,6 +2,59 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import type { CatalogModel } from "@/agent/model-catalog";
+import { filterCloudModelsByBalance } from "./model";
+
+describe("Cloud model credit filtering", () => {
+  const entries: Pick<CatalogModel, "id" | "billing" | "free">[] = [
+    { id: "paid", billing: "credits", free: true },
+    { id: "free", billing: "free", free: false },
+    { id: "quota", billing: "quota" },
+    { id: "byok", billing: "credits" },
+    { id: "legacy" },
+  ];
+  const catalog = entries.map((entry) => ({
+    ...entry,
+    handle: entry.id,
+    label: entry.id,
+    description: "",
+  }));
+  const byok = new Set(["byok"]);
+
+  test.each([-1000, 0, 999])(
+    "omits only credit-funded hosted rows at %s credits",
+    (total_balance) => {
+      expect(
+        filterCloudModelsByBalance(
+          catalog,
+          { total_balance, billing_tier: "free" },
+          byok,
+        ).map((entry) => entry.id),
+      ).toEqual(["free", "quota", "byok", "legacy"]);
+      expect(catalog).toHaveLength(5);
+    },
+  );
+
+  test.each([1000, 1001])("retains all rows at %s credits", (total_balance) => {
+    expect(
+      filterCloudModelsByBalance(
+        catalog,
+        { total_balance, billing_tier: "free" },
+        byok,
+      ),
+    ).toEqual(catalog);
+  });
+
+  test("enterprise does not require a prepaid balance", () => {
+    expect(
+      filterCloudModelsByBalance(
+        catalog,
+        { total_balance: -1000, billing_tier: "enterprise" },
+        byok,
+      ),
+    ).toEqual(catalog);
+  });
+});
 
 // Real CLI subprocesses and disk-backed local backend; no inference or mocks.
 describe("model CLI", () => {

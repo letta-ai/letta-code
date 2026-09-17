@@ -114,6 +114,7 @@ describe("toCatalogModel", () => {
       maxContextWindow: 950000,
       description: "Opus 4.8 (high reasoning)",
       isFeatured: true,
+      billing: "credits",
       contextWindow: 200000,
       maxOutputTokens: 128000,
       config: { reasoning_effort: "high", enable_reasoner: true },
@@ -125,6 +126,7 @@ describe("toCatalogModel", () => {
       label: "Opus 4.8",
       description: "Opus 4.8 (high reasoning)",
       isFeatured: true,
+      billing: "credits",
       updateArgs: {
         reasoning_effort: "high",
         enable_reasoner: true,
@@ -348,6 +350,7 @@ describe("refreshModelCatalog", () => {
           label: "GPT-9",
           isDefault: false,
           free: false,
+          billing: "credits",
         }),
       ],
     });
@@ -358,6 +361,9 @@ describe("refreshModelCatalog", () => {
 
     expect(loadPersistedModelCatalog("https://api.letta.com")).toBe(true);
     expect(models.find((m) => m.id === "persisted-model")?.label).toBe("GPT-9");
+    expect(models.find((m) => m.id === "persisted-model")?.billing).toBe(
+      "credits",
+    );
   });
 
   test("does not load a cache written for another API server", async () => {

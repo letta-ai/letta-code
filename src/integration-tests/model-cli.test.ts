@@ -3,6 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Letta from "@letta-ai/letta-client";
+import { getBalanceMetadata } from "@/backend/api/metadata";
+import { apiRequest } from "@/backend/api/request";
+import { settingsManager } from "@/settings-manager";
 
 async function verifyCloudModelCli(verifyInference: boolean) {
   const client = new Letta({
@@ -187,6 +190,13 @@ test.skipIf(!process.env.LETTA_API_KEY)(
       baseURL: process.env.LETTA_BASE_URL || "https://api.letta.com",
     });
     const inventory = await client.models.list();
+    await settingsManager.initialize();
+    const [balance, catalog] = await Promise.all([
+      getBalanceMetadata(),
+      apiRequest<{
+        models: { id: string; handle: string; billing?: string }[];
+      }>("GET", "/v1/models/catalog"),
+    ]);
     const expectedByok = new Set(
       inventory
         .filter(
@@ -231,9 +241,17 @@ test.skipIf(!process.env.LETTA_API_KEY)(
       expectedByok.size,
     );
     expect(byok.every((entry) => expectedByok.has(entry.handle))).toBe(true);
-    expect(hosted.some((entry) => entry.handle === "openai/gpt-5.6-luna")).toBe(
-      true,
-    );
+    const hasCredits =
+      balance.billing_tier === "enterprise" || balance.total_balance >= 1000;
+    const expectedHostedIds = catalog.models
+      .filter(
+        (entry) =>
+          !expectedByok.has(entry.handle) &&
+          (hasCredits || entry.billing !== "credits"),
+      )
+      .map((entry) => entry.id)
+      .sort();
+    expect(hosted.map((entry) => entry.id).sort()).toEqual(expectedHostedIds);
     expect(hosted.every((entry) => !expectedByok.has(entry.handle))).toBe(true);
     const allIds = new Set(all.map((entry) => entry.id));
     const filteredIds = new Set([...byok, ...hosted].map((entry) => entry.id));
