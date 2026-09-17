@@ -126,15 +126,28 @@ def main():
     run([str(node), "scripts/stage-pypi-deps.mjs", str(app)], env=env)
     # Native addons must be built with the Node ABI we ship, not Bun/host Node.
     npm = shutil.which("npm")
-    native_env = env.copy()
-    native_env["npm_config_build_from_source"] = "true"
-    subprocess.run(
-        [npm, "rebuild", "node-pty", "--foreground-scripts"],
-        cwd=app,
-        env=native_env,
-        check=True,
-        shell=os.name == "nt",
-    )
+    pty = app / "node_modules/node-pty"
+    if os.name == "nt":
+        # node-pty's checked-in Windows prebuild includes its matched ConPTY
+        # helpers. A source rebuild on Actions loaded but never reported child
+        # exit, leaving conpty.node locked until the runner killed the process.
+        prebuild = pty / "prebuilds/win32-x64"
+        if not prebuild.is_dir():
+            raise SystemExit("node-pty Windows x64 prebuild is missing")
+        shutil.rmtree(pty / "build", ignore_errors=True)
+        for candidate in (pty / "prebuilds").iterdir():
+            if candidate != prebuild:
+                shutil.rmtree(candidate)
+    else:
+        native_env = env.copy()
+        native_env["npm_config_build_from_source"] = "true"
+        subprocess.run(
+            [npm, "rebuild", "node-pty", "--foreground-scripts"],
+            cwd=app,
+            env=native_env,
+            check=True,
+        )
+        shutil.rmtree(pty / "prebuilds", ignore_errors=True)
     subprocess.run(
         [npm, "rebuild", "@vscode/ripgrep", "--foreground-scripts"],
         cwd=app,
@@ -142,8 +155,6 @@ def main():
         check=True,
         shell=os.name == "nt",
     )
-    pty = app / "node_modules/node-pty"
-    shutil.rmtree(pty / "prebuilds", ignore_errors=True)
     for path in ("third_party", "deps", "src", "build/Release/obj.target"):
         shutil.rmtree(pty / path, ignore_errors=True)
     for helper in app.rglob("spawn-helper"):

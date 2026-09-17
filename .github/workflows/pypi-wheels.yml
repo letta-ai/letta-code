@@ -18,8 +18,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: pypi-wheels-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: pypi-wheels-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   wheel:
