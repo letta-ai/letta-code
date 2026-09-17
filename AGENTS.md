@@ -947,8 +947,7 @@ as success if hashes match.
 
 Cloud API teleport uses a 409 `TELEPORT_SOURCE_NOT_ACTIVE` error when the source
 environment is not active. Rulesets (not branch protection) govern the cloud
-side. CODEOWNERS: the author of a PR can't self-satisfy their own review
-requirement.
+side.
 
 ### Desktop Device Selection
 
