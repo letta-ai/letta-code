@@ -15,6 +15,9 @@ import { MEMORY_TOOL_NAMES } from "@/tools/toolset";
  */
 export function getDisplayToolName(rawName: string): string {
   if (MEMORY_TOOL_NAMES.has(rawName)) return "Memory";
+  if (rawName === "remember" || rawName === "propose_memory_patch") {
+    return "Memory";
+  }
 
   // Anthropic toolset
   if (rawName === "write") return "Write";
@@ -162,7 +165,11 @@ export function alwaysRequiresUserInput(name: string): boolean {
  * Checks if a tool is a memory tool (server-side memory management)
  */
 export function isMemoryTool(name: string): boolean {
-  return MEMORY_TOOL_NAMES.has(name);
+  return (
+    MEMORY_TOOL_NAMES.has(name) ||
+    name === "remember" ||
+    name === "propose_memory_patch"
+  );
 }
 
 /**

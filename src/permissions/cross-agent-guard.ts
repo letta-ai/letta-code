@@ -346,7 +346,8 @@ export function extractTargetAgentPaths(
   if (
     toolName === "ApplyPatch" ||
     toolName === "apply_patch" ||
-    toolName === "memory_apply_patch"
+    toolName === "memory_apply_patch" ||
+    toolName === "propose_memory_patch"
   ) {
     if (typeof toolArgs.input === "string") {
       for (const p of extractApplyPatchPaths(toolArgs.input)) {

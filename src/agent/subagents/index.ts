@@ -24,8 +24,8 @@ import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
 import historyAnalyzerV2AgentMd from "./builtin/history-analyzer-v2.md";
 import initAgentMd from "./builtin/init.md";
 import initV2AgentMd from "./builtin/init-v2.md";
-import memoryAgentMd from "./builtin/memory.md";
-import memoryV2AgentMd from "./builtin/memory-v2.md";
+import memoryWriterAgentMd from "./builtin/memory-writer.md";
+import memoryWriterV2AgentMd from "./builtin/memory-writer-v2.md";
 import recallAgentMd from "./builtin/recall.md";
 import reflectionAgentMd from "./builtin/reflection.md";
 import reflectionV2AgentMd from "./builtin/reflection-v2.md";
@@ -35,7 +35,7 @@ const STANDARD_BUILTIN_SOURCES = [
   generalPurposeAgentMd,
   historyAnalyzerAgentMd,
   initAgentMd,
-  memoryAgentMd,
+  memoryWriterAgentMd,
   recallAgentMd,
   reflectionAgentMd,
 ];
@@ -45,7 +45,7 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
   generalPurposeAgentMd,
   historyAnalyzerAgentMd,
   initAgentMd,
-  memoryAgentMd,
+  memoryWriterAgentMd,
   recallAgentMd,
   reflectionAgentMd,
 ];
@@ -53,7 +53,7 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
 const MEMFS_V2_BUILTIN_SOURCES = [
   historyAnalyzerV2AgentMd,
   initV2AgentMd,
-  memoryV2AgentMd,
+  memoryWriterV2AgentMd,
   reflectionV2AgentMd,
 ];
 
@@ -354,6 +354,16 @@ async function parseSubagentFile(
   });
 }
 
+function aliasMemoryWriter(
+  builtins: Record<string, SubagentConfig>,
+): Record<string, SubagentConfig> {
+  const writer = builtins["memory-writer"];
+  if (writer && !builtins.memory) {
+    builtins.memory = { ...writer, name: "memory" };
+  }
+  return builtins;
+}
+
 /**
  * Built-in subagents that ship with the package
  * These are available to all users without configuration
@@ -389,6 +399,7 @@ function getBuiltinSubagents(
     }
   }
 
+  aliasMemoryWriter(builtins);
   cache.builtins[cacheKey] = builtins;
   return builtins;
 }
@@ -402,6 +413,7 @@ function getLocalMemfsV2Builtins(): Record<string, SubagentConfig> {
     const config = parseSubagentContent(source, { modelSource: "builtin" });
     configs[config.name] = config;
   }
+  aliasMemoryWriter(configs);
   localMemfsV2Builtins = configs;
   return configs;
 }

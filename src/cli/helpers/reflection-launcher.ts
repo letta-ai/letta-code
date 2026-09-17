@@ -4,6 +4,10 @@ import {
 } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
 import {
+  memoryMutationLockDir,
+  withMemoryMutationLock,
+} from "@/agent/memory-mutation-coordinator";
+import {
   buildReflectionIntegrationMemoryScope,
   buildReflectionMemoryScope,
   createReflectionMemoryWorktree,
@@ -616,15 +620,19 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
     }
   }
 
-  const integration = await finalizeReflectionMemoryWorktree(params.worktree, {
-    shouldMerge: params.subagentSuccess,
-    knownNoChanges: params.knownNoChanges,
-    requireAlreadyMerged:
-      params.mergePolicy === "explicit" && integrationRun !== undefined,
-    failureSummary: integrationRun?.error
-      ? `Reflection integration did not complete (${integrationRun.error}); the worktree was cleaned up so the transcript can be retried.`
-      : undefined,
-  });
+  const integration = await withMemoryMutationLock(
+    memoryMutationLockDir(params.worktree.parentMemoryDir),
+    () =>
+      finalizeReflectionMemoryWorktree(params.worktree, {
+        shouldMerge: params.subagentSuccess,
+        knownNoChanges: params.knownNoChanges,
+        requireAlreadyMerged:
+          params.mergePolicy === "explicit" && integrationRun !== undefined,
+        failureSummary: integrationRun?.error
+          ? `Reflection integration did not complete (${integrationRun.error}); the worktree was cleaned up so the transcript can be retried.`
+          : undefined,
+      }),
+  );
   const completionSuccess =
     params.subagentSuccess &&
     reflectionIntegrationConsumesTranscript(integration);

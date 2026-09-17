@@ -7,7 +7,7 @@ import {
 } from "@/agent/prompt-assets";
 import historyAnalyzerV2Prompt from "@/agent/subagents/builtin/history-analyzer-v2.md";
 import initV2Prompt from "@/agent/subagents/builtin/init-v2.md";
-import memoryV2Prompt from "@/agent/subagents/builtin/memory-v2.md";
+import memoryWriterV2Prompt from "@/agent/subagents/builtin/memory-writer-v2.md";
 import reflectionV2Prompt from "@/agent/subagents/builtin/reflection-v2.md";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
 import initializingMemoryRootPrompt from "@/skills/builtin/initializing-memory/ROOT_MEMORY.md";
@@ -22,7 +22,7 @@ const LOCAL_EXTERNAL_MEMORY_INTRO =
 const ROOT_ONLY_PROMPT_ASSETS = [
   initializingMemoryRootPrompt,
   initV2Prompt,
-  memoryV2Prompt,
+  memoryWriterV2Prompt,
   reflectionV2Prompt,
   historyAnalyzerV2Prompt,
   memoryV2ToolPrompt,
@@ -155,13 +155,14 @@ describe("buildSystemPrompt", () => {
     );
   });
 
-  test("memfs prompt documents direct edit commit safeguards", () => {
+  test("memfs prompt documents remember-tool memory writes", () => {
     const result = buildSystemPrompt("letta", "memfs");
 
     expect(result).toContain("description:");
     expect(result).toContain("MemFS pre-commit hook");
-    expect(result).toContain('author_name="${AGENT_NAME:-$AGENT_ID}"');
+    expect(result).toContain("The `remember` tool.");
     expect(result).not.toContain('--author="$AGENT_NAME');
+    expect(result).not.toContain('author_name="${AGENT_NAME:-$AGENT_ID}"');
   });
 
   test("memfs prompt explains shared-memory projections", () => {

@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "instruction": {
+      "type": "string",
+      "description": "What should be remembered, including where it belongs if known. Distill durable facts, preferences, corrections, or context. Do not paste an entire transcript."
+    },
+    "wait": {
+      "type": "boolean",
+      "description": "If true, block until the writer finishes integrating (or fails). Default false. Ordinary conversation should omit this."
+    }
+  },
+  "required": ["instruction"],
+  "additionalProperties": false
+}

@@ -807,6 +807,8 @@ const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
   "reflection", // Memory reflection - writes constrained by memory-subagent sandbox
   "Reflection",
   "history-analyzer", // History analysis - writes constrained by memory-subagent sandbox
+  "memory",
+  "memory-writer",
 ]);
 
 /**
@@ -871,6 +873,8 @@ function getDefaultDecision(
     // own path/read_only guardrails, so allow by default.
     "memory",
     "memory_apply_patch",
+    "remember",
+    "propose_memory_patch",
     // Channel sends are scoped by routing + parentScope checks in the tool.
     "MessageChannel",
   ];

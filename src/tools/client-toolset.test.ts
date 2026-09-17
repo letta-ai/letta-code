@@ -84,7 +84,12 @@ describe("request-scoped client toolsets", () => {
       expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
         "ApplyPatch",
       );
-      expect(prepared.preparedToolContext.loadedToolNames).toContain("memory");
+      expect(prepared.preparedToolContext.loadedToolNames).toContain(
+        "remember",
+      );
+      expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
+        "memory",
+      );
       expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
         "memory_apply_patch",
       );
@@ -104,6 +109,13 @@ describe("request-scoped client toolsets", () => {
 
     expect(prepared.toolset).toBe("default");
     expect(prepared.preparedToolContext.loadedToolNames).toContain("Edit");
+    expect(prepared.preparedToolContext.loadedToolNames).toContain("remember");
+    expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
+      "memory",
+    );
+    expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
+      "memory_apply_patch",
+    );
     expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
       "ApplyPatch",
     );

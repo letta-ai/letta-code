@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": "string",
+      "description": "Short description of this semantic memory change. Used by the harness as the commit subject after validation."
+    },
+    "input": {
+      "type": "string",
+      "description": "The entire apply_patch document, constrained to memory files under MEMORY_DIR."
+    }
+  },
+  "required": ["reason", "input"],
+  "additionalProperties": false
+}

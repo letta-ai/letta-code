@@ -67,7 +67,8 @@ function targetPaths(
   if (
     toolName === "ApplyPatch" ||
     toolName === "apply_patch" ||
-    toolName === "memory_apply_patch"
+    toolName === "memory_apply_patch" ||
+    toolName === "propose_memory_patch"
   ) {
     if (typeof toolArgs.input === "string") {
       rawPaths.push(...extractApplyPatchPaths(toolArgs.input));
@@ -101,7 +102,8 @@ function isWriteTool(toolName: string): boolean {
     ["Write", "Edit"].includes(canonicalToolName(toolName)) ||
     toolName === "ApplyPatch" ||
     toolName === "apply_patch" ||
-    toolName === "memory_apply_patch"
+    toolName === "memory_apply_patch" ||
+    toolName === "propose_memory_patch"
   );
 }
 

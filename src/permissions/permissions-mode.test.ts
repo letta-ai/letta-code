@@ -85,6 +85,26 @@ test("default mode - auto-allows memory_apply_patch", () => {
   expect(result.reason).toBe("Default behavior for tool");
 });
 
+test("default mode - auto-allows remember", () => {
+  permissionMode.setMode("standard");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "remember",
+    { instruction: "The user prefers bun" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
 test("default mode - treats Agent like Task for safe subagent auto-approval", () => {
   permissionMode.setMode("standard");
 

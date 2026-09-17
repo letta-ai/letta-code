@@ -88,6 +88,7 @@ import {
 const NO_BASE_TOOL_SUBAGENT_TYPES = new Set([
   "reflection",
   "memory",
+  "memory-writer",
   "history-analyzer",
   "init",
 ]);
