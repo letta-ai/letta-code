@@ -112,8 +112,7 @@ class PermissionModeManager {
 
       case "acceptEdits":
         // Auto-allow edit/write tools across Anthropic and Codex
-        // toolsets. These names intentionally cover both snake_case and
-        // PascalCase tool registrations used by different providers.
+        // toolsets, including their memory tools.
         if (
           [
             "Write",
@@ -123,8 +122,6 @@ class PermissionModeManager {
             "memory",
             "ApplyPatch",
             "memory_apply_patch",
-            "write_file",
-            "WriteFile",
           ].includes(toolName)
         ) {
           return { decision: "allow" };

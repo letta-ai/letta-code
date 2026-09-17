@@ -59,7 +59,7 @@ function getFileEditHeader(toolName: string, toolArgs: string): string {
     const relPath = relative(cwd, filePath);
     const displayPath = relPath.startsWith("..") ? filePath : relPath;
 
-    if (t === "write" || t === "write_file" || t === "writefile") {
+    if (t === "write") {
       const { existsSync } = require("node:fs");
       try {
         if (existsSync(filePath)) {

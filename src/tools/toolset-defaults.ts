@@ -16,8 +16,6 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "SetWorkingDirectory",
   "Edit",
   "TaskStop",
-  // "MultiEdit",
-  // "LS",
   "memory",
   "Read",
   "Skill",

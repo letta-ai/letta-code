@@ -55,11 +55,7 @@ function isFileReadTool(name: string): boolean {
 
 function isFileWriteTool(name: string): boolean {
   const normalized = name.toLowerCase();
-  return (
-    normalized === "write" ||
-    normalized === "write_file" ||
-    normalized === "writefile"
-  );
+  return normalized === "write";
 }
 
 function isFileEditTool(name: string): boolean {

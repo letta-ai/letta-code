@@ -51,7 +51,6 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "FetchWebpage") return "Fetch Webpage";
 
   // Additional tools
-  if (rawName === "WriteFile" || rawName === "write_file") return "Write";
   if (rawName === "KillBash") return "Kill Bash";
   if (rawName === "BashOutput") return "Shell Output";
   if (rawName === "TaskOutput") return "Task Output";
@@ -151,12 +150,7 @@ export function isFileEditTool(name: string): boolean {
  * Checks if a tool is a file write tool (has file_path/content args)
  */
 export function isFileWriteTool(name: string): boolean {
-  return (
-    name === "write" ||
-    name === "Write" ||
-    name === "WriteFile" ||
-    name === "write_file"
-  );
+  return name === "write" || name === "Write";
 }
 
 /**

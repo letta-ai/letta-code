@@ -93,7 +93,7 @@ function getHeaderText(fileEdit: FileEditInfo): string {
   const relPath = relative(cwd, fileEdit.filePath);
   const displayPath = relPath.startsWith("..") ? fileEdit.filePath : relPath;
 
-  if (t === "write" || t === "write_file" || t === "writefile") {
+  if (t === "write") {
     const { existsSync } = require("node:fs");
     try {
       if (existsSync(fileEdit.filePath)) {
@@ -121,7 +121,7 @@ function getHeaderText(fileEdit: FileEditInfo): string {
  */
 function getDiffKind(toolName: string): "write" | "edit" | "multi_edit" {
   const t = toolName.toLowerCase();
-  if (t === "write" || t === "write_file" || t === "writefile") {
+  if (t === "write") {
     return "write";
   }
   if (t === "multiedit" || t === "multi_edit") {

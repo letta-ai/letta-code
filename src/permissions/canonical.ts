@@ -10,7 +10,7 @@ const SHELL_TOOL_NAMES = new Set([
 
 const READ_TOOL_NAMES = new Set(["Read", "read_file", "ReadFile"]);
 
-const WRITE_TOOL_NAMES = new Set(["Write", "write_file", "WriteFile"]);
+const WRITE_TOOL_NAMES = new Set(["Write"]);
 
 const EDIT_TOOL_NAMES = new Set(["Edit", "MultiEdit", "NotebookEdit"]);
 

@@ -20,7 +20,7 @@ export const TOOLSET_OPTIONS: readonly ToolsetOption[] = [
     id: "none",
     display_name: "None",
     label: "None",
-    description: "Remove all Letta Code tools from your agent",
+    description: "Empty built-in preset; keeps connected tools",
     is_featured: true,
   },
   {
