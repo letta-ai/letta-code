@@ -185,7 +185,7 @@ function matchesClientToolAllowlistEntry(
   );
 }
 
-export function filterBuiltInToolNamesByClientAllowlist(
+function filterBuiltInToolNamesByClientAllowlist(
   toolNames: ToolName[],
   clientToolAllowlist?: string[],
 ): ToolName[] {
@@ -1255,7 +1255,6 @@ async function buildToolRegistry(
   toolNames: readonly string[],
   workingDirectory = getCurrentWorkingDirectory(),
 ): Promise<ToolRegistry> {
-  const { toolFilter } = await import("@/tools/filter");
   const newRegistry: ToolRegistry = new Map();
 
   for (const name of toolNames) {
@@ -2824,18 +2823,4 @@ export function getToolSchema(
  */
 export function clearTools(): void {
   toolRegistry.clear();
-}
-
-/**
- * Clears the tool registry with lock protection.
- * Acquires the switch lock, clears the registry, then releases the lock.
- * This ensures sendMessageStream() waits for the clear to complete.
- */
-export function clearToolsWithLock(): void {
-  acquireSwitchLock();
-  try {
-    toolRegistry.clear();
-  } finally {
-    releaseSwitchLock();
-  }
 }

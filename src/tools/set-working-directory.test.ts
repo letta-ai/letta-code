@@ -5,7 +5,7 @@ import path from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { set_working_directory } from "@/tools/impl/set-working-directory";
 import {
-  clearToolsWithLock,
+  clearTools,
   executeTool,
   loadSpecificTools,
   prepareCurrentToolExecutionContext,
@@ -29,7 +29,7 @@ const tempRoots: string[] = [];
 const originalUserCwd = process.env.USER_CWD;
 
 afterEach(async () => {
-  clearToolsWithLock();
+  clearTools();
   const runtime = getActiveRuntime();
   if (runtime) {
     stopAllWorktreeWatchers(runtime);
