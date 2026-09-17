@@ -4,7 +4,6 @@ import { resolveModel } from "@/agent/model";
 import { resolveModelHandleFromLlmConfig } from "@/agent/model-handles";
 import type { SkillSource } from "@/agent/skill-sources";
 import { getBackend } from "@/backend";
-import { getClient } from "@/backend/api/client";
 import { experimentManager } from "@/experiments/manager";
 import { buildModInvocationContext } from "@/mods/context";
 import type { ModEvents } from "@/mods/event-emitter";
@@ -59,16 +58,6 @@ function appendArtifactToolsIfEnabled(toolNames: ToolName[]): ToolName[] {
 }
 // Keep these as direct references at call-sites (not top-level aliases) to avoid
 // temporal-dead-zone issues under circular import initialization.
-
-// Server-side memory tool names that can mutate memory blocks.
-// When memfs is enabled, we detach ALL of these from the agent.
-export const MEMORY_TOOL_NAMES = new Set([
-  "memory",
-  "memory_apply_patch",
-  "memory_insert",
-  "memory_replace",
-  "memory_rethink",
-]);
 
 export interface ClientToolsetConfig {
   /** Request-scoped base toolset. Omitted preserves the runtime preference. */
@@ -535,44 +524,6 @@ export async function prepareToolExecutionContextForScope(params: {
     },
   });
   return { ...result, agent: agent as AgentState | null };
-}
-
-/**
- * Detach all memory tools from an agent.
- * Used when enabling memfs (filesystem-backed memory).
- *
- * @param agentId - Agent to detach memory tools from
- * @returns true if any tools were detached
- */
-export async function detachMemoryTools(agentId: string): Promise<boolean> {
-  if (!getBackend().capabilities.serverSideToolManagement) {
-    return false;
-  }
-  const client = await getClient();
-
-  try {
-    const agentWithTools = await client.agents.retrieve(agentId, {
-      include: ["agent.tools"],
-    });
-    const currentTools = agentWithTools.tools || [];
-
-    let detachedAny = false;
-    for (const tool of currentTools) {
-      if (tool.name && MEMORY_TOOL_NAMES.has(tool.name)) {
-        if (tool.id) {
-          await client.agents.tools.detach(tool.id, { agent_id: agentId });
-          detachedAny = true;
-        }
-      }
-    }
-
-    return detachedAny;
-  } catch (err) {
-    console.warn(
-      `Warning: Failed to detach memory tools: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return false;
-  }
 }
 
 type PersistedToolRule = NonNullable<AgentState["tool_rules"]>[number];
