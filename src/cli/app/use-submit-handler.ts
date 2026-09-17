@@ -3924,7 +3924,7 @@ ${SYSTEM_REMINDER_CLOSE}
       await runPostTurnMemorySync({
         agentId,
         isEnabled: isActiveMemfsEnabled,
-        debugLabel: "Post-turn memory sync",
+        conversationId: conversationIdRef.current,
         enqueueReminder: (text) => {
           enqueueMemoryGitSyncReminder(sharedReminderStateRef.current, {
             text,

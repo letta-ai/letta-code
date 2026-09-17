@@ -7,6 +7,10 @@
 // back on the subagent manager, so the graph stays acyclic.
 
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
+import {
+  MEMORY_REPAIR_SESSION_ENV,
+  MEMORY_REPAIR_SUBAGENT_TYPE,
+} from "@/agent/memory-repair-policy";
 import { type BackendMode, getLocalBackendStorageDir } from "@/backend";
 import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
 import {
@@ -208,9 +212,12 @@ export function composeSubagentChildEnv(
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     ...(actingUserId && { [ACTING_USER_ID_ENV]: actingUserId }),
     LETTA_CODE_AGENT_ROLE: "subagent",
+    [MEMORY_REPAIR_SESSION_ENV]:
+      subagentType === MEMORY_REPAIR_SUBAGENT_TYPE ? "1" : undefined,
     [SUBAGENT_LAUNCH_ENV]: "1",
     [SUBAGENT_LAUNCH_PROFILE_ENV]: launchProfile ?? "default",
-    ...(subagentType === "reflection" && {
+    ...((subagentType === "reflection" ||
+      subagentType === MEMORY_REPAIR_SUBAGENT_TYPE) && {
       [LETTA_MOD_CAPABILITY_PROFILE_ENV]: PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
     }),
     // Replace inherited parent addresses even when the new scope is unknown.

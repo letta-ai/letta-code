@@ -10,6 +10,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { resolveActingUserId } from "@/agent/acting-user";
+import { isMemoryRepairSession } from "@/agent/memory-repair-policy";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
 import { buildHeadlessSenderReminder } from "@/headless-message-sender";
@@ -1363,9 +1364,11 @@ export async function handleHeadlessCommand(
   // Apply memfs flags and auto-enable from server tag when local settings are missing.
   // Respects memfsStartupPolicy:
   //   "blocking"  (default) – await the pull; exit on conflict.
-  //   "background"           – fire pull async; session init proceeds immediately.
-  //   "skip"                 – skip the pull this session.
-  if (isStatelessSession) {
+  //   "background" pulls asynchronously; "skip" omits the pull.
+  if (isMemoryRepairSession()) {
+    // The existing checkout is the repair target. Do not pull, seed, or reconfigure it.
+    settingsManager.setMemfsEnabled(agent.id, true);
+  } else if (isStatelessSession) {
     // This is a session launch policy: do not hydrate tags, auto-enable,
     // clone, or pull MemFS. Recording false also keeps downstream client tools,
     // skills, reflection, and init metadata aligned without mutating the
@@ -1509,7 +1512,7 @@ export async function handleHeadlessCommand(
   }
 
   try {
-    if (ephemeralFlag) {
+    if (ephemeralFlag || isMemoryRepairSession()) {
       effectiveReflectionSettings = { trigger: "off", stepCount: 0 };
     } else {
       const resolvedReflectionSettings = await applyHeadlessReflectionOverrides(
@@ -1555,12 +1558,7 @@ export async function handleHeadlessCommand(
     }
   } else if (forceNewConversation) {
     // --new flag: create a new conversation (for concurrent sessions).
-    // When --from-agent is set (agent-to-agent messaging), mark the new
-    // conversation as hidden so it doesn't clutter the target agent's
-    // default conversation list in the ADE. The `hidden` field is still
-    // missing from @letta-ai/letta-client@1.10.1 types, but the core
-    // endpoint accepts it and the SDK's create impl forwards unknown
-    // body fields unchanged — remove the cast once the SDK is bumped.
+    // Hide agent-to-agent conversations from the target agent's default list.
     const createParams: ConversationCreateBody = {
       agent_id: agent.id,
     };
@@ -3135,9 +3133,10 @@ export async function handleHeadlessCommand(
   }
 
   await runPostTurnMemorySync({
+    waitForRepair: true,
     agentId: agent.id,
     isEnabled: (id) => settingsManager.isMemfsEnabled(id),
-    debugLabel: "Post-turn headless memory sync",
+    conversationId,
     emitWarning: (text) => {
       if (outputFormat !== "stream-json") {
         console.error(text);
@@ -4789,7 +4788,7 @@ async function runBidirectionalMode(
         await runPostTurnMemorySync({
           agentId: agent.id,
           isEnabled: (id) => settingsManager.isMemfsEnabled(id),
-          debugLabel: "Post-turn headless memory sync",
+          conversationId,
           enqueueReminder: (text) => {
             enqueueMemoryGitSyncReminder(sharedReminderState, { text });
           },

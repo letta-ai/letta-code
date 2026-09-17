@@ -3,15 +3,22 @@ import {
   type RepositoryPostTurnSyncResult,
   syncPendingAttachedRepositoryCommitsAfterTurn,
 } from "@/agent/attached-repository-git-sync";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   type MemoryPostTurnSyncResult,
   syncPendingMemoryCommitsAfterTurn,
 } from "@/agent/memory-git";
+import { isMemoryRepairSession } from "@/agent/memory-repair-policy";
+import { isMemoryRepairActive } from "@/agent/memory-repair-state";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { startMemoryConflictRepair } from "@/reminders/memory-conflict-repair";
 import { debugWarn } from "@/utils/debug";
 
 export interface RunPostTurnMemorySyncParams {
   agentId: string;
+  conversationId?: string | null;
+  /** One-shot callers must keep the process alive until the repair finishes. */
+  waitForRepair?: boolean;
   isEnabled?: (agentId: string) => boolean;
   enqueueReminder?: (text: string) => void;
   emitWarning?: (text: string) => void | Promise<void>;
@@ -20,6 +27,8 @@ export interface RunPostTurnMemorySyncParams {
 
 export interface RunPostTurnMemorySyncDependencies {
   syncMemory?: typeof syncPendingMemoryCommitsAfterTurn;
+  repairConflict?: typeof startMemoryConflictRepair;
+  isRepairActive?: typeof isMemoryRepairActive;
   syncAttachedRepositories?: typeof syncPendingAttachedRepositoryCommitsAfterTurn;
 }
 
@@ -29,20 +38,10 @@ export function formatMemoryPostTurnSyncReminder(
   if (
     result.status === "clean" ||
     result.status === "pushed" ||
-    result.status === "skipped"
+    result.status === "skipped" ||
+    result.status === "conflict"
   ) {
     return null;
-  }
-
-  if (result.status === "conflict") {
-    return `${SYSTEM_REMINDER_OPEN}
-MEMORY GIT CONFLICT: The memory repository needs manual conflict resolution.
-
-Memory directory: ${result.memoryDir}
-Status: ${result.summary}
-
-Resolve the merge/rebase conflicts in the memory repository, stage the resolved files, and complete the merge/rebase or create the needed commit. The harness will retry remote push after a future turn when the repo is clean.
-${SYSTEM_REMINDER_CLOSE}`;
   }
 
   if (result.status === "dirty") {
@@ -124,6 +123,7 @@ export async function runPostTurnMemorySync(
   params: RunPostTurnMemorySyncParams,
   dependencies: RunPostTurnMemorySyncDependencies = {},
 ): Promise<void> {
+  if (isMemoryRepairSession()) return;
   const debugLabel = params.debugLabel ?? "Post-turn memory sync";
   const syncMemory =
     dependencies.syncMemory ?? syncPendingMemoryCommitsAfterTurn;
@@ -148,8 +148,22 @@ export async function runPostTurnMemorySync(
 
   if (memorySyncEnabled) {
     try {
-      const syncResult = await syncMemory(params.agentId);
-      const syncReminder = formatMemoryPostTurnSyncReminder(syncResult);
+      // Do not push or queue transient dirty-state reminders while a repair owns the repo.
+      const activeRepair = await (
+        dependencies.isRepairActive ?? isMemoryRepairActive
+      )(getScopedMemoryFilesystemRoot(params.agentId));
+      const syncResult = activeRepair ? null : await syncMemory(params.agentId);
+      if (syncResult?.status === "conflict") {
+        await (dependencies.repairConflict ?? startMemoryConflictRepair)({
+          agentId: params.agentId,
+          conversationId: params.conversationId,
+          waitForCompletion: params.waitForRepair,
+          result: syncResult,
+        });
+      }
+      const syncReminder = syncResult
+        ? formatMemoryPostTurnSyncReminder(syncResult)
+        : null;
       if (syncReminder) {
         params.enqueueReminder?.(syncReminder);
         await params.emitWarning?.(syncReminder);
