@@ -10,7 +10,6 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "clear-messages",
   "doctor",
   "init",
-  "remember",
   "compact",
   "reload",
   "context-limit",
