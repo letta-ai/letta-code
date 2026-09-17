@@ -68,7 +68,7 @@ import { spawnSubagentProcess } from "./subagent-process";
 import {
   describeSubagentExit,
   type ExecutionState,
-  hasSuccessfulToolCall,
+  hasOnlyFailedToolCalls,
   looksLikeTruncatedStreamJson,
   parseResultFromStdout,
   processStreamEvent,
@@ -625,8 +625,8 @@ async function executeSubagent(
     // Return captured result if available
     if (state.finalResult !== null) {
       const toolFailureError =
-        type === "reflection" && !hasSuccessfulToolCall(state)
-          ? "Reflection could not complete because it did not finish a successful tool call."
+        type === "reflection" && hasOnlyFailedToolCalls(state)
+          ? "Reflection could not complete because every tool call failed."
           : undefined;
       const completionError = state.finalError ?? toolFailureError;
       return withModel({

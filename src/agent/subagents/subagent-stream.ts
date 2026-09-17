@@ -285,14 +285,22 @@ export function processStreamEvent(
   }
 }
 
-/** Whether at least one identified tool call reached a successful terminal state. */
-export function hasSuccessfulToolCall(state: ExecutionState): boolean {
+/**
+ * Whether every identified tool call reached an error terminal state.
+ * Incomplete streams remain unknown instead of being reclassified as failures.
+ */
+export function hasOnlyFailedToolCalls(state: ExecutionState): boolean {
+  if (state.displayedToolCalls.size === 0) return false;
+  if (state.toolCallStatuses.size !== state.displayedToolCalls.size) {
+    return false;
+  }
+
   for (const toolCallId of state.displayedToolCalls) {
-    if (state.toolCallStatuses.get(toolCallId) === "success") {
-      return true;
+    if (state.toolCallStatuses.get(toolCallId) !== "error") {
+      return false;
     }
   }
-  return false;
+  return true;
 }
 
 /**
