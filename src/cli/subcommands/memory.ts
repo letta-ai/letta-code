@@ -5,7 +5,15 @@ import { parseArgs } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getMemoryGitStatus, isGitRepo, pullMemory } from "@/agent/memory-git";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import { settingsManager } from "@/settings-manager";
 import { runMemoryTokensAction } from "./memory-tokens";
+
+export interface MemorySubcommandDependencies {
+  initializeSettings?: () => Promise<void>;
+  isGitRepo?: typeof isGitRepo;
+  isLocalBackendEnvEnabled?: typeof isLocalBackendEnvEnabled;
+  pullMemory?: typeof pullMemory;
+}
 
 function printUsage(): void {
   console.log(
@@ -121,7 +129,10 @@ function resolveBackupPath(agentId: string, from: string): string {
   return join(getAgentRoot(agentId), from);
 }
 
-export async function runMemorySubcommand(argv: string[]): Promise<number> {
+export async function runMemorySubcommand(
+  argv: string[],
+  deps: MemorySubcommandDependencies = {},
+): Promise<number> {
   let parsed: ReturnType<typeof parseMemoryArgs>;
   try {
     parsed = parseMemoryArgs(argv);
@@ -193,11 +204,14 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
     }
 
     if (action === "pull") {
-      if (!isGitRepo(agentId)) {
+      const checkGitRepo = deps.isGitRepo ?? isGitRepo;
+      const checkLocalBackend =
+        deps.isLocalBackendEnvEnabled ?? isLocalBackendEnvEnabled;
+      if (!checkGitRepo(agentId)) {
         console.error("Not a git repo. Enable git-backed memory first.");
         return 1;
       }
-      if (isLocalBackendEnvEnabled()) {
+      if (checkLocalBackend()) {
         console.log(
           JSON.stringify(
             {
@@ -211,7 +225,10 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
         );
         return 0;
       }
-      const result = await pullMemory(agentId);
+      // Subcommands exit before src/index.ts initializes settings. pullMemory
+      // needs getAuthToken -> backend capabilities -> settingsManager.getSettings().
+      await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
+      const result = await (deps.pullMemory ?? pullMemory)(agentId);
       console.log(JSON.stringify(result, null, 2));
       return 0;
     }
