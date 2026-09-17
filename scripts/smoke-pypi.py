@@ -8,7 +8,15 @@ import tempfile
 import venv
 from pathlib import Path
 
-PROBE = r"""
+ARGUMENT_PROBE = r"""
+import assert from 'node:assert/strict';
+assert.equal(process.env.LETTA_CODE_DISTRIBUTION, 'pypi');
+assert.deepEqual(process.argv.slice(2), ['space argument', 'unicode-λ', '--literal=$HOME']);
+assert.ok(process.execPath.includes('_payload'));
+process.exit(23); // Verify the Python launcher preserves child exit status.
+"""
+
+RUNTIME_PROBE = r"""
 import {createRequire as bootstrapRequire} from 'node:module';
 const require = bootstrapRequire(import.meta.url);
 const assert = require('node:assert/strict');
@@ -16,13 +24,12 @@ const {createRequire} = require('node:module');
 const {spawnSync} = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
-const cli = process.argv[1];
+const cli = process.argv[2];
 const app = path.dirname(cli);
 const req = createRequire(cli);
 const env = {...process.env};
 delete env.NODE_OPTIONS;
 assert.equal(process.env.LETTA_CODE_DISTRIBUTION, 'pypi');
-assert.deepEqual(process.argv.slice(2), ['space argument', 'unicode-λ', '--literal=$HOME']);
 assert.ok(process.execPath.includes('_payload'));
 const child = spawnSync('node', ['-p', 'process.execPath'], {env, encoding:'utf8'});
 assert.equal(child.status, 0, child.stderr);
@@ -60,10 +67,10 @@ assert.equal(typeof req('ws').WebSocketServer, 'function');
     assert.equal(exitCode, 0, output);
     assert.match(output, ptyExpected);
     console.log('native PTY, image worker, ripgrep, Telegram, assets and child Node passed');
-    process.exit(23); // Verify the Python launcher preserves child exit status.
+    process.exit(0);
   });
 })().catch(error => {console.error(error); process.exit(1)});
-// Hold ESM startup until the asynchronous probe exits; never execute CLI args.
+// Hold the script until the asynchronous probe exits.
 await new Promise(() => {});
 """
 
@@ -154,9 +161,9 @@ def main():
         assert response["conversation_id"].startswith("local-conv-"), response
         assert response["result"], response
         print("Installed headless deterministic local turn passed")
-        probe = root / "probe.mjs"
-        probe.write_text(PROBE, encoding="utf-8")
-        env["NODE_OPTIONS"] = "--import=" + json.dumps(probe.as_uri())
+        argument_probe = root / "argument-probe.mjs"
+        argument_probe.write_text(ARGUMENT_PROBE, encoding="utf-8")
+        env["NODE_OPTIONS"] = "--import=" + json.dumps(argument_probe.as_uri())
         result = subprocess.run(
             [str(cli), "space argument", "unicode-λ", "--literal=$HOME"],
             cwd=root,
@@ -165,6 +172,31 @@ def main():
             timeout=60,
         )
         assert result.returncode == 23, result
+        del env["NODE_OPTIONS"]
+        payload = Path(
+            subprocess.check_output(
+                [
+                    str(python),
+                    "-c",
+                    "from pathlib import Path; import letta_code; print(Path(letta_code.__file__).parent / '_payload')",
+                ],
+                text=True,
+            ).strip()
+        )
+        node = payload / "bin" / ("node.exe" if os.name == "nt" else "node")
+        installed_cli = payload / "app" / "letta.js"
+        runtime_probe = root / "runtime-probe.mjs"
+        runtime_probe.write_text(RUNTIME_PROBE, encoding="utf-8")
+        env["PATH"] = str(node.parent) + os.pathsep + env["PATH"]
+        env["LETTA_CODE_DISTRIBUTION"] = "pypi"
+        result = subprocess.run(
+            [str(node), str(runtime_probe), str(installed_cli)],
+            cwd=root,
+            env=env,
+            check=False,
+            timeout=60,
+        )
+        assert result.returncode == 0, result
         if os.name != "nt":
             import selectors
             import signal
