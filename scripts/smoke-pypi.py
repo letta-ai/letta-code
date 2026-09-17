@@ -152,7 +152,7 @@ def main():
         assert response["result"], response
         print("Installed headless deterministic local turn passed")
         probe = root / "probe.mjs"
-        probe.write_text(PROBE)
+        probe.write_text(PROBE, encoding="utf-8")
         env["NODE_OPTIONS"] = "--import=" + json.dumps(probe.as_uri())
         result = subprocess.run(
             [str(cli), "space argument", "unicode-λ", "--literal=$HOME"],

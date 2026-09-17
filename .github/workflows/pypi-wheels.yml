@@ -74,6 +74,8 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
       - name: Build native wheel
         run: ${{ matrix.python }} scripts/build-pypi.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - name: Check Linux ABI and vendor non-policy shared libraries
         if: runner.os == 'Linux'
         run: |
