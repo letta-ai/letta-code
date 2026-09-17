@@ -1,6 +1,6 @@
 ---
 name: scheduling-tasks
-description: Schedules reminders, recurring tasks, and channel-bound outreach via the letta cron CLI. Use when the user asks to be reminded of something, wants periodic work or check-ins, wants a scheduled Slack/iMessage/Teams message, or needs to list, inspect, replace, or cancel scheduled tasks.
+description: Schedules reminders, recurring tasks, and channel-bound outreach via the letta cron CLI. Use when the user asks to be reminded of something, wants periodic work or check-ins, wants a scheduled Slack or iMessage message, or needs to list, inspect, replace, or cancel scheduled tasks.
 ---
 
 # Scheduling Tasks
@@ -117,58 +117,100 @@ Then verify the binding explicitly:
 letta cron list --agent "$LETTA_AGENT_ID" --conversation self
 ```
 
-### Preserve Channel Conversation Continuity
+### Preserve Slack and iMessage Conversation Continuity
 
 If a scheduled turn will send through `MessageChannel` and the recipient may
 reply, run it in the channel route's existing conversation. A fresh scheduled
 conversation can deliver the outbound message, but the recipient's reply returns
 to the route conversation without the scheduled turn or tool result in context.
 
-- When the request arrived in the target Slack, iMessage, or Teams conversation,
-  pass `--conversation self`.
+- When the request arrived in the target Slack or iMessage conversation, pass
+  `--conversation self`.
 - Never omit `--conversation` or pass `new` for a scheduled message that should
   continue an existing channel conversation.
-- Include an explicit `MessageChannel` call in the scheduled prompt. An ordinary
-  assistant response is not a channel delivery.
+- Store every exact opaque routing argument in the prompt. Do not rely on the
+  scheduled agent recovering them from conversation history after compaction.
+- Include `action="send"` and the actual message in an explicit `MessageChannel`
+  call. An ordinary assistant response is not a channel delivery.
 
-For scheduled iMessage outreach, resolve the exact paired route without printing
-phone numbers. From an iMessage turn, select the route whose `conversation_id`
-matches the current conversation:
+For Slack, copy the current routed notification's exact `chat_id`, `accountId`,
+and `threadId` when present into the stored prompt. At fire time, call
+`MessageChannel` with `channel="slack"`, `target` set to that exact `chat_id`,
+the copied account and thread arguments, `action="send"`, and the actual
+message. Do not schedule Slack outreach if the routed notification does not
+provide a target.
 
-```bash
-route_json="$(
-  curl -fsS "$LETTA_BASE_URL/v1/agents/$AGENT_ID/imessage/connection" \
-    -H "Authorization: Bearer $LETTA_API_KEY" |
-    jq -cer --arg conversation_id "$CONVERSATION_ID" '
-      [.connections[] |
-        select(.conversation_id == $conversation_id and .status == "paired") |
-        {id, conversation_id, integration_id}] |
-      if length == 1 then .[0]
-      else error("expected exactly one paired iMessage route") end
-    '
-)"
-target_route_id="$(jq -r .id <<<"$route_json")"
-target_conversation_id="$(jq -r .conversation_id <<<"$route_json")"
-target_account_id="$(jq -r .integration_id <<<"$route_json")"
-```
-
-When scheduling from another conversation, select by the opaque paired
-connection ID advertised by `MessageChannel` instead: replace the `jq` selector
-with `.id == $route_id`, passing that ID through `--arg route_id`.
-
-Stop instead of guessing when the route is missing or ambiguous. Create the
-schedule with `--conversation "$target_conversation_id"`, and tell the scheduled
-agent to call `MessageChannel` with `channel="imessage"`,
-`chat_id="$target_route_id"`, and `accountId="$target_account_id"`. Never put a
-phone number in the prompt or command.
-
-After creation, verify the stored conversation binding:
+For scheduled iMessage outreach, resolve and schedule the exact paired route in
+one guarded shell call. This prevents a failed request from becoming an empty
+but apparently successful route and keeps shell-local values available while
+the prompt is constructed. Only use an opaque `chat_id` currently advertised by
+the `MessageChannel` schema; that route list is already filtered for paired,
+enabled, outbound-enabled routes. Do not copy its display label or
+phone-derived digits. Replace the message, metadata, route ID, and schedule flag
+in this example:
 
 ```bash
+set -euo pipefail
+
+message="<exact message to send>"
+schedule_name="<short name>"
+schedule_description="<what this scheduled message does>"
+advertised_route_id="<opaque iMessage chat_id advertised by MessageChannel>"
+agent_id="${AGENT_ID:-${LETTA_AGENT_ID:?missing agent ID}}"
+current_conversation_id="${CONVERSATION_ID:-${LETTA_CONVERSATION_ID:?missing conversation ID}}"
+
+connections_file="$(mktemp)"
+trap 'rm -f "$connections_file"' EXIT
+curl -fsS \
+  "$LETTA_BASE_URL/v1/agents/$agent_id/imessage/connection" \
+  -H "Authorization: Bearer $LETTA_API_KEY" \
+  -o "$connections_file"
+
+route_json="$(jq -cer \
+  --arg route_id "$advertised_route_id" \
+  --arg conversation_id "$current_conversation_id" '
+  [.connections[] |
+    select(
+      .id == $route_id and
+      .conversation_id == $conversation_id and
+      .status == "paired"
+    ) |
+    {id, conversation_id, integration_id}] |
+  if length == 1 then .[0]
+  else error("expected exactly one advertised route for this conversation") end
+' "$connections_file")"
+
+target_route_id="$(jq -er '.id | select(type == "string" and length > 0)' <<<"$route_json")"
+target_conversation_id="$(jq -er '.conversation_id | select(type == "string" and length > 0)' <<<"$route_json")"
+target_account_id="$(jq -er '.integration_id | select(type == "string" and length > 0)' <<<"$route_json")"
+message_channel_args="$(jq -cn \
+  --arg route_id "$target_route_id" \
+  --arg account_id "$target_account_id" \
+  --arg message "$message" \
+  '{action: "send", channel: "imessage", chat_id: $route_id,
+    accountId: $account_id, message: $message}')"
+prompt="When this schedule fires, call MessageChannel exactly once with these exact arguments: $message_channel_args. Do not only reply in the conversation."
+
+letta cron add \
+  --name "$schedule_name" \
+  --description "$schedule_description" \
+  --prompt "$prompt" \
+  --at "in 30m" \
+  --agent "$agent_id" \
+  --conversation "$target_conversation_id"
 letta cron list \
-  --agent "$AGENT_ID" \
+  --agent "$agent_id" \
   --conversation "$target_conversation_id"
 ```
+
+Stop instead of guessing when the route is missing or ambiguous. Route state can
+change after schedule creation, so the iMessage gateway revalidates account,
+organization, agent, conversation, paired/enabled/outbound state, rollout, and
+billing when the schedule fires. Treat a `MessageChannel` error as a failed
+delivery; schedule execution alone is not proof of delivery. Never put a phone
+number in the prompt or command. If the request did not arrive in the target
+iMessage conversation, ask the user to schedule from that conversation instead
+of weakening the conversation-match check.
 
 ### Deleting or Replacing Tasks
 
