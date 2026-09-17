@@ -141,12 +141,14 @@ async function typeInReads(groups: string[][]): Promise<Observed> {
       await tick();
     }
     await tick();
-    observed.renderedCaret = renderedCaret(stdout.frames);
-    return observed;
   } finally {
+    // Under CI (`is-in-ci`) Ink buffers frames and writes the last one only at
+    // unmount, so read the drawn caret after unmounting.
     instance.unmount();
     chalk.level = previousLevel;
   }
+  observed.renderedCaret = renderedCaret(stdout.frames);
+  return observed;
 }
 
 describe("PasteAwareTextInput multi-read input commits (#4493)", () => {
