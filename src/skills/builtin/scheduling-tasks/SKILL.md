@@ -133,21 +133,20 @@ to the route conversation without the scheduled turn or tool result in context.
 - Include `action="send"` and the actual message in an explicit `MessageChannel`
   call. An ordinary assistant response is not a channel delivery.
 
-For Slack, copy the current routed notification's exact `chat_id`, `accountId`,
-and `threadId` when present into the stored prompt. At fire time, call
-`MessageChannel` with `channel="slack"`, `target` set to that exact `chat_id`,
-the copied account and thread arguments, `action="send"`, and the actual
-message. Do not schedule Slack outreach if the routed notification does not
-provide a target.
+For Slack, copy the current routed notification's exact `chat_id`, `account_id`,
+and `thread_id` when present into the stored prompt. At fire time, call
+`MessageChannel` in routed-reply mode with `channel="slack"`, `chat_id` set to
+the exact notification `chat_id`, `accountId` set from `account_id`, `threadId`
+set from `thread_id`, `action="send"`, and the actual message. Do not use
+`target` for a route-bound send: that is the separate proactive/top-level mode
+and can lose the thread.
 
 For scheduled iMessage outreach, resolve and schedule the exact paired route in
 one guarded shell call. This prevents a failed request from becoming an empty
 but apparently successful route and keeps shell-local values available while
-the prompt is constructed. Only use an opaque `chat_id` currently advertised by
-the `MessageChannel` schema; that route list is already filtered for paired,
-enabled, outbound-enabled routes. Do not copy its display label or
-phone-derived digits. Replace the message, metadata, route ID, and schedule flag
-in this example:
+the prompt is constructed. Select by the current conversation and require
+exactly one paired route; do not copy phone-derived fields from the response.
+Replace the message, metadata, and schedule flag in this example:
 
 ```bash
 set -euo pipefail
@@ -155,34 +154,44 @@ set -euo pipefail
 message="<exact message to send>"
 schedule_name="<short name>"
 schedule_description="<what this scheduled message does>"
-advertised_route_id="<opaque iMessage chat_id advertised by MessageChannel>"
 agent_id="${AGENT_ID:-${LETTA_AGENT_ID:?missing agent ID}}"
 current_conversation_id="${CONVERSATION_ID:-${LETTA_CONVERSATION_ID:?missing conversation ID}}"
 
-connections_file="$(mktemp)"
-trap 'rm -f "$connections_file"' EXIT
-curl -fsS \
+connections_json="$(curl -fsS \
   "$LETTA_BASE_URL/v1/agents/$agent_id/imessage/connection" \
-  -H "Authorization: Bearer $LETTA_API_KEY" \
-  -o "$connections_file"
+  -H "Authorization: Bearer $LETTA_API_KEY")"
+if [[ -z "${connections_json//[[:space:]]/}" ]]; then
+  echo "iMessage route lookup returned an empty response" >&2
+  exit 1
+fi
 
 route_json="$(jq -cer \
-  --arg route_id "$advertised_route_id" \
   --arg conversation_id "$current_conversation_id" '
-  [.connections[] |
-    select(
-      .id == $route_id and
-      .conversation_id == $conversation_id and
-      .status == "paired"
-    ) |
-    {id, conversation_id, integration_id}] |
-  if length == 1 then .[0]
-  else error("expected exactly one advertised route for this conversation") end
-' "$connections_file")"
+  if type != "object" or (.connections | type) != "array" then
+    error("invalid iMessage route response")
+  else
+    [.connections[] |
+      select(
+        .conversation_id == $conversation_id and .status == "paired"
+      ) |
+      {id, conversation_id, integration_id}] |
+    if length == 1 then .[0]
+    else error("expected exactly one paired route for this conversation") end
+  end
+' <<<"$connections_json")"
+unset connections_json
+if [[ -z "${route_json//[[:space:]]/}" ]]; then
+  echo "iMessage route projection was empty" >&2
+  exit 1
+fi
 
 target_route_id="$(jq -er '.id | select(type == "string" and length > 0)' <<<"$route_json")"
 target_conversation_id="$(jq -er '.conversation_id | select(type == "string" and length > 0)' <<<"$route_json")"
 target_account_id="$(jq -er '.integration_id | select(type == "string" and length > 0)' <<<"$route_json")"
+if [[ -z "$target_route_id" || -z "$target_conversation_id" || -z "$target_account_id" ]]; then
+  echo "iMessage route contains an empty required field" >&2
+  exit 1
+fi
 message_channel_args="$(jq -cn \
   --arg route_id "$target_route_id" \
   --arg account_id "$target_account_id" \
@@ -191,16 +200,40 @@ message_channel_args="$(jq -cn \
     accountId: $account_id, message: $message}')"
 prompt="When this schedule fires, call MessageChannel exactly once with these exact arguments: $message_channel_args. Do not only reply in the conversation."
 
-letta cron add \
+created_json="$(letta cron add \
   --name "$schedule_name" \
   --description "$schedule_description" \
   --prompt "$prompt" \
   --at "in 30m" \
   --agent "$agent_id" \
-  --conversation "$target_conversation_id"
-letta cron list \
-  --agent "$agent_id" \
-  --conversation "$target_conversation_id"
+  --conversation "$target_conversation_id")"
+if [[ -z "${created_json//[[:space:]]/}" ]]; then
+  echo "cron add returned an empty response; inspect schedules before retrying" >&2
+  exit 1
+fi
+created_id="$(jq -er \
+  '.id | select(type == "string" and length > 0)' \
+  <<<"$created_json")"
+printf 'Created schedule %s. If verification fails, inspect or delete this ID; do not rerun cron add.\n' "$created_id" >&2
+jq -e \
+  --arg id "$created_id" \
+  --arg agent_id "$agent_id" \
+  --arg conversation_id "$target_conversation_id" '
+  type == "object" and
+  .id == $id and
+  .agent_id == $agent_id and
+  .conversation_id == $conversation_id
+' <<<"$created_json" >/dev/null
+verified_json="$(letta cron get "$created_id" --agent "$agent_id")"
+jq -e \
+  --arg id "$created_id" \
+  --arg conversation_id "$target_conversation_id" \
+  --arg prompt "$prompt" '
+  type == "object" and
+  .id == $id and
+  .conversation_id == $conversation_id and
+  .prompt == $prompt
+' <<<"$verified_json" >/dev/null
 ```
 
 Stop instead of guessing when the route is missing or ambiguous. Route state can
@@ -210,7 +243,8 @@ billing when the schedule fires. Treat a `MessageChannel` error as a failed
 delivery; schedule execution alone is not proof of delivery. Never put a phone
 number in the prompt or command. If the request did not arrive in the target
 iMessage conversation, ask the user to schedule from that conversation instead
-of weakening the conversation-match check.
+of weakening the conversation-match check. If post-creation verification fails,
+inspect or delete the printed schedule ID before deciding whether to retry.
 
 ### Deleting or Replacing Tasks
 
