@@ -13,6 +13,7 @@ import { resolveActingUserId } from "@/agent/acting-user";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
 import { buildHeadlessSenderReminder } from "@/headless-message-sender";
+import { createHeadlessResponseState } from "@/headless-response-state";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import {
   trackBoundaryError,
@@ -2110,7 +2111,7 @@ export async function handleHeadlessCommand(
     );
   }
 
-  // Start with the user message
+  const responseState = createHeadlessResponseState();
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
     {
       role: "user",
@@ -2272,6 +2273,7 @@ export async function handleHeadlessCommand(
           currentInput,
           {
             agentId: agent.id,
+            allowResponseStateReuse: responseState.consume(currentInput),
             preparedToolContext:
               turnToolContext.preparedToolContext.preparedToolContext,
           },
@@ -2696,13 +2698,10 @@ export async function handleHeadlessCommand(
           emitLocalToolReturns(executedResults, sessionId);
         }
 
-        // Send all results in one batch
-        const approvalInputWithOtid = {
-          type: "approval" as const,
-          approvals: executedResults as ApprovalResult[],
-          otid: randomUUID(),
-        };
-        currentInput = [approvalInputWithOtid];
+        currentInput = responseState.prepare(
+          executedResults,
+          needsUserInput.length === 0,
+        );
         continue;
       }
 
@@ -4265,7 +4264,7 @@ async function runBidirectionalMode(
           ...sharedReminderParts,
         ]);
 
-        // Initial input is the user message
+        const responseState = createHeadlessResponseState();
         let currentInput: Array<MessageCreate | ApprovalCreate> = [
           { role: "user", content: enrichedContent, otid: userOtid },
         ];
@@ -4356,6 +4355,7 @@ async function runBidirectionalMode(
             availableTools = turnToolContext.availableTools;
             stream = await sendMessageStream(conversationId, currentInput, {
               agentId: agent.id,
+              allowResponseStateReuse: responseState.consume(currentInput),
               preparedToolContext:
                 turnToolContext.preparedToolContext.preparedToolContext,
             });
@@ -4630,15 +4630,10 @@ async function runBidirectionalMode(
 
             emitLocalToolReturns(executedResults, sessionId);
 
-            // Send approval results back to continue
-            const approvalInputWithOtid = {
-              type: "approval" as const,
-              approvals: executedResults,
-              otid: randomUUID(),
-            };
-            currentInput = [approvalInputWithOtid as unknown as MessageCreate];
-
-            // Continue the loop to process the next stream
+            currentInput = responseState.prepare(
+              executedResults,
+              needsUserInput.length === 0,
+            );
             continue;
           }
 
