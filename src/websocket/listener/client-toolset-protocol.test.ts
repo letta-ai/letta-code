@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { TOOLSET_OPTIONS } from "@/tools/toolset-options";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
 
 describe("client toolset protocol", () => {
@@ -78,5 +79,24 @@ describe("client toolset protocol", () => {
       type: "input",
       payload: { client_toolset: { base: "letta" } },
     });
+  });
+
+  test("accepts each advertised toolset in update commands", () => {
+    for (const { id } of TOOLSET_OPTIONS) {
+      const parsed = parseServerMessage(
+        Buffer.from(
+          JSON.stringify({
+            type: "update_toolset",
+            request_id: "toolset-test",
+            runtime: { agent_id: "agent-1", conversation_id: "default" },
+            toolset_preference: id,
+          }),
+        ),
+      );
+      expect(parsed).toMatchObject({
+        type: "update_toolset",
+        toolset_preference: id,
+      });
+    }
   });
 });

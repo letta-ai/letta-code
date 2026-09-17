@@ -513,7 +513,7 @@ export async function applyModelUpdateForRuntime(params: {
 
   try {
     if (agentId) {
-      await ensureCorrectMemoryTool(agentId, model.handle);
+      await ensureCorrectMemoryTool(agentId);
     }
     const modAdapters = agentId
       ? await ensureListenerModAdaptersForAgent(listener, agentId)

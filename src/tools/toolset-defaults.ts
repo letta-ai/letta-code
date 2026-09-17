@@ -1,4 +1,5 @@
 import type { ToolName } from "./tool-definitions";
+import type { ToolsetName } from "./toolset-types";
 
 export const WORKTREE_TOOL_NAMES = new Set<ToolName>([
   "EnterWorktree",
@@ -41,24 +42,6 @@ export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "SendAgentMessage",
 ];
 
-export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
-  "run_shell_command",
-  "read_file_gemini",
-  "list_directory",
-  "glob_gemini",
-  "search_file_content",
-  "memory",
-  ...WORKTREE_TOOL_NAMES,
-  "SetWorkingDirectory",
-  "replace",
-  "write_file_gemini",
-  "write_todos",
-  "read_many_files",
-  "Skill",
-  "Task",
-  "SendAgentMessage",
-];
-
 // PascalCase toolsets for consistency with Skill tool naming.
 export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "AskUserQuestion",
@@ -76,6 +59,24 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "ViewImage",
   "ApplyPatch",
   "UpdatePlan",
+];
+
+export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
+  "run_shell_command",
+  "read_file_gemini",
+  "list_directory",
+  "glob_gemini",
+  "search_file_content",
+  "memory",
+  ...WORKTREE_TOOL_NAMES,
+  "SetWorkingDirectory",
+  "replace",
+  "write_file_gemini",
+  "write_todos",
+  "read_many_files",
+  "Skill",
+  "Task",
+  "SendAgentMessage",
 ];
 
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
@@ -96,3 +97,36 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   "WriteTodos",
   "ReadManyFiles",
 ];
+
+/** Letta's model-independent toolset with one preferred tool for each job. */
+export const LETTA_TOOLS: ToolName[] = [
+  "AskUserQuestion",
+  "EnterWorktree",
+  "ExitWorktree",
+  "SetWorkingDirectory",
+  "memory",
+  "Task",
+  "SendAgentMessage",
+  "Monitor",
+  "TaskOutput",
+  "TaskStop",
+  "Skill",
+  "exec_command",
+  "write_stdin",
+  "Read",
+  "Edit",
+  "Write",
+  "ViewImage",
+  "UpdatePlan",
+];
+
+/** Every selectable preset is declared here; auto only chooses a preset. */
+export const TOOLSET_TOOLS: Record<ToolsetName, readonly ToolName[]> = {
+  default: ANTHROPIC_DEFAULT_TOOLS,
+  codex: OPENAI_PASCAL_TOOLS,
+  codex_snake: OPENAI_DEFAULT_TOOLS,
+  gemini: GEMINI_PASCAL_TOOLS,
+  gemini_snake: GEMINI_DEFAULT_TOOLS,
+  letta: LETTA_TOOLS,
+  none: [],
+};

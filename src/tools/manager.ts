@@ -185,7 +185,7 @@ function matchesClientToolAllowlistEntry(
   );
 }
 
-export function filterBuiltInToolNamesByClientAllowlist(
+function filterBuiltInToolNamesByClientAllowlist(
   toolNames: ToolName[],
   clientToolAllowlist?: string[],
 ): ToolName[] {
@@ -327,11 +327,8 @@ function filterModToolsByClientAllowlist(
   );
 }
 
-import {
-  ANTHROPIC_DEFAULT_TOOLS,
-  OPENAI_PASCAL_TOOLS,
-  WORKTREE_TOOL_NAMES,
-} from "./toolset-defaults";
+import { TOOLSET_TOOLS, WORKTREE_TOOL_NAMES } from "./toolset-defaults";
+import type { ToolsetName } from "./toolset-types";
 
 type ToolArgs = Record<string, unknown>;
 
@@ -938,8 +935,10 @@ export async function prepareCurrentToolExecutionContext(options?: {
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
   const currentToolNames = Array.from(toolRegistry.keys()) as ToolName[];
-  const toolRegistrySnapshot =
-    await buildSpecificToolRegistry(currentToolNames);
+  const toolRegistrySnapshot = await buildToolRegistry(
+    currentToolNames,
+    options?.workingDirectory,
+  );
   return capturePreparedToolExecutionContext(
     {
       toolRegistry: toolRegistrySnapshot,
@@ -971,7 +970,10 @@ export async function prepareToolExecutionContextForSpecificTools(
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
-  const toolRegistrySnapshot = await buildSpecificToolRegistry(toolNames);
+  const toolRegistrySnapshot = await buildToolRegistry(
+    toolNames,
+    options?.workingDirectory,
+  );
   return capturePreparedToolExecutionContext(
     {
       toolRegistry: toolRegistrySnapshot,
@@ -990,7 +992,7 @@ export async function prepareToolExecutionContextForSpecificTools(
 }
 
 type ModelToolsetOptions = {
-  resolvedToolset?: "codex" | "default";
+  resolvedToolset?: ToolsetName;
   exclude?: ToolName[];
   include?: ToolName[];
   clientToolAllowlist?: string[];
@@ -1249,18 +1251,23 @@ function maybeApplyLspReadOverride(registry: ToolRegistry): void {
   });
 }
 
-async function buildSpecificToolRegistry(
-  toolNames: string[],
+async function buildToolRegistry(
+  toolNames: readonly string[],
+  workingDirectory = getCurrentWorkingDirectory(),
 ): Promise<ToolRegistry> {
-  const { toolFilter } = await import("@/tools/filter");
   const newRegistry: ToolRegistry = new Map();
 
   for (const name of toolNames) {
-    if (!toolFilter.isEnabled(name)) {
+    const internalName = getInternalToolName(name);
+    const enabledTools = toolFilter.getEnabledTools();
+    if (
+      enabledTools !== null &&
+      !enabledTools.some(
+        (allowed) => getInternalToolName(allowed) === internalName,
+      )
+    ) {
       continue;
     }
-
-    const internalName = getInternalToolName(name);
     if (
       !shouldIncludeWorktreeTool() &&
       WORKTREE_TOOL_NAMES.has(internalName as ToolName)
@@ -1284,7 +1291,19 @@ async function buildSpecificToolRegistry(
       definition.description,
       definition.schema as JsonSchema,
     );
-    const { description, inputSchema } = resolvedAssets;
+    let { description } = resolvedAssets;
+    const { inputSchema } = resolvedAssets;
+    if (internalName === "Task") {
+      const configs = await getAllSubagentConfigs(workingDirectory);
+      description = injectSubagentsIntoTaskDescription(
+        description,
+        Object.entries(configs).map(([name, config]) => ({
+          name,
+          description: config.description,
+          recommendedModel: config.recommendedModel,
+        })),
+      );
+    }
 
     const toolSchema: ToolSchema = {
       name: internalName,
@@ -1307,128 +1326,45 @@ async function buildSpecificToolRegistry(
   return newRegistry;
 }
 
-async function resolveBaseToolNamesForModel(
+function resolveBaseToolNamesForModel(
   modelIdentifier?: string,
   options?: ModelToolsetOptions,
-): Promise<ToolName[]> {
-  const { toolFilter } = await import("@/tools/filter");
-  let baseToolNames: ToolName[];
-  // Provider aliases can be classified by a caller that also has provider
-  // metadata. Prefer that result over re-inferring from the model handle.
-  if (
-    !toolFilter.isActive() &&
-    (options?.resolvedToolset === "codex" ||
-      (options?.resolvedToolset === undefined &&
-        modelIdentifier &&
-        isOpenAIModel(modelIdentifier)))
-  ) {
-    baseToolNames = OPENAI_PASCAL_TOOLS;
-  } else if (!toolFilter.isActive()) {
-    // Temporary rollback: Gemini models should use the default Claude-style
-    // toolset until we intentionally restore the Gemini-specific toolset.
-    baseToolNames = ANTHROPIC_DEFAULT_TOOLS;
-  } else {
-    baseToolNames = TOOL_NAMES;
+): ToolName[] {
+  const toolset =
+    options?.resolvedToolset ??
+    (modelIdentifier && isOpenAIModel(modelIdentifier) ? "codex" : "default");
+  const allowlist =
+    options?.clientToolAllowlist ?? toolFilter.getEnabledTools();
+  // An allowlist may explicitly request bundled tools outside the preset.
+  // External and mod tool names are handled when the snapshot is captured.
+  const allowlistedTools = (allowlist ?? [])
+    .map(getInternalToolName)
+    .filter((name): name is ToolName => Object.hasOwn(TOOL_DEFINITIONS, name));
+  let toolNames = resolveArtifactToolNames([
+    ...new Set([
+      ...TOOLSET_TOOLS[toolset],
+      ...(options?.include ?? []),
+      ...allowlistedTools,
+    ]),
+  ]);
+  if (options?.exclude) {
+    const excluded = new Set(options.exclude);
+    toolNames = toolNames.filter((name) => !excluded.has(name));
   }
-
-  if (options?.include && options.include.length > 0) {
-    // Copy rather than push: the branches above bind shared module-level
-    // preset arrays, so appending in place would leak one turn's tools into
-    // the preset itself for the life of the process.
-    baseToolNames = [...new Set([...baseToolNames, ...options.include])];
-  }
-
-  if (options?.exclude && options.exclude.length > 0) {
-    const excludeSet = new Set(options.exclude);
-    baseToolNames = baseToolNames.filter((name) => !excludeSet.has(name));
-  }
-
-  baseToolNames = filterWorktreeTools(baseToolNames);
-
-  baseToolNames = resolveArtifactToolNames(baseToolNames);
-
-  baseToolNames = filterBuiltInToolNamesByClientAllowlist(
-    baseToolNames,
+  return filterBuiltInToolNamesByClientAllowlist(
+    filterWorktreeTools(toolNames),
     options?.clientToolAllowlist,
   );
-
-  return baseToolNames;
 }
 
 async function buildRegistryForModel(
   modelIdentifier?: string,
-  options?: ModelToolsetOptions,
+  options?: ModelToolsetOptions & { workingDirectory?: string },
 ): Promise<ToolRegistry> {
-  const { toolFilter } = await import("@/tools/filter");
-  const allSubagentConfigs = await getAllSubagentConfigs();
-  const discoveredSubagents = Object.entries(allSubagentConfigs).map(
-    ([name, config]) => ({
-      name,
-      description: config.description,
-      recommendedModel: config.recommendedModel,
-    }),
+  return buildToolRegistry(
+    resolveBaseToolNamesForModel(modelIdentifier, options),
+    options?.workingDirectory,
   );
-  const baseToolNames = await resolveBaseToolNamesForModel(
-    modelIdentifier,
-    options,
-  );
-  const newRegistry: ToolRegistry = new Map();
-
-  for (const name of baseToolNames) {
-    if (!toolFilter.isEnabled(name)) {
-      continue;
-    }
-
-    try {
-      const definition = TOOL_DEFINITIONS[name];
-      if (!definition) {
-        throw new Error(`Missing tool definition for ${name}`);
-      }
-
-      if (!definition.impl) {
-        throw new Error(`Tool implementation not found for ${name}`);
-      }
-
-      const resolvedAssets = await resolveBackendSpecificToolAssets(
-        name,
-        definition.description,
-        definition.schema as JsonSchema,
-      );
-      let { description } = resolvedAssets;
-      const { inputSchema } = resolvedAssets;
-      if (name === "Task" && discoveredSubagents.length > 0) {
-        description = injectSubagentsIntoTaskDescription(
-          description,
-          discoveredSubagents,
-        );
-      }
-
-      const toolSchema: ToolSchema = {
-        name,
-        description,
-        input_schema: inputSchema,
-      };
-
-      newRegistry.set(name, {
-        schema: toolSchema,
-        modelForm: resolvedModelForm(
-          definition.modelForm,
-          description,
-          inputSchema,
-        ),
-        fn: definition.impl,
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : JSON.stringify(error);
-      throw new Error(
-        `Required tool "${name}" could not be loaded from bundled assets. ${message}`,
-      );
-    }
-  }
-
-  maybeApplyLspReadOverride(newRegistry);
-  return newRegistry;
 }
 
 /**
@@ -1445,7 +1381,7 @@ export async function loadSpecificTools(toolNames: string[]): Promise<void> {
   acquireSwitchLock();
 
   try {
-    const newRegistry = await buildSpecificToolRegistry(toolNames);
+    const newRegistry = await buildToolRegistry(toolNames);
     replaceRegistry(newRegistry);
   } finally {
     // Always release the lock, even if an error occurred
@@ -1454,7 +1390,7 @@ export async function loadSpecificTools(toolNames: string[]): Promise<void> {
 }
 
 /**
- * Loads all tools defined in TOOL_NAMES and constructs their full schemas + function references.
+ * Loads the selected preset and constructs its schemas and implementations.
  * This should be called on program startup.
  * Will error if any expected tool files are missing.
  *
@@ -1468,7 +1404,7 @@ export async function loadSpecificTools(toolNames: string[]): Promise<void> {
  */
 export async function loadTools(
   modelIdentifier?: string,
-  options?: { exclude?: ToolName[] },
+  options?: ModelToolsetOptions,
 ): Promise<void> {
   // Acquire lock to signal that a switch is in progress
   acquireSwitchLock();
@@ -2887,18 +2823,4 @@ export function getToolSchema(
  */
 export function clearTools(): void {
   toolRegistry.clear();
-}
-
-/**
- * Clears the tool registry with lock protection.
- * Acquires the switch lock, clears the registry, then releases the lock.
- * This ensures sendMessageStream() waits for the clear to complete.
- */
-export function clearToolsWithLock(): void {
-  acquireSwitchLock();
-  try {
-    toolRegistry.clear();
-  } finally {
-    releaseSwitchLock();
-  }
 }

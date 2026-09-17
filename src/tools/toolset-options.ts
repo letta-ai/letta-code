@@ -1,4 +1,4 @@
-import type { ToolsetOption } from "./toolset-types";
+import type { ToolsetOption, ToolsetPreference } from "./toolset-types";
 
 /** Toolsets this Letta Code runtime can load and present to clients. */
 export const TOOLSET_OPTIONS: readonly ToolsetOption[] = [
@@ -59,3 +59,9 @@ export const TOOLSET_OPTIONS: readonly ToolsetOption[] = [
     is_featured: false,
   },
 ];
+
+export function isToolsetPreference(
+  value: unknown,
+): value is ToolsetPreference {
+  return TOOLSET_OPTIONS.some((option) => option.id === value);
+}

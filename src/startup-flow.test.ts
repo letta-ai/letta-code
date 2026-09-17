@@ -200,6 +200,17 @@ describe("Startup Flow - Smoke", () => {
     expect(result.stderr).not.toContain("Invalid toolset");
   });
 
+  test("--toolset accepts every additional advertised preset", async () => {
+    for (const toolset of ["none", "codex_snake", "gemini", "gemini_snake"]) {
+      const result = await runCli(
+        ["--new-agent", "--toolset", toolset, "-p", "Say OK"],
+        { expectExit: 1 },
+      );
+      expect(result.stderr).toContain("Missing LETTA_API_KEY");
+      expect(result.stderr).not.toContain("Invalid toolset");
+    }
+  });
+
   test("--memfs-startup is accepted for headless startup", async () => {
     const result = await runCli(
       ["--new-agent", "-p", "Say OK", "--memfs-startup", "background"],
