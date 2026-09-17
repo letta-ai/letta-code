@@ -175,10 +175,19 @@ export async function tryCloudHeadlessSend(
       specifiedConversationId: values.conversation,
       specifiedAgentId: values.agent,
     });
-    const resumeId = resume.specifiedConversationId;
-    if (resumeId && resumeId !== "default") {
-      const conversation = await backend.retrieveConversation(resumeId);
-      if (conversation.agent_id === null) {
+    const resumeId = validateAddress(
+      resume.specifiedConversationId ?? undefined,
+      "conversation",
+    );
+    const resolvedConversation =
+      resumeId && resumeId !== "default"
+        ? await backend.retrieveConversation(resumeId, {
+            signal: controller.signal,
+          })
+        : undefined;
+    controller.signal.throwIfAborted();
+    if (resolvedConversation) {
+      if (resolvedConversation.agent_id === null) {
         if (resume.specifiedAgentId) {
           throw new Error(
             "An ephemeral conversation cannot be resumed with --agent",
@@ -240,6 +249,7 @@ export async function tryCloudHeadlessSend(
         agentId,
         conversationId,
         senderAgentId: sender.agentId,
+        resolvedConversation,
         currentConversation: {
           agentId: ambientSender,
           conversationId: env.CONVERSATION_ID || env.LETTA_CONVERSATION_ID,

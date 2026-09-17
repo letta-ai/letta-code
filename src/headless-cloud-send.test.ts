@@ -14,6 +14,53 @@ import {
 
 const flags = (...args: string[]) => parseCliArgs(args, true).values;
 
+test("Cloud sends reuse the abortable conversation lookup", async () => {
+  const f = fixture();
+  const signals: Array<AbortSignal | null | undefined> = [];
+  f.backend.retrieveConversation = async (id, options) => {
+    signals.push(options?.signal);
+    return { id, agent_id: "agent-target" } as Awaited<
+      ReturnType<Backend["retrieveConversation"]>
+    >;
+  };
+  expect(
+    await tryCloudHeadlessSend(
+      flags("--conversation", "conv-target", "--no-wait"),
+      "hello",
+      f.backend,
+      false,
+      f.deps,
+    ),
+  ).toBe(0);
+  expect(signals).toHaveLength(1);
+  expect(signals[0]).toBeInstanceOf(AbortSignal);
+  expect(f.submissions).toHaveLength(1);
+});
+
+test("the send deadline interrupts a stalled destination lookup", async () => {
+  const f = fixture();
+  f.backend.retrieveConversation = async (_id, options) => {
+    const signal = options?.signal;
+    if (!signal) throw new Error("Missing submission abort signal");
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), {
+        once: true,
+      });
+    });
+  };
+  expect(
+    await tryCloudHeadlessSend(
+      flags("--conversation", "conv-target", "--output-format", "json"),
+      "hello",
+      f.backend,
+      false,
+      { ...f.deps, timeoutMs: 10 },
+    ),
+  ).toBe(1);
+  expect(JSON.parse(f.stdout.join("")).error).toContain("Stopped waiting");
+  expect(f.submissions).toHaveLength(0);
+});
+
 test.each([false, true])(
   "ordinary ephemeral resume bypasses agent enqueue (no-wait=%s)",
   async (noWait) => {
