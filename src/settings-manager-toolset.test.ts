@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { settingsManager } from "@/settings-manager";
@@ -61,7 +61,7 @@ describe("Settings Manager - Toolset Preferences", () => {
   });
 
   test("persists default and named conversation overrides independently", async () => {
-    settingsManager.setToolsetPreference("agent-toolset-persist", "default");
+    settingsManager.setToolsetPreference("agent-toolset-persist", "gemini");
     settingsManager.setToolsetPreference(
       "agent-toolset-persist",
       "codex",
@@ -72,42 +72,10 @@ describe("Settings Manager - Toolset Preferences", () => {
     await settingsManager.initialize();
 
     expect(settingsManager.getToolsetPreference("agent-toolset-persist")).toBe(
-      "default",
+      "gemini",
     );
     expect(
       settingsManager.getToolsetPreference("agent-toolset-persist", "conv-a"),
     ).toBe("codex");
-  });
-
-  test("reads retired Gemini preferences as Claude in both conversation scopes", async () => {
-    await settingsManager.reset();
-    await writeFile(
-      join(testHomeDir, ".letta", "settings.json"),
-      JSON.stringify({
-        agents: [
-          {
-            agentId: "agent-gemini-migration",
-            toolset: "gemini",
-            toolsetsByConversation: { "conv-old": "gemini_snake" },
-          },
-        ],
-      }),
-    );
-    await settingsManager.initialize();
-    expect(settingsManager.getToolsetPreference("agent-gemini-migration")).toBe(
-      "default",
-    );
-    expect(
-      settingsManager.getToolsetPreference(
-        "agent-gemini-migration",
-        "conv-old",
-      ),
-    ).toBe("default");
-    expect(
-      settingsManager.getToolsetPreference(
-        "agent-gemini-migration",
-        "conv-new",
-      ),
-    ).toBe("auto");
   });
 });

@@ -19,6 +19,7 @@ import {
 import MonitorSchema from "@/tools/schemas/Monitor.json";
 import {
   ANTHROPIC_DEFAULT_TOOLS,
+  GEMINI_DEFAULT_TOOLS,
   OPENAI_DEFAULT_TOOLS,
   OPENAI_PASCAL_TOOLS,
 } from "@/tools/toolset-defaults";
@@ -103,6 +104,7 @@ describe("Monitor", () => {
     expect(ANTHROPIC_DEFAULT_TOOLS).toContain("Monitor");
     expect(OPENAI_PASCAL_TOOLS).toContain("Monitor");
     expect(OPENAI_DEFAULT_TOOLS).not.toContain("Monitor");
+    expect(GEMINI_DEFAULT_TOOLS).not.toContain("Monitor");
   });
 
   test("matches the reference schema defaults and descriptions", () => {

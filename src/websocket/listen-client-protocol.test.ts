@@ -1521,7 +1521,7 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed).toBeNull();
   });
 
-  test("rejects retired Gemini update_toolset command", () => {
+  test("parses update_toolset command", () => {
     const parsed = parseServerMessage(
       Buffer.from(
         JSON.stringify({
@@ -1533,7 +1533,8 @@ describe("listen-client parseServerMessage", () => {
       ),
     );
 
-    expect(parsed).toBeNull();
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("update_toolset");
   });
 
   test("parses skill enable/disable commands", () => {

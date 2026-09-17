@@ -18,6 +18,8 @@ test("each nonempty preset exposes SendAgentMessage in the model's tool payload"
     "default",
     "codex",
     "codex_snake",
+    "gemini",
+    "gemini_snake",
   ] as const) {
     const prepared = await prepareToolExecutionContextForResolvedTarget({
       toolsetPreference,

@@ -200,17 +200,8 @@ describe("Startup Flow - Smoke", () => {
     expect(result.stderr).not.toContain("Invalid toolset");
   });
 
-  test("--toolset rejects retired Gemini presets", async () => {
-    for (const toolset of ["gemini", "gemini_snake"]) {
-      const result = await runCli(["--toolset", toolset, "-p", "Say OK"], {
-        expectExit: 1,
-      });
-      expect(result.stderr).toContain(`Invalid toolset "${toolset}"`);
-    }
-  });
-
-  test("--toolset accepts none and codex_snake", async () => {
-    for (const toolset of ["none", "codex_snake"]) {
+  test("--toolset accepts every additional advertised preset", async () => {
+    for (const toolset of ["none", "codex_snake", "gemini", "gemini_snake"]) {
       const result = await runCli(
         ["--new-agent", "--toolset", toolset, "-p", "Say OK"],
         { expectExit: 1 },

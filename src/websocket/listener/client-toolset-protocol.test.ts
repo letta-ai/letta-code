@@ -99,36 +99,4 @@ describe("client toolset protocol", () => {
       });
     }
   });
-
-  test("rejects retired Gemini presets in requests and update commands", () => {
-    for (const base of ["gemini", "gemini_snake"]) {
-      expect(TOOLSET_OPTIONS.some((option) => option.id === base)).toBe(false);
-      const parsed = parseServerMessage(
-        Buffer.from(
-          JSON.stringify({
-            type: "input",
-            runtime: { agent_id: "agent-1", conversation_id: "default" },
-            payload: {
-              kind: "create_message",
-              messages: [{ role: "user", content: "hello" }],
-              client_toolset: { base },
-            },
-          }),
-        ),
-      );
-      expect(parsed?.type).toBe("__invalid_input");
-      expect(
-        parseServerMessage(
-          Buffer.from(
-            JSON.stringify({
-              type: "update_toolset",
-              request_id: "retired",
-              runtime: { agent_id: "agent-1", conversation_id: "default" },
-              toolset_preference: base,
-            }),
-          ),
-        ),
-      ).toBeNull();
-    }
-  });
 });

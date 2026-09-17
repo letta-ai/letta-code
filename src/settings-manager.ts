@@ -26,7 +26,6 @@ import type {
 } from "./reflection-settings";
 import { getRuntimeContext } from "./runtime-context";
 import { trackBoundaryError } from "./telemetry/error-reporting";
-import { resolveStoredToolsetPreference } from "./tools/toolset-options";
 import type { ToolsetPreference } from "./tools/toolset-types";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
@@ -1726,7 +1725,9 @@ class SettingsManager {
     return this.getAgentSettings(agentId, memfsServerKey)?.memfs === false;
   }
 
-  /** Enable or disable memory filesystem for an agent on the current server. */
+  /**
+   * Enable or disable memory filesystem for an agent on the current server.
+   */
   setMemfsEnabled(agentId: string, enabled: boolean): void {
     const settings = this.getSettings();
     const memfsServerKey = getCurrentMemfsServerKey(settings);
@@ -1744,11 +1745,10 @@ class SettingsManager {
     conversationId: string = "default",
   ): ToolsetPreference {
     const agentSettings = this.getAgentSettings(agentId);
-    return resolveStoredToolsetPreference(
-      !conversationId || conversationId === "default"
-        ? agentSettings?.toolset
-        : agentSettings?.toolsetsByConversation?.[conversationId],
-    );
+    if (!conversationId || conversationId === "default") {
+      return agentSettings?.toolset ?? "auto";
+    }
+    return agentSettings?.toolsetsByConversation?.[conversationId] ?? "auto";
   }
 
   /** Persist a manual override for one conversation; auto clears it. */

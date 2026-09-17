@@ -622,7 +622,11 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
         "ApplyPatch",
       );
 
-      settingsManager.setToolsetPreference(agent.id, "letta", conversationB.id);
+      settingsManager.setToolsetPreference(
+        agent.id,
+        "gemini",
+        conversationB.id,
+      );
       const originalModAdapter = listener.modAdapter;
       listener.modAdapter = {
         getAvailablePermissions: () => {
@@ -647,7 +651,7 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
       ).toBe("codex");
       expect(
         settingsManager.getToolsetPreference(agent.id, conversationB.id),
-      ).toBe("letta");
+      ).toBe("gemini");
       expect(runtimeA.currentToolset).toBe("codex");
 
       settingsManager.setToolsetPreference(

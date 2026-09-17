@@ -110,7 +110,7 @@ export const CLI_FLAG_CATALOG = {
     help: {
       argLabel: "<name>",
       description:
-        'Toolset mode: "auto", "letta", "codex", "codex_snake", "default", or "none" (manual values override model-based auto-selection)',
+        'Toolset mode: "auto", "letta", "codex", "codex_snake", "default", "gemini", "gemini_snake", or "none" (manual values override model-based auto-selection)',
     },
   },
   prompt: {

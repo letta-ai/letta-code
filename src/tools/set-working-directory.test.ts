@@ -13,6 +13,8 @@ import {
 } from "@/tools/manager";
 import {
   ANTHROPIC_DEFAULT_TOOLS,
+  GEMINI_DEFAULT_TOOLS,
+  GEMINI_PASCAL_TOOLS,
   OPENAI_PASCAL_TOOLS,
 } from "@/tools/toolset-defaults";
 import { getConversationWorkingDirectory } from "@/websocket/listener/cwd";
@@ -86,6 +88,8 @@ function toolReturnText(value: unknown): string {
 
 test("is available in the model-facing toolsets", () => {
   expect(ANTHROPIC_DEFAULT_TOOLS).toContain("SetWorkingDirectory");
+  expect(GEMINI_DEFAULT_TOOLS).toContain("SetWorkingDirectory");
+  expect(GEMINI_PASCAL_TOOLS).toContain("SetWorkingDirectory");
   expect(OPENAI_PASCAL_TOOLS).toContain("SetWorkingDirectory");
 });
 
