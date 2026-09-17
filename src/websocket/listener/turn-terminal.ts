@@ -1,6 +1,6 @@
 import type { Buffers } from "@/cli/helpers/accumulator";
 import type { UsageStatistics } from "@/types/protocol";
-import type { StopReasonType } from "@/types/protocol_v2";
+import type { StopReasonType, TurnFinishedMessage } from "@/types/protocol_v2";
 import { TO_SUBSCRIBERS } from "./connection";
 import { forgetListenerWork } from "./interrupted-turn-record";
 import {
@@ -39,6 +39,7 @@ export function finishListenerTurn(
     turnId?: string;
     error?: string;
     usage?: UsageStatistics;
+    retryExhaustion?: TurnFinishedMessage["retry_exhaustion"];
   },
 ): TurnFinishTransition {
   const transition = runtime.turnLifecycle.finish(lease, options.stopReason);
@@ -82,6 +83,9 @@ export function finishListenerTurn(
           : {}),
         ...(options.error ? { error: options.error } : {}),
         ...(options.usage ? { usage: options.usage } : {}),
+        ...(options.retryExhaustion
+          ? { retry_exhaustion: options.retryExhaustion }
+          : {}),
       },
       {
         agent_id: options.agentId,

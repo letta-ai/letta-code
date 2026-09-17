@@ -7,7 +7,7 @@ import type {
 import type { sendMessageStream } from "@/agent/message";
 import { getRetryDelayMs } from "@/agent/turn-recovery-policy";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
-import type { StopReasonType } from "@/types/protocol_v2";
+import type { StopReasonType, TurnFinishedMessage } from "@/types/protocol_v2";
 import {
   CLOUD_API_DEPLOYMENT_RECOVERY_MAX_ATTEMPTS,
   LLM_API_ERROR_MAX_RETRIES,
@@ -125,6 +125,31 @@ export async function prepareProviderRetryInput(params: {
     throw new Error("Cancelled by user");
   }
   return refreshTurnInputOtidsForNewRequest(params.input);
+}
+
+/** Report exhaustion only when the failure would otherwise be retried. */
+export async function getPostStopRetryExhaustion(
+  params: Parameters<typeof shouldRetryPostStopTurn>[0],
+): Promise<TurnFinishedMessage["retry_exhaustion"]> {
+  const kind = params.deploymentInterrupted ? "deployment" : "provider";
+  const attempts = params.deploymentInterrupted
+    ? params.deploymentAttempts
+    : params.providerAttempts;
+  const maxAttempts = params.deploymentInterrupted
+    ? CLOUD_API_DEPLOYMENT_RECOVERY_MAX_ATTEMPTS
+    : LLM_API_ERROR_MAX_RETRIES;
+  if (attempts < maxAttempts) return undefined;
+  if (
+    !params.deploymentInterrupted &&
+    !(await isRetriablePostStopError(
+      params.stopReason,
+      params.runId,
+      params.errorDetail,
+    ))
+  ) {
+    return undefined;
+  }
+  return { kind, attempts, max_attempts: maxAttempts };
 }
 
 export async function shouldRetryPostStopTurn(params: {

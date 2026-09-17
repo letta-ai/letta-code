@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { __testSetBackend, type Backend } from "@/backend";
 import { isRetriablePostStopError } from "@/websocket/listener/recovery";
+import { getPostStopRetryExhaustion } from "@/websocket/listener/turn-send";
 
 const capabilities = {
   remoteMemfs: false,
@@ -48,6 +49,16 @@ describe("websocket post-stop retry fallback", () => {
     await expect(isRetriablePostStopError("error", "run-1")).resolves.toBe(
       true,
     );
+    await expect(
+      getPostStopRetryExhaustion({
+        deploymentInterrupted: false,
+        deploymentAttempts: 0,
+        providerAttempts: 3,
+        stopReason: "error",
+        runId: "run-1",
+        errorDetail: null,
+      }),
+    ).resolves.toEqual({ kind: "provider", attempts: 3, max_attempts: 3 });
   });
 
   test("honors explicit non-retryable run metadata", async () => {
@@ -73,5 +84,15 @@ describe("websocket post-stop retry fallback", () => {
     await expect(
       isRetriablePostStopError("llm_api_error", "run-1"),
     ).resolves.toBe(false);
+    await expect(
+      getPostStopRetryExhaustion({
+        deploymentInterrupted: false,
+        deploymentAttempts: 0,
+        providerAttempts: 3,
+        stopReason: "llm_api_error",
+        runId: "run-1",
+        errorDetail: "HTTP 503: provider overloaded",
+      }),
+    ).resolves.toBeUndefined();
   });
 });
