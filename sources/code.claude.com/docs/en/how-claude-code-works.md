@@ -76,7 +76,7 @@ Because Claude sees your whole project, it can work across it. When you ask Clau
 
 ## Environments and interfaces
 
-The agentic loop, tools, and capabilities described above are the same everywhere you use Claude Code. What changes is where the code executes and how you interact with it.
+The [agentic loop](#the-agentic-loop), [tools](#tools), and capabilities are the same everywhere you use Claude Code. What changes is where the code executes and how you interact with it.
 
 ### Execution environments
 
@@ -175,7 +175,7 @@ Claude Code can teach you how to use it. Ask questions like "how do I set up hoo
 
 Built-in commands also guide you through setup:
 
-* `/init` walks you through creating a CLAUDE.md for your project
+* `/init` generates a starter CLAUDE.md for your project
 * `/doctor` runs a setup checkup that diagnoses installation and configuration issues and can fix them
 
 ### It's a conversation

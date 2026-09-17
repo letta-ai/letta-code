@@ -175,7 +175,7 @@ The following example shows the complete flow: enable checkpointing, capture the
   </Step>
 
   <Step title="Capture checkpoint UUID and session ID">
-    With the `replay-user-messages` option set (shown above), each user message in the response stream has a UUID that serves as a checkpoint.
+    With the `replay-user-messages` option set, each user message in the response stream has a UUID that serves as a checkpoint.
 
     For most use cases, capture the first user message UUID (`message.uuid`); rewinding to it restores the tracked files to their original state. To store multiple checkpoints and rewind to intermediate states, see [Multiple restore points](#multiple-restore-points).
 

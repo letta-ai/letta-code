@@ -202,7 +202,7 @@ When either limit is hit, the SDK returns a `ResultMessage` with a corresponding
 
 The budget cap covers [subagents](/docs/en/agent-sdk/subagents): their spend counts toward the total. Once spend reaches the cap, spawning another subagent fails with `Budget limit reached`, and Claude Code stops any background subagents still running. The cap-enforcement behaviors require Claude Code v2.1.217 or later.
 
-With [streaming input](/docs/en/agent-sdk/streaming-vs-single-mode), a message that is still queued when a turn ends at the max-turns limit stays queued. Claude Code doesn't add it to that turn's last model call. It starts a new turn for the message, and the max-turns count starts over for that turn.
+With [streaming input](/docs/en/agent-sdk/streaming-vs-single-mode), a message that is still queued when a turn ends at the max-turns limit stays queued. Claude Code doesn't add it to that turn's last model call. It starts a new turn for the message, and the max-turns count starts over for that turn. The budget total keeps accumulating across messages, and once spend reaches `maxBudgetUsd`, later messages in the same conversation end with the `error_max_budget_usd` result. A [`/clear`](/docs/en/agent-sdk/cost-tracking) starts the budget over.
 
 ### Effort level
 
@@ -241,7 +241,7 @@ For interactive applications, use `"default"` with a tool approval callback to s
 
 ### Model
 
-If you don't set `model`, the SDK uses Claude Code's default, which depends on your authentication method and subscription. Set it explicitly (for example, `model="claude-sonnet-5"`) to pin a specific model or to use a smaller model for faster, cheaper agents. See [models](https://platform.claude.com/docs/en/about-claude/models) for available IDs.
+Set the `model` option to choose which model runs the session. For more information, see [Choose a model](/docs/en/agent-sdk/configuration#choose-a-model).
 
 ## The context window
 
@@ -324,7 +324,7 @@ When the loop ends, the `ResultMessage` tells you what happened and gives you th
 
 The `result` field holds the final text output and is only present on the `success` variant, so always check the subtype before reading it.
 
-All result subtypes carry `total_cost_usd`, `usage`, `num_turns`, and `session_id` so you can track cost and resume even after errors. Two things to guard for:
+All result subtypes carry `total_cost_usd`, `usage`, `num_turns`, and `session_id` so you can track cost and resume even after errors. Guard for these cases:
 
 * After a session crash, the final result is an `error_during_execution` whose cost fields may be zeroed and whose `stop_reason` is `null`, and the process exits after emitting it. See [Recover totals after a session crash](/docs/en/agent-sdk/cost-tracking#recover-totals-after-a-session-crash).
 * In Python, `total_cost_usd`, `usage`, and `model_usage` are typed as optional, so check that they aren't `None` before you read them.

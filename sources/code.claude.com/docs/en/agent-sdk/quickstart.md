@@ -58,7 +58,7 @@ Use the Agent SDK to build an AI agent that reads your code, finds bugs, and fix
       </Tab>
 
       <Tab title="Python (uv)">
-        [uv](https://docs.astral.sh/uv/) is a fast Python package manager that handles virtual environments automatically:
+        [Install uv](https://docs.astral.sh/uv/), a fast Python package manager that handles virtual environments automatically. Then initialize a project and add the SDK:
 
         ```bash theme={null}
         uv init
@@ -342,6 +342,8 @@ You can modify your agent's behavior by changing the options. Here are a few exa
 
 With `Bash` enabled, try: `"Write unit tests for utils.py, run them, and fix any failures"`
 
+Each of these snippets sets fields on the same options object. For more information, see [Configure your agent](/docs/en/agent-sdk/configuration).
+
 ## Key concepts
 
 **Tools** control what your agent can do:
@@ -358,6 +360,7 @@ With `Bash` enabled, try: `"Write unit tests for utils.py, run them, and fix any
 
 Now that you've created your first agent, learn how to extend its capabilities and tailor it to your use case:
 
+* **[Configure your agent](/docs/en/agent-sdk/configuration)**: compose the options object and find the page that covers each setting
 * **[Permissions](/docs/en/agent-sdk/permissions)**: control what your agent can do and when it needs approval
 * **[Hooks](/docs/en/agent-sdk/hooks)**: run custom code before or after tool calls
 * **[Sessions](/docs/en/agent-sdk/sessions)**: build multi-turn agents that maintain context
