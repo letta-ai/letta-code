@@ -169,6 +169,29 @@ export async function tryCloudHeadlessSend(
   try {
     if (!["text", "json", "stream-json"].includes(format))
       throw new Error(`Invalid output format: ${format}`);
+    // Agent-free conversations have no agent enqueue destination. Resume them
+    // through the execution path, which preserves their null-owned scope.
+    const resume = normalizeConversationShorthandFlags({
+      specifiedConversationId: values.conversation,
+      specifiedAgentId: values.agent,
+    });
+    const resumeId = resume.specifiedConversationId;
+    if (resumeId && resumeId !== "default") {
+      const conversation = await backend.retrieveConversation(resumeId);
+      if (conversation.agent_id === null) {
+        if (resume.specifiedAgentId) {
+          throw new Error(
+            "An ephemeral conversation cannot be resumed with --agent",
+          );
+        }
+        if (noWait || values["from-agent"]) {
+          throw new Error(
+            "Ephemeral conversation execution does not support --no-wait or --from-agent",
+          );
+        }
+        return undefined;
+      }
+    }
     validateSendOptions(values);
     const computer = normalizeAgentMessageComputer(
       values.computer ?? values.environment ?? values.env,

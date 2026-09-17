@@ -1,10 +1,13 @@
-import type { AgentRuntimeScope } from "./runtime-scope";
+import type {
+  AgentRuntimeScope,
+  ConversationRuntimeScope,
+} from "./runtime-scope";
 
 /** Remove a queued input without stopping the active turn. */
 export interface RemoveQueueItemCommand {
   type: "remove_queue_item";
   request_id: string;
-  runtime: AgentRuntimeScope;
+  runtime: ConversationRuntimeScope;
   item_id: string;
 }
 

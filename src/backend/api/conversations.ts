@@ -4,6 +4,9 @@ export interface ForkConversationOptions {
   agentId?: string;
   hidden?: boolean;
   messageId?: string;
+  ephemeral?: boolean;
+  name?: string;
+  isSubagent?: boolean;
   /** Extra headers forwarded on the request (e.g. acting-user echo). */
   headers?: Record<string, string>;
   signal?: AbortSignal;
@@ -35,7 +38,15 @@ export async function forkConversation(
   return apiRequest<{ id: string }>(
     "POST",
     `/v1/conversations/${encodeURIComponent(conversationId)}/fork`,
-    undefined,
+    {
+      ...(options.ephemeral !== undefined
+        ? { ephemeral: options.ephemeral }
+        : {}),
+      ...(options.name !== undefined ? { name: options.name } : {}),
+      ...(options.isSubagent !== undefined
+        ? { is_subagent: options.isSubagent }
+        : {}),
+    },
     {
       query,
       ...(options.headers ? { headers: options.headers } : {}),

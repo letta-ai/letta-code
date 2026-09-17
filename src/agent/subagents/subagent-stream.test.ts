@@ -6,6 +6,30 @@ import {
   processStreamEvent,
 } from "./subagent-stream";
 
+test("agent-free init preserves conversation identity without a parent owner", () => {
+  const state: ExecutionState = {
+    agentId: "agent-parent",
+    conversationId: null,
+    finalResult: null,
+    finalError: null,
+    resultStats: null,
+    enqueueReceipt: null,
+    displayedToolCalls: new Set(),
+  };
+  processStreamEvent(
+    JSON.stringify({
+      type: "system",
+      subtype: "init",
+      agent_id: null,
+      conversation_id: "conv-child",
+    }),
+    state,
+    "subagent-ephemeral-test",
+  );
+  expect(state.agentId).toBeNull();
+  expect(state.conversationId).toBe("conv-child");
+});
+
 const initLine = JSON.stringify({
   type: "system",
   subtype: "init",

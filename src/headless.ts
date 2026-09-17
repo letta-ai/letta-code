@@ -82,10 +82,6 @@ import {
   type ConversationMessageStreamBody,
   getBackend,
 } from "./backend";
-import {
-  resolveAgentSandboxConnectionId,
-  resolveEnvironmentConnectionId,
-} from "./backend/api/environments";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
@@ -124,15 +120,16 @@ import {
 import { tryCloudHeadlessSend } from "./headless-cloud-send";
 import {
   buildEnvironmentLaunchResult,
-  buildEnvironmentResponseMetadata,
-  isCloudEnvironmentSelector,
   type ListenerLaunchResult,
   type ReplyEnvironmentMetadata,
+  resolveHeadlessListenerEnvironment,
 } from "./headless-environment-response";
 import {
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
+  getHeadlessEphemeralIdentity,
   prepareHeadlessEphemeralBackend,
+  resumeHeadlessEphemeralConversation,
 } from "./headless-ephemeral-startup";
 import { launchListenerConversation } from "./headless-listener-launch";
 import { resolveHeadlessMemfsPolicy } from "./headless-memfs-policy";
@@ -818,7 +815,7 @@ export async function handleHeadlessCommand(
   let specifiedConversationId = values.conversation;
   let specifiedAgentIdFromAmbient = false;
   const forceNew = values["new-agent"];
-  const ephemeralFlag = values.ephemeral;
+  let ephemeralFlag = values.ephemeral;
   const systemPromptPreset = values.system;
   const systemCustom = values["system-custom"];
   const personalityInput = values.personality;
@@ -840,7 +837,7 @@ export async function handleHeadlessCommand(
     newAgentRequested: Boolean(forceNew),
   });
   const { isFreshStatelessSubagent } = memfsPolicy;
-  const isStatelessSession =
+  let isStatelessSession =
     Boolean(ephemeralFlag) || memfsPolicy.isStatelessSession;
   if (isStatelessSession && backend.capabilities.localMemfs) {
     const { disableLocalBackendMemfsForProcess } = await import(
@@ -961,6 +958,7 @@ export async function handleHeadlessCommand(
     !specifiedAgentName &&
     !specifiedConversationId &&
     !forceNew &&
+    !ephemeralFlag &&
     !fromAgentId
   ) {
     specifiedAgentId = ambientAgentId;
@@ -1026,10 +1024,10 @@ export async function handleHeadlessCommand(
     );
   }
 
-  if (ephemeralFlag && (isBidirectionalMode || usesRemoteEnvironment)) {
+  if (ephemeralFlag && isBidirectionalMode) {
     return reportAndExitHeadless(
       "headless_ephemeral_transport_unsupported",
-      "--ephemeral supports direct one-shot headless prompts only",
+      "Ephemeral conversations do not support bidirectional headless input",
       "headless_startup_flag_conflicts",
     );
   }
@@ -1089,9 +1087,18 @@ export async function handleHeadlessCommand(
       const conversation = await backend.retrieveConversation(
         specifiedConversationId,
       );
-      agent = await backend.retrieveAgent(conversation.agent_id, {
-        include: ["agent.tools", "agent.tags"],
-      });
+      if (conversation.agent_id === null) {
+        agent = resumeHeadlessEphemeralConversation(
+          conversation,
+          isBidirectionalMode,
+        ).agent;
+        ephemeralFlag = true;
+        isStatelessSession = true;
+      } else {
+        agent = await backend.retrieveAgent(conversation.agent_id, {
+          include: ["agent.tools", "agent.tags"],
+        });
+      }
     } catch (error) {
       trackHeadlessBoundaryError(
         "headless_conversation_lookup_failed",
@@ -1981,30 +1988,19 @@ export async function handleHeadlessCommand(
   );
 
   if (usesRemoteEnvironment) {
-    const environmentSelector = explicitEnvironmentSelector ?? "";
-    const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
-    const environmentRouting = environmentSelector
-      ? useCloudSandbox
-        ? await resolveAgentSandboxConnectionId(agent.id, { conversationId })
-        : await resolveEnvironmentConnectionId(environmentSelector)
-      : null;
-    const connectionId =
-      environmentRouting?.connectionId ?? inheritedListenerConnectionId;
-    if (!connectionId)
-      throw new Error("No listener connection was resolved for this launch");
-    const responseEnvironment: ReplyEnvironmentMetadata = environmentRouting
-      ? buildEnvironmentResponseMetadata({
-          source: useCloudSandbox ? "cloud-sandbox" : "explicit",
-          input: environmentSelector,
-          connectionId,
-          environment: environmentRouting.environment,
-        })
-      : { source: "same-environment" };
+    const { connectionId, responseEnvironment } =
+      await resolveHeadlessListenerEnvironment({
+        selector: explicitEnvironmentSelector,
+        inheritedConnectionId: inheritedListenerConnectionId,
+        agentId: publicAgentId,
+        parentAgentId: getHeadlessEphemeralIdentity().parentAgentId,
+        conversationId,
+      });
     const launchParams: Parameters<typeof launchListenerConversation>[0] = {
       noWait: Boolean(values["no-wait"]),
       connectionId,
       scope: {
-        agent_id: agent.id,
+        agent_id: publicAgentId,
         conversation_id: conversationId,
         acting_user_id: resolveActingUserId(),
       },
@@ -2029,7 +2025,9 @@ export async function handleHeadlessCommand(
               );
             }
           : undefined,
-      cwd: environmentSelector ? undefined : getCurrentWorkingDirectory(),
+      cwd: explicitEnvironmentSelector
+        ? undefined
+        : getCurrentWorkingDirectory(),
       mode: headlessPermissionMode,
       skillSources: resolvedSkillSources,
       settings: {
@@ -2046,11 +2044,13 @@ export async function handleHeadlessCommand(
         disable_memory_guard: cliPermissions.isMemoryGuardDisabled(),
         max_turns: maxTurns,
         preload_skills: parseCsvListFlag(preLoadSkillsRaw),
-        parent_agent_id: process.env.LETTA_PARENT_AGENT_ID,
+        parent_agent_id: ephemeralFlag
+          ? getHeadlessEphemeralIdentity().parentAgentId
+          : process.env.LETTA_PARENT_AGENT_ID,
         ...(process.env.LETTA_CODE_AGENT_ROLE === "subagent"
           ? { agent_role: "subagent" as const }
           : {}),
-        ...(!environmentSelector
+        ...(!explicitEnvironmentSelector
           ? {
               transcript_path: process.env.TRANSCRIPT_PATH,
               memory_directory:

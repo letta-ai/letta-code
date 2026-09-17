@@ -6,7 +6,11 @@
  */
 
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
-import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import {
+  getConversationId,
+  getCurrentAgentId,
+  getCurrentAgentName,
+} from "@/agent/context";
 import { updateConversationLLMConfig } from "@/agent/modify";
 import {
   completeSubagent,
@@ -23,6 +27,7 @@ import {
   type SubagentMemoryScope,
 } from "@/agent/subagents";
 import { spawnSubagent } from "@/agent/subagents/manager";
+import { allocateSubagentName } from "@/agent/subagents/names";
 import {
   type ForkModelOverride,
   getPrimaryAgentModelHandle,
@@ -275,7 +280,7 @@ export async function waitForBackgroundSubagentLink(
     if (!agent) {
       return;
     }
-    if (agent.agentURL) {
+    if (agent.agentURL || agent.conversationId) {
       return;
     }
     if (agent.status === "error" || agent.status === "completed") {
@@ -669,6 +674,7 @@ export async function inheritForkToolset(
   agentId: string,
   parentConversationId: string,
   forkConversationId: string,
+  targetAgentId = agentId,
 ): Promise<void> {
   const parentToolset = settingsManager.getToolsetPreference(
     agentId,
@@ -677,7 +683,7 @@ export async function inheritForkToolset(
   if (parentToolset === "auto") return;
 
   settingsManager.setToolsetPreference(
-    agentId,
+    targetAgentId,
     parentToolset,
     forkConversationId,
   );
@@ -687,6 +693,7 @@ export async function inheritForkToolset(
 interface ForkParentConversationParams {
   backend: Backend;
   parentAgentId: string;
+  parentAgentName?: string | null;
   parentConversationId: string;
   config: SubagentConfig;
   model?: string;
@@ -708,7 +715,7 @@ export async function forkParentConversation(
   params: ForkParentConversationParams,
   dependencies: ForkParentConversationDependencies = {},
 ) {
-  // Resolve and validate before creating the hidden conversation. Invalid
+  // Resolve and validate before creating the subagent conversation. Invalid
   // model IDs should not leave an orphan fork behind.
   const modelOverride = await (
     dependencies.resolveModelOverride ??
@@ -732,7 +739,13 @@ export async function forkParentConversation(
       ...(params.parentConversationId === "default"
         ? { agentId: params.parentAgentId }
         : {}),
-      hidden: true,
+      ...(params.backend.capabilities.localMemfs
+        ? { hidden: true }
+        : {
+            ephemeral: true,
+            name: allocateSubagentName(params.parentAgentName),
+            isSubagent: true,
+          }),
       signal: params.signal,
     },
   );
@@ -751,6 +764,9 @@ export async function forkParentConversation(
       params.parentAgentId,
       params.parentConversationId,
       forkedConversation.id,
+      params.backend.capabilities.localMemfs
+        ? params.parentAgentId
+        : forkedConversation.id,
     );
   } catch (error) {
     await params.backend
@@ -863,12 +879,15 @@ export async function task(args: TaskArgs): Promise<string> {
       const forkedConv = await forkParentConversation({
         backend: getBackend(),
         parentAgentId,
+        parentAgentName: getCurrentAgentName(),
         parentConversationId: parentConvId,
         config,
         model,
         signal,
       });
-      effectiveAgentId = parentAgentId;
+      effectiveAgentId = getBackend().capabilities.localMemfs
+        ? parentAgentId
+        : undefined;
       effectiveConversationId = forkedConv.id;
     } catch (error) {
       const errorMessage =

@@ -9,6 +9,7 @@ import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
 import type {
   AgentRuntimeScope,
+  ConversationRuntimeScope,
   LoopState,
   WsProtocolCommand,
 } from "@/types/protocol_v2";
@@ -32,7 +33,11 @@ const settings: RuntimeExecutionSettings = {
   disable_memory_guard: false,
   max_turns: 10,
 };
-function transport(supportsSettings = true) {
+function transport(
+  supportsSettings = true,
+  runtimeScope: ConversationRuntimeScope = scope,
+  onInput?: (command: Extract<WsProtocolCommand, { type: "input" }>) => void,
+) {
   const commands: WsProtocolCommand[] = [];
   let socket!: Socket;
   class Socket extends EventEmitter {
@@ -48,12 +53,29 @@ function transport(supportsSettings = true) {
     send(raw: string) {
       const command = JSON.parse(raw) as WsProtocolCommand;
       commands.push(command);
+      if (command.type === "input") {
+        emit({
+          type: "input_accepted",
+          request_id: command.request_id,
+          runtime: runtimeScope,
+          accepted: true,
+        });
+        onInput?.(command);
+      }
+      if (command.type === "remove_queue_item") {
+        emit({
+          type: "remove_queue_item_response",
+          request_id: command.request_id,
+          success: true,
+          item_id: command.item_id,
+        });
+      }
       if (command.type === "runtime_start")
         emit({
           type: "runtime_start_response",
           request_id: command.request_id,
           success: true,
-          runtime: scope,
+          runtime: runtimeScope,
           agent: null,
           conversation: null,
           created: { agent: false, conversation: false },
@@ -65,14 +87,14 @@ function transport(supportsSettings = true) {
         emit({
           type: "sync_response",
           request_id: command.request_id,
-          runtime: scope,
+          runtime: runtimeScope,
           success: true,
         });
       if (command.type === "abort_message")
         emit({
           type: "abort_message_response",
           request_id: command.request_id,
-          runtime: scope,
+          runtime: runtimeScope,
           success: true,
           aborted: true,
         });
@@ -98,11 +120,14 @@ function loop(clientMessageId: string, active = true): LoopState {
     },
   };
 }
-function receipt(clientMessageId: string): EnqueueReceipt {
+function receipt(
+  clientMessageId: string,
+  runtimeScope: AgentRuntimeScope = scope,
+): EnqueueReceipt {
   return {
     status: "queued",
-    agent_id: scope.agent_id,
-    conversation_id: scope.conversation_id,
+    agent_id: runtimeScope.agent_id,
+    conversation_id: runtimeScope.conversation_id,
     client_message_id: clientMessageId,
     workflow_id: "wf",
     super_run_id: "sr",
@@ -149,7 +174,13 @@ test.each([
           cwd: "/workspace",
           execution_settings: settings,
         });
+        expect(wire.commands[0]).toMatchObject({ agent_id: scope.agent_id });
+        expect(wire.commands[0]).toMatchObject({
+          conversation_id: scope.conversation_id,
+        });
         expect(input).toMatchObject({
+          agentId: scope.agent_id,
+          conversationId: scope.conversation_id,
           computer: "conn-target",
           actingUserId: "user-parent",
           content,
@@ -194,7 +225,7 @@ test.each([
           stop_reason: "end_turn",
           usage: { total_tokens: 13, step_count: 1 },
         });
-        return receipt(input.clientMessageId);
+        return receipt(input.clientMessageId, scope);
       },
       listRunMessages: async (id) => {
         expect(id).toBe("run-own");
@@ -217,6 +248,125 @@ test.each([
   });
   expect(onMessage).toHaveBeenCalledTimes(1);
   expect(wire.commands.some((command) => command.type === "input")).toBe(false);
+});
+
+test("agent-free launches submit to the null-owned runtime instead of parent-resolving Cloud enqueue", async () => {
+  const childScope = { ...scope, agent_id: null };
+  const wire = transport(true, childScope, (command) => {
+    expect(command.runtime).toEqual(childScope);
+    if (command.payload.kind !== "create_message")
+      throw new Error("Expected a message");
+    const id = command.payload.messages[0]?.client_message_id as string;
+    wire.emit({
+      type: "update_loop_status",
+      runtime: childScope,
+      loop_status: loop(id, false),
+    });
+    wire.emit({
+      type: "turn_finished",
+      runtime: childScope,
+      turn_id: "turn-own",
+      run_id: "run-own",
+      stop_reason: "end_turn",
+      usage: { total_tokens: 13 },
+    });
+  });
+  const result = await launchListenerConversation(
+    {
+      connectionId: "conn-target",
+      scope: childScope,
+      content: "hello",
+      backend,
+      settings,
+      mode: "standard",
+    },
+    {
+      client: wire.client,
+      enqueue: async () => {
+        throw new Error("Must not enqueue agent-free input");
+      },
+      listConversationReplies: async () =>
+        [
+          {
+            id: "message-other",
+            message_type: "assistant_message",
+            run_id: "run-other",
+            date: "2026-09-12T00:00:00Z",
+            content: "not this input",
+            seq_id: 999,
+          },
+          {
+            id: "message-final",
+            message_type: "assistant_message",
+            run_id: "run-own",
+            date: "2026-09-12T00:00:00Z",
+            content: "done",
+          },
+        ] as Message[],
+    },
+  );
+  expect(result).toMatchObject({ status: "completed", text: "done" });
+  expect(wire.commands[0]).not.toHaveProperty("agent_id");
+});
+
+test("agent-free no-wait fails before configuring or submitting listener input", async () => {
+  const wire = transport();
+  await expect(
+    launchListenerConversation(
+      {
+        connectionId: "conn-target",
+        scope: { ...scope, agent_id: null },
+        content: "hello",
+        backend,
+        settings,
+        mode: "standard",
+        noWait: true,
+      },
+      { client: wire.client },
+    ),
+  ).rejects.toThrow("--no-wait is not supported");
+  expect(wire.commands).toEqual([]);
+});
+
+test("agent-free queued cancellation removes only the matching listener queue item", async () => {
+  const childScope = { ...scope, agent_id: null };
+  const wire = transport(true, childScope);
+  await wire.client.connect();
+  try {
+    expect(
+      await cancelListenerInput({
+        client: wire.client,
+        scope: childScope,
+        clientMessageId: "own",
+        dequeue: async () => {
+          throw new Error("Must not dequeue through Cloud");
+        },
+        readState: () => ({
+          cancelled: false,
+          queue: [
+            {
+              id: "queue-own",
+              client_message_id: "own",
+              kind: "message",
+              source: "subagent",
+              content: "hello",
+              enqueued_at: "2026-09-12T00:00:00Z",
+            },
+          ],
+        }),
+      }),
+    ).toBe(true);
+    expect(wire.commands.at(-1)).toMatchObject({
+      type: "remove_queue_item",
+      runtime: childScope,
+      item_id: "queue-own",
+    });
+    expect(
+      wire.commands.some((command) => command.type === "abort_message"),
+    ).toBe(false);
+  } finally {
+    wire.client.close();
+  }
 });
 
 test("an older listener cannot silently discard child restrictions", async () => {
@@ -274,47 +424,58 @@ test("queued CLI cancellation uses the existing dequeue API, never aborts the tu
   ).toBe(false);
 });
 
-test("active cancellation targets only a run mapped to the requested input", async () => {
-  const wire = transport();
-  const dequeue = async () => ({
-    client_message_id: "own",
-    status: "too_late" as const,
-  });
-  try {
-    expect(
-      await cancelListenerInput({
-        client: wire.client,
-        scope,
-        clientMessageId: "own",
-        dequeue,
-        readState: () => ({ loop: loop("someone-else"), cancelled: false }),
-      }),
-    ).toBe(false);
-    expect(
-      wire.commands.some((command) => command.type === "abort_message"),
-    ).toBe(false);
-    expect(
-      await cancelListenerInput({
-        client: wire.client,
-        scope,
-        clientMessageId: "own",
-        dequeue,
-        readState: () => ({ loop: loop("own"), cancelled: false }),
-      }),
-    ).toBe(true);
-    expect(wire.commands.at(-1)).toMatchObject({
-      type: "abort_message",
-      runtime: scope,
-      run_id: "run-own",
+test.each([scope, { ...scope, agent_id: null }])(
+  "active cancellation targets only a run mapped to the requested input: %j",
+  async (scope) => {
+    const wire = transport(true, scope);
+    const dequeue = async () => ({
+      client_message_id: "own",
+      status: "too_late" as const,
     });
-  } finally {
-    wire.client.close();
-  }
-});
+    try {
+      expect(
+        await cancelListenerInput({
+          client: wire.client,
+          scope,
+          clientMessageId: "own",
+          dequeue,
+          readState: () => ({ loop: loop("someone-else"), cancelled: false }),
+        }),
+      ).toBe(false);
+      expect(
+        wire.commands.some((command) => command.type === "abort_message"),
+      ).toBe(false);
+      expect(
+        await cancelListenerInput({
+          client: wire.client,
+          scope,
+          clientMessageId: "own",
+          dequeue,
+          readState: () => ({ loop: loop("own"), cancelled: false }),
+        }),
+      ).toBe(true);
+      expect(wire.commands.at(-1)).toMatchObject({
+        type: "abort_message",
+        runtime: scope,
+        run_id: "run-own",
+      });
+    } finally {
+      wire.client.close();
+    }
+  },
+);
 
 test("control URL uses the existing authenticated status relay without URL credentials", () => {
   expect(listenerControlUrl("https://api.example.test", "conn-1", scope)).toBe(
     "wss://api.example.test/v1/environments/conn-1/status/ws?agentId=agent-child&conversationId=conv-child",
+  );
+  expect(
+    listenerControlUrl("https://api.example.test", "conn-1", {
+      ...scope,
+      agent_id: null,
+    }),
+  ).toBe(
+    "wss://api.example.test/v1/environments/conn-1/status/ws?conversationId=conv-child",
   );
 });
 
