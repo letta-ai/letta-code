@@ -538,93 +538,6 @@ export async function prepareToolExecutionContextForScope(params: {
 }
 
 /**
- * Ensures the server-side memory tool is attached to the agent.
- * Client toolsets may use memory_apply_patch, but server-side base memory tool remains memory.
- *
- * This is a server-side tool swap - client tools are passed via client_tools per-request.
- *
- * @param agentId - The agent ID to update
- * @param modelIdentifier - Model handle (kept for API compatibility)
- * @param useMemoryPatch - Unused compatibility parameter
- */
-export async function ensureCorrectMemoryTool(
-  agentId: string,
-  modelIdentifier: string,
-  useMemoryPatch?: boolean,
-): Promise<void> {
-  void resolveModel(modelIdentifier);
-  void useMemoryPatch;
-  if (!getBackend().capabilities.serverSideToolManagement) {
-    return;
-  }
-  const client = await getClient();
-
-  try {
-    // Need full agent state for tool_rules, so use retrieve with include
-    const agentWithTools = await client.agents.retrieve(agentId, {
-      include: ["agent.tools"],
-    });
-    const currentTools = agentWithTools.tools || [];
-    const mapByName = new Map(currentTools.map((t) => [t.name, t.id]));
-
-    // If agent has no memory tool at all, don't add one
-    // This preserves stateless agents (like Incognito) that intentionally have no memory
-    const hasAnyMemoryTool =
-      mapByName.has("memory") || mapByName.has("memory_apply_patch");
-    if (!hasAnyMemoryTool) {
-      return;
-    }
-
-    // Determine which memory tool we want
-    // OpenAI/Codex models use client-side memory_apply_patch now; keep server memory tool as "memory" for all models
-    const desiredMemoryTool = "memory";
-    const otherMemoryTool =
-      desiredMemoryTool === "memory" ? "memory_apply_patch" : "memory";
-
-    // Ensure desired memory tool attached
-    let desiredId = mapByName.get(desiredMemoryTool);
-    if (!desiredId) {
-      const resp = await client.tools.list({ name: desiredMemoryTool });
-      desiredId = resp.items[0]?.id;
-    }
-    if (!desiredId) {
-      // No warning needed - the tool might not exist on this server
-      return;
-    }
-
-    const otherId = mapByName.get(otherMemoryTool);
-
-    // Check if swap is needed
-    if (mapByName.has(desiredMemoryTool) && !otherId) {
-      // Already has the right tool, no swap needed
-      return;
-    }
-
-    const currentIds = currentTools
-      .map((t) => t.id)
-      .filter((id): id is string => typeof id === "string");
-    const newIds = new Set(currentIds);
-    if (otherId) newIds.delete(otherId);
-    newIds.add(desiredId);
-
-    const updatedRules = (agentWithTools.tool_rules || []).map((r) =>
-      r.tool_name === otherMemoryTool
-        ? { ...r, tool_name: desiredMemoryTool }
-        : r,
-    );
-
-    await client.agents.update(agentId, {
-      tool_ids: Array.from(newIds),
-      tool_rules: updatedRules,
-    });
-  } catch (err) {
-    console.warn(
-      `Warning: Failed to sync memory tool: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
-/**
  * Detach all memory tools from an agent.
  * Used when enabling memfs (filesystem-backed memory).
  *
@@ -715,60 +628,40 @@ export async function clearPersistedClientToolRules(
  * Force switch to a specific toolset regardless of model.
  *
  * @param toolsetName - The toolset to switch to
- * @param agentId - Agent to relink tools to
  */
 export async function forceToolsetSwitch(
   toolsetName: ToolsetName,
-  agentId: string,
 ): Promise<void> {
   // Load the appropriate toolset
   // Note: loadTools/loadSpecificTools acquire a switch lock that causes
   // sendMessageStream to wait, preventing messages from being sent with
   // stale or partial tools during the switch.
-  let modelForLoading: string;
   if (toolsetName === "none") {
     // Clear tools with lock protection so sendMessageStream() waits
     clearToolsWithLock();
-    return;
   } else if (toolsetName === "codex") {
     await loadSpecificTools([...OPENAI_PASCAL_TOOLS]);
-    modelForLoading = "openai/gpt-4";
   } else if (toolsetName === "codex_snake") {
     await loadSpecificTools([...OPENAI_DEFAULT_TOOLS]);
-    modelForLoading = "openai/gpt-4";
   } else if (toolsetName === "gemini") {
     await loadSpecificTools([...GEMINI_PASCAL_TOOLS]);
-    modelForLoading = "google_ai/gemini-3-pro-preview";
   } else if (toolsetName === "gemini_snake") {
     await loadTools("google_ai/gemini-3-pro-preview");
-    modelForLoading = "google_ai/gemini-3-pro-preview";
   } else if (toolsetName === "letta") {
     await loadSpecificTools([...LETTA_TOOLS]);
-    modelForLoading = "anthropic/claude-sonnet-4";
   } else {
     await loadTools("anthropic/claude-sonnet-4");
-    modelForLoading = "anthropic/claude-sonnet-4";
   }
-
-  // Ensure base server memory tool is correct for the toolset
-  const useMemoryPatch =
-    toolsetName === "codex" ||
-    toolsetName === "codex_snake" ||
-    toolsetName === "letta";
-  await ensureCorrectMemoryTool(agentId, modelForLoading, useMemoryPatch);
 }
 
 /**
- * Switches the loaded toolset based on the target model identifier,
- * and ensures the correct memory tool is attached to the agent.
+ * Switches the loaded toolset based on the target model identifier.
  *
  * @param modelIdentifier - The model handle/id
- * @param agentId - Agent to relink tools to
- * @param onNotice - Optional callback to emit a transcript notice
+ * @param providerType - Provider type used to refine toolset derivation
  */
 export async function switchToolsetForModel(
   modelIdentifier: string,
-  agentId: string,
   providerType?: string | null,
 ): Promise<ToolsetName> {
   // Resolve model ID to handle when possible so provider checks stay consistent
@@ -777,7 +670,7 @@ export async function switchToolsetForModel(
   const stringOnlyToolsetName = deriveToolsetFromModel(resolvedModel);
 
   if (typedToolsetName !== stringOnlyToolsetName) {
-    await forceToolsetSwitch(typedToolsetName, agentId);
+    await forceToolsetSwitch(typedToolsetName);
     return typedToolsetName;
   }
 
@@ -800,9 +693,6 @@ export async function switchToolsetForModel(
       );
     }
   }
-
-  // Ensure base server memory tool is attached
-  await ensureCorrectMemoryTool(agentId, resolvedModel);
 
   return typedToolsetName;
 }
