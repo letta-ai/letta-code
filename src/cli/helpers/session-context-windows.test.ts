@@ -31,4 +31,19 @@ describe("Session Context Windows Notes", () => {
 
     expect(windowsShellNotes).toContain("simple quoted strings");
   });
+
+  test("Windows shell notes warn against redirecting native stderr", () => {
+    for (const family of ["powershell", "cmd", "unknown"] as const) {
+      const windowsShellNotes = buildWindowsShellNotes({
+        family,
+        displayName: "Windows shell",
+      });
+
+      expect(windowsShellNotes).toContain("Do NOT redirect native stderr");
+      expect(windowsShellNotes).toContain("2>&1");
+      expect(windowsShellNotes).toContain("2>$null");
+      expect(windowsShellNotes).toContain("captures stderr separately");
+      expect(windowsShellNotes).toContain('$env:GIT_REDIRECT_STDERR="2>&1"');
+    }
+  });
 });
