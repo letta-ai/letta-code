@@ -30,7 +30,7 @@ function getFileEditHeader(toolName: string, toolArgs: string): string {
     const args = JSON.parse(toolArgs);
 
     // Handle patch tools
-    if (t === "apply_patch" || t === "applypatch") {
+    if (t === "applypatch") {
       if (args.input) {
         const operations = parsePatchOperations(args.input);
         if (operations.length > 1) {
@@ -59,13 +59,7 @@ function getFileEditHeader(toolName: string, toolArgs: string): string {
     const relPath = relative(cwd, filePath);
     const displayPath = relPath.startsWith("..") ? filePath : relPath;
 
-    if (
-      t === "write" ||
-      t === "write_file" ||
-      t === "writefile" ||
-      t === "write_file_gemini" ||
-      t === "writefilegemini"
-    ) {
+    if (t === "write" || t === "write_file" || t === "writefile") {
       const { existsSync } = require("node:fs");
       try {
         if (existsSync(filePath)) {
@@ -156,7 +150,6 @@ export const ApprovalPreview = memo(
       toolName === "Write" ||
       toolName === "str_replace_editor" ||
       toolName === "str_replace_based_edit_tool" ||
-      toolName === "apply_patch" ||
       toolName === "ApplyPatch" ||
       toolName === "memory_apply_patch"
     ) {
@@ -168,9 +161,7 @@ export const ApprovalPreview = memo(
         // Handle patch tools (can have multiple files)
         if (
           args.input &&
-          (toolName === "apply_patch" ||
-            toolName === "ApplyPatch" ||
-            toolName === "memory_apply_patch")
+          (toolName === "ApplyPatch" || toolName === "memory_apply_patch")
         ) {
           const operations = parsePatchOperations(args.input);
 

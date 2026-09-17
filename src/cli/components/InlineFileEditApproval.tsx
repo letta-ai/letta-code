@@ -61,7 +61,7 @@ function getHeaderText(fileEdit: FileEditInfo): string {
   const t = fileEdit.toolName.toLowerCase();
 
   // Handle patch tools (multi-file)
-  if (t === "apply_patch" || t === "applypatch" || t === "memory_apply_patch") {
+  if (t === "applypatch" || t === "memory_apply_patch") {
     if (fileEdit.patchInput) {
       const operations = parsePatchOperations(fileEdit.patchInput);
       if (operations.length > 1) {
@@ -93,13 +93,7 @@ function getHeaderText(fileEdit: FileEditInfo): string {
   const relPath = relative(cwd, fileEdit.filePath);
   const displayPath = relPath.startsWith("..") ? fileEdit.filePath : relPath;
 
-  if (
-    t === "write" ||
-    t === "write_file" ||
-    t === "writefile" ||
-    t === "write_file_gemini" ||
-    t === "writefilegemini"
-  ) {
+  if (t === "write" || t === "write_file" || t === "writefile") {
     const { existsSync } = require("node:fs");
     try {
       if (existsSync(fileEdit.filePath)) {
@@ -111,7 +105,7 @@ function getHeaderText(fileEdit: FileEditInfo): string {
     return `Write to ${displayPath}?`;
   }
 
-  if (t === "edit" || t === "replace") {
+  if (t === "edit") {
     return `Update ${displayPath}?`;
   }
 
@@ -127,13 +121,7 @@ function getHeaderText(fileEdit: FileEditInfo): string {
  */
 function getDiffKind(toolName: string): "write" | "edit" | "multi_edit" {
   const t = toolName.toLowerCase();
-  if (
-    t === "write" ||
-    t === "write_file" ||
-    t === "writefile" ||
-    t === "write_file_gemini" ||
-    t === "writefilegemini"
-  ) {
+  if (t === "write" || t === "write_file" || t === "writefile") {
     return "write";
   }
   if (t === "multiedit" || t === "multi_edit") {

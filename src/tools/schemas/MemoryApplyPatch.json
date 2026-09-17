@@ -8,7 +8,7 @@
     },
     "input": {
       "type": "string",
-      "description": "The entire contents of the apply_patch command, constrained to memory files under MEMORY_DIR."
+      "description": "The entire contents of the patch, constrained to memory files under MEMORY_DIR."
     }
   },
   "required": ["reason", "input"],

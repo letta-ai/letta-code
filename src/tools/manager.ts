@@ -120,28 +120,14 @@ const STREAMING_SHELL_TOOLS = new Set([
   "ShellCommand",
   "shell",
   "Shell",
-  "run_shell_command",
-  "RunShellCommand",
   "Monitor",
 ]);
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
-const FILE_MUTATING_TOOLS = new Set(["Edit", "Write", "MultiEdit", "replace"]);
+const FILE_MUTATING_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
 
-// Maps internal tool names to server/model-facing tool names
-// This allows us to have multiple implementations (e.g., write_file_gemini, Write from Anthropic)
-// that map to the same server tool name since only one toolset is active at a time
+// Maps internal implementation names to the names shown to the model.
 const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
-  // Gemini tools - map to their original Gemini CLI names
-  glob_gemini: "glob",
-  write_todos: "write_todos",
-  write_file_gemini: "write_file",
-  replace: "replace",
-  search_file_content: "search_file_content",
-  read_many_files: "read_many_files",
-  read_file_gemini: "read_file",
-  list_directory: "list_directory",
-  run_shell_command: "run_shell_command",
   // Align subagent-spawning tool with Claude Code: surface internal `Task` as `Agent`.
   // Internal implementation name stays `Task` for backward compat with existing
   // agent states; getInternalToolName("Agent") resolves back to "Task".
@@ -583,7 +569,7 @@ export function isToolsetSwitchInProgress(): boolean {
  * based on the currently loaded toolset.
  *
  * - If a tool with the exact name is loaded, prefer that.
- * - Otherwise, fall back to the alias mapping used for Gemini tools.
+ * - Otherwise, fall back to the model-facing alias mapping.
  * - Returns undefined if no matching tool is loaded.
  */
 function resolveInternalToolName(
@@ -1435,20 +1421,6 @@ export function isOpenAIModel(modelIdentifier: string): boolean {
     modelIdentifier.startsWith("openai-codex/") ||
     modelIdentifier.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`) ||
     modelIdentifier.startsWith("chatgpt_oauth/")
-  );
-}
-
-export function isGeminiModel(modelIdentifier: string): boolean {
-  const info = getModelInfo(modelIdentifier);
-  if (info?.handle && typeof info.handle === "string") {
-    return (
-      info.handle.startsWith("google/") || info.handle.startsWith("google_ai/")
-    );
-  }
-  // Fallback: treat raw handle-style identifiers as Gemini
-  return (
-    modelIdentifier.startsWith("google/") ||
-    modelIdentifier.startsWith("google_ai/")
   );
 }
 

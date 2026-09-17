@@ -6,51 +6,19 @@ const SHELL_TOOL_NAMES = new Set([
   "ShellCommand",
   "exec_command",
   "write_stdin",
-  "run_shell_command",
-  "RunShellCommand",
 ]);
 
-const READ_TOOL_NAMES = new Set([
-  "Read",
-  "read_file",
-  "ReadFile",
-  "read_file_gemini",
-  "ReadFileGemini",
-]);
+const READ_TOOL_NAMES = new Set(["Read", "read_file", "ReadFile"]);
 
-const WRITE_TOOL_NAMES = new Set([
-  "Write",
-  "write_file",
-  "WriteFile",
-  "write_file_gemini",
-  "WriteFileGemini",
-]);
+const WRITE_TOOL_NAMES = new Set(["Write", "write_file", "WriteFile"]);
 
-const EDIT_TOOL_NAMES = new Set([
-  "Edit",
-  "MultiEdit",
-  "NotebookEdit",
-  "replace",
-  "Replace",
-]);
+const EDIT_TOOL_NAMES = new Set(["Edit", "MultiEdit", "NotebookEdit"]);
 
-const GLOB_TOOL_NAMES = new Set(["Glob", "glob_gemini", "GlobGemini"]);
+const GLOB_TOOL_NAMES = new Set(["Glob"]);
 
-const GREP_TOOL_NAMES = new Set([
-  "Grep",
-  "grep_files",
-  "GrepFiles",
-  "search_file_content",
-  "SearchFileContent",
-]);
+const GREP_TOOL_NAMES = new Set(["Grep", "grep_files", "GrepFiles"]);
 
-const LIST_TOOL_NAMES = new Set([
-  "list_dir",
-  "ListDir",
-  "list_directory",
-  "ListDirectory",
-  "LS",
-]);
+const LIST_TOOL_NAMES = new Set(["list_dir", "ListDir", "LS"]);
 
 const TASK_TOOL_NAMES = new Set(["Task", "task", "Agent", "agent"]);
 

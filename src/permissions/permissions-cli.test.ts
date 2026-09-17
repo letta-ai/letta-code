@@ -442,7 +442,7 @@ test("Precedence: CLI allowedTools > settings allow", () => {
 
 test("CLI allowedTools normalizes shell aliases to Bash wildcard", () => {
   cliPermissions.clear();
-  cliPermissions.setAllowedTools("run_shell_command");
+  cliPermissions.setAllowedTools("ShellCommand");
 
   const tools = cliPermissions.getAllowedTools();
   expect(tools).toEqual(["Bash(:*)"]);
@@ -450,10 +450,10 @@ test("CLI allowedTools normalizes shell aliases to Bash wildcard", () => {
 
 test("CLI allowedTools normalizes file alias family", () => {
   cliPermissions.clear();
-  cliPermissions.setAllowedTools("WriteFileGemini");
+  cliPermissions.setAllowedTools("ReadFile");
 
   const tools = cliPermissions.getAllowedTools();
-  expect(tools).toEqual(["Write(**)"]);
+  expect(tools).toEqual(["Read(**)"]);
 });
 
 test("ShellCommand auto-allows captured read-only inspection scripts", () => {

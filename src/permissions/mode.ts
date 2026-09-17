@@ -111,7 +111,7 @@ class PermissionModeManager {
         return { decision: "allow" };
 
       case "acceptEdits":
-        // Auto-allow edit/write tools across Anthropic, Codex, and Gemini
+        // Auto-allow edit/write tools across Anthropic and Codex
         // toolsets. These names intentionally cover both snake_case and
         // PascalCase tool registrations used by different providers.
         if (
@@ -121,15 +121,10 @@ class PermissionModeManager {
             "MultiEdit",
             "NotebookEdit",
             "memory",
-            "apply_patch",
             "ApplyPatch",
             "memory_apply_patch",
-            "replace",
-            "Replace",
             "write_file",
             "WriteFile",
-            "write_file_gemini",
-            "WriteFileGemini",
           ].includes(toolName)
         ) {
           return { decision: "allow" };

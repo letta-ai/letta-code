@@ -2,10 +2,7 @@ import { describe, expect, test } from "bun:test";
 import ShellDescription from "@/tools/descriptions/Shell.md";
 import ExecCommandSchema from "@/tools/schemas/ExecCommand.json";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
-import {
-  OPENAI_DEFAULT_TOOLS,
-  OPENAI_PASCAL_TOOLS,
-} from "@/tools/toolset-defaults";
+import { CODEX_TOOLS } from "@/tools/toolset-defaults";
 
 function extractCommitGuidance(description: string): string {
   const start = description.indexOf("# Committing changes with git");
@@ -18,14 +15,10 @@ function extractCommitGuidance(description: string): string {
 
 describe("Codex unified exec toolset", () => {
   test("uses Codex exec_command/write_stdin instead of shell_command", () => {
-    expect(OPENAI_DEFAULT_TOOLS).toContain("exec_command");
-    expect(OPENAI_DEFAULT_TOOLS).toContain("write_stdin");
-    expect(OPENAI_DEFAULT_TOOLS).not.toContain("shell_command");
-
-    expect(OPENAI_PASCAL_TOOLS).toContain("exec_command");
-    expect(OPENAI_PASCAL_TOOLS).toContain("write_stdin");
-    expect(OPENAI_PASCAL_TOOLS).toContain("Monitor");
-    expect(OPENAI_PASCAL_TOOLS).not.toContain("ShellCommand");
+    expect(CODEX_TOOLS).toContain("exec_command");
+    expect(CODEX_TOOLS).toContain("write_stdin");
+    expect(CODEX_TOOLS).toContain("Monitor");
+    expect(CODEX_TOOLS).not.toContain("ShellCommand");
   });
 
   test("documents LC-specific omission of upstream sandbox fields", () => {

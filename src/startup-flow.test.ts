@@ -200,8 +200,8 @@ describe("Startup Flow - Smoke", () => {
     expect(result.stderr).not.toContain("Invalid toolset");
   });
 
-  test("--toolset accepts every additional advertised preset", async () => {
-    for (const toolset of ["none", "codex_snake", "gemini", "gemini_snake"]) {
+  test("--toolset accepts none", async () => {
+    for (const toolset of ["none"]) {
       const result = await runCli(
         ["--new-agent", "--toolset", toolset, "-p", "Say OK"],
         { expectExit: 1 },
