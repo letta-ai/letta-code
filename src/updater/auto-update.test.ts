@@ -6,13 +6,42 @@ import {
   buildInstallCommand,
   buildLatestVersionUrl,
   buildUpdateExecOptions,
+  checkAndAutoUpdate,
   checkForUpdate,
   detectPackageManager,
   getSelfUpdateStatus,
+  manualUpdate,
   resolveUpdateInstallRegistryUrl,
   resolveUpdatePackageName,
   resolveUpdateRegistryBaseUrl,
 } from "@/updater/auto-update";
+
+test("Python wheels never query npm or self-install updates", async () => {
+  const previous = process.env.LETTA_CODE_DISTRIBUTION;
+  process.env.LETTA_CODE_DISTRIBUTION = "pypi";
+  try {
+    const fetchImpl = mock(() => {
+      throw new Error("Python distribution must not contact npm");
+    });
+    expect(
+      (await checkForUpdate(fetchImpl as unknown as typeof fetch))
+        .updateAvailable,
+    ).toBe(false);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(await checkAndAutoUpdate()).toBeUndefined();
+    expect(getSelfUpdateStatus().supported).toBe(false);
+    expect(getSelfUpdateStatus().manual_command).toContain(
+      "uv tool upgrade letta",
+    );
+    expect(await manualUpdate()).toEqual({
+      success: false,
+      message: getSelfUpdateStatus().manual_command,
+    });
+  } finally {
+    if (previous === undefined) delete process.env.LETTA_CODE_DISTRIBUTION;
+    else process.env.LETTA_CODE_DISTRIBUTION = previous;
+  }
+});
 
 describe("auto-update ENOTEMPTY handling", () => {
   let testDir: string;
