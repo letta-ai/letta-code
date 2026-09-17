@@ -73,4 +73,37 @@ Instructions`);
     expect(frontmatter.name).toBe("cua-driver");
     expect(frontmatter.description).toBe("Drive native GUI applications.");
   });
+
+  test("parses literal block scalar fields", () => {
+    const { frontmatter } = parseFrontmatter(`---
+name: web-scraping
+description: |
+  Scrape websites with Firecrawl.
+  Use this skill for structured web data.
+allowed-tools:
+  - Bash(firecrawl *)
+---
+Instructions`);
+
+    expect(frontmatter.description).toBe(
+      "Scrape websites with Firecrawl.\nUse this skill for structured web data.\n",
+    );
+    expect(frontmatter["allowed-tools"]).toEqual(["Bash(firecrawl *)"]);
+  });
+
+  test("parses folded block scalar fields and chomping indicators", () => {
+    const { frontmatter } = parseFrontmatter(`---
+name: web-scraping
+description: >-
+  Scrape websites with Firecrawl.
+  Use this skill for structured web data.
+
+  Returns structured results.
+---
+Instructions`);
+
+    expect(frontmatter.description).toBe(
+      "Scrape websites with Firecrawl. Use this skill for structured web data.\nReturns structured results.",
+    );
+  });
 });

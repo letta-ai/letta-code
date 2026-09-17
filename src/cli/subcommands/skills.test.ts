@@ -617,6 +617,30 @@ describe("skills subcommand", () => {
     }
   });
 
+  test("lists installed skills with multiline descriptions", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "letta-skills-test-"));
+    try {
+      const memoryDir = join(tempRoot, "memory");
+      const skillDir = join(memoryDir, "skills", "firecrawl");
+      await mkdir(skillDir, { recursive: true });
+      writeFileSync(
+        join(skillDir, "SKILL.md"),
+        "---\nname: firecrawl\ndescription: >-\n  Scrape websites with Firecrawl.\n  Use for structured web data.\n---\n\n# Firecrawl\n",
+      );
+
+      expect(await listSkillDirectories({ memoryDir })).toEqual([
+        {
+          name: "firecrawl",
+          description:
+            "Scrape websites with Firecrawl. Use for structured web data.",
+          path: skillDir,
+        },
+      ]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test("deletes an installed skill directory", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "letta-skills-test-"));
     try {
