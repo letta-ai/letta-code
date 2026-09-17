@@ -22,18 +22,23 @@ afterEach(() => {
 });
 
 test("shared agent discovery carries the current sender", async () => {
-  const actingUserIds: Array<string | null> = [];
+  const actingUsers: Array<{ id: string | null; assertion: string | null }> =
+    [];
   globalThis.fetch = mock(async (_input, init) => {
-    actingUserIds.push(
-      new Headers(init?.headers).get("X-Letta-Acting-User-Id"),
-    );
+    const headers = new Headers(init?.headers);
+    actingUsers.push({
+      id: headers.get("X-Letta-Acting-User-Id"),
+      assertion: headers.get("X-Letta-Acting-User-Assertion"),
+    });
     return new Response(JSON.stringify({ agents: [], nextCursor: null }), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
   }) as unknown as typeof fetch;
 
-  await listSharedAgentsForCurrentUser({}, "user-sender");
+  await listSharedAgentsForCurrentUser({}, "user-sender", "sender-assertion");
 
-  expect(actingUserIds).toEqual(["user-sender"]);
+  expect(actingUsers).toEqual([
+    { id: "user-sender", assertion: "sender-assertion" },
+  ]);
 });

@@ -400,6 +400,7 @@ async function executeSubagent(
       inheritedApiKey,
       inheritedBaseUrl,
       actingUserId: actingUserIdOverride,
+      actingUserAssertion: getRuntimeContext()?.actingUserAssertion,
       transcriptPath,
       subagentName:
         existingAgentId || existingConversationId

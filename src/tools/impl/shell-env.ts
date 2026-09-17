@@ -9,7 +9,10 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
+import {
+  ACTING_USER_ASSERTION_ENV,
+  ACTING_USER_ID_ENV,
+} from "@/agent/acting-user";
 import {
   getConversationId,
   getCurrentAgentId,
@@ -24,6 +27,7 @@ import { getServerUrl } from "@/backend/api/server-url";
 import { isLocalBackendMemfsDisabledForProcess } from "@/backend/local/paths";
 import {
   getCurrentWorkingDirectory,
+  getRuntimeActingUserAssertion,
   getRuntimeActingUserId,
   getRuntimeContext,
 } from "@/runtime-context";
@@ -359,6 +363,10 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   const actingUserId = getRuntimeActingUserId();
   if (actingUserId) {
     env[ACTING_USER_ID_ENV] = actingUserId;
+  }
+  const actingUserAssertion = getRuntimeActingUserAssertion();
+  if (actingUserAssertion) {
+    env[ACTING_USER_ASSERTION_ENV] = actingUserAssertion;
   }
 
   // Add Letta context for skill scripts.

@@ -3,7 +3,12 @@ import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Backend } from "@/backend";
 import { prepareToolExecutionContextForSpecificTools } from "@/tools/manager";
-import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "./acting-user";
+import {
+  ACTING_USER_ASSERTION_ENV,
+  ACTING_USER_ASSERTION_HEADER,
+  ACTING_USER_ID_ENV,
+  ACTING_USER_ID_HEADER,
+} from "./acting-user";
 import { sendMessageStreamWithBackend } from "./message";
 import { composeSubagentChildEnv } from "./subagents/subagent-launcher";
 
@@ -26,11 +31,14 @@ function makeRecordingBackend(recordedHeaders: Array<Record<string, string>>) {
 async function sendWithPreparedContext(
   backend: Backend,
   actingUserId?: string,
+  actingUserAssertion?: string,
 ): Promise<void> {
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
     [],
     {
-      runtimeContext: actingUserId ? { actingUserId } : undefined,
+      runtimeContext: actingUserId
+        ? { actingUserId, actingUserAssertion }
+        : undefined,
     },
   );
   await sendMessageStreamWithBackend(
@@ -53,11 +61,13 @@ describe("sendMessageStream acting-user propagation", () => {
     await sendWithPreparedContext(
       makeRecordingBackend(recordedHeaders),
       "cloud-user-a",
+      "assertion-a",
     );
 
     expect(recordedHeaders).toEqual([
       expect.objectContaining({
         [ACTING_USER_ID_HEADER]: "cloud-user-a",
+        [ACTING_USER_ASSERTION_HEADER]: "assertion-a",
       }),
     ]);
   });
@@ -70,6 +80,7 @@ describe("sendMessageStream acting-user propagation", () => {
       launchProfile: undefined,
       inheritedPrimaryRoot: null,
       actingUserId: "cloud-user-a",
+      actingUserAssertion: "assertion-a",
     });
     const nestedChildEnv = composeSubagentChildEnv({
       parentProcessEnv: firstChildEnv,
@@ -78,9 +89,13 @@ describe("sendMessageStream acting-user propagation", () => {
       launchProfile: undefined,
       inheritedPrimaryRoot: null,
       actingUserId: firstChildEnv[ACTING_USER_ID_ENV],
+      actingUserAssertion: firstChildEnv[ACTING_USER_ASSERTION_ENV],
     });
     const previousActingUserId = process.env[ACTING_USER_ID_ENV];
+    const previousActingUserAssertion = process.env[ACTING_USER_ASSERTION_ENV];
     process.env[ACTING_USER_ID_ENV] = nestedChildEnv[ACTING_USER_ID_ENV];
+    process.env[ACTING_USER_ASSERTION_ENV] =
+      nestedChildEnv[ACTING_USER_ASSERTION_ENV];
     const recordedHeaders: Array<Record<string, string>> = [];
 
     try {
@@ -93,12 +108,19 @@ describe("sendMessageStream acting-user propagation", () => {
       } else {
         process.env[ACTING_USER_ID_ENV] = previousActingUserId;
       }
+      if (previousActingUserAssertion === undefined) {
+        delete process.env[ACTING_USER_ASSERTION_ENV];
+      } else {
+        process.env[ACTING_USER_ASSERTION_ENV] = previousActingUserAssertion;
+      }
     }
 
     expect(nestedChildEnv[ACTING_USER_ID_ENV]).toBe("cloud-user-a");
+    expect(nestedChildEnv[ACTING_USER_ASSERTION_ENV]).toBe("assertion-a");
     expect(recordedHeaders).toHaveLength(2);
     for (const headers of recordedHeaders) {
       expect(headers[ACTING_USER_ID_HEADER]).toBe("cloud-user-a");
+      expect(headers[ACTING_USER_ASSERTION_HEADER]).toBe("assertion-a");
     }
   });
 });

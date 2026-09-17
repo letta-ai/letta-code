@@ -51,7 +51,10 @@ import {
   parseEvery,
   readCronRunLogEntriesPage,
 } from "@/cron";
-import { getRuntimeActingUserId } from "@/runtime-context";
+import {
+  getRuntimeActingUserAssertion,
+  getRuntimeActingUserId,
+} from "@/runtime-context";
 import {
   buildCloudScheduleInput,
   CLOUD_EXECUTION_TARGET,
@@ -515,6 +518,7 @@ async function handleCloudAdd(params: CloudAddParams): Promise<number> {
       params.agentId,
       built.input,
       getRuntimeActingUserId(),
+      getRuntimeActingUserAssertion(),
     );
 
     const targetDeviceId =
