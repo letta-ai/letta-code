@@ -145,7 +145,7 @@ describe("stopMonitor", () => {
     writeFileSync(file, "setInterval(() => {}, 1000)");
     const result = await monitor({
       description: "Command events",
-      persistent: true,
+      timeout_ms: 30_000,
       command: `${JSON.stringify(process.execPath)} ${JSON.stringify(file)}`,
       parentScope: {
         agentId: scope.agent_id,
@@ -173,7 +173,7 @@ describe("stopMonitor", () => {
         throw new Error("No server port");
       const result = await monitor({
         description: "Socket events",
-        persistent: true,
+        timeout_ms: 30_000,
         ws: { url: `ws://127.0.0.1:${address.port}` },
         parentScope: {
           agentId: scope.agent_id,
@@ -186,7 +186,7 @@ describe("stopMonitor", () => {
       });
       const silent = await monitor({
         description: "Agent-owned stop",
-        persistent: true,
+        timeout_ms: 30_000,
         ws: { url: `ws://127.0.0.1:${address.port}` },
         parentScope: {
           agentId: scope.agent_id,

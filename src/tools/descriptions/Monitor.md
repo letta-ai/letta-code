@@ -2,7 +2,7 @@ Start a background monitor that streams events from a long-running script. Each 
 
 Pick by how many notifications you need:
 - **One** ("tell me when the server is ready / the build finishes") → use **Bash with `run_in_background`** and a command that exits when the condition is true, e.g. `until grep -q "Ready in" dev.log; do sleep 0.5; done`. You get a single completion notification when it exits.
-- **One per occurrence, indefinitely** ("tell me every time an ERROR line appears") → Monitor with an unbounded command (`tail -f`, `inotifywait -m`, `while true`).
+- **One per occurrence, until the deadline** ("tell me every time an ERROR line appears") → Monitor with an unbounded command (`tail -f`, `inotifywait -m`, `while true`). Re-arm it if the watch is still needed when the deadline arrives.
 - **One per occurrence, until a known end** ("emit each CI step result, stop when the run completes") → Monitor with a command that emits lines and then exits.
 
 Your script's stdout is the event stream. Each line becomes a notification. Exit ends the watch.
@@ -43,7 +43,7 @@ For poll loops checking job state, emit on every terminal status (`succeeded|fai
 
 Stdout lines within 200ms are batched into a single notification, so multiline output from a single event groups naturally.
 
-The script runs in the same shell environment as Bash. Exit ends the watch (exit code is reported). Timeout → killed. Set `persistent: true` for session-length watches (PR monitoring, log tails) — the monitor runs until you call TaskStop or the session ends. Use TaskStop to cancel early.
+The script runs in the same shell environment as Bash. Exit ends the watch (exit code is reported). Every monitor has a deadline: 5 minutes by default and at most 30 minutes. At the deadline, the monitor is killed and sends one notice so you can re-arm it if needed. Use TaskStop to cancel early.
 
 **ws source** — open a WebSocket and stream each incoming text frame as an event. No shell, no polling: the server pushes, you get notified.
     ws: {url: 'wss://events.example.com/stream', protocols: ['v1']},

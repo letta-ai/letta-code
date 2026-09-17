@@ -163,7 +163,7 @@ async function startMonitor(scope: {
   const result = await monitor({
     description: "Watch interrupt fixture events",
     ws: { url: `ws://127.0.0.1:${address.port}` },
-    persistent: true,
+    timeout_ms: 30_000,
     parentScope: scope,
   });
   monitorIds.add(result.taskId);
