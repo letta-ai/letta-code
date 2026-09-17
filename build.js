@@ -120,6 +120,17 @@ await Bun.build({
   external: ["@janhapke/sharp-electron"],
 });
 
+// Keep script execution interruptible without bundling the SDK into its worker.
+await Bun.build({
+  entrypoints: ["./src/tools/workflow/workflow-worker.ts"],
+  outdir: ".",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: { entry: "workflow-worker.js" },
+});
+
 // Add shebang to output file
 const outputPath = join(__dirname, "letta.js");
 let content = readFileSync(outputPath, "utf-8");

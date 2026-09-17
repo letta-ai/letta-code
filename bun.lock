@@ -7,6 +7,7 @@
       "dependencies": {
         "@earendil-works/pi-ai": "^0.85.1",
         "@janhapke/sharp-electron": "0.35.3-electron.1",
+        "@letta-ai/letta-agent-sdk": "^0.8.11",
         "@letta-ai/letta-client": "^1.10.2",
         "@letta-ai/trajectory": "0.2.0",
         "@modelcontextprotocol/sdk": "1.30.0",
@@ -194,7 +195,11 @@
 
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
+    "@letta-ai/letta-agent-sdk": ["@letta-ai/letta-agent-sdk@0.8.11", "", { "dependencies": { "@letta-ai/letta-client": "^1.12.1", "@letta-ai/letta-code": "0.32.12" } }, "sha512-iwJweBycqkAl0hMSMRfSc0Gv62XnTsNceR9er+ntW6fc/bRlQ+i0zSUPWdZY7BtUWMCzQvDj5GXyB5i3C9zlwg=="],
+
     "@letta-ai/letta-client": ["@letta-ai/letta-client@1.10.2", "", {}, "sha512-BYAPkIl6wHYORJ+zHmlWaPSrlsMbN5YkoSnHnEUvaIJBOpa5kLwldNjzHIALcSAV19Qc0ktRoIQy0i0Vqb21yQ=="],
+
+    "@letta-ai/letta-code": ["@letta-ai/letta-code@0.32.12", "", { "dependencies": { "@earendil-works/pi-ai": "^0.85.1", "@janhapke/sharp-electron": "0.35.3-electron.1", "@letta-ai/letta-client": "^1.10.2", "@letta-ai/trajectory": "0.2.0", "@modelcontextprotocol/sdk": "1.30.0", "@pierre/diffs": "1.2.2", "@scarf/scarf": "^1.4.0", "cron-parser": "^5.6.1", "cross-spawn": "^7.0.6", "glob": "^13.0.0", "ink-link": "^5.0.0", "node-pty": "^1.1.0", "open": "^10.2.0", "react": "18.2.0", "sharp": "^0.34.5", "shiki": "^4.0.2", "strip-ansi": "^7.2.0", "ws": "^8.19.0" }, "optionalDependencies": { "@vscode/ripgrep": "^1.17.0" }, "bin": { "letta": "letta.js" } }, "sha512-D5MHvCBubNedH3cjZSq12Yd4zQUFwzXIaW5EV7a0360vM4XOsS+DF6jFWi+T7q8CCFa01Ft50XU1AXF0kyrv+Q=="],
 
     "@letta-ai/trajectory": ["@letta-ai/trajectory@0.2.0", "", {}, "sha512-biCyT0z8nh4Q8kIqBrPgmzoalacPmosmCpvEjdN9ILpL85+T75b8ahcN9MHPHQUVRj/J7UyQuRahJ4/JdrpCcA=="],
 
@@ -1151,6 +1156,10 @@
     "@img/sharp-webcontainers-wasm32/@img/sharp-wasm32": ["@img/sharp-wasm32@0.35.3", "", { "dependencies": { "@emnapi/runtime": "^1.11.1" } }, "sha512-cZ0XkcYGpHZkqW6iCkqTcmUC0CD9DhD5d/qeZlZkfRBn6GnHniZXLUo5+9xw8Iv76YE6LQFN9YNBlKREcCG76w=="],
 
     "@janhapke/sharp-electron/sharp": ["sharp@0.35.3", "", { "dependencies": { "@img/colour": "^1.1.0", "detect-libc": "^2.1.2", "semver": "^7.8.5" }, "optionalDependencies": { "@img/sharp-darwin-arm64": "0.35.3", "@img/sharp-darwin-x64": "0.35.3", "@img/sharp-freebsd-wasm32": "0.35.3", "@img/sharp-libvips-darwin-arm64": "1.3.2", "@img/sharp-libvips-darwin-x64": "1.3.2", "@img/sharp-libvips-linux-arm": "1.3.2", "@img/sharp-libvips-linux-arm64": "1.3.2", "@img/sharp-libvips-linux-ppc64": "1.3.2", "@img/sharp-libvips-linux-riscv64": "1.3.2", "@img/sharp-libvips-linux-s390x": "1.3.2", "@img/sharp-libvips-linux-x64": "1.3.2", "@img/sharp-libvips-linuxmusl-arm64": "1.3.2", "@img/sharp-libvips-linuxmusl-x64": "1.3.2", "@img/sharp-linux-arm": "0.35.3", "@img/sharp-linux-arm64": "0.35.3", "@img/sharp-linux-ppc64": "0.35.3", "@img/sharp-linux-riscv64": "0.35.3", "@img/sharp-linux-s390x": "0.35.3", "@img/sharp-linux-x64": "0.35.3", "@img/sharp-linuxmusl-arm64": "0.35.3", "@img/sharp-linuxmusl-x64": "0.35.3", "@img/sharp-webcontainers-wasm32": "0.35.3", "@img/sharp-win32-arm64": "0.35.3", "@img/sharp-win32-ia32": "0.35.3", "@img/sharp-win32-x64": "0.35.3" }, "peerDependencies": { "@types/node": "*" }, "optionalPeers": ["@types/node"] }, "sha512-ej0zVHuZGHCiABXcNxeYhpRnPNPAcvbG8RMdBAhDAxLKkCRVSpK3Iyu7qbqw3JMzoj0REeM6f3tJLtVwl0023Q=="],
+
+    "@letta-ai/letta-agent-sdk/@letta-ai/letta-client": ["@letta-ai/letta-client@1.12.1", "", {}, "sha512-rYjXMXpkfssj7VBBX3qCp6mdpNRv6YPNrliYsjkhWoQDqGg3J9bsgIQ28ZhQTddabYxRUIwcdzuaizFx8pvZ7A=="],
+
+    "@letta-ai/letta-code/@letta-ai/letta-client": ["@letta-ai/letta-client@1.12.1", "", {}, "sha512-rYjXMXpkfssj7VBBX3qCp6mdpNRv6YPNrliYsjkhWoQDqGg3J9bsgIQ28ZhQTddabYxRUIwcdzuaizFx8pvZ7A=="],
 
     "@pierre/diffs/diff": ["diff@8.0.3", "", {}, "sha512-qejHi7bcSD4hQAZE0tNAawRK1ZtafHDmMTMkrrIGgSLl7hTnQHmKCeB45xAcbfTqK2zowkM3j3bHt/4b/ARbYQ=="],
 

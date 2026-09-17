@@ -95,6 +95,13 @@ export function isTaskTool(name: string): boolean {
 }
 
 /**
+ * Checks if a tool name represents the background Workflow orchestration tool
+ */
+export function isWorkflowTool(name: string): boolean {
+  return name === "Workflow" || name === "workflow";
+}
+
+/**
  * Checks if a tool name represents a TODO/planning tool
  */
 export function isTodoTool(rawName: string, displayName?: string): boolean {

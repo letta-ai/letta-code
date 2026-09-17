@@ -26,6 +26,7 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "TaskGet",
   "TaskList",
   "TaskUpdate",
+  "Workflow",
   "Write",
 ];
 
@@ -71,6 +72,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "TaskOutput",
   "TaskStop",
   "Skill",
+  "Workflow",
   "exec_command",
   "write_stdin",
   "ViewImage",

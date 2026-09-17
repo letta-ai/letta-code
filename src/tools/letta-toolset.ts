@@ -21,6 +21,7 @@ export const LETTA_TOOLS: ToolName[] = [
   "TaskOutput",
   "TaskStop",
   "Skill",
+  "Workflow",
   "exec_command",
   "write_stdin",
   "Read",

@@ -123,6 +123,7 @@ const STREAMING_SHELL_TOOLS = new Set([
   "run_shell_command",
   "RunShellCommand",
   "Monitor",
+  "Workflow",
 ]);
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
@@ -148,9 +149,7 @@ const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
   Task: "Agent",
 };
 
-/**
- * Get the server-facing name for a tool (maps internal names to what the model sees)
- */
+/** Get the server-facing name for a tool (maps internal names to what the model sees). */
 export function getServerToolName(internalName: string): string {
   return TOOL_NAME_MAPPINGS[internalName as ToolName] || internalName;
 }
@@ -629,7 +628,7 @@ export interface ExternalToolDefinition {
   scopeId?: string;
   /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
   runtime?: {
-    agentId?: string;
+    agentId?: string | null;
     conversationId?: string;
   };
   /** Client-local executor owned by this tool (for example an MCP process). */
