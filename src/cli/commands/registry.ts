@@ -61,14 +61,6 @@ export const commands: Record<string, Command> = {
       return "Starting doctor...";
     },
   },
-  "/remember": {
-    desc: "Remember something from the conversation (/remember [instructions])",
-    order: 13,
-    handler: () => {
-      // Handled specially in App.tsx to trigger memory update
-      return "Processing memory request...";
-    },
-  },
   "/reflect": {
     desc: "Launch reflection (/reflect [--recent N | --conversation ID ... | --auto] [--instruction TEXT])",
     args: "[--recent N | --conversation ID ... | --auto] [--instruction TEXT]",

@@ -8,7 +8,6 @@ import {
 } from "@/agent/max-context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getActiveMemoryDirectory } from "@/agent/memory-runtime";
-import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
 import { refreshCustomCommands } from "@/cli/commands/custom";
@@ -21,11 +20,7 @@ import {
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
-import {
-  DEFAULT_SUMMARIZATION_MODEL,
-  SYSTEM_REMINDER_CLOSE,
-  SYSTEM_REMINDER_OPEN,
-} from "@/constants";
+import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { runPreCompactHooks } from "@/hooks";
 import type { ModCommand } from "@/mods/types";
 import { markPostCompactionContextRemindersPending } from "@/reminders/state";
@@ -160,15 +155,6 @@ export async function handleExecuteCommand(
 
       case "init":
         output = await handleInitCommand(socket, conversationRuntime, opts);
-        break;
-
-      case "remember":
-        output = await handleRememberCommand(
-          socket,
-          conversationRuntime,
-          trimmedArgs,
-          opts,
-        );
         break;
 
       case "compact":
@@ -765,61 +751,6 @@ async function handleInitCommand(
   return "Memory initialization completed";
 }
 
-/**
- * /remember — Store information from the conversation.
- *
- * Mirrors the CLI /remember logic by sending the remember system reminder
- * and optional user-provided text through the normal turn pipeline.
- */
-async function handleRememberCommand(
-  socket: WebSocket,
-  conversationRuntime: ConversationRuntime,
-  args: string | undefined,
-  opts: {
-    onStatusChange?: StartListenerOptions["onStatusChange"];
-    connectionId?: string;
-  },
-): Promise<string> {
-  const agentId = conversationRuntime.agentId;
-
-  if (!agentId) {
-    throw new Error("No agent ID available for /remember command");
-  }
-
-  const hasArgs = Boolean(args && args.length > 0);
-  const rememberReminder = hasArgs
-    ? `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n${SYSTEM_REMINDER_CLOSE}`
-    : `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n\nThe user did not specify what to remember. Look at the recent conversation context to identify what they likely want you to remember, or ask them to clarify.\n${SYSTEM_REMINDER_CLOSE}`;
-
-  const content = hasArgs
-    ? [
-        { type: "text" as const, text: rememberReminder },
-        { type: "text" as const, text: args as string },
-      ]
-    : [{ type: "text" as const, text: rememberReminder }];
-
-  await handleIncomingMessage(
-    {
-      type: "message",
-      agentId,
-      conversationId: conversationRuntime.conversationId,
-      messages: [
-        {
-          type: "message",
-          role: "user",
-          content,
-        },
-      ],
-    },
-    socket,
-    conversationRuntime,
-    opts.onStatusChange,
-    opts.connectionId,
-  );
-
-  return "Memory request submitted";
-}
-
 /** /context-limit — Set or reset the active scope's max context window. */
 async function handleSetMaxContextCommand(
   conversationRuntime: ConversationRuntime,
@@ -920,7 +851,7 @@ async function handleReflectCommand(
   if (result.launched)
     return "Started a reflection pass for this conversation.";
   if (result.reason === "memfs_disabled") {
-    return "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead.";
+    return "Reflection needs the memory filesystem to be enabled for this agent.";
   }
   if (result.reason === "already_active") {
     return "A reflection agent is already running for this conversation.";

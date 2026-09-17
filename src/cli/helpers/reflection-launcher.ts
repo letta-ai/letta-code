@@ -104,8 +104,8 @@ export function getReflectionLaunchSkippedMessage(
       return "Automatic reflection is paused because its model configuration is invalid. Fix the reflection model or provider, run /reload, then use /reflect to retry.";
     case "memfs_disabled":
       return surface === "listener"
-        ? "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead."
-        : "Memory filesystem is not enabled. Use /remember instead.";
+        ? "Reflection needs the memory filesystem to be enabled for this agent."
+        : "Memory filesystem is not enabled.";
     case "no_payload":
       return surface === "listener"
         ? "No new transcript content to reflect on for this conversation."
