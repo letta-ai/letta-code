@@ -1,13 +1,44 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  addWorktreeSafely,
   buildNonInteractiveGitEnv,
   formatGitFailure,
   runGit,
 } from "@/tools/impl/worktree-git";
+
+function git(args: string[], cwd: string): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Letta Test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "Letta Test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+    },
+  }).trim();
+}
+
+async function createRepo(tempDirs: string[]): Promise<string> {
+  const repo = await mkdtemp(path.join(tmpdir(), "letta-worktree-safe-add-"));
+  tempDirs.push(repo);
+  git(["init", "-b", "main"], repo);
+  await writeFile(
+    path.join(repo, ".gitattributes"),
+    "payload filter=watcher\n",
+  );
+  await writeFile(path.join(repo, "payload"), "content\n");
+  git(["add", ".gitattributes", "payload"], repo);
+  git(["commit", "-m", "initial commit"], repo);
+  return repo;
+}
 
 async function installHangingGit(
   tempDirs: string[],
@@ -93,6 +124,79 @@ describe("worktree Git runner", () => {
     expect(buildNonInteractiveGitEnv({}).GIT_SSH_COMMAND).toBe(
       "ssh -o BatchMode=yes",
     );
+  });
+
+  test("neutralizes repository-local checkout filters", async () => {
+    const repo = await createRepo(tempDirs);
+    git(["config", "filter.watcher.smudge", "false"], repo);
+    git(["config", "filter.watcher.required", "true"], repo);
+    const worktreePath = path.join(repo, "worktree");
+
+    await addWorktreeSafely({
+      repoRoot: repo,
+      branchName: "safe-filter",
+      worktreePath,
+      baseRef: "main",
+    });
+
+    expect(readFileSync(path.join(worktreePath, "payload"), "utf8")).toBe(
+      "content\n",
+    );
+  });
+
+  test.each([
+    ["lfs.customtransfer.watcher.path", "/tmp/watcher"],
+    ["lfs.standalonetransferagent", "watcher"],
+  ])(
+    "rejects repository-local Git LFS program setting %s",
+    async (key, value) => {
+      const repo = await createRepo(tempDirs);
+      git(["config", key, value], repo);
+
+      expect(
+        addWorktreeSafely({
+          repoRoot: repo,
+          branchName: "blocked-lfs",
+          worktreePath: path.join(repo, "worktree"),
+          baseRef: "main",
+        }),
+      ).rejects.toThrow(`repository's own git config sets ${key}`);
+    },
+  );
+
+  test("rejects conditional repository config includes", async () => {
+    const repo = await createRepo(tempDirs);
+    git(
+      [
+        "config",
+        "includeIf.gitdir:/tmp/letta-worktree/.path",
+        "/tmp/letta-worktree-config",
+      ],
+      repo,
+    );
+
+    expect(
+      addWorktreeSafely({
+        repoRoot: repo,
+        branchName: "blocked-include",
+        worktreePath: path.join(repo, "worktree"),
+        baseRef: "main",
+      }),
+    ).rejects.toThrow("conditional include (includeIf)");
+  });
+
+  test("rejects filter names that cannot be overridden safely", async () => {
+    const repo = await createRepo(tempDirs);
+    git(["config", "filter.bad=name.smudge", "false"], repo);
+
+    expect(
+      addWorktreeSafely({
+        repoRoot: repo,
+        branchName: "blocked-filter-name",
+        worktreePath: path.join(repo, "worktree"),
+        baseRef: "main",
+      }),
+    ).rejects.toThrow("name cannot be neutralized");
   });
 
   test.skipIf(process.platform === "win32")(

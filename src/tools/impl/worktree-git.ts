@@ -139,6 +139,104 @@ export async function gitRefExists(cwd: string, ref: string): Promise<boolean> {
   return result.exitCode === 0;
 }
 
+const WORKTREE_UNSAFE_CONFIG_PATTERN =
+  "^(includeif\\..*|filter\\..*\\.(clean|smudge|process|required)|lfs\\.customtransfer\\..*\\.path|lfs\\.standalonetransferagent)$";
+
+async function listWorktreeUnsafeConfigKeys(cwd: string): Promise<string[]> {
+  const result = await runGit(
+    [
+      "config",
+      "--local",
+      "--includes",
+      "--null",
+      "--name-only",
+      "--get-regexp",
+      WORKTREE_UNSAFE_CONFIG_PATTERN,
+    ],
+    cwd,
+    { allowFailure: true },
+  );
+  if (result.exitCode === 1 && !result.stdout) {
+    return [];
+  }
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Could not read the repository git config to neutralize filter drivers: ${result.stderr.trim() || `git config exited ${result.exitCode}`}`,
+    );
+  }
+  return result.stdout.split("\0").filter(Boolean);
+}
+
+/**
+ * Creates a worktree without executing checkout filters from repository-local
+ * git config. An agent can write that config, so allowing its filter commands
+ * to run during `git worktree add` would bypass the normal shell permission
+ * path. Config shapes that cannot be safely overridden fail closed.
+ */
+export async function addWorktreeSafely(params: {
+  repoRoot: string;
+  branchName: string;
+  worktreePath: string;
+  baseRef: string;
+}): Promise<void> {
+  const keys = await listWorktreeUnsafeConfigKeys(params.repoRoot);
+  if (keys.some((key) => key.toLowerCase().startsWith("includeif."))) {
+    throw new Error(
+      "The repository git config has a conditional include (includeIf), so its checkout filters cannot be neutralized safely.",
+    );
+  }
+
+  const blockedLfsKey = keys.find((key) =>
+    /^(lfs\.customtransfer\..*\.path|lfs\.standalonetransferagent)$/i.test(key),
+  );
+  if (blockedLfsKey) {
+    throw new Error(
+      `Git was not run: the repository's own git config sets ${blockedLfsKey}. Move trusted Git LFS transfer programs to global git config, or remove the setting and retry.`,
+    );
+  }
+
+  const driverNames = new Set<string>();
+  for (const key of keys) {
+    const match = /^filter\.(.*)\.(clean|smudge|process|required)$/i.exec(key);
+    if (!match?.[1]) {
+      continue;
+    }
+    const driverName = match[1];
+    if (/[=\r\n]/.test(driverName)) {
+      throw new Error(
+        'The repository git config defines a filter driver whose name cannot be neutralized (contains "=" or a newline).',
+      );
+    }
+    driverNames.add(driverName);
+  }
+
+  const filterOverrides = [...driverNames]
+    .sort()
+    .flatMap((driverName) => [
+      "-c",
+      `filter.${driverName}.clean=`,
+      "-c",
+      `filter.${driverName}.smudge=`,
+      "-c",
+      `filter.${driverName}.process=`,
+      "-c",
+      `filter.${driverName}.required=false`,
+    ]);
+  await runGit(
+    [
+      ...filterOverrides,
+      "worktree",
+      "add",
+      "--no-track",
+      "-b",
+      params.branchName,
+      params.worktreePath,
+      params.baseRef,
+    ],
+    params.repoRoot,
+  );
+}
+
 export async function resolveRepoRoot(cwd: string): Promise<string> {
   const repoRoot = await gitStdout(["rev-parse", "--show-toplevel"], cwd);
   return path.resolve(repoRoot);
