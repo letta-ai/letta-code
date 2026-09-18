@@ -158,6 +158,19 @@ for (const mode of ["one-shot", "bidirectional", "primary"] as const) {
       expect(after.listConversations(listParams).length).toBe(2);
       if (repair) {
         expect(after.listConversationMessages(original.id)).toEqual([]);
+        // Memory subagents use the one-shot launcher; bidirectional clients
+        // supply their own message content and do not get sender attribution.
+        if (mode === "one-shot") {
+          const workerMessages = JSON.stringify(
+            after.listConversationMessages(repair.id),
+          );
+          expect(workerMessages).toContain(
+            "Your final report stays in the background task log",
+          );
+          expect(workerMessages).not.toContain(
+            "The sender will only see the final message",
+          );
+        }
         expect(
           after
             .listConversationMessages(repair.id)
