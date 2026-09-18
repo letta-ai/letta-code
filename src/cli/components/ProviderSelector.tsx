@@ -33,10 +33,28 @@ import {
 } from "@/providers/chatgpt-usage-service";
 import { normalizeChatGPTOAuthProviderName } from "@/providers/openai-codex-provider";
 import { connectedRecordsForProvider } from "@/providers/provider-connections";
-import { type Settings, settingsManager } from "@/settings-manager";
+import { settingsManager } from "@/settings-manager";
 import { type AwsProfile, parseAwsCredentials } from "@/utils/aws-credentials";
 import { debugLog } from "@/utils/debug";
 import { colors } from "./colors";
+import {
+  type ConnectedProvidersByTarget,
+  connectedProviderSummary,
+  connectProviderTabOrder,
+  fieldValuesFromProviderPlaceholders,
+  filterProviderConfigs,
+  formatConnectProviderTab,
+  hasCloudProviderStoreCredentials,
+  isChatGPTUsageProvider,
+  isProviderTargetLoading,
+  nextProviderConnectionName,
+  providerApiKeyFromInput,
+  providerManageActionLabel,
+  providerManageActions,
+  providerSelectionFlow,
+  shouldForceLocalProviderTab,
+  shouldShowProviderStoreTabs,
+} from "./provider-selector-helpers";
 import { Text } from "./Text";
 
 const SOLID_LINE = "─";
@@ -53,17 +71,6 @@ type ViewState =
 
 type ValidationState = "idle" | "validating" | "valid" | "invalid" | "saving";
 
-type ProviderSelectionFlow =
-  | "options"
-  | "oauth"
-  | "methodSelect"
-  | "multiInput"
-  | "input";
-
-type ConnectedProvidersByTarget = Partial<
-  Record<ProviderStorageTarget, Map<string, ProviderResponse>>
->;
-
 type ChatGPTUsageStatus =
   | { status: "loading" }
   | { status: "ready"; rows: string[] }
@@ -79,147 +86,26 @@ interface ProviderSelectorProps {
   ) => void;
 }
 
-export function providerApiKeyFromInput(
-  provider: ByokProvider,
-  input: string,
-): string | undefined {
-  return input.trim() || defaultProviderApiKey(provider);
-}
-
-export function hasCloudProviderStoreCredentials(
-  settings: Pick<Settings, "env" | "refreshToken">,
-  env: { LETTA_API_KEY?: string } = {
-    LETTA_API_KEY: process.env.LETTA_API_KEY,
-  },
-): boolean {
-  return Boolean(
-    env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || settings.refreshToken,
-  );
-}
-
-export function shouldShowProviderStoreTabs(
-  hasCloudCredentials: boolean | null,
-): boolean {
-  return hasCloudCredentials === true;
-}
-
-export function filterProviderConfigs(
-  providers: readonly ByokProvider[],
-  query: string,
-): ByokProvider[] {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return [...providers];
-
-  return providers.filter((provider) => {
-    const searchable = [
-      provider.id,
-      provider.displayName,
-      provider.description,
-      provider.providerType,
-      provider.providerName,
-      provider.oauthProviderId,
-      ...(provider.providerNames ?? []),
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    return searchable.includes(normalized);
-  });
-}
-
-export function providerSelectionFlow(
-  provider: ByokProvider,
-  connectedProviderId?: string,
-): ProviderSelectionFlow {
-  if (connectedProviderId) return "options";
-  if (provider.isOAuth) return "oauth";
-  if ("authMethods" in provider && provider.authMethods) return "methodSelect";
-  if ("fields" in provider && provider.fields) return "multiInput";
-  return "input";
-}
-
-export function connectedProviderSummary(
-  provider: ByokProvider,
-  records: readonly ProviderResponse[],
-): string {
-  if (records.length === 0) return provider.description;
-  if (records.length > 1) return `${records.length} connected`;
-
-  const record = records[0];
-  if (!record || record.name === provider.providerName) return "Connected";
-  return `Connected (${record.name})`;
-}
-
-export function canConnectAnotherProvider(
-  provider: ByokProvider,
-  target: ProviderStorageTarget,
-): boolean {
-  return (
-    target === "api" &&
-    provider.isOAuth === true &&
-    provider.providerType === "chatgpt_oauth"
-  );
-}
-
-export function nextProviderConnectionName(
-  provider: ByokProvider,
-  records: readonly ProviderResponse[],
-): string {
-  const existingNames = new Set(records.map((record) => record.name));
-  if (!existingNames.has(provider.providerName)) return provider.providerName;
-
-  for (let index = 2; ; index += 1) {
-    const candidate = `${provider.providerName}-${index}`;
-    if (!existingNames.has(candidate)) return candidate;
-  }
-}
-
-export function connectAnotherProviderOption(provider: ByokProvider): string {
-  return `Connect another ${provider.displayName}`;
-}
-
-export function fieldValuesFromProviderPlaceholders(
-  fields: readonly ProviderField[] | undefined,
-): Record<string, string> {
-  if (!fields) return {};
-
-  // Optional fields stay empty so an untouched value is not persisted:
-  // e.g. leaving the Ollama base URL blank keeps env/default resolution.
-  return Object.fromEntries(
-    fields
-      .filter(
-        (field) =>
-          !field.secret && field.placeholder && field.required !== false,
-      )
-      .map((field) => [field.key, field.placeholder as string]),
-  );
-}
-
-export function isProviderTargetLoading(input: {
-  selectedTarget: ProviderStorageTarget;
-  connectedProvidersByTarget: ConnectedProvidersByTarget;
-  showProviderStoreTabs: boolean;
-}): boolean {
-  return (
-    input.connectedProvidersByTarget[input.selectedTarget] === undefined &&
-    (input.selectedTarget === "local" || input.showProviderStoreTabs)
-  );
-}
-
-export function isChatGPTUsageProvider(provider: ByokProvider): boolean {
-  return (
-    provider.providerType === "chatgpt_oauth" ||
-    provider.oauthProviderId === "openai-codex" ||
-    provider.providerName === "chatgpt-plus-pro" ||
-    (provider.providerNames ?? []).includes("openai-codex")
-  );
-}
-
 function usageStatusRows(status: ChatGPTUsageStatus | undefined): string[] {
   if (!status || status.status === "loading") return ["Loading..."];
   if (status.status === "error") return [`Unavailable: ${status.message}`];
   return status.rows;
 }
+
+export {
+  canConnectAnotherProvider,
+  connectAnotherProviderOption,
+  connectedProviderSummary,
+  fieldValuesFromProviderPlaceholders,
+  filterProviderConfigs,
+  hasCloudProviderStoreCredentials,
+  isChatGPTUsageProvider,
+  isProviderTargetLoading,
+  nextProviderConnectionName,
+  providerApiKeyFromInput,
+  providerSelectionFlow,
+  shouldShowProviderStoreTabs,
+} from "./provider-selector-helpers";
 
 export function ProviderSelector({
   onCancel,
@@ -400,13 +286,13 @@ export function ProviderSelector({
   ]);
 
   useEffect(() => {
-    if (!showProviderStoreTabs && selectedTarget !== "local") {
+    if (shouldForceLocalProviderTab(hasCloudCredentials, selectedTarget)) {
       setSelectedTarget("local");
       setSelectedIndex(0);
       setSearchQuery("");
       setViewState({ type: "list" });
     }
-  }, [selectedTarget, showProviderStoreTabs]);
+  }, [hasCloudCredentials, selectedTarget]);
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -1030,28 +916,22 @@ export function ProviderSelector({
       }
     } else if (viewState.type === "options") {
       const connectedRecords = getConnectedProviderRecords(viewState.provider);
-      const canConnectAnother = canConnectAnotherProvider(
+      const actions = providerManageActions(
         viewState.provider,
         selectedTarget,
+        connectedRecords,
       );
-      const showUsageRefresh =
-        isChatGPTUsageProvider(viewState.provider) &&
-        connectedRecords.length > 0;
-      const connectAnotherIndex = connectedRecords.length;
-      const usageRefreshIndex =
-        connectAnotherIndex + (canConnectAnother ? 1 : 0);
-      const backIndex = usageRefreshIndex + (showUsageRefresh ? 1 : 0);
-      const optionsLength = backIndex + 1;
       if (key.escape) {
         setViewState({ type: "list" });
       } else if (key.upArrow) {
         setOptionIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
-        setOptionIndex((prev) => Math.min(optionsLength - 1, prev + 1));
+        setOptionIndex((prev) => Math.min(actions.length - 1, prev + 1));
       } else if (key.return) {
-        if (optionIndex < connectedRecords.length) {
-          handleDisconnect(connectedRecords[optionIndex]?.name);
-        } else if (canConnectAnother && optionIndex === connectAnotherIndex) {
+        const action = actions[optionIndex];
+        if (action?.type === "disconnect") {
+          handleDisconnect(action.name);
+        } else if (action?.type === "connect-another") {
           setProviderNameInput(
             nextProviderConnectionName(viewState.provider, connectedRecords),
           );
@@ -1060,7 +940,9 @@ export function ProviderSelector({
             type: "oauthNameInput",
             provider: viewState.provider,
           });
-        } else if (showUsageRefresh && optionIndex === usageRefreshIndex) {
+        } else if (action?.type === "reconnect") {
+          onStartOAuth?.(viewState.provider, selectedTarget);
+        } else if (action?.type === "refresh-usage") {
           loadChatGPTUsageForProvider(viewState.provider, true);
         } else {
           setViewState({ type: "list" });
@@ -1098,28 +980,23 @@ export function ProviderSelector({
         <Text dimColor>Change models with /model after connecting</Text>
         {showProviderStoreTabs && (
           <Box marginTop={1} flexDirection="row">
-            <Text>{"  "}</Text>
-            <Text
-              bold={selectedTarget === "local"}
-              color={
-                selectedTarget === "local"
-                  ? colors.selector.title
-                  : colors.command.running
-              }
-            >
-              {selectedTarget === "local" ? "[ Local ]" : "  Local  "}
-            </Text>
-            <Text>{"  "}</Text>
-            <Text
-              bold={selectedTarget === "api"}
-              color={
-                selectedTarget === "api"
-                  ? colors.selector.title
-                  : colors.command.running
-              }
-            >
-              {selectedTarget === "api" ? "[ Cloud ]" : "  Cloud  "}
-            </Text>
+            {connectProviderTabOrder(defaultProviderStorageTarget()).map(
+              (target) => (
+                <Box key={target} flexDirection="row">
+                  <Text>{"  "}</Text>
+                  <Text
+                    bold={selectedTarget === target}
+                    color={
+                      selectedTarget === target
+                        ? colors.selector.title
+                        : colors.command.running
+                    }
+                  >
+                    {formatConnectProviderTab(target, selectedTarget)}
+                  </Text>
+                </Box>
+              ),
+            )}
           </Box>
         )}
         {!showProviderStoreTabs && <Box height={1} />}
@@ -1549,17 +1426,12 @@ export function ProviderSelector({
     if (viewState.type !== "options") return null;
     const { provider } = viewState;
     const connectedRecords = getConnectedProviderRecords(provider);
-    const canConnectAnother = canConnectAnotherProvider(
+    const showUsage = isChatGPTUsageProvider(provider);
+    const options = providerManageActions(
       provider,
       selectedTarget,
-    );
-    const showUsage = isChatGPTUsageProvider(provider);
-    const options = [
-      ...connectedRecords.map((record) => `Disconnect ${record.name}`),
-      ...(canConnectAnother ? [connectAnotherProviderOption(provider)] : []),
-      ...(showUsage && connectedRecords.length > 0 ? ["Refresh usage"] : []),
-      "Back",
-    ];
+      connectedRecords,
+    ).map((action) => providerManageActionLabel(action, provider));
 
     return (
       <>
