@@ -6,6 +6,7 @@ import type WebSocket from "ws";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
+import { settingsManager } from "@/settings-manager";
 import type { RuntimeStartCommand } from "@/types/protocol_v2";
 import { openListenerConnection } from "@/websocket/listener/connection";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
@@ -14,6 +15,7 @@ import { evictConversationRuntimeIfIdle } from "@/websocket/listener/runtime";
 import { isRuntimeStartCommand } from "@/websocket/listener/runtime-start-validation";
 import { isInboundTeleportExpected } from "@/websocket/listener/teleport";
 import type { StartListenerOptions } from "@/websocket/listener/types";
+import { applyToolsetUpdateForRuntime } from "./model-toolset";
 import { handleRuntimeStartCommand } from "./runtime-start";
 
 afterEach(() => __testSetBackend(null));
@@ -63,6 +65,7 @@ test("secondary runtime_start preserves launch settings and an idle attached chi
       parent_agent_id: "parent",
       agent_role: "subagent",
       subagent_depth: 2,
+      tools: ["Read"],
       disable_memory_guard: false,
       max_turns: 3,
     };
@@ -105,6 +108,15 @@ test("secondary runtime_start preserves launch settings and an idle attached chi
     );
     expect(runtime.executionSettings).toEqual(settings);
     expect(evictConversationRuntimeIfIdle(runtime)).toBe(false);
+    await settingsManager.initialize();
+    await applyToolsetUpdateForRuntime({
+      socket: context.socket,
+      listener,
+      scopedRuntime: runtime,
+      requestId: "toolset",
+      toolsetPreference: "default",
+    });
+    expect(runtime.currentLoadedTools).toEqual(["Read"]);
     for (const degraded of [
       { ...settings, subagent_depth: 1 },
       { allowed_tools: [], disallowed_tools: [], disable_memory_guard: false },

@@ -1,4 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
+import { fileURLToPath } from "node:url";
+import {
+  prepareSubagentDepth,
+  requireSubagentLaunchSettings,
+} from "@/agent/subagents/depth";
+import { prepareToolExecutionContextForSpecificTools } from "@/tools/manager";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
@@ -79,6 +85,96 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe("recovered approval lease boundaries", () => {
+  test("warm child recovery preserves attached depth and restrictions through actual approved tool execution", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    runtime.executionSettings = {
+      subagent_depth: 1,
+      agent_role: "subagent",
+      parent_agent_id: "authorized-parent",
+      tools: ["Read"],
+      allowed_tools: ["Read"],
+      disallowed_tools: ["Write"],
+      disable_memory_guard: false,
+    };
+    runtime.recoveredApprovalState = createRecoveredState();
+    const entry =
+      runtime.recoveredApprovalState.approvalsByRequestId.get("perm-1");
+    if (!entry) throw new Error("Missing fixture approval");
+    entry.approval.toolName = "Read";
+    entry.approval.toolArgs = JSON.stringify({
+      file_path: fileURLToPath(import.meta.url),
+      limit: 1,
+    });
+    let continuedMessages: unknown;
+    const handled = await resolveRecoveredApprovalResponse(
+      runtime,
+      createTransport([]),
+      { request_id: "perm-1", decision: { behavior: "allow" } },
+      async (
+        message,
+        _socket,
+        ownerRuntime,
+        _onStatusChange,
+        _connectionId,
+        _batchId,
+        lease,
+      ) => {
+        continuedMessages = message.messages;
+        if (lease) ownerRuntime.turnLifecycle.finish(lease, "end_turn");
+      },
+      {
+        dependencies: {
+          applySuggestedPermissions: async () => false,
+          ensureSecretsHydrated: async () => {},
+          prepareToolExecutionContext: async (params) => {
+            const settings = requireSubagentLaunchSettings(
+              await prepareSubagentDepth(
+                {
+                  id: "conv-1",
+                  agent_id: "agent-1",
+                  is_subagent: true,
+                } as Parameters<typeof prepareSubagentDepth>[0],
+                params.executionSettings,
+                {},
+              ),
+            );
+            const preparedToolContext =
+              await prepareToolExecutionContextForSpecificTools(
+                settings?.tools ?? [],
+                {
+                  runtimeContext: {
+                    agentId: params.agentId,
+                    conversationId: params.conversationId,
+                    executionSettings: settings,
+                  },
+                },
+              );
+            return {
+              preparedToolContext,
+              toolset: "default",
+              toolsetPreference: "auto",
+              effectiveModel: null,
+              agent: null,
+            };
+          },
+          // Deliberately use the production approval executor, not a stub.
+        },
+      },
+    );
+    expect(handled).toBe(true);
+    expect(runtime.currentLoadedTools).toEqual(["Read"]);
+    expect(JSON.stringify(continuedMessages)).toContain('"status":"success"');
+    expect(runtime.executionSettings).toMatchObject({
+      subagent_depth: 1,
+      parent_agent_id: "authorized-parent",
+      disallowed_tools: ["Write"],
+    });
+  });
+
   test("the last pending gate is removed only after recovery owns the lifecycle", async () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
