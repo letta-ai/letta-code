@@ -78,7 +78,7 @@ export interface Settings {
   includeWorktreeTool: boolean; // Include EnterWorktree in toolsets when true
   preferredBackendMode?: "api" | "local"; // Startup backend preference when no explicit --backend is provided
   channelCredentialsStore?: "file" | "keyring" | "auto"; // Where channel/connection tokens are persisted
-  recentModels: string[]; // Recently used model IDs (most recent first, max 5)
+  recentModels: string[]; // Recently used model IDs (most recent first, max 10)
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: ReflectionTrigger;
   reflectionStepCount: number;
@@ -642,7 +642,7 @@ class SettingsManager {
 
   addRecentModel(modelId: string): void {
     const current = this.getRecentModels().filter((id) => id !== modelId);
-    const updated = [modelId, ...current].slice(0, 5);
+    const updated = [modelId, ...current].slice(0, 10);
     this.updateSettings({ recentModels: updated });
   }
 
