@@ -1,5 +1,43 @@
 const DEFAULT_TAIL_CHARS = 4000;
 
+// Cloud-send errors can contain response bodies and credentials. Report only
+// known states and numeric fields, never the free-text error or captured output.
+export function summarizeCloudSendExit(
+  output: Record<string, unknown>,
+): string {
+  const statuses = [
+    "completed",
+    "wait_failed",
+    "acceptance_unknown",
+    "submission_failed",
+  ];
+  const status =
+    typeof output.status === "string" && statuses.includes(output.status)
+      ? output.status
+      : "unknown_or_omitted";
+  const httpStatus =
+    typeof output.http_status === "number" &&
+    Number.isInteger(output.http_status) &&
+    output.http_status >= 100 &&
+    output.http_status <= 599
+      ? output.http_status
+      : "unknown_or_omitted";
+  return formatCapturedOutput({
+    extra: {
+      status,
+      http_status: httpStatus,
+      is_error:
+        typeof output.is_error === "boolean"
+          ? output.is_error
+          : "unknown_or_omitted",
+      receipt_present: output.receipt !== undefined,
+      observed_run_count: Array.isArray(output.run_ids)
+        ? output.run_ids.length
+        : "unknown_or_omitted",
+    },
+  });
+}
+
 function tailText(text: string, maxChars: number): string {
   const trimmed = text.trim();
   if (!trimmed) {
