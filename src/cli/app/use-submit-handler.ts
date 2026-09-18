@@ -33,6 +33,7 @@ import { buildReflectionMemoryScope } from "@/agent/memory-worktree";
 import { sendMessageStreamWithBackend } from "@/agent/message";
 import { detectPersonalityFromPersonaFile } from "@/agent/personality";
 import type { PersonalityId } from "@/agent/personality-presets";
+import { requestCloudReflectionRun } from "@/agent/reflection-runs";
 import { recordSessionEnd } from "@/agent/session-history";
 import type { SessionStats } from "@/agent/stats";
 import { getBackend } from "@/backend";
@@ -67,6 +68,7 @@ import {
   clearPlaceholdersInText,
 } from "@/cli/helpers/paste-registry";
 import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-toggle";
+import { parseReflectCommandArgs } from "@/cli/helpers/reflect-command";
 import {
   buildReflectionArenaChoiceQuestions,
   finalizeReflectionArenaChoice,
@@ -348,12 +350,6 @@ type SubmitHandlerContext = {
   onReload?: () => Promise<void>;
 };
 
-type ReflectCommandArgs =
-  | { instruction?: string; kind: "single" }
-  | { instruction?: string; kind: "recent"; limit: number }
-  | { conversationIds: string[]; instruction?: string; kind: "conversations" }
-  | { instruction?: string; kind: "auto" };
-
 type ReflectArenaCommandArgs =
   | {
       instruction?: string;
@@ -368,19 +364,6 @@ type ReflectArenaCommandArgs =
       runId: string;
     }
   | { kind: "resume"; runId: string };
-
-function isReflectCommandFlag(value: string): boolean {
-  return (
-    value === "--" ||
-    value === "--auto" ||
-    value === "--conversation" ||
-    value === "--instruction" ||
-    value === "--instructions" ||
-    value === "--recent" ||
-    value === "-i" ||
-    value.startsWith("--instruction=")
-  );
-}
 
 function parseReflectArenaCommandArgs(input: string): ReflectArenaCommandArgs {
   const trimmed = input.trim();
@@ -487,109 +470,6 @@ function parseReflectArenaCommandArgs(input: string): ReflectArenaCommandArgs {
     modelB,
     instruction: instructions.join("\n").trim() || undefined,
   };
-}
-
-function parseReflectCommandArgs(input: string): ReflectCommandArgs {
-  const trimmed = input.trim();
-  const command = trimmed.split(/\s+/, 1)[0] ?? "/reflect";
-  const parts = parseModCommandArgv(trimmed.slice(command.length).trim());
-  if (parts.length === 0) {
-    return { kind: "single" };
-  }
-
-  let recentLimit: number | null = null;
-  const conversationIds: string[] = [];
-  const instructions: string[] = [];
-  let auto = false;
-  for (let index = 0; index < parts.length; index += 1) {
-    const part = parts[index];
-    if (!part) continue;
-    if (
-      part === "--instruction" ||
-      part === "--instructions" ||
-      part === "-i"
-    ) {
-      let instructionEnd = index + 1;
-      while (instructionEnd < parts.length) {
-        const instructionPart = parts[instructionEnd];
-        if (!instructionPart || isReflectCommandFlag(instructionPart)) break;
-        instructionEnd += 1;
-      }
-      const instruction = parts
-        .slice(index + 1, instructionEnd)
-        .join(" ")
-        .trim();
-      if (!instruction) {
-        throw new Error("Usage: /reflect --instruction <instruction>");
-      }
-      instructions.push(instruction);
-      index = instructionEnd - 1;
-      continue;
-    }
-    if (part.startsWith("--instruction=")) {
-      const instruction = part.slice("--instruction=".length).trim();
-      if (!instruction) {
-        throw new Error("Usage: /reflect --instruction <instruction>");
-      }
-      instructions.push(instruction);
-      continue;
-    }
-    if (part === "--") {
-      const instruction = parts
-        .slice(index + 1)
-        .join(" ")
-        .trim();
-      if (!instruction) {
-        throw new Error("Usage: /reflect -- <instruction>");
-      }
-      instructions.push(instruction);
-      break;
-    }
-    if (part === "--auto") {
-      auto = true;
-      continue;
-    }
-    if (part === "--recent") {
-      const raw = parts[index + 1];
-      const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        throw new Error("Usage: /reflect --recent <positive integer>");
-      }
-      recentLimit = parsed;
-      index += 1;
-      continue;
-    }
-    if (part === "--conversation") {
-      const conversationId = parts[index + 1];
-      if (!conversationId) {
-        throw new Error("Usage: /reflect --conversation <conversation-id>");
-      }
-      conversationIds.push(conversationId);
-      index += 1;
-      continue;
-    }
-    throw new Error(
-      "Usage: /reflect [--recent N | --conversation <id> ... | --auto] [--instruction <instruction>]",
-    );
-  }
-
-  const instruction = instructions.join("\n").trim() || undefined;
-  const modes = [recentLimit !== null, conversationIds.length > 0, auto].filter(
-    Boolean,
-  ).length;
-  if (modes > 1) {
-    throw new Error("Use only one of --recent, --conversation, or --auto.");
-  }
-  if (auto) {
-    return { instruction, kind: "auto" };
-  }
-  if (recentLimit !== null) {
-    return { instruction, kind: "recent", limit: recentLimit };
-  }
-  if (conversationIds.length > 0) {
-    return { conversationIds, instruction, kind: "conversations" };
-  }
-  return { instruction, kind: "single" };
 }
 
 export function useSubmitHandler(ctx: SubmitHandlerContext) {
@@ -2984,14 +2864,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           return { submitted: true };
         }
-        // Special handling for /reflect command - manually launch reflection subagent
-        if (trimmed === "/reflect" || trimmed.startsWith("/reflect ")) {
-          const cmd = commandRunner.start(msg, "Launching reflection agent...");
-
-          if (!isActiveMemfsEnabled(agentId)) {
-            cmd.fail("Memory filesystem is not enabled.");
-            return { submitted: true };
-          }
+        // All manual aliases resolve ownership before entering any legacy mode.
+        if (/^\/(dream|reflect|reflection)(?:\s|$)/.test(trimmed)) {
+          const agentId = commandScope.agentId;
+          const cmd = commandRunner.start(msg, "Starting reflection...");
+          const reflectionConversationId =
+            commandScope.conversationId ?? "default";
 
           let reflectionReserved = false;
           let reflectionReservationDelegated = false;
@@ -3002,9 +2880,19 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           };
 
           try {
+            const output = await requestCloudReflectionRun(
+              commandScope,
+              trimmed.replace(/^\/\S+/, "").trim(),
+            );
+            if (output !== null) {
+              cmd.finish(output, true);
+              return { submitted: true };
+            }
+            if (!isActiveMemfsEnabled(commandScope.agentId)) {
+              cmd.fail("Memory filesystem is not enabled.");
+              return { submitted: true };
+            }
             const reflectArgs = parseReflectCommandArgs(trimmed);
-            const reflectionConversationId =
-              conversationIdRef.current ?? "default";
 
             if (reflectArgs.kind === "single") {
               if (experimentManager.isEnabled("reflection_arena")) {
@@ -3046,27 +2934,30 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 return { submitted: true };
               }
 
-              const result = await launchReflectionSubagent({
-                agentId,
-                conversationId: reflectionConversationId,
-                memfsEnabled: isActiveMemfsEnabled(agentId),
-                triggerSource: "manual",
-                description: AUTO_REFLECTION_DESCRIPTION,
-                instruction: reflectArgs.instruction,
-                completionConversationId: () => conversationIdRef.current,
-                recompileByConversation:
-                  systemPromptRecompileByConversationRef.current,
-                recompileQueuedByConversation:
-                  queuedSystemPromptRecompileByConversationRef.current,
-                onCompletionMessage: (completionMessage) => {
-                  appendTaskNotificationEvents([completionMessage]);
+              const result = await launchReflectionSubagent(
+                {
+                  agentId,
+                  conversationId: reflectionConversationId,
+                  memfsEnabled: isActiveMemfsEnabled(agentId),
+                  triggerSource: "manual",
+                  description: AUTO_REFLECTION_DESCRIPTION,
+                  instruction: reflectArgs.instruction,
+                  completionConversationId: () => conversationIdRef.current,
+                  recompileByConversation:
+                    systemPromptRecompileByConversationRef.current,
+                  recompileQueuedByConversation:
+                    queuedSystemPromptRecompileByConversationRef.current,
+                  onCompletionMessage: (completionMessage) => {
+                    appendTaskNotificationEvents([completionMessage]);
+                  },
+                  feedbackContext: {
+                    parentAgentName: agentName,
+                    parentAgentDescription: agentDescription,
+                    surface: "letta_code_tui",
+                  },
                 },
-                feedbackContext: {
-                  parentAgentName: agentName,
-                  parentAgentDescription: agentDescription,
-                  surface: "letta_code_tui",
-                },
-              });
+                { isCutover: async () => false },
+              ); // Use the captured ownership decision.
 
               if (!result.launched) {
                 const skippedMessage = getReflectionLaunchSkippedMessage(

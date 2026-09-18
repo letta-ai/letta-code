@@ -43,7 +43,9 @@ const NON_STATE_COMMANDS = new Set([
   "/rename", // agent/convo rename
   "/btw",
   "/reload", // runtime surface reload (has its own busy guard)
-  "/dream", // admission-only HTTP request; the server reports unfinished/busy
+  "/dream", // Cloud admission or Code-managed background reflection
+  "/reflect",
+  "/reflection",
 ]);
 
 export function aliasBareExitCommand(input: string): string {

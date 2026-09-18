@@ -100,6 +100,6 @@ export async function postReflectionRun(
 
 export function formatReflectionReceipt(receipt: ReflectionRunReceipt): string {
   return receipt.status === "queued"
-    ? `Reflection queued. Run ID: ${safeText(receipt.run_id)}`
+    ? "Dreaming..."
     : "No new work to reflect on in this conversation.";
 }

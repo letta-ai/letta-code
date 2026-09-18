@@ -49,6 +49,8 @@ describe.each(runtimes)("/dream over real %s app-server", (runtime) => {
       authorization: string | null;
       actor: string | null;
     }[] = [];
+    let cutover = true;
+    let configStatus = 200;
     let status = 202;
     let responseBody: unknown = { status: "queued", run_id: "run-fixture" };
     const server = Bun.serve({
@@ -59,10 +61,12 @@ describe.each(runtimes)("/dream over real %s app-server", (runtime) => {
         requests.push({
           path,
           method: request.method,
-          body: await request.json(),
+          body: request.method === "GET" ? null : await request.json(),
           authorization: request.headers.get("authorization"),
           actor: request.headers.get("X-Letta-Acting-User-Id"),
         });
+        if (request.method === "GET")
+          return Response.json({ cutover }, { status: configStatus });
         return Response.json(responseBody, { status });
       },
     });
@@ -159,7 +163,7 @@ globalThis.fetch = (input, init) => {
       expect(await send()).toMatchObject({
         request_id: id,
         success: true,
-        output: "Reflection queued. Run ID: run-fixture",
+        output: "Dreaming...",
       });
       status = 409;
       responseBody = {
@@ -204,8 +208,41 @@ globalThis.fetch = (input, init) => {
         success: false,
         output: expect.stringContaining("does not accept arguments"),
       });
-      expect(requests).toHaveLength(6);
-      for (const request of requests) {
+      configStatus = 403;
+      expect(await send()).toMatchObject({ success: false });
+      configStatus = 200;
+      cutover = false;
+      for (const alias of ["dream", "reflect", "reflection"]) {
+        frame.command_id = alias;
+        expect(await send("--recent 2")).toMatchObject({
+          success: false,
+          output: expect.stringContaining("Use the TUI"),
+        });
+        expect(await send('--instruction "remember this"')).toMatchObject({
+          success: true,
+          output: expect.stringContaining("memory filesystem"),
+        });
+      }
+      cutover = true;
+      status = 202;
+      responseBody = { status: "queued", run_id: "alias-fixture" };
+      for (const alias of ["reflect", "reflection"]) {
+        frame.command_id = alias;
+        expect(await send()).toMatchObject({
+          success: true,
+          output: "Dreaming...",
+        });
+      }
+      const posts = requests.filter((request) => request.method === "POST");
+      expect(posts).toHaveLength(8);
+      for (const request of requests.filter(
+        (request) => request.method === "GET",
+      )) {
+        expect(request.path).toBe("/v1/agents/agent-fixture/reflection");
+        expect(request.actor).toBe("user-fixture");
+        expect(request.authorization).toBe("Bearer fixture-scoped-key");
+      }
+      for (const request of posts) {
         expect(request).toEqual({
           path: "/v1/agents/agent-fixture/reflection/runs",
           method: "POST",

@@ -13,6 +13,10 @@ import type {
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
 import {
+  type CloudReflectionConfig,
+  retrieveCloudReflectionConfig,
+} from "./api/reflection";
+import {
   postReflectionRun,
   REFLECTION_UNSUPPORTED,
   type ReflectionRunReceipt,
@@ -205,6 +209,12 @@ export interface Backend {
     body: AgentUpdateBody,
     options?: AgentUpdateOptions,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["update"]>>>;
+
+  /** Null means a known non-Cloud API server; lookup errors must propagate. */
+  retrieveReflectionConfig?(
+    agentId: string,
+    options?: { headers: Record<string, string> },
+  ): Promise<CloudReflectionConfig | null>;
 
   /** Cloud admission only; unsupported backends must not run local reflection. */
   enqueueReflectionRun?(
@@ -403,6 +413,25 @@ export class APIBackend implements Backend {
       },
     );
     return request;
+  }
+
+  async retrieveReflectionConfig(
+    agentId: string,
+    options?: { headers: Record<string, string> },
+  ): Promise<CloudReflectionConfig | null> {
+    if (!isCloudServerUrl()) return null;
+    const headers = options ? { ...options.headers } : undefined;
+    const client = await this.getClient();
+    const config = await retrieveCloudReflectionConfig(
+      agentId,
+      (_method, path) => client.get(path, { headers, maxRetries: 0 }),
+    );
+    if (!config || typeof config.cutover !== "boolean") {
+      throw new Error(
+        "Unable to determine reflection ownership: missing cutover configuration.",
+      );
+    }
+    return config;
   }
 
   async enqueueReflectionRun(

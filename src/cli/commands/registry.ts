@@ -3,7 +3,7 @@
 
 import {
   type DreamCommandScope,
-  requestReflectionRun,
+  requestCloudReflectionRun,
 } from "@/agent/reflection-runs";
 import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
@@ -27,6 +27,20 @@ interface Command {
   hidden?: boolean; // Hidden commands don't show in autocomplete but still work
   order?: number; // Lower numbers appear first in autocomplete (default: 100)
   noArgs?: boolean; // If true, reject any arguments passed to this command
+}
+
+async function handleReflectionCommand(
+  args: string[],
+  scope?: DreamCommandScope,
+) {
+  if (!scope) throw new Error("Reflection requires an active agent.");
+  const output = await requestCloudReflectionRun(scope, args.join(" "));
+  // Code-managed reflection needs the TUI/listener runtime, not this registry.
+  if (output === null)
+    throw new Error(
+      "Run this command in the TUI or listener to launch Code-managed reflection.",
+    );
+  return output;
 }
 
 export const commands: Record<string, Command> = {
@@ -67,31 +81,22 @@ export const commands: Record<string, Command> = {
     },
   },
   "/dream": {
-    desc: "Queue a reflection run on Letta Cloud for this conversation",
+    desc: "Reflect on memory (alias for /reflect; Cloud reflects this conversation)",
     order: 49,
-    noArgs: true,
-    handler: (_args, scope) => {
-      if (!scope) throw new Error("/dream requires an active agent.");
-      return requestReflectionRun(scope);
-    },
+    args: "[--recent N | --conversation ID ... | --auto] [--instruction TEXT]",
+    handler: handleReflectionCommand,
   },
   "/reflect": {
     desc: "Launch reflection (/reflect [--recent N | --conversation ID ... | --auto] [--instruction TEXT])",
     args: "[--recent N | --conversation ID ... | --auto] [--instruction TEXT]",
     order: 50,
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Launching reflection agent...";
-    },
+    handler: handleReflectionCommand,
   },
   "/reflection": {
     desc: "Alias for /reflect",
-    args: "[transcript_file]",
+    args: "[--recent N | --conversation ID ... | --auto] [--instruction TEXT]",
     hidden: true,
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Launching reflection agent...";
-    },
+    handler: handleReflectionCommand,
   },
   "/reflect-arena": {
     desc: "Experimental blind A/B reflection model comparison",
