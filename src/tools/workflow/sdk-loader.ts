@@ -10,12 +10,20 @@
  *   1. LETTA_AGENT_SDK_PATH env var (installed copy or checkout; overrides)
  *   2. letta-code's own dependency (resolved from this module)
  *   3. Normal module resolution from the working directory
+ *   4. A direct probe of node_modules/@letta-ai/letta-agent-sdk walking up
+ *      from this module and from the working directory
+ *
+ * Step 4 exists because the runtime caches a failed resolution for the life
+ * of the process: a CLI started before `bun install` added the SDK keeps
+ * failing steps 2-3 after the install, while a file URL it has never tried
+ * still loads. When the package is on disk and nothing loads, the error says
+ * to restart rather than to install.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { SdkClient } from "./types.ts";
 
 // Computed so bundlers treat the import as fully dynamic.
@@ -40,6 +48,50 @@ function preferRunningCliForSubagents(): void {
   if (entry && /(^|[\\/])letta\.js$/.test(entry) && existsSync(entry)) {
     process.env.LETTA_CLI_PATH = entry;
   }
+}
+
+/** The package's ESM entry from its package.json, or null if unreadable. */
+function packageEntry(packageDir: string): string | null {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(join(packageDir, "package.json"), "utf8"),
+    ) as {
+      main?: string;
+      exports?: Record<string, string | Record<string, string>>;
+    };
+    const root = manifest.exports?.["."];
+    const entry =
+      typeof root === "string"
+        ? root
+        : (root?.import ?? root?.default ?? manifest.main);
+    return entry ? join(packageDir, entry) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Installed copies found by walking up from each start directory, nearest
+ * first. Bypasses the module resolver entirely.
+ */
+export function probeInstalledSdkDirs(startDirs: string[]): string[] {
+  const found: string[] = [];
+  for (const start of startDirs) {
+    let dir = start;
+    while (true) {
+      const candidate = join(dir, "node_modules", ...SDK_PACKAGE.split("/"));
+      if (
+        existsSync(join(candidate, "package.json")) &&
+        !found.includes(candidate)
+      ) {
+        found.push(candidate);
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return found;
 }
 
 export async function loadAgentSdk(): Promise<LoadedSdk> {
@@ -69,8 +121,16 @@ export async function loadAgentSdk(): Promise<LoadedSdk> {
   } catch {
     specifiers.push(SDK_PACKAGE);
   }
+  const installedDirs = probeInstalledSdkDirs([
+    dirname(fileURLToPath(import.meta.url)),
+    process.cwd(),
+  ]);
+  for (const dir of installedDirs) {
+    const entry = packageEntry(dir);
+    if (entry) specifiers.push(pathToFileURL(entry).href);
+  }
 
-  for (const specifier of specifiers) {
+  for (const specifier of new Set(specifiers)) {
     try {
       const sdk = (await import(specifier)) as {
         LettaAgentClient: new (options: {
@@ -112,9 +172,13 @@ export async function loadAgentSdk(): Promise<LoadedSdk> {
     }
   }
 
+  const advice =
+    installedDirs.length > 0
+      ? `${SDK_PACKAGE} is installed at ${installedDirs[0]} but this process ` +
+        "cannot load it (it was likely started before the install). Restart the CLI and retry."
+      : `Could not load ${SDK_PACKAGE}. Install it (bun add ${SDK_PACKAGE}) or ` +
+        "set LETTA_AGENT_SDK_PATH to an installed copy.";
   throw new Error(
-    `Could not load ${SDK_PACKAGE}. Install it (bun add ${SDK_PACKAGE}) or ` +
-      `set LETTA_AGENT_SDK_PATH to an installed copy.\n` +
-      attempts.map((a) => `  tried ${a}`).join("\n"),
+    `${advice}\n${attempts.map((a) => `  tried ${a}`).join("\n")}`,
   );
 }
