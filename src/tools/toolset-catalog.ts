@@ -53,7 +53,8 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
     default: {
       display_name: "Claude",
       label: "Claude toolset",
-      description: "Optimized for Anthropic models",
+      description:
+        "Optimized for Anthropic models, recommended for all non-OpenAI models",
       is_featured: true,
       tools: [
         "AskUserQuestion",
