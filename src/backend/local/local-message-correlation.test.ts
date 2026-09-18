@@ -68,6 +68,42 @@ describe("local assistant message correlation", () => {
     expect("otid" in live ? live.otid : undefined).toBeUndefined();
     expect(store.listLocalMessages("default", agentId)).toHaveLength(1);
   });
+
+  test("matches an untagged mixed assistant chunk to its assistant row", async () => {
+    const storageDir = await createStorageDirectory();
+    const agentId = "agent-local-mixed-assistant-correlation";
+    const store = new LocalStore(agentId, { storageDir });
+    const live = store.appendStreamChunk("default", agentId, {
+      message_type: "assistant_message",
+      content: [
+        { type: "text", text: "answer" },
+        { type: "reasoning", text: "thought" },
+      ],
+    } as unknown as LettaStreamingResponse);
+    store.appendStreamChunk("default", agentId, {
+      message_type: "stop_reason",
+      stop_reason: "end_turn",
+    });
+
+    const canonical = new LocalStore(agentId, { storageDir })
+      .listConversationMessages("default", {
+        agent_id: agentId,
+        order: "asc",
+      })
+      .filter(
+        (row) =>
+          row.message_type === "assistant_message" ||
+          row.message_type === "reasoning_message",
+      );
+    const assistant = canonical.find(
+      (row) => row.message_type === "assistant_message",
+    );
+    const reasoning = canonical.find(
+      (row) => row.message_type === "reasoning_message",
+    );
+    expect("id" in live ? live.id : undefined).toBe(assistant?.id);
+    expect("id" in live ? live.id : undefined).not.toBe(reasoning?.id);
+  });
 });
 
 describe("local segment identity", () => {

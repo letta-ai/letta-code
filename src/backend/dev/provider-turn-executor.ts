@@ -455,6 +455,28 @@ function createProviderLettaStream(
           }
 
           const { part } = event;
+          if (part.type === "text_start") {
+            const content = part.partial.content[part.contentIndex];
+            if (content?.type === "text" && content.text.length > 0) {
+              const identity = identityForContentSegment(
+                assistantIdentities,
+                "provider-assistant",
+                part.contentIndex,
+                part.partial,
+                "assistant_message",
+              );
+              yield attachLocalSegmentIdentity(
+                {
+                  message_type: "assistant_message",
+                  otid: identity.otid,
+                  content: [{ type: "text", text: content.text }],
+                } as LettaStreamingResponse,
+                identity,
+              );
+            }
+            continue;
+          }
+
           if (part.type === "text_delta") {
             const identity = identityForContentSegment(
               assistantIdentities,
@@ -471,6 +493,28 @@ function createProviderLettaStream(
               } as LettaStreamingResponse,
               identity,
             );
+            continue;
+          }
+
+          if (part.type === "thinking_start") {
+            const content = part.partial.content[part.contentIndex];
+            if (content?.type === "thinking" && content.thinking.length > 0) {
+              const identity = identityForContentSegment(
+                reasoningIdentities,
+                "provider-reasoning",
+                part.contentIndex,
+                part.partial,
+                "reasoning_message",
+              );
+              yield attachLocalSegmentIdentity(
+                {
+                  message_type: "reasoning_message",
+                  otid: identity.otid,
+                  reasoning: content.thinking,
+                } as LettaStreamingResponse,
+                identity,
+              );
+            }
             continue;
           }
 

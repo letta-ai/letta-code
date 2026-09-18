@@ -385,6 +385,81 @@ describe("ProviderTurnExecutor", () => {
     }
   });
 
+  test("persists start-only reasoning identity when the provider fails", async () => {
+    const message = {
+      ...assistantMessage(),
+      content: [
+        { type: "thinking" as const, thinking: "[Reasoning redacted]" },
+        { type: "text" as const, text: "partial answer" },
+      ],
+    };
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield providerStreamPart(
+          part({ type: "thinking_start", contentIndex: 0, partial: message }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "text_delta",
+            contentIndex: 1,
+            delta: "partial answer",
+            partial: message,
+          }),
+        );
+        yield { type: "error", error: new Error("provider interrupted") };
+      },
+    };
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "letta-interrupted-start-only-thinking-"),
+    );
+
+    try {
+      const store = new LocalStore(input().agentId, { storageDir });
+      const chunks = await collect(
+        await new ProviderTurnExecutor(adapter).execute(input()),
+      );
+      const liveIds: string[] = [];
+      for (const chunk of chunks) {
+        const stored = store.appendStreamChunk(
+          input().conversationId,
+          input().agentId,
+          chunk,
+        );
+        if (
+          (chunk.message_type === "reasoning_message" ||
+            chunk.message_type === "assistant_message") &&
+          "id" in stored
+        ) {
+          liveIds.push(stored.id);
+        }
+      }
+
+      const history = new LocalStore(input().agentId, { storageDir })
+        .listConversationMessages(input().conversationId, {
+          agent_id: input().agentId,
+          order: "asc",
+        })
+        .filter(
+          (row) =>
+            row.message_type === "reasoning_message" ||
+            row.message_type === "assistant_message",
+        );
+      expect(liveIds).toEqual(history.map((row) => row.id));
+      expect(history).toEqual([
+        expect.objectContaining({
+          message_type: "reasoning_message",
+          reasoning: "[Reasoning redacted]",
+        }),
+        expect.objectContaining({
+          message_type: "assistant_message",
+          content: [{ type: "text", text: "partial answer" }],
+        }),
+      ]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("emits final local assistant messages as state-only chunks before stop_reason", async () => {
     const finalMessage = assistantMessage();
     const adapter: ProviderStreamAdapter = {

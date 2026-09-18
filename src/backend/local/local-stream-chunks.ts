@@ -63,7 +63,9 @@ export function canonicalizeLocalStreamChunk(
         stored.agent_id,
         stored.conversation_id,
         stored.date,
-      ).at(-1)?.id;
+      )
+        .filter((projected) => projected.message_type === chunk.message_type)
+        .at(-1)?.id;
   if (!id) return stored;
   // Provider OTIDs are transient and are not persisted. Leaving one here would
   // override the canonical envelope identity in assistant/reasoning consumers.
