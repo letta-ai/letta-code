@@ -6,11 +6,7 @@ import { getBackend } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { clearCapturedToolExecutionContexts } from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
-import {
-  ANTHROPIC_DEFAULT_TOOLS,
-  CODEX_TOOLS,
-  LETTA_TOOLS,
-} from "@/tools/toolset-defaults";
+import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import type { SubagentSpawner } from "@/tools/workflow/types";
 import {
   clearPendingMessages,
@@ -52,9 +48,11 @@ return { count: results.filter(Boolean).length }`;
 
 describe("Workflow tool toolsets", () => {
   test("is exposed wherever Monitor is", () => {
-    expect(ANTHROPIC_DEFAULT_TOOLS).toContain("Workflow");
-    expect(CODEX_TOOLS).toContain("Workflow");
-    expect(LETTA_TOOLS).toContain("Workflow");
+    for (const preset of Object.values(TOOLSET_CATALOG)) {
+      expect(preset.tools.includes("Workflow")).toBe(
+        preset.tools.includes("Monitor"),
+      );
+    }
   });
 
   test("explicit allowlists can exclude it", async () => {

@@ -1,5 +1,5 @@
 import { settingsManager } from "@/settings-manager";
-import { TOOLSET_OPTIONS } from "@/tools/toolset-options";
+import { TOOLSET_OPTIONS } from "@/tools/toolset-catalog";
 import type { DeviceStatus, ToolsetPreference } from "@/types/protocol_v2";
 import type { ConversationRuntime } from "./types";
 

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { clearCapturedToolExecutionContexts } from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
-import { LETTA_TOOLS } from "@/tools/toolset-defaults";
+import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 
 describe("request-scoped client toolsets", () => {
   afterEach(() => {
@@ -78,7 +78,9 @@ describe("request-scoped client toolsets", () => {
 
       expect(prepared.toolset).toBe("letta");
       expect(prepared.preparedToolContext.loadedToolNames).toEqual(
-        LETTA_TOOLS.map((name) => (name === "Task" ? "Agent" : name)),
+        TOOLSET_CATALOG.letta.tools.map((name) =>
+          name === "Task" ? "Agent" : name,
+        ),
       );
       expect(prepared.preparedToolContext.loadedToolNames).toContain("Edit");
       expect(prepared.preparedToolContext.loadedToolNames).not.toContain(

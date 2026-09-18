@@ -14,6 +14,7 @@ import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
 import { buildHeadlessSenderReminder } from "@/headless-message-sender";
 import { createHeadlessResponseState } from "@/headless-response-state";
+import { createStartupBackend } from "@/headless-startup-backend";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import {
   trackBoundaryError,
@@ -806,6 +807,7 @@ export async function handleHeadlessCommand(
     computer: explicitEnvironmentSelector,
     ephemeral: values.ephemeral,
   });
+  const startupBackend = createStartupBackend(backend, usesRemoteEnvironment);
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -1079,18 +1081,17 @@ export async function handleHeadlessCommand(
   }
 
   // Priority 0: --conversation derives agent from conversation ID.
-  // "default" is a virtual agent-scoped conversation (not a retrievable conv-*).
-  // It requires --agent and should not hit conversations.retrieve().
+  // "default" is virtual and requires --agent, so it is never retrieved.
   if (specifiedConversationId && specifiedConversationId !== "default") {
     try {
       debugLog(
         "conversations",
         `retrieve(${specifiedConversationId}) [headless conv→agent lookup]`,
       );
-      const conversation = await backend.retrieveConversation(
+      const conversation = await startupBackend.retrieveConversation(
         specifiedConversationId,
       );
-      agent = await backend.retrieveAgent(conversation.agent_id, {
+      agent = await startupBackend.retrieveAgent(conversation.agent_id, {
         include: ["agent.tools", "agent.tags"],
       });
     } catch (error) {
@@ -1107,7 +1108,7 @@ export async function handleHeadlessCommand(
   // Priority 2: Try to use --agent specified ID
   if (!agent && specifiedAgentId) {
     try {
-      agent = await backend.retrieveAgent(specifiedAgentId, {
+      agent = await startupBackend.retrieveAgent(specifiedAgentId, {
         include: ["agent.tools", "agent.tags"],
       });
     } catch (_error) {
@@ -1544,7 +1545,7 @@ export async function handleHeadlessCommand(
           "conversations",
           `retrieve(${specifiedConversationId}) [headless --conv validate]`,
         );
-        await backend.retrieveConversation(specifiedConversationId);
+        await startupBackend.retrieveConversation(specifiedConversationId);
         conversationId = specifiedConversationId;
         conversationOpenReason = "resume";
       } catch {
@@ -1568,7 +1569,7 @@ export async function handleHeadlessCommand(
     if (fromAgentId) {
       (createParams as { hidden?: boolean }).hidden = true;
     }
-    const conversation = await backend.createConversation(createParams);
+    const conversation = await startupBackend.createConversation(createParams);
     conversationId = conversation.id;
     conversationOpenReason = "new";
   } else if (isSubagent) {
@@ -1579,9 +1580,8 @@ export async function handleHeadlessCommand(
   } else {
     // Default for headless: always create a new conversation to avoid
     // 409 "conversation busy" races (e.g., parent agent calling letta -p).
-    // Use --conv default to explicitly target the agent's
-    // primary conversation.
-    const conversation = await backend.createConversation({
+    // Use --conv default to explicitly target the agent's primary conversation.
+    const conversation = await startupBackend.createConversation({
       agent_id: agent.id,
     });
     conversationId = conversation.id;

@@ -310,7 +310,7 @@ function filterModToolsByClientAllowlist(
   );
 }
 
-import { TOOLSET_TOOLS, WORKTREE_TOOL_NAMES } from "./toolset-defaults";
+import { TOOLSET_CATALOG, WORKTREE_TOOL_NAMES } from "./toolset-catalog";
 import type { ToolsetName } from "./toolset-types";
 
 type ToolArgs = Record<string, unknown>;
@@ -1325,7 +1325,7 @@ function resolveBaseToolNamesForModel(
     .filter((name): name is ToolName => Object.hasOwn(TOOL_DEFINITIONS, name));
   let toolNames = resolveArtifactToolNames([
     ...new Set([
-      ...TOOLSET_TOOLS[toolset],
+      ...TOOLSET_CATALOG[toolset].tools,
       ...(options?.include ?? []),
       ...allowlistedTools,
     ]),

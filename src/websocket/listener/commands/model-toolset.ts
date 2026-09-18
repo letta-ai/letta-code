@@ -28,7 +28,6 @@ import {
 } from "@/providers/byok-providers";
 import { settingsManager } from "@/settings-manager";
 import {
-  ensureCorrectMemoryTool,
   prepareToolExecutionContextForScope,
   type ToolsetName,
   type ToolsetPreference,
@@ -512,9 +511,6 @@ export async function applyModelUpdateForRuntime(params: {
   let toolsetError: string | null = null;
 
   try {
-    if (agentId) {
-      await ensureCorrectMemoryTool(agentId);
-    }
     const modAdapters = agentId
       ? await ensureListenerModAdaptersForAgent(listener, agentId)
       : [];

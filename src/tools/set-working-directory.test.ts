@@ -11,7 +11,7 @@ import {
   prepareCurrentToolExecutionContext,
   releaseToolExecutionContext,
 } from "@/tools/manager";
-import { ANTHROPIC_DEFAULT_TOOLS, CODEX_TOOLS } from "@/tools/toolset-defaults";
+import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import { getConversationWorkingDirectory } from "@/websocket/listener/cwd";
 import { createRuntime } from "@/websocket/listener/lifecycle";
 import {
@@ -82,8 +82,8 @@ function toolReturnText(value: unknown): string {
 }
 
 test("is available in the model-facing toolsets", () => {
-  expect(ANTHROPIC_DEFAULT_TOOLS).toContain("SetWorkingDirectory");
-  expect(CODEX_TOOLS).toContain("SetWorkingDirectory");
+  expect(TOOLSET_CATALOG.default.tools).toContain("SetWorkingDirectory");
+  expect(TOOLSET_CATALOG.codex.tools).toContain("SetWorkingDirectory");
 });
 
 test("changes the conversation cwd and resolves relative paths", async () => {
