@@ -40,6 +40,19 @@ async function createRepo(tempDirs: string[]): Promise<string> {
   return repo;
 }
 
+function addWorktree(repo: string, name: string): Promise<void> {
+  return addWorktreeSafely({
+    repoRoot: repo,
+    branchName: name,
+    worktreePath: path.join(repo, name),
+    baseRef: "main",
+  });
+}
+
+function readPayload(repo: string, name: string): string {
+  return readFileSync(path.join(repo, name, "payload"), "utf8");
+}
+
 async function installHangingGit(
   tempDirs: string[],
   originalPath: string | undefined,
@@ -126,134 +139,57 @@ describe("worktree Git runner", () => {
     );
   });
 
-  test("neutralizes repository-local checkout filters", async () => {
+  test.each([
+    ["repository-local", []],
+    // `git worktree add` copies config.worktree into the new worktree before
+    // checkout, and `git config --local` never reads that file.
+    ["worktree-scoped", ["--worktree"]],
+  ])("neutralizes %s checkout filters", async (_label, scope) => {
     const repo = await createRepo(tempDirs);
-    git(["config", "filter.watcher.smudge", "false"], repo);
-    git(["config", "filter.watcher.required", "true"], repo);
-    const worktreePath = path.join(repo, "worktree");
+    git(["config", "extensions.worktreeConfig", "true"], repo);
+    // A failing required smudge filter fails a plain `git worktree add`.
+    git(["config", ...scope, "filter.watcher.smudge", "false"], repo);
+    git(["config", ...scope, "filter.watcher.required", "true"], repo);
 
-    await addWorktreeSafely({
-      repoRoot: repo,
-      branchName: "safe-filter",
-      worktreePath,
-      baseRef: "main",
-    });
+    await addWorktree(repo, "safe-filter");
 
-    expect(readFileSync(path.join(worktreePath, "payload"), "utf8")).toBe(
-      "content\n",
-    );
+    expect(readPayload(repo, "safe-filter")).toBe("content\n");
   });
 
   test.each([
-    ["lfs.customtransfer.watcher.path", "/tmp/watcher"],
-    ["lfs.standalonetransferagent", "watcher"],
-  ])(
-    "rejects repository-local Git LFS program setting %s",
-    async (key, value) => {
-      const repo = await createRepo(tempDirs);
-      git(["config", key, value], repo);
-
-      await expect(
-        addWorktreeSafely({
-          repoRoot: repo,
-          branchName: "blocked-lfs",
-          worktreePath: path.join(repo, "worktree"),
-          baseRef: "main",
-        }),
-      ).rejects.toThrow(`repository's own git config sets ${key}`);
-    },
-  );
-
-  test("rejects conditional repository config includes", async () => {
-    const repo = await createRepo(tempDirs);
-    git(
-      [
-        "config",
-        "includeIf.gitdir:/tmp/letta-worktree/.path",
-        "/tmp/letta-worktree-config",
-      ],
-      repo,
-    );
-
-    await expect(
-      addWorktreeSafely({
-        repoRoot: repo,
-        branchName: "blocked-include",
-        worktreePath: path.join(repo, "worktree"),
-        baseRef: "main",
-      }),
-    ).rejects.toThrow("conditional include (includeIf)");
-  });
-
-  test("rejects filter names that cannot be overridden safely", async () => {
-    const repo = await createRepo(tempDirs);
-    git(["config", "filter.bad=name.smudge", "false"], repo);
-
-    await expect(
-      addWorktreeSafely({
-        repoRoot: repo,
-        branchName: "blocked-filter-name",
-        worktreePath: path.join(repo, "worktree"),
-        baseRef: "main",
-      }),
-    ).rejects.toThrow("name cannot be neutralized");
-  });
-
-  test("neutralizes checkout filters from worktree-scoped config", async () => {
-    const repo = await createRepo(tempDirs);
-    // `git worktree add` copies config.worktree into the new worktree before
-    // checkout, and `git config --local` never reads that file.
-    git(["config", "extensions.worktreeConfig", "true"], repo);
-    git(["config", "--worktree", "filter.watcher.smudge", "false"], repo);
-    git(["config", "--worktree", "filter.watcher.required", "true"], repo);
-    const worktreePath = path.join(repo, "worktree");
-
-    await addWorktreeSafely({
-      repoRoot: repo,
-      branchName: "safe-worktree-filter",
-      worktreePath,
-      baseRef: "main",
-    });
-
-    expect(readFileSync(path.join(worktreePath, "payload"), "utf8")).toBe(
-      "content\n",
-    );
-  });
-
-  test("rejects unsafe settings in worktree-scoped config", async () => {
+    [
+      ["lfs.customtransfer.watcher.path", "/tmp/watcher"],
+      "repository's own git config sets lfs.customtransfer.watcher.path",
+    ],
+    [
+      ["lfs.standalonetransferagent", "watcher"],
+      "repository's own git config sets lfs.standalonetransferagent",
+    ],
+    [
+      ["--worktree", "lfs.standalonetransferagent", "watcher"],
+      "repository's own git config sets lfs.standalonetransferagent",
+    ],
+    [
+      ["includeIf.gitdir:/tmp/letta-worktree/.path", "/tmp/letta-worktree-cfg"],
+      "conditional include (includeIf)",
+    ],
+    [["filter.bad=name.smudge", "false"], "name cannot be neutralized"],
+  ])("rejects git config %j", async (configArgs, message) => {
     const repo = await createRepo(tempDirs);
     git(["config", "extensions.worktreeConfig", "true"], repo);
-    git(
-      ["config", "--worktree", "lfs.standalonetransferagent", "watcher"],
-      repo,
-    );
+    git(["config", ...configArgs], repo);
 
-    await expect(
-      addWorktreeSafely({
-        repoRoot: repo,
-        branchName: "blocked-worktree-lfs",
-        worktreePath: path.join(repo, "worktree"),
-        baseRef: "main",
-      }),
-    ).rejects.toThrow("git config sets lfs.standalonetransferagent");
+    await expect(addWorktree(repo, "blocked")).rejects.toThrow(message);
   });
 
   test("adds further worktrees when worktree-scoped config is disabled", async () => {
     const repo = await createRepo(tempDirs);
     // `git config --worktree` dies in a multi-worktree repository unless
     // extensions.worktreeConfig is on, so the scan must not rely on it.
-    for (const name of ["first", "second"]) {
-      await addWorktreeSafely({
-        repoRoot: repo,
-        branchName: name,
-        worktreePath: path.join(repo, name),
-        baseRef: "main",
-      });
-    }
+    await addWorktree(repo, "first");
+    await addWorktree(repo, "second");
 
-    expect(readFileSync(path.join(repo, "second", "payload"), "utf8")).toBe(
-      "content\n",
-    );
+    expect(readPayload(repo, "second")).toBe("content\n");
   });
 
   test("does not run repository hooks", async () => {
@@ -262,18 +198,10 @@ describe("worktree Git runner", () => {
     const hook = path.join(repo, ".git", "hooks", "post-checkout");
     await writeFile(hook, "#!/bin/sh\nexit 1\n");
     await chmod(hook, 0o755);
-    const worktreePath = path.join(repo, "worktree");
 
-    await addWorktreeSafely({
-      repoRoot: repo,
-      branchName: "safe-hooks",
-      worktreePath,
-      baseRef: "main",
-    });
+    await addWorktree(repo, "safe-hooks");
 
-    expect(readFileSync(path.join(worktreePath, "payload"), "utf8")).toBe(
-      "content\n",
-    );
+    expect(readPayload(repo, "safe-hooks")).toBe("content\n");
   });
 
   test.skipIf(process.platform === "win32")(
@@ -289,12 +217,7 @@ describe("worktree Git runner", () => {
       await chmod(script, 0o755);
       git(["config", "core.fsmonitor", script], repo);
 
-      await addWorktreeSafely({
-        repoRoot: repo,
-        branchName: "safe-fsmonitor",
-        worktreePath: path.join(repo, "worktree"),
-        baseRef: "main",
-      });
+      await addWorktree(repo, "safe-fsmonitor");
 
       expect(existsSync(path.join(scriptDir, "ran"))).toBe(false);
     },

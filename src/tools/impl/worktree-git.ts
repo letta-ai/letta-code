@@ -141,8 +141,16 @@ export async function gitRefExists(cwd: string, ref: string): Promise<boolean> {
   return result.exitCode === 0;
 }
 
-const WORKTREE_UNSAFE_CONFIG_PATTERN =
-  "^(includeif\\..*|filter\\..*\\.(clean|smudge|process|required)|lfs\\.customtransfer\\..*\\.path|lfs\\.standalonetransferagent)$";
+// Each key shape is written once and shared by the `git config --get-regexp`
+// scan and the classification below, so the two cannot drift apart.
+const INCLUDE_IF_KEY = "includeif\\..*";
+const FILTER_DRIVER_KEY = "filter\\.(.*)\\.(clean|smudge|process|required)";
+const LFS_PROGRAM_KEY =
+  "lfs\\.customtransfer\\..*\\.path|lfs\\.standalonetransferagent";
+const WORKTREE_UNSAFE_CONFIG_PATTERN = `^(${INCLUDE_IF_KEY}|${FILTER_DRIVER_KEY}|${LFS_PROGRAM_KEY})$`;
+const INCLUDE_IF_KEY_PATTERN = new RegExp(`^(${INCLUDE_IF_KEY})$`, "i");
+const FILTER_DRIVER_KEY_PATTERN = new RegExp(`^${FILTER_DRIVER_KEY}$`, "i");
+const LFS_PROGRAM_KEY_PATTERN = new RegExp(`^(${LFS_PROGRAM_KEY})$`, "i");
 
 type GitConfigScope = "--local" | "--worktree";
 
@@ -220,15 +228,13 @@ export async function addWorktreeSafely(params: {
   baseRef: string;
 }): Promise<void> {
   const keys = await listWorktreeUnsafeConfigKeys(params.repoRoot);
-  if (keys.some((key) => key.toLowerCase().startsWith("includeif."))) {
+  if (keys.some((key) => INCLUDE_IF_KEY_PATTERN.test(key))) {
     throw new Error(
       "The repository git config has a conditional include (includeIf), so its checkout filters cannot be neutralized safely.",
     );
   }
 
-  const blockedLfsKey = keys.find((key) =>
-    /^(lfs\.customtransfer\..*\.path|lfs\.standalonetransferagent)$/i.test(key),
-  );
+  const blockedLfsKey = keys.find((key) => LFS_PROGRAM_KEY_PATTERN.test(key));
   if (blockedLfsKey) {
     throw new Error(
       `Git was not run: the repository's own git config sets ${blockedLfsKey}. Move trusted Git LFS transfer programs to global git config, or remove the setting and retry.`,
@@ -237,11 +243,13 @@ export async function addWorktreeSafely(params: {
 
   const driverNames = new Set<string>();
   for (const key of keys) {
-    const match = /^filter\.(.*)\.(clean|smudge|process|required)$/i.exec(key);
-    if (!match?.[1]) {
-      continue;
+    const driverName = FILTER_DRIVER_KEY_PATTERN.exec(key)?.[1];
+    if (!driverName) {
+      // The scan reported a key nothing above knows how to switch off.
+      throw new Error(
+        `The repository git config sets ${key}, which cannot be neutralized safely.`,
+      );
     }
-    const driverName = match[1];
     if (/[=\r\n]/.test(driverName)) {
       throw new Error(
         'The repository git config defines a filter driver whose name cannot be neutralized (contains "=" or a newline).',
