@@ -28,13 +28,22 @@ function child(parent: string): RuntimeExecutionSettings {
 describe("runtime execution settings", () => {
   test("depth uses explicit turn state, safely infers legacy children, and fails closed", () => {
     expect(getSubagentDepth({})).toBe(0);
-    expect(getSubagentDepth({ LETTA_CODE_AGENT_ROLE: "subagent" })).toBe(1);
-    expect(getSubagentDepth({ LETTA_PARENT_AGENT_ID: "parent" })).toBe(1);
+    expect(getSubagentDepth({ LETTA_CODE_AGENT_ROLE: "subagent" })).toBe(2);
+    expect(getSubagentDepth({ LETTA_PARENT_AGENT_ID: "parent" })).toBe(2);
+    expect(
+      getSubagentDepth({
+        LETTA_CODE_AGENT_ROLE: "subagent",
+        LETTA_SUBAGENT_DEPTH: "0",
+      }),
+    ).toBe(2);
     for (const value of ["-1", "NaN", "", "1.5", "Infinity"]) {
       expect(getSubagentDepth({ LETTA_SUBAGENT_DEPTH: value })).toBe(2);
     }
     const staleEnv = { LETTA_SUBAGENT_DEPTH: "2" };
-    expect(getSubagentDepth(staleEnv, child("p"))).toBe(1);
+    expect(getSubagentDepth(staleEnv, child("p"))).toBe(2);
+    expect(
+      getSubagentDepth(staleEnv, { ...child("p"), subagent_depth: 1 }),
+    ).toBe(1);
     expect(
       getRuntimeExecutionEnv(staleEnv, { ...child("p"), subagent_depth: 2 })
         .LETTA_SUBAGENT_DEPTH,

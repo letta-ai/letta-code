@@ -69,6 +69,8 @@ export interface RuntimeStartResponseMessage {
   /** Echoed only when this listener applied the requested execution options. */
   execution_settings?: RuntimeExecutionSettings;
   created: { agent: boolean; conversation: boolean };
+  /** Receiver-enforced delegation bound, not an echo of caller settings. */
+  max_subagent_depth?: number;
   error?: string;
 }
 

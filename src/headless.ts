@@ -1573,10 +1573,10 @@ export async function handleHeadlessCommand(
     conversationId = conversation.id;
     conversationOpenReason = "new";
   } else if (isSubagent) {
-    // Freshly created subagents have no concurrency risk — use the default
-    // conversation so it's easy to inspect in the ADE.
-    conversationId = "default";
-    conversationOpenReason = "startup";
+    // A durable conversation row lets cold listeners recognize child ancestry.
+    conversationId = (await backend.createConversation({ agent_id: agent.id }))
+      .id;
+    conversationOpenReason = "new";
   } else {
     // Default for headless: always create a new conversation to avoid
     // 409 "conversation busy" races (e.g., parent agent calling letta -p).

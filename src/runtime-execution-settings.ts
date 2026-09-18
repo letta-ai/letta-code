@@ -11,12 +11,13 @@ export function getSubagentDepth(
     : env.LETTA_PARENT_AGENT_ID;
   const isSubagent = role === "subagent" || Boolean(parent);
   const raw = settings ? settings.subagent_depth : env.LETTA_SUBAGENT_DEPTH;
-  if (raw === undefined) return isSubagent ? 1 : 0;
+  // A child marker proves ancestry, not its level. Missing depth fails closed.
+  if (raw === undefined) return isSubagent ? MAX_SUBAGENT_DEPTH : 0;
   const depth =
     typeof raw === "string" && raw.trim() === "" ? NaN : Number(raw);
-  // Fail closed for malformed inherited state; old role-only launches are depth 1.
+  // Fail closed for malformed inherited state, too.
   if (!Number.isSafeInteger(depth) || depth < 0) return MAX_SUBAGENT_DEPTH;
-  return Math.max(isSubagent ? 1 : 0, depth);
+  return isSubagent && depth === 0 ? MAX_SUBAGENT_DEPTH : depth;
 }
 
 export function assertSubagentSpawnAllowed(
