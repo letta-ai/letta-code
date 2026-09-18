@@ -36,6 +36,7 @@ import type {
 import type { ChannelAccount, SupportedChannelId } from "./types";
 import {
   DEFAULT_SLACK_PERMISSION_MODE,
+  isCustomChannelAccount,
   isDiscordChannelAccount,
   isSignalChannelAccount,
   isSlackChannelAccount,
@@ -83,6 +84,15 @@ export function isAccountConfigured(account: ChannelAccount): boolean {
 
   if (isSignalChannelAccount(account)) {
     return account.baseUrl.trim().length > 0;
+  }
+
+  if (isCustomChannelAccount(account) && account.channel === "xchat") {
+    return (
+      typeof account.config.bot_token === "string" &&
+      account.config.bot_token.trim().length > 0 &&
+      typeof account.config.pin === "string" &&
+      account.config.pin.trim().length > 0
+    );
   }
 
   if (!isSlackChannelAccount(account)) {
