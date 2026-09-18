@@ -100,7 +100,7 @@ const MCP_ECHO_TOOL = "mcp__everything__echo";
 type McpOutputMode = "pipe" | "file" | "closed-pipe";
 
 function escapedMcpPayload(size: number): string {
-  const seed = ["A", "b", "+", "/", "=", "\\", '"', "\n"].join("");
+  const seed = ["A", "b", "+", "/", "=", "\\", '"', "\n", "雪"].join("");
   return seed.repeat(Math.ceil(size / seed.length)).slice(0, size);
 }
 
@@ -165,7 +165,7 @@ async function runMcpEcho(
     await writeFile(argsPath, JSON.stringify({ message: payload }));
     if (outputMode === "file") stdoutFile = await open(stdoutPath, "w");
 
-    let stdout = "";
+    const stdoutChunks: Buffer[] = [];
     let stderr = "";
     const exitCode = await new Promise<number | null>((resolve, reject) => {
       const proc = spawn(
@@ -200,7 +200,7 @@ async function runMcpEcho(
       );
 
       proc.stdout?.on("data", (data) => {
-        stdout += data.toString();
+        stdoutChunks.push(Buffer.from(data));
       });
       proc.stderr?.on("data", (data) => {
         stderr += data.toString();
@@ -221,6 +221,7 @@ async function runMcpEcho(
       });
     });
 
+    let stdout = Buffer.concat(stdoutChunks).toString("utf8");
     if (stdoutFile) {
       await stdoutFile.close();
       stdoutFile = undefined;
