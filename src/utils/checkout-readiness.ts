@@ -157,7 +157,7 @@ export async function waitForToolCheckouts(
   const tool = name.replaceAll("_", "").toLowerCase();
   if (
     arbitraryCode ||
-    /^(bash|execcommand|writestdin|shellcommand|shell|runshellcommand|monitor|skill)$/.test(
+    /^(bash|execcommand|writestdin|shellcommand|shell|monitor|skill)$/.test(
       tool,
     )
   ) {

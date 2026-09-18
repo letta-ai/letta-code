@@ -110,7 +110,6 @@ describe("formatChannelNotification", () => {
     expect(reminder.text).toContain("current toolset");
     expect(reminder.text).toContain("Read");
     expect(reminder.text).toContain("ViewImage");
-    expect(reminder.text).not.toContain("ReadFileGemini");
     expect(reminder.text).not.toContain("External slack turn");
     expect(reminder.text).not.toContain("Current local time");
     expect(notification.text).toContain('local_path="/tmp/photo.heic"');

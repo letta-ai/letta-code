@@ -326,9 +326,6 @@ describe("tool execution context snapshot", () => {
     expect(prepared.loadedToolNames).toContain("Read");
     expect(prepared.loadedToolNames).toContain("Write");
     expect(prepared.loadedToolNames).toContain("Bash");
-    expect(prepared.loadedToolNames).not.toContain("ReadFileGemini");
-    expect(prepared.loadedToolNames).not.toContain("WriteFileGemini");
-    expect(prepared.loadedToolNames).not.toContain("RunShellCommand");
   });
 
   test("empty request-scoped allowlist disables client tools", async () => {
