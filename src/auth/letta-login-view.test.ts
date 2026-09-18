@@ -73,26 +73,4 @@ describe("completeLettaLogin", () => {
     expect(isLocalBackendEnabled()).toBe(false);
     expect(getBackend().capabilities.remoteMemfs).toBe(true);
   });
-
-  test("one-off cloud login saves credentials without replacing the default", async () => {
-    configureBackendMode("local");
-    const { state, writer } = createSettingsWriter();
-
-    await completeLettaLogin(TOKENS, {
-      activateCloudBackend: true,
-      persistBackendPreference: false,
-      settings: writer,
-      now: () => 1_000,
-    });
-
-    expect(isLocalBackendEnabled()).toBe(false);
-    expect(state.updates).toEqual([
-      {
-        env: { LETTA_API_KEY: "cloud-access-token" },
-        refreshToken: "cloud-refresh-token",
-        tokenExpiresAt: 61_000,
-      },
-    ]);
-    expect(state.flushCount).toBe(1);
-  });
 });
