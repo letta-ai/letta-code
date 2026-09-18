@@ -489,3 +489,48 @@ describe("refreshModelCatalog", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Regression test for LET-9287: letta/auto had significantly lower
+ * max_output_tokens (28k) compared to other featured models (128k),
+ * causing failures on verbose read-only tasks.
+ */
+describe("model catalog token limit validation", () => {
+  test("auto model has comparable output token limits to other featured models", () => {
+    const autoModel = models.find((m) => m.id === "auto");
+    expect(autoModel).toBeDefined();
+    expect(autoModel?.updateArgs?.max_output_tokens).toBeDefined();
+
+    // Collect max_output_tokens from all featured models
+    const featuredModels = models.filter((m) => m.isFeatured && m.id !== "auto");
+    const outputLimits = featuredModels
+      .map((m) => m.updateArgs?.max_output_tokens)
+      .filter((limit): limit is number => typeof limit === "number");
+
+    expect(outputLimits.length).toBeGreaterThan(0);
+
+    // Calculate median output limit of featured models
+    const sortedLimits = [...outputLimits].sort((a, b) => a - b);
+    const medianLimit =
+      sortedLimits[Math.floor(sortedLimits.length / 2)] || 128000;
+
+    const autoLimit = autoModel?.updateArgs?.max_output_tokens;
+    expect(autoLimit).toBeDefined();
+
+    // Auto should have at least 80% of the median featured model limit
+    // (allows some variance but catches significant misconfiguration)
+    const minExpectedLimit = medianLimit * 0.8;
+
+    expect(autoLimit).toBeGreaterThanOrEqual(minExpectedLimit);
+
+    // Helpful error message if this fails
+    if (autoLimit && autoLimit < minExpectedLimit) {
+      throw new Error(
+        `letta/auto has insufficient max_output_tokens: ${autoLimit} ` +
+          `(should be >= ${minExpectedLimit}, median featured model: ${medianLimit}). ` +
+          `This causes max_tokens_exceeded errors on verbose tasks. ` +
+          `Update the catalog configuration to match other models.`,
+      );
+    }
+  });
+});
