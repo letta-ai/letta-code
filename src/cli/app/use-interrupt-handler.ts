@@ -18,7 +18,6 @@ import { settleTuiInterrupt } from "@/cli/helpers/tui-turn-lifecycle";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import type { QueueRuntime } from "@/queue/queue-runtime";
-import { stopMonitorsForScope } from "@/tools/impl/stop-monitor";
 
 import { EAGER_CANCEL, INTERRUPT_MESSAGE } from "./constants";
 import { extractErrorMeta } from "./errors";
@@ -141,11 +140,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects; .current is read dynamically when interrupt fires.
   const handleInterrupt = useCallback(async () => {
-    const stopMonitors = () =>
-      stopMonitorsForScope({
-        agentId: agentIdRef.current,
-        conversationId: conversationIdRef.current || "default",
-      });
     // If we're executing client-side tools, abort them AND the main stream
     const hasTrackedTools =
       executingToolCallIdsRef.current.length > 0 ||
@@ -156,7 +150,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       hasTrackedTools &&
       !toolResultsInFlightRef.current
     ) {
-      stopMonitors();
       toolAbortControllerRef.current.abort();
 
       // Mark any in-flight conversation as stale, consistent with EAGER_CANCEL.
@@ -248,7 +241,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     if (!streaming || interruptRequested) {
       return;
     }
-    stopMonitors();
 
     // If we're in the middle of queue cancel, set flag to restore instead of auto-send
     if (waitingForQueueCancelRef.current) {
