@@ -23,8 +23,6 @@ const DEFAULT_TIMEOUT_MS = 60000;
 function truncateHookFeedback(text: string, workingDirectory: string): string {
   return truncateByChars(text, LIMITS.HOOK_OUTPUT_CHARS, "Hook", {
     workingDirectory,
-    toolName: "Hook",
-    useMiddleTruncation: false,
     previewChars: LIMITS.OVERFLOW_PREVIEW_CHARS,
   }).content;
 }

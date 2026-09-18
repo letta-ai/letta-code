@@ -45,18 +45,18 @@ describe("truncation utilities", () => {
       expect(result.content).toContain("1,000 characters");
     });
 
-    test("uses a shorter prefix preview after exceeding the limit", () => {
+    test("ignores previewChars when no overflow file was written", () => {
       const text = `${"a".repeat(1000)}END`;
       const result = truncateByChars(text, 500, "Test", {
         previewChars: 100,
-        useMiddleTruncation: false,
+        useMiddleTruncation: true,
       });
 
-      expect(result.wasTruncated).toBe(true);
-      expect(result.content).toStartWith("a".repeat(100));
-      expect(result.content).not.toContain("END");
+      expect(result.overflowPath).toBeUndefined();
+      expect(result.content).toStartWith("a".repeat(250));
+      expect(result.content).toContain("END");
       expect(result.content).toContain(
-        "[Output truncated: showing 100 of 1,003 characters.]",
+        "[Output truncated: showing 500 of 1,003 characters.]",
       );
     });
   });

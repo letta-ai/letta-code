@@ -523,14 +523,22 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       const output = [foregroundOutput.stdout, foregroundOutput.stderr]
         .filter(Boolean)
         .join("\n");
-      const rawOutput = output || "(Command completed with no output)";
-      if (result.status === "failed") {
-        const { content: truncatedOutput } = truncateByChars(
-          rawOutput,
-          LIMITS.BASH_FAILURE_OUTPUT_CHARS,
-          "Bash",
-          { useMiddleTruncation: true },
-        );
+      const failed = result.status === "failed";
+      const { content: truncatedOutput } = truncateByChars(
+        output || "(Command completed with no output)",
+        failed ? LIMITS.BASH_FAILURE_OUTPUT_CHARS : LIMITS.BASH_OUTPUT_CHARS,
+        "Bash",
+        {
+          workingDirectory: userCwd,
+          toolName: "Bash",
+          secrets: secretEnv,
+          // Failures keep a head-and-tail excerpt; successes a short prefix.
+          ...(failed
+            ? { useMiddleTruncation: true }
+            : { previewChars: LIMITS.OVERFLOW_PREVIEW_CHARS }),
+        },
+      );
+      if (failed) {
         const isAbort =
           signal?.aborted ||
           ("error" in result &&
@@ -548,18 +556,6 @@ export async function bash(args: BashArgs): Promise<BashResult> {
           status: "error",
         };
       }
-      const { content: truncatedOutput } = truncateByChars(
-        rawOutput,
-        LIMITS.BASH_OUTPUT_CHARS,
-        "Bash",
-        {
-          workingDirectory: userCwd,
-          toolName: "Bash",
-          useMiddleTruncation: false,
-          previewChars: LIMITS.OVERFLOW_PREVIEW_CHARS,
-          secrets: secretEnv,
-        },
-      );
       return {
         content: [{ type: "text", text: `${recoveryNote}${truncatedOutput}` }],
         status: "success",

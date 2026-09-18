@@ -16,7 +16,10 @@ import {
   type SessionStartHookInput,
   type StopHookInput,
 } from "@/hooks/types";
-import { getOverflowDirectory } from "@/tools/impl/overflow";
+import {
+  expectPrefixPreview,
+  removeOverflowProjectDirectory,
+} from "@/test-utils/overflow-preview";
 import { LIMITS } from "@/tools/impl/truncation";
 
 // Skip on Windows - test commands use bash syntax (&&, >&2, sleep, etc.)
@@ -34,7 +37,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
   afterEach(() => {
     try {
       rmSync(tempDir, { recursive: true, force: true });
-      rmSync(getOverflowDirectory(tempDir), { recursive: true, force: true });
+      removeOverflowProjectDirectory(tempDir);
     } catch {
       // Ignore cleanup errors
     }
@@ -305,16 +308,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
 
       const result = await executeHooks(hooks, input, tempDir);
 
-      expect(result.feedback[0]).toStartWith(
-        "x".repeat(LIMITS.OVERFLOW_PREVIEW_CHARS),
-      );
-      expect(result.feedback[0]).toContain(
-        `[Output truncated: showing ${LIMITS.OVERFLOW_PREVIEW_CHARS.toLocaleString()}`,
-      );
-      expect(result.feedback[0]).not.toContain(
-        "x".repeat(LIMITS.OVERFLOW_PREVIEW_CHARS + 1),
-      );
-      expect(result.feedback[0]).toContain("[Full output written to:");
+      expectPrefixPreview(result.feedback[0] ?? "", "x");
     });
 
     test("collects feedback from blocking hooks", async () => {
@@ -439,16 +433,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
 
       const result = await executeHooksParallel(hooks, input, tempDir);
 
-      expect(result.feedback[0]).toStartWith(
-        "y".repeat(LIMITS.OVERFLOW_PREVIEW_CHARS),
-      );
-      expect(result.feedback[0]).toContain(
-        `[Output truncated: showing ${LIMITS.OVERFLOW_PREVIEW_CHARS.toLocaleString()}`,
-      );
-      expect(result.feedback[0]).not.toContain(
-        "y".repeat(LIMITS.OVERFLOW_PREVIEW_CHARS + 1),
-      );
-      expect(result.feedback[0]).toContain("[Full output written to:");
+      expectPrefixPreview(result.feedback[0] ?? "", "y");
     });
 
     test("parallel execution is faster than sequential for slow hooks", async () => {

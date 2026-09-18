@@ -47,7 +47,7 @@ export interface TruncationOptions {
   toolName?: string;
   /** Whether to use middle truncation (keep beginning and end) */
   useMiddleTruncation?: boolean;
-  /** Characters to show after the maxChars threshold is exceeded */
+  /** Prefix to show instead of the maxChars excerpt when the full output was saved to a file */
   previewChars?: number;
   /** Secret values available to this tool invocation */
   secrets?: Readonly<Record<string, string>>;
@@ -68,11 +68,6 @@ export function truncateByChars(
     return { content: text, wasTruncated: false };
   }
 
-  // Determine if we should use middle truncation
-  const useMiddleTruncation =
-    options?.useMiddleTruncation ?? OVERFLOW_CONFIG.MIDDLE_TRUNCATE;
-  const previewChars = Math.min(maxChars, options?.previewChars ?? maxChars);
-
   // Write to overflow file if enabled and working directory provided
   let overflowPath: string | undefined;
   if (OVERFLOW_CONFIG.ENABLED && options?.workingDirectory) {
@@ -89,22 +84,30 @@ export function truncateByChars(
     }
   }
 
+  // A prefix preview only applies when the full output was saved; otherwise
+  // fall back to the normal maxChars excerpt so nothing becomes unreachable.
+  const filePreviewChars = overflowPath ? options?.previewChars : undefined;
+  const shownChars = Math.min(maxChars, filePreviewChars ?? maxChars);
+  const useMiddleTruncation =
+    filePreviewChars === undefined &&
+    (options?.useMiddleTruncation ?? OVERFLOW_CONFIG.MIDDLE_TRUNCATE);
+
   let truncated: string;
   if (useMiddleTruncation) {
     // Middle truncation: keep beginning and end
-    const halfMax = Math.floor(previewChars / 2);
+    const halfMax = Math.floor(shownChars / 2);
     const beginning = text.slice(0, halfMax);
     const end = text.slice(-halfMax);
-    const omittedChars = text.length - previewChars;
+    const omittedChars = text.length - shownChars;
     const middleNotice = `\n... [${omittedChars.toLocaleString()} characters omitted] ...\n`;
     truncated = beginning + middleNotice + end;
   } else {
     // Post truncation: keep beginning only
-    truncated = text.slice(0, previewChars);
+    truncated = text.slice(0, shownChars);
   }
 
   const noticeLines = [
-    `[Output truncated: showing ${previewChars.toLocaleString()} of ${text.length.toLocaleString()} characters.]`,
+    `[Output truncated: showing ${shownChars.toLocaleString()} of ${text.length.toLocaleString()} characters.]`,
   ];
 
   if (overflowPath) {

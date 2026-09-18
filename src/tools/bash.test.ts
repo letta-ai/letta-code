@@ -3,9 +3,26 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
+import {
+  expectOverflowPath,
+  expectPrefixPreview,
+} from "@/test-utils/overflow-preview";
 import { bash, spawnCommand } from "@/tools/impl/bash";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
 import { LIMITS } from "@/tools/impl/truncation";
+
+// Reads a saved overflow file, then removes the per-project overflow tree
+// (~/.letta/projects/<tmpdir>) the temp working directory created.
+async function readAndRemoveOverflowFile(overflowPath: string) {
+  try {
+    return await readFile(overflowPath, "utf8");
+  } finally {
+    await rm(path.dirname(path.dirname(overflowPath)), {
+      recursive: true,
+      force: true,
+    });
+  }
+}
 
 async function runBashInTemp(
   command: string,
@@ -57,20 +74,28 @@ describe("Bash tool", () => {
       `node -e "process.stdout.write('a'.repeat(${LIMITS.BASH_OUTPUT_CHARS + 1}) + 'TAIL')"`,
     );
     const output = result.content[0]?.text ?? "";
-    const overflowPath = output.match(
-      /\[Full output written to: (.+?\.txt)\]/,
-    )?.[1];
 
     expect(result.status).toBe("success");
-    expect(output).toStartWith("a".repeat(LIMITS.OVERFLOW_PREVIEW_CHARS));
     expect(output).not.toContain("TAIL");
-    expect(output).toContain(
-      `[Output truncated: showing ${LIMITS.OVERFLOW_PREVIEW_CHARS.toLocaleString()}`,
+    const overflowPath = expectPrefixPreview(output, "a");
+    expect(await readAndRemoveOverflowFile(overflowPath)).toEndWith("TAIL");
+  });
+
+  test("returns a head-and-tail excerpt and saved file when failed output overflows", async () => {
+    const result = await runBashInTemp(
+      `node -e "process.stdout.write('HEAD' + 'a'.repeat(${LIMITS.BASH_FAILURE_OUTPUT_CHARS}) + 'TAIL'); process.exitCode = 1"`,
     );
-    expect(overflowPath).toBeDefined();
-    if (!overflowPath) throw new Error("Expected Bash overflow path");
-    expect(await readFile(overflowPath, "utf8")).toEndWith("TAIL");
-    await rm(path.dirname(overflowPath), { recursive: true, force: true });
+    const output = result.content[0]?.text ?? "";
+
+    expect(result.status).toBe("error");
+    expect(output).toContain("HEAD");
+    expect(output).toContain("characters omitted");
+    expect(output).toContain("TAIL");
+    expect(output).toContain(
+      `[Output truncated: showing ${LIMITS.BASH_FAILURE_OUTPUT_CHARS.toLocaleString()}`,
+    );
+    const overflowPath = expectOverflowPath(output);
+    expect(await readAndRemoveOverflowFile(overflowPath)).toEndWith("TAIL");
   });
 
   test("recovers when runtime working directory was deleted mid-turn", async () => {
