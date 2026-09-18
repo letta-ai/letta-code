@@ -938,7 +938,11 @@ Exit codes only let you block or stay silent, but JSON output gives you finer-gr
 
 Your hook's stdout must contain only the JSON object. If your shell profile prints text on startup, it can interfere with JSON parsing. See [Hook JSON has no effect](/docs/en/hooks-guide#hook-json-has-no-effect) in the troubleshooting guide.
 
-Hook output strings, including `additionalContext`, `systemMessage`, and plain stdout, are capped at 10,000 characters. Output that exceeds this limit is saved to a file and replaced with a preview and file path, the same way a large valid Bash result is handled under [Output limits](/docs/en/tools-reference#output-limits).
+A hook's `additionalContext`, `systemMessage`, and `initialUserMessage` strings, and its plain stdout, are capped at 10,000 characters:
+
+* **Scope**: Claude Code measures each string on its own, even when several hooks run for the same event. For JSON output, each field is measured separately; plain stdout is measured whole.
+* **Over the limit**: Claude Code saves the output to a file in the session directory and replaces it with the file path and a preview of up to the first 2,000 characters. A large valid Bash result is handled the same way, described under [Output limits](/docs/en/tools-reference#output-limits). Unlike that Bash ceiling, this cap has no setting or environment variable to raise it.
+* **Reading the file**: Claude Code doesn't ask Claude to read the file, so keep anything Claude must always see within the cap.
 
 The JSON object supports three kinds of fields:
 
@@ -1020,7 +1024,7 @@ Where the reminder appears depends on the event:
 
 When several hooks return `additionalContext` for the same event, Claude receives all of the values.
 
-If a value exceeds 10,000 characters, Claude Code writes the text to a file in the session directory and passes Claude the file path with a short preview instead.
+If a value exceeds 10,000 characters, Claude Code writes the text to a file in the session directory and passes Claude the file path with a preview of up to the first 2,000 characters instead. Claude can read the file, but Claude Code doesn't ask it to.
 
 Use `additionalContext` for information Claude should know about the current state of your environment or the operation that just ran:
 
