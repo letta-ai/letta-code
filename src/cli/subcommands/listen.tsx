@@ -429,7 +429,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } else {
       // No saved name - default to hostname so a first run (e.g. pasted from
       // onboarding) registers without an interactive prompt.
-      connectionName = hostname();
+      connectionName = hostname() || "my-computer";
       settingsManager.setListenerEnvName(connectionName);
       const welcome = render(<FirstRunWelcome computerName={connectionName} />);
       // Let Ink paint the frame before unmounting. The normal path skips its
