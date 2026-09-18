@@ -12,6 +12,11 @@ import StdoutContext from './StdoutContext.js';
 const tab = '\t';
 const shiftTab = '\u001B[Z';
 const escape = '\u001B';
+// C0 control characters (including ESC) and DEL. A burst of plain text (for
+// example a CJK IME commit split across several reads) is buffered and
+// coalesced; a text event containing any control character is never buffered
+// and is dispatched as-is so control sequences keep their position.
+const CONTROL_CHARS_RE = /[\x00-\x1f\x7f]/;
 // Maximum number of event listeners to allow on stdin and internal_eventEmitter.
 const MAX_INPUT_LISTENERS = 20;
 
@@ -51,6 +56,10 @@ export default class App extends PureComponent {
         }
     }
     componentWillUnmount() {
+        if (this.pendingTextTimer) {
+            clearTimeout(this.pendingTextTimer);
+            this.pendingTextTimer = null;
+        }
         cliCursor.show(this.props.stdout);
         if (this.isRawModeSupported()) {
             this.handleSetRawMode(false);
@@ -92,6 +101,12 @@ export default class App extends PureComponent {
     };
     keyParseState = { mode: 'NORMAL', incomplete: '', pasteBuffer: '' };
     fallbackPaste = { aggregating: false, buffer: '', timer: null, lastAt: 0, chunks: 0, bytes: 0, escalated: false, recentTime: 0, recentLen: 0 };
+    // Plain-text input is buffered briefly so a burst of reads that make up a
+    // single logical entry (for example a CJK IME commit split across several
+    // reads or drains) is delivered as one input event. A control event flushes
+    // the buffer first so ordering is preserved.
+    pendingText = '';
+    pendingTextTimer = null;
     FALLBACK_NORMAL_MS = 16;
     FALLBACK_PASTE_MS = 150;
     PLACEHOLDER_LINE_THRESHOLD = 5;
@@ -192,6 +207,7 @@ export default class App extends PureComponent {
         this.fallbackPaste.aggregating = false;
     };
     fallbackFlush = () => {
+        this.flushPendingText();
         const txt = this.fallbackPaste.buffer;
         this.fallbackStop();
         if (!txt)
@@ -211,6 +227,26 @@ export default class App extends PureComponent {
         this.fallbackPaste.bytes = 0;
         this.fallbackPaste.escalated = false;
     };
+    queueText = (text) => {
+        this.pendingText += text;
+        if (this.pendingTextTimer) {
+            clearTimeout(this.pendingTextTimer);
+        }
+        this.pendingTextTimer = setTimeout(this.flushPendingText, this.FALLBACK_NORMAL_MS);
+    };
+    flushPendingText = () => {
+        if (this.pendingTextTimer) {
+            clearTimeout(this.pendingTextTimer);
+            this.pendingTextTimer = null;
+        }
+        if (!this.pendingText) {
+            return;
+        }
+        const text = this.pendingText;
+        this.pendingText = '';
+        this.handleInput(text);
+        this.internal_eventEmitter.emit('input', text);
+    };
     handleReadable = () => {
         let chunk;
         while ((chunk = this.props.stdin.read()) !== null) {
@@ -221,6 +257,7 @@ export default class App extends PureComponent {
                     if (this.fallbackPaste.aggregating) {
                         this.fallbackFlush();
                     }
+                    this.flushPendingText();
                     const content = evt.value;
                     const pasteEvent = { sequence: content, raw: content, isPasted: true, name: '', ctrl: false, meta: false, shift: false };
                     this.internal_eventEmitter.emit('input', pasteEvent);
@@ -253,8 +290,14 @@ export default class App extends PureComponent {
                         this.fallbackSchedule(this.FALLBACK_PASTE_MS);
                         continue;
                     }
-                    this.handleInput(text);
-                    this.internal_eventEmitter.emit('input', text);
+                    if (CONTROL_CHARS_RE.test(text)) {
+                        this.flushPendingText();
+                        this.handleInput(text);
+                        this.internal_eventEmitter.emit('input', text);
+                    }
+                    else {
+                        this.queueText(text);
+                    }
                     this.fallbackPaste.recentTime = Date.now();
                     this.fallbackPaste.recentLen = text.length;
                     continue;
