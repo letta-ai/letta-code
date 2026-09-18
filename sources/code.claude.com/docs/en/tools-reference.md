@@ -548,6 +548,7 @@ This makes WebFetch lossy by design. The extraction prompt determines what reach
 
 A few behaviors shape the response Claude receives:
 
+* WebFetch refuses `localhost` and any other hostname without a dot, such as a bare intranet name, before making a request. The [error it returns](/docs/en/errors#webfetch-cannot-fetch-localhost) tells Claude to reach local servers with `curl` through Bash instead.
 * HTTP URLs are automatically upgraded to HTTPS.
 * Large pages are truncated to a fixed character limit before processing.
 * WebFetch caches each response for 15 minutes by default, so repeated fetches of the same URL return quickly. On Claude Code v2.1.233 or later, set [`CLAUDE_CODE_WEBFETCH_CACHE_TTL_MS`](/docs/en/env-vars#variables) to change how long WebFetch keeps each response.

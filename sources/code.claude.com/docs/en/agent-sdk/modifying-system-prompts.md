@@ -136,7 +136,7 @@ For every code submission:
 
 Once created, activate output styles via:
 
-* **CLI**: run `/config` and select an output style
+* **CLI**: run `/output-style <style>`, for example `/output-style concise`, or run `/config` and select one. The `/output-style` command requires Claude Code v2.1.269 or later.
 * **Settings**: set `outputStyle` in `.claude/settings.local.json`
 * **TypeScript SDK**: set `outputStyle` inside the inline `settings` object passed to `query()`, or point `settings` at a settings file that sets it. `outputStyle` is not a top-level `Options` field:
 
