@@ -24,6 +24,15 @@ import { apiRequest } from "@/backend/api/request";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
+  finishWorkflowExecution,
+  recordWorkflowProgress,
+  registerWorkflowExecution,
+} from "@/tools/workflow/execution-registry";
+import {
+  formatWorkflowDuration,
+  formatWorkflowSummary,
+} from "@/tools/workflow/format-stats";
+import {
   createExecutionDir,
   defaultExecutionsDir,
   newExecutionId,
@@ -225,7 +234,11 @@ function formatCompletionResult(
   executionDir: string,
 ): string {
   const payload = JSON.stringify(
-    { result: jsonSafe(run.result), agentsSpawned: run.agentsSpawned },
+    {
+      result: jsonSafe(run.result),
+      agentsSpawned: run.agentsSpawned,
+      totalTokens: run.totalTokens,
+    },
     null,
     2,
   );
@@ -323,6 +336,13 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     description: meta.description,
   };
   backgroundProcesses.set(taskId, processState);
+  registerWorkflowExecution({
+    taskId,
+    executionDir,
+    outputFile,
+    meta,
+    startedAt: processState.startTime?.getTime(),
+  });
   notifyBackgroundProcessStateChanged(scope);
 
   const finish = (outcome: {
@@ -342,21 +362,36 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       outputFile,
       outcome.run ? `\n[result]\n${result}\n` : `\n[error] ${outcome.error}\n`,
     );
+    finishWorkflowExecution(taskId, {
+      status: processState.status === "completed" ? "completed" : "failed",
+      error: outcome.error,
+    });
     notifyBackgroundProcessStateChanged(scope);
     scheduleBackgroundProcessCleanup(taskId);
     if (processState.completionNotificationSuppressed) return;
     const durationMs = Date.now() - (processState.startTime?.getTime() ?? 0);
+    // The summary is what the transcript shows for the notification, so it
+    // carries the same numbers as /workflows.
+    const summary = outcome.run
+      ? `Workflow "${meta.description}" completed · ${formatWorkflowSummary({
+          durationMs,
+          agentsDone: outcome.run.agentsSpawned,
+          agentsTotal: outcome.run.agentsSpawned,
+          totalTokens: outcome.run.totalTokens,
+        })}`
+      : `Workflow "${meta.description}" failed after ${formatWorkflowDuration(durationMs)}`;
     addToMessageQueue({
       kind: "task_notification",
       text: formatTaskNotification({
         taskId,
         status: outcome.run ? "completed" : "failed",
-        summary: outcome.run
-          ? `Workflow "${meta.description}" completed · ${outcome.run.agentsSpawned} agents`
-          : `Workflow "${meta.description}" failed`,
+        summary,
         result: truncateResult(result),
         outputFile,
-        usage: { durationMs },
+        usage: {
+          durationMs,
+          ...(outcome.run ? { totalTokens: outcome.run.totalTokens } : {}),
+        },
       }),
       agentId: scope?.agentId,
       conversationId: scope?.conversationId,
@@ -374,6 +409,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     journalPath,
     signal: abortController.signal,
     onProgress: (event) => {
+      recordWorkflowProgress(taskId, event);
       const line = formatWorkflowProgressLine(event);
       if (!line) return;
       appendBackgroundProcessOutput(processState, "stdout", line);
@@ -405,7 +441,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       `Script file: ${scriptPath}`,
       `Journal: ${journalPath} (one line per completed agent)`,
       "",
-      "You will be notified when it completes. Do not poll or sleep — keep working or end your turn. TaskOutput reads the progress log; TaskStop aborts the run.",
+      "You will be notified when it completes. Do not poll or sleep — keep working or end your turn. TaskOutput reads the progress log; TaskStop aborts the run; the user can watch live status with /workflows.",
     ].join("\n"),
     status: "success",
   };
