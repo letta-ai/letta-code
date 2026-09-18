@@ -230,6 +230,60 @@ describe("ProviderTurnExecutor", () => {
     expect(reasoningOtids[0]).not.toBe(reasoningOtids[2]);
   });
 
+  test("does not replay deltas already covered by a live start snapshot", async () => {
+    const message = {
+      ...assistantMessage(),
+      content: [{ type: "text" as const, text: "complete" }],
+    };
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield providerStreamPart(
+          part({ type: "text_start", contentIndex: 0, partial: message }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "comp",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "lete",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({ type: "done", reason: "stop", message }),
+        );
+      },
+    };
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    const assistantText = chunks
+      .filter((chunk) => chunk.message_type === "assistant_message")
+      .flatMap((chunk) => {
+        if (!("content" in chunk) || !Array.isArray(chunk.content)) return [];
+        return chunk.content.flatMap((content) =>
+          typeof content === "object" &&
+          content !== null &&
+          "type" in content &&
+          content.type === "text" &&
+          "text" in content &&
+          typeof content.text === "string"
+            ? [content.text]
+            : [],
+        );
+      })
+      .join("");
+    expect(assistantText).toBe("complete");
+  });
+
   test("matches history identity after start-only redacted reasoning", async () => {
     const message = {
       ...assistantMessage(),
