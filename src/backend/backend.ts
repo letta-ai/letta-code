@@ -622,10 +622,16 @@ export function getLocalBackendStorageDir(homeDir = homedir()): string {
   return getLocalBackendStorageDirFromPaths(homeDir);
 }
 
-function localBackendExecutionMode(): "deterministic" | "pi" {
-  return process.env.LETTA_LOCAL_BACKEND_EXECUTOR === "deterministic"
-    ? "deterministic"
-    : "pi";
+function localBackendExecutionMode():
+  | "deterministic"
+  | "deterministic-reflection"
+  | "pi" {
+  const configuredMode = process.env.LETTA_LOCAL_BACKEND_EXECUTOR;
+  if (configuredMode === "deterministic") return "deterministic";
+  if (configuredMode === "deterministic-reflection") {
+    return "deterministic-reflection";
+  }
+  return "pi";
 }
 
 function createExperimentalLocalBackend(): Backend {
