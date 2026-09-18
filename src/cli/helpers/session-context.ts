@@ -124,7 +124,7 @@ export function buildWindowsShellNotes(shellContext?: ShellContext): string {
 ${shellLine}
 - HEREDOC syntax (e.g., \`$(cat <<'EOF'...EOF)\`) does NOT work on Windows
 - For multiline strings (git commits, PR bodies), use simple quoted strings instead
-- Windows PowerShell 5.1: Do NOT redirect native stderr (\`2>&1\`, \`2>$null\`) in Bash tool commands; that turns benign stderr (e.g. git's LF/CRLF warnings) into exit code 1. The Bash tool already captures stderr separately; for git, set the \`GIT_REDIRECT_STDERR\` environment variable to \`2>&1\` using your shell's syntax instead
+- Windows PowerShell 5.1: Do NOT redirect native stderr (\`2>&1\`, \`2>$null\`) in Bash tool commands; that turns benign stderr (e.g. git's LF/CRLF warnings) into exit code 1. Leave native stderr unredirected; the Bash tool already captures stderr separately.
 `;
 }
 

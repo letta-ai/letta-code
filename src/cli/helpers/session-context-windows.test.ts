@@ -43,8 +43,8 @@ describe("Session Context Windows Notes", () => {
       expect(windowsShellNotes).toContain("2>&1");
       expect(windowsShellNotes).toContain("2>$null");
       expect(windowsShellNotes).toContain("captures stderr separately");
-      expect(windowsShellNotes).toContain("`GIT_REDIRECT_STDERR`");
-      expect(windowsShellNotes).not.toContain("$env:GIT_REDIRECT_STDERR");
+      expect(windowsShellNotes).not.toContain("GIT_REDIRECT_STDERR");
+      expect(windowsShellNotes).not.toContain("using your shell's syntax");
     }
   });
 });
