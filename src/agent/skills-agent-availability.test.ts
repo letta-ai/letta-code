@@ -16,6 +16,7 @@ describe("isSkillAvailableForAgent", () => {
     for (const id of [
       "image-generation",
       "managing-shared-memory",
+      "managing-tray",
       "working-across-computers",
     ]) {
       const skill: Skill = { ...baseSkill, id };

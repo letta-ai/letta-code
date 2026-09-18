@@ -21,6 +21,7 @@ import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
 import { runStepsSubcommand } from "./steps";
 import { runTeleportSubcommand } from "./teleport";
 import { runTrajectoriesSubcommand } from "./trajectories";
+import { runTraySubcommand } from "./tray";
 import { runUsageSubcommand } from "./usage";
 
 async function runUpdateSubcommand(): Promise<number> {
@@ -64,6 +65,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "shared-memory":
     case "skills":
     case "teleport":
+    case "tray":
     case "usage":
       return true;
     default:
@@ -117,6 +119,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runSecretSubcommand(rest);
     case "teleport":
       return runTeleportSubcommand(rest);
+    case "tray":
+      return runTraySubcommand(rest);
     case "server":
       return runServerSubcommand(rest);
     case "feedback":

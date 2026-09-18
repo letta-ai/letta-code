@@ -174,6 +174,19 @@ describe("subcommand router", () => {
     }
   });
 
+  test("routes Tray help with early backend selection", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => messages.push(String(message));
+    try {
+      expect(subcommandNeedsEarlyBackendMode("tray")).toBe(true);
+      expect(await runSubcommand(["tray", "--help"])).toBe(0);
+      expect(messages.join("\n")).toContain("letta tray add");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   test("routes teleport help", async () => {
     const messages: string[] = [];
     const originalLog = console.log;
