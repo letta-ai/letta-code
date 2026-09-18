@@ -22,8 +22,7 @@ import { wrapLauncher } from "@/sandbox/wrap";
  * leaving the current agent's own directory, the repo, and temp writable.
  *
  * Shared by every shell executor — the `Bash` tool (`bash.ts`), the Codex
- * `exec_command`/`write_stdin` sessions (`exec-command.ts`), and the Gemini
- * `run_shell_command` path (`shell.ts`) — so the kernel owns the whole shell
+ * `exec_command`/`write_stdin` sessions (`exec-command.ts`) — so the kernel owns the whole shell
  * surface, not just one dialect.
  *
  * This is the SOLE cross-agent enforcement for spawned shells: the static

@@ -4,7 +4,6 @@ import { resolveModel } from "@/agent/model";
 import { resolveModelHandleFromLlmConfig } from "@/agent/model-handles";
 import type { SkillSource } from "@/agent/skill-sources";
 import { getBackend } from "@/backend";
-import { experimentManager } from "@/experiments/manager";
 import { buildModInvocationContext } from "@/mods/context";
 import type { ModEvents } from "@/mods/event-emitter";
 import type { ModAdapter } from "@/mods/mod-adapter";
@@ -14,50 +13,18 @@ import type { ModContext } from "@/mods/types";
 import type { RuntimeContextSnapshot } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
-import { toolFilter } from "./filter";
-import { LETTA_TOOLS } from "./letta-toolset";
 import {
-  clearToolsWithLock,
-  filterBuiltInToolNamesByClientAllowlist,
   getInternalToolName,
-  getToolNames,
   isOpenAIModel,
-  loadSpecificTools,
   loadTools,
   type PreparedToolExecutionContext,
   prepareToolExecutionContextForModel,
-  prepareToolExecutionContextForSpecificTools,
 } from "./manager";
 import type { PermissionModeState } from "./permission-mode-state";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
-import {
-  ANTHROPIC_DEFAULT_TOOLS,
-  GEMINI_DEFAULT_TOOLS,
-  GEMINI_PASCAL_TOOLS,
-  OPENAI_DEFAULT_TOOLS,
-  OPENAI_PASCAL_TOOLS,
-} from "./toolset-defaults";
 import type { ToolsetName, ToolsetPreference } from "./toolset-types";
 
 export type { ToolsetName, ToolsetPreference } from "./toolset-types";
-
-const ARTIFACT_TOOL_NAMES: ToolName[] = [
-  "read_artifact_file",
-  "write_artifact_file",
-];
-
-function appendArtifactToolsIfEnabled(toolNames: ToolName[]): ToolName[] {
-  const artifactToolSet = new Set<ToolName>(ARTIFACT_TOOL_NAMES);
-  const withoutArtifactTools = toolNames.filter(
-    (name) => !artifactToolSet.has(name),
-  );
-  if (!experimentManager.isEnabled("artifacts")) {
-    return withoutArtifactTools;
-  }
-  return [...withoutArtifactTools, ...ARTIFACT_TOOL_NAMES];
-}
-// Keep these as direct references at call-sites (not top-level aliases) to avoid
-// temporal-dead-zone issues under circular import initialization.
 
 export interface ClientToolsetConfig {
   /** Request-scoped base toolset. Omitted preserves the runtime preference. */
@@ -78,46 +45,6 @@ function resolveIncludedToolNames(toolNames: string[] | undefined): ToolName[] {
   });
 }
 
-/**
- * Bundled client tools named in the allowlist, so that allowlisting a tool
- * also loads it. Without this an allowlist is only a filter over whatever the
- * base happens to carry, so a client asking for exactly ["Read", "LS",
- * "Glob", "Grep"] silently gets just the ones its base already had.
- *
- * Unknown names are skipped rather than rejected: unlike `include`, an
- * allowlist legitimately carries MCP and other external tool names that are
- * not bundled client tools.
- */
-function resolveAllowlistedToolNames(
-  allowlist: string[] | undefined,
-): ToolName[] {
-  if (!allowlist) return [];
-
-  const toolNames: ToolName[] = [];
-  for (const allowedName of allowlist) {
-    const internalName = getInternalToolName(allowedName);
-    if (Object.hasOwn(TOOL_DEFINITIONS, internalName)) {
-      toolNames.push(internalName as ToolName);
-    }
-  }
-  return toolNames;
-}
-
-function appendUniqueToolNames(
-  baseToolNames: ToolName[],
-  includedToolNames: ToolName[],
-): ToolName[] {
-  const result = [...baseToolNames];
-  const seen = new Set(result);
-  for (const toolName of includedToolNames) {
-    if (!seen.has(toolName)) {
-      result.push(toolName);
-      seen.add(toolName);
-    }
-  }
-  return result;
-}
-
 export function deriveToolsetFromModel(
   modelIdentifier: string,
   providerType?: string | null,
@@ -127,6 +54,22 @@ export function deriveToolsetFromModel(
   }
   const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
   return isOpenAIModel(resolvedModel) ? "codex" : "default";
+}
+
+/** Startup uses the same preset selection and construction as each turn. */
+export async function loadStartupTools(params: {
+  modelIdentifier?: string;
+  toolset?: ToolsetPreference;
+  exclude?: ToolName[];
+}): Promise<void> {
+  const { modelIdentifier, toolset = "auto", exclude } = params;
+  await loadTools(modelIdentifier, {
+    resolvedToolset:
+      toolset === "auto"
+        ? deriveToolsetFromModel(modelIdentifier ?? "")
+        : toolset,
+    exclude,
+  });
 }
 
 type ScopeModelCarrier = Partial<
@@ -209,35 +152,6 @@ function providerForMatchingModel(
   return null;
 }
 
-function getToolNamesForToolset(toolsetName: ToolsetName): ToolName[] {
-  let tools: ToolName[];
-  switch (toolsetName) {
-    case "codex":
-      tools = [...OPENAI_PASCAL_TOOLS];
-      break;
-    case "codex_snake":
-      tools = [...OPENAI_DEFAULT_TOOLS];
-      break;
-    case "gemini":
-      tools = [...GEMINI_PASCAL_TOOLS];
-      break;
-    case "gemini_snake":
-      tools = [...GEMINI_DEFAULT_TOOLS];
-      break;
-    case "letta":
-      tools = [...LETTA_TOOLS];
-      break;
-    case "none":
-      tools = [];
-      break;
-    default:
-      tools = [...ANTHROPIC_DEFAULT_TOOLS];
-      break;
-  }
-
-  return appendArtifactToolsIfEnabled(tools);
-}
-
 export async function prepareToolExecutionContextForResolvedTarget(params: {
   modelIdentifier?: string | null;
   providerType?: string | null;
@@ -289,55 +203,12 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       ? (resolveModel(modelIdentifier) ?? modelIdentifier)
       : null;
   const effectiveToolsetPreference = clientToolset?.base ?? toolsetPreference;
-  const includedToolNames = appendUniqueToolNames(
-    resolveIncludedToolNames(clientToolset?.include),
-    resolveAllowlistedToolNames(clientToolAllowlist),
-  );
+  const includedToolNames = resolveIncludedToolNames(clientToolset?.include);
 
-  if (effectiveToolsetPreference === "auto") {
-    const derivedToolset = effectiveModel
-      ? deriveToolsetFromModel(effectiveModel, providerType)
-      : "default";
-    const scopedModContext = buildModInvocationContext({
-      agent,
-      base: modContext,
-      conversationId,
-      modelIdentifier: effectiveModel,
-      permissionMode:
-        permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
-      toolset: derivedToolset,
-      workingDirectory,
-    });
-    const modCapabilities = mergeModAdapterCapabilities(
-      modAdapters,
-      scopedModContext,
-    );
-    const preparedToolContext = await prepareToolExecutionContextForModel(
-      effectiveModel ?? undefined,
-      {
-        resolvedToolset: derivedToolset,
-        exclude,
-        include: includedToolNames,
-        clientToolAllowlist,
-        externalToolScopeIds,
-        workingDirectory,
-        permissionModeState,
-        modContext: scopedModContext,
-        modEvents,
-        modPermissions: modCapabilities.permissions,
-        modTools: modCapabilities.tools,
-        runtimeContext,
-      },
-    );
-
-    return {
-      preparedToolContext,
-      toolset: derivedToolset,
-      toolsetPreference,
-      effectiveModel,
-      agent: null,
-    };
-  }
+  const resolvedToolset =
+    effectiveToolsetPreference === "auto"
+      ? deriveToolsetFromModel(effectiveModel ?? "", providerType)
+      : effectiveToolsetPreference;
 
   const scopedModContext = buildModInvocationContext({
     agent,
@@ -346,22 +217,19 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     modelIdentifier: effectiveModel,
     permissionMode:
       permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
-    toolset: effectiveToolsetPreference,
+    toolset: resolvedToolset,
     workingDirectory,
   });
   const modCapabilities = mergeModAdapterCapabilities(
     modAdapters,
     scopedModContext,
   );
-  const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
-    filterBuiltInToolNamesByClientAllowlist(
-      appendUniqueToolNames(
-        getToolNamesForToolset(effectiveToolsetPreference),
-        includedToolNames,
-      ).filter((toolName) => (exclude ? !exclude.includes(toolName) : true)),
-      clientToolAllowlist,
-    ),
+  const preparedToolContext = await prepareToolExecutionContextForModel(
+    effectiveModel ?? undefined,
     {
+      resolvedToolset,
+      exclude,
+      include: includedToolNames,
       clientToolAllowlist,
       externalToolScopeIds,
       workingDirectory,
@@ -376,7 +244,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 
   return {
     preparedToolContext,
-    toolset: effectiveToolsetPreference,
+    toolset: resolvedToolset,
     toolsetPreference,
     effectiveModel,
     agent: null,
@@ -583,26 +451,7 @@ export async function clearPersistedClientToolRules(
 export async function forceToolsetSwitch(
   toolsetName: ToolsetName,
 ): Promise<void> {
-  // Load the appropriate toolset
-  // Note: loadTools/loadSpecificTools acquire a switch lock that causes
-  // sendMessageStream to wait, preventing messages from being sent with
-  // stale or partial tools during the switch.
-  if (toolsetName === "none") {
-    // Clear tools with lock protection so sendMessageStream() waits
-    clearToolsWithLock();
-  } else if (toolsetName === "codex") {
-    await loadSpecificTools([...OPENAI_PASCAL_TOOLS]);
-  } else if (toolsetName === "codex_snake") {
-    await loadSpecificTools([...OPENAI_DEFAULT_TOOLS]);
-  } else if (toolsetName === "gemini") {
-    await loadSpecificTools([...GEMINI_PASCAL_TOOLS]);
-  } else if (toolsetName === "gemini_snake") {
-    await loadTools("google_ai/gemini-3-pro-preview");
-  } else if (toolsetName === "letta") {
-    await loadSpecificTools([...LETTA_TOOLS]);
-  } else {
-    await loadTools("anthropic/claude-sonnet-4");
-  }
+  await loadTools(undefined, { resolvedToolset: toolsetName });
 }
 
 /**
@@ -615,35 +464,7 @@ export async function switchToolsetForModel(
   modelIdentifier: string,
   providerType?: string | null,
 ): Promise<ToolsetName> {
-  // Resolve model ID to handle when possible so provider checks stay consistent
-  const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
-  const typedToolsetName = deriveToolsetFromModel(resolvedModel, providerType);
-  const stringOnlyToolsetName = deriveToolsetFromModel(resolvedModel);
-
-  if (typedToolsetName !== stringOnlyToolsetName) {
-    await forceToolsetSwitch(typedToolsetName);
-    return typedToolsetName;
-  }
-
-  // Load the appropriate set for the target model
-  // Note: loadTools acquires a switch lock that causes sendMessageStream to wait,
-  // preventing messages from being sent with stale or partial tools during the switch.
-  await loadTools(resolvedModel);
-
-  // If no tools were loaded (e.g., unexpected handle or edge-case filter),
-  // fall back to loading the default toolset to avoid ending up with only base tools.
-  const loadedAfterPrimary = getToolNames().length;
-  if (loadedAfterPrimary === 0 && !toolFilter.isActive()) {
-    await loadTools();
-
-    // If we *still* have no tools, surface an explicit error instead of silently
-    // leaving the agent with only base tools attached.
-    if (getToolNames().length === 0) {
-      throw new Error(
-        `Failed to load any Letta tools for model "${resolvedModel}".`,
-      );
-    }
-  }
-
-  return typedToolsetName;
+  const toolset = deriveToolsetFromModel(modelIdentifier, providerType);
+  await forceToolsetSwitch(toolset);
+  return toolset;
 }

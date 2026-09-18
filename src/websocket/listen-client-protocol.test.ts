@@ -1528,7 +1528,7 @@ describe("listen-client parseServerMessage", () => {
           type: "update_toolset",
           request_id: "update-toolset-1",
           runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
-          toolset_preference: "gemini",
+          toolset_preference: "letta",
         }),
       ),
     );

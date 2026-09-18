@@ -1,6 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import {
   clearRuntimeModelCatalogFixture,
   installRuntimeModelCatalogFixture,
@@ -75,17 +73,5 @@ describe("deriveToolsetFromModel", () => {
     expect(deriveToolsetFromModel("letta/auto")).toBe("default");
     expect(deriveToolsetFromModel("auto-fast")).toBe("default");
     expect(deriveToolsetFromModel("letta/auto-fast")).toBe("default");
-  });
-});
-
-describe("toolset initialization safety", () => {
-  test("avoids top-level toolset aliases that can trigger circular-import TDZ", () => {
-    const toolsetPath = fileURLToPath(
-      new URL("../tools/toolset.ts", import.meta.url),
-    );
-    const source = readFileSync(toolsetPath, "utf-8");
-
-    expect(source).not.toContain("const CODEX_TOOLS = OPENAI_PASCAL_TOOLS");
-    expect(source).toContain("loadSpecificTools([...OPENAI_PASCAL_TOOLS])");
   });
 });

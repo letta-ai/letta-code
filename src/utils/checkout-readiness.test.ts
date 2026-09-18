@@ -21,8 +21,6 @@ import {
 } from "./checkout-readiness";
 
 test.each([
-  "RunShellCommand",
-  "run_shell_command",
   "ShellCommand",
   "shell_command",
   "Bash",
@@ -32,21 +30,11 @@ test.each([
   "shell",
   "Monitor",
   "Skill",
-  "Replace",
-  "replace",
-  "view_image",
   "ViewImage",
   "LS",
   "Read",
   "Write",
-  "ReadFileGemini",
-  "WriteFileGemini",
-  "ReadManyFiles",
-  "ListDirectory",
-  "GlobGemini",
-  "SearchFileContent",
   "ApplyPatch",
-  "apply_patch",
 ])("%s waits for its unpublished checkout", async (name) => {
   const agent = crypto.randomUUID();
   const root = join(tmpdir(), agent);
