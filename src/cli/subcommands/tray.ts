@@ -1,7 +1,7 @@
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { isLocalAgentId } from "@/agent/agent-id";
 import { getBackend } from "@/backend";
-import { ApiRequestError } from "@/backend/api/request";
 import {
   createTrayItem,
   deleteTrayItem,
@@ -28,23 +28,26 @@ const TRAY_OPTIONS = {
   conversation: { type: "string" },
   "conversation-id": { type: "string" },
   "tray-payload": { type: "string" },
+  "tray-payload-file": { type: "string" },
 } as const;
 
 function printUsage(): void {
   console.log(
     `
 Usage:
-  letta tray add --conversation-id <id> --tray-payload '<json>'
-  letta tray list --conversation-id <id>
-  letta tray update <tray-item-id> --conversation-id <id> --tray-payload '<json>'
-  letta tray delete <tray-item-id> --conversation-id <id>
+  letta tray add --agent <id> --conversation-id <id> --tray-payload-file <path>
+  letta tray list --agent <id> --conversation-id <id>
+  letta tray update <tray-item-id> --agent <id> --conversation-id <id> --tray-payload-file <path>
+  letta tray delete <tray-item-id> --agent <id> --conversation-id <id>
 
 Options:
-  --agent <id>             Agent ID (defaults to active agent context)
+  --agent <id>             Agent ID
   --agent-id <id>          Alias for --agent
   --conversation <id>      Conversation ID
   --conversation-id <id>   Alias for --conversation
   --tray-payload <json>    Versioned Tray payload
+  --tray-payload-file <path>
+                           Read the versioned Tray payload from a JSON file
 
 Markdownlet V1:
   {"version":1,"type":"markdownlet","title":"Open PRs","markdown":"| PR | Status |\\n|---|---|"}
@@ -67,7 +70,9 @@ function parseTrayArgs(argv: string[]) {
 }
 
 function parseTrayPayload(raw: string | undefined): TrayPayload {
-  if (!raw) throw new Error("Pass --tray-payload <json>");
+  if (!raw) {
+    throw new Error("Pass --tray-payload <json> or --tray-payload-file <path>");
+  }
 
   let value: unknown;
   try {
@@ -212,40 +217,51 @@ function validateAction(
   action: string,
   itemId: string | undefined,
   trayPayload: string | undefined,
+  trayPayloadFile: string | undefined,
 ): TrayPayload | undefined {
   if (action === "list") {
     if (itemId) throw new Error("list does not accept a Tray item ID");
-    if (trayPayload !== undefined) {
-      throw new Error("list does not accept --tray-payload");
+    if (trayPayload !== undefined || trayPayloadFile !== undefined) {
+      throw new Error("list does not accept a Tray payload");
     }
     return undefined;
   }
   if (action === "add") {
     if (itemId) throw new Error("add does not accept a Tray item ID");
-    return parseTrayPayload(trayPayload);
+    return parseTrayPayloadInput(trayPayload, trayPayloadFile);
   }
   if (action === "update") {
     if (!itemId) throw new Error("update requires a Tray item ID");
-    return parseTrayPayload(trayPayload);
+    return parseTrayPayloadInput(trayPayload, trayPayloadFile);
   }
   if (action === "delete" || action === "remove" || action === "rm") {
     if (!itemId) throw new Error(`${action} requires a Tray item ID`);
-    if (trayPayload !== undefined) {
-      throw new Error(`${action} does not accept --tray-payload`);
+    if (trayPayload !== undefined || trayPayloadFile !== undefined) {
+      throw new Error(`${action} does not accept a Tray payload`);
     }
     return undefined;
   }
   throw new Error(`Unknown Tray action: ${action}`);
 }
 
-function throwCloudOnlyForMissingRoute(error: unknown): never {
-  if (
-    error instanceof ApiRequestError &&
-    (error.status === 404 || error.status === 405)
-  ) {
-    throw new Error("Tray is only available on Letta Cloud");
+function parseTrayPayloadInput(
+  trayPayload: string | undefined,
+  trayPayloadFile: string | undefined,
+): TrayPayload {
+  if (trayPayload !== undefined && trayPayloadFile !== undefined) {
+    throw new Error("Pass only one of --tray-payload or --tray-payload-file");
   }
-  throw error;
+  if (trayPayloadFile === undefined) return parseTrayPayload(trayPayload);
+
+  let fileContents: string;
+  try {
+    fileContents = readFileSync(trayPayloadFile, "utf8");
+  } catch (error) {
+    throw new Error(
+      `Unable to read --tray-payload-file: ${error instanceof Error ? error.message : error}`,
+    );
+  }
+  return parseTrayPayload(fileContents);
 }
 
 export async function runTraySubcommand(
@@ -261,7 +277,8 @@ export async function runTraySubcommand(
     return 1;
   }
 
-  const [action, itemId, ...extras] = parsed.positionals;
+  const [action, rawItemId, ...extras] = parsed.positionals;
+  const itemId = rawItemId?.trim() || undefined;
   if (parsed.values.help || !action || action === "help") {
     printUsage();
     return 0;
@@ -273,6 +290,7 @@ export async function runTraySubcommand(
       action,
       itemId,
       parsed.values["tray-payload"],
+      parsed.values["tray-payload-file"],
     );
 
     await (deps.initializeSettings ?? initializeTraySettings)();
@@ -288,24 +306,13 @@ export async function runTraySubcommand(
         deps.getLastSession ?? (() => settingsManager.getEffectiveLastSession())
       )(),
     );
-    const list = deps.listItems ?? listTrayItems;
-
     if (action === "list") {
-      try {
-        const items = await list(session.agentId, session.conversationId);
-        console.log(JSON.stringify({ items }, null, 2));
-        return 0;
-      } catch (error) {
-        throwCloudOnlyForMissingRoute(error);
-      }
-    }
-
-    // Probe the route instead of inferring Cloud support from its URL. Managed
-    // Cloud sessions may intentionally reach cloud-api through localhost.
-    try {
-      await list(session.agentId, session.conversationId);
-    } catch (error) {
-      throwCloudOnlyForMissingRoute(error);
+      const items = await (deps.listItems ?? listTrayItems)(
+        session.agentId,
+        session.conversationId,
+      );
+      console.log(JSON.stringify({ items }, null, 2));
+      return 0;
     }
 
     if (action === "add" && payload) {

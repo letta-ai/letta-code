@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ApiRequestError } from "@/backend/api/request";
 import type { TrayItem } from "@/backend/api/tray";
@@ -38,22 +39,17 @@ async function withEnvironment<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 describe("managing-tray SKILL.md", () => {
-  test("documented --tray-payload example parses with real newlines", () => {
+  test("documents shell-neutral one-line commands with payload files", () => {
     const skillPath = join(
       process.cwd(),
       "src/skills/builtin/managing-tray/SKILL.md",
     );
     const content = readFileSync(skillPath, "utf8");
 
-    const match = content.match(/--tray-payload '([^']+)'/);
-    if (!match?.[1]) throw new Error("SKILL.md must document --tray-payload");
-    const rawJson = match[1];
-    const parsed = JSON.parse(rawJson) as Record<string, unknown>;
-
-    expect(typeof parsed.markdown).toBe("string");
-    const md = parsed.markdown as string;
-    expect(md).toContain("\n");
-    expect(md).not.toContain("\\n");
+    expect(content).toContain("--tray-payload-file tray-item.json");
+    expect(content).not.toMatch(/\\\r?\n/);
+    expect(content).not.toContain("$AGENT_ID");
+    expect(content).not.toContain("$CONVERSATION_ID");
   });
 });
 
@@ -335,13 +331,25 @@ describe("action validation before settings", () => {
       payload,
     ]);
     expect(code).toBe(1);
-    expect(errors.join("\n")).toContain("list does not accept --tray-payload");
+    expect(errors.join("\n")).toContain("list does not accept a Tray payload");
     expect(settingsInitialized).toBe(false);
   });
 
   test("update without item ID errors immediately without calling settings", async () => {
     const { code, errors, settingsInitialized } = await runWithTracking([
       "update",
+      "--tray-payload",
+      payload,
+    ]);
+    expect(code).toBe(1);
+    expect(errors.join("\n")).toContain("update requires a Tray item ID");
+    expect(settingsInitialized).toBe(false);
+  });
+
+  test("update rejects a whitespace-only item ID before settings", async () => {
+    const { code, errors, settingsInitialized } = await runWithTracking([
+      "update",
+      "   ",
       "--tray-payload",
       payload,
     ]);
@@ -411,7 +419,7 @@ describe("Tray subcommand action contracts", () => {
     }
   });
 
-  test("list surfaces Cloud-only error when route returns 404", async () => {
+  test("list preserves the Cloud conversation-not-found response", async () => {
     const errors: string[] = [];
     const originalError = console.error;
     console.error = (msg?: unknown) => errors.push(String(msg));
@@ -422,14 +430,17 @@ describe("Tray subcommand action contracts", () => {
           isLocalBackend: () => false,
           getLastSession: () => null,
           listItems: async () => {
-            throw new ApiRequestError("Not Found", 404, "");
+            throw new ApiRequestError(
+              'API error (404): {"message":"Conversation not found"}',
+              404,
+              '{"message":"Conversation not found"}',
+            );
           },
         }),
       );
       expect(code).toBe(1);
-      expect(errors.join("\n")).toContain(
-        "Tray is only available on Letta Cloud",
-      );
+      expect(errors.join("\n")).toContain("Conversation not found");
+      expect(errors.join("\n")).not.toContain("only available on Letta Cloud");
     } finally {
       console.error = originalError;
     }
@@ -508,6 +519,26 @@ describe("Tray subcommand action contracts", () => {
 });
 
 describe("Tray subcommand", () => {
+  test("help examples include complete agent and conversation scopes", async () => {
+    const output: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => output.push(String(message));
+    try {
+      expect(await runTraySubcommand(["--help"])).toBe(0);
+      const usageLines = output
+        .join("\n")
+        .split("\n")
+        .filter((line) => line.trimStart().startsWith("letta tray"));
+      expect(usageLines).toHaveLength(4);
+      for (const line of usageLines) {
+        expect(line).toContain("--agent <id>");
+        expect(line).toContain("--conversation-id <id>");
+      }
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   test("adds a validated markdownlet", async () => {
     const calls: unknown[] = [];
     const originalLog = console.log;
@@ -547,6 +578,40 @@ describe("Tray subcommand", () => {
       expect(calls).toEqual([["agent-1", "conv-1", JSON.parse(payload)]]);
     } finally {
       console.log = originalLog;
+    }
+  });
+
+  test("reads a versioned payload from a JSON file", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "letta-tray-payload-"));
+    const payloadPath = join(directory, "tray-item.json");
+    writeFileSync(payloadPath, payload);
+    let receivedPayload: unknown;
+    const originalLog = console.log;
+    console.log = () => {};
+    try {
+      const code = await withEnvironment(() =>
+        runTraySubcommand(["add", "--tray-payload-file", payloadPath], {
+          initializeSettings: async () => {},
+          isLocalBackend: () => false,
+          getLastSession: () => null,
+          createItem: async (_, __, trayPayload) => {
+            receivedPayload = trayPayload;
+            return {
+              id: "tray-file",
+              agent_id: "agent-1",
+              conversation_id: "conv-1",
+              payload: trayPayload,
+              created_at: "2026-09-18T00:00:00.000Z",
+              updated_at: "2026-09-18T00:00:00.000Z",
+            };
+          },
+        }),
+      );
+      expect(code).toBe(0);
+      expect(receivedPayload).toEqual(JSON.parse(payload));
+    } finally {
+      console.log = originalLog;
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 
@@ -630,8 +695,9 @@ describe("Tray subcommand", () => {
     }
   });
 
-  test("proxy regression: 404 from add probe surfaces Cloud-only error", async () => {
+  test("add skips list preflight and preserves the Cloud 404 response", async () => {
     const errors: string[] = [];
+    let listCalled = false;
     const originalError = console.error;
     console.error = (msg?: unknown) => errors.push(String(msg));
     try {
@@ -641,17 +707,22 @@ describe("Tray subcommand", () => {
           isLocalBackend: () => false,
           getLastSession: () => null,
           listItems: async () => {
-            throw new ApiRequestError("Not Found", 404, "");
+            listCalled = true;
+            return [];
           },
           createItem: async () => {
-            throw new Error("must not reach createItem");
+            throw new ApiRequestError(
+              'API error (404): {"message":"Conversation not found"}',
+              404,
+              '{"message":"Conversation not found"}',
+            );
           },
         }),
       );
       expect(code).toBe(1);
-      expect(errors.join("\n")).toContain(
-        "Tray is only available on Letta Cloud",
-      );
+      expect(listCalled).toBe(false);
+      expect(errors.join("\n")).toContain("Conversation not found");
+      expect(errors.join("\n")).not.toContain("only available on Letta Cloud");
     } finally {
       console.error = originalError;
     }

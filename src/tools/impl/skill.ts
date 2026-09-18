@@ -24,6 +24,7 @@ import {
   SKILLS_DIR,
 } from "@/agent/skills";
 import { getBackend } from "@/backend";
+import { resolveTrayFeatureAvailability } from "@/backend/api/tray-support";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { parseFrontmatter } from "@/utils/frontmatter";
@@ -44,6 +45,7 @@ interface SkillResult {
 
 export interface ReadSkillContentOptions {
   attachedRepositories?: readonly AttachedAgentRepository[];
+  trayAvailable?: boolean;
 }
 
 async function readSkillFromRoot(
@@ -248,7 +250,19 @@ export async function readSkillContent(
   // 6. Try bundled skills (lowest priority)
   const bundledSkills = await getBundledSkills();
   const bundledSkill = bundledSkills.find((s) => s.id === skillId);
-  if (bundledSkill?.path && isSkillAvailableForAgent(bundledSkill, agentId)) {
+  const trayAvailable =
+    bundledSkill?.id === "managing-tray"
+      ? await resolveTrayFeatureAvailability(agentId, options.trayAvailable)
+      : true;
+  if (bundledSkill?.id === "managing-tray" && !trayAvailable) {
+    throw new Error(
+      `Skill "${skillId}" not found. Check that the skill name is correct and that it appears in the available skills list.`,
+    );
+  }
+  if (
+    bundledSkill?.path &&
+    isSkillAvailableForAgent(bundledSkill, agentId, trayAvailable)
+  ) {
     try {
       const path = resolveBundledSkillContentPath({
         skillId,

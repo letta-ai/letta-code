@@ -35,29 +35,18 @@ The initial payload type is a versioned markdownlet:
 
 ## Commands
 
-Use the active conversation ID explicitly. The harness provides
-`$CONVERSATION_ID` and `$AGENT_ID` during an agent session.
+Use the active agent and conversation IDs explicitly. Replace `AGENT_ID`,
+`CONVERSATION_ID`, and `TRAY_ITEM_ID` below with their actual values. For add
+and update, write the payload to `tray-item.json` first. These one-line commands
+work in POSIX shells, PowerShell, and cmd.exe.
 
-```bash
-letta tray add \
-  --agent "$AGENT_ID" \
-  --conversation-id "$CONVERSATION_ID" \
-  --tray-payload '{"version":1,"type":"markdownlet","title":"Open pull requests","markdown":"| PR | Status |\n| --- | --- |\n| #123 | CI running |"}'
-
-letta tray list \
-  --agent "$AGENT_ID" \
-  --conversation-id "$CONVERSATION_ID"
-
-letta tray update tray-item-id \
-  --agent "$AGENT_ID" \
-  --conversation-id "$CONVERSATION_ID" \
-  --tray-payload '{"version":1,"type":"markdownlet","title":"Open pull requests","markdown":"Updated content"}'
-
-letta tray delete tray-item-id \
-  --agent "$AGENT_ID" \
-  --conversation-id "$CONVERSATION_ID"
+```text
+letta tray add --agent AGENT_ID --conversation-id CONVERSATION_ID --tray-payload-file tray-item.json
+letta tray list --agent AGENT_ID --conversation-id CONVERSATION_ID
+letta tray update TRAY_ITEM_ID --agent AGENT_ID --conversation-id CONVERSATION_ID --tray-payload-file tray-item.json
+letta tray delete TRAY_ITEM_ID --agent AGENT_ID --conversation-id CONVERSATION_ID
 ```
 
 After adding or updating an item, list the Tray to verify the saved state and
-retain the returned item ID for future updates or deletion.
-
+retain the returned item ID for future updates or deletion. Remove the temporary
+payload file after the command succeeds.

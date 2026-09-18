@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { buildClientSkillsPayload } from "@/agent/client-skills";
 import { isSkillAvailableForAgent, type Skill } from "@/agent/skills";
+import { clearTraySupportCacheForTests } from "@/backend/api/tray-support";
+import { settingsManager } from "@/settings-manager";
 import { readSkillContent } from "@/tools/impl/skill";
 
 const baseSkill: Skill = {
@@ -79,21 +81,19 @@ describe("isSkillAvailableForAgent", () => {
     }
   });
 
-  test("hides bundled managing-tray for Cloud agent when cloudFeaturesAvailable is false", () => {
+  test("hides bundled managing-tray when Tray is unavailable", () => {
     const skill: Skill = { ...baseSkill, id: "managing-tray" };
-    // Cloud agent ID (non-local) but Cloud features are unavailable (self-hosted backend).
     expect(isSkillAvailableForAgent(skill, "agent-123", false)).toBe(false);
-    // Cloud agent with Cloud features available → still visible.
     expect(isSkillAvailableForAgent(skill, "agent-123", true)).toBe(true);
   });
 
-  test("hides bundled managing-tray for anonymous agent when cloudFeaturesAvailable is false", () => {
+  test("hides bundled managing-tray for an anonymous agent when Tray is unavailable", () => {
     const skill: Skill = { ...baseSkill, id: "managing-tray" };
     expect(isSkillAvailableForAgent(skill, undefined, false)).toBe(false);
     expect(isSkillAvailableForAgent(skill, undefined, true)).toBe(true);
   });
 
-  test("non-bundled managing-tray override is available regardless of cloudFeaturesAvailable", () => {
+  test("keeps non-bundled managing-tray overrides regardless of Tray availability", () => {
     const skill: Skill = {
       ...baseSkill,
       id: "managing-tray",
@@ -106,31 +106,88 @@ describe("isSkillAvailableForAgent", () => {
   });
 });
 
-describe("buildClientSkillsPayload with cloudFeaturesAvailable", () => {
-  test("excludes bundled managing-tray for Cloud agents when cloudFeaturesAvailable is false", async () => {
-    const noCloudPayload = await buildClientSkillsPayload({
-      agentId: "agent-cloud",
-      cloudFeaturesAvailable: false,
-      skillSources: ["bundled"],
-      attachedRepositories: [],
+async function withTrayServer(
+  status: 200 | 404,
+  run: (requests: string[]) => Promise<void>,
+): Promise<void> {
+  const previousBaseUrl = process.env.LETTA_BASE_URL;
+  const previousApiKey = process.env.LETTA_API_KEY;
+  const requests: string[] = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      requests.push(new URL(request.url).pathname);
+      return Response.json(
+        status === 200 ? { items: [] } : { error: "missing" },
+        {
+          status,
+        },
+      );
+    },
+  });
+  process.env.LETTA_BASE_URL = `http://127.0.0.1:${server.port}`;
+  process.env.LETTA_API_KEY = "tray-support-test";
+  clearTraySupportCacheForTests();
+  try {
+    await settingsManager.initialize();
+    await run(requests);
+  } finally {
+    server.stop(true);
+    clearTraySupportCacheForTests();
+    if (previousBaseUrl === undefined) delete process.env.LETTA_BASE_URL;
+    else process.env.LETTA_BASE_URL = previousBaseUrl;
+    if (previousApiKey === undefined) delete process.env.LETTA_API_KEY;
+    else process.env.LETTA_API_KEY = previousApiKey;
+  }
+}
+
+describe("Tray skill availability through localhost API servers", () => {
+  test("discovers and directly loads managing-tray through a Cloud proxy", async () => {
+    await withTrayServer(200, async (requests) => {
+      const agentId = "agent-tray-proxy";
+      const payload = await buildClientSkillsPayload({
+        agentId,
+        skillSources: ["bundled"],
+        attachedRepositories: [],
+      });
+      expect(
+        payload.availableSkills.some((skill) => skill.name === "managing-tray"),
+      ).toBe(true);
+
+      const loaded = await readSkillContent(
+        "managing-tray",
+        "/tmp/no-project-skills",
+        agentId,
+        { attachedRepositories: [] },
+      );
+      expect(loaded.content).toContain("# Managing Tray");
+      expect(requests).toEqual([
+        `/v1/agents/${agentId}/conversations/default/tray`,
+      ]);
     });
-    expect(
-      noCloudPayload.clientSkills.some((s) => s.name === "managing-tray"),
-    ).toBe(false);
-    expect(
-      noCloudPayload.availableSkills.some((s) => s.name === "managing-tray"),
-    ).toBe(false);
   });
 
-  test("includes bundled managing-tray for Cloud agents when cloudFeaturesAvailable is true", async () => {
-    const cloudPayload = await buildClientSkillsPayload({
-      agentId: "agent-cloud",
-      cloudFeaturesAvailable: true,
-      skillSources: ["bundled"],
-      attachedRepositories: [],
+  test("hides and rejects managing-tray on a self-hosted server", async () => {
+    await withTrayServer(404, async (requests) => {
+      const agentId = "agent-tray-self-hosted";
+      const payload = await buildClientSkillsPayload({
+        agentId,
+        skillSources: ["bundled"],
+        attachedRepositories: [],
+      });
+      expect(
+        payload.availableSkills.some((skill) => skill.name === "managing-tray"),
+      ).toBe(false);
+
+      await expect(
+        readSkillContent("managing-tray", "/tmp/no-project-skills", agentId, {
+          attachedRepositories: [],
+        }),
+      ).rejects.toThrow('Skill "managing-tray" not found');
+      expect(requests).toEqual([
+        `/v1/agents/${agentId}/conversations/default/tray`,
+      ]);
     });
-    expect(
-      cloudPayload.clientSkills.some((s) => s.name === "managing-tray"),
-    ).toBe(true);
   });
 });
