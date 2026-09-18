@@ -1,3 +1,4 @@
+import { formatSlackBindingNotice } from "@/channels/message-channel-bindings";
 import type {
   ChannelMessageActionAdapter,
   ChannelMessageActionContext,
@@ -14,6 +15,8 @@ export interface CreateSlackMessageActionAdapterOptions {
   resolveMessageTarget?: ChannelMessageActionAdapter["resolveMessageTarget"];
   /** Host-owned attachment materialization, when download-file is supported. */
   downloadFile?: (context: ChannelMessageActionContext) => Promise<string>;
+  /** Advertise binding actions only when the executor's host provides them. */
+  bindings?: boolean;
 }
 
 async function sendSlackMessage(
@@ -46,9 +49,13 @@ async function sendSlackMessage(
     agentId: route.agentId,
     conversationId: route.conversationId,
   });
-  return request.mediaPath
+  const confirmation = request.mediaPath
     ? `Attachment sent to slack (message_id: ${result.messageId})`
     : `Message sent to slack (message_id: ${result.messageId})`;
+  return (
+    confirmation +
+    formatSlackBindingNotice(result.bindingInfo, route.conversationId)
+  );
 }
 
 async function reactInSlack(
@@ -108,10 +115,28 @@ export function createSlackMessageActionAdapter(
     ...(options.listCustomEmojis ? ["list-custom-emojis"] : []),
     ...(options.uploadFile ? ["upload-file"] : []),
     ...(options.downloadFile ? ["download-file"] : []),
+    ...(options.bindings ? ["get-binding", "update-binding"] : []),
   ];
   return {
     describeMessageTool() {
       const properties: Record<string, unknown> = {};
+      if (options.bindings) {
+        properties.threadId = {
+          type: ["string", "null"],
+          description:
+            "Thread identifier. Binding actions require an exact Slack thread timestamp, or explicit null for an unthreaded DM.",
+        };
+        properties.conversationId = {
+          type: "string",
+          description:
+            "Destination conversation for update-binding. Must belong to this agent; default selects this agent's default conversation.",
+        };
+        properties.expectedConversationId = {
+          type: "string",
+          description:
+            "Expected current destination for update-binding, from get-binding. A different current binding returns a conflict; an already-matching destination is a no-op.",
+        };
+      }
       if (options.downloadFile) {
         properties.attachmentId = {
           type: "string",

@@ -40,6 +40,8 @@ export interface AgentRuntimeStatusEntry {
   state: "IDLE" | "PENDING_DELIVERY" | "ACTIVE" | "ACTIVE_UNATTRIBUTED";
   /** The owning listener's loop status, relayed verbatim; null when unowned. */
   loop_state: { status: string } | null;
+  active_harness?: { connection_id: string } | null;
+  has_conflicting_listeners?: boolean;
   active_run_ids: string[];
   last_activity_at: number;
 }
@@ -60,11 +62,12 @@ export interface AgentRuntimeStatusSnapshot {
 export async function getAgentRuntimeStatus(
   agentId: string,
   conversationIds: string[],
+  signal?: AbortSignal,
 ): Promise<AgentRuntimeStatusSnapshot> {
   return apiRequest<AgentRuntimeStatusSnapshot>(
     "GET",
     `/v1/agents/${encodeURIComponent(agentId)}/runtime-status`,
     undefined,
-    { query: { conversation_ids: conversationIds.join(",") } },
+    { query: { conversation_ids: conversationIds.join(",") }, signal },
   );
 }

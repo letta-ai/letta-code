@@ -55,7 +55,11 @@ export function resolveSlackConcreteActivity(
     return null;
   }
 
-  for (const description of [event.toolTitle, event.toolDetails]) {
+  const descriptions =
+    event.toolBatchTitle !== undefined
+      ? [event.toolBatchTitle]
+      : [event.toolTitle, event.toolDetails];
+  for (const description of descriptions) {
     if (!isNonEmptyString(description)) {
       continue;
     }

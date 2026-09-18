@@ -53,20 +53,12 @@ export const commands: Record<string, Command> = {
     },
   },
   "/doctor": {
-    desc: "Audit and refine your memory structure",
+    desc: "Investigate an agent issue in this conversation",
     order: 12.1,
-    noArgs: true,
+    args: "[symptom]",
     handler: () => {
-      // Handled specially in App.tsx to send doctor prompt
-      return "Running memory doctor...";
-    },
-  },
-  "/remember": {
-    desc: "Remember something from the conversation (/remember [instructions])",
-    order: 13,
-    handler: () => {
-      // Handled specially in App.tsx to trigger memory update
-      return "Processing memory request...";
+      // Handled by the primary-agent turn in the TUI and listener.
+      return "Starting doctor...";
     },
   },
   "/reflect": {
@@ -278,15 +270,6 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Updating description...";
-    },
-  },
-  "/export": {
-    desc: "Export AgentFile (.af)",
-    order: 26,
-    noArgs: true,
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
-      return "Exporting agent file...";
     },
   },
   "/toolset": {
@@ -647,14 +630,6 @@ export const commands: Record<string, Command> = {
     noArgs: true,
     handler: () => {
       return "Opening agent browser...";
-    },
-  },
-  "/download": {
-    desc: "Export AgentFile (.af)",
-    hidden: true, // Legacy alias for /export
-    noArgs: true,
-    handler: () => {
-      return "Exporting agent file...";
     },
   },
 };

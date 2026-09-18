@@ -83,6 +83,58 @@ describe("public memory constraints contract", () => {
   ])("rejects invalid policy %s", (content, message) => {
     expect(() => parseMemoryConstraintsConfig(content)).toThrow(message);
   });
+  /** Resolves the per-file limit for each path under one uncapped glob override
+   * and returns the paths that stayed on the 1-character default cap. */
+  async function cappedPaths(
+    pattern: string,
+    paths: string[],
+  ): Promise<string[]> {
+    const errors = await validateMemoryTreeConstraints(
+      {
+        async listFiles() {
+          return paths.map((path) => ({ path, mode: "100644" }));
+        },
+        async readFile() {
+          throw new Error("countCharacters must be preferred when provided");
+        },
+        async countCharacters() {
+          return 3;
+        },
+      },
+      {
+        layout: "shared-memory",
+        requireRootMarker: false,
+        config: {
+          version: 1,
+          maxFileCharacters: 1,
+          fileCharacterLimits: [{ pattern, maxCharacters: null }],
+        },
+      },
+    );
+    return errors.map((error) => error.split(":")[0] ?? error);
+  }
+
+  test.each([
+    ["*.md", ["notes.md", "reference/notes.md"], ["reference/notes.md"]],
+    [
+      "reference/**/*.md",
+      ["reference/api.md", "reference/a/b/deep.md", "system/api.md"],
+      ["system/api.md"],
+    ],
+    [
+      "**/MEMORY.md",
+      ["MEMORY.md", "reference/MEMORY.md", "MEMORY-x.md"],
+      ["MEMORY-x.md"],
+    ],
+    ["v?.md", ["v1.md", "v10.md", "v/.md"], ["v10.md", "v/.md"]],
+    ["a.b.md", ["a.b.md", "aXb.md"], ["aXb.md"]],
+  ])(
+    "resolves glob override %s with path-segment semantics",
+    async (pattern, paths, expectedCapped) => {
+      expect(await cappedPaths(pattern, paths)).toEqual(expectedCapped);
+    },
+  );
+
   test("exports the tracked config path used by the validator", () => {
     expect(MEMORY_CONSTRAINTS_CONFIG_PATH).toBe(".memfs.config.json");
     expect(VALIDATOR_CONFIG_PATH).toBe(MEMORY_CONSTRAINTS_CONFIG_PATH);

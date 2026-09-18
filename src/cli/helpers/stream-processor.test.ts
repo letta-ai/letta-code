@@ -13,6 +13,7 @@ describe("StreamProcessor structured errors", () => {
       detail: "ChatGPT rate limit exceeded:",
       error_code: "usage_limit_reached",
       kind: "insufficient_credits",
+      status_code: 429,
       retryable: false,
       run_id: "run-production-shape",
     } as unknown as LettaStreamingResponse);
@@ -20,6 +21,8 @@ describe("StreamProcessor structured errors", () => {
     expect(result.errorInfo).toMatchObject({
       error_code: "usage_limit_reached",
       detail: "ChatGPT rate limit exceeded:",
+      status_code: 429,
+      retryable: false,
     });
     expect(parseChatGPTUsageLimitDetail(result.errorInfo)).toEqual({
       planType: null,

@@ -1,6 +1,6 @@
 import type WebSocket from "ws";
-import { isSkillSourceArray } from "@/agent/skill-sources";
 import type { ExperimentId } from "@/experiments/types";
+import { isToolsetPreference } from "@/tools/toolset-catalog";
 import {
   CHANNEL_ACCOUNT_CREATE_FIELDS,
   CHANNEL_ACCOUNT_UPDATE_FIELDS,
@@ -77,7 +77,6 @@ import type {
   ReadFileCommand,
   ReadMemoryFileCommand,
   RuntimeScope,
-  RuntimeStartCommand,
   SearchBranchesCommand,
   SearchFilesCommand,
   SecretApplyCommand,
@@ -128,7 +127,6 @@ import { isConnectProviderCommand } from "./connect-provider-protocol-inbound";
 import {
   isExternalToolCallResponseCommand,
   isRuntimeExternalToolsUpdateCommand,
-  isRuntimeStartExternalToolsGroup,
 } from "./external-tool-protocol";
 import {
   isAppServerInfoCommand,
@@ -140,12 +138,7 @@ import {
   isRuntimeScope,
   isStringArray,
 } from "./protocol-validation";
-import {
-  isRuntimeStartClientInfo,
-  isRuntimeStartCreateAgentOptions,
-  isRuntimeStartCreateConversationOptions,
-  isRuntimeStartWorkspaceSandbox,
-} from "./runtime-start-validation";
+import { isRuntimeStartCommand } from "./runtime-start-validation";
 import {
   isTeleportContinuePayload,
   parseTeleportCommand,
@@ -156,22 +149,10 @@ export type ServerLifecycleMessage = {
   type: "pong";
 };
 
-const TOOLSET_PREFERENCES = new Set([
-  "auto",
-  "codex",
-  "codex_snake",
-  "default",
-  "gemini",
-  "gemini_snake",
-  "none",
-]);
-
 function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
   if (!isObjectRecord(value)) return false;
   return (
-    (value.base === undefined ||
-      (typeof value.base === "string" &&
-        TOOLSET_PREFERENCES.has(value.base))) &&
+    (value.base === undefined || isToolsetPreference(value.base)) &&
     (value.include === undefined || isStringArray(value.include))
   );
 }
@@ -480,69 +461,17 @@ function isSyncCommand(value: unknown): value is SyncCommand {
   if (!value || typeof value !== "object") {
     return false;
   }
-  const candidate = value as {
-    type?: unknown;
-    runtime?: unknown;
-    request_id?: unknown;
-    recover_approvals?: unknown;
-    force_device_status?: unknown;
-    wait_for_replay?: unknown;
-  };
+  const c = value as Partial<Record<keyof SyncCommand, unknown>>;
   return (
-    candidate.type === "sync" &&
-    isRuntimeScope(candidate.runtime) &&
-    (candidate.request_id === undefined ||
-      typeof candidate.request_id === "string") &&
-    (candidate.recover_approvals === undefined ||
-      typeof candidate.recover_approvals === "boolean") &&
-    (candidate.force_device_status === undefined ||
-      typeof candidate.force_device_status === "boolean")
-  );
-}
-
-function isDevicePermissionMode(value: unknown): boolean {
-  return (
-    value === "standard" ||
-    value === "acceptEdits" ||
-    value === "unrestricted" ||
-    value === "strict"
-  );
-}
-
-export function isRuntimeStartCommand(
-  value: unknown,
-): value is RuntimeStartCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as Record<string, unknown>;
-  return (
-    c.type === "runtime_start" &&
-    typeof c.request_id === "string" &&
-    (c.agent_id === undefined || typeof c.agent_id === "string") &&
-    (c.create_agent === undefined ||
-      isRuntimeStartCreateAgentOptions(c.create_agent)) &&
-    (c.conversation_id === undefined ||
-      typeof c.conversation_id === "string") &&
-    (c.create_conversation === undefined ||
-      isRuntimeStartCreateConversationOptions(c.create_conversation)) &&
-    (c.conversation_source_tags === undefined ||
-      isStringArray(c.conversation_source_tags)) &&
-    (c.cwd === undefined || c.cwd === null || typeof c.cwd === "string") &&
-    (c.mode === undefined || isDevicePermissionMode(c.mode)) &&
-    (c.workspace_sandbox === undefined ||
-      isRuntimeStartWorkspaceSandbox(c.workspace_sandbox)) &&
-    (c.skill_sources === undefined || isSkillSourceArray(c.skill_sources)) &&
-    (c.preserve_skill_sources === undefined ||
-      typeof c.preserve_skill_sources === "boolean") &&
-    (c.client_info === undefined || isRuntimeStartClientInfo(c.client_info)) &&
+    c.type === "sync" &&
+    isRuntimeScope(c.runtime) &&
+    (c.request_id === undefined || typeof c.request_id === "string") &&
     (c.recover_approvals === undefined ||
       typeof c.recover_approvals === "boolean") &&
+    (c.resume_interrupted_turn === undefined ||
+      typeof c.resume_interrupted_turn === "boolean") &&
     (c.force_device_status === undefined ||
-      typeof c.force_device_status === "boolean") &&
-    (c.wait_for_replay === undefined ||
-      typeof c.wait_for_replay === "boolean") &&
-    (c.external_tools === undefined ||
-      (Array.isArray(c.external_tools) &&
-        c.external_tools.every(isRuntimeStartExternalToolsGroup)))
+      typeof c.force_device_status === "boolean")
   );
 }
 
@@ -1034,7 +963,7 @@ export function isUpdateToolsetCommand(
     c.type === "update_toolset" &&
     typeof c.request_id === "string" &&
     isRuntimeScope(c.runtime) &&
-    typeof c.toolset_preference === "string"
+    isToolsetPreference(c.toolset_preference)
   );
 }
 

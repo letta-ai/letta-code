@@ -47,7 +47,6 @@ import type {
   ExternalToolCallResponseCommand,
   RuntimeExternalToolsUpdateCommand,
   RuntimeExternalToolsUpdateResponseMessage,
-  RuntimeStartExternalToolsGroup,
 } from "./external-tool-protocol";
 import type { LoopState } from "./loop-status-protocol";
 import type {
@@ -55,9 +54,9 @@ import type {
   ConversationRuntimeScope,
 } from "./runtime-scope";
 import type {
-  RuntimeStartClientInfo,
-  RuntimeStartCreateAgentOptions,
-  RuntimeStartCreateConversationOptions,
+  DevicePermissionMode,
+  RuntimeStartCommand,
+  RuntimeStartResponseMessage,
 } from "./runtime-start-protocol";
 import type {
   CronProtocolCommand,
@@ -70,6 +69,11 @@ import type {
   RemoveQueueItemResponse,
 } from "./task-control-protocol";
 import type * as TeleportProtocol from "./teleport-protocol";
+import type {
+  ToolsetName,
+  ToolsetOption,
+  ToolsetPreference,
+} from "./toolset-protocol";
 
 export type * from "./approval-classification-protocol";
 export type * from "./background-process-protocol";
@@ -81,6 +85,7 @@ export type * from "./runtime-start-protocol";
 export type * from "./schedule-protocol";
 export type * from "./task-control-protocol";
 export type * from "./teleport-protocol";
+export type * from "./toolset-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 
@@ -113,22 +118,6 @@ export interface RuntimeEnvelope {
   emitted_at: string;
   idempotency_key: string;
 }
-
-export type DevicePermissionMode =
-  | "standard"
-  | "acceptEdits"
-  | "unrestricted"
-  | "strict";
-
-export type ToolsetName =
-  | "codex"
-  | "codex_snake"
-  | "default"
-  | "gemini"
-  | "gemini_snake"
-  | "none";
-
-export type ToolsetPreference = ToolsetName | "auto";
 
 export interface ClientToolsetConfig {
   /** Request-scoped base toolset. Omitted preserves the runtime preference. */
@@ -386,6 +375,7 @@ export interface DeviceStatus {
   letta_code_version: string | null;
   current_toolset: ToolsetName | null;
   current_toolset_preference: ToolsetPreference;
+  available_toolsets: ToolsetOption[];
   current_loaded_tools: string[];
   current_available_skills: AvailableSkillSummary[];
   background_processes: BackgroundProcessSummary[];
@@ -570,6 +560,8 @@ export interface TurnFinishedMessage extends RuntimeEnvelope {
   stop_reason: StopReasonType;
   run_id?: string;
   error?: string;
+  /** Final CLI counters, independent of control/stream socket delivery order. */
+  usage?: LettaStreamingResponse.LettaUsageStatistics;
 }
 
 export interface SubagentSnapshotToolCall {
@@ -721,50 +713,15 @@ export interface SyncCommand {
   runtime: ConversationRuntimeScope;
   /** When provided, app-server sends sync_response after replaying state. */
   request_id?: string;
-  /**
-   * Whether the device should probe backend state for stale pending approvals.
-   * Defaults to true for older clients. Lightweight status/recovery syncs should
-   * set this false and only replay in-memory listener state.
-   */
+  /** Consult the backend for stale approvals (default true). Observer-safe. */
   recover_approvals?: boolean;
+  /** Owner-only: resume the interrupted turn now (listener/recovery-sync.ts). */
+  resume_interrupted_turn?: boolean;
   /**
    * Force the sync replay to include update_device_status even when the
    * listener's last device-status snapshot for this socket/scope is unchanged.
    */
   force_device_status?: boolean;
-}
-
-export interface RuntimeStartCommand {
-  type: "runtime_start";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-  /** Existing agent to start/resume a runtime for. Mutually exclusive with create_agent. */
-  agent_id?: string;
-  /** Create a new agent before starting the runtime. Mutually exclusive with agent_id. */
-  create_agent?: RuntimeStartCreateAgentOptions;
-  /** Existing conversation to start/resume. Mutually exclusive with create_conversation. */
-  conversation_id?: string;
-  /** Create a new conversation. Without an agent, body must provide model and system. */
-  create_conversation?: RuntimeStartCreateConversationOptions;
-  /** Canonical source tags to merge. Matching legacy summary prefixes are removed. */
-  conversation_source_tags?: readonly string[];
-  /** Initial working directory for this runtime scope. Null resets to listener boot CWD. */
-  cwd?: string | null;
-  /** Initial permission mode for this runtime scope. */
-  mode?: DevicePermissionMode;
-  workspace_sandbox?: { root: string; isolation_root: string };
-  skill_sources?: readonly ("bundled" | "global" | "agent" | "project")[];
-  /** Preserve the current override when skill_sources is omitted. */ preserve_skill_sources?: boolean;
-  /** Optional client metadata for diagnostics/future protocol negotiation. */
-  client_info?: RuntimeStartClientInfo;
-  /** Whether to probe backend state for stale pending approvals before replaying state. Defaults to true. */
-  recover_approvals?: boolean;
-  /** Force the initial state replay to include update_device_status. Defaults to true. */
-  force_device_status?: boolean;
-  /** Resolve runtime_start only after its initial state replay has been emitted. */
-  wait_for_replay?: boolean;
-  /** Controller-owned tools registered atomically with the resolved runtime. */
-  external_tools?: readonly RuntimeStartExternalToolsGroup[];
 }
 
 export interface TerminalSpawnCommand {
@@ -2050,20 +2007,6 @@ export interface ConversationCompactResponseMessage {
   request_id: string;
   success: boolean;
   compaction: CompactionResponse | null;
-  error?: string;
-}
-
-export interface RuntimeStartResponseMessage {
-  type: "runtime_start_response";
-  request_id: string;
-  success: boolean;
-  runtime: ConversationRuntimeScope | null;
-  agent: AgentState | null;
-  conversation: Conversation | null;
-  created: {
-    agent: boolean;
-    conversation: boolean;
-  };
   error?: string;
 }
 

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { clearCapturedToolExecutionContexts } from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
+import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 
 describe("request-scoped client toolsets", () => {
   afterEach(() => {
@@ -61,6 +62,38 @@ describe("request-scoped client toolsets", () => {
       expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
         "Edit",
       );
+    }
+  });
+
+  test("builds the same Letta toolset for every model", async () => {
+    for (const modelIdentifier of [
+      "anthropic/claude-sonnet-5",
+      "openai/gpt-5.6-sol",
+      "google_ai/gemini-3.1-pro-preview",
+    ]) {
+      const prepared = await prepareToolExecutionContextForResolvedTarget({
+        modelIdentifier,
+        toolsetPreference: "letta",
+      });
+
+      expect(prepared.toolset).toBe("letta");
+      expect(prepared.preparedToolContext.loadedToolNames).toEqual(
+        TOOLSET_CATALOG.letta.tools.map((name) =>
+          name === "Task" ? "Agent" : name,
+        ),
+      );
+      expect(prepared.preparedToolContext.loadedToolNames).toContain("Edit");
+      expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
+        "ApplyPatch",
+      );
+      expect(prepared.preparedToolContext.loadedToolNames).toContain("memory");
+      expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
+        "memory_apply_patch",
+      );
+      expect(prepared.preparedToolContext.loadedToolNames).toContain(
+        "exec_command",
+      );
+      expect(prepared.preparedToolContext.loadedToolNames).toContain("Monitor");
     }
   });
 

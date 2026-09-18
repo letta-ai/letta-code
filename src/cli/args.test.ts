@@ -248,21 +248,25 @@ describe("shared CLI arg schema", () => {
     ).toThrow();
   });
 
-  test("treats --import argument as a flag value, not prompt text", () => {
-    const parsed = parseCliArgs(
-      preprocessCliArgs([
-        "node",
-        "script",
-        "-p",
-        "hello",
-        "--import",
-        "@author/agent",
-      ]),
-      true,
-    );
-    expect(parsed.values.import).toBe("@author/agent");
-    expect(parsed.positionals.slice(2).join(" ")).toBe("hello");
-  });
+  test.each(["--import", "--from-af"])(
+    "rejects removed AgentFile flag %s before treating its value as prompt text",
+    (flag) => {
+      for (const promptArgs of [[], ["-p", "hello"]]) {
+        expect(() =>
+          parseCliArgs(
+            preprocessCliArgs([
+              "node",
+              "script",
+              ...promptArgs,
+              flag,
+              "@author/agent",
+            ]),
+            true,
+          ),
+        ).toThrow(`Unknown option '${flag}'`);
+      }
+    },
+  );
 
   test("supports short aliases used by headless and interactive modes", () => {
     const parsed = parseCliArgs(

@@ -1,9 +1,10 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import WebSocket from "ws";
 import {
   backgroundProcesses,
   clearBackgroundProcessCleanup,
 } from "@/tools/impl/process_manager";
+import { clearPendingMessages } from "@/utils/message-queue-bridge";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
@@ -16,11 +17,16 @@ import { scheduleQueuePump } from "./queue";
 import { setActiveRuntime } from "./runtime";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
+beforeEach(() => {
+  clearPendingMessages();
+});
+
 afterEach(() => {
   setActiveRuntime(null);
   for (const id of backgroundProcesses.keys())
     clearBackgroundProcessCleanup(id);
   backgroundProcesses.clear();
+  clearPendingMessages();
 });
 
 for (const busy of [false, true])
@@ -133,7 +139,7 @@ for (const busy of [false, true])
       }
       await deliveredPromise;
       expect(delivered).toHaveLength(1);
-      expect(delivered[0]?.actingUserId).toBe("human-a");
+      expect(delivered[0]?.actingUserId).toBe(busy ? "human-a" : undefined);
       expect(delivered[0]?.messages[0]).toMatchObject({ role: "user" });
       const content = JSON.stringify(delivered[0]?.messages);
       expect(content).toContain("The user cancelled this Monitor.");

@@ -8,7 +8,6 @@ import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
-import { settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   DeviceStatus,
@@ -43,6 +42,7 @@ import {
   recordDeviceStatus,
   shouldEmitDeviceStatus,
 } from "./device-status-cache";
+import { buildDeviceToolsetStatus } from "./device-toolset-status";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 import { listListenerModCommands } from "./mod-command-registry";
 import { enqueueOutboundFrame } from "./outbound-wire";
@@ -189,8 +189,7 @@ export function buildDeviceStatus(
       current_working_directory: fallbackCwd,
       git_context: deviceGitContextCache.read(fallbackCwd),
       letta_code_version: process.env.npm_package_version || null,
-      current_toolset: null,
-      current_toolset_preference: "auto",
+      ...buildDeviceToolsetStatus(null, null),
       current_loaded_tools: [],
       current_available_skills: [],
       background_processes: buildBackgroundProcessSnapshot(),
@@ -212,16 +211,6 @@ export function buildDeviceStatus(
     agentId,
     conversationId,
   );
-  const toolsetPreference = (() => {
-    if (!agentId) {
-      return "auto" as const;
-    }
-    try {
-      return settingsManager.getToolsetPreference(agentId, conversationId);
-    } catch {
-      return "auto" as const;
-    }
-  })();
   const conversationPermissionModeState = getConversationPermissionModeState(
     listener,
     agentId,
@@ -254,13 +243,7 @@ export function buildDeviceStatus(
     current_working_directory: resolvedCwd,
     git_context: deviceGitContextCache.read(resolvedCwd),
     letta_code_version: process.env.npm_package_version || null,
-    current_toolset:
-      conversationRuntime?.currentToolset ??
-      (toolsetPreference === "auto" ? null : toolsetPreference),
-    current_toolset_preference:
-      conversationRuntime?.currentToolset === null
-        ? toolsetPreference
-        : (conversationRuntime?.currentToolsetPreference ?? toolsetPreference),
+    ...buildDeviceToolsetStatus(agentId, conversationId, conversationRuntime),
     current_loaded_tools: conversationRuntime?.currentLoadedTools ?? [],
     current_available_skills: conversationRuntime?.currentAvailableSkills ?? [],
     background_processes: buildBackgroundProcessSnapshot(
@@ -663,9 +646,7 @@ export function emitDequeuedUserMessage(
   incoming: IncomingMessage,
   batch: DequeuedBatch,
 ): void {
-  // A mod-driven continue turn carries no real user input — suppress the
-  // optimistic echo so the follow-up stays seamless (matches TUI, where the
-  // continue is injected without rendering a user message).
+  // Mod-only continuations do not render optimistic user messages.
   if (
     batch.items.length > 0 &&
     batch.items.every((item) => item.kind === "mod_continue")
@@ -673,60 +654,59 @@ export function emitDequeuedUserMessage(
     return;
   }
 
-  const firstUserPayload = incoming.messages.find(
-    (payload): payload is MessageCreate & { client_message_id?: string } =>
-      "content" in payload,
-  );
-  if (!firstUserPayload) return;
+  for (const payload of incoming.messages) {
+    if (!("content" in payload) || payload.role !== "user") continue;
+    const rawContent = payload.content;
+    let content: MessageCreate["content"];
 
-  const rawContent = firstUserPayload.content;
-  let content: MessageCreate["content"];
-
-  if (typeof rawContent === "string") {
-    content = replaceCronPromptsForDisplay(rawContent, batch)
-      .replace(SYSTEM_REMINDER_RE, "")
-      .trim();
-  } else if (Array.isArray(rawContent)) {
-    content = rawContent.flatMap((part) => {
-      if (isTextContentPart(part)) {
-        const cronDisplay = getCronPromptDisplayForText(part.text, batch);
-        if (cronDisplay !== null) {
-          return [{ ...part, text: cronDisplay }];
+    if (typeof rawContent === "string") {
+      content = replaceCronPromptsForDisplay(rawContent, batch)
+        .replace(SYSTEM_REMINDER_RE, "")
+        .trim();
+    } else if (Array.isArray(rawContent)) {
+      content = rawContent.flatMap((part) => {
+        if (isTextContentPart(part)) {
+          const cronDisplay = getCronPromptDisplayForText(part.text, batch);
+          if (cronDisplay !== null) {
+            return [{ ...part, text: cronDisplay }];
+          }
         }
-      }
-      return isSystemReminderPart(part) ? [] : [part];
-    }) as MessageCreate["content"];
-  } else {
-    return;
+        return isSystemReminderPart(part) ? [] : [part];
+      }) as MessageCreate["content"];
+    } else {
+      continue;
+    }
+
+    const hasContent =
+      typeof content === "string"
+        ? content.length > 0
+        : Array.isArray(content) && content.length > 0;
+    if (!hasContent) continue;
+    // The outgoing request shares this payload; retain the echo's identity.
+    payload.otid ??= payload.client_message_id ?? crypto.randomUUID();
+    const otid = payload.otid;
+
+    emitCanonicalMessageDelta(
+      socket,
+      runtime,
+      {
+        type: "message",
+        id: `user-msg-${crypto.randomUUID()}`,
+        date: new Date().toISOString(),
+        message_type: "user_message",
+        content,
+        otid,
+        created_by_id:
+          payload.attribution === undefined
+            ? incoming.actingUserId
+            : payload.attribution.acting_user_id,
+      } as StreamDelta,
+      {
+        agent_id: incoming.agentId,
+        conversation_id: incoming.conversationId,
+      },
+    );
   }
-
-  const hasContent =
-    typeof content === "string"
-      ? content.length > 0
-      : Array.isArray(content) && content.length > 0;
-  if (!hasContent) return;
-  const otid =
-    firstUserPayload.otid ??
-    firstUserPayload.client_message_id ??
-    batch.batchId;
-
-  emitCanonicalMessageDelta(
-    socket,
-    runtime,
-    {
-      type: "message",
-      id: `user-msg-${crypto.randomUUID()}`,
-      date: new Date().toISOString(),
-      message_type: "user_message",
-      content,
-      otid,
-      created_by_id: incoming.actingUserId,
-    } as StreamDelta,
-    {
-      agent_id: incoming.agentId,
-      conversation_id: incoming.conversationId,
-    },
-  );
 }
 
 export function emitQueueUpdateIfOpen(

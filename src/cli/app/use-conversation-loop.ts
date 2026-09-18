@@ -83,9 +83,12 @@ import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript"
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import {
   type ApprovalRequest,
+  advanceStreamSequenceCursor,
   type DrainResult,
   drainStream,
   drainStreamWithResume,
+  recordEmptyApprovalTelemetry,
+  type StreamSequenceCursor,
 } from "@/cli/helpers/stream";
 import { shouldClearCompletedSubagentsOnTurnStart } from "@/cli/helpers/subagent-turn-start";
 import {
@@ -738,11 +741,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           clearCompletedSubagents();
         }
 
-        let highestSeqIdSeen: number | null = null;
+        let streamSequenceCursor: StreamSequenceCursor | null = null;
 
         while (true) {
-          // Capture the signal BEFORE any async operations
-          // This prevents a race where handleInterrupt nulls the ref during await
           const signal = abortControllerRef.current?.signal;
 
           // Check if cancelled before starting new stream
@@ -947,7 +948,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   undefined, // no handleFirstMessage on resume
                   makeExecutionPhaseHook(setExecutionPhase),
                   contextTrackerRef.current,
-                  highestSeqIdSeen,
+                  streamSequenceCursor,
                 );
                 debugLog(
                   "stream",
@@ -1309,7 +1310,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             contextTrackerRef.current.currentTurnId++;
           }
 
-          const drainResult = preStreamResumeResult
+          const drainResult: Promise<DrainResult> = preStreamResumeResult
             ? preStreamResumeResult
             : (() => {
                 if (!stream) {
@@ -1325,7 +1326,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   handleFirstMessage,
                   makeExecutionPhaseHook(setExecutionPhase),
                   contextTrackerRef.current,
-                  highestSeqIdSeen,
+                  streamSequenceCursor,
                 );
               })();
 
@@ -1337,11 +1338,14 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             lastRunId,
             lastSeqId,
             fallbackError,
+            errorInfo: streamErrorInfo,
           } = await drainResult;
 
-          if (lastSeqId != null) {
-            highestSeqIdSeen = Math.max(highestSeqIdSeen ?? 0, lastSeqId);
-          }
+          streamSequenceCursor = advanceStreamSequenceCursor(
+            streamSequenceCursor,
+            lastRunId,
+            lastSeqId,
+          );
 
           // Update currentRunId for error reporting in catch block
           currentRunId = lastRunId ?? undefined;
@@ -1368,8 +1372,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           const wasAborted = !!signal?.aborted;
           let stopReasonToHandle = wasAborted ? "cancelled" : stopReason;
 
-          // Check if this conversation became stale while the stream was running.
-          // If stale, a newer processConversation is running and we shouldn't modify UI state.
           const isStaleAfterDrain =
             myGeneration !== conversationGenerationRef.current;
 
@@ -1731,17 +1733,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             clearApprovalToolContext();
             preserveTranscriptStartForApproval = true;
             approvalToolContextIdRef.current = turnToolContextId;
-            // Clear stale state immediately to prevent ID mismatch bugs
             setAutoHandledResults([]);
             setAutoDeniedApprovals([]);
             lastSentInputRef.current = null; // Clear - message was received by server
             pendingInterruptRecoveryConversationIdRef.current = null;
 
-            // Use new approvals array, fallback to legacy approval for backward compat
             const approvalsToProcess = approvalsFromStream;
 
             if (approvalsToProcess.length === 0) {
               clearApprovalToolContext();
+              recordEmptyApprovalTelemetry(lastRunId, streamSequenceCursor);
               appendError(
                 `Unexpected empty approvals with stop reason: ${stopReason}`,
               );
@@ -2241,7 +2242,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
           }
 
-          // Fetch run error metadata for recovery decisions.
           const runErrorInfo = await fetchRunErrorInfo(lastRunId),
             detailFromRun = runErrorInfo?.detail ?? runErrorInfo?.message;
           const invalidIdsDetected =
@@ -2382,12 +2382,12 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               agentId: agentIdRef.current,
               conversationId: conversationIdRef.current,
               currentHandle: currentModelId,
-              error: runErrorInfo ?? detailFromRun ?? fallbackError,
+              error: streamErrorInfo ?? runErrorInfo ?? fallbackError,
               exhaustedProviders: chatgptExhaustedProvidersRef.current,
+              signal: turnAbortController.signal,
             });
             if (rotation) {
               chatgptPlanSwapsRef.current += 1;
-
               const statusId = uid("status");
               buffersRef.current.byId.set(statusId, {
                 kind: "status",
@@ -2480,7 +2480,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 ...currentInput,
                 {
                   type: "message" as const,
-                  role: "system" as const,
+                  role: "user" as const,
                   content: `<system-reminder>The previous response was empty. Please provide a response with either text content or a tool call.</system-reminder>`,
                   otid: randomUUID(),
                 },
@@ -2605,7 +2605,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 ? []
                 : refreshInputOtidsForNewRequest(currentInput);
               // Reset seq_id threshold — new run starts from seq_id 1, not a resume.
-              highestSeqIdSeen = null;
+              streamSequenceCursor = null;
               // Reset interrupted flag so retry stream chunks are processed
               buffersRef.current.interrupted = false;
               // Retry by continuing the while loop with fresh OTIDs.

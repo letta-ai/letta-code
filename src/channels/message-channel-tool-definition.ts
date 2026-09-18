@@ -257,6 +257,12 @@ export function buildMessageChannelDescriptionFromDiscovery(
         hasAction("download-file")
           ? 'action="download-file" with attachmentId + messageId'
           : "",
+        hasAction("get-binding")
+          ? 'action="get-binding" with chat_id and an explicit threadId (null for an unthreaded DM) to inspect the persisted incoming-message destination without sending'
+          : "",
+        hasAction("update-binding")
+          ? 'action="update-binding" with the same exact thread, conversationId, and expectedConversationId to reassign an existing binding within this agent. It does not send a message, copy history, move queued inputs, change computers, or alter pause/detach settings. Outbound sends never take over an existing binding'
+          : "",
       ].filter(Boolean)
     : [];
   const slackCapabilityGuidance =

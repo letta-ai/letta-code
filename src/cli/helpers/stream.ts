@@ -41,8 +41,15 @@ import {
   summarizeChunkForDebug,
   summarizeStreamForDebug,
 } from "./stream-debug";
-import type { ApprovalRequest, ErrorInfo } from "./stream-processor";
-import { StreamProcessor } from "./stream-processor";
+import type {
+  ApprovalRequest,
+  ErrorInfo,
+  StreamSequenceCursor,
+} from "./stream-processor";
+import {
+  advanceStreamSequenceCursor,
+  StreamProcessor,
+} from "./stream-processor";
 import {
   discoverFallbackRunIdWithTimeout,
   isReplayableRun,
@@ -53,7 +60,20 @@ import {
 import { createStreamStallReconciler } from "./stream-stall-reconciler";
 import { createTerminalEofGuard } from "./stream-terminal-eof-guard";
 
-export type { ApprovalRequest } from "./stream-processor";
+export { advanceStreamSequenceCursor };
+export type { ApprovalRequest, StreamSequenceCursor } from "./stream-processor";
+
+export function recordEmptyApprovalTelemetry(
+  runId: string | null | undefined,
+  cursor: StreamSequenceCursor | null,
+): void {
+  telemetry.trackError(
+    "stream_requires_approval_without_approvals",
+    `requires_approval stop returned no approvals (cursor=${cursor?.runId ?? "none"}:${cursor?.seqId ?? "none"})`,
+    "message_stream",
+    { runId: runId ?? undefined },
+  );
+}
 
 export type DrainStreamHookContext = {
   chunk: LettaStreamingResponse;
@@ -85,6 +105,7 @@ export type DrainResult = {
   approvals?: ApprovalRequest[]; // NEW: supports parallel approvals
   apiDurationMs: number; // time spent in API call
   fallbackError?: string | null; // Error message for when we can't fetch details from server (no run_id)
+  errorInfo?: ErrorInfo; // Structured stream error, including SDK-thrown SSE errors
   terminalEofGuardFired?: boolean; // HTTP body never ended after the terminal SSE sequence; guard aborted the read
   stallReconcilerFired?: boolean; // Stream went silent mid-run; reconciler aborted the dead read to reconnect
 };
@@ -97,7 +118,7 @@ export async function drainStream(
   onFirstMessage?: () => void,
   onChunkProcessed?: DrainStreamHook,
   contextTracker?: ContextTracker,
-  seenSeqIdThreshold?: number | null,
+  seenSequenceCursor?: StreamSequenceCursor | null,
   isResumeStream?: boolean,
   skipCancelToolsOnError?: boolean,
   actingUserId?: string,
@@ -106,7 +127,7 @@ export async function drainStream(
   const requestStartTime = getStreamRequestStartTime(stream) ?? startTime;
   let hasLoggedTTFT = false;
 
-  const streamProcessor = new StreamProcessor(seenSeqIdThreshold ?? null);
+  const streamProcessor = new StreamProcessor(seenSequenceCursor ?? null);
 
   let stopReason: StopReasonType | null = null;
   let hasCalledFirstMessage = false;
@@ -305,10 +326,16 @@ export async function drainStream(
       debugWarn("drainStream", "Stream error stack: %s", e.stack);
     }
 
-    // Try to extract run_id from APIError if we don't have one yet
-    if (!streamProcessor.lastRunId && e instanceof APIError && e.error) {
+    // The SDK throws event:error payloads instead of yielding them as chunks.
+    // Preserve their structured fields before falling back to the message text.
+    if (e instanceof APIError && e.error) {
       const errorObj = e.error as Record<string, unknown>;
-      if ("run_id" in errorObj && typeof errorObj.run_id === "string") {
+      if (errorObj.message_type === "error_message") {
+        streamProcessor.processChunk(
+          errorObj as unknown as LettaStreamingResponse,
+        );
+      }
+      if (!streamProcessor.lastRunId && typeof errorObj.run_id === "string") {
         streamProcessor.lastRunId = errorObj.run_id;
         debugWarn(
           "drainStream",
@@ -501,6 +528,7 @@ export async function drainStream(
     lastSeqId: streamProcessor.lastSeqId,
     apiDurationMs,
     fallbackError,
+    errorInfo: streamProcessor.lastErrorInfo,
     terminalEofGuardFired: terminalEofGuard.fired(),
     stallReconcilerFired: stallReconciler.fired(),
   };
@@ -529,7 +557,7 @@ export async function drainStreamWithResume(
   onFirstMessage?: () => void,
   onChunkProcessed?: DrainStreamHook,
   contextTracker?: ContextTracker,
-  seenSeqIdThreshold?: number | null,
+  seenSequenceCursor?: StreamSequenceCursor | null,
   resumePolicy?: StreamResumePolicy,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
@@ -555,7 +583,7 @@ export async function drainStreamWithResume(
     onFirstMessage,
     onChunkProcessed,
     contextTracker,
-    seenSeqIdThreshold,
+    seenSequenceCursor,
     false, // isResumeStream
     true, // skipCancelToolsOnError
   );
@@ -751,7 +779,7 @@ export async function drainStreamWithResume(
             undefined,
             onChunkProcessed,
             contextTracker,
-            seenSeqIdThreshold,
+            runIdToResume ? { runId: runIdToResume, seqId: nextSeqId } : null,
             true,
             true,
             streamRequestContext?.actingUserId,
@@ -761,6 +789,7 @@ export async function drainStreamWithResume(
           runIdToResume = candidate.lastRunId ?? runIdToResume;
           result.lastRunId = runIdToResume;
           result.lastSeqId = candidate.lastSeqId;
+          result.errorInfo = candidate.errorInfo ?? result.errorInfo;
 
           if (candidate.stopReason !== "error") {
             resumeResult = candidate;

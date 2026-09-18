@@ -52,6 +52,7 @@ interface MonitorArgs {
   ws?: MonitorWebSocketSource;
   secretEnv?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
+  signal?: AbortSignal;
 }
 
 type NormalizedMonitorArgs = MonitorArgs & {
@@ -314,8 +315,7 @@ function queueMonitorEvent(params: {
       description,
       event: sanitizedEvent,
     }),
-    agentId: scope?.agentId,
-    conversationId: scope?.conversationId,
+    ...scope,
   });
 }
 
@@ -357,8 +357,7 @@ function queueCommandCompletion(params: {
       outputFile,
       usage: durationMs === undefined ? undefined : { durationMs },
     }),
-    agentId: scope?.agentId,
-    conversationId: scope?.conversationId,
+    ...scope,
   });
 }
 
@@ -746,6 +745,8 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
 }
 
 export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
+  // Hooks may have yielded since approval execution checked cancellation.
+  args.signal?.throwIfAborted();
   const normalized = normalizeMonitorArgs(args);
   installMonitorProcessExitCleanup();
   return normalized.command !== undefined

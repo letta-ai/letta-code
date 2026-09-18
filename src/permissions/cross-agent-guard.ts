@@ -4,7 +4,7 @@
 //
 // SCOPE — this guard now exists ONLY for agent-process IN-PROCESS file
 // tools: Read / Write / Edit / MultiEdit / NotebookEdit / Glob / ListDir, the
-// apply_patch family, and their Codex/Gemini aliases (all canonicalized via
+// ApplyPatch family, and their Codex aliases (all canonicalized via
 // `canonicalToolName`, all carrying an explicit absolute path). These never
 // fork, so the kernel filesystem sandbox (src/sandbox/) cannot see them.
 //
@@ -30,6 +30,8 @@
 // already kernel-confined as whole processes.
 
 import { homedir } from "node:os";
+import { getRuntimeContext } from "@/runtime-context";
+import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 import {
   getLocalBackendCrossAgentTreeRoot,
@@ -63,7 +65,9 @@ function deriveParentAgentId(env: NodeJS.ProcessEnv): string | null {
 export function isMemoryGuardDisabled(
   options: CrossAgentGuardOptions = {},
 ): boolean {
-  const env = options.env ?? process.env;
+  const env =
+    options.env ??
+    getRuntimeExecutionEnv(process.env, getRuntimeContext()?.executionSettings);
   if (isSubagentProcess(env)) return false;
   return options.disableMemoryGuard ?? cliPermissions.isMemoryGuardDisabled();
 }
@@ -75,7 +79,9 @@ export function isMemoryGuardDisabled(
 export function resolveAllowedAgents(
   options: CrossAgentGuardOptions = {},
 ): Set<string> {
-  const env = options.env ?? process.env;
+  const env =
+    options.env ??
+    getRuntimeExecutionEnv(process.env, getRuntimeContext()?.executionSettings);
 
   const self = deriveAgentId(env, options.currentAgentId);
   const parent = deriveParentAgentId(env);
@@ -207,7 +213,7 @@ function classifyPathUnderRoot(
 }
 
 /**
- * Extract file directives from an apply_patch / memory_apply_patch input.
+ * Extract file directives from an ApplyPatch / memory_apply_patch input.
  */
 export function extractApplyPatchPaths(input: string): string[] {
   const paths: string[] = [];
@@ -239,13 +245,6 @@ export function extractFilePath(toolArgs: ToolArgs): string | null {
   ) {
     return toolArgs.notebook_path;
   }
-  // Gemini's glob_gemini / search_file_content / list_directory pass their search
-  // root as `dir_path` (the handler renames it to `path` only at execution time,
-  // after this approval-time check). Read it here so cross-agent enumeration via
-  // those tools is caught for every toolset.
-  if (typeof toolArgs.dir_path === "string" && toolArgs.dir_path.length > 0) {
-    return toolArgs.dir_path;
-  }
   return null;
 }
 
@@ -262,8 +261,7 @@ function extractMultiEditPaths(toolArgs: ToolArgs): string[] {
  * at an *ancestor* of the agents tree, the walk would expose every
  * agent on disk — so we treat ancestor paths as hits for these tools.
  *
- * Compared against the canonical tool name (so Gemini's `glob_gemini` /
- * `list_directory` and the `LS` alias all fold into Glob/ListDir).
+ * Compared against the canonical tool name, including the LS alias.
  */
 const RECURSIVE_CANONICAL_TOOLS = new Set<string>(["Glob", "ListDir", "Grep"]);
 
@@ -337,11 +335,7 @@ export function extractTargetAgentPaths(
   };
 
   // Patch tools: extract every file directive.
-  if (
-    toolName === "ApplyPatch" ||
-    toolName === "apply_patch" ||
-    toolName === "memory_apply_patch"
-  ) {
+  if (toolName === "ApplyPatch" || toolName === "memory_apply_patch") {
     if (typeof toolArgs.input === "string") {
       for (const p of extractApplyPatchPaths(toolArgs.input)) {
         addFromPath(p);
@@ -359,7 +353,7 @@ export function extractTargetAgentPaths(
   }
 
   // All other in-process file tools: Read/Write/Edit/NotebookEdit/Glob/
-  // ListDir + Gemini + Codex aliases (all converge on file_path / path /
+  // ListDir + Codex aliases (all converge on file_path / path /
   // notebook_path after the toolset adapters).
   addFromPath(extractFilePath(toolArgs));
 

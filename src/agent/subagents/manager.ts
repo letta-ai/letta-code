@@ -7,8 +7,8 @@
  * - Managing parallel subagent execution
  */
 
-import { spawn } from "node:child_process";
 import { platform } from "node:os";
+import { resolveActingUserId } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
@@ -16,6 +16,7 @@ import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
 import { updateSubagent } from "@/agent/subagent-state.js";
 import { wrapSubagentLauncher } from "@/agent/subagents/sandbox";
+import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import {
   type BackendMode,
   getBackend,
@@ -30,7 +31,12 @@ import {
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { sessionPermissions } from "@/permissions/session";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+  runWithRuntimeContext,
+} from "@/runtime-context";
+import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
@@ -43,11 +49,9 @@ import {
   type SubagentMemoryScope,
   type SubagentResult,
 } from ".";
-import {
-  estimateStartupContextTokens,
-  REFLECTION_STARTUP_CONTEXT_CHAR_LIMIT,
-  REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
-} from "./context-budget";
+import { buildSubagentPrompt } from "./context-budget";
+import { allocateSubagentName } from "./names";
+import { collectRemoteTurnResult } from "./remote-turn-wait";
 import {
   composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
@@ -59,7 +63,9 @@ import {
   getPrimaryAgentModelHandle,
   resolveSubagentModel,
 } from "./subagent-model";
+import { spawnSubagentProcess } from "./subagent-process";
 import {
+  describeSubagentExit,
   type ExecutionState,
   looksLikeTruncatedStreamJson,
   parseResultFromStdout,
@@ -105,99 +111,6 @@ function isProviderNotSupportedError(errorOutput: string): boolean {
 // Core Functions
 // ============================================================================
 
-function getReflectionStartupNotice(): string {
-  return `[Reflection startup context truncated: system prompt + initial message are capped at ~${REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT.toLocaleString()} estimated tokens. Some parent memory preview content was omitted; read files directly from MEMORY_DIR if needed.]`;
-}
-
-function buildMinimalParentMemorySection(maxChars: number): string {
-  const notice = getReflectionStartupNotice();
-  const section = `<parent_memory>\n${notice}\n</parent_memory>`;
-  if (section.length <= maxChars) {
-    return section;
-  }
-  return section.slice(0, Math.max(0, maxChars));
-}
-
-function shrinkParentMemorySection(section: string, maxChars: number): string {
-  const notice = getReflectionStartupNotice();
-  const treeMatch = section.match(
-    /<memory_filesystem>[\s\S]*?<\/memory_filesystem>/,
-  );
-  const prefix = "<parent_memory>\n";
-  const suffix = "\n</parent_memory>";
-
-  const tree = treeMatch?.[0];
-  if (tree) {
-    const candidate = `${prefix}${tree}\n${notice}${suffix}`;
-    if (candidate.length <= maxChars) {
-      return candidate;
-    }
-  }
-
-  return buildMinimalParentMemorySection(maxChars);
-}
-
-function hardTruncateReflectionPrompt(
-  prompt: string,
-  maxChars: number,
-): string {
-  const notice = `\n${getReflectionStartupNotice()}`;
-  if (maxChars <= notice.length) {
-    return notice.slice(0, Math.max(0, maxChars));
-  }
-  return `${prompt.slice(0, maxChars - notice.length).trimEnd()}${notice}`;
-}
-
-function capReflectionStartupPrompt(
-  type: string,
-  systemPrompt: string,
-  userPrompt: string,
-): string {
-  if (type !== "reflection") {
-    return userPrompt;
-  }
-
-  const estimatedTokens = estimateStartupContextTokens(
-    `${systemPrompt}\n${userPrompt}`,
-  );
-  if (estimatedTokens <= REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT) {
-    return userPrompt;
-  }
-
-  const allowedPromptChars = Math.max(
-    0,
-    REFLECTION_STARTUP_CONTEXT_CHAR_LIMIT - systemPrompt.length - 1,
-  );
-  const parentMemoryMatch = userPrompt.match(
-    /<parent_memory>[\s\S]*?<\/parent_memory>/,
-  );
-
-  if (parentMemoryMatch?.index !== undefined) {
-    const start = parentMemoryMatch.index;
-    const end = start + parentMemoryMatch[0].length;
-    const outsideChars = userPrompt.length - parentMemoryMatch[0].length;
-    const parentMemoryBudget = Math.max(0, allowedPromptChars - outsideChars);
-    const replacement = shrinkParentMemorySection(
-      parentMemoryMatch[0],
-      parentMemoryBudget,
-    );
-    const candidate = `${userPrompt.slice(0, start)}${replacement}${userPrompt.slice(end)}`;
-    if (candidate.length <= allowedPromptChars) {
-      return candidate;
-    }
-  }
-
-  return hardTruncateReflectionPrompt(userPrompt, allowedPromptChars);
-}
-
-export function buildSubagentPrompt(
-  type: string,
-  config: SubagentConfig,
-  userPrompt: string,
-): string {
-  return capReflectionStartupPrompt(type, config.systemPrompt, userPrompt);
-}
-
 interface BuildSubagentArgsOptions {
   backendMode?: BackendMode;
   promptTransport?: "argv" | "stdin";
@@ -242,7 +155,10 @@ export function buildSubagentArgs(
   }
 
   if (options.environment) {
-    args.push("--computer", options.environment);
+    // The child only submits the send and exits with the enqueue receipt;
+    // this process follows the remote turn through Cloud's status APIs
+    // (see remote-turn-wait.ts). No child process waits on the remote turn.
+    args.push("--computer", options.environment, "--no-wait");
   }
 
   if (isDeployingExisting) {
@@ -370,6 +286,9 @@ async function executeSubagent(
   memoryScope?: SubagentMemoryScope,
   systemPromptOverride?: string,
   environment?: string,
+  actingUserIdOverride?: string,
+  parentAgentName?: string | null,
+  parentConversationId?: string,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
@@ -428,11 +347,17 @@ async function executeSubagent(
     // keychain lookups under high parallel fan-out.
     const settings = await settingsManager.getSettingsWithSecureTokens();
     const inheritedApiKey =
-      process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+      getDesktopAccessToken() ||
+      process.env.LETTA_API_KEY ||
+      settings.env?.LETTA_API_KEY;
     const inheritedBaseUrl =
       process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
     const inheritedMemoryRoots = resolveAllowedMemoryRoots({
       currentAgentId: parentAgentId ?? null,
+      env: getRuntimeExecutionEnv(
+        process.env,
+        getRuntimeContext()?.executionSettings,
+      ),
     });
     const effectiveLaunchProfile = memoryScope
       ? "memory-subagent"
@@ -446,7 +371,7 @@ async function executeSubagent(
       localBackendStorageDir,
     });
     const subagentWorkingDirectory = resolveSubagentWorkingDirectory(
-      process.env,
+      { ...process.env, USER_CWD: getCurrentWorkingDirectory() },
       getCurrentWorkingDirectory(),
       {
         subagentType: type,
@@ -457,19 +382,29 @@ async function executeSubagent(
     );
     const childEnv = composeSubagentChildEnv({
       parentProcessEnv: {
-        ...process.env,
+        ...getRuntimeExecutionEnv(
+          process.env,
+          getRuntimeContext()?.executionSettings,
+        ),
         USER_CWD: subagentWorkingDirectory,
       },
+      listenerConnectionId: getRuntimeContext()?.connectionId,
       backendMode,
       localBackendStorageDir,
       parentAgentId,
       subagentType: type,
+      parentConversationId,
       launchProfile: effectiveLaunchProfile,
       inheritedPrimaryRoot,
       memoryScope,
       inheritedApiKey,
       inheritedBaseUrl,
+      actingUserId: actingUserIdOverride,
       transcriptPath,
+      subagentName:
+        existingAgentId || existingConversationId
+          ? undefined
+          : allocateSubagentName(parentAgentName),
     });
 
     // Optionally confine subagents with the memory-subagent profile to an OS filesystem sandbox.
@@ -505,10 +440,12 @@ async function executeSubagent(
     if (!managedCommand) {
       throw new Error("Subagent executable is required");
     }
-    const proc = spawn(managedCommand, managedArgs, {
+    const runningProcess = spawnSubagentProcess(managedCommand, managedArgs, {
       cwd: subagentWorkingDirectory,
       env: spawnEnv,
+      signal,
     });
+    const proc = runningProcess.process;
     proc.stdin.on("error", () => {});
     proc.stdin.end(boundedUserPrompt);
 
@@ -517,14 +454,6 @@ async function executeSubagent(
     proc.once("spawn", () => {
       updateSubagent(subagentId, { status: "running" });
     });
-
-    // Set up abort handler to kill the child process
-    let wasAborted = false;
-    const abortHandler = () => {
-      wasAborted = true;
-      proc.kill("SIGTERM");
-    };
-    signal?.addEventListener("abort", abortHandler);
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -535,6 +464,7 @@ async function executeSubagent(
       conversationId: existingConversationId || null,
       finalResult: null,
       finalError: null,
+      enqueueReceipt: null,
       resultStats: null,
       displayedToolCalls: new Set(),
     };
@@ -561,10 +491,7 @@ async function executeSubagent(
     });
 
     // Wait for process to complete
-    const exitCode = await new Promise<number | null>((resolve) => {
-      proc.on("close", resolve);
-      proc.on("error", () => resolve(null));
-    });
+    const { exitCode, exitSignal } = await runningProcess.completion;
 
     // Ensure the trailing partial line is processed before completing.
     // Without this, late tool events can be dropped before Task marks completion.
@@ -572,11 +499,8 @@ async function executeSubagent(
       processStreamEvent(stdoutBuffer, state, subagentId);
     }
 
-    // Clean up abort listener
-    signal?.removeEventListener("abort", abortHandler);
-
     // Check if process was aborted by user
-    if (wasAborted) {
+    if (runningProcess.wasAborted()) {
       return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
@@ -596,7 +520,10 @@ async function executeSubagent(
           agentId: parentAgentIdOverride,
         });
         if (primaryModel) {
-          // Retry with the primary agent's model
+          // New agent is required: deploying an existing agent omits --model,
+          // so the retry would keep the unsupported provider. Keep memoryScope
+          // and systemPromptOverride so the replacement child uses the same
+          // writable tree and prompt the first attempt was given.
           return executeSubagent(
             type,
             config,
@@ -605,14 +532,17 @@ async function executeSubagent(
             subagentId,
             true, // Mark as retry to prevent infinite loops
             signal,
-            undefined, // existingAgentId
+            undefined, // existingAgentId: new agent so --model applies
             undefined, // existingConversationId
             maxTurns,
             parentAgentIdOverride,
             transcriptPath,
-            undefined, // memoryScope
-            undefined, // systemPromptOverride
+            memoryScope,
+            systemPromptOverride,
             environment,
+            actingUserIdOverride,
+            parentAgentName,
+            parentConversationId,
           );
         }
       }
@@ -641,19 +571,35 @@ async function executeSubagent(
           memoryScope,
           systemPromptOverride,
           environment,
+          actingUserIdOverride,
+          parentAgentName,
+          parentConversationId,
         );
       }
 
       const propagatedError = state.finalError?.trim();
-      const fallbackError = stderr || `Subagent exited with code ${exitCode}`;
 
       return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: "",
         success: false,
-        error: propagatedError || fallbackError,
+        error:
+          propagatedError || describeSubagentExit(exitCode, exitSignal, stderr),
       });
+    }
+
+    // The child submitted a computer-routed send and exited with the receipt.
+    // Follow the remote turn from here; the remote listener owns execution.
+    if (state.enqueueReceipt) {
+      return withModel(
+        await collectRemoteTurnResult(
+          state.enqueueReceipt,
+          state,
+          subagentId,
+          signal,
+        ),
+      );
     }
 
     // Return captured result if available
@@ -738,6 +684,9 @@ async function executeSubagent(
           memoryScope,
           systemPromptOverride,
           environment,
+          actingUserIdOverride,
+          parentAgentName,
+          parentConversationId,
         );
       }
     }
@@ -832,7 +781,7 @@ ${SYSTEM_REMINDER_CLOSE}
  *   function runs after several async yields and the in-process context
  *   may have drifted (e.g., the listener processing another agent's turn).
  */
-export async function spawnSubagent(
+async function spawnSubagentInContext(
   type: string,
   prompt: string,
   userModel: string | undefined,
@@ -848,7 +797,9 @@ export async function spawnSubagent(
   memoryScope?: SubagentMemoryScope,
   systemPromptOverride?: string,
   environment?: string,
+  actingUserId?: string,
 ): Promise<SubagentResult> {
+  const launchActingUserId = resolveActingUserId(actingUserId);
   const allConfigs = await getAllSubagentConfigs();
   let config = allConfigs[type];
 
@@ -982,7 +933,21 @@ export async function spawnSubagent(
     memoryScope,
     effectiveSystemPromptOverride,
     environment,
+    launchActingUserId,
+    parentAgent?.name,
+    resolvedParentConversationId,
   );
 
   return result;
+}
+
+export function spawnSubagent(
+  ...args: Parameters<typeof spawnSubagentInContext>
+): Promise<SubagentResult> {
+  // A background child keeps its launch directory even if its parent changes
+  // worktrees while model/configuration lookup is still awaiting I/O.
+  return runWithRuntimeContext(
+    { ...getRuntimeContext(), workingDirectory: getCurrentWorkingDirectory() },
+    () => spawnSubagentInContext(...args),
+  );
 }

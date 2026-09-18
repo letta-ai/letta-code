@@ -14,8 +14,15 @@ import type {
   ListModelsResponseModelEntry,
   StopReasonType,
 } from "@/types/protocol_v2";
+import type { ChannelTurnProgressUpdate } from "./progress-types";
 import type { WhatsAppAttachmentPolicyConfig } from "./whatsapp/attachment-policy-types";
 import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
+
+export type {
+  ChannelTurnProgressKind,
+  ChannelTurnProgressState,
+  ChannelTurnProgressUpdate,
+} from "./progress-types";
 /**
  * Vendor-neutral model-picker payload produced by the generic channel
  * `/model` handler. Adapters decide how (or whether) to render it.
@@ -152,6 +159,8 @@ export interface ChannelTurnSource {
   senderId?: string;
   /** Platform team/workspace for the triggering user, when known. */
   senderTeamId?: string;
+  /** The host already showed startup activity before delivering this input. */
+  showStartupStatus?: boolean;
   messageId?: string;
   threadId?: string | null;
   agentId: string;
@@ -159,44 +168,6 @@ export interface ChannelTurnSource {
 }
 
 export type ChannelTurnOutcome = "completed" | "error" | "cancelled";
-
-export type ChannelTurnProgressKind =
-  | "thinking"
-  | "responding"
-  | "tool"
-  | "approval"
-  | "command"
-  | "status"
-  | "retry"
-  | "error";
-
-export type ChannelTurnProgressState =
-  | "started"
-  | "updated"
-  | "completed"
-  | "error"
-  | "waiting";
-
-export interface ChannelTurnProgressUpdate {
-  kind: ChannelTurnProgressKind;
-  state: ChannelTurnProgressState;
-  /** Sanitized, user-facing status text. Never include tool args or output. */
-  message: string;
-  toolCallId?: string;
-  toolName?: string;
-  /** Optional sanitized argument summary for expanded tool progress details. */
-  toolDetails?: string;
-  /**
-   * Optional sanitized error-output preview for failed tool calls. Kept
-   * separate from toolDetails so surfaces can render it as secondary detail
-   * text; it must never be used as a row title/header (LET-9509).
-   */
-  errorDetails?: string;
-  /** Optional sanitized row title for native/rich progress surfaces. */
-  toolTitle?: string;
-  command?: string;
-  runId?: string;
-}
 
 export interface ChannelTurnProgressEvent extends ChannelTurnProgressUpdate {
   type: "progress";
@@ -248,6 +219,8 @@ export type ChannelTurnLifecycleEvent =
       sources: ChannelTurnSource[];
       outcome: ChannelTurnOutcome;
       stopReason: StopReasonType;
+      /** Other inputs still queued or running when this delivery finishes. */
+      remainingSources?: ChannelTurnSource[];
       error?: string;
       runId?: string;
     };

@@ -23,6 +23,11 @@ describe("subcommand router", () => {
     }
   });
 
+  test("routes steps help with early backend selection", async () => {
+    expect(subcommandNeedsEarlyBackendMode("steps")).toBe(true);
+    expect(await runSubcommand(["steps", "--help"])).toBe(0);
+  });
+
   test("routes connect subcommand", async () => {
     const exitCode = await runSubcommand(["connect", "help"]);
     expect(exitCode).toBe(0);
@@ -199,6 +204,8 @@ describe("subcommand router", () => {
     expect(subcommandNeedsEarlyBackendMode("envs")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("memory")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("mcp")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("model")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("models")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("mods")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("sandbox")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("teleport")).toBe(true);

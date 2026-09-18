@@ -8,6 +8,7 @@ When using the Agent tool, you must specify a subagent_type parameter to select 
 
 ## When NOT to use the Agent tool:
 
+- To send input to an agent that is already working, use SendAgentMessage when available (Cloud backend). It sends to the existing conversation without waiting for an answer or creating another local task. On the local backend, or for other ways to message an agent, load the messaging-agents skill.
 - If you want to read a specific file path, use the Read or Glob tool instead of the Agent tool, to find the match more quickly
 - If you are searching for a specific class definition like "class Foo", use the Glob tool instead, to find the match more quickly
 - If you are searching for code within a specific file or set of 2-3 files, use the Read tool instead of the Agent tool, to find the match more quickly
@@ -132,7 +133,7 @@ Note: `fork` cannot be combined with `agent_id` or `conversation_id`.
 
 ## Running on Another Computer
 
-Pass `computer` to run the subagent's turn on another connected computer instead of this machine. Works with any subagent type. The call fails fast if the named device is offline, ambiguous, or too old to support routing.
+Pass `computer` to run the subagent's turn on another connected computer instead of this machine. Prefer a stable device ID or computer name; these select the freshest online listener for that device. Ephemeral connection IDs are still supported to pin a specific listener. Works with any subagent type. The call fails fast if the named device is offline, the name matches multiple online devices, or the listener is too old to support routing.
 
 `computer: "cloud"` provisions a Cloud sandbox for the subagent's conversation and runs the turn there. Sandboxes are per-conversation: this is a separate machine from wherever you are running now, even if you are already in a Cloud sandbox.
 
@@ -159,7 +160,7 @@ Agent({
 Behavior notes:
 - The remote turn runs with the remote machine's working directory, tools, and skills. Subagent-type tool restrictions (e.g. recall's read-only toolset) travel with the turn on current servers; older servers ignore them.
 - The remote turn's final assistant message is returned as the task result. Token and step statistics are not available for remote runs.
-- The wait tracks turn liveness (new messages, run activity, device online) with an absolute one-hour ceiling rather than a fixed timeout.
+- Computer-routed tasks are submitted asynchronously and tracked through Cloud's existing Super Run status feed. Temporary status-read failures retry in the background; there is no one-hour tracking ceiling. Completion still notifies you if the reply could not be collected; use `letta messages list` to read the conversation rather than launching the task again. Stopping a task cancels its queued input or its executing listener run.
 
 ## Concurrency and Safety:
 

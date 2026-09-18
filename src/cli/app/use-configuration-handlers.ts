@@ -1,5 +1,3 @@
-// src/cli/app/useConfigurationHandlers.ts
-
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import {
@@ -48,6 +46,7 @@ import {
   mapHandleToLlmConfigPatch,
   providerTypeFromModelSettings,
   providerTypeFromUpdateArgs,
+  resolveModelSelectionReasoningHandle,
 } from "./model-config";
 import { formatReflectionSettings } from "./reflection";
 import type {
@@ -380,7 +379,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               reasoningCapabilities,
             })
           : getReasoningTierOptionsForHandle(
-              registryHandle,
+              resolveModelSelectionReasoningHandle(modelHandle, registryHandle),
               selectedContextWindow,
               reasoningCapabilities,
             );
@@ -641,7 +640,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             const { switchToolsetForModel } = await import("@/tools/toolset");
             const toolsetName = await switchToolsetForModel(
               modelHandle,
-              agentId,
               resolvedProviderType,
             );
             setCurrentToolsetPreference("auto");
@@ -658,7 +656,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           } else {
             const { forceToolsetSwitch } = await import("@/tools/toolset");
             if (currentToolset !== persistedToolsetPreference) {
-              await forceToolsetSwitch(persistedToolsetPreference, agentId);
+              await forceToolsetSwitch(persistedToolsetPreference);
               setCurrentToolset(persistedToolsetPreference);
               maybeRecordToolsetChangeReminder({
                 source: "/model (manual toolset override)",
@@ -1210,7 +1208,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               null;
             const derivedToolset = await switchToolsetForModel(
               modelHandle,
-              agentId,
               providerType,
             );
             settingsManager.setToolsetPreference(agentId, "auto", convId);
@@ -1230,7 +1227,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             return;
           }
 
-          await forceToolsetSwitch(toolsetId, agentId);
+          await forceToolsetSwitch(toolsetId);
           settingsManager.setToolsetPreference(agentId, toolsetId, convId);
           setCurrentToolsetPreference(toolsetId);
           setCurrentToolset(toolsetId);

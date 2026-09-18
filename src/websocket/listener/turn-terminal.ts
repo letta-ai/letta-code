@@ -1,5 +1,8 @@
+import type { Buffers } from "@/cli/helpers/accumulator";
+import type { UsageStatistics } from "@/types/protocol";
 import type { StopReasonType } from "@/types/protocol_v2";
 import { TO_SUBSCRIBERS } from "./connection";
+import { forgetListenerWork } from "./interrupted-turn-record";
 import {
   emitInterruptedStatusDelta,
   emitProtocolV2Message,
@@ -8,6 +11,21 @@ import {
 import type { ListenerTransport } from "./transport";
 import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
 import type { ConversationRuntime } from "./types";
+
+export function buildTurnUsage(usage: Buffers["usage"]): UsageStatistics {
+  return {
+    prompt_tokens: usage.promptTokens,
+    completion_tokens: usage.completionTokens,
+    total_tokens: usage.totalTokens,
+    step_count: usage.stepCount,
+    cached_input_tokens: usage.cachedInputTokens,
+    cache_write_tokens: usage.cacheWriteTokens,
+    reasoning_tokens: usage.reasoningTokens,
+    ...(usage.contextTokens !== undefined
+      ? { context_tokens: usage.contextTokens }
+      : {}),
+  };
+}
 
 export function finishListenerTurn(
   runtime: ConversationRuntime,
@@ -20,11 +38,15 @@ export function finishListenerTurn(
     conversationId: string;
     turnId?: string;
     error?: string;
+    usage?: UsageStatistics;
   },
 ): TurnFinishTransition {
   const transition = runtime.turnLifecycle.finish(lease, options.stopReason);
   if (!transition.finished) {
     return transition;
+  }
+  if (options.stopReason === "end_turn" || options.stopReason === "cancelled") {
+    forgetListenerWork(runtime);
   }
 
   // Explicit abort projects the interrupted state when it moves the lease to
@@ -59,6 +81,7 @@ export function finishListenerTurn(
           ? { run_id: options.runId ?? transition.runId ?? undefined }
           : {}),
         ...(options.error ? { error: options.error } : {}),
+        ...(options.usage ? { usage: options.usage } : {}),
       },
       {
         agent_id: options.agentId,

@@ -35,8 +35,6 @@ const NON_STATE_COMMANDS = new Set([
   "/search",
   "/memory",
   "/feedback",
-  "/export",
-  "/download",
   "/mods", // starts background local mod-learning runs; does not need the foreground lock
   "/reasoning-tab",
   "/secret",

@@ -26,7 +26,7 @@ function isImageFile(filePath: string): boolean {
 export async function view_image(
   args: ViewImageArgs,
 ): Promise<{ content: ToolReturnContent }> {
-  validateRequiredParams(args, ["path"], "view_image");
+  validateRequiredParams(args, ["path"], "ViewImage");
 
   const userCwd = getCurrentWorkingDirectory();
   const resolvedPath = path.isAbsolute(args.path)

@@ -12,6 +12,7 @@ import type {
 } from "@/types/protocol_v2";
 import { debugLog, isDebugEnabled } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
+import { sealStartupLogs } from "@/utils/startup-log-boundary";
 import {
   handleTerminalInput,
   handleTerminalKill,
@@ -33,7 +34,10 @@ import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
-import { subscribeListenerConnection } from "./connection";
+import {
+  getOrCreateProcessTransport,
+  subscribeListenerConnection,
+} from "./connection";
 import { getBootWorkingDirectory } from "./cwd";
 import {
   handleExternalToolCallResponseCommand,
@@ -65,6 +69,7 @@ import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import { parseListenerReadyMessage } from "./split-stream-lifecycle";
 import {
   buildTeleportContinuationMessages,
+  clearExpectedInboundTeleport,
   clearPriorReadyTeleports,
   handleTeleportFailure,
   handleTeleportProbe,
@@ -80,6 +85,7 @@ import type {
   ListenerRuntime,
   ProcessQueuedTurn,
   StartListenerOptions,
+  SyncReplayOptions,
 } from "./types";
 
 type SafeSocketSend = (
@@ -122,7 +128,7 @@ type MessageRouterParams = {
     listenerRuntime: ListenerRuntime,
     socket: WebSocket,
     scope: RuntimeScope,
-    opts?: { recoverApprovals?: boolean; forceDeviceStatus?: boolean },
+    opts?: SyncReplayOptions,
   ) => Promise<void>;
   getOrCreateScopedRuntime: (
     listener: ListenerRuntime,
@@ -212,12 +218,16 @@ export function createListenerMessageHandler(
   const connectionId = explicitConnectionId ?? opts.connectionId;
 
   return async (data: WebSocket.RawData): Promise<void> => {
+    const lifecycleMessage =
+      parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
+    // Legacy relays can deliver input before onConnected. Fail outside the
+    // handler catch so no parsing, logging, or dispatch follows a failed seal.
+    // Only projected pongs are content-free; ready frames retain extra fields.
+    if (lifecycleMessage?.type !== "pong") sealStartupLogs();
     const raw = data.toString();
     let parsedScope: ParsedRuntimeScope = null;
 
     try {
-      const lifecycleMessage =
-        parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
       if (lifecycleMessage) {
         // Record relay pongs so the heartbeat watchdog can detect a half-open
         // socket (no pong within the timeout) and force a reconnect.
@@ -376,7 +386,10 @@ export function createListenerMessageHandler(
         try {
           await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
             recoverApprovals: parsed.recover_approvals !== false,
+            resumeInterruptedTurn: parsed.resume_interrupted_turn === true,
             forceDeviceStatus: parsed.force_device_status === true,
+            onStatusChange: opts.onStatusChange,
+            connectionId: opts.connectionId,
           });
           if (parsed.request_id) {
             safeSocketSend(
@@ -459,6 +472,9 @@ export function createListenerMessageHandler(
             parsed.runtime.agent_id,
             parsed.runtime.conversation_id,
           );
+          // The continuation this scope's runtime_start announced has arrived;
+          // sync recovery may act on its own again from here.
+          clearExpectedInboundTeleport(scopedRuntime);
           const acceptedKey = `teleport:${teleportId}`;
           const previousDisposition =
             scopedRuntime.acceptedInputDispositions.get(acceptedKey);
@@ -467,10 +483,6 @@ export function createListenerMessageHandler(
             return;
           }
           const approvals = parsed.payload.continuation?.approvals;
-          if (!approvals || approvals.length === 0) {
-            acknowledgeInput(true);
-            return;
-          }
           if (scopedRuntime.isProcessing) {
             acknowledgeInput(
               false,
@@ -492,7 +504,7 @@ export function createListenerMessageHandler(
                   approvals,
                 }),
               },
-              socket,
+              getOrCreateProcessTransport(runtime),
               scopedRuntime,
               opts.onStatusChange,
               connectionId,

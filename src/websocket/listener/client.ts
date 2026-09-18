@@ -61,7 +61,6 @@ import {
 } from "./interrupts";
 import {
   createRuntime,
-  replaySyncStateForRuntime,
   runDetachedListenerTask,
   safeSocketSend,
   startConnectedListenerRuntime,
@@ -94,6 +93,7 @@ import {
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
 } from "./send";
+import { replaySyncStateForRuntime } from "./sync-replay";
 import { handleIncomingMessage } from "./turn";
 import type {
   ConversationRuntime,
@@ -662,6 +662,7 @@ export const __listenClientTestUtils = {
     scope: { agent_id: string | null; conversation_id: string },
     opts?: {
       recoverApprovals?: boolean;
+      resumeInterruptedTurn?: boolean;
       recoverApprovalStateForSync?: (
         runtime: ConversationRuntime,
         scope: { agent_id: string | null; conversation_id: string },

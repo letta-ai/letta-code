@@ -158,6 +158,9 @@ export function evictConversationRuntimeIfIdle(
 ): boolean {
   if (
     runtime.turnLifecycle.kind !== "idle" ||
+    (runtime.expectedTeleportId !== null &&
+      (runtime.expectedTeleportExpiresAt === null ||
+        runtime.expectedTeleportExpiresAt > Date.now())) ||
     runtime.queuePumpActive ||
     runtime.queuePumpScheduled ||
     runtime.pendingTurns > 0 ||
@@ -169,7 +172,8 @@ export function evictConversationRuntimeIfIdle(
     (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
     runtime.queuedMessagesByItemId.size > 0 ||
     runtime.queueRuntime?.length > 0 ||
-    (runtime.workspaceSandbox !== undefined &&
+    ((runtime.workspaceSandbox !== undefined ||
+      runtime.executionSettings !== undefined) &&
       runtime.listener.connectionIdsByRuntimeKey.has(runtime.key))
   ) {
     return false;
@@ -262,6 +266,8 @@ export function createConversationRuntime(
     acceptedInputDispositions: new Map(),
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
+    expectedTeleportId: null,
+    expectedTeleportExpiresAt: null,
     get lastStopReason() {
       return turnLifecycle.lastStopReason;
     },
@@ -367,6 +373,8 @@ export function clearConversationRuntimeState(
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
+  runtime.expectedTeleportId = null;
+  runtime.expectedTeleportExpiresAt = null;
   runtime.dequeuedClientMessageIdsByBatchId.clear();
   runtime.continuationEpoch += 1;
   runtime.pendingTurns = 0;

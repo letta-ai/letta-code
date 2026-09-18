@@ -21,12 +21,22 @@ const capabilities = {
   remoteMemfs: true,
   serverSideToolManagement: true,
   serverSecrets: true,
-  agentFileImportExport: true,
   promptRecompile: true,
   byokProviderRefresh: true,
   localModelCatalog: false,
   localMemfs: false,
 };
+
+describe("removed AgentFile commands", () => {
+  test.each(["/export", "/download"])(
+    "%s is not executable",
+    async (command) => {
+      const result = await executeCommand(command);
+      expect(result.success).toBe(false);
+      expect(result.notFound).toBe(true);
+    },
+  );
+});
 
 describe("command registry", () => {
   beforeEach(() => {

@@ -5,6 +5,7 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
+import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { updateConversationLLMConfig } from "@/agent/modify";
 import {
@@ -29,7 +30,10 @@ import {
 } from "@/agent/subagents/subagent-model";
 import { type Backend, getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import { sleep } from "@/utils/sleep";
@@ -98,6 +102,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
   forkedContext?: boolean;
   /** Parent conversation scope for routing notifications in listener mode. */
   parentScope?: { agentId: string; conversationId: string };
+  /** Authenticated Cloud user responsible for the launch-time turn. */
+  actingUserId?: string;
   /**
    * Optional path to a transcript/payload file the subagent should read.
    * Exposed to the child process as the `TRANSCRIPT_PATH` env var so
@@ -367,6 +373,7 @@ export function spawnBackgroundSubagentTask(
     maxTurns,
     forkedContext,
     parentScope,
+    actingUserId: explicitActingUserId,
     silentCompletion,
     emitCompletionNotification,
     completionSummary,
@@ -380,6 +387,10 @@ export function spawnBackgroundSubagentTask(
     emitCompletionNotification ?? !silentCompletion;
 
   const resolvedParentScope = resolveNotificationScope(parentScope);
+  const actingUserId =
+    explicitActingUserId ??
+    getRuntimeContext()?.actingUserId ??
+    process.env[ACTING_USER_ID_ENV];
 
   const spawnSubagentFn = deps?.spawnSubagentImpl ?? spawnSubagent;
   const copyGitHubPullRequestTagsFn =
@@ -423,6 +434,7 @@ export function spawnBackgroundSubagentTask(
     outputFile,
     abortController,
     runtimeScope: resolvedParentScope,
+    actingUserId,
   };
   backgroundTasks.set(taskId, bgTask);
   writeTaskTranscriptStart(outputFile, description, subagentType);
@@ -437,7 +449,7 @@ export function spawnBackgroundSubagentTask(
   // is the authoritative value — the listener and App.tsx both derive it
   // from their own closure-captured agentId.
   const parentAgentIdForSpawn = resolvedParentScope?.agentId;
-  spawnSubagentFn(
+  const subagentExecution = spawnSubagentFn(
     subagentType,
     prompt,
     model,
@@ -453,7 +465,13 @@ export function spawnBackgroundSubagentTask(
     memoryScope,
     systemPromptOverride,
     environment,
-  )
+    actingUserId,
+  );
+  bgTask.completion = subagentExecution.then(
+    () => undefined,
+    () => undefined,
+  );
+  subagentExecution
     .then(async (result) => {
       await copyGitHubPullRequestTagsFn(
         result.conversationId,
@@ -545,6 +563,7 @@ export function spawnBackgroundSubagentTask(
           text: notificationXml,
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
+          actingUserId: bgTask.actingUserId,
         });
       }
 
@@ -627,6 +646,7 @@ export function spawnBackgroundSubagentTask(
           text: notificationXml,
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
+          actingUserId: bgTask.actingUserId,
         });
       }
 
@@ -886,6 +906,10 @@ export async function task(args: TaskArgs): Promise<string> {
   );
   const agentId = linkedAgent?.agentId ?? null;
   const agentIdLine = agentId ? `\nAgent ID: ${agentId}` : "";
+  const conversationId = linkedAgent?.conversationId ?? null;
+  const conversationIdLine = conversationId
+    ? `\nConversation ID: ${conversationId}`
+    : "";
 
-  return `Task running in background with task ID: ${taskId}${agentIdLine}\nOutput file: ${outputFile}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll, sleep-wait, or check the output file. Just continue with your current work.`;
+  return `Task running in background with task ID: ${taskId}${agentIdLine}${conversationIdLine}\nOutput file: ${outputFile}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll, sleep-wait, or check the output file. Just continue with your current work.`;
 }

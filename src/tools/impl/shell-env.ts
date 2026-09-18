@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import {
   getConversationId,
   getCurrentAgentId,
@@ -23,9 +24,12 @@ import { getServerUrl } from "@/backend/api/server-url";
 import { isLocalBackendMemfsDisabledForProcess } from "@/backend/local/paths";
 import {
   getCurrentWorkingDirectory,
+  getRuntimeActingUserId,
   getRuntimeContext,
 } from "@/runtime-context";
+import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
+import { LISTENER_CONNECTION_ENV } from "@/utils/subagent-launch-marker";
 import { getRipgrepBinDir } from "./ripgrep-manager.js";
 
 /**
@@ -306,7 +310,11 @@ function applyHostedMemfsGitHeaderEnv(env: NodeJS.ProcessEnv): void {
  * Includes bundled tools (like ripgrep) in PATH and Letta context for skill scripts.
  */
 export function getShellEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+  const executionEnv = getRuntimeExecutionEnv(
+    process.env,
+    getRuntimeContext()?.executionSettings,
+  );
+  const env = { ...executionEnv };
   const desktopAccessToken = getDesktopAccessToken();
   if (desktopAccessToken) env.LETTA_API_KEY = desktopAccessToken;
   const pathKey =
@@ -343,6 +351,14 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   const environmentDeviceId = getRuntimeContext()?.environmentDeviceId?.trim();
   if (environmentDeviceId) {
     env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = environmentDeviceId;
+  }
+  const listenerConnectionId = getRuntimeContext()?.connectionId;
+  if (listenerConnectionId?.startsWith("conn-")) {
+    env[LISTENER_CONNECTION_ENV] = listenerConnectionId;
+  }
+  const actingUserId = getRuntimeActingUserId();
+  if (actingUserId) {
+    env[ACTING_USER_ID_ENV] = actingUserId;
   }
 
   // Add Letta context for skill scripts.
@@ -389,9 +405,9 @@ export function getShellEnv(): NodeJS.ProcessEnv {
         env.LETTA_MEMORY_DIR = memoryDir;
         env.MEMORY_DIR = memoryDir;
       } else {
-        const inheritedMemoryDir = process.env.MEMORY_DIR?.trim();
-        const inheritedLettaMemoryDir = process.env.LETTA_MEMORY_DIR?.trim();
-        const parentAgentId = process.env.LETTA_PARENT_AGENT_ID?.trim();
+        const inheritedMemoryDir = executionEnv.MEMORY_DIR?.trim();
+        const inheritedLettaMemoryDir = executionEnv.LETTA_MEMORY_DIR?.trim();
+        const parentAgentId = executionEnv.LETTA_PARENT_AGENT_ID?.trim();
         const inheritedParentMemoryDir = parentAgentId
           ? getScopedMemoryFilesystemRoot(parentAgentId)
           : null;

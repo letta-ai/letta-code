@@ -124,6 +124,36 @@ async function interruptWithQueuedItems(params: {
 describe("abort_message parks queued user messages", () => {
   afterEach(() => setActiveRuntime(null));
 
+  test("an old run-specific abort cannot cancel the replacement turn", async () => {
+    const listener = createRuntime();
+    setActiveRuntime(listener);
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    runtime.turnLifecycle.setRunId(lease, "run-replacement");
+    const cancelRun = mock(async () => {});
+    const cancelled = await handleAbortMessageInput(
+      listener,
+      {
+        command: {
+          type: "abort_message",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          run_id: "run-old",
+        },
+        socket: createOpenTransport(),
+        opts: {} as StartListenerOptions,
+        processQueuedTurn: async () => {},
+      },
+      { cancelRun, cancelConversation: async () => {} },
+    );
+    expect(cancelled).toBe(false);
+    expect(runtime.turnLifecycle.kind).toBe("active");
+    expect(runtime.activeRunId).toBe("run-replacement");
+    expect(cancelRun).not.toHaveBeenCalled();
+  });
+
   test("parked user messages wait while a notification queued during the interrupt drains", async () => {
     const { runtime, processedTurns } = await interruptWithQueuedItems({
       queuedBeforeAbort: (r) => enqueueUser(r, "queued before esc"),

@@ -8,13 +8,10 @@ import EnterWorktreeDescription from "./descriptions/EnterWorktree.md";
 import ExecCommandDescription from "./descriptions/ExecCommand.md";
 import ExitWorktreeDescription from "./descriptions/ExitWorktree.md";
 import GlobDescription from "./descriptions/Glob.md";
-// Gemini toolset
-import GlobGeminiDescription from "./descriptions/GlobGemini.md";
 import GrepDescription from "./descriptions/Grep.md";
 import GrepFilesDescription from "./descriptions/GrepFiles.md";
 import KillBashDescription from "./descriptions/KillBash.md";
 import ListDirCodexDescription from "./descriptions/ListDirCodex.md";
-import ListDirectoryGeminiDescription from "./descriptions/ListDirectoryGemini.md";
 import LSDescription from "./descriptions/LS.md";
 import MemoryDescription from "./descriptions/Memory.md";
 import MemoryApplyPatchDescription from "./descriptions/MemoryApplyPatch.md";
@@ -25,12 +22,8 @@ import MultiEditDescription from "./descriptions/MultiEdit.md";
 import ReadDescription from "./descriptions/Read.md";
 import ReadArtifactFileDescription from "./descriptions/ReadArtifactFile.md";
 import ReadFileCodexDescription from "./descriptions/ReadFileCodex.md";
-import ReadFileGeminiDescription from "./descriptions/ReadFileGemini.md";
 import ReadLSPDescription from "./descriptions/ReadLSP.md";
-import ReadManyFilesGeminiDescription from "./descriptions/ReadManyFilesGemini.md";
-import ReplaceGeminiDescription from "./descriptions/ReplaceGemini.md";
-import RunShellCommandGeminiDescription from "./descriptions/RunShellCommandGemini.md";
-import SearchFileContentGeminiDescription from "./descriptions/SearchFileContentGemini.md";
+import SendAgentMessageDescription from "./descriptions/SendAgentMessage.md";
 import SetWorkingDirectoryDescription from "./descriptions/SetWorkingDirectory.md";
 import ShellDescription from "./descriptions/Shell.md";
 import ShellCommandDescription from "./descriptions/ShellCommand.md";
@@ -47,9 +40,7 @@ import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import ViewImageDescription from "./descriptions/ViewImage.md";
 import WriteDescription from "./descriptions/Write.md";
 import WriteArtifactFileDescription from "./descriptions/WriteArtifactFile.md";
-import WriteFileGeminiDescription from "./descriptions/WriteFileGemini.md";
 import WriteStdinDescription from "./descriptions/WriteStdin.md";
-import WriteTodosGeminiDescription from "./descriptions/WriteTodosGemini.md";
 import { apply_patch } from "./impl/apply-patch";
 import { read_artifact_file, write_artifact_file } from "./impl/artifact-files";
 import { ask_user_question } from "./impl/ask-user-question";
@@ -60,13 +51,10 @@ import { enter_worktree } from "./impl/enter-worktree";
 import { exec_command, write_stdin } from "./impl/exec-command";
 import { exit_worktree } from "./impl/exit-worktree";
 import { glob } from "./impl/glob";
-// Gemini toolset
-import { glob_gemini } from "./impl/glob-gemini";
 import { grep } from "./impl/grep";
 import { grep_files } from "./impl/grep-files";
 import { kill_bash } from "./impl/kill-bash";
 import { list_dir } from "./impl/list-dir-codex";
-import { list_directory } from "./impl/list-directory-gemini";
 import { ls } from "./impl/ls";
 import { memory } from "./impl/memory";
 import { memory_apply_patch } from "./impl/memory-apply-patch";
@@ -74,12 +62,8 @@ import { monitor } from "./impl/monitor";
 import { multi_edit } from "./impl/multi-edit";
 import { read } from "./impl/read";
 import { read_file } from "./impl/read-file-codex";
-import { read_file_gemini } from "./impl/read-file-gemini";
 import { read_lsp } from "./impl/read-lsp";
-import { read_many_files } from "./impl/read-many-files-gemini";
-import { replace } from "./impl/replace-gemini";
-import { run_shell_command } from "./impl/run-shell-command-gemini";
-import { search_file_content } from "./impl/search-file-content-gemini";
+import { send_agent_message } from "./impl/send-agent-message";
 import { set_working_directory } from "./impl/set-working-directory";
 import { shell } from "./impl/shell";
 import { shell_command } from "./impl/shell-command";
@@ -95,8 +79,6 @@ import { todo_write } from "./impl/todo-write";
 import { update_plan } from "./impl/update-plan";
 import { view_image } from "./impl/view-image";
 import { write } from "./impl/write";
-import { write_file_gemini } from "./impl/write-file-gemini";
-import { write_todos } from "./impl/write-todos-gemini";
 
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
@@ -107,13 +89,10 @@ import EnterWorktreeSchema from "./schemas/EnterWorktree.json";
 import ExecCommandSchema from "./schemas/ExecCommand.json";
 import ExitWorktreeSchema from "./schemas/ExitWorktree.json";
 import GlobSchema from "./schemas/Glob.json";
-// Gemini toolset
-import GlobGeminiSchema from "./schemas/GlobGemini.json";
 import GrepSchema from "./schemas/Grep.json";
 import GrepFilesSchema from "./schemas/GrepFiles.json";
 import KillBashSchema from "./schemas/KillBash.json";
 import ListDirCodexSchema from "./schemas/ListDirCodex.json";
-import ListDirectoryGeminiSchema from "./schemas/ListDirectoryGemini.json";
 import LSSchema from "./schemas/LS.json";
 import MemorySchema from "./schemas/Memory.json";
 import MemoryApplyPatchSchema from "./schemas/MemoryApplyPatch.json";
@@ -123,12 +102,8 @@ import MultiEditSchema from "./schemas/MultiEdit.json";
 import ReadSchema from "./schemas/Read.json";
 import ReadArtifactFileSchema from "./schemas/ReadArtifactFile.json";
 import ReadFileCodexSchema from "./schemas/ReadFileCodex.json";
-import ReadFileGeminiSchema from "./schemas/ReadFileGemini.json";
 import ReadLSPSchema from "./schemas/ReadLSP.json";
-import ReadManyFilesGeminiSchema from "./schemas/ReadManyFilesGemini.json";
-import ReplaceGeminiSchema from "./schemas/ReplaceGemini.json";
-import RunShellCommandGeminiSchema from "./schemas/RunShellCommandGemini.json";
-import SearchFileContentGeminiSchema from "./schemas/SearchFileContentGemini.json";
+import SendAgentMessageSchema from "./schemas/SendAgentMessage.json";
 import SetWorkingDirectorySchema from "./schemas/SetWorkingDirectory.json";
 import ShellSchema from "./schemas/Shell.json";
 import ShellCommandSchema from "./schemas/ShellCommand.json";
@@ -145,9 +120,7 @@ import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import ViewImageSchema from "./schemas/ViewImage.json";
 import WriteSchema from "./schemas/Write.json";
 import WriteArtifactFileSchema from "./schemas/WriteArtifactFile.json";
-import WriteFileGeminiSchema from "./schemas/WriteFileGemini.json";
 import WriteStdinSchema from "./schemas/WriteStdin.json";
-import WriteTodosGeminiSchema from "./schemas/WriteTodosGemini.json";
 
 const WINDOWS_UNIFIED_EXEC_GUIDANCE = `Windows safety rules:
 - Do not compose destructive filesystem commands across shells. Do not enumerate paths in PowerShell and then pass them to \`cmd /c\`, batch builtins, or another shell for deletion or moving. Use one shell end-to-end, prefer native PowerShell cmdlets such as \`Remove-Item\` / \`Move-Item\` with \`-LiteralPath\`, and avoid string-built shell commands for file operations.
@@ -278,11 +251,6 @@ const toolDefinitions = {
     description: ReadArtifactFileDescription.trim(),
     impl: read_artifact_file,
   }),
-  view_image: defineTool({
-    schema: ViewImageSchema,
-    description: ViewImageDescription.trim(),
-    impl: view_image,
-  }),
   ViewImage: defineTool({
     schema: ViewImageSchema,
     description: ViewImageDescription.trim(),
@@ -293,6 +261,11 @@ const toolDefinitions = {
     schema: ReadLSPSchema,
     description: ReadLSPDescription.trim(),
     impl: read_lsp,
+  }),
+  SendAgentMessage: defineTool({
+    schema: SendAgentMessageSchema,
+    description: SendAgentMessageDescription.trim(),
+    impl: send_agent_message,
   }),
   SetWorkingDirectory: defineTool({
     schema: SetWorkingDirectorySchema,
@@ -379,63 +352,7 @@ const toolDefinitions = {
     description: GrepFilesDescription.trim(),
     impl: grep_files,
   }),
-  apply_patch: defineTool({
-    schema: ApplyPatchSchema,
-    description: ApplyPatchDescription.trim(),
-    impl: apply_patch,
-  }),
-  update_plan: defineTool({
-    schema: UpdatePlanSchema,
-    description: UpdatePlanDescription.trim(),
-    impl: update_plan,
-  }),
-  // Gemini toolset
-  glob_gemini: defineTool({
-    schema: GlobGeminiSchema,
-    description: GlobGeminiDescription.trim(),
-    impl: glob_gemini,
-  }),
-  list_directory: defineTool({
-    schema: ListDirectoryGeminiSchema,
-    description: ListDirectoryGeminiDescription.trim(),
-    impl: list_directory,
-  }),
-  read_file_gemini: defineTool({
-    schema: ReadFileGeminiSchema,
-    description: ReadFileGeminiDescription.trim(),
-    impl: read_file_gemini,
-  }),
-  read_many_files: defineTool({
-    schema: ReadManyFilesGeminiSchema,
-    description: ReadManyFilesGeminiDescription.trim(),
-    impl: read_many_files,
-  }),
-  replace: defineTool({
-    schema: ReplaceGeminiSchema,
-    description: ReplaceGeminiDescription.trim(),
-    impl: replace,
-  }),
-  run_shell_command: defineTool({
-    schema: RunShellCommandGeminiSchema,
-    description: RunShellCommandGeminiDescription.trim(),
-    impl: run_shell_command,
-  }),
-  search_file_content: defineTool({
-    schema: SearchFileContentGeminiSchema,
-    description: SearchFileContentGeminiDescription.trim(),
-    impl: search_file_content,
-  }),
-  write_todos: defineTool({
-    schema: WriteTodosGeminiSchema,
-    description: WriteTodosGeminiDescription.trim(),
-    impl: write_todos,
-  }),
-  write_file_gemini: defineTool({
-    schema: WriteFileGeminiSchema,
-    description: WriteFileGeminiDescription.trim(),
-    impl: write_file_gemini,
-  }),
-  // Codex-2 toolset (PascalCase aliases for OpenAI tools)
+  // Additional Codex tools
   ShellCommand: defineTool({
     schema: ShellCommandSchema,
     description: ShellCommandDescription.trim(),
@@ -470,52 +387,6 @@ const toolDefinitions = {
     schema: UpdatePlanSchema,
     description: UpdatePlanDescription.trim(),
     impl: update_plan,
-  }),
-  // Gemini-2 toolset (PascalCase aliases for Gemini tools)
-  RunShellCommand: defineTool({
-    schema: RunShellCommandGeminiSchema,
-    description: RunShellCommandGeminiDescription.trim(),
-    impl: run_shell_command,
-  }),
-  ReadFileGemini: defineTool({
-    schema: ReadFileGeminiSchema,
-    description: ReadFileGeminiDescription.trim(),
-    impl: read_file_gemini,
-  }),
-  ListDirectory: defineTool({
-    schema: ListDirectoryGeminiSchema,
-    description: ListDirectoryGeminiDescription.trim(),
-    impl: list_directory,
-  }),
-  GlobGemini: defineTool({
-    schema: GlobGeminiSchema,
-    description: GlobGeminiDescription.trim(),
-    impl: glob_gemini,
-  }),
-  SearchFileContent: defineTool({
-    schema: SearchFileContentGeminiSchema,
-    description: SearchFileContentGeminiDescription.trim(),
-    impl: search_file_content,
-  }),
-  Replace: defineTool({
-    schema: ReplaceGeminiSchema,
-    description: ReplaceGeminiDescription.trim(),
-    impl: replace,
-  }),
-  WriteFileGemini: defineTool({
-    schema: WriteFileGeminiSchema,
-    description: WriteFileGeminiDescription.trim(),
-    impl: write_file_gemini,
-  }),
-  WriteTodos: defineTool({
-    schema: WriteTodosGeminiSchema,
-    description: WriteTodosGeminiDescription.trim(),
-    impl: write_todos,
-  }),
-  ReadManyFiles: defineTool({
-    schema: ReadManyFilesGeminiSchema,
-    description: ReadManyFilesGeminiDescription.trim(),
-    impl: read_many_files,
   }),
 } as const satisfies Record<string, ToolAssets>;
 

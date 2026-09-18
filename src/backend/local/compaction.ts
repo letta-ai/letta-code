@@ -12,6 +12,7 @@ import {
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
+import { resolvePiRequestHeaders } from "@/backend/dev/pi-request-headers";
 import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
 import { isRecord } from "@/utils/type-guards";
 import type { LocalMessage } from "./local-message";
@@ -116,6 +117,7 @@ export type LocalCompleteFunction = (
 ) => Promise<AssistantMessage>;
 
 export interface LocalAllCompactionInput {
+  conversationId: string;
   agent: LocalAgentRecord;
   messages: LocalMessage[];
   complete?: LocalCompleteFunction;
@@ -461,11 +463,16 @@ async function runGenerateText(
     localModel.model,
     resolved.model,
   );
+  const headers = resolvePiRequestHeaders({
+    provider: resolved.model.provider,
+    configuredHeaders: resolved.headers,
+    conversationId: input.conversationId,
+  });
   const options: SimpleStreamOptions & Record<string, unknown> = {
     ...resolved.providerOptions,
     ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
     ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
-    ...(resolved.headers ? { headers: resolved.headers } : {}),
+    ...(headers ? { headers } : {}),
     ...(input.abortSignal ? { signal: input.abortSignal } : {}),
     // Mirrors Pi's createSummarizationOptions, which passes the session
     // thinking level into summarization requests. Required for adaptive
@@ -475,6 +482,7 @@ async function runGenerateText(
     // compaction (automatic and manual /compact).
     ...(reasoning ? { reasoning } : {}),
     maxRetries: 0,
+    sessionId: input.conversationId,
   };
   const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
   let result: AssistantMessage;

@@ -23,6 +23,26 @@ function createDeps(
 }
 
 describe("sandbox file API", () => {
+  test("selects agent scope for default rather than looking up a literal conversation", async () => {
+    const calls: Array<{ input: string; init?: RequestInit }> = [];
+    await ensureConversationSandbox(
+      "agent-1",
+      "default",
+      createDeps(
+        Response.json({
+          sandboxId: "main-sandbox",
+          deviceId: "device-1",
+          connectionName: "Cloud",
+        }),
+        calls,
+      ),
+    );
+    expect(calls[0]?.input).toBe(
+      "https://api.letta.test/v1/agents/agent-1/sandboxes",
+    );
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({});
+  });
+
   test("ensures the conversation-scoped sandbox", async () => {
     const calls: Array<{ input: string; init?: RequestInit }> = [];
     const result = await ensureConversationSandbox(

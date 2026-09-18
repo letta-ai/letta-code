@@ -122,8 +122,8 @@ async function buildSecretsInfoReminder(
   }
 }
 
-/** Re-check the MCP server list at most this often for mid-session changes. */
-const MCP_SERVERS_REFRESH_MS = 5 * 60 * 1000;
+/** Cache tool counts, never the list of attached servers. */
+const MCP_TOOL_COUNTS_REFRESH_MS = 5 * 60 * 1000;
 
 export interface McpServerReminderEntry {
   name: string;
@@ -141,6 +141,7 @@ export interface McpServersReminderDependencies {
 
 async function defaultListServerSideServers(
   agentId: string,
+  state: SharedReminderContext["state"],
 ): Promise<McpServerReminderEntry[] | null> {
   // An unavailable backend means no server-side MCP; local names are still
   // valid. A failed server fetch on an available backend throws instead, so a
@@ -171,15 +172,30 @@ async function defaultListServerSideServers(
     getServerUrl() === LETTA_CLOUD_API_URL
       ? allServers.filter((server) => server.serverType !== "stdio")
       : allServers;
+  const serverIds = new Set(servers.map((server) => server.id));
+  for (const id of state.mcpToolCounts.keys()) {
+    if (!serverIds.has(id)) state.mcpToolCounts.delete(id);
+  }
+  const now = Date.now();
   return Promise.all(
-    servers.map(async (server) => ({
-      name: server.serverName,
-      // Tool counts read the server-synced tool rows; a miscounted server
-      // still lists by name.
-      toolCount: await listUnifiedMcpTools(client, agentId, server.id, 3_000)
+    servers.map(async (server) => {
+      const cached = state.mcpToolCounts.get(server.id);
+      if (cached && now - cached.fetchedAtMs < MCP_TOOL_COUNTS_REFRESH_MS) {
+        return { name: server.serverName, toolCount: cached.toolCount };
+      }
+      // New attachments get counts immediately. Existing servers reuse counts
+      // so fresh discovery costs one list request, not one per server as well.
+      const toolCount = await listUnifiedMcpTools(
+        client,
+        agentId,
+        server.id,
+        3_000,
+      )
         .then((tools) => tools.length)
-        .catch(() => null),
-    })),
+        .catch(() => null);
+      state.mcpToolCounts.set(server.id, { toolCount, fetchedAtMs: now });
+      return { name: server.serverName, toolCount };
+    }),
   );
 }
 
@@ -195,19 +211,6 @@ export async function buildMcpServersInfoReminderText(
   deps: McpServersReminderDependencies = {},
 ): Promise<string | null> {
   try {
-    const now = Date.now();
-    const lastFetched = context.state.lastMcpServersFetchedAtMs;
-    const due =
-      !context.state.hasSentMcpServersInfo ||
-      lastFetched === null ||
-      now - lastFetched > MCP_SERVERS_REFRESH_MS;
-    if (!due) {
-      return null;
-    }
-    // Record the attempt first so a failing backend is retried on the
-    // refresh interval instead of on every turn.
-    context.state.lastMcpServersFetchedAtMs = now;
-
     const localNames = (
       deps.getLocalServerNames ??
       ((agentId: string) =>
@@ -218,7 +221,9 @@ export async function buildMcpServersInfoReminderText(
       toolCount: null,
     }));
     const serverSideEntries = await (
-      deps.listServerSideServers ?? defaultListServerSideServers
+      deps.listServerSideServers ??
+      ((agentId: string) =>
+        defaultListServerSideServers(agentId, context.state))
     )(context.agent.id);
     if (serverSideEntries) {
       entries.push(...serverSideEntries);

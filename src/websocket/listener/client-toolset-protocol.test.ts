@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { TOOLSET_OPTIONS } from "@/tools/toolset-catalog";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
 
 describe("client toolset protocol", () => {
@@ -57,5 +58,45 @@ describe("client toolset protocol", () => {
       reason:
         "Protocol violation: input.payload.client_toolset must contain an optional valid base and string[] include",
     });
+  });
+
+  test("accepts the Letta toolset as a request-scoped base", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [{ role: "user", content: "hello" }],
+            client_toolset: { base: "letta" },
+          },
+        }),
+      ),
+    );
+
+    expect(parsed).toMatchObject({
+      type: "input",
+      payload: { client_toolset: { base: "letta" } },
+    });
+  });
+
+  test("accepts each advertised toolset in update commands", () => {
+    for (const { id } of TOOLSET_OPTIONS) {
+      const parsed = parseServerMessage(
+        Buffer.from(
+          JSON.stringify({
+            type: "update_toolset",
+            request_id: "toolset-test",
+            runtime: { agent_id: "agent-1", conversation_id: "default" },
+            toolset_preference: id,
+          }),
+        ),
+      );
+      expect(parsed).toMatchObject({
+        type: "update_toolset",
+        toolset_preference: id,
+      });
+    }
   });
 });

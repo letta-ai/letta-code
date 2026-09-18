@@ -15,10 +15,13 @@ interface KillBashResult {
 
 export async function kill_bash(args: KillBashArgs): Promise<KillBashResult> {
   validateRequiredParams(args, ["shell_id"], "KillBash");
-  const { shell_id } = args;
+  return { killed: killBackgroundProcess(args.shell_id) };
+}
+
+export function killBackgroundProcess(shell_id: string): boolean {
   const proc = backgroundProcesses.get(shell_id);
   if (!proc || (proc.kind === "monitor" && proc.status !== "running")) {
-    return { killed: false };
+    return false;
   }
   const previousStatus = proc.status;
   const previousNotificationSuppression = proc.completionNotificationSuppressed;
@@ -37,10 +40,10 @@ export async function kill_bash(args: KillBashArgs): Promise<KillBashResult> {
     } else {
       backgroundProcesses.delete(shell_id);
     }
-    return { killed: true };
+    return true;
   } catch {
     proc.status = previousStatus;
     proc.completionNotificationSuppressed = previousNotificationSuppression;
-    return { killed: false };
+    return false;
   }
 }

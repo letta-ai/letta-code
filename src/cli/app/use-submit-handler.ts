@@ -1,7 +1,7 @@
 // src/cli/app/useSubmitHandler.ts
 
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -56,9 +56,9 @@ import {
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { resetContextHistory } from "@/cli/helpers/context-tracker";
 import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switch-alert";
+import { buildDoctorMessage } from "@/cli/helpers/doctor-command";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
-  buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
@@ -99,10 +99,6 @@ import {
   buildReflectionSelectorPrompt,
   readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
-import {
-  formatSkillNameFrontmatterRepairReport,
-  repairMissingSkillNameFrontmatter,
-} from "@/cli/helpers/skill-name-frontmatter-repair";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
@@ -910,12 +906,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           try {
             // Mark command as finished BEFORE sending to agent
-            // (matches /remember pattern - command succeeded in triggering agent)
+            // (command succeeded in triggering agent)
             cmd.finish("Running custom command...", true);
 
             // Send prompt to agent
-            // NOTE: Unlike /remember, we DON'T append args separately because
-            // they're already substituted into the prompt via $ARGUMENTS
+            // NOTE: We DON'T append args separately because they're already
+            // substituted into the prompt via $ARGUMENTS
             await processConversationWithQueuedApprovals([
               {
                 type: "message",
@@ -2599,75 +2595,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /export command (also accepts legacy /download)
-        if (msg.trim() === "/export" || msg.trim() === "/download") {
-          const cmd = commandRunner.start(
-            msg.trim(),
-            "Exporting agent file...",
-          );
-
-          if (!getBackend().capabilities.agentFileImportExport) {
-            cmd.fail(
-              "AgentFile export is not supported by the local backend yet.",
-            );
-            return { submitted: true };
-          }
-
-          setCommandRunning(true);
-
-          try {
-            const client = await getClient();
-
-            // Build export parameters (include conversation_id if in specific conversation)
-            const exportParams: { conversation_id?: string } = {};
-            if (conversationId !== "default" && conversationId !== agentId) {
-              exportParams.conversation_id = conversationId;
-            }
-
-            // Package skills from agent/project/global directories
-            const { packageSkills } = await import("@/agent/export");
-            const skills = await packageSkills(agentId);
-
-            // Export agent via SDK (GET endpoint), then embed skills client-side
-            const baseContent = await client.agents.exportFile(
-              agentId,
-              exportParams,
-            );
-
-            // Parse if returned as a string, otherwise use as-is
-            const fileContent: Record<string, unknown> =
-              typeof baseContent === "string"
-                ? JSON.parse(baseContent)
-                : (baseContent as Record<string, unknown>);
-
-            // Embed skills into the .af JSON (client-side, no server support needed)
-            if (skills.length > 0) {
-              fileContent.skills = skills;
-            }
-
-            // Generate filename
-            const fileName = exportParams.conversation_id
-              ? `${exportParams.conversation_id}.af`
-              : `${agentId}.af`;
-
-            writeFileSync(fileName, JSON.stringify(fileContent, null, 2));
-
-            // Build success message
-            let summary = `AgentFile exported to ${fileName}`;
-            if (skills.length > 0) {
-              summary += `\n📦 Included ${skills.length} skill(s): ${skills.map((s) => s.name).join(", ")}`;
-            }
-
-            cmd.finish(summary, true);
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed: ${errorDetails}`);
-          } finally {
-            setCommandRunning(false);
-          }
-          return { submitted: true };
-        }
-
         // Special handling for /memfs command - manage filesystem-backed memory
         if (trimmed.startsWith("/memfs")) {
           const [, subcommand] = trimmed.split(/\s+/);
@@ -2951,70 +2878,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /remember command - remember something from conversation
-        if (trimmed.startsWith("/remember")) {
-          // Extract optional description after `/remember`
-          const [, ...rest] = trimmed.split(/\s+/);
-          const userText = rest.join(" ").trim();
-
-          const initialOutput = userText
-            ? "Storing to memory..."
-            : "Processing memory request...";
-
-          const cmd = commandRunner.start(msg, initialOutput);
-
-          // Check for pending approvals before sending (mirrors regular message flow)
-          const approvalCheck = await checkPendingApprovalsForSlashCommand();
-          if (approvalCheck.blocked) {
-            cmd.fail(
-              "Pending approval(s). Resolve approvals before running /remember.",
-            );
-            return { submitted: false }; // Keep /remember in input box, user handles approval first
-          }
-
-          setCommandRunning(true);
-
-          try {
-            // Import the remember prompt
-            const { REMEMBER_PROMPT } = await import(
-              "@/agent/prompt-assets.js"
-            );
-
-            // Build system-reminder content for memory request
-            const rememberReminder = userText
-              ? `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n${SYSTEM_REMINDER_CLOSE}`
-              : `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n\nThe user did not specify what to remember. Look at the recent conversation context to identify what they likely want you to remember, or ask them to clarify.\n${SYSTEM_REMINDER_CLOSE}`;
-            const rememberParts = userText
-              ? buildTextParts(rememberReminder, userText)
-              : buildTextParts(rememberReminder);
-
-            // Mark command as finished before sending message
-            cmd.finish(
-              userText
-                ? "Storing to memory..."
-                : "Processing memory request from conversation context...",
-              true,
-            );
-
-            // Process conversation with the remember prompt
-            await processConversationWithQueuedApprovals([
-              {
-                type: "message",
-                role: "user",
-                content: rememberParts,
-                otid: randomUUID(),
-              },
-            ]);
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed: ${errorDetails}`);
-          } finally {
-            setCommandRunning(false);
-          }
-
-          return { submitted: true };
-        }
-
         // Experimental reflection arena - blind A/B reflection model comparison
         if (
           trimmed === "/reflect-arena" ||
@@ -3126,9 +2989,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           const cmd = commandRunner.start(msg, "Launching reflection agent...");
 
           if (!isActiveMemfsEnabled(agentId)) {
-            cmd.fail(
-              "Memory filesystem is not enabled. Use /remember instead.",
-            );
+            cmd.fail("Memory filesystem is not enabled.");
             return { submitted: true };
           }
 
@@ -3562,10 +3423,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /doctor command
-        if (trimmed === "/doctor") {
-          const cmd = commandRunner.start(msg, "Gathering project context...");
-
+        if (trimmed === "/doctor" || trimmed.startsWith("/doctor ")) {
+          const cmd = commandRunner.start(msg, "Starting doctor...");
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
             cmd.fail(
@@ -3573,39 +3432,26 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
             return { submitted: false };
           }
-
           setCommandRunning(true);
           try {
-            cmd.finish(
-              "Running memory doctor... I'll ask a few questions to refine memory structure.",
-              true,
-            );
-
-            const { context: gitContext } = gatherInitGitContext();
-            const memoryDir = getActiveMemoryDirectory(agentId);
-            const skillNameFrontmatterRepair =
-              await repairMissingSkillNameFrontmatter(memoryDir);
-            const skillNameFrontmatterRepairReport =
-              formatSkillNameFrontmatterRepairReport(
-                skillNameFrontmatterRepair,
-              );
-
             const doctorMessage = buildDoctorMessage({
-              gitContext,
-              memoryDir,
-              skillNameFrontmatterRepairReport,
+              agentId,
+              conversationId: conversationIdRef.current,
+              memoryDir: getActiveMemoryDirectory(agentId),
+              local: getBackend().capabilities.localMemfs,
+              symptom: trimmed.slice("/doctor".length).trim(),
             });
-
+            cmd.finish("", true);
             await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
                 content: buildTextParts(doctorMessage),
+                otid: randomUUID(),
               },
             ]);
           } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed: ${errorDetails}`);
+            cmd.fail(`Doctor failed: ${formatErrorDetails(error, agentId)}`);
           } finally {
             setCommandRunning(false);
           }

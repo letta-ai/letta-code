@@ -7,28 +7,20 @@ import {
   formatSetMaxContextResult,
 } from "@/agent/max-context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
-import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
+import { getActiveMemoryDirectory } from "@/agent/memory-runtime";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
 import { refreshCustomCommands } from "@/cli/commands/custom";
+import { buildDoctorMessage } from "@/cli/helpers/doctor-command";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
-  buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
-import {
-  formatSkillNameFrontmatterRepairReport,
-  repairMissingSkillNameFrontmatter,
-} from "@/cli/helpers/skill-name-frontmatter-repair";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
-import {
-  DEFAULT_SUMMARIZATION_MODEL,
-  SYSTEM_REMINDER_CLOSE,
-  SYSTEM_REMINDER_OPEN,
-} from "@/constants";
+import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { runPreCompactHooks } from "@/hooks";
 import type { ModCommand } from "@/mods/types";
 import { markPostCompactionContextRemindersPending } from "@/reminders/state";
@@ -128,21 +120,41 @@ export async function handleExecuteCommand(
         });
         break;
 
-      case "doctor":
-        output = await handleDoctorCommand(socket, conversationRuntime, opts);
+      case "doctor": {
+        const agentId = conversationRuntime.agentId;
+        if (!agentId) throw new Error("Doctor requires an active agent.");
+        const doctorMessage = buildDoctorMessage({
+          agentId,
+          conversationId: conversationRuntime.conversationId,
+          memoryDir: getActiveMemoryDirectory(agentId),
+          local: getBackend().capabilities.localMemfs,
+          symptom: trimmedArgs,
+        });
+        await handleIncomingMessage(
+          {
+            type: "message",
+            agentId,
+            conversationId: conversationRuntime.conversationId,
+            actingUserId: command.runtime.acting_user_id,
+            messages: [
+              {
+                type: "message",
+                role: "user",
+                content: [{ type: "text", text: doctorMessage }],
+              },
+            ],
+          },
+          socket,
+          conversationRuntime,
+          opts.onStatusChange,
+          opts.connectionId,
+        );
+        output = "";
         break;
+      }
 
       case "init":
         output = await handleInitCommand(socket, conversationRuntime, opts);
-        break;
-
-      case "remember":
-        output = await handleRememberCommand(
-          socket,
-          conversationRuntime,
-          trimmedArgs,
-          opts,
-        );
         break;
 
       case "compact":
@@ -688,66 +700,6 @@ async function handleClearCommand(
 }
 
 /**
- * /doctor — Audit and refine memory structure.
- *
- * Builds the doctor system-reminder message (same as the CLI /doctor)
- * and feeds it through `handleIncomingMessage` so the agent runs a full
- * turn executing the `context-doctor` skill.
- */
-async function handleDoctorCommand(
-  socket: WebSocket,
-  conversationRuntime: ConversationRuntime,
-  opts: {
-    onStatusChange?: StartListenerOptions["onStatusChange"];
-    connectionId?: string;
-  },
-): Promise<string> {
-  const agentId = conversationRuntime.agentId;
-
-  if (!agentId) {
-    throw new Error("No agent ID available for /doctor command");
-  }
-
-  const { context: gitContext } = gatherInitGitContext();
-  const memoryDir = settingsManager.isMemfsEnabled(agentId)
-    ? getScopedMemoryFilesystemRoot(agentId)
-    : undefined;
-  const skillNameFrontmatterRepair =
-    await repairMissingSkillNameFrontmatter(memoryDir);
-  const skillNameFrontmatterRepairReport =
-    formatSkillNameFrontmatterRepairReport(skillNameFrontmatterRepair);
-
-  const doctorMessage = buildDoctorMessage({
-    gitContext,
-    memoryDir,
-    skillNameFrontmatterRepairReport,
-  });
-
-  // Feed the doctor prompt as a user message through the normal turn pipeline.
-  // This triggers a full agent turn whose deltas stream back to the web UI.
-  await handleIncomingMessage(
-    {
-      type: "message",
-      agentId,
-      conversationId: conversationRuntime.conversationId,
-      messages: [
-        {
-          type: "message",
-          role: "user",
-          content: [{ type: "text", text: doctorMessage }],
-        },
-      ],
-    },
-    socket,
-    conversationRuntime,
-    opts.onStatusChange,
-    opts.connectionId,
-  );
-
-  return "Memory doctor completed";
-}
-
-/**
  * /init — Initialize (or re-init) agent memory.
  *
  * Builds the init system-reminder message (same as the CLI /init)
@@ -797,61 +749,6 @@ async function handleInitCommand(
   );
 
   return "Memory initialization completed";
-}
-
-/**
- * /remember — Store information from the conversation.
- *
- * Mirrors the CLI /remember logic by sending the remember system reminder
- * and optional user-provided text through the normal turn pipeline.
- */
-async function handleRememberCommand(
-  socket: WebSocket,
-  conversationRuntime: ConversationRuntime,
-  args: string | undefined,
-  opts: {
-    onStatusChange?: StartListenerOptions["onStatusChange"];
-    connectionId?: string;
-  },
-): Promise<string> {
-  const agentId = conversationRuntime.agentId;
-
-  if (!agentId) {
-    throw new Error("No agent ID available for /remember command");
-  }
-
-  const hasArgs = Boolean(args && args.length > 0);
-  const rememberReminder = hasArgs
-    ? `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n${SYSTEM_REMINDER_CLOSE}`
-    : `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n\nThe user did not specify what to remember. Look at the recent conversation context to identify what they likely want you to remember, or ask them to clarify.\n${SYSTEM_REMINDER_CLOSE}`;
-
-  const content = hasArgs
-    ? [
-        { type: "text" as const, text: rememberReminder },
-        { type: "text" as const, text: args as string },
-      ]
-    : [{ type: "text" as const, text: rememberReminder }];
-
-  await handleIncomingMessage(
-    {
-      type: "message",
-      agentId,
-      conversationId: conversationRuntime.conversationId,
-      messages: [
-        {
-          type: "message",
-          role: "user",
-          content,
-        },
-      ],
-    },
-    socket,
-    conversationRuntime,
-    opts.onStatusChange,
-    opts.connectionId,
-  );
-
-  return "Memory request submitted";
 }
 
 /** /context-limit — Set or reset the active scope's max context window. */
@@ -954,7 +851,7 @@ async function handleReflectCommand(
   if (result.launched)
     return "Started a reflection pass for this conversation.";
   if (result.reason === "memfs_disabled") {
-    return "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead.";
+    return "Reflection needs the memory filesystem to be enabled for this agent.";
   }
   if (result.reason === "already_active") {
     return "A reflection agent is already running for this conversation.";

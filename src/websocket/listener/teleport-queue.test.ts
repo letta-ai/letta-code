@@ -1,5 +1,6 @@
 import { afterEach, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
+import type { TeleportContinuation } from "@/types/protocol_v2";
 import { openListenerConnection } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
@@ -8,9 +9,11 @@ import { createListenerMessageHandler } from "./message-router";
 import { setActiveRuntime } from "./runtime";
 import {
   claimPendingTeleportAtBoundary,
+  expectInboundTeleport,
   finishPendingTeleport,
   finishTeleport,
   handleTeleportRequest,
+  isInboundTeleportExpected,
   isRuntimeTeleportPending,
 } from "./teleport";
 import type { IncomingMessage, StartListenerOptions } from "./types";
@@ -274,7 +277,23 @@ test("accepted queue drains before teleport readiness", () => {
   );
 });
 
-test("reverse teleport clears the returning destination's old marker", async () => {
+test.each([
+  { name: "missing continuation", continuation: undefined },
+  { name: "empty approvals", continuation: { approvals: [] } },
+  {
+    name: "completed tool result",
+    continuation: {
+      approvals: [
+        {
+          type: "tool",
+          tool_call_id: "call-teleport",
+          status: "success",
+          tool_return: "source tool completed",
+        },
+      ],
+    } satisfies TeleportContinuation,
+  },
+])("returning teleport continues once with $name", async ({ continuation }) => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(
     listener,
@@ -283,8 +302,12 @@ test("reverse teleport clears the returning destination's old marker", async () 
   );
   const socket = new MockSocket();
   const sent: unknown[] = [];
+  const tasks: Promise<void>[] = [];
+  const processIncomingMessage = mock(async (_incoming: IncomingMessage) => {});
   openSource(listener, socket);
   setActiveRuntime(listener);
+  // The destination's runtime_start announced this continuation.
+  expectInboundTeleport(runtime, "teleport-return");
   listener.pendingTeleports = new Map([
     [
       "teleport-outbound",
@@ -317,34 +340,81 @@ test("reverse teleport clears the returning destination's old marker", async () 
       sent.push(payload);
       return true;
     },
-    runDetachedListenerTask: () => {},
+    runDetachedListenerTask: (_name, task) => {
+      tasks.push(task());
+    },
     trackListenerError: () => {},
-    processIncomingMessage: async (_incoming: IncomingMessage) => {},
+    processIncomingMessage,
   });
 
-  await handleMessage(
+  const frame = (requestId: string, teleportId = "teleport-return") =>
     Buffer.from(
       JSON.stringify({
         type: "input",
-        request_id: "reverse-continue",
+        request_id: requestId,
         runtime: { agent_id: "agent-1", conversation_id: "conversation-1" },
         payload: {
           kind: "teleport_continue",
-          teleport_id: "teleport-return",
+          teleport_id: teleportId,
           source: { device_id: "away", connection_name: "Away" },
+          ...(continuation ? { continuation } : {}),
         },
       }),
-    ),
-  );
+    );
+  await handleMessage(frame("reverse-continue"));
+  await Promise.all(tasks);
 
   expect(isRuntimeTeleportPending(listener, "agent-1", "conversation-1")).toBe(
     false,
   );
+  expect(isInboundTeleportExpected(runtime)).toBe(false);
   expect(sent).toContainEqual(
     expect.objectContaining({
       type: "input_accepted",
       request_id: "reverse-continue",
       accepted: true,
+      disposition: "started",
     }),
   );
+  expect(processIncomingMessage).toHaveBeenCalledTimes(1);
+  expect(processIncomingMessage.mock.calls[0]?.[0].messages).toEqual([
+    ...(continuation?.approvals.length
+      ? [
+          {
+            type: "approval" as const,
+            approvals: [...continuation.approvals],
+            otid: "teleport-return",
+          },
+        ]
+      : []),
+    {
+      role: "user",
+      content:
+        "<system-reminder>Teleportation to this environment is complete. Continue the existing task from this environment now.</system-reminder>",
+      otid: "teleport-return:continue",
+    },
+  ]);
+
+  const lease = runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: process.cwd(),
+  });
+  await handleMessage(frame("duplicate-continue"));
+  await handleMessage(frame("different-continue", "teleport-different"));
+  expect(processIncomingMessage).toHaveBeenCalledTimes(1);
+  expect(sent).toContainEqual(
+    expect.objectContaining({
+      request_id: "duplicate-continue",
+      accepted: true,
+      disposition: "started",
+    }),
+  );
+  expect(sent).toContainEqual(
+    expect.objectContaining({
+      request_id: "different-continue",
+      accepted: false,
+      error: "Destination runtime is already processing",
+    }),
+  );
+  runtime.turnLifecycle.finish(lease, "end_turn");
 });

@@ -10,7 +10,6 @@ function setProviderTarget(target: "api" | "local") {
       remoteMemfs: target === "api",
       serverSideToolManagement: target === "api",
       serverSecrets: target === "api",
-      agentFileImportExport: target === "api",
       promptRecompile: target === "api",
       byokProviderRefresh: target === "api",
       localModelCatalog: target === "local",

@@ -175,7 +175,7 @@ test("terminal teleport failure resumes the source without approvals", async () 
     conversationId: "conversation-1",
     messages: [
       {
-        role: "system",
+        role: "user",
         content:
           "<system-reminder>Teleportation failed.\n\nError: 404 Agent &lt;missing&gt; &amp; unavailable\n\nContinue the existing task from this environment now.</system-reminder>",
         otid: "teleport-1:failed",
@@ -238,7 +238,7 @@ test("terminal teleport failure preserves approval results before resuming", asy
       otid: "teleport-1",
     },
     {
-      role: "system",
+      role: "user",
       content:
         "<system-reminder>Teleportation failed.\n\nError: Target failed to start\n\nContinue the existing task from this environment now.</system-reminder>",
       otid: "teleport-1:failed",

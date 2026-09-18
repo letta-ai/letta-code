@@ -468,8 +468,7 @@ function notifyExecCompletion(session: ExecSession): void {
       outputFile: session.outputFile,
       usage: durationMs === undefined ? undefined : { durationMs },
     }),
-    agentId: session.notificationScope?.agentId,
-    conversationId: session.notificationScope?.conversationId,
+    ...session.notificationScope,
   });
 }
 

@@ -17,6 +17,7 @@ const originalBaseUrl = process.env.LETTA_BASE_URL;
 const originalApiKey = process.env.LETTA_API_KEY;
 const originalRuntimeDeviceId = process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID;
 const originalConversationId = process.env.LETTA_CONVERSATION_ID;
+const originalActingUserId = process.env.LETTA_ACTING_USER_ID;
 const originalLettaHome = process.env.LETTA_HOME;
 
 const addArgs = [
@@ -71,6 +72,7 @@ function installScheduleApi(options: {
     method: string;
     pathname: string;
     body: Record<string, unknown> | undefined;
+    actingUserId: string | null;
   }> = [];
 
   globalThis.fetch = mock(async (input, init) => {
@@ -79,7 +81,13 @@ function installScheduleApi(options: {
     const body = init?.body
       ? (JSON.parse(String(init.body)) as Record<string, unknown>)
       : undefined;
-    requests.push({ method, pathname: url.pathname, body });
+    requests.push({
+      method,
+      pathname: url.pathname,
+      body,
+      actingUserId:
+        new Headers(init?.headers).get("X-Letta-Acting-User-Id") ?? null,
+    });
 
     if (
       method === "GET" &&
@@ -122,6 +130,7 @@ beforeEach(() => {
   process.env.LETTA_API_KEY = "test-key";
   delete process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID;
   delete process.env.LETTA_CONVERSATION_ID;
+  delete process.env.LETTA_ACTING_USER_ID;
   settingsManager.initialize = mock(
     async () => {},
   ) as typeof settingsManager.initialize;
@@ -153,6 +162,7 @@ afterEach(() => {
     ["LETTA_API_KEY", originalApiKey],
     ["LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID", originalRuntimeDeviceId],
     ["LETTA_CONVERSATION_ID", originalConversationId],
+    ["LETTA_ACTING_USER_ID", originalActingUserId],
     ["LETTA_HOME", originalLettaHome],
   ] as const) {
     if (value === undefined) delete process.env[key];
@@ -303,6 +313,18 @@ describe("cron add execution targeting", () => {
       schedule: { type: "recurring", cron_expression: "*/5 * * * *" },
       use_sandbox: true,
     });
+  });
+
+  test("Cloud schedule creation preserves the requesting user", async () => {
+    process.env.LETTA_ACTING_USER_ID = "user-requester";
+    process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "sandbox-agent-example";
+    const requests = installScheduleApi({});
+
+    expect(await runCronSubcommand(addArgs)).toBe(0);
+
+    expect(
+      requests.find((request) => request.method === "POST")?.actingUserId,
+    ).toBe("user-requester");
   });
 
   test("explicit --runner cloud deliberately omits inferred targeting", async () => {

@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "properties": {
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The message to send."
+    },
+    "agent_id": {
+      "type": "string",
+      "description": "The agent to start a new conversation with. An agent shares its identity and memory across conversations. Omit when targeting an existing conv-... thread; required with conversation_id: default."
+    },
+    "conversation_id": {
+      "type": "string",
+      "description": "The existing message thread to send to. Each conversation has its own message history. A conv-... ID is sufficient; to use an agent's default thread, also supply agent_id."
+    },
+    "computer": {
+      "type": ["string", "null"],
+      "description": "Optional computer where the recipient should run: cloud, an online computer name, or its stable device ID. Omitted, null, and blank values use its active computer or saved destination (a computer or Cloud sandbox). An offline saved computer does not trigger a Cloud-sandbox fallback."
+    }
+  },
+  "required": ["message"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

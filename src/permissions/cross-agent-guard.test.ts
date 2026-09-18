@@ -856,12 +856,12 @@ describe("local-backend memfs tree", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Toolset alignment: the guard covers Codex/Gemini file tools (not just Claude)
+// Toolset alignment: the guard covers Codex file tools (not just Claude)
 // on BOTH the API and local trees. Tool names are canonicalized; path args
-// converge on file_path / path / notebook_path / dir_path / patch input.
+// converge on file_path / path / notebook_path / patch input.
 // ---------------------------------------------------------------------------
 
-describe("toolset alignment (Codex / Gemini file tools)", () => {
+describe("toolset alignment (Codex file tools)", () => {
   const localMemfs = (id: string, rel = ""): string =>
     join(HOME, ".letta", "lc-local-backend", "memfs", id, "memory", rel);
 
@@ -871,15 +871,9 @@ describe("toolset alignment (Codex / Gemini file tools)", () => {
 
   // [toolName, args] pairs that each target OTHER's memory, for both trees.
   const cases: Array<[string, (target: string) => Record<string, unknown>]> = [
-    ["read_file_gemini", (t) => ({ file_path: t })],
-    ["write_file_gemini", (t) => ({ file_path: t })],
-    ["replace", (t) => ({ file_path: t })], // Gemini edit
-    ["read_file", (t) => ({ file_path: t })], // Codex read
-    ["list_directory", (t) => ({ dir_path: t })], // Gemini list (dir_path!)
-    ["glob_gemini", (t) => ({ pattern: "**/*.md", dir_path: t })],
-    ["search_file_content", (t) => ({ pattern: "secret", dir_path: t })],
+    ["read_file", (t) => ({ file_path: t })],
     [
-      "apply_patch",
+      "ApplyPatch",
       (t) => ({
         input: `*** Begin Patch\n*** Update File: ${t}\n*** End Patch`,
       }),

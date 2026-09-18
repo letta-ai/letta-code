@@ -26,32 +26,10 @@ class ToolFilterManager {
   }
 
   /**
-   * Check if a tool is enabled
-   * @param toolName - Name of the tool to check
-   * @returns true if the tool should be loaded, false otherwise
-   */
-  isEnabled(toolName: string): boolean {
-    // If no filter set (null), all tools are enabled
-    if (this.enabledTools === null) {
-      return true;
-    }
-
-    // Check if tool is in the enabled list
-    return this.enabledTools.includes(toolName);
-  }
-
-  /**
    * Get list of enabled tools (null means all tools)
    */
   getEnabledTools(): string[] | null {
     return this.enabledTools === null ? null : [...this.enabledTools];
-  }
-
-  /**
-   * Check if filter is active (i.e., not all tools enabled)
-   */
-  isActive(): boolean {
-    return this.enabledTools !== null;
   }
 
   /**

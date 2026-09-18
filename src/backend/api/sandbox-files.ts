@@ -72,7 +72,9 @@ export async function ensureConversationSandbox(
     `/v1/agents/${encodeURIComponent(agentId)}/sandboxes`,
     {
       method: "POST",
-      body: JSON.stringify({ conversationId }),
+      body: JSON.stringify(
+        conversationId === "default" ? {} : { conversationId },
+      ),
     },
     deps,
   );

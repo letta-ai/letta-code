@@ -38,9 +38,10 @@ function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
  * Builds model_settings from updateArgs based on provider type.
  * Always ensures parallel_tool_calls is enabled.
  */
-function buildModelSettings(
+export function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
+  localModelCatalog = false,
 ): ModelSettings {
   const explicitProviderType =
     typeof updateArgs?.provider_type === "string"
@@ -170,6 +171,9 @@ function buildModelSettings(
     settings = {
       provider_type: "zai",
       parallel_tool_calls: true,
+      ...(typeof updateArgs?.reasoning_effort === "string" && {
+        reasoning_effort: updateArgs.reasoning_effort,
+      }),
     };
   } else if (isXai) {
     // xAI is OpenAI-compatible on the wire, but direct xAI handles must route
@@ -238,14 +242,15 @@ function buildModelSettings(
     }
     settings = bedrockSettings;
   } else {
-    // Unknown/BYOK providers (e.g. openai-proxy) — assume OpenAI-compatible
-    const openaiProxySettings: OpenAIModelSettings = {
-      provider_type: "openai",
+    // Preserve runtime provider identity for organization-specific BYOK names.
+    // Only untyped custom handles retain the OpenAI-compatible fallback.
+    const openaiProxySettings = {
+      provider_type: explicitProviderType ?? "openai",
       parallel_tool_calls:
         typeof updateArgs?.parallel_tool_calls === "boolean"
           ? updateArgs.parallel_tool_calls
           : true,
-    };
+    } as OpenAIModelSettings;
     if (updateArgs && "reasoning_effort" in updateArgs) {
       (openaiProxySettings as Record<string, unknown>).reasoning =
         updateArgs.reasoning_effort === null
@@ -286,6 +291,22 @@ function buildModelSettings(
       updateArgs.capabilities;
   }
 
+  // Local pi-ai reads a provider-neutral effort as well. Cloud-specific
+  // settings for Google/xAI/zAI do not otherwise preserve the selected level.
+  if (
+    localModelCatalog &&
+    (typeof updateArgs?.reasoning_effort === "string" ||
+      updateArgs?.reasoning_effort === null)
+  ) {
+    (settings as Record<string, unknown>).reasoning_effort =
+      updateArgs.reasoning_effort;
+  }
+  // pi-ai owns provider-specific request options. Preserve explicit local
+  // overrides for its samplingParams seam; never send these to Cloud's schema.
+  if (localModelCatalog && isRecord(updateArgs?.sampling_params)) {
+    (settings as Record<string, unknown>).sampling_params =
+      updateArgs.sampling_params;
+  }
   return settings;
 }
 
@@ -330,6 +351,7 @@ function maxTokensForUpdatePayload(
  * @returns The updated agent state from the server (includes llm_config and model_settings)
  */
 export interface UpdateLLMConfigOptions {
+  signal?: AbortSignal;
   /**
    * Context window to send explicitly. Wins over updateArgs.context_window
    * and catalog derivation on EVERY backend — including local backends, where
@@ -418,6 +440,7 @@ export async function updateAgentLLMConfig(
   const modelSettings = buildModelSettings(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+    useBackendModelCatalog,
   );
   const contextWindow = await resolveContextWindowForUpdate({
     modelHandle,
@@ -432,12 +455,17 @@ export async function updateAgentLLMConfig(
     useBackendModelCatalog,
   });
 
-  await backend.updateAgent(agentId, {
-    model: modelHandle,
-    ...(hasModelSettings && { model_settings: modelSettings }),
-    ...(contextWindow && { context_window_limit: contextWindow }),
-    ...(maxTokens !== undefined && { max_tokens: maxTokens }),
-  });
+  options?.signal?.throwIfAborted();
+  await backend.updateAgent(
+    agentId,
+    {
+      model: modelHandle,
+      ...(hasModelSettings && { model_settings: modelSettings }),
+      ...(contextWindow && { context_window_limit: contextWindow }),
+      ...(maxTokens !== undefined && { max_tokens: maxTokens }),
+    },
+    ...(options?.signal ? [{ signal: options.signal }] : []),
+  );
 
   const finalAgent = await backend.retrieveAgent(agentId, {
     include: ["agent.tools", "agent.tags"],
@@ -468,6 +496,7 @@ export async function updateConversationLLMConfig(
   const modelSettings = buildModelSettings(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+    useBackendModelCatalog,
   );
   const contextWindow = await resolveContextWindowForUpdate({
     modelHandle,
@@ -506,7 +535,12 @@ export async function updateConversationLLMConfig(
     ...(maxTokens !== undefined && { max_tokens: maxTokens }),
   } as Parameters<typeof backend.updateConversation>[1];
 
-  return backend.updateConversation(conversationId, payload);
+  options?.signal?.throwIfAborted();
+  return backend.updateConversation(
+    conversationId,
+    payload,
+    ...(options?.signal ? [{ signal: options.signal }] : []),
+  );
 }
 
 export interface ModelConfigUpdate {
@@ -611,6 +645,7 @@ export async function updateModelConfig(
       ? buildModelSettings(
           modelHandle,
           updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+          useBackendModelCatalog,
         )
       : undefined;
   const hasModelSettings =
