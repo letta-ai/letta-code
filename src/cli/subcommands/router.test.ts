@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   runSubcommand,
   subcommandNeedsEarlyBackendMode,
@@ -205,6 +207,11 @@ describe("subcommand router", () => {
     } finally {
       console.log = originalLog;
     }
+  });
+
+  test("global letta --help text documents the tray subcommand", () => {
+    const src = readFileSync(join(process.cwd(), "src/index.ts"), "utf8");
+    expect(src).toContain("letta tray");
   });
 
   test("identifies backend-aware subcommands for early backend selection", () => {

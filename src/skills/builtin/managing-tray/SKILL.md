@@ -42,7 +42,7 @@ Use the active conversation ID explicitly. The harness provides
 letta tray add \
   --agent "$AGENT_ID" \
   --conversation-id "$CONVERSATION_ID" \
-  --tray-payload '{"version":1,"type":"markdownlet","title":"Open pull requests","markdown":"| PR | Status |\\n| --- | --- |\\n| #123 | CI running |"}'
+  --tray-payload '{"version":1,"type":"markdownlet","title":"Open pull requests","markdown":"| PR | Status |\n| --- | --- |\n| #123 | CI running |"}'
 
 letta tray list \
   --agent "$AGENT_ID" \

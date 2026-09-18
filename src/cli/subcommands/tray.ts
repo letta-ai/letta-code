@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { isLocalAgentId } from "@/agent/agent-id";
-import { isLettaCloud } from "@/agent/memory-filesystem";
+import { getBackend } from "@/backend";
+import { ApiRequestError } from "@/backend/api/request";
 import {
   createTrayItem,
   deleteTrayItem,
@@ -15,7 +16,7 @@ interface TraySubcommandDeps {
   deleteItem?: typeof deleteTrayItem;
   getLastSession?: () => SessionRef | null;
   initializeSettings?: () => Promise<void>;
-  isCloud?: () => Promise<boolean>;
+  isLocalBackend?: () => boolean;
   listItems?: typeof listTrayItems;
   updateItem?: typeof updateTrayItem;
 }
@@ -94,11 +95,8 @@ function parseTrayPayload(raw: string | undefined): TrayPayload {
   if (payload.type !== "markdownlet") {
     throw new Error('Unsupported tray payload type; expected "markdownlet"');
   }
-  if (
-    typeof payload.title !== "string" ||
-    !payload.title.trim() ||
-    payload.title.length > 120
-  ) {
+  const title = typeof payload.title === "string" ? payload.title.trim() : "";
+  if (!title || title.length > 120) {
     throw new Error("Markdownlet title must be 1-120 characters");
   }
   if (
@@ -111,51 +109,143 @@ function parseTrayPayload(raw: string | undefined): TrayPayload {
   return {
     version: 1,
     type: "markdownlet",
-    title: payload.title.trim(),
+    title,
     markdown: payload.markdown,
   };
 }
 
+type TrayScopeValues = {
+  agent?: string;
+  "agent-id"?: string;
+  conversation?: string;
+  "conversation-id"?: string;
+};
+
+function resolveAliasedValue(
+  primary: string | undefined,
+  alias: string | undefined,
+  label: string,
+): string | undefined {
+  if (
+    primary !== undefined &&
+    alias !== undefined &&
+    primary.trim() !== alias.trim()
+  ) {
+    throw new Error(`Conflicting ${label} values`);
+  }
+  return primary ?? alias;
+}
+
+function requireCompletePair(
+  pair: { agentId?: string; conversationId?: string },
+  source: string,
+): SessionRef | null {
+  const provided =
+    pair.agentId !== undefined || pair.conversationId !== undefined;
+  if (!provided) return null;
+  const agentId = pair.agentId?.trim();
+  const conversationId = pair.conversationId?.trim();
+  if (!agentId || !conversationId) {
+    throw new Error(
+      `${source} Tray scope must provide both agent and conversation IDs`,
+    );
+  }
+  return { agentId, conversationId };
+}
+
 export function resolveTraySession(
-  values: {
-    agent?: string;
-    "agent-id"?: string;
-    conversation?: string;
-    "conversation-id"?: string;
-  },
+  values: TrayScopeValues,
   env: NodeJS.ProcessEnv,
   fallback: SessionRef | null,
 ): SessionRef {
-  const agentId = (
-    values.agent ||
-    values["agent-id"] ||
-    env.LETTA_AGENT_ID ||
-    env.AGENT_ID ||
-    fallback?.agentId ||
-    ""
-  ).trim();
-  const conversationId = (
-    values.conversation ||
-    values["conversation-id"] ||
-    env.LETTA_CONVERSATION_ID ||
-    env.CONVERSATION_ID ||
-    fallback?.conversationId ||
-    ""
-  ).trim();
+  const explicit = requireCompletePair(
+    {
+      agentId: resolveAliasedValue(values.agent, values["agent-id"], "agent"),
+      conversationId: resolveAliasedValue(
+        values.conversation,
+        values["conversation-id"],
+        "conversation",
+      ),
+    },
+    "Explicit",
+  );
+  if (explicit) return validateTraySession(explicit);
 
-  if (!agentId) throw new Error("Pass --agent <id> or run inside an agent");
-  if (!conversationId || conversationId === "new") {
+  const lettaEnv = requireCompletePair(
+    {
+      agentId: env.LETTA_AGENT_ID,
+      conversationId: env.LETTA_CONVERSATION_ID,
+    },
+    "LETTA environment",
+  );
+  if (lettaEnv) return validateTraySession(lettaEnv);
+
+  const agentEnv = requireCompletePair(
+    { agentId: env.AGENT_ID, conversationId: env.CONVERSATION_ID },
+    "Agent environment",
+  );
+  if (agentEnv) return validateTraySession(agentEnv);
+
+  const saved = requireCompletePair(fallback ?? {}, "Saved");
+  return validateTraySession(saved);
+}
+
+function validateTraySession(session: SessionRef | null): SessionRef {
+  if (!session?.agentId) {
+    throw new Error("Pass --agent <id> and --conversation-id <id>");
+  }
+  if (!session.conversationId || session.conversationId === "new") {
     throw new Error("Pass --conversation-id <id>");
   }
-  if (isLocalAgentId(agentId)) {
+  if (isLocalAgentId(session.agentId)) {
     throw new Error("Tray is only available for Letta Cloud agents");
   }
-  return { agentId, conversationId };
+  return session;
 }
 
 async function initializeTraySettings(): Promise<void> {
   await settingsManager.initialize();
   await settingsManager.loadLocalProjectSettings();
+}
+
+function validateAction(
+  action: string,
+  itemId: string | undefined,
+  trayPayload: string | undefined,
+): TrayPayload | undefined {
+  if (action === "list") {
+    if (itemId) throw new Error("list does not accept a Tray item ID");
+    if (trayPayload !== undefined) {
+      throw new Error("list does not accept --tray-payload");
+    }
+    return undefined;
+  }
+  if (action === "add") {
+    if (itemId) throw new Error("add does not accept a Tray item ID");
+    return parseTrayPayload(trayPayload);
+  }
+  if (action === "update") {
+    if (!itemId) throw new Error("update requires a Tray item ID");
+    return parseTrayPayload(trayPayload);
+  }
+  if (action === "delete" || action === "remove" || action === "rm") {
+    if (!itemId) throw new Error(`${action} requires a Tray item ID`);
+    if (trayPayload !== undefined) {
+      throw new Error(`${action} does not accept --tray-payload`);
+    }
+    return undefined;
+  }
+  throw new Error(`Unknown Tray action: ${action}`);
+}
+
+function throwCloudOnlyForMissingRoute(error: unknown): never {
+  if (
+    error instanceof ApiRequestError &&
+    (error.status === 404 || error.status === 405)
+  ) {
+    throw new Error("Tray is only available on Letta Cloud");
+  }
+  throw error;
 }
 
 export async function runTraySubcommand(
@@ -176,15 +266,19 @@ export async function runTraySubcommand(
     printUsage();
     return 0;
   }
-  if (extras.length > 0) {
-    console.error("Error: too many positional arguments");
-    printUsage();
-    return 1;
-  }
 
   try {
+    if (extras.length > 0) throw new Error("too many positional arguments");
+    const payload = validateAction(
+      action,
+      itemId,
+      parsed.values["tray-payload"],
+    );
+
     await (deps.initializeSettings ?? initializeTraySettings)();
-    if (!(await (deps.isCloud ?? isLettaCloud)())) {
+    if (
+      (deps.isLocalBackend ?? (() => getBackend().capabilities.localMemfs))()
+    ) {
       throw new Error("Tray is only available on Letta Cloud");
     }
     const session = resolveTraySession(
@@ -194,20 +288,27 @@ export async function runTraySubcommand(
         deps.getLastSession ?? (() => settingsManager.getEffectiveLastSession())
       )(),
     );
+    const list = deps.listItems ?? listTrayItems;
 
     if (action === "list") {
-      if (itemId) throw new Error("list does not accept a Tray item ID");
-      const items = await (deps.listItems ?? listTrayItems)(
-        session.agentId,
-        session.conversationId,
-      );
-      console.log(JSON.stringify({ items }, null, 2));
-      return 0;
+      try {
+        const items = await list(session.agentId, session.conversationId);
+        console.log(JSON.stringify({ items }, null, 2));
+        return 0;
+      } catch (error) {
+        throwCloudOnlyForMissingRoute(error);
+      }
     }
 
-    if (action === "add") {
-      if (itemId) throw new Error("add does not accept a Tray item ID");
-      const payload = parseTrayPayload(parsed.values["tray-payload"]);
+    // Probe the route instead of inferring Cloud support from its URL. Managed
+    // Cloud sessions may intentionally reach cloud-api through localhost.
+    try {
+      await list(session.agentId, session.conversationId);
+    } catch (error) {
+      throwCloudOnlyForMissingRoute(error);
+    }
+
+    if (action === "add" && payload) {
       const item = await (deps.createItem ?? createTrayItem)(
         session.agentId,
         session.conversationId,
@@ -216,10 +317,7 @@ export async function runTraySubcommand(
       console.log(JSON.stringify(item, null, 2));
       return 0;
     }
-
-    if (action === "update") {
-      if (!itemId) throw new Error("update requires a Tray item ID");
-      const payload = parseTrayPayload(parsed.values["tray-payload"]);
+    if (action === "update" && itemId && payload) {
       const item = await (deps.updateItem ?? updateTrayItem)(
         session.agentId,
         session.conversationId,
@@ -230,21 +328,14 @@ export async function runTraySubcommand(
       return 0;
     }
 
-    if (action === "delete" || action === "remove" || action === "rm") {
-      if (!itemId) throw new Error(`${action} requires a Tray item ID`);
-      if (parsed.values["tray-payload"]) {
-        throw new Error(`${action} does not accept --tray-payload`);
-      }
-      await (deps.deleteItem ?? deleteTrayItem)(
-        session.agentId,
-        session.conversationId,
-        itemId,
-      );
-      console.log(JSON.stringify({ success: true, id: itemId }, null, 2));
-      return 0;
-    }
-
-    throw new Error(`Unknown Tray action: ${action}`);
+    if (!itemId) throw new Error("delete requires a Tray item ID");
+    await (deps.deleteItem ?? deleteTrayItem)(
+      session.agentId,
+      session.conversationId,
+      itemId,
+    );
+    console.log(JSON.stringify({ success: true, id: itemId }, null, 2));
+    return 0;
   } catch (error) {
     console.error(`Error: ${error instanceof Error ? error.message : error}`);
     return 1;

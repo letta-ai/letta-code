@@ -163,9 +163,11 @@ const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set([
 export function isSkillAvailableForAgent(
   skill: Skill,
   agentId?: string,
+  cloudFeaturesAvailable = true,
 ): boolean {
+  if (skill.source !== "bundled") return true;
+  if (skill.id === "managing-tray" && !cloudFeaturesAvailable) return false;
   if (
-    skill.source === "bundled" &&
     agentId &&
     isLocalAgentId(agentId) &&
     LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS.has(skill.id)

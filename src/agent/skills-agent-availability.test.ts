@@ -78,4 +78,59 @@ describe("isSkillAvailableForAgent", () => {
       expect(isSkillAvailableForAgent(skill, "agent-local-123")).toBe(true);
     }
   });
+
+  test("hides bundled managing-tray for Cloud agent when cloudFeaturesAvailable is false", () => {
+    const skill: Skill = { ...baseSkill, id: "managing-tray" };
+    // Cloud agent ID (non-local) but Cloud features are unavailable (self-hosted backend).
+    expect(isSkillAvailableForAgent(skill, "agent-123", false)).toBe(false);
+    // Cloud agent with Cloud features available → still visible.
+    expect(isSkillAvailableForAgent(skill, "agent-123", true)).toBe(true);
+  });
+
+  test("hides bundled managing-tray for anonymous agent when cloudFeaturesAvailable is false", () => {
+    const skill: Skill = { ...baseSkill, id: "managing-tray" };
+    expect(isSkillAvailableForAgent(skill, undefined, false)).toBe(false);
+    expect(isSkillAvailableForAgent(skill, undefined, true)).toBe(true);
+  });
+
+  test("non-bundled managing-tray override is available regardless of cloudFeaturesAvailable", () => {
+    const skill: Skill = {
+      ...baseSkill,
+      id: "managing-tray",
+      source: "project",
+    };
+    expect(isSkillAvailableForAgent(skill, "agent-123", false)).toBe(true);
+    expect(isSkillAvailableForAgent(skill, "agent-local-123", false)).toBe(
+      true,
+    );
+  });
+});
+
+describe("buildClientSkillsPayload with cloudFeaturesAvailable", () => {
+  test("excludes bundled managing-tray for Cloud agents when cloudFeaturesAvailable is false", async () => {
+    const noCloudPayload = await buildClientSkillsPayload({
+      agentId: "agent-cloud",
+      cloudFeaturesAvailable: false,
+      skillSources: ["bundled"],
+      attachedRepositories: [],
+    });
+    expect(
+      noCloudPayload.clientSkills.some((s) => s.name === "managing-tray"),
+    ).toBe(false);
+    expect(
+      noCloudPayload.availableSkills.some((s) => s.name === "managing-tray"),
+    ).toBe(false);
+  });
+
+  test("includes bundled managing-tray for Cloud agents when cloudFeaturesAvailable is true", async () => {
+    const cloudPayload = await buildClientSkillsPayload({
+      agentId: "agent-cloud",
+      cloudFeaturesAvailable: true,
+      skillSources: ["bundled"],
+      attachedRepositories: [],
+    });
+    expect(
+      cloudPayload.clientSkills.some((s) => s.name === "managing-tray"),
+    ).toBe(true);
+  });
 });

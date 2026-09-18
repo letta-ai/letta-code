@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
+import { getBackend } from "@/backend";
 import type { AvailableSkillSummary } from "@/types/protocol_v2";
 import { getCheckoutGeneration } from "@/utils/checkout-readiness";
 import type { AttachedAgentRepository } from "./attached-repositories";
@@ -112,6 +113,7 @@ function getWatcher(): ClientSkillsWatcher {
  */
 function computeCacheKey(components: {
   agentId: string | undefined;
+  cloudFeaturesAvailable: boolean;
   skillSources: SkillSource[];
   cwd: string;
   configuredSkillsDirectory: string | null;
@@ -123,6 +125,7 @@ function computeCacheKey(components: {
 }): string {
   return [
     components.agentId ?? "",
+    String(components.cloudFeaturesAvailable),
     [...components.skillSources].sort().join(","),
     components.cwd,
     components.configuredSkillsDirectory ?? "",
@@ -355,6 +358,7 @@ export type ClientSkill = NonNullable<
 
 export interface BuildClientSkillsPayloadOptions {
   agentId?: string;
+  cloudFeaturesAvailable?: boolean;
   workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
@@ -411,6 +415,7 @@ function resolveSkillDiscoveryContext(
 
 export interface DiscoverClientSideSkillsOptions {
   agentId?: string;
+  cloudFeaturesAvailable?: boolean;
   workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
@@ -499,7 +504,14 @@ async function collectClientSideSkills(
       });
       errors.push(...discovery.errors);
       for (const skill of discovery.skills) {
-        if (isSkillAvailableForAgent(skill, options.agentId)) {
+        if (
+          isSkillAvailableForAgent(
+            skill,
+            options.agentId,
+            options.cloudFeaturesAvailable ??
+              getBackend().capabilities.environmentRouting,
+          )
+        ) {
           skillsById.set(skill.id, skill);
         }
       }
@@ -516,7 +528,14 @@ async function collectClientSideSkills(
     const memoryDiscovery = await discoverMemorySkills(options.agentId);
     errors.push(...memoryDiscovery.errors);
     for (const skill of memoryDiscovery.skills) {
-      if (!isSkillAvailableForAgent(skill, options.agentId)) {
+      if (
+        !isSkillAvailableForAgent(
+          skill,
+          options.agentId,
+          options.cloudFeaturesAvailable ??
+            getBackend().capabilities.environmentRouting,
+        )
+      ) {
         continue;
       }
       const existing = skillsById.get(skill.id);
@@ -531,7 +550,14 @@ async function collectClientSideSkills(
     );
     errors.push(...sharedMemoryDiscovery.errors);
     for (const skill of sharedMemoryDiscovery.skills) {
-      if (!isSkillAvailableForAgent(skill, options.agentId)) {
+      if (
+        !isSkillAvailableForAgent(
+          skill,
+          options.agentId,
+          options.cloudFeaturesAvailable ??
+            getBackend().capabilities.environmentRouting,
+        )
+      ) {
         continue;
       }
       const existing = skillsById.get(skill.id);
@@ -604,6 +630,9 @@ export async function buildClientSkillsPayload(
     skillSources,
   } = resolveSkillDiscoveryContext(options);
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
+  const cloudFeaturesAvailable =
+    options.cloudFeaturesAvailable ??
+    getBackend().capabilities.environmentRouting;
 
   // When a custom discoverSkillsFn is provided (tests / DI), bypass the cache
   // so the injected function is always called.
@@ -629,6 +658,7 @@ export async function buildClientSkillsPayload(
   }
   const cacheComponents = {
     agentId: options.agentId,
+    cloudFeaturesAvailable,
     skillSources,
     cwd: workingDirectory,
     configuredSkillsDirectory,
@@ -652,6 +682,7 @@ export async function buildClientSkillsPayload(
   const checkoutGenerationBeforeDiscovery = getCheckoutGeneration();
   const discovery = await collectClientSideSkills({
     ...options,
+    cloudFeaturesAvailable,
     configuredSkillsDirectory,
     legacySkillsDirectory,
     skillSources,

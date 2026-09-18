@@ -193,6 +193,7 @@ USAGE
   letta setup           Re-run first-run setup
   letta install ...     Install a skill or mod package
   letta skills ...      List or delete installed agent skills
+  letta tray ...        Add, list, update, and delete Cloud Tray items
 OPTIONS
 ${renderCliOptionsHelp()}
 SUBCOMMANDS
@@ -225,7 +226,6 @@ SUBCOMMANDS
   letta skills delete <skill_name> --agent <id>
   letta backend [cloud|local]
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
-
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
   - If profiles exist, you'll be prompted to select one or create a new agent
