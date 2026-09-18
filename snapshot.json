@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.277:docs:c85dfdfd0f05095ffdf1bc8dc021704d4b32f9a826f78e471f0c78f226bda739:runtime:a15321820b5a78741c86c55c3e687a43140c424f459645a8d3decbdf1edc3451",
+  "candidate_id": "claude@2.1.277:docs:70d73f8c1b65d59459e063174ce7fb24a779f16950f6dad4e328f0abe0c98d41:runtime:a15321820b5a78741c86c55c3e687a43140c424f459645a8d3decbdf1edc3451",
   "package_version": "2.1.277",
   "npm_integrity": "sha512-JedQvDxaHIWr303Ymlqlz43j3LqRaUe7rNtDKjEDQaHt8MkKPpCR+jKI6K0TKU5gquTqodgYLfTNM3qfGkTbpQ==",
   "npm_published_at": "2026-09-18T16:22:26.548Z",
@@ -14,7 +14,7 @@
   },
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
-    "index_hash": "70376109a1593580db4d2f2c120d3b9e131b86450cfda7c54567c9dd0a7f7d65",
+    "index_hash": "92adf76ba4eb3e090e186ed7766c99686ca7fb067a4038e86754e9231c42dac3",
     "full_scan": false,
     "scanned_at": "2026-09-18T18:28:53.428Z",
     "pages": {
@@ -1273,7 +1273,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "c85dfdfd0f05095ffdf1bc8dc021704d4b32f9a826f78e471f0c78f226bda739"
+    "digest": "70d73f8c1b65d59459e063174ce7fb24a779f16950f6dad4e328f0abe0c98d41"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1491,8 +1491,8 @@
           {
             "name": "TaskCreate",
             "input": {
-              "activeForm": "Probing task tools",
-              "description": "Temporary task used to exercise the task tool lifecycle (create, metadata update, get, delete).",
+              "activeForm": "Running probe task",
+              "description": "Probe task used to exercise task tool metadata handling and deletion.",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1543,7 +1543,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Temporary task used to exercise the task tool lifecycle (create, metadata update, get, delete).",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task used to exercise task tool metadata handling and deletion.",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1554,8 +1554,8 @@
     ],
     "digest": "a15321820b5a78741c86c55c3e687a43140c424f459645a8d3decbdf1edc3451"
   },
-  "fetched_at": "2026-09-18T20:25:47.634Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/35391272415",
-  "state_commit_parent": "0f375601c9390991b44833dd3bc66f151ec54bfa",
-  "analysis_parent_sha": "0f375601c9390991b44833dd3bc66f151ec54bfa"
+  "fetched_at": "2026-09-18T22:24:14.480Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/35401290617",
+  "state_commit_parent": "a68057e7675f9abe04d140c4ebcc88ceb9bbd2e3",
+  "analysis_parent_sha": "a68057e7675f9abe04d140c4ebcc88ceb9bbd2e3"
 }
