@@ -38,6 +38,29 @@ export function attachLocalSegmentIdentity<T extends object>(
   return target;
 }
 
+function projectedMessageTypeForChunk(
+  chunk: LettaStreamingResponse,
+): "assistant_message" | "reasoning_message" {
+  if (chunk.message_type === "reasoning_message") return "reasoning_message";
+  const content = (chunk as unknown as { content?: unknown }).content;
+  if (!Array.isArray(content)) return "assistant_message";
+  const partTypes = content.flatMap((part) => {
+    if (
+      typeof part !== "object" ||
+      part === null ||
+      !("type" in part) ||
+      typeof part.type !== "string"
+    ) {
+      return [];
+    }
+    return [part.type];
+  });
+  if (partTypes.includes("text")) return "assistant_message";
+  return partTypes.includes("reasoning")
+    ? "reasoning_message"
+    : "assistant_message";
+}
+
 /** Stream canonical local segment IDs instead of transient provider identities. */
 export function canonicalizeLocalStreamChunk(
   chunk: LettaStreamingResponse,
@@ -54,6 +77,7 @@ export function canonicalizeLocalStreamChunk(
   const identity = (
     chunk as unknown as Record<symbol, LocalSegmentIdentity | undefined>
   )[LOCAL_SEGMENT_IDENTITY];
+  const projectedMessageType = projectedMessageTypeForChunk(chunk);
   const id = identity
     ? chunk.message_type === "assistant_message" && identity.useSourceMessageId
       ? message.id
@@ -64,7 +88,7 @@ export function canonicalizeLocalStreamChunk(
         stored.conversation_id,
         stored.date,
       )
-        .filter((projected) => projected.message_type === chunk.message_type)
+        .filter((projected) => projected.message_type === projectedMessageType)
         .at(-1)?.id;
   if (!id) return stored;
   // Provider OTIDs are transient and are not persisted. Leaving one here would

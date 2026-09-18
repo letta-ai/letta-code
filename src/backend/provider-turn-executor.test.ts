@@ -230,58 +230,77 @@ describe("ProviderTurnExecutor", () => {
     expect(reasoningOtids[0]).not.toBe(reasoningOtids[2]);
   });
 
-  test("does not replay deltas already covered by a live start snapshot", async () => {
+  test("preserves new deltas after provider-supplied start content", async () => {
     const message = {
       ...assistantMessage(),
-      content: [{ type: "text" as const, text: "complete" }],
+      content: [{ type: "text" as const, text: "Initial text" }],
     };
     const adapter: ProviderStreamAdapter = {
       async *stream() {
         yield providerStreamPart(
           part({ type: "text_start", contentIndex: 0, partial: message }),
         );
+        const content = message.content[0];
+        if (!content || content.type !== "text") {
+          throw new Error("Expected text content");
+        }
+        content.text += " plus delta";
         yield providerStreamPart(
           part({
             type: "text_delta",
             contentIndex: 0,
-            delta: "comp",
+            delta: " plus delta",
             partial: message,
           }),
         );
-        yield providerStreamPart(
-          part({
-            type: "text_delta",
-            contentIndex: 0,
-            delta: "lete",
-            partial: message,
-          }),
-        );
+        yield providerLocalMessage(message);
         yield providerStreamPart(
           part({ type: "done", reason: "stop", message }),
         );
       },
     };
+    const storageDir = await mkdtemp(join(tmpdir(), "letta-nonempty-start-"));
 
-    const chunks = await collect(
-      await new ProviderTurnExecutor(adapter).execute(input()),
-    );
-    const assistantText = chunks
-      .filter((chunk) => chunk.message_type === "assistant_message")
-      .flatMap((chunk) => {
-        if (!("content" in chunk) || !Array.isArray(chunk.content)) return [];
-        return chunk.content.flatMap((content) =>
-          typeof content === "object" &&
-          content !== null &&
-          "type" in content &&
-          content.type === "text" &&
-          "text" in content &&
-          typeof content.text === "string"
-            ? [content.text]
-            : [],
-        );
-      })
-      .join("");
-    expect(assistantText).toBe("complete");
+    try {
+      const store = new LocalStore(input().agentId, { storageDir });
+      const chunks = await collect(
+        await new ProviderTurnExecutor(adapter).execute(input()),
+      );
+      const streamedText: string[] = [];
+      for (const chunk of chunks) {
+        store.appendStreamChunk(input().conversationId, input().agentId, chunk);
+        if (chunk.message_type !== "assistant_message") continue;
+        const content = "content" in chunk ? chunk.content : undefined;
+        if (!Array.isArray(content)) continue;
+        for (const block of content) {
+          if (
+            typeof block === "object" &&
+            block !== null &&
+            "type" in block &&
+            block.type === "text" &&
+            "text" in block &&
+            typeof block.text === "string"
+          ) {
+            streamedText.push(block.text);
+          }
+        }
+      }
+
+      expect(streamedText.join("")).toBe(" plus delta");
+      const history = new LocalStore(input().agentId, { storageDir })
+        .listConversationMessages(input().conversationId, {
+          agent_id: input().agentId,
+          order: "asc",
+        })
+        .find((row) => row.message_type === "assistant_message");
+      expect(history).toEqual(
+        expect.objectContaining({
+          content: [{ type: "text", text: "Initial text plus delta" }],
+        }),
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("matches history identity after start-only redacted reasoning", async () => {
@@ -460,6 +479,7 @@ describe("ProviderTurnExecutor", () => {
             partial: message,
           }),
         );
+        yield providerLocalMessage(message);
         yield { type: "error", error: new Error("provider interrupted") };
       },
     };
@@ -472,19 +492,15 @@ describe("ProviderTurnExecutor", () => {
       const chunks = await collect(
         await new ProviderTurnExecutor(adapter).execute(input()),
       );
-      const liveIds: string[] = [];
+      let liveAssistantId: string | undefined;
       for (const chunk of chunks) {
         const stored = store.appendStreamChunk(
           input().conversationId,
           input().agentId,
           chunk,
         );
-        if (
-          (chunk.message_type === "reasoning_message" ||
-            chunk.message_type === "assistant_message") &&
-          "id" in stored
-        ) {
-          liveIds.push(stored.id);
+        if (chunk.message_type === "assistant_message" && "id" in stored) {
+          liveAssistantId = stored.id;
         }
       }
 
@@ -498,7 +514,9 @@ describe("ProviderTurnExecutor", () => {
             row.message_type === "reasoning_message" ||
             row.message_type === "assistant_message",
         );
-      expect(liveIds).toEqual(history.map((row) => row.id));
+      expect(liveAssistantId).toBe(
+        history.find((row) => row.message_type === "assistant_message")?.id,
+      );
       expect(history).toEqual([
         expect.objectContaining({
           message_type: "reasoning_message",

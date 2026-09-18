@@ -424,20 +424,6 @@ function identityForContentSegment(
   return identity;
 }
 
-function uncoveredStartSnapshotDelta(
-  coveredCharacters: Map<number, number>,
-  contentIndex: number,
-  delta: string,
-): string {
-  const covered = coveredCharacters.get(contentIndex) ?? 0;
-  if (covered <= 0) return delta;
-  const consumed = Math.min(covered, delta.length);
-  const remaining = covered - consumed;
-  if (remaining > 0) coveredCharacters.set(contentIndex, remaining);
-  else coveredCharacters.delete(contentIndex);
-  return delta.slice(consumed);
-}
-
 function createProviderLettaStream(
   events: AsyncIterable<ProviderStreamEvent>,
   contextTokensEstimate?: number,
@@ -451,10 +437,6 @@ function createProviderLettaStream(
       let sawUsageStatistics = false;
       const assistantIdentities = new Map<number, ProviderSegmentIdentity>();
       const reasoningIdentities = new Map<number, ProviderSegmentIdentity>();
-      // Pi's partial is shared live state. A queued start event can therefore
-      // expose text already represented by later queued deltas.
-      const assistantStartSnapshotCharacters = new Map<number, number>();
-      const reasoningStartSnapshotCharacters = new Map<number, number>();
       try {
         for await (const event of events) {
           if (event.type === "error") {
@@ -473,39 +455,7 @@ function createProviderLettaStream(
           }
 
           const { part } = event;
-          if (part.type === "text_start") {
-            const content = part.partial.content[part.contentIndex];
-            if (content?.type === "text" && content.text.length > 0) {
-              assistantStartSnapshotCharacters.set(
-                part.contentIndex,
-                content.text.length,
-              );
-              const identity = identityForContentSegment(
-                assistantIdentities,
-                "provider-assistant",
-                part.contentIndex,
-                part.partial,
-                "assistant_message",
-              );
-              yield attachLocalSegmentIdentity(
-                {
-                  message_type: "assistant_message",
-                  otid: identity.otid,
-                  content: [{ type: "text", text: content.text }],
-                } as LettaStreamingResponse,
-                identity,
-              );
-            }
-            continue;
-          }
-
           if (part.type === "text_delta") {
-            const delta = uncoveredStartSnapshotDelta(
-              assistantStartSnapshotCharacters,
-              part.contentIndex,
-              part.delta,
-            );
-            if (delta.length === 0) continue;
             const identity = identityForContentSegment(
               assistantIdentities,
               "provider-assistant",
@@ -517,46 +467,14 @@ function createProviderLettaStream(
               {
                 message_type: "assistant_message",
                 otid: identity.otid,
-                content: [{ type: "text", text: delta }],
+                content: [{ type: "text", text: part.delta }],
               } as LettaStreamingResponse,
               identity,
             );
             continue;
           }
 
-          if (part.type === "thinking_start") {
-            const content = part.partial.content[part.contentIndex];
-            if (content?.type === "thinking" && content.thinking.length > 0) {
-              reasoningStartSnapshotCharacters.set(
-                part.contentIndex,
-                content.thinking.length,
-              );
-              const identity = identityForContentSegment(
-                reasoningIdentities,
-                "provider-reasoning",
-                part.contentIndex,
-                part.partial,
-                "reasoning_message",
-              );
-              yield attachLocalSegmentIdentity(
-                {
-                  message_type: "reasoning_message",
-                  otid: identity.otid,
-                  reasoning: content.thinking,
-                } as LettaStreamingResponse,
-                identity,
-              );
-            }
-            continue;
-          }
-
           if (part.type === "thinking_delta") {
-            const delta = uncoveredStartSnapshotDelta(
-              reasoningStartSnapshotCharacters,
-              part.contentIndex,
-              part.delta,
-            );
-            if (delta.length === 0) continue;
             const identity = identityForContentSegment(
               reasoningIdentities,
               "provider-reasoning",
@@ -568,7 +486,7 @@ function createProviderLettaStream(
               {
                 message_type: "reasoning_message",
                 otid: identity.otid,
-                reasoning: delta,
+                reasoning: part.delta,
               } as LettaStreamingResponse,
               identity,
             );

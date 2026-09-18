@@ -104,6 +104,29 @@ describe("local assistant message correlation", () => {
     expect("id" in live ? live.id : undefined).toBe(assistant?.id);
     expect("id" in live ? live.id : undefined).not.toBe(reasoning?.id);
   });
+
+  test("matches an untagged reasoning-only assistant chunk to reasoning history", async () => {
+    const storageDir = await createStorageDirectory();
+    const agentId = "agent-local-reasoning-envelope-correlation";
+    const store = new LocalStore(agentId, { storageDir });
+    const live = store.appendStreamChunk("default", agentId, {
+      message_type: "assistant_message",
+      content: [{ type: "reasoning", text: "thought" }],
+    } as unknown as LettaStreamingResponse);
+    store.appendStreamChunk("default", agentId, {
+      message_type: "stop_reason",
+      stop_reason: "end_turn",
+    });
+
+    const canonical = new LocalStore(agentId, { storageDir })
+      .listConversationMessages("default", {
+        agent_id: agentId,
+        order: "asc",
+      })
+      .filter((row) => row.message_type === "reasoning_message");
+    expect(canonical).toHaveLength(1);
+    expect("id" in live ? live.id : undefined).toBe(canonical[0]?.id);
+  });
 });
 
 describe("local segment identity", () => {
