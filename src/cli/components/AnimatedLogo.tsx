@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { colors, hexToBgAnsi } from "./colors";
+import { colors } from "./colors";
 import { Text } from "./Text";
 
 const LOGO_WIDTH = 10;
@@ -162,24 +162,6 @@ function renderLogoLine(line: string, faceColor: string) {
       </Text>
     );
   });
-}
-
-/**
- * Static logo (frame 1, with shadow) as ANSI-colored lines for plain
- * console output where mounting Ink for a one-shot render is overkill.
- */
-export function staticLogoAnsiLines(
-  faceColor: string = colors.welcome.accent,
-): string[] {
-  const lines = normalizedLogoFrames[1]?.split("\n") ?? [];
-  return lines.map((line) =>
-    Array.from(line)
-      .map((token) => {
-        const bg = logoCellColor(token, faceColor);
-        return bg ? `${hexToBgAnsi(bg)} \x1b[0m` : " ";
-      })
-      .join(""),
-  );
 }
 
 interface AnimatedLogoProps {

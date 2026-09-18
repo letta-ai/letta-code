@@ -6,7 +6,7 @@
 import { hostname } from "node:os";
 import { parseArgs } from "node:util";
 import { MessageChannel } from "node:worker_threads";
-import { render } from "ink";
+import { Box, render, Text } from "ink";
 import { configureBackendMode } from "@/backend";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import type { ChannelGatewaySupervisor } from "@/channels/gateway-supervisor";
@@ -17,7 +17,8 @@ import {
   RESTORE_CHANNEL_AGENT_SCOPE_ENV,
   RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV,
 } from "@/channels/restore-scope";
-import { staticLogoAnsiLines } from "@/cli/components/AnimatedLogo";
+import { AnimatedLogo } from "@/cli/components/AnimatedLogo";
+import { colors } from "@/cli/components/colors";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
 import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
@@ -62,30 +63,20 @@ const activeListenerProcessAnchors = new Set<ListenerProcessAnchor>();
 
 /**
  * One-shot banner for a computer's first registration (typically pasted from
- * onboarding). Printed once and left in the scrollback. The logo is drawn with
- * background-color cells, so it only exists on the color path; when stdout is
- * not a TTY or NO_COLOR is set (service logs, `letta server --debug > file`),
- * the banner is plain text with no escape sequences.
+ * onboarding). Rendered once and left in the scrollback.
  */
-function formatFirstRunWelcome(computerName: string, color: boolean): string[] {
-  const bold = color ? (s: string) => `\x1b[1m${s}\x1b[22m` : (s: string) => s;
-  const dim = color ? (s: string) => `\x1b[2m${s}\x1b[22m` : (s: string) => s;
-  return [
-    "",
-    ...(color ? [...staticLogoAnsiLines(), ""] : []),
-    bold("Welcome to Letta"),
-    dim(
-      `Registering this computer as "${computerName}" so your agent can work here. Use --computer-name to change it.`,
-    ),
-    "",
-  ];
-}
-
-function printFirstRunWelcome(computerName: string): void {
-  const color = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
-  for (const line of formatFirstRunWelcome(computerName, color)) {
-    console.log(line);
-  }
+function FirstRunWelcome({ computerName }: { computerName: string }) {
+  return (
+    <Box flexDirection="column" paddingY={1}>
+      <AnimatedLogo color={colors.welcome.accent} animate={false} />
+      <Text> </Text>
+      <Text bold>Welcome to Letta</Text>
+      <Text dimColor>
+        Registering this computer as "{computerName}" so your agent can work
+        here. Use --computer-name to change it.
+      </Text>
+    </Box>
+  );
 }
 
 function formatTimestamp(): string {
@@ -209,7 +200,6 @@ function shouldAcquireStandaloneListenerLock(): boolean {
 export const __listenSubcommandTestUtils = {
   createListenerProcessAnchorPromise,
   flushListenerTelemetryEnd,
-  formatFirstRunWelcome,
   getListenerServerUrl,
   resolveListenerStartupMode,
   resolveListenerRegistrationOptions,
@@ -441,9 +431,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       // onboarding) registers without an interactive prompt.
       connectionName = hostname() || "my-computer";
       settingsManager.setListenerEnvName(connectionName);
-      // The normal path skips its console.clear() on a first run so this
-      // stays visible above the status UI.
-      printFirstRunWelcome(connectionName);
+      // Ink paints the final frame synchronously on unmount, so this is a
+      // one-shot render. The normal path skips its console.clear() on a first
+      // run so the banner stays visible above the status UI.
+      render(<FirstRunWelcome computerName={connectionName} />).unmount();
       showedFirstRunWelcome = true;
     }
   }
