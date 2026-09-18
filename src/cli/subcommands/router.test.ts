@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   runSubcommand,
   subcommandNeedsEarlyBackendMode,
@@ -174,6 +176,19 @@ describe("subcommand router", () => {
     }
   });
 
+  test("routes Tray help with early backend selection", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => messages.push(String(message));
+    try {
+      expect(subcommandNeedsEarlyBackendMode("tray")).toBe(true);
+      expect(await runSubcommand(["tray", "--help"])).toBe(0);
+      expect(messages.join("\n")).toContain("letta tray add");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   test("routes teleport help", async () => {
     const messages: string[] = [];
     const originalLog = console.log;
@@ -192,6 +207,11 @@ describe("subcommand router", () => {
     } finally {
       console.log = originalLog;
     }
+  });
+
+  test("global letta --help text documents the tray subcommand", () => {
+    const src = readFileSync(join(process.cwd(), "src/index.ts"), "utf8");
+    expect(src).toContain("letta tray");
   });
 
   test("identifies backend-aware subcommands for early backend selection", () => {

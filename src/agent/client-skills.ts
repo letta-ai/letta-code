@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
+import { resolveTrayFeatureAvailability } from "@/backend/api/tray-support";
 import type { AvailableSkillSummary } from "@/types/protocol_v2";
 import { getCheckoutGeneration } from "@/utils/checkout-readiness";
 import type { AttachedAgentRepository } from "./attached-repositories";
@@ -112,6 +113,7 @@ function getWatcher(): ClientSkillsWatcher {
  */
 function computeCacheKey(components: {
   agentId: string | undefined;
+  trayAvailable: boolean;
   skillSources: SkillSource[];
   cwd: string;
   configuredSkillsDirectory: string | null;
@@ -123,6 +125,7 @@ function computeCacheKey(components: {
 }): string {
   return [
     components.agentId ?? "",
+    String(components.trayAvailable),
     [...components.skillSources].sort().join(","),
     components.cwd,
     components.configuredSkillsDirectory ?? "",
@@ -355,6 +358,7 @@ export type ClientSkill = NonNullable<
 
 export interface BuildClientSkillsPayloadOptions {
   agentId?: string;
+  trayAvailable?: boolean;
   workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
@@ -411,6 +415,7 @@ function resolveSkillDiscoveryContext(
 
 export interface DiscoverClientSideSkillsOptions {
   agentId?: string;
+  trayAvailable?: boolean;
   workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
@@ -499,7 +504,13 @@ async function collectClientSideSkills(
       });
       errors.push(...discovery.errors);
       for (const skill of discovery.skills) {
-        if (isSkillAvailableForAgent(skill, options.agentId)) {
+        if (
+          isSkillAvailableForAgent(
+            skill,
+            options.agentId,
+            options.trayAvailable ?? true,
+          )
+        ) {
           skillsById.set(skill.id, skill);
         }
       }
@@ -516,7 +527,13 @@ async function collectClientSideSkills(
     const memoryDiscovery = await discoverMemorySkills(options.agentId);
     errors.push(...memoryDiscovery.errors);
     for (const skill of memoryDiscovery.skills) {
-      if (!isSkillAvailableForAgent(skill, options.agentId)) {
+      if (
+        !isSkillAvailableForAgent(
+          skill,
+          options.agentId,
+          options.trayAvailable ?? true,
+        )
+      ) {
         continue;
       }
       const existing = skillsById.get(skill.id);
@@ -531,7 +548,13 @@ async function collectClientSideSkills(
     );
     errors.push(...sharedMemoryDiscovery.errors);
     for (const skill of sharedMemoryDiscovery.skills) {
-      if (!isSkillAvailableForAgent(skill, options.agentId)) {
+      if (
+        !isSkillAvailableForAgent(
+          skill,
+          options.agentId,
+          options.trayAvailable ?? true,
+        )
+      ) {
         continue;
       }
       const existing = skillsById.get(skill.id);
@@ -567,8 +590,13 @@ export async function discoverClientSideSkills(
     skillSources,
     attachedRepositories: options.attachedRepositories,
   });
+  const trayAvailable = await resolveTrayFeatureAvailability(
+    options.agentId,
+    options.trayAvailable,
+  );
   return collectClientSideSkills({
     ...options,
+    trayAvailable,
     configuredSkillsDirectory,
     legacySkillsDirectory,
     skillSources,
@@ -604,6 +632,10 @@ export async function buildClientSkillsPayload(
     skillSources,
   } = resolveSkillDiscoveryContext(options);
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
+  const trayAvailable = await resolveTrayFeatureAvailability(
+    options.agentId,
+    options.trayAvailable,
+  );
 
   // When a custom discoverSkillsFn is provided (tests / DI), bypass the cache
   // so the injected function is always called.
@@ -629,6 +661,7 @@ export async function buildClientSkillsPayload(
   }
   const cacheComponents = {
     agentId: options.agentId,
+    trayAvailable,
     skillSources,
     cwd: workingDirectory,
     configuredSkillsDirectory,
@@ -652,6 +685,7 @@ export async function buildClientSkillsPayload(
   const checkoutGenerationBeforeDiscovery = getCheckoutGeneration();
   const discovery = await collectClientSideSkills({
     ...options,
+    trayAvailable,
     configuredSkillsDirectory,
     legacySkillsDirectory,
     skillSources,
