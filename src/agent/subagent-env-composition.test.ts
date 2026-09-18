@@ -20,7 +20,7 @@ const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
 const PARENT_MEMORY_DIR = `/Users/someone/.letta/agents/${PARENT_ID}/memory`;
 
 describe("composeSubagentChildEnv", () => {
-  test("carries the parent's shadow name through child creation", () => {
+  test("carries the reserved generated name through child creation", () => {
     const reservedName = allocateSubagentName("Bob");
     const env = composeSubagentChildEnv({
       parentProcessEnv: {},
@@ -35,7 +35,7 @@ describe("composeSubagentChildEnv", () => {
       env[SUBAGENT_NAME_ENV],
     );
     expect(createdName).toBe(reservedName);
-    expect(createdName).toEndWith(" (Bob's shadow)");
+    expect(createdName).not.toContain("shadow");
   });
 
   test("forwards a reserved name to a fresh child without leaking a parent's name", () => {
