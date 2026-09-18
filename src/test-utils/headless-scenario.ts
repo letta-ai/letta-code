@@ -233,7 +233,7 @@ async function runCLI(args: Args): Promise<RunResult> {
     "--base-tools",
     args.backend === "local"
       ? "none"
-      : "memory,web_search,fetch_webpage,conversation_search",
+      : "web_search,fetch_webpage,conversation_search",
     "--output-format",
     args.output,
     "-m",

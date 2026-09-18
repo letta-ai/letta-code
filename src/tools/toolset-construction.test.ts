@@ -45,7 +45,7 @@ describe("shared toolset construction", () => {
       await loadStartupTools({ toolset: id });
       const startupTools = getClientToolsFromRegistry();
       await loadSpecificTools(["Read"]);
-      await forceToolsetSwitch(id, "agent-toolset-test");
+      await forceToolsetSwitch(id);
       expect(getClientToolsFromRegistry()).toEqual(startupTools);
       const turn = await prepare({ toolsetPreference: id });
       expect(turn.preparedToolContext.clientTools).toEqual(startupTools);
@@ -74,9 +74,7 @@ describe("shared toolset construction", () => {
       expect(getClientToolsFromRegistry()).toEqual(
         auto.preparedToolContext.clientTools,
       );
-      expect(await switchToolsetForModel(model, "agent-toolset-test")).toBe(
-        auto.toolset,
-      );
+      expect(await switchToolsetForModel(model)).toBe(auto.toolset);
       expect(getClientToolsFromRegistry()).toEqual(
         auto.preparedToolContext.clientTools,
       );

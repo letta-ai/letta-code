@@ -4,7 +4,6 @@ import { resolveModel } from "@/agent/model";
 import { resolveModelHandleFromLlmConfig } from "@/agent/model-handles";
 import type { SkillSource } from "@/agent/skill-sources";
 import { getBackend } from "@/backend";
-import { getClient } from "@/backend/api/client";
 import { buildModInvocationContext } from "@/mods/context";
 import type { ModEvents } from "@/mods/event-emitter";
 import type { ModAdapter } from "@/mods/mod-adapter";
@@ -26,16 +25,6 @@ import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 import type { ToolsetName, ToolsetPreference } from "./toolset-types";
 
 export type { ToolsetName, ToolsetPreference } from "./toolset-types";
-
-// Server-side memory tool names that can mutate memory blocks.
-// When memfs is enabled, we detach ALL of these from the agent.
-export const MEMORY_TOOL_NAMES = new Set([
-  "memory",
-  "memory_apply_patch",
-  "memory_insert",
-  "memory_replace",
-  "memory_rethink",
-]);
 
 export interface ClientToolsetConfig {
   /** Request-scoped base toolset. Omitted preserves the runtime preference. */
@@ -405,123 +394,6 @@ export async function prepareToolExecutionContextForScope(params: {
   return { ...result, agent: agent as AgentState | null };
 }
 
-/**
- * Ensures the server-side memory tool is attached to the agent.
- * Client toolsets may use memory_apply_patch, but server-side base memory tool remains memory.
- *
- * This is a server-side tool swap - client tools are passed via client_tools per-request.
- *
- * @param agentId - The agent ID to update
- */
-export async function ensureCorrectMemoryTool(agentId: string): Promise<void> {
-  if (!getBackend().capabilities.serverSideToolManagement) {
-    return;
-  }
-  const client = await getClient();
-
-  try {
-    // Need full agent state for tool_rules, so use retrieve with include
-    const agentWithTools = await client.agents.retrieve(agentId, {
-      include: ["agent.tools"],
-    });
-    const currentTools = agentWithTools.tools || [];
-    const mapByName = new Map(currentTools.map((t) => [t.name, t.id]));
-
-    // If agent has no memory tool at all, don't add one
-    // This preserves stateless agents (like Incognito) that intentionally have no memory
-    const hasAnyMemoryTool =
-      mapByName.has("memory") || mapByName.has("memory_apply_patch");
-    if (!hasAnyMemoryTool) {
-      return;
-    }
-
-    // Determine which memory tool we want
-    // OpenAI/Codex models use client-side memory_apply_patch now; keep server memory tool as "memory" for all models
-    const desiredMemoryTool = "memory";
-    const otherMemoryTool =
-      desiredMemoryTool === "memory" ? "memory_apply_patch" : "memory";
-
-    // Ensure desired memory tool attached
-    let desiredId = mapByName.get(desiredMemoryTool);
-    if (!desiredId) {
-      const resp = await client.tools.list({ name: desiredMemoryTool });
-      desiredId = resp.items[0]?.id;
-    }
-    if (!desiredId) {
-      // No warning needed - the tool might not exist on this server
-      return;
-    }
-
-    const otherId = mapByName.get(otherMemoryTool);
-
-    // Check if swap is needed
-    if (mapByName.has(desiredMemoryTool) && !otherId) {
-      // Already has the right tool, no swap needed
-      return;
-    }
-
-    const currentIds = currentTools
-      .map((t) => t.id)
-      .filter((id): id is string => typeof id === "string");
-    const newIds = new Set(currentIds);
-    if (otherId) newIds.delete(otherId);
-    newIds.add(desiredId);
-
-    const updatedRules = (agentWithTools.tool_rules || []).map((r) =>
-      r.tool_name === otherMemoryTool
-        ? { ...r, tool_name: desiredMemoryTool }
-        : r,
-    );
-
-    await client.agents.update(agentId, {
-      tool_ids: Array.from(newIds),
-      tool_rules: updatedRules,
-    });
-  } catch (err) {
-    console.warn(
-      `Warning: Failed to sync memory tool: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
-/**
- * Detach all memory tools from an agent.
- * Used when enabling memfs (filesystem-backed memory).
- *
- * @param agentId - Agent to detach memory tools from
- * @returns true if any tools were detached
- */
-export async function detachMemoryTools(agentId: string): Promise<boolean> {
-  if (!getBackend().capabilities.serverSideToolManagement) {
-    return false;
-  }
-  const client = await getClient();
-
-  try {
-    const agentWithTools = await client.agents.retrieve(agentId, {
-      include: ["agent.tools"],
-    });
-    const currentTools = agentWithTools.tools || [];
-
-    let detachedAny = false;
-    for (const tool of currentTools) {
-      if (tool.name && MEMORY_TOOL_NAMES.has(tool.name)) {
-        if (tool.id) {
-          await client.agents.tools.detach(tool.id, { agent_id: agentId });
-          detachedAny = true;
-        }
-      }
-    }
-
-    return detachedAny;
-  } catch (err) {
-    console.warn(
-      `Warning: Failed to detach memory tools: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return false;
-  }
-}
-
 type PersistedToolRule = NonNullable<AgentState["tool_rules"]>[number];
 
 interface AgentWithToolsAndRules {
@@ -575,29 +447,24 @@ export async function clearPersistedClientToolRules(
  * Force switch to a specific toolset regardless of model.
  *
  * @param toolsetName - The toolset to switch to
- * @param agentId - Agent to relink tools to
  */
 export async function forceToolsetSwitch(
   toolsetName: ToolsetName,
-  agentId: string,
 ): Promise<void> {
   await loadTools(undefined, { resolvedToolset: toolsetName });
-  if (toolsetName !== "none") await ensureCorrectMemoryTool(agentId);
 }
 
 /**
- * Switches the loaded toolset based on the target model identifier,
- * and ensures the correct memory tool is attached to the agent.
+ * Switches the loaded toolset based on the target model identifier.
  *
  * @param modelIdentifier - The model handle/id
- * @param agentId - Agent to relink tools to
+ * @param providerType - Provider type used to refine toolset derivation
  */
 export async function switchToolsetForModel(
   modelIdentifier: string,
-  agentId: string,
   providerType?: string | null,
 ): Promise<ToolsetName> {
   const toolset = deriveToolsetFromModel(modelIdentifier, providerType);
-  await forceToolsetSwitch(toolset, agentId);
+  await forceToolsetSwitch(toolset);
   return toolset;
 }
