@@ -24,6 +24,49 @@ export function getStringField(
   return typeof val === "string" ? val : undefined;
 }
 
+function parseBlockScalar(
+  lines: string[],
+  style: "|" | ">",
+  chomping: "" | "+" | "-",
+): string {
+  const contentIndent = lines.reduce<number | null>((minimum, line) => {
+    if (!line.trim()) return minimum;
+    const indentation = line.length - line.trimStart().length;
+    return minimum === null ? indentation : Math.min(minimum, indentation);
+  }, null);
+  const deindented = lines.map((line) =>
+    line.trim() && contentIndent !== null ? line.slice(contentIndent) : "",
+  );
+
+  let value: string;
+  if (style === "|") {
+    value = deindented.join("\n");
+  } else {
+    let pendingBreaks = 0;
+    value = "";
+    for (const line of deindented) {
+      if (!line) {
+        pendingBreaks += 1;
+        continue;
+      }
+      if (value) {
+        value += pendingBreaks > 0 ? "\n".repeat(pendingBreaks) : " ";
+      } else if (pendingBreaks > 0) {
+        value += "\n".repeat(pendingBreaks);
+      }
+      value += line;
+      pendingBreaks = 0;
+    }
+    value += "\n".repeat(pendingBreaks);
+  }
+
+  if (chomping === "+") return `${value}\n`;
+  const withoutTrailingNewlines = value.replace(/\n+$/, "");
+  return chomping === "-"
+    ? withoutTrailingNewlines
+    : `${withoutTrailingNewlines}\n`;
+}
+
 /**
  * Parse frontmatter and content from a markdown file
  */
@@ -63,7 +106,8 @@ export function parseFrontmatter(content: string): {
     currentArray = [];
   };
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex] ?? "";
     const trimmedLine = line.trim();
     const indentation = line.length - line.trimStart().length;
 
@@ -83,6 +127,24 @@ export function parseFrontmatter(content: string): {
     if (colonIndex > 0) {
       const key = line.slice(0, colonIndex).trim();
       const value = line.slice(colonIndex + 1).trim();
+
+      const blockScalar = value.match(/^([|>])([+-]?)$/);
+      if (blockScalar?.[1]) {
+        const blockLines: string[] = [];
+        let blockLineIndex = lineIndex + 1;
+        for (; blockLineIndex < lines.length; blockLineIndex += 1) {
+          const blockLine = lines[blockLineIndex] ?? "";
+          if (blockLine.trim() && blockLine === blockLine.trimStart()) break;
+          blockLines.push(blockLine);
+        }
+        frontmatter[key] = parseBlockScalar(
+          blockLines,
+          blockScalar[1] as "|" | ">",
+          (blockScalar[2] ?? "") as "" | "+" | "-",
+        );
+        lineIndex = blockLineIndex - 1;
+        continue;
+      }
 
       if (value) {
         // Simple key: value pair
