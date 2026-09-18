@@ -157,7 +157,9 @@ async function runBidirectionalReflectionScenario(): Promise<BidirectionalReflec
       env: createIsolatedCliTestEnv({
         HOME: homeDir,
         LETTA_LOCAL_BACKEND_DIR: localBackendDir,
-        LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
+        // Ordinary turns still return pong, while reflection turns execute a
+        // real Bash read of TRANSCRIPT_PATH before returning success.
+        LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic-reflection",
         LETTA_TRANSCRIPT_ROOT: transcriptRoot,
         // This test exercises transcript-driven reflection, not kernel sandbox
         // behavior. Keep it independent of host bwrap/seatbelt availability.
