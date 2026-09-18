@@ -41,7 +41,7 @@ describe("tool truncation integration tests", () => {
         });
 
         const output = result.content[0]?.text || "";
-        expect(output).toContain("[Output truncated: showing 30,000");
+        expect(output).toContain("[Output truncated: showing 2,000");
         expect(output.length).toBeLessThan(35000); // Truncated + notice
       },
     );
@@ -64,7 +64,8 @@ describe("tool truncation integration tests", () => {
         });
 
         const output = result.content[0]?.text || "";
-        expect(output).toContain("[Output truncated: showing 30,000");
+        expect(output).toContain("[Output truncated: showing 10,000");
+        expect(output).not.toContain("[Full output written to:");
         expect(result.status).toBe("error");
       },
     );

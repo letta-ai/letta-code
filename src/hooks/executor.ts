@@ -4,6 +4,7 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { buildShellLaunchers } from "@/tools/impl/shell-launchers";
+import { LIMITS, truncateByChars } from "@/tools/impl/truncation";
 import { executePromptHook } from "./prompt-executor";
 import {
   type CommandHookConfig,
@@ -18,6 +19,15 @@ import {
 
 /** Default timeout for hook execution (60 seconds) */
 const DEFAULT_TIMEOUT_MS = 60000;
+
+function truncateHookFeedback(text: string, workingDirectory: string): string {
+  return truncateByChars(text, LIMITS.HOOK_OUTPUT_CHARS, "Hook", {
+    workingDirectory,
+    toolName: "Hook",
+    useMiddleTruncation: false,
+    previewChars: LIMITS.OVERFLOW_PREVIEW_CHARS,
+  }).content;
+}
 
 /**
  * Get a display identifier for a hook (for logging and feedback)
@@ -387,7 +397,9 @@ export async function executeHooks(
           input.event_type === "UserPromptSubmit" ||
           input.event_type === "SessionStart"
         ) {
-          feedback.push(result.stdout.trim());
+          feedback.push(
+            truncateHookFeedback(result.stdout.trim(), workingDirectory),
+          );
         }
       }
       continue;
@@ -452,8 +464,10 @@ export async function executeHooksParallel(
         const additionalContext =
           json?.hookSpecificOutput?.additionalContext ||
           json?.additionalContext;
-        if (additionalContext) {
-          feedback.push(additionalContext);
+        if (typeof additionalContext === "string" && additionalContext) {
+          feedback.push(
+            truncateHookFeedback(additionalContext, workingDirectory),
+          );
         }
       } catch {
         // Not JSON, ignore

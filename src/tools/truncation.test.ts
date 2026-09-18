@@ -44,6 +44,21 @@ describe("truncation utilities", () => {
 
       expect(result.content).toContain("1,000 characters");
     });
+
+    test("uses a shorter prefix preview after exceeding the limit", () => {
+      const text = `${"a".repeat(1000)}END`;
+      const result = truncateByChars(text, 500, "Test", {
+        previewChars: 100,
+        useMiddleTruncation: false,
+      });
+
+      expect(result.wasTruncated).toBe(true);
+      expect(result.content).toStartWith("a".repeat(100));
+      expect(result.content).not.toContain("END");
+      expect(result.content).toContain(
+        "[Output truncated: showing 100 of 1,003 characters.]",
+      );
+    });
   });
 
   describe("truncateByLines", () => {
@@ -160,6 +175,9 @@ describe("truncation utilities", () => {
   describe("LIMITS constants", () => {
     test("has expected values", () => {
       expect(LIMITS.BASH_OUTPUT_CHARS).toBe(30_000);
+      expect(LIMITS.BASH_FAILURE_OUTPUT_CHARS).toBe(10_000);
+      expect(LIMITS.HOOK_OUTPUT_CHARS).toBe(10_000);
+      expect(LIMITS.OVERFLOW_PREVIEW_CHARS).toBe(2_000);
       expect(LIMITS.READ_MAX_LINES).toBe(2_000);
       expect(LIMITS.READ_MAX_CHARS_PER_LINE).toBe(2_000);
       expect(LIMITS.READ_OUTPUT_CHARS).toBe(30_000);

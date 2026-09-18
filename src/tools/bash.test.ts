@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { bash, spawnCommand } from "@/tools/impl/bash";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
+import { LIMITS } from "@/tools/impl/truncation";
 
 async function runBashInTemp(
   command: string,
@@ -49,6 +50,27 @@ describe("Bash tool", () => {
     });
 
     expect(result.content[0]?.text).toContain("error message");
+  });
+
+  test("returns a prefix preview when successful output overflows", async () => {
+    const result = await runBashInTemp(
+      `node -e "process.stdout.write('a'.repeat(${LIMITS.BASH_OUTPUT_CHARS + 1}) + 'TAIL')"`,
+    );
+    const output = result.content[0]?.text ?? "";
+    const overflowPath = output.match(
+      /\[Full output written to: (.+?\.txt)\]/,
+    )?.[1];
+
+    expect(result.status).toBe("success");
+    expect(output).toStartWith("a".repeat(LIMITS.OVERFLOW_PREVIEW_CHARS));
+    expect(output).not.toContain("TAIL");
+    expect(output).toContain(
+      `[Output truncated: showing ${LIMITS.OVERFLOW_PREVIEW_CHARS.toLocaleString()}`,
+    );
+    expect(overflowPath).toBeDefined();
+    if (!overflowPath) throw new Error("Expected Bash overflow path");
+    expect(await readFile(overflowPath, "utf8")).toEndWith("TAIL");
+    await rm(path.dirname(overflowPath), { recursive: true, force: true });
   });
 
   test("recovers when runtime working directory was deleted mid-turn", async () => {

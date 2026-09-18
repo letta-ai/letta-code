@@ -16,6 +16,8 @@ import {
   type SessionStartHookInput,
   type StopHookInput,
 } from "@/hooks/types";
+import { getOverflowDirectory } from "@/tools/impl/overflow";
+import { LIMITS } from "@/tools/impl/truncation";
 
 // Skip on Windows - test commands use bash syntax (&&, >&2, sleep, etc.)
 // The executor itself is cross-platform, but these test commands are bash-specific
@@ -32,6 +34,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
   afterEach(() => {
     try {
       rmSync(tempDir, { recursive: true, force: true });
+      rmSync(getOverflowDirectory(tempDir), { recursive: true, force: true });
     } catch {
       // Ignore cleanup errors
     }
@@ -286,6 +289,34 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       expect(result.results).toHaveLength(0);
     });
 
+    test("caps each plain stdout feedback string with a prefix preview", async () => {
+      const hooks: HookCommand[] = [
+        {
+          type: "command",
+          command: `node -e 'process.stdout.write("x".repeat(${LIMITS.HOOK_OUTPUT_CHARS + 1}))'`,
+          quiet: true,
+        },
+      ];
+      const input: SessionStartHookInput = {
+        event_type: "SessionStart",
+        working_directory: tempDir,
+        is_new_session: true,
+      };
+
+      const result = await executeHooks(hooks, input, tempDir);
+
+      expect(result.feedback[0]).toStartWith(
+        "x".repeat(LIMITS.OVERFLOW_PREVIEW_CHARS),
+      );
+      expect(result.feedback[0]).toContain(
+        `[Output truncated: showing ${LIMITS.OVERFLOW_PREVIEW_CHARS.toLocaleString()}`,
+      );
+      expect(result.feedback[0]).not.toContain(
+        "x".repeat(LIMITS.OVERFLOW_PREVIEW_CHARS + 1),
+      );
+      expect(result.feedback[0]).toContain("[Full output written to:");
+    });
+
     test("collects feedback from blocking hooks", async () => {
       const hooks: HookCommand[] = [
         {
@@ -388,6 +419,36 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       expect(result.errored).toBe(false);
       expect(result.feedback).toEqual([]);
       expect(result.results).toEqual([]);
+    });
+
+    test("caps each additionalContext string with a prefix preview", async () => {
+      const hooks: HookCommand[] = [
+        {
+          type: "command",
+          command: `node -e 'process.stdout.write(JSON.stringify({additionalContext: "y".repeat(${LIMITS.HOOK_OUTPUT_CHARS + 1})}))'`,
+          quiet: true,
+        },
+      ];
+      const input: PostToolUseHookInput = {
+        event_type: "PostToolUse",
+        working_directory: tempDir,
+        tool_name: "Read",
+        tool_input: {},
+        tool_result: { status: "success" },
+      };
+
+      const result = await executeHooksParallel(hooks, input, tempDir);
+
+      expect(result.feedback[0]).toStartWith(
+        "y".repeat(LIMITS.OVERFLOW_PREVIEW_CHARS),
+      );
+      expect(result.feedback[0]).toContain(
+        `[Output truncated: showing ${LIMITS.OVERFLOW_PREVIEW_CHARS.toLocaleString()}`,
+      );
+      expect(result.feedback[0]).not.toContain(
+        "y".repeat(LIMITS.OVERFLOW_PREVIEW_CHARS + 1),
+      );
+      expect(result.feedback[0]).toContain("[Full output written to:");
     });
 
     test("parallel execution is faster than sequential for slow hooks", async () => {
