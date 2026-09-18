@@ -721,7 +721,20 @@ export function updateTask(
     const task = data.tasks.find((t) => t.id === taskId);
     if (!task) return null;
     const originalCron = task.cron;
+    const wasTerminal = TERMINAL_TASK_STATUSES.has(task.status);
     updater(task);
+    if (wasTerminal && !TERMINAL_TASK_STATUSES.has(task.status)) {
+      const scheduledCount = data.tasks.filter(
+        (candidate) =>
+          candidate.agent_id === task.agent_id &&
+          !TERMINAL_TASK_STATUSES.has(candidate.status),
+      ).length;
+      if (scheduledCount > MAX_ACTIVE_TASKS_PER_AGENT) {
+        throw new Error(
+          `Agent ${task.agent_id} already has the maximum ${MAX_ACTIVE_TASKS_PER_AGENT} active or paused tasks.`,
+        );
+      }
+    }
     const cronChanged = task.cron !== originalCron;
     if (cronChanged) assertValidCronForPersistence(task.cron);
     if (cronChanged && task.last_run_reason === "invalid_cron") {
