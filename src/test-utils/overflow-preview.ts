@@ -1,12 +1,10 @@
 /**
- * Assertions and cleanup for file-backed overflow previews
- * (a short prefix of the output plus the saved file path).
+ * Assertions for file-backed overflow previews (a short prefix of the output
+ * plus the saved file path). Overflow files land under the disposable test
+ * home set up by scripts/test-home-preload.ts, so tests need no cleanup.
  */
 
 import { expect } from "bun:test";
-import { rmSync } from "node:fs";
-import { dirname } from "node:path";
-import { getOverflowDirectory } from "@/tools/impl/overflow";
 import { LIMITS } from "@/tools/impl/truncation";
 
 const OVERFLOW_PATH_PATTERN = /\[Full output written to: (.+?\.txt)\]/;
@@ -35,15 +33,4 @@ export function expectOverflowPath(text: string): string {
     throw new Error("Expected output to name a saved overflow file");
   }
   return overflowPath;
-}
-
-/**
- * Remove the per-project overflow tree (~/.letta/projects/<project>) that a
- * test's working directory created, not just its agent-tools leaf.
- */
-export function removeOverflowProjectDirectory(workingDirectory: string): void {
-  rmSync(dirname(getOverflowDirectory(workingDirectory)), {
-    recursive: true,
-    force: true,
-  });
 }

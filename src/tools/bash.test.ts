@@ -11,19 +11,6 @@ import { bash, spawnCommand } from "@/tools/impl/bash";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
 import { LIMITS } from "@/tools/impl/truncation";
 
-// Reads a saved overflow file, then removes the per-project overflow tree
-// (~/.letta/projects/<tmpdir>) the temp working directory created.
-async function readAndRemoveOverflowFile(overflowPath: string) {
-  try {
-    return await readFile(overflowPath, "utf8");
-  } finally {
-    await rm(path.dirname(path.dirname(overflowPath)), {
-      recursive: true,
-      force: true,
-    });
-  }
-}
-
 async function runBashInTemp(
   command: string,
   args: Partial<Parameters<typeof bash>[0]> = {},
@@ -78,7 +65,7 @@ describe("Bash tool", () => {
     expect(result.status).toBe("success");
     expect(output).not.toContain("TAIL");
     const overflowPath = expectPrefixPreview(output, "a");
-    expect(await readAndRemoveOverflowFile(overflowPath)).toEndWith("TAIL");
+    expect(await readFile(overflowPath, "utf8")).toEndWith("TAIL");
   });
 
   test("returns a head-and-tail excerpt and saved file when failed output overflows", async () => {
@@ -95,7 +82,7 @@ describe("Bash tool", () => {
       `[Output truncated: showing ${LIMITS.BASH_FAILURE_OUTPUT_CHARS.toLocaleString()}`,
     );
     const overflowPath = expectOverflowPath(output);
-    expect(await readAndRemoveOverflowFile(overflowPath)).toEndWith("TAIL");
+    expect(await readFile(overflowPath, "utf8")).toEndWith("TAIL");
   });
 
   test("recovers when runtime working directory was deleted mid-turn", async () => {

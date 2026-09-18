@@ -20,7 +20,14 @@ import {
 /** Default timeout for hook execution (60 seconds) */
 const DEFAULT_TIMEOUT_MS = 60000;
 
-function truncateHookFeedback(text: string, workingDirectory: string): string {
+/**
+ * Cap a model-facing hook string. Oversized text is saved to a file and
+ * replaced with a short prefix plus the file path.
+ */
+export function truncateHookFeedback(
+  text: string,
+  workingDirectory: string,
+): string {
   return truncateByChars(text, LIMITS.HOOK_OUTPUT_CHARS, "Hook", {
     workingDirectory,
     previewChars: LIMITS.OVERFLOW_PREVIEW_CHARS,
@@ -371,7 +378,8 @@ export async function executeHooks(
     results.push(result);
 
     // Collect feedback from stdout when hook succeeds (exit 0)
-    // Only for UserPromptSubmit and SessionStart hooks
+    // Only for UserPromptSubmit hooks; runSessionStartHooks collects
+    // SessionStart stdout itself, regardless of exit code
     if (result.exitCode === HookExitCode.ALLOW) {
       if (result.stdout?.trim()) {
         // Try to parse updatedInput from hook output (PreToolUse rewrite protocol)
@@ -391,13 +399,8 @@ export async function executeHooks(
           }
         }
 
-        if (
-          input.event_type === "UserPromptSubmit" ||
-          input.event_type === "SessionStart"
-        ) {
-          feedback.push(
-            truncateHookFeedback(result.stdout.trim(), workingDirectory),
-          );
+        if (input.event_type === "UserPromptSubmit") {
+          feedback.push(result.stdout.trim());
         }
       }
       continue;
@@ -427,7 +430,9 @@ export async function executeHooks(
   return {
     blocked,
     errored,
-    feedback,
+    feedback: feedback.map((text) =>
+      truncateHookFeedback(text, workingDirectory),
+    ),
     results,
     ...(updatedInput && { updatedInput }),
   };
@@ -463,9 +468,7 @@ export async function executeHooksParallel(
           json?.hookSpecificOutput?.additionalContext ||
           json?.additionalContext;
         if (typeof additionalContext === "string" && additionalContext) {
-          feedback.push(
-            truncateHookFeedback(additionalContext, workingDirectory),
-          );
+          feedback.push(additionalContext);
         }
       } catch {
         // Not JSON, ignore
@@ -492,7 +495,9 @@ export async function executeHooksParallel(
   return {
     blocked,
     errored,
-    feedback,
+    feedback: feedback.map((text) =>
+      truncateHookFeedback(text, workingDirectory),
+    ),
     results,
   };
 }

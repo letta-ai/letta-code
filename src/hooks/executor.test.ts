@@ -15,10 +15,11 @@ import {
   type PreToolUseHookInput,
   type SessionStartHookInput,
   type StopHookInput,
+  type UserPromptSubmitHookInput,
 } from "@/hooks/types";
 import {
+  expectOverflowPath,
   expectPrefixPreview,
-  removeOverflowProjectDirectory,
 } from "@/test-utils/overflow-preview";
 import { LIMITS } from "@/tools/impl/truncation";
 
@@ -37,7 +38,6 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
   afterEach(() => {
     try {
       rmSync(tempDir, { recursive: true, force: true });
-      removeOverflowProjectDirectory(tempDir);
     } catch {
       // Ignore cleanup errors
     }
@@ -300,15 +300,42 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
           quiet: true,
         },
       ];
-      const input: SessionStartHookInput = {
-        event_type: "SessionStart",
+      const input: UserPromptSubmitHookInput = {
+        event_type: "UserPromptSubmit",
         working_directory: tempDir,
-        is_new_session: true,
+        prompt: "hello",
+        is_command: false,
       };
 
       const result = await executeHooks(hooks, input, tempDir);
 
       expectPrefixPreview(result.feedback[0] ?? "", "x");
+    });
+
+    test("caps stderr feedback from a blocking hook", async () => {
+      const hooks: HookCommand[] = [
+        {
+          type: "command",
+          command: `node -e 'process.stderr.write("e".repeat(${LIMITS.HOOK_OUTPUT_CHARS + 1})); process.exitCode = 2'`,
+          quiet: true,
+        },
+      ];
+      const input: PreToolUseHookInput = {
+        event_type: "PreToolUse",
+        working_directory: tempDir,
+        tool_name: "Bash",
+        tool_input: {},
+      };
+
+      const result = await executeHooks(hooks, input, tempDir);
+      const feedback = result.feedback[0] ?? "";
+
+      expect(result.blocked).toBe(true);
+      expect(feedback).toContain(
+        `[Output truncated: showing ${LIMITS.OVERFLOW_PREVIEW_CHARS.toLocaleString()}`,
+      );
+      expect(feedback.length).toBeLessThan(LIMITS.OVERFLOW_PREVIEW_CHARS + 500);
+      expectOverflowPath(feedback);
     });
 
     test("collects feedback from blocking hooks", async () => {
