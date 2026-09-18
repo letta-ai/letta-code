@@ -30,6 +30,9 @@ async function createRepo(tempDirs: string[]): Promise<string> {
   const repo = await mkdtemp(path.join(tmpdir(), "letta-worktree-safe-add-"));
   tempDirs.push(repo);
   git(["init", "-b", "main"], repo);
+  // Windows runners enable core.autocrlf, which would check the payload out
+  // with CRLF and break the exact-bytes assertions.
+  git(["config", "core.autocrlf", "false"], repo);
   await writeFile(
     path.join(repo, ".gitattributes"),
     "payload filter=watcher\n",
