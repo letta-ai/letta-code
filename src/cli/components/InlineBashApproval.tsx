@@ -50,6 +50,7 @@ export const InlineBashApproval = memo(
     defaultScope = "project",
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
+    const [expanded, setExpanded] = useState(false);
     const {
       text: customReason,
       cursorPos,
@@ -121,6 +122,12 @@ export const InlineBashApproval = memo(
           return;
         }
 
+        // Toggle expanded command preview
+        if (input === "e") {
+          setExpanded((prev) => !prev);
+          return;
+        }
+
         // Number keys for quick selection (only for fixed options, not custom text input)
         if (input === "1") {
           onApprove();
@@ -155,9 +162,9 @@ export const InlineBashApproval = memo(
           <Box paddingLeft={2} flexDirection="column">
             <SyntaxHighlightedCommand
               command={bashInfo.command}
-              maxLines={BASH_PREVIEW_MAX_LINES}
-              maxColumns={Math.max(10, columns - 2)}
-              showTruncationHint
+              maxLines={expanded ? undefined : BASH_PREVIEW_MAX_LINES}
+              maxColumns={expanded ? undefined : Math.max(10, columns - 2)}
+              showTruncationHint={!expanded}
             />
             {bashInfo.description && (
               <Box marginTop={1}>
@@ -167,15 +174,16 @@ export const InlineBashApproval = memo(
           </Box>
         </>
       ),
-      [bashInfo.command, bashInfo.description, solidLine, columns],
+      [bashInfo.command, bashInfo.description, solidLine, columns, expanded],
     );
 
     // Hint text based on state
+    const expandHint = expanded ? "e to collapse" : "e to expand";
     const hintText = isOnCustomOption
       ? customReason
         ? "Enter to submit · Esc to clear"
-        : "Type reason · Esc to cancel"
-      : "Enter to select · Esc to cancel";
+        : `Type reason · Esc to cancel · ${expandHint}`
+      : `Enter to select · Esc to cancel · ${expandHint}`;
 
     const optionsMarginTop = showPreview ? 1 : 0;
 
