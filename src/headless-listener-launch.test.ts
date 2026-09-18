@@ -27,6 +27,7 @@ const scope: AgentRuntimeScope = {
 const settings: RuntimeExecutionSettings = {
   parent_agent_id: "agent-parent",
   agent_role: "subagent",
+  subagent_depth: 2,
   allowed_tools: ["Read"],
   disallowed_tools: ["Write"],
   disable_memory_guard: false,

@@ -14,6 +14,7 @@ import {
   PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
 } from "@/mods/capabilities";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { getSubagentDepth } from "@/runtime-execution-settings";
 import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
@@ -208,6 +209,7 @@ export function composeSubagentChildEnv(
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     ...(actingUserId && { [ACTING_USER_ID_ENV]: actingUserId }),
     LETTA_CODE_AGENT_ROLE: "subagent",
+    LETTA_SUBAGENT_DEPTH: String(getSubagentDepth(parentProcessEnv) + 1),
     [SUBAGENT_LAUNCH_ENV]: "1",
     [SUBAGENT_LAUNCH_PROFILE_ENV]: launchProfile ?? "default",
     ...(subagentType === "reflection" && {

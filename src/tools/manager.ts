@@ -55,6 +55,10 @@ import {
   type RuntimeContextSnapshot,
   runWithRuntimeContext,
 } from "@/runtime-context";
+import {
+  getSubagentDepth,
+  MAX_SUBAGENT_DEPTH,
+} from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { messageChannelTelemetry } from "@/telemetry/channel";
@@ -835,6 +839,12 @@ function capturePreparedToolExecutionContext(
     snapshot.toolRegistry,
     clientToolAllowlist,
   );
+  if (
+    getSubagentDepth(process.env, runtimeContext.executionSettings) >=
+    MAX_SUBAGENT_DEPTH
+  ) {
+    toolRegistrySnapshot.delete("Task");
+  }
   const executionSnapshot: ToolExecutionContextSnapshot = {
     toolRegistry: toolRegistrySnapshot,
     externalTools: selectModelFacingExternalTools(
@@ -1375,19 +1385,7 @@ export async function loadSpecificTools(toolNames: string[]): Promise<void> {
   }
 }
 
-/**
- * Loads the selected preset and constructs its schemas and implementations.
- * This should be called on program startup.
- * Will error if any expected tool files are missing.
- *
- * Acquires the toolset switch lock during loading to prevent message sends from
- * reading stale tools. Callers should use waitForToolsetReady() before sending messages.
- *
- * @param modelIdentifier - Optional model identifier to select the appropriate toolset
- * @param options - Optional configuration
- * @param options.exclude - Tool names to exclude from the loaded toolset
- * @returns Promise that resolves when all tools are loaded
- */
+/** Load a preset under the switch lock; senders must await waitForToolsetReady(). */
 export async function loadTools(
   modelIdentifier?: string,
   options?: ModelToolsetOptions,

@@ -178,6 +178,7 @@ import {
   enqueueMemoryGitSyncReminder,
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
+import { getSubagentDepth } from "./runtime-execution-settings";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
 import { stopMonitorsForScope } from "./tools/impl/stop-monitor";
@@ -2048,9 +2049,8 @@ export async function handleHeadlessCommand(
         max_turns: maxTurns,
         preload_skills: parseCsvListFlag(preLoadSkillsRaw),
         parent_agent_id: process.env.LETTA_PARENT_AGENT_ID,
-        ...(process.env.LETTA_CODE_AGENT_ROLE === "subagent"
-          ? { agent_role: "subagent" as const }
-          : {}),
+        subagent_depth: getSubagentDepth(),
+        agent_role: isSubagent ? "subagent" : undefined,
         ...(!environmentSelector
           ? {
               transcript_path: process.env.TRANSCRIPT_PATH,

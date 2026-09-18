@@ -59,6 +59,7 @@ test("secondary runtime_start preserves launch settings and an idle attached chi
       disallowed_tools: ["Write"],
       parent_agent_id: "parent",
       agent_role: "subagent",
+      subagent_depth: 2,
       disable_memory_guard: false,
       max_turns: 3,
     };
