@@ -411,6 +411,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   // Determine connection name
   let connectionName: string;
+  let showedFirstRunWelcome = false;
 
   const explicitComputerName = values["computer-name"] ?? values["env-name"];
   const spawnerDeviceId = getSpawnerDeviceId();
@@ -431,9 +432,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       connectionName = hostname();
       settingsManager.setListenerEnvName(connectionName);
       const welcome = render(<FirstRunWelcome computerName={connectionName} />);
-      // Let Ink paint the frame before unmounting; the output stays in scrollback.
+      // Let Ink paint the frame before unmounting. The normal path skips its
+      // console.clear() on a first run so this stays visible above the status UI.
       await new Promise((resolve) => setTimeout(resolve, 50));
       welcome.unmount();
+      showedFirstRunWelcome = true;
     }
   }
 
@@ -867,8 +870,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         supportsPairedListenerGenerations,
       );
     } else {
-      // Normal mode: interactive Ink UI
-      console.clear();
+      // Normal mode: interactive Ink UI. On a first run keep the welcome banner
+      // and sign-in output on screen instead of clearing them.
+      if (!showedFirstRunWelcome) console.clear();
 
       let updateStatusCallback:
         | ((status: "idle" | "receiving" | "processing") => void)
