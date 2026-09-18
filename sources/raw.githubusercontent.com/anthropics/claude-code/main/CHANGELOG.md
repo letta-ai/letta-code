@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.276
+
+- Fixed every request failing with `400 … Input tag 'advisor_20260301'` when `ANTHROPIC_BASE_URL` points at a proxy or gateway (2.1.275 regression)
+
 ## 2.1.275
 
 - Added the signed-in account to Claude apps gateway sign-in: when the gateway names it, you confirm it before the credential is saved, and `/status` shows it
