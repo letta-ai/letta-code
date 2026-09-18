@@ -51,13 +51,11 @@ function runPtyRunner(filename: string, ...args: string[]): void {
 }
 
 describe("startup PTY", () => {
-  for (const scenario of ["fresh", "saved-cloud", "explicit-cloud"]) {
-    ptyTest(
-      `${scenario} startup offers Cloud by default with working keyboard input`,
-      () => runPtyRunner("startup-setup-pty-runner.cjs", scenario),
-      { timeout: 35000 },
-    );
-  }
+  ptyTest(
+    "setup menu keeps raw keyboard input after terminal preflight",
+    () => runPtyRunner("startup-setup-pty-runner.cjs"),
+    { timeout: 35000 },
+  );
 
   for (const runtime of ["bun", "node"]) {
     ptyTest(

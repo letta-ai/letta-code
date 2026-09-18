@@ -596,17 +596,17 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const localBackendEnvValue = process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV];
-  const envBackendMode =
-    localBackendEnvValue === undefined
-      ? undefined
-      : localBackendEnvValue === "1" ||
-          localBackendEnvValue.toLowerCase() === "true"
-        ? "local"
-        : "api";
   if (subcommandNeedsEarlyBackendMode(subcommandArgs[0])) {
     const savedBackendSettings =
       settingsManager.readStartupBackendSettingsSync();
+    const localBackendEnvValue = process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV];
+    const envBackendMode =
+      localBackendEnvValue === undefined
+        ? undefined
+        : localBackendEnvValue === "1" ||
+            localBackendEnvValue.toLowerCase() === "true"
+          ? "local"
+          : "api";
     const backendMode = resolveSubcommandBackendMode({
       explicitBackendMode,
       envBackendMode,
@@ -767,13 +767,11 @@ async function main(): Promise<void> {
     configureBackendMode(inferredBackendModeFromAgentId);
   }
   const setupLocalModeDisabledReason =
-    explicitBackendMode === "api"
-      ? "--backend cloud requires Letta sign-in. Rerun with --backend local to start locally."
-      : !explicitBackendMode &&
-          specifiedAgentId &&
-          inferredBackendModeFromAgentId === "api"
-        ? `Agent ${specifiedAgentId} requires Letta sign-in. Sign in with Letta to access it, or rerun without --agent to start locally.`
-        : undefined;
+    !explicitBackendMode &&
+    specifiedAgentId &&
+    inferredBackendModeFromAgentId === "api"
+      ? `Agent ${specifiedAgentId} requires Letta sign-in. Sign in with Letta to access it, or rerun without --agent to start locally.`
+      : undefined;
   const specifiedModel = values.model ?? undefined;
   const systemPromptPreset = values.system ?? undefined;
   const systemCustom = values["system-custom"] ?? undefined;
@@ -856,17 +854,31 @@ async function main(): Promise<void> {
     }
   };
 
-  const startupBackendMode = resolveSubcommandBackendMode({
-    explicitBackendMode: explicitBackendMode ?? inferredBackendModeFromAgentId,
-    envBackendMode,
-    savedBackendMode: settings.preferredBackendMode,
-    baseURL,
-    cloudBaseURL: LETTA_CLOUD_API_URL,
-  });
-  if (startupBackendMode === "local") {
+  if (
+    !explicitBackendMode &&
+    !inferredBackendModeFromAgentId &&
+    settings.preferredBackendMode === "local" &&
+    baseURL === LETTA_CLOUD_API_URL
+  ) {
     await tryConfigureStartupLocalBackend();
-  } else if (startupBackendMode === "api") {
-    configureBackendMode("api");
+  }
+
+  // Local-first new-user flow: if the user has no Letta Cloud credentials and
+  // did not explicitly request a backend, start in local mode immediately so
+  // they can type right away. Existing local agents will be resumed below; if
+  // none exist, startup falls through to local default-agent creation.
+  if (
+    !explicitBackendMode &&
+    !inferredBackendModeFromAgentId &&
+    !isHeadless &&
+    baseURL === LETTA_CLOUD_API_URL &&
+    !settings.refreshToken &&
+    !apiKey
+  ) {
+    if (await tryConfigureStartupLocalBackend()) {
+      settingsManager.updateSettings({ preferredBackendMode: "local" });
+      await settingsManager.flush();
+    }
   }
 
   const startupTargetLookupOrder = getStartupTargetLookupOrderForCredentials({
@@ -1045,7 +1057,6 @@ async function main(): Promise<void> {
       const { runSetup } = await import("@/auth/setup");
       const setupResult = await runSetup({
         localModeDisabledReason: setupLocalModeDisabledReason,
-        persistBackendPreference: !explicitBackendMode,
       });
       if (setupResult.kind === "cancelled") {
         process.exit(0);
@@ -1071,7 +1082,6 @@ async function main(): Promise<void> {
       const { runSetup } = await import("@/auth/setup");
       const setupResult = await runSetup({
         localModeDisabledReason: setupLocalModeDisabledReason,
-        persistBackendPreference: !explicitBackendMode,
       });
       if (setupResult.kind === "cancelled") {
         process.exit(0);
@@ -1202,7 +1212,6 @@ async function main(): Promise<void> {
         const setupResult = await runSetup({
           initialMode: baseURL === LETTA_CLOUD_API_URL ? "device-code" : "menu",
           localModeDisabledReason: setupLocalModeDisabledReason,
-          persistBackendPreference: !explicitBackendMode,
         });
         if (setupResult.kind === "cancelled") {
           process.exit(0);
