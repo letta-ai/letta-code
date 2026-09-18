@@ -183,6 +183,7 @@ async function handleIncomingMessageInner(
         ...options,
         socket: options.socket ?? socket,
         turnId: activeDequeuedBatchId,
+        clientMessageIds: turnCorrelation.getClientMessageIds(),
         ...(runtime.executionSettings
           ? { usage: buildTurnUsage(buffers.usage) }
           : {}),
@@ -197,7 +198,6 @@ async function handleIncomingMessageInner(
     }
     finishTurn({
       stopReason: "cancelled",
-      socket,
       runId,
       agentId: agentId ?? null,
       conversationId,

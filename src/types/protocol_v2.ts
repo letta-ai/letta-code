@@ -74,6 +74,7 @@ import type {
   ToolsetOption,
   ToolsetPreference,
 } from "./toolset-protocol";
+import type { TurnFinishedFields } from "./turn-finished-protocol";
 
 export type * from "./approval-classification-protocol";
 export type * from "./background-process-protocol";
@@ -554,15 +555,9 @@ export interface StreamDeltaMessage extends RuntimeEnvelope {
   subagent_id?: string;
 }
 
-export interface TurnFinishedMessage extends RuntimeEnvelope {
-  type: "turn_finished";
-  turn_id: string;
-  stop_reason: StopReasonType;
-  run_id?: string;
-  error?: string;
-  /** Final CLI counters, independent of control/stream socket delivery order. */
-  usage?: LettaStreamingResponse.LettaUsageStatistics;
-}
+export interface TurnFinishedMessage
+  extends RuntimeEnvelope,
+    TurnFinishedFields {}
 
 export interface SubagentSnapshotToolCall {
   id: string;

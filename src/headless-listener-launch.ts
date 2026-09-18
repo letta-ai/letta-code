@@ -217,6 +217,15 @@ export async function launchListenerConversation(
       );
     } else if (message.type === "turn_finished") {
       if (message.run_id) finishedByRunId.set(message.run_id, message);
+      // Older listeners omit input IDs. A runless event from them cannot be
+      // attributed safely: another caller may own the same runtime.
+      if (
+        !message.run_id &&
+        message.client_message_ids?.includes(clientMessageId) &&
+        message.stop_reason !== "end_turn"
+      )
+        terminalError =
+          message.error ?? `Listener turn stopped (${message.stop_reason})`;
     } else if (message.type === "stream_delta") {
       const delta = message.delta;
       const runId = Reflect.get(delta, "run_id");

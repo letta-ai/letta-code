@@ -23,6 +23,10 @@ test("turn correlation re-emits when a continuation adds queued sends", () => {
     },
     "batch-1",
   );
+  const initialIds = turnCorrelation.getClientMessageIds();
+  expect(initialIds).toEqual(["cm-1", "cm-2"]);
+  initialIds.push("not-owned");
+  expect(turnCorrelation.getClientMessageIds()).toEqual(["cm-1", "cm-2"]);
   turnCorrelation.observeRun("run-1");
   runtime.dequeuedClientMessageIdsByBatchId.set("batch-2", ["cm-3"]);
   turnCorrelation.appendDequeuedBatch("batch-2");
