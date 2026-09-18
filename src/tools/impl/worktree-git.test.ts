@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -153,7 +153,7 @@ describe("worktree Git runner", () => {
       const repo = await createRepo(tempDirs);
       git(["config", key, value], repo);
 
-      expect(
+      await expect(
         addWorktreeSafely({
           repoRoot: repo,
           branchName: "blocked-lfs",
@@ -175,7 +175,7 @@ describe("worktree Git runner", () => {
       repo,
     );
 
-    expect(
+    await expect(
       addWorktreeSafely({
         repoRoot: repo,
         branchName: "blocked-include",
@@ -189,7 +189,7 @@ describe("worktree Git runner", () => {
     const repo = await createRepo(tempDirs);
     git(["config", "filter.bad=name.smudge", "false"], repo);
 
-    expect(
+    await expect(
       addWorktreeSafely({
         repoRoot: repo,
         branchName: "blocked-filter-name",
@@ -198,6 +198,107 @@ describe("worktree Git runner", () => {
       }),
     ).rejects.toThrow("name cannot be neutralized");
   });
+
+  test("neutralizes checkout filters from worktree-scoped config", async () => {
+    const repo = await createRepo(tempDirs);
+    // `git worktree add` copies config.worktree into the new worktree before
+    // checkout, and `git config --local` never reads that file.
+    git(["config", "extensions.worktreeConfig", "true"], repo);
+    git(["config", "--worktree", "filter.watcher.smudge", "false"], repo);
+    git(["config", "--worktree", "filter.watcher.required", "true"], repo);
+    const worktreePath = path.join(repo, "worktree");
+
+    await addWorktreeSafely({
+      repoRoot: repo,
+      branchName: "safe-worktree-filter",
+      worktreePath,
+      baseRef: "main",
+    });
+
+    expect(readFileSync(path.join(worktreePath, "payload"), "utf8")).toBe(
+      "content\n",
+    );
+  });
+
+  test("rejects unsafe settings in worktree-scoped config", async () => {
+    const repo = await createRepo(tempDirs);
+    git(["config", "extensions.worktreeConfig", "true"], repo);
+    git(
+      ["config", "--worktree", "lfs.standalonetransferagent", "watcher"],
+      repo,
+    );
+
+    await expect(
+      addWorktreeSafely({
+        repoRoot: repo,
+        branchName: "blocked-worktree-lfs",
+        worktreePath: path.join(repo, "worktree"),
+        baseRef: "main",
+      }),
+    ).rejects.toThrow("git config sets lfs.standalonetransferagent");
+  });
+
+  test("adds further worktrees when worktree-scoped config is disabled", async () => {
+    const repo = await createRepo(tempDirs);
+    // `git config --worktree` dies in a multi-worktree repository unless
+    // extensions.worktreeConfig is on, so the scan must not rely on it.
+    for (const name of ["first", "second"]) {
+      await addWorktreeSafely({
+        repoRoot: repo,
+        branchName: name,
+        worktreePath: path.join(repo, name),
+        baseRef: "main",
+      });
+    }
+
+    expect(readFileSync(path.join(repo, "second", "payload"), "utf8")).toBe(
+      "content\n",
+    );
+  });
+
+  test("does not run repository hooks", async () => {
+    const repo = await createRepo(tempDirs);
+    // A failing post-checkout hook fails a plain `git worktree add`.
+    const hook = path.join(repo, ".git", "hooks", "post-checkout");
+    await writeFile(hook, "#!/bin/sh\nexit 1\n");
+    await chmod(hook, 0o755);
+    const worktreePath = path.join(repo, "worktree");
+
+    await addWorktreeSafely({
+      repoRoot: repo,
+      branchName: "safe-hooks",
+      worktreePath,
+      baseRef: "main",
+    });
+
+    expect(readFileSync(path.join(worktreePath, "payload"), "utf8")).toBe(
+      "content\n",
+    );
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "does not run a repository-local fsmonitor command",
+    async () => {
+      const repo = await createRepo(tempDirs);
+      const scriptDir = await mkdtemp(
+        path.join(tmpdir(), "letta-worktree-fsmonitor-"),
+      );
+      tempDirs.push(scriptDir);
+      const script = path.join(scriptDir, "fsmonitor");
+      await writeFile(script, '#!/bin/sh\ntouch "$(dirname "$0")/ran"\n');
+      await chmod(script, 0o755);
+      git(["config", "core.fsmonitor", script], repo);
+
+      await addWorktreeSafely({
+        repoRoot: repo,
+        branchName: "safe-fsmonitor",
+        worktreePath: path.join(repo, "worktree"),
+        baseRef: "main",
+      });
+
+      expect(existsSync(path.join(scriptDir, "ran"))).toBe(false);
+    },
+  );
 
   test.skipIf(process.platform === "win32")(
     "kills Git descendants when an internal command times out",

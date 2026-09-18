@@ -7,6 +7,8 @@
  * the other.
  */
 
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { getShellEnv } from "./shell-env.js";
 import { spawnWithLauncher } from "./shell-runner.js";
@@ -142,36 +144,74 @@ export async function gitRefExists(cwd: string, ref: string): Promise<boolean> {
 const WORKTREE_UNSAFE_CONFIG_PATTERN =
   "^(includeif\\..*|filter\\..*\\.(clean|smudge|process|required)|lfs\\.customtransfer\\..*\\.path|lfs\\.standalonetransferagent)$";
 
-async function listWorktreeUnsafeConfigKeys(cwd: string): Promise<string[]> {
-  const result = await runGit(
-    [
-      "config",
-      "--local",
-      "--includes",
-      "--null",
-      "--name-only",
-      "--get-regexp",
-      WORKTREE_UNSAFE_CONFIG_PATTERN,
-    ],
-    cwd,
-    { allowFailure: true },
-  );
+type GitConfigScope = "--local" | "--worktree";
+
+/** Runs a read-only `git config` query; null means nothing matched. */
+async function queryRepoConfig(
+  cwd: string,
+  args: string[],
+): Promise<string | null> {
+  const result = await runGit(["config", ...args], cwd, {
+    allowFailure: true,
+  });
   if (result.exitCode === 1 && !result.stdout) {
-    return [];
+    return null;
   }
   if (result.exitCode !== 0) {
     throw new Error(
       `Could not read the repository git config to neutralize filter drivers: ${result.stderr.trim() || `git config exited ${result.exitCode}`}`,
     );
   }
-  return result.stdout.split("\0").filter(Boolean);
+  return result.stdout;
+}
+
+async function listUnsafeConfigKeysInScope(
+  cwd: string,
+  scope: GitConfigScope,
+): Promise<string[]> {
+  const stdout = await queryRepoConfig(cwd, [
+    scope,
+    "--includes",
+    "--null",
+    "--name-only",
+    "--get-regexp",
+    WORKTREE_UNSAFE_CONFIG_PATTERN,
+  ]);
+  return stdout?.split("\0").filter(Boolean) ?? [];
 }
 
 /**
- * Creates a worktree without executing checkout filters from repository-local
- * git config. An agent can write that config, so allowing its filter commands
- * to run during `git worktree add` would bypass the normal shell permission
- * path. Config shapes that cannot be safely overridden fail closed.
+ * Git honors `extensions.worktreeConfig` only from the repository config file
+ * itself, so this deliberately reads it without following includes.
+ */
+async function isWorktreeConfigEnabled(cwd: string): Promise<boolean> {
+  const stdout = await queryRepoConfig(cwd, [
+    "--local",
+    "--type=bool",
+    "--get",
+    "extensions.worktreeConfig",
+  ]);
+  return stdout?.trim() === "true";
+}
+
+async function listWorktreeUnsafeConfigKeys(cwd: string): Promise<string[]> {
+  const keys = await listUnsafeConfigKeysInScope(cwd, "--local");
+  // `git worktree add` copies this worktree's config.worktree into the new
+  // worktree before checkout, and `--local` never reads that file. Asking for
+  // `--worktree` without the extension dies in multi-worktree repositories.
+  if (await isWorktreeConfigEnabled(cwd)) {
+    keys.push(...(await listUnsafeConfigKeysInScope(cwd, "--worktree")));
+  }
+  return keys;
+}
+
+/**
+ * Creates a worktree without executing commands planted inside the repository's
+ * git directory: checkout filters from repository-local or worktree-scoped git
+ * config, the `core.fsmonitor` command, and hooks such as post-checkout. An
+ * agent can write those files, so letting them run during `git worktree add`
+ * would bypass the normal shell permission path. Config shapes that cannot be
+ * safely overridden fail closed.
  */
 export async function addWorktreeSafely(params: {
   repoRoot: string;
@@ -222,19 +262,32 @@ export async function addWorktreeSafely(params: {
       "-c",
       `filter.${driverName}.required=false`,
     ]);
-  await runGit(
-    [
-      ...filterOverrides,
-      "worktree",
-      "add",
-      "--no-track",
-      "-b",
-      params.branchName,
-      params.worktreePath,
-      params.baseRef,
-    ],
-    params.repoRoot,
+  // An empty directory is the portable way to say "no hooks": /dev/null is not
+  // a path Git for Windows resolves.
+  const emptyHooksDir = await mkdtemp(
+    path.join(tmpdir(), "letta-worktree-no-hooks-"),
   );
+  try {
+    await runGit(
+      [
+        ...filterOverrides,
+        "-c",
+        `core.hooksPath=${emptyHooksDir}`,
+        "-c",
+        "core.fsmonitor=false",
+        "worktree",
+        "add",
+        "--no-track",
+        "-b",
+        params.branchName,
+        params.worktreePath,
+        params.baseRef,
+      ],
+      params.repoRoot,
+    );
+  } finally {
+    await rm(emptyHooksDir, { recursive: true, force: true });
+  }
 }
 
 export async function resolveRepoRoot(cwd: string): Promise<string> {
