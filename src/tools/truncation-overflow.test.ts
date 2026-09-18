@@ -31,7 +31,6 @@ describe("truncation with overflow support", () => {
       const longText = "a".repeat(2000);
       const result = truncateByChars(longText, 1000, "TestTool", {
         workingDirectory: testWorkingDir,
-        toolName: "TestTool",
       });
 
       expect(result.wasTruncated).toBe(true);
@@ -47,7 +46,6 @@ describe("truncation with overflow support", () => {
       const longText = "x".repeat(2000);
       const result = truncateByChars(longText, 1000, "TestTool", {
         workingDirectory: testWorkingDir,
-        toolName: "TestTool",
       });
 
       expect(result.content).toContain("Full output written to:");
@@ -102,7 +100,6 @@ describe("truncation with overflow support", () => {
       const shortText = "short text";
       const result = truncateByChars(shortText, 1000, "TestTool", {
         workingDirectory: testWorkingDir,
-        toolName: "TestTool",
       });
 
       expect(result.wasTruncated).toBe(false);
@@ -117,7 +114,6 @@ describe("truncation with overflow support", () => {
 
       const result = truncateByLines(text, 50, undefined, "TestTool", {
         workingDirectory: testWorkingDir,
-        toolName: "TestTool",
       });
 
       expect(result.wasTruncated).toBe(true);
@@ -152,7 +148,6 @@ describe("truncation with overflow support", () => {
 
       const result = truncateByLines(text, 50, undefined, "TestTool", {
         workingDirectory: testWorkingDir,
-        toolName: "TestTool",
       });
 
       expect(result.content).toContain("Full output written to:");
@@ -167,7 +162,6 @@ describe("truncation with overflow support", () => {
 
       const result = truncateArray(items, 50, formatter, "items", "TestTool", {
         workingDirectory: testWorkingDir,
-        toolName: "TestTool",
       });
 
       expect(result.wasTruncated).toBe(true);
@@ -204,7 +198,6 @@ describe("truncation with overflow support", () => {
 
       const result = truncateArray(items, 50, formatter, "items", "TestTool", {
         workingDirectory: testWorkingDir,
-        toolName: "TestTool",
       });
 
       expect(result.content).toContain("Full output written to:");

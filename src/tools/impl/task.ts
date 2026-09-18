@@ -533,7 +533,7 @@ export function spawnBackgroundSubagentTask(
           fullResult,
           LIMITS.TASK_OUTPUT_CHARS,
           "Task",
-          { workingDirectory: userCwd, toolName: "Task" },
+          { workingDirectory: userCwd },
         );
 
         const defaultSummary = `Agent "${description}" ${result.success ? "completed" : "failed"}`;
