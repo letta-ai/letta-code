@@ -374,6 +374,14 @@ function contiguousContentStartIndex(
   ) {
     startIndex -= 1;
   }
+  if (messageType === "reasoning_message") {
+    for (let index = startIndex; index <= contentIndex; index++) {
+      const content = partial.content[index];
+      if (content?.type === "thinking" && content.thinking.length > 0) {
+        return index;
+      }
+    }
+  }
   return startIndex;
 }
 

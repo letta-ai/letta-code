@@ -299,6 +299,92 @@ describe("ProviderTurnExecutor", () => {
     }
   });
 
+  test("uses the first nonempty reasoning block for live and history identity", async () => {
+    const message = {
+      ...assistantMessage(),
+      content: [
+        { type: "thinking" as const, thinking: "" },
+        { type: "thinking" as const, thinking: "actual " },
+        { type: "thinking" as const, thinking: "" },
+        { type: "thinking" as const, thinking: "reasoning" },
+        { type: "text" as const, text: "done" },
+      ],
+    };
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield providerStreamPart(
+          part({
+            type: "thinking_delta",
+            contentIndex: 1,
+            delta: "actual ",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "thinking_delta",
+            contentIndex: 3,
+            delta: "reasoning",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "text_delta",
+            contentIndex: 4,
+            delta: "done",
+            partial: message,
+          }),
+        );
+        yield providerLocalMessage(message);
+        yield providerStreamPart(
+          part({ type: "done", reason: "stop", message }),
+        );
+      },
+    };
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "letta-leading-empty-thinking-"),
+    );
+
+    try {
+      const store = new LocalStore(input().agentId, { storageDir });
+      const chunks = await collect(
+        await new ProviderTurnExecutor(adapter).execute(input()),
+      );
+      const liveReasoningIds: string[] = [];
+      for (const chunk of chunks) {
+        const stored = store.appendStreamChunk(
+          input().conversationId,
+          input().agentId,
+          chunk,
+        );
+        if (chunk.message_type === "reasoning_message" && "id" in stored) {
+          liveReasoningIds.push(stored.id);
+        }
+      }
+
+      const history = new LocalStore(input().agentId, { storageDir })
+        .listConversationMessages(input().conversationId, {
+          agent_id: input().agentId,
+          order: "asc",
+        })
+        .filter((row) => row.message_type === "reasoning_message");
+      expect(history).toHaveLength(1);
+      const canonicalReasoning = history[0];
+      if (!canonicalReasoning) throw new Error("Expected canonical reasoning");
+      expect(liveReasoningIds).toEqual([
+        canonicalReasoning.id,
+        canonicalReasoning.id,
+      ]);
+      expect(liveReasoningIds[0]).toEndWith(":reasoning:1");
+      expect(history[0]).toEqual(
+        expect.objectContaining({ reasoning: "actual reasoning" }),
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("emits final local assistant messages as state-only chunks before stop_reason", async () => {
     const finalMessage = assistantMessage();
     const adapter: ProviderStreamAdapter = {
