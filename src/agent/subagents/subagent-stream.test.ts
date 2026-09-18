@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   type ExecutionState,
-  hasOnlyFailedToolCalls,
+  hasSuccessfulToolCall,
   looksLikeTruncatedStreamJson,
   parseResultFromStdout,
   processStreamEvent,
@@ -38,8 +38,8 @@ function processEvent(
   processStreamEvent(JSON.stringify(event), state, "subagent-1");
 }
 
-describe("hasOnlyFailedToolCalls", () => {
-  test("detects a final report after every tool call failed", () => {
+describe("hasSuccessfulToolCall", () => {
+  test("rejects a final report after every tool call failed", () => {
     const state = createState();
     processEvent(state, {
       type: "message",
@@ -60,10 +60,10 @@ describe("hasOnlyFailedToolCalls", () => {
     });
 
     expect(state.finalError).toBeNull();
-    expect(hasOnlyFailedToolCalls(state)).toBe(true);
+    expect(hasSuccessfulToolCall(state)).toBe(false);
   });
 
-  test("does not classify a run with a successful tool as all failed", () => {
+  test("accepts a run with a successful tool", () => {
     const state = createState();
     processEvent(state, {
       type: "message",
@@ -82,11 +82,11 @@ describe("hasOnlyFailedToolCalls", () => {
       ],
     });
 
-    expect(hasOnlyFailedToolCalls(state)).toBe(false);
+    expect(hasSuccessfulToolCall(state)).toBe(true);
   });
 
-  test("does not classify a run with no tool calls as all failed", () => {
-    expect(hasOnlyFailedToolCalls(createState())).toBe(false);
+  test("rejects a final report with no tool calls", () => {
+    expect(hasSuccessfulToolCall(createState())).toBe(false);
   });
 });
 
