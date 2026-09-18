@@ -412,8 +412,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       // onboarding) registers without an interactive prompt.
       connectionName = hostname() || "my-computer";
       settingsManager.setListenerEnvName(connectionName);
-      // The normal path skips its console.clear() on a first run so the
-      // banner stays visible above the status UI.
       printFirstRunWelcome(connectionName);
       showedFirstRunWelcome = true;
     }
@@ -865,6 +863,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         <ListenerStatusUI
           connectionId={connectionId}
           envName={connectionName}
+          isFirstRun={showedFirstRunWelcome}
           onReady={(callbacks) => {
             updateStatusCallback = callbacks.updateStatus;
             updateRetryStatusCallback = callbacks.updateRetryStatus;
