@@ -6,7 +6,6 @@
 import { hostname } from "node:os";
 import { parseArgs } from "node:util";
 import { MessageChannel } from "node:worker_threads";
-import chalk, { type ChalkInstance } from "chalk";
 import { render } from "ink";
 import { configureBackendMode } from "@/backend";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
@@ -18,8 +17,8 @@ import {
   RESTORE_CHANNEL_AGENT_SCOPE_ENV,
   RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV,
 } from "@/channels/restore-scope";
-import { staticLogoLines } from "@/cli/components/AnimatedLogo";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
+import { printFirstRunWelcome } from "@/cli/subcommands/listen-first-run-welcome";
 import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
@@ -60,39 +59,6 @@ type CreateListenerProcessAnchor = () => ListenerProcessAnchor;
 // Without a retained reference, the MessageChannel anchor could be garbage
 // collected even though it is intended to hold channel-only listeners open.
 const activeListenerProcessAnchors = new Set<ListenerProcessAnchor>();
-
-/**
- * One-shot banner for a computer's first registration (typically pasted from
- * onboarding). Printed once with console.log and left in the scrollback.
- *
- * Written directly rather than through Ink: Ink emits cursor/erase control
- * bytes even when stdout is redirected, which would corrupt the plain-text
- * `letta server --debug > file` path. Colors go through chalk so the banner
- * follows the CLI's color-level detection (24-bit, 256-color on Terminal.app,
- * none at level 0). The logo only exists as background-color cells, so it is
- * dropped when chalk reports no color support.
- */
-function formatFirstRunWelcome(
-  computerName: string,
-  paint: ChalkInstance,
-): string[] {
-  const logo = paint.level > 0 ? [...staticLogoLines(paint), ""] : [];
-  return [
-    "",
-    ...logo,
-    paint.bold("Welcome to Letta"),
-    paint.dim(
-      `Registering this computer as "${computerName}" so your agent can work here. Use --computer-name to change it.`,
-    ),
-    "",
-  ];
-}
-
-function printFirstRunWelcome(computerName: string): void {
-  for (const line of formatFirstRunWelcome(computerName, chalk)) {
-    console.log(line);
-  }
-}
 
 function formatTimestamp(): string {
   const now = new Date();
@@ -215,7 +181,6 @@ function shouldAcquireStandaloneListenerLock(): boolean {
 export const __listenSubcommandTestUtils = {
   createListenerProcessAnchorPromise,
   flushListenerTelemetryEnd,
-  formatFirstRunWelcome,
   getListenerServerUrl,
   resolveListenerStartupMode,
   resolveListenerRegistrationOptions,

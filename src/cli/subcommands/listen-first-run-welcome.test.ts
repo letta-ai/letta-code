@@ -1,13 +1,29 @@
 import { describe, expect, test } from "bun:test";
-import { Chalk } from "chalk";
-import { __listenSubcommandTestUtils } from "@/cli/subcommands/listen";
-
-const { formatFirstRunWelcome } = __listenSubcommandTestUtils;
+import chalk, { Chalk } from "chalk";
+import {
+  firstRunWelcomeChalk,
+  formatFirstRunWelcome,
+} from "@/cli/subcommands/listen-first-run-welcome";
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching ANSI escapes is the point
 const ANSI_ESCAPE = /\x1b\[/;
 
 describe("first-run welcome banner", () => {
+  test("NO_COLOR forces level 0 even when chalk detects a color terminal", () => {
+    expect(firstRunWelcomeChalk({ NO_COLOR: "1" }).level).toBe(0);
+    expect(
+      formatFirstRunWelcome(
+        "my-laptop",
+        firstRunWelcomeChalk({ NO_COLOR: "1" }),
+      ).join("\n"),
+    ).not.toMatch(ANSI_ESCAPE);
+  });
+
+  test("an empty NO_COLOR is not set, per the no-color.org convention", () => {
+    expect(firstRunWelcomeChalk({ NO_COLOR: "" }).level).toBe(chalk.level);
+    expect(firstRunWelcomeChalk({}).level).toBe(chalk.level);
+  });
+
   test("level 0 (redirected stdout, NO_COLOR) emits no escape bytes and drops the logo", () => {
     const lines = formatFirstRunWelcome("my-laptop", new Chalk({ level: 0 }));
 
