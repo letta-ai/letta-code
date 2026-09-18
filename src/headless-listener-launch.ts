@@ -15,7 +15,11 @@ import {
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
 import { getApiRequestConfig } from "@/backend/api/request";
-import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
+import {
+  getSubagentDepth,
+  MAX_SUBAGENT_DEPTH,
+  type RuntimeExecutionSettings,
+} from "@/runtime-execution-settings";
 import type {
   AgentRuntimeScope,
   ConversationRuntimeScope,
@@ -259,6 +263,12 @@ export async function launchListenerConversation(
   }
   try {
     await client.connect();
+    const childLaunch = getSubagentDepth({}, params.settings) > 0;
+    if (childLaunch && params.scope.conversation_id === "default") {
+      throw new Error(
+        "Remote subagents require an explicit conversation for safe recovery. Omit conversation_id in Agent to start a new conversation; default history was not resumed.",
+      );
+    }
     const runtime = await client.runtimeStart({
       agent_id: params.scope.agent_id ?? undefined,
       conversation_id: params.scope.conversation_id,
@@ -277,6 +287,16 @@ export async function launchListenerConversation(
       throw new Error(
         "This listener does not support scoped CLI launch settings; upgrade it before launching children",
       );
+    if (
+      childLaunch &&
+      (runtime.max_subagent_depth !== MAX_SUBAGENT_DEPTH ||
+        runtime.execution_settings.subagent_depth !==
+          params.settings.subagent_depth)
+    ) {
+      throw new Error(
+        "This listener cannot confirm subagent depth enforcement; upgrade it before launching children",
+      );
+    }
     if (interrupted) throw new Error("Launch cancelled before input was sent");
     const accepted = await (deps.enqueue ?? enqueueConversationMessage)(
       {

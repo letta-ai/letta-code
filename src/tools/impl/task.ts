@@ -34,6 +34,7 @@ import {
   getCurrentWorkingDirectory,
   getRuntimeContext,
 } from "@/runtime-context";
+import { assertSubagentSpawnAllowed } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import { sleep } from "@/utils/sleep";
@@ -358,6 +359,7 @@ export async function waitForBackgroundSubagentConversationId(
 export function spawnBackgroundSubagentTask(
   args: SpawnBackgroundSubagentTaskArgs,
 ): SpawnBackgroundSubagentTaskResult {
+  assertSubagentSpawnAllowed(getRuntimeContext()?.executionSettings);
   assertBackgroundTaskCapacity();
 
   const {
@@ -766,6 +768,7 @@ export async function forkParentConversation(
  * Task tool - Launch a specialized subagent to handle complex tasks
  */
 export async function task(args: TaskArgs): Promise<string> {
+  assertSubagentSpawnAllowed(getRuntimeContext()?.executionSettings);
   const { command = "run", model, toolCallId, signal } = args;
 
   // Handle refresh command - re-discover subagents from .letta/agents/ directories

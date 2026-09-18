@@ -521,6 +521,7 @@ export async function applyModelUpdateForRuntime(params: {
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
+      executionSettings: scopedRuntime.executionSettings,
       overrideModel: model.handle,
       overrideProviderType:
         providerTypeFromModelSettings(modelSettings) ??
@@ -615,6 +616,7 @@ export async function applyToolsetUpdateForRuntime(params: {
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
+      executionSettings: scopedRuntime.executionSettings,
       ...(agentId
         ? { modContext: createListenerAgentModContext(agentId) }
         : {}),

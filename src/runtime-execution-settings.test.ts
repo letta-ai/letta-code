@@ -8,6 +8,7 @@ import {
 import { getRuntimeContext, runWithRuntimeContext } from "@/runtime-context";
 import {
   getRuntimeExecutionEnv,
+  getSubagentDepth,
   isRuntimeExecutionSettings,
   type RuntimeExecutionSettings,
 } from "./runtime-execution-settings";
@@ -25,6 +26,30 @@ function child(parent: string): RuntimeExecutionSettings {
 }
 
 describe("runtime execution settings", () => {
+  test("depth uses explicit turn state, safely infers legacy children, and fails closed", () => {
+    expect(getSubagentDepth({})).toBe(0);
+    expect(getSubagentDepth({ LETTA_CODE_AGENT_ROLE: "subagent" })).toBe(2);
+    expect(getSubagentDepth({ LETTA_PARENT_AGENT_ID: "parent" })).toBe(2);
+    expect(
+      getSubagentDepth({
+        LETTA_CODE_AGENT_ROLE: "subagent",
+        LETTA_SUBAGENT_DEPTH: "0",
+      }),
+    ).toBe(2);
+    for (const value of ["-1", "NaN", "", "1.5", "Infinity"]) {
+      expect(getSubagentDepth({ LETTA_SUBAGENT_DEPTH: value })).toBe(2);
+    }
+    const staleEnv = { LETTA_SUBAGENT_DEPTH: "2" };
+    expect(getSubagentDepth(staleEnv, child("p"))).toBe(2);
+    expect(
+      getSubagentDepth(staleEnv, { ...child("p"), subagent_depth: 1 }),
+    ).toBe(1);
+    expect(
+      getRuntimeExecutionEnv(staleEnv, { ...child("p"), subagent_depth: 2 })
+        .LETTA_SUBAGENT_DEPTH,
+    ).toBe("2");
+    expect(staleEnv.LETTA_SUBAGENT_DEPTH).toBe("2");
+  });
   test("interleaved parents keep their permissions, memory and identity", async () => {
     const permissions = new CliPermissions();
     permissions.setAllowedTools("Bash");
@@ -115,7 +140,7 @@ describe("runtime execution settings", () => {
       },
       { allowed_tools: [], disallowed_tools: [], disable_memory_guard: false },
     );
-    expect(env).toEqual({ HOME: "/home" });
+    expect(env).toEqual({ HOME: "/home", LETTA_SUBAGENT_DEPTH: "0" });
   });
 
   test("invalid wire settings cannot reach runtime execution", () => {
@@ -123,6 +148,10 @@ describe("runtime execution settings", () => {
     for (const value of [
       null,
       {},
+      ...[-1, 1.5, NaN, Infinity, "1", null].map((subagent_depth) => ({
+        ...child("p"),
+        subagent_depth,
+      })),
       { ...child("p"), max_turns: 0 },
       { ...child("p"), tools: [1] },
       { ...child("p"), allowed_tools: "Bash" },

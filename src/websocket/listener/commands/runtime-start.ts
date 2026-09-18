@@ -9,6 +9,10 @@ import type {
 import type WebSocket from "ws";
 import { createAgentWithBaseToolsRecovery } from "@/agent/create";
 import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
+import {
+  prepareSubagentDepth,
+  requireSubagentLaunchSettings,
+} from "@/agent/subagents/depth";
 import { type ConversationUpdateBody, getBackend } from "@/backend";
 import {
   createEphemeralConversation,
@@ -17,6 +21,10 @@ import {
 import { migratePermissionMode } from "@/permissions/mode";
 import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
+import {
+  getSubagentDepth,
+  MAX_SUBAGENT_DEPTH,
+} from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
 import { subscribeListenerConnection } from "@/websocket/listener/connection";
@@ -122,6 +130,7 @@ function sendRuntimeStartResponse(
       type: "runtime_start_response",
       request_id: parsed.request_id,
       ...response,
+      ...(response.success ? { max_subagent_depth: MAX_SUBAGENT_DEPTH } : {}),
       ...(response.success && parsed.execution_settings !== undefined
         ? { execution_settings: parsed.execution_settings }
         : {}),
@@ -338,6 +347,14 @@ async function applyRuntimeStartState(
 ): Promise<void> {
   if (parsed.execution_settings !== undefined) {
     if (
+      getSubagentDepth({}, parsed.execution_settings) <
+      getSubagentDepth({}, scopedRuntime.executionSettings)
+    ) {
+      throw new Error(
+        "Cannot reduce subagent depth for an attached conversation",
+      );
+    }
+    if (
       (scopedRuntime.turnLifecycle.kind !== "idle" ||
         scopedRuntime.queueRuntime.length > 0) &&
       JSON.stringify(scopedRuntime.executionSettings) !==
@@ -463,7 +480,22 @@ export async function handleRuntimeStartCommand(
       runtimeScope.agent_id,
       runtimeScope.conversation_id,
     );
+    if (
+      conversation.id === "default" &&
+      getSubagentDepth({}, parsed.execution_settings) > 0
+    ) {
+      throw new Error(
+        "Remote subagents require an explicit conversation; start a new conversation instead of default",
+      );
+    }
     await applyRuntimeStartState(parsed, context, runtimeScope, scopedRuntime);
+    scopedRuntime.executionSettings = requireSubagentLaunchSettings(
+      await prepareSubagentDepth(
+        conversation.id === "default" ? null : conversation,
+        scopedRuntime.executionSettings,
+        {},
+      ),
+    );
     if (parsed.teleport_id) {
       expectInboundTeleport(scopedRuntime, parsed.teleport_id);
     }

@@ -1,3 +1,33 @@
+export const MAX_SUBAGENT_DEPTH = 2;
+
+/** Resolve turn-local depth without inheriting another listener conversation's env. */
+export function getSubagentDepth(
+  env: NodeJS.ProcessEnv = process.env,
+  settings?: RuntimeExecutionSettings,
+): number {
+  const role = settings ? settings.agent_role : env.LETTA_CODE_AGENT_ROLE;
+  const parent = settings
+    ? settings.parent_agent_id
+    : env.LETTA_PARENT_AGENT_ID;
+  const isSubagent = role === "subagent" || Boolean(parent);
+  const raw = settings ? settings.subagent_depth : env.LETTA_SUBAGENT_DEPTH;
+  // A child marker proves ancestry, not its level. Missing depth fails closed.
+  if (raw === undefined) return isSubagent ? MAX_SUBAGENT_DEPTH : 0;
+  const depth =
+    typeof raw === "string" && raw.trim() === "" ? NaN : Number(raw);
+  // Fail closed for malformed inherited state, too.
+  if (!Number.isSafeInteger(depth) || depth < 0) return MAX_SUBAGENT_DEPTH;
+  return isSubagent && depth === 0 ? MAX_SUBAGENT_DEPTH : depth;
+}
+
+export function assertSubagentSpawnAllowed(
+  settings?: RuntimeExecutionSettings,
+): void {
+  if (getSubagentDepth(process.env, settings) >= MAX_SUBAGENT_DEPTH) {
+    throw new Error("Agent cannot spawn subagents at maximum depth 2.");
+  }
+}
+
 /** CLI execution options owned by one listener conversation, never process.env. */
 export interface RuntimeExecutionSettings {
   tools?: string[];
@@ -7,6 +37,7 @@ export interface RuntimeExecutionSettings {
   max_turns?: number;
   parent_agent_id?: string;
   agent_role?: "subagent";
+  subagent_depth?: number;
   transcript_path?: string;
   memory_directory?: string;
   disable_memory_guard: boolean;
@@ -31,6 +62,9 @@ export function isRuntimeExecutionSettings(
         Number.isSafeInteger(settings.max_turns) &&
         settings.max_turns > 0)) &&
     (settings.agent_role === undefined || settings.agent_role === "subagent") &&
+    (settings.subagent_depth === undefined ||
+      (Number.isSafeInteger(settings.subagent_depth) &&
+        Number(settings.subagent_depth) >= 0)) &&
     ["parent_agent_id", "transcript_path", "memory_directory"].every(
       (key) => settings[key] === undefined || typeof settings[key] === "string",
     )
@@ -46,6 +80,8 @@ export function getRuntimeExecutionEnv(
   // Absence is meaningful: a child must not inherit another turn's identity.
   delete scoped.LETTA_PARENT_AGENT_ID;
   delete scoped.LETTA_CODE_AGENT_ROLE;
+  delete scoped.LETTA_SUBAGENT_DEPTH;
+  scoped.LETTA_SUBAGENT_DEPTH = String(getSubagentDepth(env, settings));
   delete scoped.TRANSCRIPT_PATH;
   delete scoped.MEMORY_DIR;
   delete scoped.LETTA_MEMORY_DIR;

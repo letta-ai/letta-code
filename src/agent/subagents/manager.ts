@@ -36,7 +36,10 @@ import {
   getRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
-import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
+import {
+  assertSubagentSpawnAllowed,
+  getRuntimeExecutionEnv,
+} from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
@@ -799,6 +802,7 @@ async function spawnSubagentInContext(
   environment?: string,
   actingUserId?: string,
 ): Promise<SubagentResult> {
+  assertSubagentSpawnAllowed(getRuntimeContext()?.executionSettings);
   const launchActingUserId = resolveActingUserId(actingUserId);
   const allConfigs = await getAllSubagentConfigs();
   let config = allConfigs[type];

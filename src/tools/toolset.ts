@@ -3,6 +3,10 @@ import { getModelProviderType } from "@/agent/available-models";
 import { resolveModel } from "@/agent/model";
 import { resolveModelHandleFromLlmConfig } from "@/agent/model-handles";
 import type { SkillSource } from "@/agent/skill-sources";
+import {
+  prepareSubagentDepth,
+  requireSubagentLaunchSettings,
+} from "@/agent/subagents/depth";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { buildModInvocationContext } from "@/mods/context";
@@ -317,14 +321,14 @@ export async function prepareToolExecutionContextForScope(params: {
         (await backend.retrieveAgent(agentId))) as ScopeModelCarrier)
     : null;
   const agentTarget = modelTargetFromCarrier(agent);
-  const conversationTarget =
+  const conversation =
     conversationId && conversationId !== "default"
-      ? modelTargetFromCarrier(
-          (await backend.retrieveConversation(
-            conversationId,
-          )) as ScopeModelCarrier,
-        )
-      : { model: null, providerType: null };
+      ? await backend.retrieveConversation(conversationId)
+      : null;
+  const conversationTarget = modelTargetFromCarrier(conversation);
+  const scopedExecutionSettings = requireSubagentLaunchSettings(
+    await prepareSubagentDepth(conversation, executionSettings),
+  );
 
   const explicitModel = normalizeModelHandle(overrideModel);
   const cachedModel = normalizeModelHandle(cachedEffectiveModel);
@@ -399,7 +403,7 @@ export async function prepareToolExecutionContextForScope(params: {
       ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
       ...(skillSources !== undefined ? { skillSources } : {}),
       ...(workspaceSandbox !== undefined ? { workspaceSandbox } : {}),
-      executionSettings,
+      executionSettings: scopedExecutionSettings,
     },
   });
   return { ...result, agent: agent as AgentState | null };

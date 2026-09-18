@@ -798,6 +798,7 @@ async function executeRecoveredApprovalContinuation(params: {
       const preparedToolContext = await prepareToolExecutionContext({
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
+        executionSettings: runtime.executionSettings,
         workingDirectory,
         permissionModeState: getOrCreateConversationPermissionModeStateRef(
           runtime.listener,

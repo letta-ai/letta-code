@@ -27,12 +27,18 @@ const scope: AgentRuntimeScope = {
 const settings: RuntimeExecutionSettings = {
   parent_agent_id: "agent-parent",
   agent_role: "subagent",
+  subagent_depth: 2,
   allowed_tools: ["Read"],
   disallowed_tools: ["Write"],
   disable_memory_guard: false,
   max_turns: 10,
 };
-function transport(supportsSettings = true) {
+function transport(
+  supportsSettings = true,
+  depthSupport: { maxSubagentDepth?: number; stripDepth?: boolean } = {
+    maxSubagentDepth: 2,
+  },
+) {
   const commands: WsProtocolCommand[] = [];
   let socket!: Socket;
   class Socket extends EventEmitter {
@@ -57,8 +63,13 @@ function transport(supportsSettings = true) {
           agent: null,
           conversation: null,
           created: { agent: false, conversation: false },
+          max_subagent_depth: depthSupport.maxSubagentDepth,
           ...(supportsSettings
-            ? { execution_settings: command.execution_settings }
+            ? {
+                execution_settings: depthSupport.stripDepth
+                  ? { ...command.execution_settings, subagent_depth: undefined }
+                  : command.execution_settings,
+              }
             : {}),
         });
       if (command.type === "sync")
@@ -238,6 +249,55 @@ test("an older listener cannot silently discard child restrictions", async () =>
     ),
   ).rejects.toThrow("does not support scoped CLI launch settings");
   expect(enqueue).not.toHaveBeenCalled();
+});
+
+test.each([
+  { maxSubagentDepth: undefined },
+  { maxSubagentDepth: 2, stripDepth: true },
+  { maxSubagentDepth: 3 },
+])("an echo is not proof of depth enforcement: %j", async (depthSupport) => {
+  const wire = transport(true, depthSupport);
+  const enqueue = mock(async (input: { clientMessageId: string }) =>
+    receipt(input.clientMessageId),
+  );
+  await expect(
+    launchListenerConversation(
+      {
+        connectionId: "conn-target",
+        scope,
+        content: "must not run",
+        backend,
+        settings,
+        mode: "standard",
+      },
+      { client: wire.client, enqueue },
+    ),
+  ).rejects.toThrow("cannot confirm subagent depth enforcement");
+  expect(enqueue).not.toHaveBeenCalled();
+});
+
+test("legacy default child history is never silently rerouted remotely", async () => {
+  const wire = transport();
+  const enqueue = mock(async (input: { clientMessageId: string }) =>
+    receipt(input.clientMessageId),
+  );
+  await expect(
+    launchListenerConversation(
+      {
+        connectionId: "conn-target",
+        scope: { ...scope, conversation_id: "default" },
+        content: "must not run",
+        backend,
+        settings,
+        mode: "standard",
+      },
+      { client: wire.client, enqueue },
+    ),
+  ).rejects.toThrow("default history was not resumed");
+  expect(enqueue).not.toHaveBeenCalled();
+  expect(
+    wire.commands.some((command) => command.type === "runtime_start"),
+  ).toBe(false);
 });
 
 test("queued CLI cancellation uses the existing dequeue API, never aborts the turn ahead", async () => {

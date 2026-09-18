@@ -82,6 +82,7 @@ type StoredConversation = Conversation & {
   agent_id: string;
   in_context_message_ids: string[];
   hidden?: boolean;
+  is_subagent?: boolean;
   tags?: string[];
 };
 
@@ -163,6 +164,9 @@ function createLocalConversationRecord(
       ? { hidden: bodyRecord.hidden }
       : {}),
     ...(isStringArray(bodyRecord.tags) ? { tags: bodyRecord.tags } : {}),
+    ...(typeof bodyRecord.is_subagent === "boolean"
+      ? { is_subagent: bodyRecord.is_subagent }
+      : {}),
   } as StoredConversation;
 }
 
@@ -175,6 +179,9 @@ function updateLocalConversationRecord(
   const next: StoredConversation = {
     ...current,
     updated_at: updatedAt,
+    ...(typeof bodyRecord.is_subagent === "boolean"
+      ? { is_subagent: bodyRecord.is_subagent }
+      : {}),
   };
   const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
   if (typeof bodyRecord.archived === "boolean") {

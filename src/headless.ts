@@ -178,6 +178,7 @@ import {
   enqueueMemoryGitSyncReminder,
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
+import { getSubagentDepth } from "./runtime-execution-settings";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
 import { stopMonitorsForScope } from "./tools/impl/stop-monitor";
@@ -1572,10 +1573,10 @@ export async function handleHeadlessCommand(
     conversationId = conversation.id;
     conversationOpenReason = "new";
   } else if (isSubagent) {
-    // Freshly created subagents have no concurrency risk — use the default
-    // conversation so it's easy to inspect in the ADE.
-    conversationId = "default";
-    conversationOpenReason = "startup";
+    // A durable conversation row lets cold listeners recognize child ancestry.
+    conversationId = (await backend.createConversation({ agent_id: agent.id }))
+      .id;
+    conversationOpenReason = "new";
   } else {
     // Default for headless: always create a new conversation to avoid
     // 409 "conversation busy" races (e.g., parent agent calling letta -p).
@@ -2048,9 +2049,8 @@ export async function handleHeadlessCommand(
         max_turns: maxTurns,
         preload_skills: parseCsvListFlag(preLoadSkillsRaw),
         parent_agent_id: process.env.LETTA_PARENT_AGENT_ID,
-        ...(process.env.LETTA_CODE_AGENT_ROLE === "subagent"
-          ? { agent_role: "subagent" as const }
-          : {}),
+        subagent_depth: getSubagentDepth(),
+        agent_role: isSubagent ? "subagent" : undefined,
         ...(!environmentSelector
           ? {
               transcript_path: process.env.TRANSCRIPT_PATH,
