@@ -77,6 +77,7 @@ import {
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
+import { tagSubagentConversation } from "./agent/subagents/conversation-tags";
 import {
   type BackendMode,
   type ConversationCreateBody,
@@ -1589,11 +1590,10 @@ export async function handleHeadlessCommand(
   }
   markMilestone("HEADLESS_CONVERSATION_READY");
 
-  // Set conversation ID in context for tools (e.g., Skill tool) to access
   setConversationId(conversationId);
+  await tagSubagentConversation(backend, conversationId, isAgentLaunch);
 
   // Save session (agent + conversation) to both project and global settings
-  // Skip for subagents - they shouldn't pollute the LRU settings
   if (!ephemeralFlag && shouldPersistSessionState()) {
     await settingsManager.loadLocalProjectSettings();
     settingsManager.persistSession(agent.id, conversationId);
