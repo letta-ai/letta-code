@@ -6,7 +6,8 @@
 import { hostname } from "node:os";
 import { parseArgs } from "node:util";
 import { MessageChannel } from "node:worker_threads";
-import { Box, render, Text } from "ink";
+import chalk, { type ChalkInstance } from "chalk";
+import { render } from "ink";
 import { configureBackendMode } from "@/backend";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import type { ChannelGatewaySupervisor } from "@/channels/gateway-supervisor";
@@ -17,8 +18,7 @@ import {
   RESTORE_CHANNEL_AGENT_SCOPE_ENV,
   RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV,
 } from "@/channels/restore-scope";
-import { AnimatedLogo } from "@/cli/components/AnimatedLogo";
-import { colors } from "@/cli/components/colors";
+import { staticLogoLines } from "@/cli/components/AnimatedLogo";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
 import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
@@ -63,20 +63,35 @@ const activeListenerProcessAnchors = new Set<ListenerProcessAnchor>();
 
 /**
  * One-shot banner for a computer's first registration (typically pasted from
- * onboarding). Rendered once and left in the scrollback.
+ * onboarding). Printed once with console.log and left in the scrollback.
+ *
+ * Written directly rather than through Ink: Ink emits cursor/erase control
+ * bytes even when stdout is redirected, which would corrupt the plain-text
+ * `letta server --debug > file` path. Colors go through chalk so the banner
+ * follows the CLI's color-level detection (24-bit, 256-color on Terminal.app,
+ * none at level 0). The logo only exists as background-color cells, so it is
+ * dropped when chalk reports no color support.
  */
-function FirstRunWelcome({ computerName }: { computerName: string }) {
-  return (
-    <Box flexDirection="column" paddingY={1}>
-      <AnimatedLogo color={colors.welcome.accent} animate={false} />
-      <Text> </Text>
-      <Text bold>Welcome to Letta</Text>
-      <Text dimColor>
-        Registering this computer as "{computerName}" so your agent can work
-        here. Use --computer-name to change it.
-      </Text>
-    </Box>
-  );
+function formatFirstRunWelcome(
+  computerName: string,
+  paint: ChalkInstance,
+): string[] {
+  const logo = paint.level > 0 ? [...staticLogoLines(paint), ""] : [];
+  return [
+    "",
+    ...logo,
+    paint.bold("Welcome to Letta"),
+    paint.dim(
+      `Registering this computer as "${computerName}" so your agent can work here. Use --computer-name to change it.`,
+    ),
+    "",
+  ];
+}
+
+function printFirstRunWelcome(computerName: string): void {
+  for (const line of formatFirstRunWelcome(computerName, chalk)) {
+    console.log(line);
+  }
 }
 
 function formatTimestamp(): string {
@@ -200,6 +215,7 @@ function shouldAcquireStandaloneListenerLock(): boolean {
 export const __listenSubcommandTestUtils = {
   createListenerProcessAnchorPromise,
   flushListenerTelemetryEnd,
+  formatFirstRunWelcome,
   getListenerServerUrl,
   resolveListenerStartupMode,
   resolveListenerRegistrationOptions,
@@ -431,10 +447,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       // onboarding) registers without an interactive prompt.
       connectionName = hostname() || "my-computer";
       settingsManager.setListenerEnvName(connectionName);
-      // Ink paints the final frame synchronously on unmount, so this is a
-      // one-shot render. The normal path skips its console.clear() on a first
-      // run so the banner stays visible above the status UI.
-      render(<FirstRunWelcome computerName={connectionName} />).unmount();
+      // The normal path skips its console.clear() on a first run so the
+      // banner stays visible above the status UI.
+      printFirstRunWelcome(connectionName);
       showedFirstRunWelcome = true;
     }
   }
