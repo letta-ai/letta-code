@@ -26,7 +26,7 @@ import type {
 } from "./reflection-settings";
 import { getRuntimeContext } from "./runtime-context";
 import { trackBoundaryError } from "./telemetry/error-reporting";
-import { isToolsetPreference } from "./tools/toolset-options";
+import { isToolsetPreference } from "./tools/toolset-catalog";
 import type { ToolsetPreference } from "./tools/toolset-types";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";

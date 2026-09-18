@@ -3,8 +3,8 @@ import { Box, useInput } from "ink";
 import { useState } from "react";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
+import { TOOLSET_OPTIONS } from "@/tools/toolset-catalog";
 import { formatToolsetName } from "@/tools/toolset-labels";
-import { TOOLSET_OPTIONS } from "@/tools/toolset-options";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

@@ -20,7 +20,7 @@ import {
   prepareToolExecutionContextForResolvedTarget as prepare,
   switchToolsetForModel,
 } from "./toolset";
-import { TOOLSET_OPTIONS } from "./toolset-options";
+import { TOOLSET_OPTIONS } from "./toolset-catalog";
 
 const originalArtifacts = process.env.LETTA_ARTIFACTS;
 const temporaryDirectories: string[] = [];

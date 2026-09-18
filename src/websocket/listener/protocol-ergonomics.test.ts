@@ -7,7 +7,7 @@ import {
   resolveBackendMode,
   setConfiguredBackendMode,
 } from "@/backend/backend-mode";
-import { TOOLSET_OPTIONS } from "@/tools/toolset-options";
+import { TOOLSET_OPTIONS } from "@/tools/toolset-catalog";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { createListenerMessageHandler } from "@/websocket/listener/message-router";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
