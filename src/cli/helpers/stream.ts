@@ -41,8 +41,15 @@ import {
   summarizeChunkForDebug,
   summarizeStreamForDebug,
 } from "./stream-debug";
-import type { ApprovalRequest, ErrorInfo } from "./stream-processor";
-import { StreamProcessor } from "./stream-processor";
+import type {
+  ApprovalRequest,
+  ErrorInfo,
+  StreamSequenceCursor,
+} from "./stream-processor";
+import {
+  advanceStreamSequenceCursor,
+  StreamProcessor,
+} from "./stream-processor";
 import {
   discoverFallbackRunIdWithTimeout,
   isReplayableRun,
@@ -53,7 +60,20 @@ import {
 import { createStreamStallReconciler } from "./stream-stall-reconciler";
 import { createTerminalEofGuard } from "./stream-terminal-eof-guard";
 
-export type { ApprovalRequest } from "./stream-processor";
+export { advanceStreamSequenceCursor };
+export type { ApprovalRequest, StreamSequenceCursor } from "./stream-processor";
+
+export function recordEmptyApprovalTelemetry(
+  runId: string | null | undefined,
+  cursor: StreamSequenceCursor | null,
+): void {
+  telemetry.trackError(
+    "stream_requires_approval_without_approvals",
+    `requires_approval stop returned no approvals (cursor=${cursor?.runId ?? "none"}:${cursor?.seqId ?? "none"})`,
+    "message_stream",
+    { runId: runId ?? undefined },
+  );
+}
 
 export type DrainStreamHookContext = {
   chunk: LettaStreamingResponse;
@@ -98,7 +118,7 @@ export async function drainStream(
   onFirstMessage?: () => void,
   onChunkProcessed?: DrainStreamHook,
   contextTracker?: ContextTracker,
-  seenSeqIdThreshold?: number | null,
+  seenSequenceCursor?: StreamSequenceCursor | null,
   isResumeStream?: boolean,
   skipCancelToolsOnError?: boolean,
   actingUserId?: string,
@@ -107,7 +127,7 @@ export async function drainStream(
   const requestStartTime = getStreamRequestStartTime(stream) ?? startTime;
   let hasLoggedTTFT = false;
 
-  const streamProcessor = new StreamProcessor(seenSeqIdThreshold ?? null);
+  const streamProcessor = new StreamProcessor(seenSequenceCursor ?? null);
 
   let stopReason: StopReasonType | null = null;
   let hasCalledFirstMessage = false;
@@ -537,7 +557,7 @@ export async function drainStreamWithResume(
   onFirstMessage?: () => void,
   onChunkProcessed?: DrainStreamHook,
   contextTracker?: ContextTracker,
-  seenSeqIdThreshold?: number | null,
+  seenSequenceCursor?: StreamSequenceCursor | null,
   resumePolicy?: StreamResumePolicy,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
@@ -563,7 +583,7 @@ export async function drainStreamWithResume(
     onFirstMessage,
     onChunkProcessed,
     contextTracker,
-    seenSeqIdThreshold,
+    seenSequenceCursor,
     false, // isResumeStream
     true, // skipCancelToolsOnError
   );
@@ -759,7 +779,7 @@ export async function drainStreamWithResume(
             undefined,
             onChunkProcessed,
             contextTracker,
-            seenSeqIdThreshold,
+            runIdToResume ? { runId: runIdToResume, seqId: nextSeqId } : null,
             true,
             true,
             streamRequestContext?.actingUserId,

@@ -44,6 +44,23 @@ export interface ChunkProcessingResult {
   updatedApproval?: ApprovalRequest;
 }
 
+export interface StreamSequenceCursor {
+  runId: string;
+  seqId: number;
+}
+
+export function advanceStreamSequenceCursor(
+  cursor: StreamSequenceCursor | null,
+  runId: string | null | undefined,
+  seqId: number | null | undefined,
+): StreamSequenceCursor | null {
+  if (!runId || seqId == null) return cursor;
+  return {
+    runId,
+    seqId: cursor?.runId === runId ? Math.max(cursor.seqId, seqId) : seqId,
+  };
+}
+
 // ============================================================================
 // STREAM PROCESSOR
 // ============================================================================
@@ -57,17 +74,22 @@ export class StreamProcessor {
   public stopReason: StopReasonType | null = null;
   public lastErrorInfo: ErrorInfo | undefined;
 
-  constructor(private readonly seenSeqIdThreshold: number | null = null) {}
+  constructor(
+    private readonly seenSequenceCursor: StreamSequenceCursor | null = null,
+  ) {}
 
   processChunk(chunk: LettaStreamingResponse): ChunkProcessingResult {
     let errorInfo: ErrorInfo | undefined;
     let updatedApproval: ApprovalRequest | undefined;
+    const cursor = this.seenSequenceCursor;
 
     if (
       "seq_id" in chunk &&
       chunk.seq_id != null &&
-      this.seenSeqIdThreshold != null &&
-      chunk.seq_id <= this.seenSeqIdThreshold
+      "run_id" in chunk &&
+      cursor &&
+      chunk.run_id === cursor.runId &&
+      chunk.seq_id <= cursor.seqId
     ) {
       return { shouldOutput: false };
     }
