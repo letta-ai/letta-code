@@ -184,8 +184,9 @@ async function runListenerOAuthLogin(
   console.log("No API key found. Starting OAuth login...\n");
 
   const deviceData = await oauthDeps.requestDeviceCode();
+  console.log("Opening your browser to sign in...");
   console.log(
-    `To authenticate, visit: ${deviceData.verification_uri_complete}`,
+    `If it didn't open, visit: ${deviceData.verification_uri_complete}`,
   );
   console.log(`Your code: ${deviceData.user_code}\n`);
   console.log("Waiting for authorization...\n");
