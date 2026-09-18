@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeOverflowProjectDirectory } from "@/test-utils/overflow-preview";
 import { bash } from "@/tools/impl/bash";
 import { bash_output } from "@/tools/impl/bash-output";
 import { glob } from "@/tools/impl/glob";
@@ -29,6 +30,8 @@ describe("tool truncation integration tests", () => {
     else process.env.USER_CWD = originalUserCwd;
     // Clean up the temp directory
     await rm(testDir, { recursive: true, force: true });
+    // Overflow files land under ~/.letta/projects/<testDir>, outside testDir
+    removeOverflowProjectDirectory(testDir);
   });
 
   describe("Bash tool truncation", () => {
