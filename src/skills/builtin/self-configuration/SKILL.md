@@ -98,18 +98,13 @@ Letta Code supports two layouts:
 | Deferred memory | Directories with their own `MEMORY.md` | Files outside `$MEMORY_DIR/system/` |
 | Agent-owned skills | `$MEMORY_DIR/skills/` | `$MEMORY_DIR/skills/` |
 
-Use the active layout shown by the prompt and memory tools. Do not create a
+Use the active layout shown by the prompt and memory files. Do not create a
 `system/` directory in a root-layout repository or move existing-layout memory
 to the root as part of an unrelated self-configuration request.
 
-After changing memory, inspect and commit the exact changed files. Push/sync according to the current harness reminder or the `syncing-memory-filesystem` skill; some environments sync committed memory automatically.
+Delegate the requested memory or identity change to the background `memory` subagent through the Agent tool. Include the intended change and relevant evidence; the worker chooses files, preserves the active layout, and commits. Continue immediately without waiting or polling. The harness handles sync and memory refresh.
 
-```bash
-cd "$MEMORY_DIR" && git status
-cd "$MEMORY_DIR" && git add <changed-files> && git commit --author="$AGENT_NAME <$AGENT_ID@letta.com>" -m "memory: <summary>"
-```
-
-Do not use API system-prompt replacement for ordinary learning. That can clobber the compiled prompt. Edit memory instead.
+Do not use API system-prompt replacement for ordinary learning. That can clobber the compiled prompt. Delegate a memory update instead.
 
 ## Server-side agent and conversation settings
 

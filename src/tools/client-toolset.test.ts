@@ -84,7 +84,9 @@ describe("request-scoped client toolsets", () => {
       expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
         "ApplyPatch",
       );
-      expect(prepared.preparedToolContext.loadedToolNames).toContain("memory");
+      expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
+        "memory",
+      );
       expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
         "memory_apply_patch",
       );

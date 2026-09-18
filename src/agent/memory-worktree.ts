@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { getAuthToken } from "@/agent/memory-auth";
 import { runGit as runMemoryGit } from "@/agent/memory-git";
 import { GIT_DISABLE_COMMIT_SIGNING_ARGS } from "@/agent/memory-git-signing";
+import { withMemoryOperation } from "@/agent/memory-operation";
 import { getMemfsServerUrl } from "@/backend/api/memfs-git-proxy";
 import { debugLog } from "@/utils/debug";
 
@@ -655,7 +656,9 @@ export async function finalizeReflectionMemoryWorktree(
   worktree: ReflectionMemoryWorktree,
   options: ReflectionMemoryWorktreeFinalizeOptions,
 ): Promise<ReflectionMemoryWorktreeFinalizeResult> {
-  return await finalizeReflectionMemoryWorktreeImpl(worktree, options);
+  return withMemoryOperation(worktree.parentMemoryDir, () =>
+    finalizeReflectionMemoryWorktreeImpl(worktree, options),
+  );
 }
 
 export interface ReflectionMemoryWorktreeFinalizeOptions {

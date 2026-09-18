@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker";
 import {
   allocateSubagentName,
   resolveCreatedAgentName,
@@ -19,6 +20,27 @@ const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
 const PARENT_MEMORY_DIR = `/Users/someone/.letta/agents/${PARENT_ID}/memory`;
 
 describe("composeSubagentChildEnv", () => {
+  test("memory forks suppress worker-side sync without marking other children as memory workers", () => {
+    const worker = composeSubagentChildEnv({
+      parentProcessEnv: {},
+      parentAgentId: PARENT_ID,
+      subagentType: "memory",
+      launchProfile: "memory-subagent",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+    });
+    expect(isMemoryWorkerSession(worker)).toBe(true);
+    expect(worker[LETTA_MOD_CAPABILITY_PROFILE_ENV]).toBe(
+      PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
+    );
+    const other = composeSubagentChildEnv({
+      parentProcessEnv: worker,
+      parentAgentId: PARENT_ID,
+      subagentType: "general-purpose",
+      launchProfile: "default",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+    });
+    expect(isMemoryWorkerSession(other)).toBe(false);
+  });
   test("carries the parent's shadow name through child creation", () => {
     const reservedName = allocateSubagentName("Bob");
     const env = composeSubagentChildEnv({

@@ -7,7 +7,7 @@
 
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
-import { updateConversationLLMConfig } from "@/agent/modify";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   completeSubagent,
   generateSubagentId,
@@ -19,22 +19,20 @@ import {
   clearSubagentConfigCache,
   discoverSubagents,
   getAllSubagentConfigs,
-  type SubagentConfig,
   type SubagentMemoryScope,
 } from "@/agent/subagents";
+import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
 import {
-  type ForkModelOverride,
-  getPrimaryAgentModelHandle,
-  resolveForkModelOverride,
-} from "@/agent/subagents/subagent-model";
-import { type Backend, getBackend } from "@/backend";
+  buildMemoryRepairPrompt,
+  runMemoryWorker,
+} from "@/agent/subagents/memory-worker";
+import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import {
   getCurrentWorkingDirectory,
   getRuntimeContext,
 } from "@/runtime-context";
-import { settingsManager } from "@/settings-manager";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import { sleep } from "@/utils/sleep";
 import {
@@ -127,6 +125,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
    * into the agent's context.
    */
   silentCompletion?: boolean;
+  /** Harness-triggered conflict repair; skip if another worker already resolved it. */
+  memoryRepairOnly?: boolean;
   /**
    * Emit a completion notification even when `silentCompletion` is true.
    * Useful when the parent should not stream subagent tokens but still wants
@@ -374,7 +374,7 @@ export function spawnBackgroundSubagentTask(
     forkedContext,
     parentScope,
     actingUserId: explicitActingUserId,
-    silentCompletion,
+    silentCompletion: requestedSilentCompletion,
     emitCompletionNotification,
     completionSummary,
     onComplete,
@@ -383,8 +383,11 @@ export function spawnBackgroundSubagentTask(
     environment,
     deps,
   } = args;
+  const silentCompletion =
+    subagentType === "memory" || requestedSilentCompletion;
   const shouldEmitCompletionNotification =
-    emitCompletionNotification ?? !silentCompletion;
+    subagentType !== "memory" &&
+    (emitCompletionNotification ?? !silentCompletion);
 
   const resolvedParentScope = resolveNotificationScope(parentScope);
   const actingUserId =
@@ -449,29 +452,84 @@ export function spawnBackgroundSubagentTask(
   // is the authoritative value — the listener and App.tsx both derive it
   // from their own closure-captured agentId.
   const parentAgentIdForSpawn = resolvedParentScope?.agentId;
-  const subagentExecution = spawnSubagentFn(
-    subagentType,
-    prompt,
-    model,
-    subagentId,
-    abortController.signal,
-    existingAgentId,
-    existingConversationId,
-    maxTurns,
-    forkedContext,
-    parentAgentIdForSpawn,
-    transcriptPath,
-    resolvedParentScope?.conversationId,
-    memoryScope,
-    systemPromptOverride,
-    environment,
-    actingUserId,
-  );
-  bgTask.completion = subagentExecution.then(
-    () => undefined,
-    () => undefined,
-  );
-  subagentExecution
+  const workerMemoryDir =
+    subagentType === "memory" && resolvedParentScope
+      ? (memoryScope?.primaryRoot ??
+        getScopedMemoryFilesystemRoot(resolvedParentScope.agentId))
+      : undefined;
+  const effectiveMemoryScope =
+    memoryScope ??
+    (workerMemoryDir
+      ? { primaryRoot: workerMemoryDir, writableRoots: [workerMemoryDir] }
+      : undefined);
+  const execute = (fork?: { agentId: string; conversationId: string }) => {
+    return spawnSubagentFn(
+      subagentType,
+      prompt,
+      model,
+      subagentId,
+      abortController.signal,
+      fork?.agentId ?? existingAgentId,
+      fork?.conversationId ?? existingConversationId,
+      maxTurns,
+      fork ? true : forkedContext,
+      parentAgentIdForSpawn,
+      transcriptPath,
+      resolvedParentScope?.conversationId,
+      effectiveMemoryScope,
+      systemPromptOverride,
+      environment,
+      actingUserId,
+    );
+  };
+  const subagentExecution =
+    subagentType === "memory" && resolvedParentScope && workerMemoryDir
+      ? runMemoryWorker(
+          {
+            ...resolvedParentScope,
+            memoryDir: workerMemoryDir,
+            repairOnly: args.memoryRepairOnly,
+            signal: abortController.signal,
+          },
+          async () => {
+            const config = (await getAllSubagentConfigs()).memory;
+            if (!config) throw new Error("Memory subagent is unavailable");
+            const fork = await forkParentConversation({
+              backend: getBackend(),
+              parentAgentId: resolvedParentScope.agentId,
+              parentConversationId: resolvedParentScope.conversationId,
+              config,
+              model,
+              signal: abortController.signal,
+            });
+            return execute({
+              agentId: resolvedParentScope.agentId,
+              conversationId: fork.id,
+            });
+          },
+          {
+            repair: (result) => {
+              spawnBackgroundSubagentTask({
+                subagentType: "memory",
+                prompt: buildMemoryRepairPrompt(result),
+                description: "Repair memory Git conflict",
+                parentScope: resolvedParentScope,
+                actingUserId,
+                memoryScope: {
+                  primaryRoot: result.memoryDir,
+                  writableRoots: [result.memoryDir],
+                },
+                memoryRepairOnly: true,
+              });
+            },
+          },
+        )
+      : subagentType === "memory"
+        ? Promise.reject(
+            new Error("Memory tasks require a parent conversation scope"),
+          )
+        : execute();
+  bgTask.completion = subagentExecution
     .then(async (result) => {
       await copyGitHubPullRequestTagsFn(
         result.conversationId,
@@ -665,103 +723,6 @@ export function spawnBackgroundSubagentTask(
   return { taskId, outputFile, subagentId };
 }
 
-export async function inheritForkToolset(
-  agentId: string,
-  parentConversationId: string,
-  forkConversationId: string,
-): Promise<void> {
-  const parentToolset = settingsManager.getToolsetPreference(
-    agentId,
-    parentConversationId,
-  );
-  if (parentToolset === "auto") return;
-
-  settingsManager.setToolsetPreference(
-    agentId,
-    parentToolset,
-    forkConversationId,
-  );
-  await settingsManager.flush();
-}
-
-interface ForkParentConversationParams {
-  backend: Backend;
-  parentAgentId: string;
-  parentConversationId: string;
-  config: SubagentConfig;
-  model?: string;
-  signal?: AbortSignal;
-}
-
-interface ForkParentConversationDependencies {
-  resolveModelOverride?: () => Promise<ForkModelOverride | null>;
-  updateConversationModel?: (
-    conversationId: string,
-    modelHandle: string,
-    updateArgs?: Record<string, unknown>,
-  ) => Promise<unknown>;
-  inheritToolset?: typeof inheritForkToolset;
-}
-
-/** Fork the parent conversation, then apply fork-only runtime configuration. */
-export async function forkParentConversation(
-  params: ForkParentConversationParams,
-  dependencies: ForkParentConversationDependencies = {},
-) {
-  // Resolve and validate before creating the hidden conversation. Invalid
-  // model IDs should not leave an orphan fork behind.
-  const modelOverride = await (
-    dependencies.resolveModelOverride ??
-    (async () => {
-      const parent = await getPrimaryAgentModelHandle({
-        agentId: params.parentAgentId,
-        conversationId: params.parentConversationId,
-      });
-      return resolveForkModelOverride({
-        userModel: params.model,
-        recommendedModel: params.config.recommendedModel,
-        recommendedModelSource: params.config.recommendedModelSource,
-        parentModelHandle: parent.handle,
-      });
-    })
-  )();
-
-  const forkedConversation = await params.backend.forkConversation(
-    params.parentConversationId,
-    {
-      ...(params.parentConversationId === "default"
-        ? { agentId: params.parentAgentId }
-        : {}),
-      hidden: true,
-      signal: params.signal,
-    },
-  );
-
-  try {
-    if (modelOverride) {
-      const updateConversationModel =
-        dependencies.updateConversationModel ?? updateConversationLLMConfig;
-      await updateConversationModel(
-        forkedConversation.id,
-        modelOverride.modelHandle,
-        modelOverride.updateArgs,
-      );
-    }
-    await (dependencies.inheritToolset ?? inheritForkToolset)(
-      params.parentAgentId,
-      params.parentConversationId,
-      forkedConversation.id,
-    );
-  } catch (error) {
-    await params.backend
-      .deleteConversation?.(forkedConversation.id)
-      .catch(() => undefined);
-    throw error;
-  }
-
-  return forkedConversation;
-}
-
 /**
  * Task tool - Launch a specialized subagent to handle complex tasks
  */
@@ -853,7 +814,7 @@ export async function task(args: TaskArgs): Promise<string> {
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;
 
-  if (config.fork) {
+  if (config.fork && subagent_type !== "memory") {
     if (args.agent_id || args.conversation_id) {
       return "Error: Subagent type with fork: true cannot be combined with agent_id or conversation_id";
     }
@@ -897,6 +858,10 @@ export async function task(args: TaskArgs): Promise<string> {
         ? args.computer.trim()
         : undefined,
   });
+
+  if (subagent_type === "memory") {
+    return `Memory task running in background (${taskId}). Continue with your current work; no completion notification will be sent. Output file: ${outputFile}`;
+  }
 
   await waitForBackgroundSubagentLink(subagentId, null, signal);
 

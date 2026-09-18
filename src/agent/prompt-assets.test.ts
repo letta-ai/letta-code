@@ -99,7 +99,8 @@ describe("buildSystemPrompt", () => {
     expect(result).toBe(preset?.localMemfsContent?.trim() ?? "");
     expect(result).not.toBe(buildSystemPrompt("letta", "memfs"));
     expect(result).toContain("$MEMORY_DIR");
-    expect(result).toContain("git commit");
+    expect(result).toContain('subagent_type: "memory"');
+    expect(result).toContain("Continue your current work immediately");
     expect(result).not.toContain("git push");
     expect(result).not.toContain("Shared memory");
   });
@@ -155,13 +156,11 @@ describe("buildSystemPrompt", () => {
     );
   });
 
-  test("memfs prompt documents direct edit commit safeguards", () => {
+  test("memfs prompt delegates edits without waiting for memory", () => {
     const result = buildSystemPrompt("letta", "memfs");
-
-    expect(result).toContain("description:");
-    expect(result).toContain("MemFS pre-commit hook");
-    expect(result).toContain('author_name="${AGENT_NAME:-$AGENT_ID}"');
-    expect(result).not.toContain('--author="$AGENT_NAME');
+    expect(result).toContain('subagent_type: "memory"');
+    expect(result).toContain("Continue your current work immediately");
+    expect(result).not.toContain("There are two ways to change memory");
   });
 
   test("memfs prompt explains shared-memory projections", () => {

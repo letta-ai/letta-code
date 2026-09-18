@@ -733,7 +733,11 @@ export function recallPromptForBackend(backendMode?: BackendMode): string {
 function buildForkSystemReminder(
   subagentType?: string,
   backendMode?: BackendMode,
+  memoryPrompt?: string,
 ): string {
+  if (subagentType === "memory") {
+    return `${SYSTEM_REMINDER_OPEN}\n${memoryPrompt}\n${SYSTEM_REMINDER_CLOSE}\n\n`;
+  }
   if (subagentType === "recall") {
     const recallPrompt = recallPromptForBackend(backendMode);
     return `${SYSTEM_REMINDER_OPEN}
@@ -881,7 +885,11 @@ async function spawnSubagentInContext(
         parentAgent ??
         (await getBackend().retrieveAgent(resolvedParentAgentId));
       if (forkedContext) {
-        const systemReminder = buildForkSystemReminder(type, backendMode);
+        const systemReminder = buildForkSystemReminder(
+          type,
+          backendMode,
+          config.systemPrompt,
+        );
         finalPrompt = systemReminder + prompt;
       } else if (
         shouldPrependDeploySystemReminder(

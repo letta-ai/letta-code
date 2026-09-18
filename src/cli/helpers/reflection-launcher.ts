@@ -3,6 +3,7 @@ import {
   isLettaCloud,
 } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
+import { withMemoryOperation } from "@/agent/memory-operation";
 import {
   buildReflectionIntegrationMemoryScope,
   buildReflectionMemoryScope,
@@ -604,15 +605,17 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
       ? { commitCount: 0, dirty: false }
       : await inspectReflectionMemoryWorktree(params.worktree);
     if (state.commitCount > 0 || state.dirty) {
-      integrationRun = await (
-        params.runExplicitIntegration ?? runExplicitReflectionIntegration
-      )({
-        agentId: params.agentId,
-        conversationId: params.conversationId,
-        worktree: params.worktree,
-        instructions: params.mergeInstructions,
-        reflectionSubagentId: params.subagentAgentId,
-      });
+      integrationRun = await withMemoryOperation(
+        params.worktree.parentMemoryDir,
+        () =>
+          (params.runExplicitIntegration ?? runExplicitReflectionIntegration)({
+            agentId: params.agentId,
+            conversationId: params.conversationId,
+            worktree: params.worktree,
+            instructions: params.mergeInstructions,
+            reflectionSubagentId: params.subagentAgentId,
+          }),
+      );
     }
   }
 

@@ -76,6 +76,7 @@ import {
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
+import { isMemoryWorkerSession } from "./agent/subagents/memory-worker";
 import {
   type BackendMode,
   type ConversationCreateBody,
@@ -179,6 +180,7 @@ import {
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
+import { finishBackgroundMemoryTasks } from "./tools/impl/memory-task-lifecycle";
 import { stopMonitorsForScope } from "./tools/impl/stop-monitor";
 import {
   INTERACTIVE_USER_INPUT_TOOL_NAMES,
@@ -1360,16 +1362,11 @@ export async function handleHeadlessCommand(
       )
     : Promise.resolve();
 
-  // Apply memfs flags and auto-enable from server tag when local settings are missing.
-  // Respects memfsStartupPolicy:
-  //   "blocking"  (default) – await the pull; exit on conflict.
-  //   "background"           – fire pull async; session init proceeds immediately.
-  //   "skip"                 – skip the pull this session.
-  if (isStatelessSession) {
-    // This is a session launch policy: do not hydrate tags, auto-enable,
-    // clone, or pull MemFS. Recording false also keeps downstream client tools,
-    // skills, reflection, and init metadata aligned without mutating the
-    // server-side agent configuration.
+  // Memory workers use the existing checkout without startup sync.
+  if (isMemoryWorkerSession()) {
+    settingsManager.setMemfsEnabled(agent.id, true);
+  } else if (isStatelessSession) {
+    // Stateless launches do not hydrate or sync MemFS.
     settingsManager.setMemfsEnabled(agent.id, false);
   } else if (!backend.capabilities.remoteMemfs) {
     if (backend.capabilities.localMemfs) {
@@ -1478,10 +1475,8 @@ export async function handleHeadlessCommand(
     agent = result.agent;
   }
 
-  // Maintain managed system prompt versions without blocking startup.
-  // This updates only agents whose current prompt still matches the stored
-  // managed prompt hash, so custom edits are preserved.
-  if (isResumingAgent && !systemPromptPreset) {
+  // Refresh managed prompts only in the primary session.
+  if (isResumingAgent && !systemPromptPreset && !isMemoryWorkerSession()) {
     const {
       ensureLettaCodeOriginTag,
       getMemoryPromptModeForAgent,
@@ -1516,9 +1511,10 @@ export async function handleHeadlessCommand(
         agent.id,
         reflectionOverrides,
       );
-      effectiveReflectionSettings = isStatelessSession
-        ? { ...resolvedReflectionSettings, trigger: "off" }
-        : resolvedReflectionSettings;
+      effectiveReflectionSettings =
+        isStatelessSession || isMemoryWorkerSession()
+          ? { ...resolvedReflectionSettings, trigger: "off" }
+          : resolvedReflectionSettings;
     }
   } catch (error) {
     console.error(
@@ -3135,6 +3131,7 @@ export async function handleHeadlessCommand(
   }
 
   await runPostTurnMemorySync({
+    conversationId,
     agentId: agent.id,
     isEnabled: (id) => settingsManager.isMemfsEnabled(id),
     debugLabel: "Post-turn headless memory sync",
@@ -3283,6 +3280,7 @@ export async function handleHeadlessCommand(
   // Report all milestones at the end for latency audit
   markMilestone("HEADLESS_COMPLETE");
   reportAllMilestones();
+  await finishBackgroundMemoryTasks(agent.id, conversationId);
   await exitHeadless(0, "headless_complete");
 }
 
@@ -4787,6 +4785,7 @@ async function runBidirectionalMode(
         writeWireMessage(errorResultMsg);
       } finally {
         await runPostTurnMemorySync({
+          conversationId,
           agentId: agent.id,
           isEnabled: (id) => settingsManager.isMemfsEnabled(id),
           debugLabel: "Post-turn headless memory sync",

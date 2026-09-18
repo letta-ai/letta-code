@@ -7,7 +7,7 @@ description: Diagnose and repair MemFS repository setup, remote sync, authentica
 
 Use this skill only when the Git repository behind an agent's memory is not
 setting up or syncing correctly. For ordinary memory reads and edits, use the
-memory files or the memory tools without loading this skill.
+memory files without loading this skill. Delegate edits to the background `memory` subagent.
 
 ## Current Model
 
@@ -31,7 +31,7 @@ $MEMORY_DIR/                        $MEMORY_DIR/
 Cloud-backed agents have a hosted MemFS remote. Local-backend agents keep a
 local-only Git repository and do not need a remote or cloud credentials.
 
-The memory tools commit their changes. After each turn, the harness pushes
+The background memory subagent commits its changes. After each turn, the harness pushes
 clean committed changes for cloud-backed agents. Local-backend commits remain
 on the current machine. Do not run `git push` for normal MemFS sync; let the
 harness push after the turn.
@@ -116,8 +116,10 @@ cloud-backed agent's pending commits after the turn.
 
 The harness first tries a fast-forward pull. When a remote push is rejected
 because the remote moved, post-turn sync tries `git pull --rebase` and retries
-the push. If that rebase conflicts, the harness leaves the repository for
-manual resolution and reports the affected files.
+the push. If that rebase conflicts, the harness launches a background forked
+`memory` subagent to repair it. The primary conversation is not interrupted.
+The harness retries normal sync after the worker finishes. The instructions
+below are for explicit troubleshooting; routine repairs run in the background.
 
 Start by reading the current Git operation and every conflicted file:
 
