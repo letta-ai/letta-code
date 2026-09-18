@@ -88,7 +88,7 @@ import {
   clearPersistedClientToolRules,
   loadStartupTools,
 } from "./tools/toolset";
-import { isToolsetPreference, TOOLSET_OPTIONS } from "./tools/toolset-options";
+import { isToolsetPreference, TOOLSET_OPTIONS } from "./tools/toolset-catalog";
 import type { ToolsetPreference } from "./tools/toolset-types";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
 import { startOrphanDetection } from "./utils/orphan-detection";

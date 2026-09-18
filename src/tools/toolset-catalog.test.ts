@@ -2,10 +2,14 @@ import { afterEach, expect, test } from "bun:test";
 import { checkPermission } from "@/permissions/checker";
 import { permissionMode } from "@/permissions/mode";
 import { sessionPermissions } from "@/permissions/session";
-import { clearCapturedToolExecutionContexts } from "./manager";
+import {
+  clearCapturedToolExecutionContexts,
+  getServerToolName,
+} from "./manager";
+import { TOOL_DEFINITIONS } from "./tool-definitions";
 import { TOOL_PERMISSIONS } from "./tool-permissions";
 import { prepareToolExecutionContextForResolvedTarget } from "./toolset";
-import { TOOLSET_OPTIONS } from "./toolset-options";
+import { TOOLSET_CATALOG, TOOLSET_OPTIONS } from "./toolset-catalog";
 
 afterEach(() => {
   clearCapturedToolExecutionContexts();
@@ -22,6 +26,28 @@ test("advertises the supported toolset choices", () => {
     "codex",
   ]);
 });
+
+test("client options contain only toolset protocol metadata", () => {
+  for (const option of TOOLSET_OPTIONS) {
+    expect(Object.keys(option).sort()).toEqual([
+      "description",
+      "display_name",
+      "id",
+      "is_featured",
+      "label",
+    ]);
+  }
+});
+
+test.each(Object.entries(TOOLSET_CATALOG))(
+  "%s contains registered tools with unique model-facing names",
+  (_id, { tools }) => {
+    for (const tool of tools) {
+      expect(Object.hasOwn(TOOL_DEFINITIONS, tool)).toBe(true);
+    }
+    expect(new Set(tools.map(getServerToolName)).size).toBe(tools.length);
+  },
+);
 
 test("each nonempty preset exposes SendAgentMessage in the model's tool payload", async () => {
   for (const toolsetPreference of ["letta", "default", "codex"] as const) {

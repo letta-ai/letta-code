@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { TOOLSET_OPTIONS } from "@/tools/toolset-options";
+import { TOOLSET_OPTIONS } from "@/tools/toolset-catalog";
 
 export type CliFlagMode = "interactive" | "headless" | "both";
 export type CliBackendMode = "api" | "local";

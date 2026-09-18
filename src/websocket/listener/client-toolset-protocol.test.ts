@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { TOOLSET_OPTIONS } from "@/tools/toolset-options";
+import { TOOLSET_OPTIONS } from "@/tools/toolset-catalog";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
 
 describe("client toolset protocol", () => {

@@ -1,6 +1,6 @@
 import type WebSocket from "ws";
 import type { ExperimentId } from "@/experiments/types";
-import { isToolsetPreference } from "@/tools/toolset-options";
+import { isToolsetPreference } from "@/tools/toolset-catalog";
 import {
   CHANNEL_ACCOUNT_CREATE_FIELDS,
   CHANNEL_ACCOUNT_UPDATE_FIELDS,
