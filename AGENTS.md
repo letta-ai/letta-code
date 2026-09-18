@@ -966,3 +966,17 @@ Automated cross-repository release orchestration publishes Agent SDK and ACP to
 follow every stable Letta Code release. Not Dependabot, it needs multi-step
 package releases in lockstep. Currently blocked by token permissions
 (`amelia-letta` has read-only access to downstream repos).
+
+### Memory-Constraints Published Contract
+
+`src/memory-constraints.ts` is the canonical memory-policy module:
+`parseMemoryConstraintsConfig` / `validateMemoryTreeConstraints` parse and
+validate the tracked `.memfs.config.json` policy; the same functions are
+embedded by source into the installed MemFS pre-commit hook, and the module is
+published as the `./memory-constraints` package subpath that letta-cloud
+consumes for memory-policy validation. Treat its exported surface and
+parsing/validation semantics as an external contract: do not remove or rename
+exports or fork the parser logic downstream. Behavior changes (including
+default budget changes) only take effect for cloud and existing MemFS
+repositories after a letta-code release, so a semantic change is a release
+decision, not a silent tweak.
