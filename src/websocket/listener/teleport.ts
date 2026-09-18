@@ -9,6 +9,7 @@ import type {
   TeleportRequestCommand,
 } from "@/types/protocol_v2";
 import { toListenerConnection } from "./connection";
+import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitProtocolV2Message,
@@ -81,21 +82,23 @@ export function clearExpectedInboundTeleport(
 
 export function buildTeleportContinuationMessages(params: {
   teleportId: string;
-  approvals: NonNullable<TeleportContinuation["approvals"]>;
+  approvals?: TeleportContinuation["approvals"];
 }): IncomingMessage["messages"] {
-  return [
-    {
+  const messages: IncomingMessage["messages"] = [];
+  if (params.approvals?.length) {
+    messages.push({
       type: "approval",
       approvals: params.approvals,
       otid: params.teleportId,
-    },
-    {
-      role: "system",
-      content:
-        "<system-reminder>Teleportation to this environment is complete. Continue the existing task from this environment now.</system-reminder>",
-      otid: `${params.teleportId}:continue`,
-    },
-  ];
+    });
+  }
+  messages.push({
+    role: "user",
+    content:
+      "<system-reminder>Teleportation to this environment is complete. Continue the existing task from this environment now.</system-reminder>",
+    otid: `${params.teleportId}:continue`,
+  });
+  return messages;
 }
 
 function escapeSystemReminderText(value: string): string {
@@ -119,7 +122,7 @@ function buildTeleportFailureMessages(params: {
     });
   }
   messages.push({
-    role: "system",
+    role: "user",
     content: `<system-reminder>Teleportation failed.\n\nError: ${escapeSystemReminderText(params.error)}\n\nContinue the existing task from this environment now.</system-reminder>`,
     otid: `${params.teleportId}:failed`,
   });
@@ -336,9 +339,13 @@ export function handleTeleportRequest(params: {
     ? hasAcceptedInputsWaiting(conversationRuntime, true)
     : false;
   if (!conversationRuntime?.isProcessing && !pending.drainAcceptedInputs) {
-    if (sendTeleportReady(listener, pending, { success: true })) {
+    const connection = listener.connections.get(pending.connectionId);
+    if (!connection || !isListenerTransportOpen(connection.writer)) {
+      pendingTeleports.delete(pending.teleportId);
+      return;
+    }
+    if (emitClaimedTeleportReady(listener, pending)) {
       pending.readyAt = Date.now();
-      retainTeleportForRecovery(listener, pending);
     }
   }
 }
@@ -366,7 +373,12 @@ export function claimPendingTeleportAtBoundary(params: {
     if (runtime && hasAcceptedInputsWaiting(runtime, false)) return null;
   }
   const connection = params.listener.connections.get(pending.connectionId);
-  if (!connection || !isListenerTransportOpen(connection.writer)) return null;
+  if (!connection || !isListenerTransportOpen(connection.writer)) {
+    // No readiness was sent and the source still owns its turn and results.
+    // Drop only the handoff request so later input is not blocked forever.
+    params.listener.pendingTeleports?.delete(pending.teleportId);
+    return null;
+  }
   pending.readyAt = Date.now();
   pending.activeTurn = params.activeTurn;
   pending.continuation = params.continuation;
@@ -377,11 +389,28 @@ export function emitClaimedTeleportReady(
   listener: ListenerRuntime,
   pending: PendingTeleport,
 ): boolean {
+  if (listener.connectionId?.startsWith("conn-"))
+    suspendRecordedTeleport(pending, true);
   const sent = sendTeleportReady(listener, pending, { success: true });
   if (sent) {
     retainTeleportForRecovery(listener, pending);
+  } else if (listener.connectionId?.startsWith("conn-")) {
+    suspendRecordedTeleport(pending, false);
   }
   return sent;
+}
+
+function suspendRecordedTeleport(
+  pending: PendingTeleport,
+  suspended: boolean,
+): void {
+  const store = createInterruptedTurnStore();
+  const record = store.read(pending.agentId, pending.conversationId);
+  if (record)
+    store.write({
+      ...record,
+      teleportId: suspended ? pending.teleportId : undefined,
+    });
 }
 
 export function finishTeleport(

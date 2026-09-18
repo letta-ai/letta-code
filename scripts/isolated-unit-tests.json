@@ -72,6 +72,11 @@
       "reason": "Renders Ink while mutating the backend mode, backend instance, provider registry, settings singleton, and model cache."
     },
     {
+      "path": "src/cli/app/use-configuration-handlers.test.tsx",
+      "timeoutMs": 15000,
+      "reason": "Renders the reasoning picker while replacing the shared runtime model catalog; shared batches can retain prior catalog or Ink state."
+    },
+    {
       "path": "src/cli/message-search-cache-warm.test.ts",
       "timeoutMs": 15000,
       "reason": "Uses a top-level Bun module mock for backend search."

@@ -66,14 +66,6 @@ export const commands: Record<string, Command> = {
       return "Starting doctor...";
     },
   },
-  "/remember": {
-    desc: "Remember something from the conversation (/remember [instructions])",
-    order: 13,
-    handler: () => {
-      // Handled specially in App.tsx to trigger memory update
-      return "Processing memory request...";
-    },
-  },
   "/dream": {
     desc: "Queue a reflection run on Letta Cloud for this conversation",
     order: 49,

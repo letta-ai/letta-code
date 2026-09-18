@@ -1,10 +1,10 @@
 Apply a codex-style patch to memory files in `$MEMORY_DIR`, then automatically commit the change. The harness pushes clean committed memory changes after the turn for remote MemFS agents.
 
-This is similar to `apply_patch`, but scoped to the memory filesystem and with memory-aware guardrails.
+This is similar to `ApplyPatch`, but scoped to the memory filesystem and with memory-aware guardrails.
 
 - Required args:
   - `reason` — git commit message for the memory change
-  - `input` — patch text using the standard apply_patch format
+  - `input` — patch text using the standard patch format
 
 Patch format:
 - `*** Begin Patch`

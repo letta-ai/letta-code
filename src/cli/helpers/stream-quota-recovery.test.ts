@@ -7,6 +7,7 @@ import { rotateChatGPTPlanOnQuotaLimit } from "@/agent/chatgpt-plan-rotation";
 import { __testSetBackend, type Backend } from "@/backend";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStream, drainStreamWithResume } from "@/cli/helpers/stream";
+import { isCloudApiDeploymentInterrupted } from "@/utils/cloud-api-shutdown";
 
 const RUN_ID = "run-quota-recovery";
 const PRIMARY_HANDLE = "chatgpt-primary/gpt-6-astra";
@@ -57,6 +58,11 @@ function installBackend(overrides: Partial<Backend> = {}) {
   __testSetBackend({
     capabilities: { localModelCatalog: false },
     retrieveRun,
+    retrieveAgent: async () => ({
+      id: "agent-quota",
+      model: PRIMARY_HANDLE,
+      llm_config: { context_window: 350_000 },
+    }),
     retrieveConversation: async () => conversation,
     updateConversation,
     listModels: async () =>
@@ -81,6 +87,36 @@ afterEach(() => {
 });
 
 describe("SSE quota errors through stream recovery", () => {
+  test("preserves deployment recovery fields from durable run metadata", async () => {
+    installBackend({
+      retrieveRun: async () =>
+        ({
+          id: RUN_ID,
+          status: "failed",
+          metadata: {
+            error: {
+              error_type: "internal_error",
+              error_code: "cloud_api_deployment_interrupted",
+              status_code: 503,
+              retryable: true,
+              run_id: RUN_ID,
+            },
+          },
+        }) as never,
+    });
+
+    const runErrorInfo = await fetchRunErrorInfo(RUN_ID);
+
+    expect(runErrorInfo).toMatchObject({
+      error_type: "internal_error",
+      error_code: "cloud_api_deployment_interrupted",
+      status_code: 503,
+      retryable: true,
+      run_id: RUN_ID,
+    });
+    expect(isCloudApiDeploymentInterrupted(runErrorInfo)).toBe(true);
+  });
+
   for (const event of ["error", ""]) {
     test(`rotates from ${event ? "event: error" : "data-only error"} without saved run metadata`, async () => {
       const { conversation, updateConversation } = installBackend();

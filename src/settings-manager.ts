@@ -26,6 +26,7 @@ import type {
 } from "./reflection-settings";
 import { getRuntimeContext } from "./runtime-context";
 import { trackBoundaryError } from "./telemetry/error-reporting";
+import { isToolsetPreference } from "./tools/toolset-options";
 import type { ToolsetPreference } from "./tools/toolset-types";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
@@ -1740,15 +1741,13 @@ class SettingsManager {
     this.upsertAgentSettings(agentId, { mcpServers: servers });
   }
   /** Resolve the manual override for one conversation; unset means auto. */
-  getToolsetPreference(
-    agentId: string,
-    conversationId: string = "default",
-  ): ToolsetPreference {
+  getToolsetPreference(agentId: string, conversationId = "default") {
     const agentSettings = this.getAgentSettings(agentId);
-    if (!conversationId || conversationId === "default") {
-      return agentSettings?.toolset ?? "auto";
-    }
-    return agentSettings?.toolsetsByConversation?.[conversationId] ?? "auto";
+    const preference =
+      !conversationId || conversationId === "default"
+        ? agentSettings?.toolset
+        : agentSettings?.toolsetsByConversation?.[conversationId];
+    return isToolsetPreference(preference) ? preference : "auto";
   }
 
   /** Persist a manual override for one conversation; auto clears it. */

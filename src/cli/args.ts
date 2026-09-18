@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { TOOLSET_OPTIONS } from "@/tools/toolset-options";
 
 export type CliFlagMode = "interactive" | "headless" | "both";
 export type CliBackendMode = "api" | "local";
@@ -109,8 +110,7 @@ export const CLI_FLAG_CATALOG = {
     mode: "both",
     help: {
       argLabel: "<name>",
-      description:
-        'Toolset mode: "auto", "letta", "codex", "default", or "gemini" (manual values override model-based auto-selection)',
+      description: `Toolset mode: ${TOOLSET_OPTIONS.map(({ id }) => `"${id}"`).join(", ")} (manual values override model-based auto-selection)`,
     },
   },
   prompt: {

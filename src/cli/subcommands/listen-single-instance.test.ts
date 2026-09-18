@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,7 +18,10 @@ import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { deriveListenerInstanceId } from "@/websocket/listen-register";
 import { __listenerIdentityTestUtils } from "@/websocket/listener/identity";
-import { acquireManualListenerLock } from "@/websocket/listener/manual-instance-lock";
+import {
+  acquireManualListenerLock,
+  ManualListenerAlreadyRunningError,
+} from "@/websocket/listener/manual-instance-lock";
 
 describe("standalone listener single-instance wiring", () => {
   const originalInitialize = settingsManager.initialize;
@@ -33,6 +44,7 @@ describe("standalone listener single-instance wiring", () => {
 
   let tempHome: string;
   let errors: string[];
+  let registrationFetch: ReturnType<typeof spyOn<typeof globalThis, "fetch">>;
 
   beforeEach(async () => {
     __listenerIdentityTestUtils.resetCachedSpawnerIdentity();
@@ -44,6 +56,12 @@ describe("standalone listener single-instance wiring", () => {
     delete process.env.LETTA_BASE_URL;
     delete process.env.LETTA_LISTENER_INSTANCE_ID;
     delete process.env.LETTA_DESKTOP_MODE;
+
+    // Registration precedes channel startup. Fail locally rather than waiting
+    // for Cloud to reject the fake API key before validating a channel name.
+    registrationFetch = spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("fixture registration denied", { status: 401 }),
+    );
 
     settingsManager.initialize = mock(
       async () => {},
@@ -68,6 +86,7 @@ describe("standalone listener single-instance wiring", () => {
   });
 
   afterEach(async () => {
+    registrationFetch.mockRestore();
     __listenerIdentityTestUtils.resetCachedSpawnerIdentity();
     if (originalSpawnerDevice === undefined)
       delete process.env.LETTA_LISTENER_DEVICE_ID;
@@ -132,20 +151,38 @@ describe("standalone listener single-instance wiring", () => {
       expect(exitCode).toBe(1);
       expect(errors.join("\n")).toContain("already running");
       expect(errors.join("\n")).toContain(`pid ${process.pid}`);
+      expect(registrationFetch).not.toHaveBeenCalled();
     } finally {
       await incumbent.release();
     }
   });
 
-  test("releases ownership when startup fails after acquisition", async () => {
-    const exitCode = await runListenSubcommand([
-      "--env-name",
-      "ci-env",
-      "--channels",
-      "not-a-channel",
-      "--install-channel-runtimes",
-    ]);
+  test("releases ownership when registration fails after acquisition", async () => {
+    let lockWasHeld = false;
+    registrationFetch.mockImplementation(
+      Object.assign(
+        async () => {
+          try {
+            const duplicate = await acquireManualListenerLock(scope(), {
+              lockRoot: path.join(tempHome, ".letta"),
+            });
+            await duplicate.release();
+          } catch (error) {
+            lockWasHeld = error instanceof ManualListenerAlreadyRunningError;
+          }
+          return new Response("fixture registration denied", { status: 401 });
+        },
+        { preconnect: globalThis.fetch.preconnect },
+      ),
+    );
+    const exitCode = await runListenSubcommand(["--env-name", "ci-env"]);
     expect(exitCode).toBe(1);
+    expect(lockWasHeld).toBe(true);
+    expect(registrationFetch).toHaveBeenCalledTimes(1);
+    expect(registrationFetch.mock.calls[0]?.[0]).toBe(
+      "https://api.letta.com/v1/environments/register",
+    );
+    expect(errors.join("\n")).toContain("fixture registration denied");
 
     const replacement = await acquireManualListenerLock(scope(), {
       lockRoot: path.join(tempHome, ".letta"),
@@ -165,15 +202,11 @@ describe("standalone listener single-instance wiring", () => {
   test("uses Desktop registration identity without writing CLI device or name", async () => {
     process.env.LETTA_LISTENER_DEVICE_ID = "desktop:install-1:user-1";
     process.env.LETTA_LISTENER_INSTANCE_ID = "desktop-primary:install-1";
-    const exitCode = await runListenSubcommand([
-      "--env-name",
-      "My Desktop",
-      "--channels",
-      "not-a-channel",
-      "--install-channel-runtimes",
-    ]);
-    // Stop at the existing channel validation boundary, before connecting to Cloud.
+    const exitCode = await runListenSubcommand(["--env-name", "My Desktop"]);
+    // Stop at the fake registration response, before opening a WebSocket.
     expect(exitCode).toBe(1);
+    expect(registrationFetch).toHaveBeenCalledTimes(1);
+    expect(errors.join("\n")).toContain("fixture registration denied");
     expect(settingsManager.getOrCreateDeviceId).not.toHaveBeenCalled();
     expect(settingsManager.setListenerEnvName).not.toHaveBeenCalled();
     expect(process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID).toBe(

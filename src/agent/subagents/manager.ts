@@ -7,7 +7,6 @@
  * - Managing parallel subagent execution
  */
 
-import { spawn } from "node:child_process";
 import { platform } from "node:os";
 import { resolveActingUserId } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
@@ -17,6 +16,7 @@ import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
 import { updateSubagent } from "@/agent/subagent-state.js";
 import { wrapSubagentLauncher } from "@/agent/subagents/sandbox";
+import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import {
   type BackendMode,
   getBackend,
@@ -51,6 +51,7 @@ import {
 } from ".";
 import { buildSubagentPrompt } from "./context-budget";
 import { allocateSubagentName } from "./names";
+import { collectRemoteTurnResult } from "./remote-turn-wait";
 import {
   composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
@@ -62,7 +63,9 @@ import {
   getPrimaryAgentModelHandle,
   resolveSubagentModel,
 } from "./subagent-model";
+import { spawnSubagentProcess } from "./subagent-process";
 import {
+  describeSubagentExit,
   type ExecutionState,
   looksLikeTruncatedStreamJson,
   parseResultFromStdout,
@@ -152,7 +155,10 @@ export function buildSubagentArgs(
   }
 
   if (options.environment) {
-    args.push("--computer", options.environment);
+    // The child only submits the send and exits with the enqueue receipt;
+    // this process follows the remote turn through Cloud's status APIs
+    // (see remote-turn-wait.ts). No child process waits on the remote turn.
+    args.push("--computer", options.environment, "--no-wait");
   }
 
   if (isDeployingExisting) {
@@ -281,6 +287,8 @@ async function executeSubagent(
   systemPromptOverride?: string,
   environment?: string,
   actingUserIdOverride?: string,
+  parentAgentName?: string | null,
+  parentConversationId?: string,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
@@ -339,7 +347,9 @@ async function executeSubagent(
     // keychain lookups under high parallel fan-out.
     const settings = await settingsManager.getSettingsWithSecureTokens();
     const inheritedApiKey =
-      process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+      getDesktopAccessToken() ||
+      process.env.LETTA_API_KEY ||
+      settings.env?.LETTA_API_KEY;
     const inheritedBaseUrl =
       process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
     const inheritedMemoryRoots = resolveAllowedMemoryRoots({
@@ -383,6 +393,7 @@ async function executeSubagent(
       localBackendStorageDir,
       parentAgentId,
       subagentType: type,
+      parentConversationId,
       launchProfile: effectiveLaunchProfile,
       inheritedPrimaryRoot,
       memoryScope,
@@ -393,7 +404,7 @@ async function executeSubagent(
       subagentName:
         existingAgentId || existingConversationId
           ? undefined
-          : allocateSubagentName(),
+          : allocateSubagentName(parentAgentName),
     });
 
     // Optionally confine subagents with the memory-subagent profile to an OS filesystem sandbox.
@@ -429,10 +440,12 @@ async function executeSubagent(
     if (!managedCommand) {
       throw new Error("Subagent executable is required");
     }
-    const proc = spawn(managedCommand, managedArgs, {
+    const runningProcess = spawnSubagentProcess(managedCommand, managedArgs, {
       cwd: subagentWorkingDirectory,
       env: spawnEnv,
+      signal,
     });
+    const proc = runningProcess.process;
     proc.stdin.on("error", () => {});
     proc.stdin.end(boundedUserPrompt);
 
@@ -441,14 +454,6 @@ async function executeSubagent(
     proc.once("spawn", () => {
       updateSubagent(subagentId, { status: "running" });
     });
-
-    // Set up abort handler to kill the child process
-    let wasAborted = false;
-    const abortHandler = () => {
-      wasAborted = true;
-      proc.kill("SIGTERM");
-    };
-    signal?.addEventListener("abort", abortHandler);
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -459,6 +464,7 @@ async function executeSubagent(
       conversationId: existingConversationId || null,
       finalResult: null,
       finalError: null,
+      enqueueReceipt: null,
       resultStats: null,
       displayedToolCalls: new Set(),
     };
@@ -485,10 +491,7 @@ async function executeSubagent(
     });
 
     // Wait for process to complete
-    const exitCode = await new Promise<number | null>((resolve) => {
-      proc.on("close", resolve);
-      proc.on("error", () => resolve(null));
-    });
+    const { exitCode, exitSignal } = await runningProcess.completion;
 
     // Ensure the trailing partial line is processed before completing.
     // Without this, late tool events can be dropped before Task marks completion.
@@ -496,11 +499,8 @@ async function executeSubagent(
       processStreamEvent(stdoutBuffer, state, subagentId);
     }
 
-    // Clean up abort listener
-    signal?.removeEventListener("abort", abortHandler);
-
     // Check if process was aborted by user
-    if (wasAborted) {
+    if (runningProcess.wasAborted()) {
       return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
@@ -541,6 +541,8 @@ async function executeSubagent(
             systemPromptOverride,
             environment,
             actingUserIdOverride,
+            parentAgentName,
+            parentConversationId,
           );
         }
       }
@@ -570,19 +572,34 @@ async function executeSubagent(
           systemPromptOverride,
           environment,
           actingUserIdOverride,
+          parentAgentName,
+          parentConversationId,
         );
       }
 
       const propagatedError = state.finalError?.trim();
-      const fallbackError = stderr || `Subagent exited with code ${exitCode}`;
 
       return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: "",
         success: false,
-        error: propagatedError || fallbackError,
+        error:
+          propagatedError || describeSubagentExit(exitCode, exitSignal, stderr),
       });
+    }
+
+    // The child submitted a computer-routed send and exited with the receipt.
+    // Follow the remote turn from here; the remote listener owns execution.
+    if (state.enqueueReceipt) {
+      return withModel(
+        await collectRemoteTurnResult(
+          state.enqueueReceipt,
+          state,
+          subagentId,
+          signal,
+        ),
+      );
     }
 
     // Return captured result if available
@@ -668,6 +685,8 @@ async function executeSubagent(
           systemPromptOverride,
           environment,
           actingUserIdOverride,
+          parentAgentName,
+          parentConversationId,
         );
       }
     }
@@ -915,6 +934,8 @@ async function spawnSubagentInContext(
     effectiveSystemPromptOverride,
     environment,
     launchActingUserId,
+    parentAgent?.name,
+    resolvedParentConversationId,
   );
 
   return result;

@@ -176,7 +176,23 @@ function isDesktopManagedRuntime(resolvedEntrypoint: string): boolean {
   );
 }
 
+function isPythonDistribution(): boolean {
+  return process.env.LETTA_CODE_DISTRIBUTION === "pypi";
+}
+
+const PYTHON_UPDATE_COMMAND =
+  "Upgrade with your installer: uv tool upgrade letta, pipx upgrade letta, or python -m pip install --upgrade letta";
+
 export function getSelfUpdateStatus(): SelfUpdateStatus {
+  if (isPythonDistribution()) {
+    return {
+      supported: false,
+      writable: false,
+      reason:
+        "This Letta Code runtime is managed by a Python package installer.",
+      manual_command: PYTHON_UPDATE_COMMAND,
+    };
+  }
   const pm = detectPackageManager();
   const manualCommand = buildInstallCommand(pm);
   const resolvedEntrypoint = getResolvedEntrypoint();
@@ -280,6 +296,7 @@ export async function checkForUpdate(
   fetchImpl: FetchImpl = fetch,
 ): Promise<UpdateCheckResult> {
   const currentVersion = getVersion();
+  if (isPythonDistribution()) return { updateAvailable: false, currentVersion };
   debugLog("Current version:", currentVersion);
 
   // Skip auto-update for prerelease versions (e.g., 0.2.0-next.3)
@@ -503,6 +520,7 @@ function isSignificantUpdate(current: string, latest: string): boolean {
 export async function checkAndAutoUpdate(): Promise<
   AutoUpdateResult | undefined
 > {
+  if (isPythonDistribution()) return;
   debugLog("Auto-update check starting...");
   debugLog("isAutoUpdateEnabled:", isAutoUpdateEnabled());
   const runningLocally = isRunningLocally();
@@ -542,6 +560,9 @@ export async function manualUpdate(options?: {
   success: boolean;
   message: string;
 }> {
+  if (isPythonDistribution()) {
+    return { success: false, message: PYTHON_UPDATE_COMMAND };
+  }
   if (isRunningLocally()) {
     return {
       success: false,

@@ -16,6 +16,18 @@ This file explains how to work effectively in this repo. It covers the rules enf
 
 ## Runtime Validation
 
+### Automated notifications use user-role reminders
+
+Never inject `role: "system"` messages into conversation history for harness
+notifications, recovery, teleport, onboarding, or mod instructions. Use
+`role: "user"` with `<system-reminder>...</system-reminder>` content instead.
+The tags identify automated context without requiring API-level system priority;
+the existing transcript echo strips reminder-only content from user bubbles.
+Anthropic can reject a system-role notification after an ordinary assistant
+message, including when a later user message follows it. Keep tool results before
+the reminder and preserve message IDs. This rule does not change the compiled
+system prompt or explicit user-supplied provider/API message roles.
+
 Development and distribution use different runtimes. `bun run dev` runs the
 TypeScript source with Bun, while the published package exposes a Node-targeted
 `letta.js` bundle and requires Node 22.19 or newer. When behavior depends on the
@@ -369,7 +381,7 @@ resent. Interrupt handler marking tools cancelled even when execution completed.
 ### Shell Tool Parity Gap
 
 Policy/UI layer treats all shell variants (`Bash`, `shell_command`,
-`ShellCommand`, `run_shell_command`) identically, but the implementation
+`ShellCommand`, `exec_command`) identically, but the implementation
 layer differs. Features added to one tool may be missing from others.
 
 - **Review signal:** any shell tool change, check ALL variants have parity.
@@ -935,8 +947,7 @@ as success if hashes match.
 
 Cloud API teleport uses a 409 `TELEPORT_SOURCE_NOT_ACTIVE` error when the source
 environment is not active. Rulesets (not branch protection) govern the cloud
-side. CODEOWNERS: the author of a PR can't self-satisfy their own review
-requirement.
+side.
 
 ### Desktop Device Selection
 

@@ -12,6 +12,8 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import { resolveActingUserId } from "@/agent/acting-user";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
+import { buildHeadlessSenderReminder } from "@/headless-message-sender";
+import { createHeadlessResponseState } from "@/headless-response-state";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import {
   trackBoundaryError,
@@ -82,7 +84,6 @@ import {
   getBackend,
 } from "./backend";
 import {
-  type EnvironmentConnection,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
 } from "./backend/api/environments";
@@ -121,9 +122,14 @@ import {
   validateConversationDefaultRequiresAgent,
   validatePrimaryStartupFlagConflicts,
 } from "./cli/startup-flag-validation";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import { tryCloudHeadlessSend } from "./headless-cloud-send";
-import { isCloudEnvironmentSelector } from "./headless-environment-response";
+import {
+  buildEnvironmentLaunchResult,
+  buildEnvironmentResponseMetadata,
+  isCloudEnvironmentSelector,
+  type ListenerLaunchResult,
+  type ReplyEnvironmentMetadata,
+} from "./headless-environment-response";
 import {
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
@@ -202,6 +208,7 @@ import type {
   SystemInitMessage,
 } from "./types/protocol";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
+import { getErrorMessage } from "./utils/error";
 import {
   markMilestone,
   measureSinceMilestone,
@@ -652,38 +659,6 @@ async function writeFinalHeadlessStdout(text: string): Promise<void> {
   });
 }
 
-type ReplyEnvironmentMetadata =
-  | {
-      source: "same-environment";
-    }
-  | {
-      source: "explicit" | "cloud-sandbox";
-      input: string;
-      id: string;
-      connection_id: string;
-      device_id: string;
-      name: string;
-    };
-
-function buildEnvironmentResponseMetadata(params: {
-  source: Extract<
-    ReplyEnvironmentMetadata,
-    { source: "explicit" | "cloud-sandbox" }
-  >["source"];
-  input: string;
-  connectionId: string;
-  environment: EnvironmentConnection;
-}): ReplyEnvironmentMetadata {
-  return {
-    source: params.source,
-    input: params.input,
-    id: params.environment.id,
-    connection_id: params.connectionId,
-    device_id: params.environment.deviceId,
-    name: params.environment.connectionName,
-  };
-}
-
 export async function handleHeadlessCommand(
   parsedArgs: ParsedCliArgs,
   model?: string,
@@ -694,6 +669,10 @@ export async function handleHeadlessCommand(
 ) {
   const { values, positionals } = parsedArgs;
   const isAgentLaunch = consumeSubagentLaunch(process.env);
+  const senderReminder = buildHeadlessSenderReminder(
+    isAgentLaunch,
+    values["from-agent"],
+  );
   const launchProfile = isAgentLaunch
     ? process.env[SUBAGENT_LAUNCH_PROFILE_ENV]
     : undefined;
@@ -1946,18 +1925,7 @@ export async function handleHeadlessCommand(
     contentParts.push({ type: "text", text });
   };
 
-  if (fromAgentId) {
-    const senderAgentId = fromAgentId;
-    const senderAgent = await backend.retrieveAgent(senderAgentId);
-    const systemReminder = `${SYSTEM_REMINDER_OPEN}
-This message is from "${senderAgent.name}" (agent ID: ${senderAgentId}), an agent currently running inside the Letta Code CLI (docs.letta.com/letta-code).
-The sender will only see the final message you generate (not tool calls or reasoning).
-If you need to share detailed information, include it in your response text.
-${SYSTEM_REMINDER_CLOSE}
-
-`;
-    pushPart(systemReminder);
-  }
+  pushPart(senderReminder);
 
   if (!usesRemoteEnvironment) {
     const lastRunAt = (agent as { last_run_completion?: string })
@@ -2033,7 +2001,8 @@ ${SYSTEM_REMINDER_CLOSE}
           environment: environmentRouting.environment,
         })
       : { source: "same-environment" };
-    const environmentResult = await launchListenerConversation({
+    const launchParams: Parameters<typeof launchListenerConversation>[0] = {
+      noWait: Boolean(values["no-wait"]),
       connectionId,
       scope: {
         agent_id: agent.id,
@@ -2090,67 +2059,59 @@ ${SYSTEM_REMINDER_CLOSE}
             }
           : {}),
       },
-    });
-    const stats = sessionStats.getSnapshot();
-
-    if (outputFormat === "json") {
-      await writeFinalHeadlessStdout(
-        `${JSON.stringify(
-          {
-            type: "result",
-            subtype: "success",
-            is_error: false,
-            duration_ms: Math.round(stats.totalWallMs),
-            duration_api_ms: Math.round(stats.totalApiMs),
-            num_turns:
-              environmentResult.usage.step_count ??
-              environmentResult.runIds.length,
-            result: environmentResult.text,
-            agent_id: publicAgentId,
-            conversation_id: conversationId,
-            environment: responseEnvironment,
-            usage: environmentResult.usage,
-            ...(environmentResult.stopReason &&
-            environmentResult.stopReason !== "end_turn"
-              ? { stop_reason: environmentResult.stopReason }
-              : {}),
-          },
-          null,
-          2,
-        )}\n`,
+    };
+    let launchOutcome:
+      | ListenerLaunchResult
+      | { status: "error"; error: string };
+    try {
+      launchOutcome = await launchListenerConversation(launchParams);
+    } catch (error) {
+      trackHeadlessBoundaryError(
+        "headless_environment_launch_failed",
+        error,
+        "headless_environment_launch",
       );
-    } else if (outputFormat === "stream-json") {
-      const resultEvent: ResultMessage & {
-        environment: ReplyEnvironmentMetadata;
-      } = {
-        type: "result",
-        subtype: "success",
-        session_id: sessionId,
-        duration_ms: Math.round(stats.totalWallMs),
-        duration_api_ms: Math.round(stats.totalApiMs),
-        num_turns:
-          environmentResult.usage.step_count ?? environmentResult.runIds.length,
-        result: environmentResult.text,
-        agent_id: publicAgentId,
-        conversation_id: conversationId,
-        environment: responseEnvironment,
-        run_ids: environmentResult.runIds,
-        usage: environmentResult.usage,
-        uuid: `result-${agent.id}-${Date.now()}`,
-        ...(environmentResult.stopReason &&
-        environmentResult.stopReason !== "end_turn"
-          ? { stop_reason: environmentResult.stopReason }
-          : {}),
-      };
-      writeWireMessage(resultEvent);
+      launchOutcome = { status: "error", error: getErrorMessage(error) };
+    }
+    const stats = sessionStats.getSnapshot();
+    if (outputFormat === "text" && launchOutcome.status === "error") {
+      console.error(`Error: ${launchOutcome.error}`);
+    } else if (
+      outputFormat === "text" &&
+      launchOutcome.status === "completed"
+    ) {
+      await writeFinalHeadlessStdout(`${launchOutcome.text}\n`);
     } else {
-      await writeFinalHeadlessStdout(`${environmentResult.text}\n`);
+      const result = buildEnvironmentLaunchResult(
+        {
+          sessionId,
+          agentId: publicAgentId,
+          internalAgentId: agent.id,
+          conversationId,
+          environment: responseEnvironment,
+          durationMs: Math.round(stats.totalWallMs),
+          durationApiMs: Math.round(stats.totalApiMs),
+        },
+        launchOutcome,
+      );
+      if (outputFormat === "stream-json") writeWireMessage(result);
+      else
+        await writeFinalHeadlessStdout(
+          `${JSON.stringify(result, null, outputFormat === "json" ? 2 : 0)}\n`,
+        );
     }
 
-    await exitHeadless(0, "headless_environment_message_complete");
+    return exitHeadless(
+      launchOutcome.status === "error" ? 1 : 0,
+      launchOutcome.status === "error"
+        ? "headless_environment_launch_failed"
+        : launchOutcome.status === "queued"
+          ? "headless_environment_message_queued"
+          : "headless_environment_message_complete",
+    );
   }
 
-  // Start with the user message
+  const responseState = createHeadlessResponseState();
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
     {
       role: "user",
@@ -2312,6 +2273,7 @@ ${SYSTEM_REMINDER_CLOSE}
           currentInput,
           {
             agentId: agent.id,
+            allowResponseStateReuse: responseState.consume(currentInput),
             preparedToolContext:
               turnToolContext.preparedToolContext.preparedToolContext,
           },
@@ -2736,13 +2698,10 @@ ${SYSTEM_REMINDER_CLOSE}
           emitLocalToolReturns(executedResults, sessionId);
         }
 
-        // Send all results in one batch
-        const approvalInputWithOtid = {
-          type: "approval" as const,
-          approvals: executedResults as ApprovalResult[],
-          otid: randomUUID(),
-        };
-        currentInput = [approvalInputWithOtid];
+        currentInput = responseState.prepare(
+          executedResults,
+          needsUserInput.length === 0,
+        );
         continue;
       }
 
@@ -2955,7 +2914,7 @@ ${SYSTEM_REMINDER_CLOSE}
             // Only append a nudge on the last attempt
             if (attempt >= EMPTY_RESPONSE_MAX_RETRIES) {
               const nudgeMessage: MessageCreate = {
-                role: "system",
+                role: "user",
                 content: `<system-reminder>The previous response was empty. Please provide a response with either text content or a tool call.</system-reminder>`,
                 otid: randomUUID(),
               };
@@ -4305,7 +4264,7 @@ async function runBidirectionalMode(
           ...sharedReminderParts,
         ]);
 
-        // Initial input is the user message
+        const responseState = createHeadlessResponseState();
         let currentInput: Array<MessageCreate | ApprovalCreate> = [
           { role: "user", content: enrichedContent, otid: userOtid },
         ];
@@ -4396,6 +4355,7 @@ async function runBidirectionalMode(
             availableTools = turnToolContext.availableTools;
             stream = await sendMessageStream(conversationId, currentInput, {
               agentId: agent.id,
+              allowResponseStateReuse: responseState.consume(currentInput),
               preparedToolContext:
                 turnToolContext.preparedToolContext.preparedToolContext,
             });
@@ -4670,15 +4630,10 @@ async function runBidirectionalMode(
 
             emitLocalToolReturns(executedResults, sessionId);
 
-            // Send approval results back to continue
-            const approvalInputWithOtid = {
-              type: "approval" as const,
-              approvals: executedResults,
-              otid: randomUUID(),
-            };
-            currentInput = [approvalInputWithOtid as unknown as MessageCreate];
-
-            // Continue the loop to process the next stream
+            currentInput = responseState.prepare(
+              executedResults,
+              needsUserInput.length === 0,
+            );
             continue;
           }
 

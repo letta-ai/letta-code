@@ -21,8 +21,7 @@ function isShellTool(name: string): boolean {
     normalized === "bash" ||
     normalized === "exec_command" ||
     normalized === "shell_command" ||
-    normalized === "shell" ||
-    normalized === "runshellcommand"
+    normalized === "shell"
   );
 }
 
@@ -36,15 +35,13 @@ function isSearchTool(name: string): boolean {
   return (
     normalized === "grep" ||
     normalized === "grep_files" ||
-    normalized === "grepfiles" ||
-    normalized === "search_file_content" ||
-    normalized === "searchfilecontent"
+    normalized === "grepfiles"
   );
 }
 
 function isGlobTool(name: string): boolean {
   const normalized = name.toLowerCase();
-  return normalized === "glob" || normalized === "glob_gemini";
+  return normalized === "glob";
 }
 
 function isFileReadTool(name: string): boolean {
@@ -52,21 +49,13 @@ function isFileReadTool(name: string): boolean {
   return (
     normalized === "read" ||
     normalized === "read_file" ||
-    normalized === "readfile" ||
-    normalized === "read_file_gemini" ||
-    normalized === "readfilegemini"
+    normalized === "readfile"
   );
 }
 
 function isFileWriteTool(name: string): boolean {
   const normalized = name.toLowerCase();
-  return (
-    normalized === "write" ||
-    normalized === "write_file" ||
-    normalized === "writefile" ||
-    normalized === "write_file_gemini" ||
-    normalized === "writefilegemini"
-  );
+  return normalized === "write";
 }
 
 function isFileEditTool(name: string): boolean {
@@ -75,8 +64,6 @@ function isFileEditTool(name: string): boolean {
     normalized === "edit" ||
     normalized === "multi_edit" ||
     normalized === "multiedit" ||
-    normalized === "replace" ||
-    normalized === "apply_patch" ||
     normalized === "applypatch"
   );
 }

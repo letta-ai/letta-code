@@ -1,12 +1,15 @@
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import { getStreamRequestContext } from "@/agent/message";
 import { normalizeStreamErrorTypeToStopReason } from "@/agent/turn-recovery-policy";
 import type { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import type { StreamDelta } from "@/types/protocol_v2";
+import { isCloudApiDeploymentInterrupted } from "@/utils/cloud-api-shutdown";
 import { debugLog } from "@/utils/debug";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import { LISTENER_STREAM_RESUME_POLICY } from "./constants";
+import { recordListenerWork } from "./interrupted-turn-record";
 import { normalizeToolReturnWireMessage } from "./interrupts";
 import {
   emitCanonicalMessageDelta,
@@ -73,6 +76,10 @@ export async function drainTurnStreamWithEmission(
         runtime.turnLifecycle.setRunId(turnLease, maybeRunId);
         turnCorrelation.observeRun(maybeRunId);
         if (!runIdSent) {
+          recordListenerWork(runtime, {
+            runId: maybeRunId,
+            actingUserId: getStreamRequestContext(stream)?.actingUserId,
+          });
           runIdSent = true;
           msgRunIds.push(maybeRunId);
           emitLoopStatusUpdate(socket, runtime, {
@@ -84,7 +91,9 @@ export async function drainTurnStreamWithEmission(
       if (errorInfo) {
         const recoverableApprovalErrorText =
           getApprovalToolCallDesyncErrorText(errorInfo);
-        if (!recoverableApprovalErrorText) {
+        const deploymentInterrupted =
+          isCloudApiDeploymentInterrupted(errorInfo);
+        if (!recoverableApprovalErrorText && !deploymentInterrupted) {
           emitLoopErrorNotice(socket, runtime, {
             message: errorInfo.message || "Stream error",
             stopReason: normalizeStreamErrorTypeToStopReason(
@@ -101,9 +110,12 @@ export async function drainTurnStreamWithEmission(
         } else {
           debugLog(
             "recovery",
-            "Suppressing streamed approval conflict while post-stop recovery runs: %s",
-            recoverableApprovalErrorText,
+            "Suppressing streamed recoverable error while post-stop recovery runs: %s",
+            recoverableApprovalErrorText ?? errorInfo.error_code,
           );
+        }
+        if (deploymentInterrupted) {
+          return { shouldOutput: false, shouldAccumulate: false };
         }
       }
       if (shouldOutput) {

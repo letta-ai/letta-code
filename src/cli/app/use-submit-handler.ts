@@ -906,12 +906,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           try {
             // Mark command as finished BEFORE sending to agent
-            // (matches /remember pattern - command succeeded in triggering agent)
+            // (command succeeded in triggering agent)
             cmd.finish("Running custom command...", true);
 
             // Send prompt to agent
-            // NOTE: Unlike /remember, we DON'T append args separately because
-            // they're already substituted into the prompt via $ARGUMENTS
+            // NOTE: We DON'T append args separately because they're already
+            // substituted into the prompt via $ARGUMENTS
             await processConversationWithQueuedApprovals([
               {
                 type: "message",
@@ -2878,70 +2878,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /remember command - remember something from conversation
-        if (trimmed.startsWith("/remember")) {
-          // Extract optional description after `/remember`
-          const [, ...rest] = trimmed.split(/\s+/);
-          const userText = rest.join(" ").trim();
-
-          const initialOutput = userText
-            ? "Storing to memory..."
-            : "Processing memory request...";
-
-          const cmd = commandRunner.start(msg, initialOutput);
-
-          // Check for pending approvals before sending (mirrors regular message flow)
-          const approvalCheck = await checkPendingApprovalsForSlashCommand();
-          if (approvalCheck.blocked) {
-            cmd.fail(
-              "Pending approval(s). Resolve approvals before running /remember.",
-            );
-            return { submitted: false }; // Keep /remember in input box, user handles approval first
-          }
-
-          setCommandRunning(true);
-
-          try {
-            // Import the remember prompt
-            const { REMEMBER_PROMPT } = await import(
-              "@/agent/prompt-assets.js"
-            );
-
-            // Build system-reminder content for memory request
-            const rememberReminder = userText
-              ? `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n${SYSTEM_REMINDER_CLOSE}`
-              : `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n\nThe user did not specify what to remember. Look at the recent conversation context to identify what they likely want you to remember, or ask them to clarify.\n${SYSTEM_REMINDER_CLOSE}`;
-            const rememberParts = userText
-              ? buildTextParts(rememberReminder, userText)
-              : buildTextParts(rememberReminder);
-
-            // Mark command as finished before sending message
-            cmd.finish(
-              userText
-                ? "Storing to memory..."
-                : "Processing memory request from conversation context...",
-              true,
-            );
-
-            // Process conversation with the remember prompt
-            await processConversationWithQueuedApprovals([
-              {
-                type: "message",
-                role: "user",
-                content: rememberParts,
-                otid: randomUUID(),
-              },
-            ]);
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed: ${errorDetails}`);
-          } finally {
-            setCommandRunning(false);
-          }
-
-          return { submitted: true };
-        }
-
         // Experimental reflection arena - blind A/B reflection model comparison
         if (
           trimmed === "/reflect-arena" ||
@@ -3053,9 +2989,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           const cmd = commandRunner.start(msg, "Launching reflection agent...");
 
           if (!isActiveMemfsEnabled(agentId)) {
-            cmd.fail(
-              "Memory filesystem is not enabled. Use /remember instead.",
-            );
+            cmd.fail("Memory filesystem is not enabled.");
             return { submitted: true };
           }
 

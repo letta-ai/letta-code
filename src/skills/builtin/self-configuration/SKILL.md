@@ -1,6 +1,6 @@
 ---
 name: self-configuration
-description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, agent secrets, and local runtime settings. Use when the user asks how this agent or conversation is configured, asks you to change how you behave or how the harness runs you, or renames you.
+description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, agent secrets, and local runtime settings. Use when the user asks how this agent or conversation is configured, asks about account usage, remaining credits, or model quota, asks you to change how you behave or how the harness runs you, or renames you.
 license: MIT
 ---
 
@@ -52,6 +52,16 @@ Local settings, server state, and the current process are different sources of t
 - `letta model list [--byok | --hosted]` lists available models.
 - `letta model set [model_handle] [--reasoning <reasoning-option>] [--default]` changes the current conversation's model or reasoning; add `--default` only when the user asks for the agent default.
 - `letta model get [--default]` gets the current model configuration; `--default` gets the agent's default configuration.
+
+### Account credits and model quota
+
+Run `letta usage` for a Markdown overview of the current plan, credit balance, and `letta/*` model quota (`lettaTier` only). Report the server's bucket (`full`, `high`, `medium`, `low`, or `empty`) and quota/daily reset timestamps as-is; do not infer exact requests or percentages. Amounts are credits, not dollars; preserve negative balances. An omitted daily reset is shown as unavailable.
+
+The command uses CLI auth and respects `LETTA_API_KEY`/`LETTA_BASE_URL`, not agent or conversation selectors. Credits belong to the organization; user-scoped quota belongs to the authenticated user, not necessarily the person chatting with the agent. In local mode, use `letta --backend cloud usage` only when the user wants Cloud account usage.
+
+Use `letta model list` for available models; credits and quota buckets do not guarantee inference availability. `letta usage` does not include session token statistics; the interactive `/usage` command is a separate surface. If either lookup fails, the command exits nonzero without partial usage. Treat that as unavailable data, not zero credits or exhausted quota.
+
+### Harness and server settings
 
 Use the secret-safe local/runtime report for harness settings, permissions, and backend diagnostics:
 
@@ -267,7 +277,7 @@ Per-agent `agents[]` entries are keyed by `agentId` plus server. For api.letta.c
 
 Base URL resolution is split between runtime API calls and settings lookup. Runtime API calls require `LETTA_BASE_URL` or an explicit script `--base-url`; do not replace it with a hard-coded Cloud URL. Settings server keys resolve from `LETTA_SETTINGS_BASE_URL`, `env.LETTA_SETTINGS_BASE_URL`, `LETTA_BASE_URL`, `env.LETTA_BASE_URL`, then api.letta.com. Do not move `agents[]` entries across base URLs unless the user is deliberately migrating servers.
 
-Toolset values currently include `auto`, `letta`, `default`, `codex`, `codex_snake`, `gemini`, `gemini_snake`, and `none`. Use `auto` unless the user explicitly wants a manual override.
+Toolset values currently include `auto`, `letta`, `default`, `codex`, and `none`. Use `auto` unless the user explicitly wants a manual override.
 
 ## Permissions
 

@@ -203,9 +203,7 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
   test("updates scoped runtime tools and wraps toolset refresh in try/catch", () => {
     const source = readModelToolsetCommandSource();
 
-    expect(source).toContain(
-      "await ensureCorrectMemoryTool(agentId, model.handle)",
-    );
+    expect(source).toContain("await ensureCorrectMemoryTool(agentId)");
     expect(source).toContain("await prepareToolExecutionContextForScope({");
     expect(source).toContain("overrideModel: model.handle");
     expect(source).toContain(
@@ -626,7 +624,7 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
 
       settingsManager.setToolsetPreference(
         agent.id,
-        "gemini",
+        "default",
         conversationB.id,
       );
       const originalModAdapter = listener.modAdapter;
@@ -653,7 +651,7 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
       ).toBe("codex");
       expect(
         settingsManager.getToolsetPreference(agent.id, conversationB.id),
-      ).toBe("gemini");
+      ).toBe("default");
       expect(runtimeA.currentToolset).toBe("codex");
 
       settingsManager.setToolsetPreference(

@@ -183,7 +183,7 @@ jobs:
 
       - name: Ask Amelia to audit built-in skill
         id: review
-        uses: letta-ai/letta-code-action@4b8e508a523ff576fee09be1432d6f39158c272c
+        uses: letta-ai/letta-code-action@b7e51edb0643e67ae74327a1cdf0c332e549f8fc
         env:
           LETTA_REQUEST_TIMEOUT_MS: "2700000"
         with:

@@ -651,6 +651,11 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
       sessionId: input.conversationId,
+      // streamSimple drops provider-specific named options; samplingParams is
+      // pi-ai's supported pass-through for explicit provider request overrides.
+      ...(isRecord(input.agent.model_settings.sampling_params)
+        ? { samplingParams: input.agent.model_settings.sampling_params }
+        : {}),
       ...(reasoning ? { reasoning } : {}),
       ...(maxTokensForSettings(input.agent.model_settings)
         ? { maxTokens: maxTokensForSettings(input.agent.model_settings) }

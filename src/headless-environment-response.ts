@@ -8,6 +8,7 @@ import {
   type AgentRuntimeStatusSnapshot,
   getAgentRuntimeStatus,
 } from "@/backend/api/agents";
+import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import {
   type EnvironmentConnection,
   getEnvironmentConnection,
@@ -16,6 +17,91 @@ import {
 } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
 import { toolFilter } from "@/tools/filter";
+import type { ResultMessage, UsageStatistics } from "@/types/protocol";
+
+export type ListenerLaunchResult =
+  | {
+      status: "completed";
+      text: string;
+      stopReason: StopReasonType | null;
+      runIds: string[];
+      usage: UsageStatistics;
+    }
+  | { status: "queued"; receipt: EnqueueReceipt };
+
+export type ReplyEnvironmentMetadata =
+  | {
+      source: "same-environment";
+    }
+  | {
+      source: "explicit" | "cloud-sandbox";
+      input: string;
+      id: string;
+      connection_id: string;
+      device_id: string;
+      name: string;
+    };
+
+export function buildEnvironmentResponseMetadata(params: {
+  source: Extract<
+    ReplyEnvironmentMetadata,
+    { source: "explicit" | "cloud-sandbox" }
+  >["source"];
+  input: string;
+  connectionId: string;
+  environment: EnvironmentConnection;
+}): ReplyEnvironmentMetadata {
+  return {
+    source: params.source,
+    input: params.input,
+    id: params.environment.id,
+    connection_id: params.connectionId,
+    device_id: params.environment.deviceId,
+    name: params.environment.connectionName,
+  };
+}
+
+/** One wire envelope for accepted, completed, and failed listener launches. */
+export function buildEnvironmentLaunchResult(
+  base: {
+    sessionId: string;
+    agentId: string | null;
+    internalAgentId: string;
+    conversationId: string;
+    environment: ReplyEnvironmentMetadata;
+    durationMs: number;
+    durationApiMs: number;
+  },
+  outcome: ListenerLaunchResult | { status: "error"; error: string },
+): ResultMessage & {
+  is_error: boolean;
+  environment: ReplyEnvironmentMetadata;
+} {
+  const reply = outcome.status === "completed" ? outcome : null;
+  return {
+    type: "result",
+    subtype: outcome.status === "completed" ? "success" : outcome.status,
+    is_error: outcome.status === "error",
+    result: reply?.text ?? null,
+    session_id: base.sessionId,
+    duration_ms: base.durationMs,
+    duration_api_ms: base.durationApiMs,
+    num_turns: reply?.usage.step_count ?? reply?.runIds.length ?? 0,
+    agent_id: base.agentId,
+    conversation_id: base.conversationId,
+    environment: base.environment,
+    run_ids: reply?.runIds ?? [],
+    usage: reply?.usage ?? null,
+    uuid: `result-${base.internalAgentId}-${Date.now()}`,
+    ...(outcome.status === "queued" ? outcome.receipt : {}),
+    ...(outcome.status === "error"
+      ? { error: outcome.error, stop_reason: "error" as const }
+      : {}),
+    ...(reply?.stopReason && reply.stopReason !== "end_turn"
+      ? { stop_reason: reply.stopReason }
+      : {}),
+  };
+}
 
 export function isCloudEnvironmentSelector(
   selector: string | boolean | undefined,

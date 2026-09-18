@@ -446,7 +446,7 @@ export const ToolCallMessage = memo(
           }
         }
 
-        // Check if this is an update_plan tool with successful result
+        // Check if this is an UpdatePlan tool with successful result
         if (
           isPlanTool(rawName, displayName) &&
           line.resultOk !== false &&

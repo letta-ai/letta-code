@@ -31,6 +31,10 @@ import {
 import { TO_SUBSCRIBERS } from "./connection";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import {
+  readInterruptedTurn,
+  recordListenerWork,
+} from "./interrupted-turn-record";
+import {
   createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
   emitToolExecutionAbortedEvents,
@@ -469,6 +473,11 @@ export async function handleApprovalStop(params: {
   lastExecutingToolCallIds = approvedDecisions.map(
     (decision) => decision.approval.toolCallId,
   );
+  recordListenerWork(runtime, {
+    toolCallIds: decisions.map((decision) => decision.approval.toolCallId),
+    results: [],
+    requestOtid: crypto.randomUUID(),
+  });
   runtime.turnLifecycle.setExecutingToolCallIds(
     turnLease,
     lastExecutingToolCallIds,
@@ -591,6 +600,7 @@ export async function handleApprovalStop(params: {
     conversationId,
   });
   lastExecutionResults = persistedExecutionResults;
+  recordListenerWork(runtime, { results: persistedExecutionResults });
   emitInterruptToolReturnMessage(
     socket,
     runtime,
@@ -635,7 +645,7 @@ export async function handleApprovalStop(params: {
     {
       type: "approval",
       approvals: persistedExecutionResults,
-      otid: crypto.randomUUID(),
+      otid: readInterruptedTurn(runtime)?.requestOtid ?? crypto.randomUUID(),
     },
   ]);
   let continuationBatchId = dequeuedBatchId;

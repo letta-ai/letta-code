@@ -28,6 +28,51 @@ class MockTransport implements LocalTransport {
   }
 }
 
+test("an adopted connection starts recorded recovery even when process services already exist", async () => {
+  const runtime = createRuntime();
+  const transport = new MockTransport();
+  const options: StartListenerOptions = {
+    connectionId: "conn-adopted",
+    wsUrl: "local://app-server",
+    deviceId: "device-1",
+    connectionName: "adopted",
+    onConnected: () => {},
+    onDisconnected: () => {},
+    onError: () => {},
+  };
+  openListenerConnection({
+    runtime,
+    connectionId: options.connectionId,
+    writer: transport,
+    options,
+  });
+  runtime.processServicesStarted = true;
+  setActiveRuntime(runtime);
+  let recovered = false;
+  try {
+    await startConnectedListenerRuntime(
+      runtime,
+      transport,
+      options,
+      async () => {},
+      {
+        startHeartbeat: false,
+        startCronScheduler: false,
+        emitInitialState: false,
+        recoverRecordedWork: async (owner) => {
+          expect(owner).toBe(runtime);
+          recovered = true;
+        },
+      },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(recovered).toBe(true);
+  } finally {
+    stopRuntime(runtime, true);
+    setActiveRuntime(null);
+  }
+});
+
 test("an unsubscribed app-server connection receives no existing runtime state", async () => {
   const runtime = createRuntime();
   const transport = new MockTransport();

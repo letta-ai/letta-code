@@ -5,6 +5,7 @@ import { sessionPermissions } from "@/permissions/session";
 import { clearCapturedToolExecutionContexts } from "./manager";
 import { TOOL_PERMISSIONS } from "./tool-permissions";
 import { prepareToolExecutionContextForResolvedTarget } from "./toolset";
+import { TOOLSET_OPTIONS } from "./toolset-options";
 
 afterEach(() => {
   clearCapturedToolExecutionContexts();
@@ -12,15 +13,18 @@ afterEach(() => {
   sessionPermissions.clear();
 });
 
-test("each nonempty preset exposes SendAgentMessage in the model's tool payload", async () => {
-  for (const toolsetPreference of [
+test("advertises the supported toolset choices", () => {
+  expect(TOOLSET_OPTIONS.map(({ id }) => id)).toEqual([
+    "auto",
     "letta",
+    "none",
     "default",
     "codex",
-    "codex_snake",
-    "gemini",
-    "gemini_snake",
-  ] as const) {
+  ]);
+});
+
+test("each nonempty preset exposes SendAgentMessage in the model's tool payload", async () => {
+  for (const toolsetPreference of ["letta", "default", "codex"] as const) {
     const prepared = await prepareToolExecutionContextForResolvedTarget({
       toolsetPreference,
     });

@@ -365,46 +365,6 @@ test("acceptEdits mode - allows memory_apply_patch", () => {
   expect(result.reason).toBe("Permission mode: acceptEdits");
 });
 
-test("acceptEdits mode - allows Replace", () => {
-  permissionMode.setMode("acceptEdits");
-
-  const permissions: PermissionRules = {
-    allow: [],
-    deny: [],
-    ask: [],
-  };
-
-  const result = checkPermission(
-    "Replace",
-    { file_path: "/tmp/test.txt", old_string: "old", new_string: "new" },
-    permissions,
-    "/Users/test/project",
-  );
-
-  expect(result.decision).toBe("allow");
-  expect(result.matchedRule).toBe("acceptEdits mode");
-});
-
-test("acceptEdits mode - allows WriteFileGemini", () => {
-  permissionMode.setMode("acceptEdits");
-
-  const permissions: PermissionRules = {
-    allow: [],
-    deny: [],
-    ask: [],
-  };
-
-  const result = checkPermission(
-    "WriteFileGemini",
-    { file_path: "/tmp/test.txt", content: "hello" },
-    permissions,
-    "/Users/test/project",
-  );
-
-  expect(result.decision).toBe("allow");
-  expect(result.matchedRule).toBe("acceptEdits mode");
-});
-
 test("acceptEdits mode - does NOT allow Bash", () => {
   permissionMode.setMode("acceptEdits");
 
