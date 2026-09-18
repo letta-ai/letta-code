@@ -69,6 +69,7 @@ export async function executeWorkflow(
   let currentPhase: string | null = null;
   let callCounter = 0;
   let agentsSpawned = 0;
+  let totalTokens = 0;
 
   function agent(prompt: unknown, callOptions?: unknown): Promise<unknown> {
     const pending = callAgent(prompt, callOptions);
@@ -113,6 +114,7 @@ export async function executeWorkflow(
         signal,
       );
       if (signal.aborted) throw new Error("Workflow aborted.");
+      totalTokens += outcome.totalTokens ?? 0;
       if (options.journalPath) {
         appendJournalEntry(options.journalPath, {
           callIndex,
@@ -129,6 +131,7 @@ export async function executeWorkflow(
         status: outcome.failed ? "error" : "done",
         detail: outcome.error,
         durationMs: outcome.durationMs,
+        totalTokens: outcome.totalTokens,
       });
       return outcome.failed ? null : outcome.value;
     } finally {
@@ -247,5 +250,5 @@ export async function executeWorkflow(
   });
   void abortRun.catch(() => {});
   const result = await Promise.race([pending, abortRun]);
-  return { meta, result, agentsSpawned };
+  return { meta, result, agentsSpawned, totalTokens };
 }

@@ -7,6 +7,10 @@ import { runWithRuntimeContext } from "@/runtime-context";
 import { clearCapturedToolExecutionContexts } from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
+import {
+  __resetWorkflowExecutionsForTests,
+  getWorkflowExecution,
+} from "@/tools/workflow/execution-registry";
 import type { SubagentSpawner } from "@/tools/workflow/types";
 import {
   clearPendingMessages,
@@ -110,7 +114,12 @@ describe("Workflow tool (background launch)", () => {
       if (signal.aborted) {
         return { value: null, failed: true, error: "aborted" };
       }
-      return { value: `echo:${request.prompt}`, failed: false, durationMs: 5 };
+      return {
+        value: `echo:${request.prompt}`,
+        failed: false,
+        durationMs: 5,
+        totalTokens: 12_000,
+      };
     };
   }
 
@@ -143,6 +152,7 @@ describe("Workflow tool (background launch)", () => {
       }
     }
     backgroundProcesses.clear();
+    __resetWorkflowExecutionsForTests();
     __setWorkflowSpawnerFactoryForTests(null);
     setMessageQueueAdder(null);
     clearPendingMessages();
@@ -294,6 +304,15 @@ describe("Workflow tool (background launch)", () => {
 
     // The progress log is what TaskOutput reads while the run is live.
     await waitFor(() => (processState?.stdout.length ?? 0) >= 3);
+    const live = getWorkflowExecution(taskId);
+    expect(live).toMatchObject({
+      status: "running",
+      agentsTotal: 2,
+      agentsRunning: 2,
+      agentsDone: 0,
+      logs: ["starting"],
+    });
+    expect(live?.phases[0]?.title).toBe("Find");
     const running = await task_output({
       task_id: taskId,
       block: false,
@@ -313,9 +332,16 @@ describe("Workflow tool (background launch)", () => {
     expect(notification?.text).toContain(`<task-id>${taskId}</task-id>`);
     expect(notification?.text).toContain("<status>completed</status>");
     expect(notification?.text).toContain(
-      'Workflow "Quick demo workflow with parallel agents" completed · 2 agents',
+      'Workflow "Quick demo workflow with parallel agents" completed · ',
     );
+    expect(notification?.text).toContain("2 agents · 24k tokens");
+    expect(notification?.text).toContain("total_tokens: 24000");
     expect(notification?.text).toContain('"count": 2');
+    expect(getWorkflowExecution(taskId)).toMatchObject({
+      status: "completed",
+      agentsDone: 2,
+      totalTokens: 24_000,
+    });
 
     const log = readFileSync(processState?.outputFile as string, "utf8");
     expect(log).toContain("── Find ──");
@@ -349,6 +375,10 @@ describe("Workflow tool (background launch)", () => {
     expect(readFileSync(processState?.outputFile as string, "utf8")).toContain(
       "[error] Workflow stopped",
     );
+    expect(getWorkflowExecution(taskId)).toMatchObject({
+      status: "failed",
+      agentsFailed: 2,
+    });
   });
 
   test("persists the full final result while bounding the completion notification", async () => {
@@ -376,7 +406,9 @@ throw new Error('kaboom')`,
     expect(result.status).toBe("success");
     await waitFor(() => queuedMessages.length === 1);
     expect(queuedMessages[0]?.text).toContain("<status>failed</status>");
-    expect(queuedMessages[0]?.text).toContain('Workflow "explodes" failed');
+    expect(queuedMessages[0]?.text).toMatch(
+      /Workflow "explodes" failed after \d+s/,
+    );
     expect(queuedMessages[0]?.text).toContain("kaboom");
   });
 
