@@ -62,21 +62,30 @@ const activeListenerProcessAnchors = new Set<ListenerProcessAnchor>();
 
 /**
  * One-shot banner for a computer's first registration (typically pasted from
- * onboarding). Rendered once and left in the scrollback.
+ * onboarding). Printed once and left in the scrollback. The logo is drawn with
+ * background-color cells, so it only exists on the color path; when stdout is
+ * not a TTY or NO_COLOR is set (service logs, `letta server --debug > file`),
+ * the banner is plain text with no escape sequences.
  */
-function printFirstRunWelcome(computerName: string): void {
-  const bold = (s: string) => `\x1b[1m${s}\x1b[22m`;
-  const dim = (s: string) => `\x1b[2m${s}\x1b[22m`;
-  console.log();
-  for (const line of staticLogoAnsiLines()) console.log(line);
-  console.log();
-  console.log(bold("Welcome to Letta"));
-  console.log(
+function formatFirstRunWelcome(computerName: string, color: boolean): string[] {
+  const bold = color ? (s: string) => `\x1b[1m${s}\x1b[22m` : (s: string) => s;
+  const dim = color ? (s: string) => `\x1b[2m${s}\x1b[22m` : (s: string) => s;
+  return [
+    "",
+    ...(color ? [...staticLogoAnsiLines(), ""] : []),
+    bold("Welcome to Letta"),
     dim(
       `Registering this computer as "${computerName}" so your agent can work here. Use --computer-name to change it.`,
     ),
-  );
-  console.log();
+    "",
+  ];
+}
+
+function printFirstRunWelcome(computerName: string): void {
+  const color = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
+  for (const line of formatFirstRunWelcome(computerName, color)) {
+    console.log(line);
+  }
 }
 
 function formatTimestamp(): string {
@@ -200,6 +209,7 @@ function shouldAcquireStandaloneListenerLock(): boolean {
 export const __listenSubcommandTestUtils = {
   createListenerProcessAnchorPromise,
   flushListenerTelemetryEnd,
+  formatFirstRunWelcome,
   getListenerServerUrl,
   resolveListenerStartupMode,
   resolveListenerRegistrationOptions,
