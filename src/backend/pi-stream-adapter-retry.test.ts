@@ -160,4 +160,49 @@ describe("PiStreamAdapter retry output boundary", () => {
       ),
     ).toBe(false);
   });
+
+  test("emits a partial snapshot before a non-retryable error part", async () => {
+    const partial = {
+      ...assistantMessage(),
+      content: [
+        { type: "thinking" as const, thinking: "[Reasoning redacted]" },
+      ],
+      stopReason: "error" as const,
+    };
+    const error = {
+      ...errorMessage(),
+      content: partial.content,
+      errorMessage: "usage limit reached",
+    };
+    const stream: PiStreamFunction = () =>
+      streamFromEvents(
+        [
+          { type: "thinking_start", contentIndex: 0, partial },
+          { type: "error", reason: "error", error },
+        ],
+        error,
+      );
+    const events: ProviderStreamEvent[] = [];
+    try {
+      for await (const event of new PiStreamAdapter({ stream }).stream(
+        input(),
+      )) {
+        events.push(event);
+      }
+    } catch {
+      // The adapter surfaces the non-retryable provider error after its events.
+    }
+
+    const localMessageIndex = events.findIndex(
+      (event) => event.type === "local-message",
+    );
+    const errorPartIndex = events.findIndex(
+      (event) => event.type === "provider-part" && event.part.type === "error",
+    );
+    expect(localMessageIndex).toBeGreaterThanOrEqual(0);
+    expect(errorPartIndex).toBeGreaterThan(localMessageIndex);
+    expect(
+      events.filter((event) => event.type === "local-message"),
+    ).toHaveLength(1);
+  });
 });
