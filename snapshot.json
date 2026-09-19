@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.277:docs:70d73f8c1b65d59459e063174ce7fb24a779f16950f6dad4e328f0abe0c98d41:runtime:a15321820b5a78741c86c55c3e687a43140c424f459645a8d3decbdf1edc3451",
+  "candidate_id": "claude@2.1.277:docs:26ef20bc984f9d1030c7a30bc97062550633dc488733d6c54bd6fa63a3a2f07f:runtime:a15321820b5a78741c86c55c3e687a43140c424f459645a8d3decbdf1edc3451",
   "package_version": "2.1.277",
   "npm_integrity": "sha512-JedQvDxaHIWr303Ymlqlz43j3LqRaUe7rNtDKjEDQaHt8MkKPpCR+jKI6K0TKU5gquTqodgYLfTNM3qfGkTbpQ==",
   "npm_published_at": "2026-09-18T16:22:26.548Z",
@@ -356,7 +356,7 @@
       },
       "https://code.claude.com/docs/en/changelog.md": {
         "url": "https://code.claude.com/docs/en/changelog.md",
-        "hash": "57c3146669dc557a6eb153f7b841b92180753bf85f5cdf812028a02b0d7578ed",
+        "hash": "a739ba546e1775c60beefa53510ad652137c32629159b54f8292c2afefa6abbe",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/changelog.md"
       },
@@ -590,7 +590,7 @@
       },
       "https://code.claude.com/docs/en/env-vars.md": {
         "url": "https://code.claude.com/docs/en/env-vars.md",
-        "hash": "5f6c400183a3f87eb08064bca9e46a2795bf0f8f912a75a3e7d15e618ee31818",
+        "hash": "17c833c69ac7d9c16c48993110880e13cefbf0fb61509fa2f656a87e09d1a834",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/env-vars.md"
       },
@@ -1273,7 +1273,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "70d73f8c1b65d59459e063174ce7fb24a779f16950f6dad4e328f0abe0c98d41"
+    "digest": "26ef20bc984f9d1030c7a30bc97062550633dc488733d6c54bd6fa63a3a2f07f"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1491,8 +1491,8 @@
           {
             "name": "TaskCreate",
             "input": {
-              "activeForm": "Running probe task",
-              "description": "Probe task used to exercise task tool metadata handling and deletion.",
+              "activeForm": "Probing task tools",
+              "description": "Probe task for exercising task tool metadata and deletion behavior.",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1543,7 +1543,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task used to exercise task tool metadata handling and deletion.",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tool metadata and deletion behavior.",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1554,8 +1554,8 @@
     ],
     "digest": "a15321820b5a78741c86c55c3e687a43140c424f459645a8d3decbdf1edc3451"
   },
-  "fetched_at": "2026-09-18T22:24:14.480Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/35401290617",
-  "state_commit_parent": "a68057e7675f9abe04d140c4ebcc88ceb9bbd2e3",
-  "analysis_parent_sha": "a68057e7675f9abe04d140c4ebcc88ceb9bbd2e3"
+  "fetched_at": "2026-09-19T00:57:35.000Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/35411018487",
+  "state_commit_parent": "e5fdb541b9b19844fd8d73311de7f2e7289c4ffb",
+  "analysis_parent_sha": "e5fdb541b9b19844fd8d73311de7f2e7289c4ffb"
 }
