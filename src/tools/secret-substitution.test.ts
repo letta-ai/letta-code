@@ -324,19 +324,46 @@ describe("all-tool secret redaction", () => {
 });
 
 describe("managed cloud shell secret execution", () => {
-  test("protected managed runtime auth wins over an explicit agent secret", async () => {
+  test("protected managed context survives explicit agent-secret references", async () => {
     const configuredAgentKey = "configured-agent-runtime-key";
     const managedRuntimeKey = "managed-sandbox-runtime-key";
-    __testSeedSecretsCache(AGENT_A, { LETTA_API_KEY: configuredAgentKey });
+    const staleAgentId = "agent-stale-listener-scope";
+    const activeAgentId = AGENT_A;
+    const staleConversationId = "conv-stale-listener-scope";
+    const activeConversationId = "conv-active-turn-scope";
+    const staleMemoryDir = "/tmp/stale-listener-memory";
+    const activeMemoryDir = "/tmp/active-turn-memory";
+    const staleDeviceId = "device-stale-listener";
+    const activeDeviceId = "device-active-turn";
+    __testSeedSecretsCache(AGENT_A, {
+      AGENT_ID: staleAgentId,
+      CONVERSATION_ID: staleConversationId,
+      LETTA_API_KEY: configuredAgentKey,
+      LETTA_MEMORY_DIR: staleMemoryDir,
+      LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID: staleDeviceId,
+      MEMORY_DIR: staleMemoryDir,
+      PATH: "/tmp/stale-listener-bin",
+    });
     const runtimeScript = createTempRuntimeScriptCommand(
-      "process.stdout.write(process.env.LETTA_API_KEY ?? '')",
+      "process.stdout.write(JSON.stringify({ agentId: process.env.AGENT_ID, conversationId: process.env.CONVERSATION_ID, apiKey: process.env.LETTA_API_KEY, memoryDir: process.env.MEMORY_DIR, lettaMemoryDir: process.env.LETTA_MEMORY_DIR, deviceId: process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID, path: process.env.PATH }))",
     );
     const originalEnv = {
       marker: process.env.LETTA_MANAGED_CLOUD_SANDBOX,
       apiKey: process.env.LETTA_API_KEY,
+      agentId: process.env.AGENT_ID,
+      conversationId: process.env.CONVERSATION_ID,
+      memoryDir: process.env.MEMORY_DIR,
+      lettaMemoryDir: process.env.LETTA_MEMORY_DIR,
+      deviceId: process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID,
+      path: process.env.PATH,
     };
     process.env.LETTA_MANAGED_CLOUD_SANDBOX = "1";
     process.env.LETTA_API_KEY = managedRuntimeKey;
+    process.env.AGENT_ID = staleAgentId;
+    process.env.CONVERSATION_ID = staleConversationId;
+    process.env.MEMORY_DIR = staleMemoryDir;
+    process.env.LETTA_MEMORY_DIR = staleMemoryDir;
+    process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = staleDeviceId;
     let prepared: Awaited<
       ReturnType<typeof prepareToolExecutionContextForSpecificTools>
     > | null = null;
@@ -344,7 +371,15 @@ describe("managed cloud shell secret execution", () => {
     try {
       prepared = await prepareToolExecutionContextForSpecificTools(["Bash"], {
         runtimeContext: {
-          agentId: AGENT_A,
+          agentId: activeAgentId,
+          conversationId: activeConversationId,
+          environmentDeviceId: activeDeviceId,
+          executionSettings: {
+            allowed_tools: [],
+            disallowed_tools: [],
+            disable_memory_guard: false,
+            memory_directory: activeMemoryDir,
+          },
           workingDirectory: process.cwd(),
         },
         workingDirectory: process.cwd(),
@@ -352,15 +387,26 @@ describe("managed cloud shell secret execution", () => {
       const result = await executeTool(
         "Bash",
         {
-          command: `${runtimeScript.command} $LETTA_API_KEY`,
+          command: `${runtimeScript.command} $AGENT_ID $CONVERSATION_ID $LETTA_API_KEY $MEMORY_DIR $LETTA_MEMORY_DIR $LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID $PATH`,
           timeout: 5000,
         },
         { toolContextId: prepared.contextId },
       );
       const text = asText(result.toolReturn);
-      expect(text).toContain("LETTA_API_KEY=<REDACTED>");
       expect(text).not.toContain(configuredAgentKey);
-      expect(text).not.toContain(managedRuntimeKey);
+      expect(text).toContain(managedRuntimeKey);
+      expect(text).not.toContain(staleAgentId);
+      expect(text).not.toContain(staleConversationId);
+      expect(text).not.toContain(staleMemoryDir);
+      expect(text).not.toContain(staleDeviceId);
+      expect(text).toContain(activeAgentId);
+      expect(text).toContain(activeConversationId);
+      expect(text).toContain(activeMemoryDir);
+      expect(text).toContain(activeDeviceId);
+      expect(text).toContain(process.execPath.includes("\\") ? ";" : ":");
+      expect(
+        extractSecretEnvFromCommand("echo $LETTA_API_KEY", AGENT_A),
+      ).toEqual({});
       expect(getScopedSecretRedactions(AGENT_A).LETTA_API_KEY).toBe(
         configuredAgentKey,
       );
@@ -370,6 +416,12 @@ describe("managed cloud shell secret execution", () => {
       for (const [name, value] of [
         ["LETTA_MANAGED_CLOUD_SANDBOX", originalEnv.marker],
         ["LETTA_API_KEY", originalEnv.apiKey],
+        ["AGENT_ID", originalEnv.agentId],
+        ["CONVERSATION_ID", originalEnv.conversationId],
+        ["MEMORY_DIR", originalEnv.memoryDir],
+        ["LETTA_MEMORY_DIR", originalEnv.lettaMemoryDir],
+        ["LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID", originalEnv.deviceId],
+        ["PATH", originalEnv.path],
       ] as const) {
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;
@@ -398,7 +450,7 @@ describe("managed cloud shell secret execution", () => {
       );
       expect(referenced.HOME).toBeUndefined();
       expect(referenced.AGENT_ID).toBeUndefined();
-      expect(referenced.LETTA_API_KEY).toBe(process.env.LETTA_API_KEY);
+      expect(referenced.LETTA_API_KEY).toBeUndefined();
     } finally {
       for (const [name, value] of [
         ["LETTA_MANAGED_CLOUD_SANDBOX", originalEnv.marker],

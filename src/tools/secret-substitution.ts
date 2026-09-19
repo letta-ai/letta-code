@@ -122,7 +122,12 @@ export function extractSecretEnvFromCommand(
   const scan = (text: string) => {
     for (const match of text.matchAll(SECRET_PATTERN)) {
       const name = match[1];
-      if (name !== undefined && secrets[name] !== undefined) {
+      if (
+        name !== undefined &&
+        secrets[name] !== undefined &&
+        (!isManagedCloudSandbox() ||
+          !PROTECTED_MANAGED_CLOUD_ENV_NAMES.has(name))
+      ) {
         env[name] = secrets[name];
       }
     }
@@ -138,14 +143,7 @@ export function extractSecretEnvFromCommand(
 
   if (!isManagedCloudSandbox()) return env;
 
-  const managedEnv = getManagedCloudAgentSecretEnv(agentId);
-  for (const name of Object.keys(env)) {
-    if (!PROTECTED_MANAGED_CLOUD_ENV_NAMES.has(name)) continue;
-    delete env[name];
-    const ambientValue = process.env[name];
-    if (ambientValue !== undefined) managedEnv[name] = ambientValue;
-  }
-  return { ...env, ...managedEnv };
+  return { ...env, ...getManagedCloudAgentSecretEnv(agentId) };
 }
 
 /**
