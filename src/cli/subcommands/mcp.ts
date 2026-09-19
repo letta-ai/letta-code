@@ -27,9 +27,12 @@ import { isRecord } from "@/utils/type-guards";
 import {
   loadMcpToolArgs,
   McpCliError,
+  type McpOutput,
   printMcpError,
   printMcpUsage,
   resolveMcpAgentId,
+  writeMcpStderr,
+  writeMcpStdout,
 } from "./mcp-io";
 import {
   mergeMcpSearchResults,
@@ -115,8 +118,8 @@ export interface McpSubcommandDependencies {
   readFile?: (path: string) => Promise<string>;
   readStdin?: () => Promise<string>;
   env?: NodeJS.ProcessEnv;
-  stdout?: (message: string) => void;
-  stderr?: (message: string) => void;
+  stdout?: McpOutput;
+  stderr?: McpOutput;
 }
 
 interface ParsedMcpArgs {
@@ -575,17 +578,17 @@ function mcpToolResultFromServer(result: UnifiedMcpRunResult): McpToolResult {
   };
 }
 
-function printJson(stdout: (message: string) => void, value: unknown): void {
-  stdout(JSON.stringify(value, null, 2));
+async function printJson(stdout: McpOutput, value: unknown): Promise<void> {
+  await stdout(JSON.stringify(value, null, 2));
 }
 
 async function runList(
   deps: McpSubcommandDependencies,
   agentId: string,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   const servers = await listUnifiedServers(deps, agentId);
-  printJson(stdout, servers.map(serverSummary));
+  await printJson(stdout, servers.map(serverSummary));
   return 0;
 }
 
@@ -593,7 +596,7 @@ async function runGet(
   deps: McpSubcommandDependencies,
   agentId: string,
   selector: string | undefined,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   if (!selector) {
     throw new McpCliError("invalid_arguments", "Usage: letta mcp get <server>");
@@ -602,7 +605,7 @@ async function runGet(
     await listUnifiedServers(deps, agentId),
     selector,
   );
-  printJson(stdout, serverDetails(server));
+  await printJson(stdout, serverDetails(server));
   return 0;
 }
 
@@ -611,11 +614,11 @@ async function runTools(
   agentId: string,
   serverSelector: string | undefined,
   full: boolean,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   const catalog = await buildToolCatalog(deps, agentId, { serverSelector });
   try {
-    printJson(
+    await printJson(
       stdout,
       catalog.tools.map((tool) =>
         full
@@ -639,7 +642,7 @@ async function runSchema(
   deps: McpSubcommandDependencies,
   agentId: string,
   toolName: string | undefined,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   if (!toolName) {
     throw new McpCliError(
@@ -658,7 +661,7 @@ async function runSchema(
         `MCP tool '${toolName}' is not available`,
       );
     }
-    printJson(stdout, tool.schema);
+    await printJson(stdout, tool.schema);
     return 0;
   } finally {
     await catalog.close();
@@ -669,7 +672,7 @@ async function runSearch(
   parsed: ParsedMcpArgs,
   deps: McpSubcommandDependencies,
   agentId: string,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   const serverSearchAvailable = serverMcpAvailable(deps);
   const hasClientLocalServers = getLocalServers(deps, agentId).length > 0;
@@ -763,7 +766,7 @@ async function runCall(
   parsed: ParsedMcpArgs,
   deps: McpSubcommandDependencies,
   agentId: string,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   const toolName = parsed.target;
   if (!toolName) {
@@ -800,7 +803,7 @@ async function runCall(
               args,
             }),
           );
-    printJson(stdout, result);
+    await printJson(stdout, result);
     return result.isError === true ? 2 : 0;
   } finally {
     await catalog.close();
@@ -811,18 +814,18 @@ export async function runMcpSubcommand(
   argv: string[],
   deps: McpSubcommandDependencies = {},
 ): Promise<number> {
-  const stdout = deps.stdout ?? console.log;
-  const stderr = deps.stderr ?? console.error;
+  const stdout = deps.stdout ?? writeMcpStdout;
+  const stderr = deps.stderr ?? writeMcpStderr;
   let parsed: ParsedMcpArgs;
   try {
     parsed = parseCommandLine(argv);
   } catch (error) {
-    printMcpError(stderr, error);
+    await printMcpError(stderr, error);
     return 1;
   }
 
   if (parsed.values.help || !parsed.action || parsed.action === "help") {
-    printMcpUsage(stdout);
+    await printMcpUsage(stdout);
     return 0;
   }
 
@@ -832,7 +835,7 @@ export async function runMcpSubcommand(
     deps.env ?? process.env,
   );
   if (!agentId) {
-    printMcpError(
+    await printMcpError(
       stderr,
       new McpCliError(
         "agent_id_required",
@@ -876,7 +879,7 @@ export async function runMcpSubcommand(
         );
     }
   } catch (error) {
-    printMcpError(stderr, error);
+    await printMcpError(stderr, error);
     return 1;
   }
 }

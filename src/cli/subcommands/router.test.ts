@@ -52,10 +52,16 @@ describe("subcommand router", () => {
 
   test("routes unified MCP help before TUI startup", async () => {
     const messages: string[] = [];
-    const originalLog = console.log;
-    console.log = (message?: unknown) => {
-      messages.push(String(message));
-    };
+    const originalWrite = process.stdout.write;
+    process.stdout.write = ((
+      chunk: string | Uint8Array,
+      ...args: unknown[]
+    ) => {
+      messages.push(String(chunk));
+      const callback = args.find((arg) => typeof arg === "function");
+      if (typeof callback === "function") callback();
+      return true;
+    }) as typeof process.stdout.write;
 
     try {
       const exitCode = await runSubcommand(["mcp", "--help"]);
@@ -64,7 +70,7 @@ describe("subcommand router", () => {
       expect(messages.join("\n")).toContain("letta mcp tools");
       expect(messages.join("\n")).toContain("letta mcp call");
     } finally {
-      console.log = originalLog;
+      process.stdout.write = originalWrite;
     }
   });
 
