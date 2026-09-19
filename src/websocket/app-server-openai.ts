@@ -23,6 +23,7 @@ import {
   resolveConversationId,
   sendJson,
   sendOpenAiError,
+  startOpenAiSseHeartbeat,
 } from "@/websocket/app-server-openai-common";
 import {
   handleResponses,
@@ -228,8 +229,10 @@ async function handleChatCompletions(
   const created = Math.floor(Date.now() / 1000);
   const streaming = body.stream === true;
   let clientClosed = false;
+  let stopHeartbeat = () => {};
   response.on("close", () => {
     clientClosed = true;
+    stopHeartbeat();
   });
 
   if (streaming) {
@@ -238,6 +241,11 @@ async function handleChatCompletions(
       "cache-control": "no-cache",
       connection: "keep-alive",
     });
+    stopHeartbeat = startOpenAiSseHeartbeat(
+      response,
+      () => clientClosed,
+      options.sseHeartbeatIntervalMs,
+    );
     response.write(
       chatCompletionChunk(
         completionId,
@@ -302,6 +310,7 @@ async function handleChatCompletions(
       error: "failed to run agent turn",
     };
   }
+  stopHeartbeat();
   const fullText = outcome.text;
   const usage = {
     prompt_tokens: outcome.usage.prompt_tokens,
