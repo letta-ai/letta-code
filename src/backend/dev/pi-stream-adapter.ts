@@ -39,6 +39,7 @@ import {
 } from "./pi-model-factory";
 import { LocalPiModelsRuntime } from "./pi-models-runtime";
 import { resolvePiRequestHeaders } from "./pi-request-headers";
+import { withMidConversationSystemPrompt } from "./pi-stream-mid-conversation";
 import { isPiModelOutputEvent } from "./pi-stream-output";
 import type {
   LlmEndErrorInfo,
@@ -321,31 +322,6 @@ function withOpenAIResponsesReplayIdSanitizer(
     const sanitized = stripOpenAIResponsesReplayItemIds(next);
     if (sanitized !== undefined) return sanitized;
     return upstreamChanged ? next : undefined;
-  };
-}
-
-function withMidConversationSystemPrompt(
-  existing: SimpleStreamOptions["onPayload"] | undefined,
-  systemPrompt: string | undefined,
-): SimpleStreamOptions["onPayload"] {
-  if (!systemPrompt) return existing;
-  return async (payload, model) => {
-    let next = payload;
-    let upstreamChanged = false;
-    const upstream = await existing?.(payload, model);
-    if (upstream !== undefined) {
-      next = upstream;
-      upstreamChanged = true;
-    }
-    if (model.id !== "claude-opus-4-8" || !isRecord(next)) {
-      return upstreamChanged ? next : undefined;
-    }
-    const messages = Array.isArray(next.messages) ? next.messages : undefined;
-    if (!messages) return upstreamChanged ? next : undefined;
-    return {
-      ...next,
-      messages: [...messages, { role: "system", content: systemPrompt }],
-    };
   };
 }
 
@@ -673,11 +649,19 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         options.onPayload,
       );
     }
-    if (resolved.model.api === "anthropic-messages") {
+    if (
+      resolved.model.api === "anthropic-messages" ||
+      resolved.model.api === "openai-completions"
+    ) {
+      // The backend only produces midConversationSystemPrompt for models that
+      // accept a system message after a user turn (see
+      // supportsMidConversationSystemMessages); the transport just appends it.
       options.onPayload = withMidConversationSystemPrompt(
         options.onPayload,
         input.midConversationSystemPrompt,
       );
+    }
+    if (resolved.model.api === "anthropic-messages") {
       if (
         resolved.model.id.includes("claude-fable-5") &&
         anthropicEffortForSettings(input.agent.model_settings) === "max"
