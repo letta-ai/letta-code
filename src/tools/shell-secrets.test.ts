@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { bash } from "@/tools/impl/bash";
+import { backgroundProcesses } from "@/tools/impl/process_manager";
 
 import { shell_command } from "@/tools/impl/shell-command.js";
 import {
@@ -147,7 +148,7 @@ describe("shell secret execution", () => {
     expectLiteralSecrets(result.output);
   });
 
-  test("does not scrub an unused low-entropy secret", async () => {
+  test("scrubs raw secret matches even when the command does not reference them", async () => {
     await seedSecrets();
     const context = await prepareToolExecutionContextForSpecificTools(
       ["Bash"],
@@ -170,10 +171,8 @@ describe("shell secret execution", () => {
       );
 
       expect(result.status).toBe("success");
-      expect(toolReturnText(result.toolReturn)).toContain("letta");
-      expect(toolReturnText(result.toolReturn)).not.toContain(
-        "PROFILE=<REDACTED>",
-      );
+      expect(toolReturnText(result.toolReturn)).not.toContain("letta");
+      expect(toolReturnText(result.toolReturn)).toContain("PROFILE=<REDACTED>");
     } finally {
       releaseToolExecutionContext(context.contextId);
     }
@@ -210,6 +209,7 @@ describe("shell secret execution", () => {
       const outputFile = launchedText.match(/Output file: (.+)/)?.[1];
       expect(taskId).toBeString();
       expect(outputFile).toBeString();
+      expect(outputFile).not.toContain(seededSecrets.PROFILE);
 
       const completed = await executeTool(
         "TaskOutput",
@@ -219,7 +219,10 @@ describe("shell secret execution", () => {
       const output = toolReturnText(completed.toolReturn);
       expect(output).toContain("PASSWORD=<REDACTED>");
       expect(output).not.toContain(seededSecrets.PASSWORD);
-      expect(readFileSync(outputFile as string, "utf8")).not.toContain(
+      // Model-facing paths are redacted too; inspect the actual file through
+      // the process registry rather than interpreting redacted display text.
+      const storedPath = backgroundProcesses.get(taskId as string)?.outputFile;
+      expect(readFileSync(storedPath as string, "utf8")).not.toContain(
         seededSecrets.PASSWORD,
       );
     } finally {
