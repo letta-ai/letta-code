@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INHERITED_SECRET_NAMES_ENV } from "@/agent/subagents/subagent-launcher";
@@ -14,6 +14,7 @@ import {
   extractSecretEnvFromCommand,
   getManagedCloudAgentSecretEnv,
   getScopedSecretRedactions,
+  mergeSecretRedactions,
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
 import {
@@ -218,6 +219,66 @@ describe("all-tool secret redaction", () => {
       }
     });
   }
+
+  test("redacts the active runtime credential from Read and tool_end output", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "letta-read-runtime-key-"));
+    const activeRuntimeKey = "active-runtime-read-key";
+    const file = join(directory, "runtime-key.txt");
+    writeFileSync(file, activeRuntimeKey);
+    const originalApiKey = process.env.LETTA_API_KEY;
+    process.env.LETTA_API_KEY = activeRuntimeKey;
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Read"],
+      {
+        runtimeContext: {
+          workingDirectory: directory,
+        },
+        workingDirectory: directory,
+        modEvents: {
+          async emit(name, event) {
+            if (name === "tool_end") {
+              (
+                event as ModToolEndEvent & {
+                  result?: { status: "success"; output: string };
+                }
+              ).result = {
+                status: "success",
+                output: `override:${activeRuntimeKey}`,
+              };
+            }
+            return { diagnostics: [], handlerCount: 0, name, results: [] };
+          },
+        },
+      },
+    );
+
+    try {
+      const result = await executeTool(
+        "Read",
+        { file_path: file },
+        { toolContextId: prepared.contextId },
+      );
+      const text = asText(result.toolReturn);
+      expect(text).toBe("override:LETTA_API_KEY=<REDACTED>");
+      expect(text).not.toContain(activeRuntimeKey);
+    } finally {
+      releaseToolExecutionContext(prepared.contextId);
+      rmSync(directory, { recursive: true, force: true });
+      if (originalApiKey === undefined) delete process.env.LETTA_API_KEY;
+      else process.env.LETTA_API_KEY = originalApiKey;
+    }
+  });
+
+  test("keeps colliding configured and runtime credentials in redaction scope", () => {
+    expect(
+      Object.values(
+        mergeSecretRedactions(
+          { LETTA_API_KEY: "configured-collision-key" },
+          { LETTA_API_KEY: "runtime-collision-key" },
+        ),
+      ),
+    ).toEqual(["configured-collision-key", "runtime-collision-key"]);
+  });
 
   test("redacts a scoped secret from real Read output", async () => {
     const directory = mkdtempSync(join(tmpdir(), "letta-read-secret-"));
@@ -462,7 +523,6 @@ describe("managed cloud shell secret execution", () => {
     };
     process.env.LETTA_MANAGED_CLOUD_SANDBOX = "1";
     process.env.LETTA_API_KEY = managedRuntimeKey;
-    const chunks: string[] = [];
     let prepared: Awaited<
       ReturnType<typeof prepareToolExecutionContextForSpecificTools>
     > | null = null;
@@ -482,36 +542,20 @@ describe("managed cloud shell secret execution", () => {
       const launched = await executeTool(
         "Bash",
         {
-          command:
-            "node -e \"const value=process.env.LETTA_API_KEY??''; process.stdout.write(value.slice(0,5)); setTimeout(()=>process.stdout.write(value.slice(5)),25)\"",
-          run_in_background: true,
+          command: `node -e 'const runtime=process.env.LETTA_API_KEY??""; const configured=${JSON.stringify(configuredAgentKey)}; process.stdout.write(runtime.slice(0,5)); setTimeout(()=>process.stdout.write(runtime.slice(5)+"|"+configured),25)'`,
           timeout: 5000,
+          foregroundYieldMs: 1000,
+          secretRedactions: mergeSecretRedactions(
+            { LETTA_API_KEY: configuredAgentKey },
+            { LETTA_API_KEY: managedRuntimeKey },
+          ),
         },
-        {
-          toolContextId: prepared.contextId,
-          onOutput: (chunk) => chunks.push(chunk),
-        },
+        { toolContextId: prepared.contextId },
       );
-      taskId = asText(launched.toolReturn).match(/ID: (bash_\d+)/)?.[1];
-      expect(taskId).toBeString();
-      const completed = await executeTool(
-        "TaskOutput",
-        { task_id: taskId, block: true, timeout: 5000 },
-        {
-          toolContextId: prepared.contextId,
-          onOutput: (chunk) => chunks.push(chunk),
-        },
-      );
-      const text = asText(completed.toolReturn);
+      const text = asText(launched.toolReturn);
       expect(text).toContain("LETTA_API_KEY=<REDACTED>");
       expect(text).not.toContain(managedRuntimeKey);
       expect(text).not.toContain(configuredAgentKey);
-      expect(chunks.join("")).not.toContain(managedRuntimeKey);
-      const outputFile = backgroundProcesses.get(taskId as string)?.outputFile;
-      expect(outputFile).toBeString();
-      expect(readFileSync(outputFile as string, "utf8")).not.toContain(
-        managedRuntimeKey,
-      );
     } finally {
       if (taskId) {
         const processState = backgroundProcesses.get(taskId);

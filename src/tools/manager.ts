@@ -83,6 +83,7 @@ import {
 import {
   extractSecretEnvFromCommand,
   getScopedSecretRedactions,
+  mergeSecretRedactions,
   scrubSecretsFromString,
   scrubToolExecutionResult,
 } from "./secret-substitution";
@@ -2424,7 +2425,10 @@ async function executeToolInner(
             command.every((part) => typeof part === "string"))
             ? extractSecretEnvFromCommand(command, scopedAgentId)
             : {};
-        invocationSecrets = { ...secretEnv, ...getShellOutputRedactions() };
+        invocationSecrets = mergeSecretRedactions(
+          secretEnv,
+          getShellOutputRedactions(),
+        );
         if (options?.onOutput) {
           enhancedArgs = {
             ...enhancedArgs,
@@ -2696,7 +2700,10 @@ export async function executeTool(
   const scrubResult = (result: ToolExecutionResult) =>
     scrubToolExecutionResult(
       result,
-      getScopedSecretRedactions(executionScope.agentId ?? undefined),
+      mergeSecretRedactions(
+        getScopedSecretRedactions(executionScope.agentId ?? undefined),
+        getShellOutputRedactions(),
+      ),
     );
   const modEvents = context?.modEvents;
   if (!modEvents || typeof res.toolReturn !== "string") return scrubResult(res);

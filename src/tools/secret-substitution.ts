@@ -61,21 +61,28 @@ function getInheritedSecretEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   }
 }
 
+export function mergeSecretRedactions(
+  ...sources: Readonly<Record<string, string>>[]
+): Record<string, string> {
+  const redactions: Record<string, string> = {};
+  for (const source of sources) {
+    for (const [name, value] of Object.entries(source)) {
+      if (Object.values(redactions).includes(value)) continue;
+      let alias = name;
+      while (alias in redactions) alias += "_INHERITED";
+      redactions[alias] = value;
+    }
+  }
+  return redactions;
+}
+
 export function getScopedSecretRedactions(
   agentId: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
   const inherited = getInheritedSecretEnv(env);
   const current = agentId ? loadSecrets(agentId) : {};
-  const redactions = { ...inherited, ...current };
-  for (const [name, value] of Object.entries(inherited)) {
-    if (current[name] !== undefined && current[name] !== value) {
-      let alias = `${name}_INHERITED`;
-      while (alias in redactions) alias += "_INHERITED";
-      redactions[alias] = value;
-    }
-  }
-  return redactions;
+  return mergeSecretRedactions(current, inherited);
 }
 
 export function getManagedCloudAgentSecretEnv(
