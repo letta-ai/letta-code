@@ -2427,6 +2427,7 @@ async function executeToolInner(
             : {};
         invocationSecrets = mergeSecretRedactions(
           secretEnv,
+          getScopedSecretRedactions(scopedAgentId),
           getShellOutputRedactions(),
         );
         if (options?.onOutput) {
@@ -2702,7 +2703,7 @@ export async function executeTool(
       result,
       mergeSecretRedactions(
         getScopedSecretRedactions(executionScope.agentId ?? undefined),
-        getShellOutputRedactions(),
+        runWithRuntimeContext(executionScope, getShellOutputRedactions),
       ),
     );
   const modEvents = context?.modEvents;

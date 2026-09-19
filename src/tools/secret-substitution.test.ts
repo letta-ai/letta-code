@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INHERITED_SECRET_NAMES_ENV } from "@/agent/subagents/subagent-launcher";
@@ -471,7 +471,7 @@ describe("managed cloud shell secret execution", () => {
       const text = asText(result.toolReturn);
       expect(text).not.toContain(configuredAgentKey);
       expect(text).not.toContain(managedRuntimeKey);
-      expect(text).toContain("LETTA_API_KEY=<REDACTED>");
+      expect(text).toContain("LETTA_API_KEY_INHERITED=<REDACTED>");
       expect(text).not.toContain(staleAgentId);
       expect(text).not.toContain(staleConversationId);
       expect(text).not.toContain(staleMemoryDir);
@@ -527,6 +527,9 @@ describe("managed cloud shell secret execution", () => {
       ReturnType<typeof prepareToolExecutionContextForSpecificTools>
     > | null = null;
     let taskId: string | undefined;
+    const runtimeScript = createTempRuntimeScriptCommand(
+      `const runtime=process.env.LETTA_API_KEY??""; const configured=${JSON.stringify(configuredAgentKey)}; process.stdout.write(runtime.slice(0,5)); setTimeout(()=>process.stdout.write(runtime.slice(5)+"|"+configured),25)`,
+    );
 
     try {
       prepared = await prepareToolExecutionContextForSpecificTools(
@@ -542,20 +545,29 @@ describe("managed cloud shell secret execution", () => {
       const launched = await executeTool(
         "Bash",
         {
-          command: `node -e 'const runtime=process.env.LETTA_API_KEY??""; const configured=${JSON.stringify(configuredAgentKey)}; process.stdout.write(runtime.slice(0,5)); setTimeout(()=>process.stdout.write(runtime.slice(5)+"|"+configured),25)'`,
+          command: runtimeScript.command,
           timeout: 5000,
-          foregroundYieldMs: 1000,
-          secretRedactions: mergeSecretRedactions(
-            { LETTA_API_KEY: configuredAgentKey },
-            { LETTA_API_KEY: managedRuntimeKey },
-          ),
+          run_in_background: true,
         },
         { toolContextId: prepared.contextId },
       );
-      const text = asText(launched.toolReturn);
-      expect(text).toContain("LETTA_API_KEY=<REDACTED>");
-      expect(text).not.toContain(managedRuntimeKey);
-      expect(text).not.toContain(configuredAgentKey);
+      taskId = asText(launched.toolReturn).match(/ID: (bash_\d+)/)?.[1];
+      expect(taskId).toBeString();
+      const completed = await executeTool(
+        "TaskOutput",
+        { task_id: taskId, block: true, timeout: 5000 },
+        { toolContextId: prepared.contextId },
+      );
+      const outputFile = backgroundProcesses.get(taskId as string)?.outputFile;
+      expect(outputFile).toBeString();
+      for (const text of [
+        asText(completed.toolReturn),
+        readFileSync(outputFile as string, "utf8"),
+      ]) {
+        expect(text).toContain("<REDACTED>");
+        expect(text).not.toContain(managedRuntimeKey);
+        expect(text).not.toContain(configuredAgentKey);
+      }
     } finally {
       if (taskId) {
         const processState = backgroundProcesses.get(taskId);
@@ -564,6 +576,7 @@ describe("managed cloud shell secret execution", () => {
         backgroundProcesses.delete(taskId);
       }
       if (prepared) releaseToolExecutionContext(prepared.contextId);
+      runtimeScript.cleanup();
       if (originalEnv.marker === undefined) {
         delete process.env.LETTA_MANAGED_CLOUD_SANDBOX;
       } else {
