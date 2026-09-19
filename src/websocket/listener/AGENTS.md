@@ -64,6 +64,25 @@ caller must guess whether another layer already finalized the turn.
 `requires_approval` is a continuation boundary, not a terminal turn. A pending
 approval remains inside the same active lease.
 
+## Recovery Ownership
+
+Recovery observes pending work; it must not take it from another listener.
+Before resuming an interrupted turn (including approval recovery) after a
+restart or reconnect, verify conversation ownership first:
+
+- No inbound-teleport handoff is expected or pending.
+- For a Cloud relay registration (connection ID starting `conn-`), the server
+  snapshot must show no conflicting listeners and either an `active_harness`
+  whose `connection_id` is this listener or `state: IDLE`.
+- Ownership verification fails closed: on error or timeout, do not recover.
+
+A delivery or unclaimed live run is not an ownerless crashed turn. Interrupted
+tool calls are never replayed silently; resuming an interrupted turn requires
+an explicit owner-authorized continuation signal, and the listener must not
+invent one. Automatic approval continuation
+(`startRecoveredApprovalContinuation`) runs only on an idle lifecycle after
+the ownership check passes.
+
 ## Queue And Status
 
 Queue gating consumes `turnLifecycle.snapshot()`. It must not reconstruct
@@ -74,10 +93,22 @@ Do not add queue self-healing as the primary fix for an impossible state. Find
 and repair the transition that produced the state. Defensive telemetry is fine
 after the producer path has a regression test.
 
+## Retry Budgets
+
+Provider API-error retries are budgeted per turn, not per consecutive failure.
+`llmApiErrorRetries` in `turn.ts` is turn-scoped and is not reset between
+provider failures, so intermittent failures separated by successful tool work
+consume the same cumulative budget (`LLM_API_ERROR_MAX_RETRIES` in
+`constants.ts`; deployment-recovery and pre-stream retries have separate
+budgets). When a turn dies after several transient provider errors, check the
+cumulative per-turn budget first instead of treating the last error as the
+root cause.
+
 ## Module Map
 
 - `turn-lifecycle.ts`: canonical state, leases, and transitions.
 - `turn.ts`: one-turn orchestration and the stream stop-reason loop.
+- `recovery-ownership.ts`: cross-listener recovery ownership gate.
 - `turn-setup.ts`: input normalization, reminders, mod start, and tool context.
 - `turn-send.ts`: initial/retry send selection and recovered terminal results.
 - `turn-approval.ts`: live approval execution and continuation branching.
