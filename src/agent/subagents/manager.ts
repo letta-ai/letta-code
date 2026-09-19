@@ -936,6 +936,7 @@ async function spawnSubagentInContext(
       conversationId: existingConversationId,
     });
     updateSubagent(subagentId, {
+      agentId: existingAgentId,
       agentURL: forkAgentURL,
       conversationId: existingConversationId,
     });
