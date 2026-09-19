@@ -37,6 +37,7 @@ export function finishListenerTurn(
     agentId?: string | null;
     conversationId: string;
     turnId?: string;
+    clientMessageIds?: string[];
     error?: string;
     usage?: UsageStatistics;
   },
@@ -79,6 +80,9 @@ export function finishListenerTurn(
         stop_reason: options.stopReason,
         ...((options.runId ?? transition.runId)
           ? { run_id: options.runId ?? transition.runId ?? undefined }
+          : {}),
+        ...(options.clientMessageIds?.length
+          ? { client_message_ids: options.clientMessageIds }
           : {}),
         ...(options.error ? { error: options.error } : {}),
         ...(options.usage ? { usage: options.usage } : {}),

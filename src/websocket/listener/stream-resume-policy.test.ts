@@ -171,6 +171,7 @@ describe("listener stream resume policy", () => {
           turnCorrelation: {
             appendDequeuedBatch: () => {},
             observeRun: () => {},
+            getClientMessageIds: () => [],
           },
           msgRunIds,
           runId: undefined,
@@ -236,6 +237,7 @@ describe("listener stream resume policy", () => {
           turnCorrelation: {
             appendDequeuedBatch: () => {},
             observeRun: () => {},
+            getClientMessageIds: () => [],
           },
           msgRunIds: [],
           runId: undefined,
