@@ -53,16 +53,18 @@ export async function runMemoryWorker(
           report: "No memory conflict remains.",
         };
       }
+      let result: SubagentResult;
+      let syncError: string | undefined;
       try {
-        return await execute();
+        result = await execute();
       } finally {
         // Normal sync owns Git status checks and remote retries.
         try {
-          const result = await sync();
+          const syncResult = await sync();
           if (
-            result.status === "clean" ||
-            result.status === "pushed" ||
-            result.status === "skipped"
+            syncResult.status === "clean" ||
+            syncResult.status === "pushed" ||
+            syncResult.status === "skipped"
           ) {
             if (deps.recompile || getBackend().capabilities.promptRecompile) {
               await (deps.recompile ?? recompileAgentSystemPrompt)(
@@ -71,15 +73,20 @@ export async function runMemoryWorker(
               );
             }
           } else {
-            debugWarn("memory-worker", result.summary);
-            if (result.status === "conflict" && !params.repairOnly) {
-              deps.repair?.(result);
+            syncError = `Memory sync incomplete (${syncResult.status}): ${syncResult.summary}`;
+            debugWarn("memory-worker", syncError);
+            if (syncResult.status === "conflict" && !params.repairOnly) {
+              deps.repair?.(syncResult);
             }
           }
         } catch (error) {
-          debugWarn("memory-worker", `Memory sync failed: ${String(error)}`);
+          syncError = `Memory sync failed: ${String(error)}`;
+          debugWarn("memory-worker", syncError);
         }
       }
+      return syncError
+        ? { ...result, success: false, error: result.error ?? syncError }
+        : result;
     },
     params.signal,
   );

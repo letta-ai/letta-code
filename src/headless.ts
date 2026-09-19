@@ -1364,7 +1364,7 @@ export async function handleHeadlessCommand(
 
   // Memory workers use the existing checkout without startup sync.
   if (isMemoryWorkerSession()) {
-    settingsManager.setMemfsEnabled(agent.id, true);
+    settingsManager.setMemfsEnabled(agent.id, !isStatelessSession);
   } else if (isStatelessSession) {
     // Stateless launches do not hydrate or sync MemFS.
     settingsManager.setMemfsEnabled(agent.id, false);

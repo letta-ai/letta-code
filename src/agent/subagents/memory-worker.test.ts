@@ -222,3 +222,38 @@ test("reflection integrates its own worktree after a memory edit releases the ch
     "reflection finding\n",
   );
 });
+
+test("failed remote sync preserves the worker identity and report and releases the checkout", async () => {
+  const result = await runMemoryWorker(
+    scope(),
+    async () => {
+      writeFileSync(join(root, "note.md"), "remembered locally\n");
+      git("commit", "-am", "save memory");
+      return {
+        agentId: "agent-worker",
+        conversationId: "conv-worker",
+        success: true,
+        report: "Committed note.md",
+      };
+    },
+    {
+      sync: async () => ({
+        status: "push_failed",
+        summary: "Remote timed out",
+        memoryDir: root,
+        localOnly: false,
+      }),
+    },
+  );
+  expect(result).toMatchObject({
+    agentId: "agent-worker",
+    conversationId: "conv-worker",
+    success: false,
+    report: "Committed note.md",
+    error: "Memory sync incomplete (push_failed): Remote timed out",
+  });
+  expect(git("status", "--porcelain")).toBe("");
+  const release = await claimMemoryOperation(root);
+  expect(release).not.toBeNull();
+  await release?.();
+});

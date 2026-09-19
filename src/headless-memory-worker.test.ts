@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -21,7 +22,10 @@ for (const mode of ["one-shot", "bidirectional", "primary"] as const) {
     try {
       const storageDir = join(home, "store");
       const agentId = "local-agent-memory-repair";
-      const store = new LocalStore(agentId, { storageDir });
+      const store = new LocalStore(agentId, {
+        storageDir,
+        defaultAgentModel: "anthropic/claude-sonnet-4-6",
+      });
       const original = store.createConversation({ agent_id: agentId });
       const repair = isRepair
         ? store.forkConversation(original.id, { hidden: true })
@@ -155,7 +159,7 @@ for (const mode of ["one-shot", "bidirectional", "primary"] as const) {
         seedDefaultAgent: false,
       });
       const listParams = { agent_id: agentId, include_hidden: true };
-      expect(after.listConversations(listParams).length).toBe(2);
+      expect(after.listConversations(listParams).length).toBe(isRepair ? 2 : 1);
       if (repair) {
         expect(after.listConversationMessages(original.id)).toEqual([]);
         // Memory subagents use the one-shot launcher; bidirectional clients
@@ -179,22 +183,36 @@ for (const mode of ["one-shot", "bidirectional", "primary"] as const) {
             ),
         ).toBe(true);
       } else {
-        const conversations = after.listConversations(listParams);
-        const launched = conversations.find(
-          (conversation) => conversation.id !== original.id,
+        const workerIds = readdirSync(join(storageDir, "agents"))
+          .filter((file) => file.endsWith(".json"))
+          .map(
+            (file) =>
+              JSON.parse(readFileSync(join(storageDir, "agents", file), "utf8"))
+                .id as string,
+          )
+          .filter((id) => id !== agentId);
+        expect(workerIds).toHaveLength(1);
+        const workerId = workerIds[0];
+        if (!workerId) throw new Error("No memory worker created");
+        const workerStore = new LocalStore(workerId, {
+          storageDir,
+          seedDefaultAgent: false,
+        });
+        const workerMessages = JSON.stringify(
+          workerStore.listConversationMessages("default", {
+            agent_id: workerId,
+          }),
         );
-        if (!launched) throw new Error("No repair conversation was launched");
+        expect(workerMessages).toContain(
+          "Repair only the existing Git conflict",
+        );
+        expect(workerMessages).not.toContain(prompt);
+        expect(workerMessages).toContain(memoryDir);
         expect(
-          after
-            .listConversations({ agent_id: agentId })
-            .map((conversation) => conversation.id),
-        ).toEqual([original.id]);
-        expect(
-          JSON.stringify(after.listConversationMessages(launched.id)),
-        ).toContain("Repair only the existing Git conflict");
-        expect(
-          JSON.stringify(after.listConversationMessages(launched.id)),
-        ).toContain(prompt);
+          JSON.parse(readFileSync(settingsPath, "utf8")).agents.find(
+            (a: { agentId: string }) => a.agentId === workerId,
+          )?.memfs,
+        ).toBe(false);
         const originalMessages = JSON.stringify(
           after.listConversationMessages(original.id),
         );

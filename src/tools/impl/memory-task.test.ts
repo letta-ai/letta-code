@@ -1,9 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { clearAllSubagents, getSnapshot } from "@/agent/subagent-state";
+import {
+  clearAllSubagents,
+  getSnapshot,
+  updateSubagent,
+} from "@/agent/subagent-state";
 import { __testSetBackend, type Backend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
 import { finishBackgroundMemoryTasks } from "./memory-task-lifecycle";
@@ -24,7 +28,7 @@ afterEach(async () => {
     rmSync(root, { recursive: true, force: true });
 });
 
-test("memory delegates immediately, forks the originating conversation, and never notifies the primary", async () => {
+test("memory delegates immediately, exports the originating conversation and launches fresh, and never notifies the primary", async () => {
   const root = mkdtempSync(join(tmpdir(), "memory-task-"));
   roots.push(root);
   await settingsManager.reset();
@@ -39,26 +43,22 @@ test("memory delegates immediately, forks the originating conversation, and neve
   writeFileSync(join(root, "note.md"), "memory\n");
   git("add", "note.md");
   git("commit", "-m", "initial");
-  let startFork = () => {};
-  const forkStarted = new Promise<void>((resolve) => {
-    startFork = resolve;
+  let startExport = () => {};
+  const exportStarted = new Promise<void>((resolve) => {
+    startExport = resolve;
   });
-  let finishFork = () => {};
-  const forkGate = new Promise<void>((resolve) => {
-    finishFork = resolve;
+  let finishExport = () => {};
+  const exportGate = new Promise<void>((resolve) => {
+    finishExport = resolve;
   });
-  const forks: string[] = [];
+  const exports: string[] = [];
   __testSetBackend({
     capabilities: { localMemfs: true, remoteMemfs: false },
-    forkConversation: async (
-      conversationId: string,
-      options: { hidden: boolean },
-    ) => {
-      forks.push(conversationId);
-      expect(options.hidden).toBe(true);
-      startFork();
-      await forkGate;
-      return { id: "conv-memory-fork" };
+    listConversationMessages: async (conversationId: string) => {
+      exports.push(conversationId);
+      startExport();
+      await exportGate;
+      return [];
     },
   } as unknown as Backend);
   const notifications: unknown[] = [];
@@ -82,15 +82,25 @@ test("memory delegates immediately, forks the originating conversation, and neve
       spawnSubagentImpl: async (...args) => {
         spawned = true;
         expect(args[0]).toBe("memory");
-        expect(args[5]).toBe("agent-parent");
-        expect(args[6]).toBe("conv-memory-fork");
-        expect(args[8]).toBe(true);
+        expect(args[5]).toBeUndefined();
+        expect(args[6]).toBeUndefined();
+        expect(args[8]).toBeUndefined();
+        expect(args[1]).toContain(`Memory repository: ${root}`);
+        expect(args[1]).toContain("Remember Bun");
+        expect(args[10]).toContain("memory-handoffs/");
         expect(args[9]).toBe("agent-parent");
         expect(args[11]).toBe("conv-origin");
         expect(args[12]?.primaryRoot).toBe(root);
+        updateSubagent(args[3], {
+          agentId: "agent-worker",
+          conversationId: "default",
+        });
+        const log = readFileSync(result.outputFile, "utf8");
+        expect(log).toContain("agent_id=agent-worker conversation_id=default");
+        expect(log).not.toContain("[Task completed]");
         return {
-          agentId: "agent-parent",
-          conversationId: "conv-memory-fork",
+          agentId: "agent-worker",
+          conversationId: "default",
           success: true,
           report: "saved",
         };
@@ -113,7 +123,7 @@ test("memory delegates immediately, forks the originating conversation, and neve
     getSnapshot().agents.find((agent) => agent.id === result.subagentId)
       ?.silent,
   ).toBe(true);
-  await forkStarted;
+  await exportStarted;
   let drained = false;
   const drain = finishBackgroundMemoryTasks("agent-parent", "conv-origin").then(
     () => {
@@ -122,10 +132,53 @@ test("memory delegates immediately, forks the originating conversation, and neve
   );
   await Bun.sleep(10);
   expect(drained).toBe(false);
-  finishFork();
+  finishExport();
   await drain;
   await completion;
-  expect(forks).toEqual(["conv-origin"]);
+  expect(exports).toEqual(["conv-origin"]);
   expect(spawned, backgroundTasks.get(result.taskId)?.error).toBe(true);
   expect(notifications).toEqual([]);
+});
+
+test("a failed transcript export terminates the silent task with an inspectable error", async () => {
+  const root = mkdtempSync(join(tmpdir(), "memory-task-failed-"));
+  roots.push(root);
+  await settingsManager.reset();
+  process.env.HOME = root;
+  await settingsManager.initialize();
+  execFileSync("git", ["init", "-b", "main", root], { stdio: "pipe" });
+  __testSetBackend({
+    capabilities: { localMemfs: true, remoteMemfs: false },
+    listConversationMessages: async () => {
+      throw new Error("Transcript unavailable");
+    },
+  } as unknown as Backend);
+  let notified = false;
+  const task = spawnBackgroundSubagentTask({
+    subagentType: "memory",
+    description: "remember",
+    prompt: "Remember Bun",
+    parentScope: { agentId: "agent-parent", conversationId: "conv-origin" },
+    memoryScope: { primaryRoot: root, writableRoots: [root] },
+    deps: {
+      spawnSubagentImpl: async () => {
+        throw new Error("Must not launch without handoff");
+      },
+      addToMessageQueueImpl: () => {
+        notified = true;
+      },
+      runSubagentStopHooksImpl: async () => ({
+        blocked: false,
+        errored: false,
+        feedback: [],
+        results: [],
+      }),
+    },
+  });
+  await finishBackgroundMemoryTasks("agent-parent", "conv-origin");
+  expect(backgroundTasks.get(task.taskId)?.status).toBe("failed");
+  expect(readFileSync(task.outputFile, "utf8")).toContain(
+    "[error] Transcript unavailable\n\n[Task failed]",
+  );
+  expect(notified).toBe(false);
 });

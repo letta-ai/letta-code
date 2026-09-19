@@ -93,7 +93,7 @@ Custom prompt body`,
     const hiddenFileTools = ["Read", "Write", "Glob", "Grep"];
 
     expect(configs.reflection?.allowedTools).toContain("Edit");
-    expect(configs.memory?.fork).toBe(true);
+    expect(configs.memory?.fork).toBe(false);
     expect(configs.memory?.allowedTools).toEqual([
       "Bash",
       "Read",
@@ -134,6 +134,12 @@ Custom prompt body`,
         "memfs-v2",
         false,
       );
+      if (name === "memory") {
+        expect(resolved.fork).toBe(false);
+        expect(resolved.systemPrompt).toContain(
+          "specific missing fact or ambiguity",
+        );
+      }
       expect(resolved.systemPrompt).not.toContain("MemFS v2");
       expect(resolved.systemPrompt).not.toContain("$MEMORY_DIR/system/");
       // shared v2 layout markers

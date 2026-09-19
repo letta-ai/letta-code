@@ -169,4 +169,4 @@ Behavior notes:
 - **Risky**: Multiple agents editing the same file (conflict detection will handle it, but may lose changes)
 - **Best practice**: Partition work by file or directory boundaries for parallel execution
 
-Memory subagents (`subagent_type: "memory"`) silently edit or repair memory in the background using a fork of this conversation. Continue immediately after delegation; they do not send completion notifications. Do not wait or poll for memory tasks.
+Memory subagents (`subagent_type: "memory"`) start fresh and silently edit or repair memory in the background. Include all necessary facts, corrections, and exceptions in the assignment, quoting factual corrections and exceptions verbatim rather than broadening their scope. The parent transcript is available only as a reference if needed. Continue immediately after delegation; they do not send completion notifications. Do not wait or poll for memory tasks.

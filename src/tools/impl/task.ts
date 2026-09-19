@@ -14,6 +14,7 @@ import {
   getSnapshot as getSubagentSnapshot,
   getSubagentToolCount,
   registerSubagent,
+  subscribeToSubagentLifecycle,
 } from "@/agent/subagent-state.js";
 import {
   clearSubagentConfigCache,
@@ -23,6 +24,7 @@ import {
 } from "@/agent/subagents";
 import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
+import { prepareMemoryHandoff } from "@/agent/subagents/memory-handoff";
 import {
   buildMemoryRepairPrompt,
   runMemoryWorker,
@@ -462,19 +464,19 @@ export function spawnBackgroundSubagentTask(
     (workerMemoryDir
       ? { primaryRoot: workerMemoryDir, writableRoots: [workerMemoryDir] }
       : undefined);
-  const execute = (fork?: { agentId: string; conversationId: string }) => {
+  const execute = (assignment = prompt, parentTranscript = transcriptPath) => {
     return spawnSubagentFn(
       subagentType,
-      prompt,
+      assignment,
       model,
       subagentId,
       abortController.signal,
-      fork?.agentId ?? existingAgentId,
-      fork?.conversationId ?? existingConversationId,
+      existingAgentId,
+      existingConversationId,
       maxTurns,
-      fork ? true : forkedContext,
+      forkedContext,
       parentAgentIdForSpawn,
-      transcriptPath,
+      parentTranscript,
       resolvedParentScope?.conversationId,
       effectiveMemoryScope,
       systemPromptOverride,
@@ -482,6 +484,23 @@ export function spawnBackgroundSubagentTask(
       actingUserId,
     );
   };
+  let loggedAddress = "";
+  const unsubscribe =
+    subagentType === "memory"
+      ? subscribeToSubagentLifecycle(() => {
+          const worker = getSubagentSnapshotFn().agents.find(
+            (entry) => entry.id === subagentId,
+          );
+          if (!worker?.agentId || !worker.conversationId) return;
+          const address = `${worker.agentId}:${worker.conversationId}`;
+          if (address === loggedAddress) return;
+          loggedAddress = address;
+          appendToOutputFile(
+            outputFile,
+            `${buildTaskResultHeader(subagentType, subagentId, { agentId: worker.agentId, conversationId: worker.conversationId })}\n`,
+          );
+        })
+      : () => {};
   const subagentExecution =
     subagentType === "memory" && resolvedParentScope && workerMemoryDir
       ? runMemoryWorker(
@@ -492,20 +511,22 @@ export function spawnBackgroundSubagentTask(
             signal: abortController.signal,
           },
           async () => {
-            const config = (await getAllSubagentConfigs()).memory;
-            if (!config) throw new Error("Memory subagent is unavailable");
-            const fork = await forkParentConversation({
-              backend: getBackend(),
-              parentAgentId: resolvedParentScope.agentId,
-              parentConversationId: resolvedParentScope.conversationId,
-              config,
-              model,
-              signal: abortController.signal,
+            const handoff = await prepareMemoryHandoff({
+              ...resolvedParentScope,
+              memoryDir: workerMemoryDir,
+              assignment: prompt,
+              repairOnly: args.memoryRepairOnly,
             });
-            return execute({
-              agentId: resolvedParentScope.agentId,
-              conversationId: fork.id,
-            });
+            const result = await execute(
+              handoff.prompt,
+              handoff.transcriptPath,
+            );
+            // Preserve the worker identity/report even if remote sync is slow or fails.
+            appendToOutputFile(
+              outputFile,
+              `${buildTaskResultHeader(subagentType, subagentId, result)}\n\n${result.report}\n[Memory worker finished; syncing commits]\n`,
+            );
+            return result;
           },
           {
             repair: (result) => {
@@ -641,7 +662,10 @@ export function spawnBackgroundSubagentTask(
         error instanceof Error ? error.message : String(error);
       bgTask.status = "failed";
       bgTask.error = errorMessage;
-      appendToOutputFile(outputFile, `[error] ${errorMessage}\n`);
+      appendToOutputFile(
+        outputFile,
+        `[error] ${errorMessage}\n\n[Task failed]\n`,
+      );
       scheduleBackgroundTaskCleanup(taskId);
       completeSubagentFn(subagentId, { success: false, error: errorMessage });
 
@@ -718,7 +742,8 @@ export function spawnBackgroundSubagentTask(
       ).catch(() => {
         // Silently ignore hook errors
       });
-    });
+    })
+    .finally(unsubscribe);
 
   return { taskId, outputFile, subagentId };
 }
