@@ -18,6 +18,7 @@ import {
   isSearchTool,
   isShellTool,
   isTodoTool,
+  isWorkflowTool,
 } from "./tool-name-mapping.js";
 
 function formatItemCount(count: number): string {
@@ -346,6 +347,19 @@ export function formatArgsDisplay(
             } else if (filePath) {
               display = formatDisplayPath(filePath);
             }
+            return { display, parsed };
+          }
+
+          // Workflow: the script is pages long; show its meta description.
+          if (isWorkflowTool(toolName)) {
+            const script = String(parsed.script ?? "");
+            const description =
+              /description\s*:\s*(['"`])((?:\\.|(?!\1).)*)\1/.exec(script)?.[2];
+            display = description
+              ? description
+              : parsed.scriptPath
+                ? formatDisplayPath(String(parsed.scriptPath))
+                : "workflow";
             return { display, parsed };
           }
 
