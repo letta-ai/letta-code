@@ -188,7 +188,6 @@ function truncateOutput(
     "exec_command",
     {
       workingDirectory: getCurrentWorkingDirectory(),
-      toolName: "exec_command",
       secrets,
     },
   ).content;

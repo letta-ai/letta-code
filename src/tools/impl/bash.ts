@@ -526,17 +526,25 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       const output = [foregroundOutput.stdout, foregroundOutput.stderr]
         .filter(Boolean)
         .join("\n");
+      const failed = result.status === "failed";
+      // Both outcomes save the full output. Keeping the file on failure is a
+      // deliberate departure from Claude Code, which omits it: the foreground
+      // output file is already deleted, so the excerpt would be all that is left
+      // of a large failing build or test log.
       const { content: truncatedOutput } = truncateByChars(
         output || "(Command completed with no output)",
-        LIMITS.BASH_OUTPUT_CHARS,
+        failed ? LIMITS.BASH_FAILURE_OUTPUT_CHARS : LIMITS.BASH_OUTPUT_CHARS,
         "Bash",
         {
           workingDirectory: userCwd,
-          toolName: "Bash",
           secrets: outputRedactions,
+          // Failures keep a head-and-tail excerpt; successes a short prefix.
+          ...(failed
+            ? { useMiddleTruncation: true }
+            : { previewChars: LIMITS.OVERFLOW_PREVIEW_CHARS }),
         },
       );
-      if (result.status === "failed") {
+      if (failed) {
         const isAbort =
           signal?.aborted ||
           ("error" in result &&
