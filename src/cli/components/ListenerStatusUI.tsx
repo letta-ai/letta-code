@@ -6,10 +6,10 @@ interface ListenerStatusUIProps {
   connectionId: string;
   envName: string;
   /**
-   * First registration on this computer (typically pasted from onboarding).
-   * The welcome banner above already named the computer, and the user is
-   * mid-flow in a browser tab that detects the listener on its own, so the
-   * footer points them back there instead of at the agent computer picker.
+   * First registration on this computer. The welcome banner above already
+   * named it, and a first `letta server` is always in service of a flow in
+   * Letta (onboarding, the computer picker) that detects the listener on its
+   * own, so the footer points back at Letta rather than at the picker.
    */
   isFirstRun?: boolean;
   onReady: (callbacks: {
@@ -76,8 +76,8 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
       <Box>
         {isFirstRun ? (
           <Text dimColor>
-            Connected. Go back to the Letta tab in your browser — it will detect
-            this computer automatically. Keep this window open.
+            Connected. Head back to Letta in your browser — it will detect this
+            computer automatically. Keep this window open.
           </Text>
         ) : (
           <Text dimColor>
