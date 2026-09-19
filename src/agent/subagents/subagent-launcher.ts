@@ -29,6 +29,8 @@ import {
 import { TRANSCRIPT_ROOT_ENV } from "@/utils/transcript-paths";
 import type { SubagentLaunchProfile, SubagentMemoryScope } from ".";
 
+export const INHERITED_SECRET_NAMES_ENV = "LETTA_INHERITED_SECRET_NAMES";
+
 interface ResolveSubagentLauncherOptions {
   env?: NodeJS.ProcessEnv;
   argv?: string[];
@@ -134,6 +136,8 @@ export function resolveSubagentLauncher(
 export interface ComposeSubagentChildEnvOptions {
   /** The env of the process spawning the subagent (parent). */
   parentProcessEnv: NodeJS.ProcessEnv;
+  /** Agent-scoped secrets allowed to enter this managed cloud child process. */
+  agentSecretEnv?: Record<string, string>;
   listenerConnectionId?: string | null;
   /** Active backend mode to force in the child CLI process. */
   backendMode?: BackendMode;
@@ -212,6 +216,7 @@ export function composeSubagentChildEnv(
 ): NodeJS.ProcessEnv {
   const {
     parentProcessEnv,
+    agentSecretEnv,
     listenerConnectionId,
     backendMode,
     localBackendStorageDir,
@@ -228,6 +233,10 @@ export function composeSubagentChildEnv(
 
   const childEnv: NodeJS.ProcessEnv = {
     ...parentProcessEnv,
+    ...agentSecretEnv,
+    ...(agentSecretEnv && {
+      [INHERITED_SECRET_NAMES_ENV]: JSON.stringify(Object.keys(agentSecretEnv)),
+    }),
     ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     ...(actingUserId && { [ACTING_USER_ID_ENV]: actingUserId }),

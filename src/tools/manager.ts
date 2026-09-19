@@ -81,7 +81,9 @@ import {
 } from "./permission-mode-state";
 import {
   extractSecretEnvFromCommand,
+  getScopedSecretRedactions,
   scrubSecretsFromString,
+  scrubToolExecutionResult,
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 import { TOOL_PERMISSIONS } from "./tool-permissions";
@@ -2678,11 +2680,6 @@ export async function executeTool(
   const context = options?.toolContextId
     ? getExecutionContextById(options.toolContextId)
     : undefined;
-  const modEvents = context?.modEvents;
-  if (!modEvents || typeof res.toolReturn !== "string") {
-    return res;
-  }
-
   const executionScope = context?.runtimeContext
     ? buildExecutionRuntimeContextSnapshot({
         workingDirectory: context.runtimeContext.workingDirectory ?? undefined,
@@ -2693,6 +2690,14 @@ export async function executeTool(
         workingDirectory: context?.workingDirectory,
         permissionModeState: context?.permissionModeState,
       });
+  const scrubResult = (result: ToolExecutionResult) =>
+    scrubToolExecutionResult(
+      result,
+      getScopedSecretRedactions(executionScope.agentId ?? undefined),
+    );
+  const modEvents = context?.modEvents;
+  if (!modEvents || typeof res.toolReturn !== "string") return scrubResult(res);
+
   const modContext =
     context?.modContext ??
     toolExecutionModContext(executionScope, {
@@ -2711,9 +2716,11 @@ export async function executeTool(
     output: res.toolReturn,
   });
 
-  return override
-    ? { ...res, toolReturn: override.output, status: override.status }
-    : res;
+  return scrubResult(
+    override
+      ? { ...res, toolReturn: override.output, status: override.status }
+      : res,
+  );
 }
 
 /**

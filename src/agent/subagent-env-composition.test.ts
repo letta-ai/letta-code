@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import {
   allocateSubagentName,
@@ -6,6 +7,7 @@ import {
 } from "@/agent/subagents/names";
 import {
   composeSubagentChildEnv,
+  INHERITED_SECRET_NAMES_ENV,
   resolveSubagentInheritedPrimaryRoot,
 } from "@/agent/subagents/subagent-launcher";
 import {
@@ -343,6 +345,42 @@ describe("composeSubagentChildEnv", () => {
       });
       expect(env.LETTA_CODE_AGENT_ROLE).toBe("subagent");
     }
+  });
+
+  test("managed cloud agent secrets reach the real subagent child environment", () => {
+    const secret = `synthetic-${Date.now()}`;
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: {
+        HOME: "/home/user",
+        PATH: process.env.PATH,
+        LETTA_API_KEY: "managed-runtime-key",
+      },
+      agentSecretEnv: {
+        SYNTHETIC_CHILD_SECRET: secret,
+      },
+      parentAgentId: PARENT_ID,
+      launchProfile: "default",
+      inheritedPrimaryRoot: null,
+      inheritedApiKey: "managed-runtime-key",
+    });
+
+    expect(JSON.parse(env[INHERITED_SECRET_NAMES_ENV] ?? "[]")).toEqual([
+      "SYNTHETIC_CHILD_SECRET",
+    ]);
+    const child = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        "process.stdout.write(JSON.stringify({ secret: process.env.SYNTHETIC_CHILD_SECRET, apiKey: process.env.LETTA_API_KEY }))",
+      ],
+      { encoding: "utf8", env },
+    );
+
+    expect(child.status).toBe(0);
+    expect(JSON.parse(child.stdout)).toEqual({
+      secret,
+      apiKey: "managed-runtime-key",
+    });
   });
 
   test("parent process env is inherited (HOME, PATH, etc.)", () => {
