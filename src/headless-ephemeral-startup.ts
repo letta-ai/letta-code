@@ -1,5 +1,9 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import {
+  actingUserRequestOptions,
+  resolveActingUserId,
+} from "@/agent/acting-user";
+import {
   createEphemeralConversation,
   createLocalEphemeralConversation,
   projectResumedEphemeralConversation,
@@ -63,6 +67,7 @@ export function resumeHeadlessEphemeralConversation(
 export async function createHeadlessEphemeralConversation(params: {
   backendMode: string;
   isAgentLaunch?: boolean;
+  usesRemoteComputer?: boolean;
   personality: string | null | undefined;
   model: string | undefined;
   systemPromptPreset: string | undefined;
@@ -86,7 +91,14 @@ export async function createHeadlessEphemeralConversation(params: {
   if (params.backendMode === "local") {
     return createLocalEphemeralConversation(options);
   }
-  const created = await createEphemeralConversation(options);
+  const created = await createEphemeralConversation({
+    ...options,
+    // Match createStartupBackend: remote creation belongs to the initiator,
+    // not the account whose credential started the listener.
+    requestOptions: params.usesRemoteComputer
+      ? actingUserRequestOptions(resolveActingUserId())
+      : undefined,
+  });
   // Nested launches must not recover a parent deliberately omitted above.
   if (!options.parentAgentId) delete process.env.LETTA_PARENT_AGENT_ID;
   return created;

@@ -1142,12 +1142,12 @@ export async function handleHeadlessCommand(
 
   if (usesRemoteEnvironment && !backend.capabilities.environmentRouting)
     throw new Error("Computer routing requires the Cloud backend");
-
   if (!agent && ephemeralFlag) {
     try {
       const result = await createHeadlessEphemeralConversation({
         backendMode: startupBackendMode,
         isAgentLaunch,
+        usesRemoteComputer: usesRemoteEnvironment,
         personality: personalityInput,
         model,
         systemPromptPreset,

@@ -18,6 +18,7 @@ export interface CreateEphemeralConversationOptions {
   name?: string;
   isSubagent?: boolean;
   parentAgentId?: string;
+  requestOptions?: { headers?: Record<string, string> };
 }
 
 export async function buildEphemeralConversationCreateBody(
@@ -110,12 +111,16 @@ export async function createEphemeralConversation(
   options: CreateEphemeralConversationOptions,
 ): Promise<{ agent: AgentState; conversationId: string }> {
   const body = await buildEphemeralConversationCreateBody(options);
-  const conversation = await createEphemeralConversationRequest(body, {
-    ...(options.name !== undefined ? { name: options.name } : {}),
-    ...(options.isSubagent !== undefined
-      ? { is_subagent: options.isSubagent }
-      : {}),
-  });
+  const conversation = await createEphemeralConversationRequest(
+    body,
+    {
+      ...(options.name !== undefined ? { name: options.name } : {}),
+      ...(options.isSubagent !== undefined
+        ? { is_subagent: options.isSubagent }
+        : {}),
+    },
+    options.requestOptions,
+  );
   return {
     agent: projectEphemeralAgent(conversation.id, body, conversation.name),
     conversationId: conversation.id,

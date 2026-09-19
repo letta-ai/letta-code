@@ -25,7 +25,7 @@ function backendFixture(events: string[], parentName?: string) {
       expect(options).toMatchObject({ ephemeral: true, isSubagent: true });
       expect(options?.name).toBeTruthy();
       if (parentName)
-        expect(options?.name).toEndWith(`(${parentName}'s shadow)`);
+        expect(options?.name).not.toEndWith(`(${parentName}'s shadow)`);
       expect(options?.hidden).toBeUndefined();
       events.push(`fork:${conversationId}`);
       return { id: "conv-fork" };

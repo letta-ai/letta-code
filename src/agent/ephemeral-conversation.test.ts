@@ -141,64 +141,78 @@ describe("ephemeral conversation creation", () => {
     },
   );
 
-  test("fresh headless creation requires an explicit launch, not ambient parent or role", async () => {
-    const keys = [
-      "HOME",
-      "LETTA_BASE_URL",
-      "LETTA_PARENT_AGENT_ID",
-      "LETTA_CODE_AGENT_ROLE",
-    ] as const;
-    const previous = Object.fromEntries(
-      keys.map((key) => [key, process.env[key]]),
-    );
-    const home = mkdtempSync(join(tmpdir(), "letta-parent-scope-"));
-    const bodies: Record<string, unknown>[] = [];
-    const server = Bun.serve({
-      port: 0,
-      async fetch(request) {
-        expect(new URL(request.url).pathname).toBe(
-          "/v1/conversations/ephemeral",
-        );
-        const body = (await request.json()) as Record<string, unknown>;
-        bodies.push(body);
-        return Response.json({ ...body, id: "conv-created", agent_id: null });
-      },
-    });
-    try {
-      process.env.HOME = home;
-      process.env.LETTA_BASE_URL = server.url.toString().replace(/\/$/, "");
-      process.env.LETTA_PARENT_AGENT_ID =
-        "agent-11111111-1111-4111-8111-111111111111";
-      process.env.LETTA_CODE_AGENT_ROLE = "subagent";
-      await settingsManager.initialize();
-      for (const isAgentLaunch of [true, false]) {
-        await createHeadlessEphemeralConversation({
-          backendMode: "api",
-          isAgentLaunch,
-          personality: undefined,
-          model: "openai/gpt-5.6-luna",
-          systemPromptPreset: undefined,
-          systemPromptCustom: "minimal prompt",
-        });
-      }
-      expect(bodies[0]?.parent_agent_id).toBe(
-        "agent-11111111-1111-4111-8111-111111111111",
+  test.each([false, true])(
+    "fresh headless creation preserves explicit parent and initiator scope (remote=%s)",
+    async (usesRemoteComputer) => {
+      const keys = [
+        "HOME",
+        "LETTA_BASE_URL",
+        "LETTA_PARENT_AGENT_ID",
+        "LETTA_CODE_AGENT_ROLE",
+        "LETTA_ACTING_USER_ID",
+      ] as const;
+      const previous = Object.fromEntries(
+        keys.map((key) => [key, process.env[key]]),
       );
-      expect(bodies[1]).not.toHaveProperty("parent_agent_id");
-      expect(process.env.LETTA_PARENT_AGENT_ID).toBeUndefined();
-      expect(
-        bodies.every((body) => !("agent_id" in body) && !("secrets" in body)),
-      ).toBe(true);
-    } finally {
-      server.stop(true);
-      await settingsManager.reset();
-      for (const key of keys) {
-        if (previous[key] === undefined) delete process.env[key];
-        else process.env[key] = previous[key];
+      const home = mkdtempSync(join(tmpdir(), "letta-parent-scope-"));
+      const bodies: Record<string, unknown>[] = [];
+      const actingUsers: Array<string | null> = [];
+      const server = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          expect(new URL(request.url).pathname).toBe(
+            "/v1/conversations/ephemeral",
+          );
+          const body = (await request.json()) as Record<string, unknown>;
+          bodies.push(body);
+          actingUsers.push(request.headers.get("X-Letta-Acting-User-Id"));
+          return Response.json({ ...body, id: "conv-created", agent_id: null });
+        },
+      });
+      try {
+        process.env.HOME = home;
+        process.env.LETTA_BASE_URL = server.url.toString().replace(/\/$/, "");
+        process.env.LETTA_PARENT_AGENT_ID =
+          "agent-11111111-1111-4111-8111-111111111111";
+        process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+        process.env.LETTA_ACTING_USER_ID = "user-initiator";
+        await settingsManager.initialize();
+        for (const isAgentLaunch of [true, false]) {
+          await createHeadlessEphemeralConversation({
+            backendMode: "api",
+            isAgentLaunch,
+            usesRemoteComputer,
+            personality: undefined,
+            model: "openai/gpt-5.6-luna",
+            systemPromptPreset: undefined,
+            systemPromptCustom: "minimal prompt",
+          });
+        }
+        expect(actingUsers).toEqual(
+          usesRemoteComputer
+            ? ["user-initiator", "user-initiator"]
+            : [null, null],
+        );
+        expect(bodies.every((body) => !("requestOptions" in body))).toBe(true);
+        expect(bodies[0]?.parent_agent_id).toBe(
+          "agent-11111111-1111-4111-8111-111111111111",
+        );
+        expect(bodies[1]).not.toHaveProperty("parent_agent_id");
+        expect(process.env.LETTA_PARENT_AGENT_ID).toBeUndefined();
+        expect(
+          bodies.every((body) => !("agent_id" in body) && !("secrets" in body)),
+        ).toBe(true);
+      } finally {
+        server.stop(true);
+        await settingsManager.reset();
+        for (const key of keys) {
+          if (previous[key] === undefined) delete process.env[key];
+          else process.env[key] = previous[key];
+        }
+        rmSync(home, { recursive: true, force: true });
       }
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   test("creates local execution state outside the persistent local store", async () => {
     const storageDir = mkdtempSync(join(tmpdir(), "letta-local-persistent-"));

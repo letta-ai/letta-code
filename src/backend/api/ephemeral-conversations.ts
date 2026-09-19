@@ -46,10 +46,12 @@ export interface EphemeralConversationMetadata {
 export async function createEphemeralConversation(
   body: EphemeralConversationCreateBody,
   metadata: EphemeralConversationMetadata = {},
+  options?: { headers?: Record<string, string> },
 ): Promise<EphemeralConversation> {
   return apiRequest<EphemeralConversation>(
     "POST",
     "/v1/conversations/ephemeral",
     { ...body, ...metadata },
+    options,
   );
 }
