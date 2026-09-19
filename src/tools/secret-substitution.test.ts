@@ -324,6 +324,66 @@ describe("all-tool secret redaction", () => {
 });
 
 describe("managed cloud shell secret execution", () => {
+  test("protected managed runtime auth wins over an explicit agent secret", async () => {
+    const configuredAgentKey = "configured-agent-runtime-key";
+    const managedRuntimeKey = "managed-sandbox-runtime-key";
+    __testSeedSecretsCache(AGENT_A, { LETTA_API_KEY: configuredAgentKey });
+    const runtimeScript = createTempRuntimeScriptCommand(
+      "process.stdout.write(process.env.LETTA_API_KEY ?? '')",
+    );
+    const originalEnv = {
+      marker: process.env.LETTA_MANAGED_CLOUD_SANDBOX,
+      apiKey: process.env.LETTA_API_KEY,
+    };
+    process.env.LETTA_MANAGED_CLOUD_SANDBOX = "1";
+    process.env.LETTA_API_KEY = managedRuntimeKey;
+    let prepared: Awaited<
+      ReturnType<typeof prepareToolExecutionContextForSpecificTools>
+    > | null = null;
+
+    try {
+      prepared = await prepareToolExecutionContextForSpecificTools(["Bash"], {
+        runtimeContext: {
+          agentId: AGENT_A,
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+      });
+      const result = await executeTool(
+        "Bash",
+        {
+          command: `${runtimeScript.command} $LETTA_API_KEY`,
+          timeout: 5000,
+        },
+        { toolContextId: prepared.contextId },
+      );
+      const text = asText(result.toolReturn);
+      expect(text).toContain("LETTA_API_KEY=<REDACTED>");
+      expect(text).not.toContain(configuredAgentKey);
+      expect(text).not.toContain(managedRuntimeKey);
+      expect(getScopedSecretRedactions(AGENT_A).LETTA_API_KEY).toBe(
+        configuredAgentKey,
+      );
+    } finally {
+      if (prepared) releaseToolExecutionContext(prepared.contextId);
+      runtimeScript.cleanup();
+      for (const [name, value] of [
+        ["LETTA_MANAGED_CLOUD_SANDBOX", originalEnv.marker],
+        ["LETTA_API_KEY", originalEnv.apiKey],
+      ] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
+  test("local explicit references still use the configured agent secret", () => {
+    __testSeedSecretsCache(AGENT_A, { LETTA_API_KEY: SECRET_A });
+    expect(extractSecretEnvFromCommand("echo $LETTA_API_KEY", AGENT_A)).toEqual(
+      { LETTA_API_KEY: SECRET_A },
+    );
+  });
+
   test("injects and scrubs an unreferenced secret in a real child process", async () => {
     seedSecret(AGENT_A, SECRET_A);
     const runtimeScript = createTempRuntimeScriptCommand(

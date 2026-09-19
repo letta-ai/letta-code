@@ -136,9 +136,14 @@ export function extractSecretEnvFromCommand(
     }
   }
 
-  return isManagedCloudSandbox()
-    ? { ...getManagedCloudAgentSecretEnv(agentId), ...env }
-    : env;
+  if (!isManagedCloudSandbox()) return env;
+
+  const managedEnv = getManagedCloudAgentSecretEnv(agentId);
+  for (const name of PROTECTED_MANAGED_CLOUD_ENV_NAMES) {
+    const ambientValue = process.env[name];
+    if (ambientValue !== undefined) managedEnv[name] = ambientValue;
+  }
+  return { ...env, ...managedEnv };
 }
 
 /**
