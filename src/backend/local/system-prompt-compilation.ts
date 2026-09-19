@@ -268,11 +268,24 @@ function pad2(value: number): string {
   return value.toString().padStart(2, "0");
 }
 
-function formatUtcTimestamp(date: Date): string {
-  const hours = date.getUTCHours();
-  const hour12 = hours % 12 || 12;
-  const meridiem = hours < 12 ? "AM" : "PM";
-  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())} ${pad2(hour12)}:${pad2(date.getUTCMinutes())}:${pad2(date.getUTCSeconds())} ${meridiem} UTC+0000`;
+// Day resolution on purpose. The system prompt is the first item of every
+// request, and provider prompt caches match on an exact prefix from token 0
+// (DeepSeek, Anthropic, OpenAI). A second-resolution timestamp here changed the
+// prefix on every memory commit and re-billed the whole prompt as uncached input.
+// Nothing reads the compiled-at time back; it exists only for the model's
+// situational awareness, for which the day is enough.
+function formatUtcDay(date: Date): string {
+  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())} UTC`;
+}
+
+// Coarse bucket for the recall-memory size. An exact live count changes on
+// every turn and would defeat prefix caching for the same reason as above.
+function approximateMessageCount(count: number): string {
+  if (count < 50) return "fewer than 50";
+  if (count < 200) return "over 50";
+  if (count < 1000) return "over 200";
+  if (count < 5000) return "over 1,000";
+  return "over 5,000";
 }
 
 function compileMemoryMetadata(input: {
@@ -285,8 +298,8 @@ function compileMemoryMetadata(input: {
     "<memory_metadata>",
     `- AGENT_ID: ${input.agentId}`,
     `- CONVERSATION_ID: ${input.conversationId}`,
-    `- System prompt last recompiled: ${formatUtcTimestamp(input.compiledAt)}`,
-    `- ${input.previousMessageCount} previous messages between you and the user are stored in recall memory`,
+    `- System prompt last recompiled: ${formatUtcDay(input.compiledAt)}`,
+    `- ${approximateMessageCount(input.previousMessageCount)} previous messages between you and the user are stored in recall memory`,
     "</memory_metadata>",
   ].join("\n");
 }

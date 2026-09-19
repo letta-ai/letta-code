@@ -112,11 +112,56 @@ describe("local system prompt compilation", () => {
       expect(compiled.content).toContain("- AGENT_ID: agent-local-test");
       expect(compiled.content).toContain("- CONVERSATION_ID: local-conv-test");
       expect(compiled.content).toContain(
-        "- System prompt last recompiled: 2026-05-04 12:00:00 AM UTC+0000",
+        "- System prompt last recompiled: 2026-05-04 UTC",
       );
       expect(compiled.content).toContain(
-        "- 7 previous messages between you and the user are stored in recall memory",
+        "- fewer than 50 previous messages between you and the user are stored in recall memory",
       );
+    } finally {
+      await rm(memoryDir, { recursive: true, force: true });
+    }
+  });
+
+  test("memory metadata is stable across recompilations within the same day", async () => {
+    // Prompt caches (DeepSeek, Anthropic, OpenAI) match an exact prefix from
+    // token 0. The system prompt is that prefix, so anything volatile in it
+    // re-bills the whole prompt as uncached input on every memory commit.
+    const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-stable-"));
+    try {
+      await writeMemoryFile(
+        memoryDir,
+        "system/persona.md",
+        "Persona",
+        "I am a local agent.",
+      );
+      initAndCommitMemory(memoryDir);
+      const base = {
+        agent: agent("hello {CORE_MEMORY}"),
+        conversationId: "local-conv-test",
+        memoryDir,
+      };
+      const a = compileLocalSystemPrompt({
+        ...base,
+        now: new Date("2026-05-04T09:15:07.000Z"),
+        previousMessageCount: 120,
+      });
+      const b = compileLocalSystemPrompt({
+        ...base,
+        now: new Date("2026-05-04T21:48:59.000Z"),
+        previousMessageCount: 187,
+      });
+      // Same day, different second and different live count: identical prompt.
+      expect(b.content).toBe(a.content);
+      expect(a.content).not.toMatch(/\d{2}:\d{2}:\d{2}/);
+      expect(a.content).toContain("over 50 previous messages");
+      // A new day is allowed to change the prefix once.
+      const c = compileLocalSystemPrompt({
+        ...base,
+        now: new Date("2026-05-05T00:00:01.000Z"),
+        previousMessageCount: 187,
+      });
+      expect(c.content).not.toBe(a.content);
+      expect(c.content).toContain("2026-05-05 UTC");
     } finally {
       await rm(memoryDir, { recursive: true, force: true });
     }

@@ -49,6 +49,7 @@ import {
   type LocalBackendExecutionMode,
 } from "./local-executor-factory";
 import type { LocalMessage } from "./local-message";
+import { supportsMidConversationSystemMessages } from "./local-mid-conversation-memory";
 import {
   listLocalModels,
   localModelSettingsForHandle,
@@ -224,12 +225,6 @@ function localCompactionSettingsForStorage(
   if (!hasLocalSetting) return undefined;
 
   return { ...settings };
-}
-
-function supportsMidConversationSystemMessages(
-  agent: LocalAgentRecord,
-): boolean {
-  return agent.model === "anthropic/claude-opus-4-8";
 }
 
 function formatMidConversationMemoryUpdate(
