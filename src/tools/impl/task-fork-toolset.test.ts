@@ -49,4 +49,24 @@ describe("fork subagent toolset inheritance", () => {
       settingsManager.getToolsetPreference("agent-parent", "conv-fork"),
     ).toBe("auto");
   });
+
+  test("copies an ephemeral fork's toolset under its conversation runtime key", async () => {
+    settingsManager.setToolsetPreference(
+      "agent-parent",
+      "codex",
+      "conv-parent",
+    );
+    await inheritForkToolset(
+      "agent-parent",
+      "conv-parent",
+      "conv-child",
+      "conv-child",
+    );
+    expect(
+      settingsManager.getToolsetPreference("conv-child", "conv-child"),
+    ).toBe("codex");
+    expect(
+      settingsManager.getToolsetPreference("agent-parent", "conv-child"),
+    ).toBe("auto");
+  });
 });

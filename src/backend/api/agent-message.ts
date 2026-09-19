@@ -67,6 +67,8 @@ export async function resolveAgentMessageDestination(
     conversationId?: string;
     senderAgentId?: string;
     actingUserId?: string;
+    /** Reuse a lookup already authorized in this request's actor scope. */
+    resolvedConversation?: { id: string; agent_id: string | null };
     /** Calling runtime, independent of optional sender attribution overrides. */
     currentConversation?: { agentId?: string; conversationId?: string };
   },
@@ -80,10 +82,10 @@ export async function resolveAgentMessageDestination(
   }
   const options = { signal, ...actingUserRequestOptions(input.actingUserId) };
   if (conversationId && conversationId !== "default") {
-    const conversation = await backend.retrieveConversation(
-      conversationId,
-      options,
-    );
+    const conversation =
+      input.resolvedConversation?.id === conversationId
+        ? input.resolvedConversation
+        : await backend.retrieveConversation(conversationId, options);
     if (agentId && agentId !== conversation.agent_id) {
       throw new Error(
         "The conversation does not belong to the requested agent.",

@@ -1,7 +1,12 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import {
+  actingUserRequestOptions,
+  resolveActingUserId,
+} from "@/agent/acting-user";
+import {
   createEphemeralConversation,
   createLocalEphemeralConversation,
+  projectResumedEphemeralConversation,
 } from "@/agent/ephemeral-conversation";
 import {
   configureEphemeralLocalBackend,
@@ -16,8 +21,53 @@ export function prepareHeadlessEphemeralBackend(enabled: boolean): void {
   }
 }
 
+export function getHeadlessEphemeralIdentity(
+  env: NodeJS.ProcessEnv = process.env,
+): { name?: string; isSubagent: boolean; parentAgentId?: string } {
+  const parentAgentId = env.LETTA_PARENT_AGENT_ID?.trim();
+  return {
+    name: env.LETTA_SUBAGENT_NAME,
+    isSubagent: env.LETTA_CODE_AGENT_ROLE === "subagent",
+    // Resource lineage is independent of the child's tool restrictions.
+    // Nested ephemeral execution IDs (conv-*) are not agent parents.
+    ...(parentAgentId &&
+    /^agent-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      parentAgentId,
+    )
+      ? { parentAgentId }
+      : {}),
+  };
+}
+
+export function resumeHeadlessEphemeralConversation(
+  conversation: Parameters<typeof projectResumedEphemeralConversation>[0] & {
+    parent_agent_id?: string | null;
+  },
+  bidirectional: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): { agent: AgentState; parentAgentId?: string } {
+  if (bidirectional) {
+    throw new Error(
+      "Ephemeral conversations do not support bidirectional headless input",
+    );
+  }
+  const agent = projectResumedEphemeralConversation(conversation);
+  // Persisted lineage is authoritative, including a deliberately absent parent.
+  if (conversation.parent_agent_id) {
+    env.LETTA_PARENT_AGENT_ID = conversation.parent_agent_id;
+  } else {
+    delete env.LETTA_PARENT_AGENT_ID;
+  }
+  return {
+    agent,
+    parentAgentId: getHeadlessEphemeralIdentity(env).parentAgentId,
+  };
+}
+
 export async function createHeadlessEphemeralConversation(params: {
   backendMode: string;
+  isAgentLaunch?: boolean;
+  usesRemoteComputer?: boolean;
   personality: string | null | undefined;
   model: string | undefined;
   systemPromptPreset: string | undefined;
@@ -28,15 +78,30 @@ export async function createHeadlessEphemeralConversation(params: {
       "--ephemeral cannot be used with --personality because it has no memory blocks",
     );
   }
+  const identity = getHeadlessEphemeralIdentity();
   const options = {
+    ...identity,
+    // Only harness-created children acquire the explicit creation linkage.
+    parentAgentId: params.isAgentLaunch ? identity.parentAgentId : undefined,
     model: params.model,
     systemPromptPreset: params.systemPromptPreset,
     systemPromptCustom: params.systemPromptCustom,
     memoryPromptMode: "standard" as const,
   };
-  return params.backendMode === "local"
-    ? createLocalEphemeralConversation(options)
-    : createEphemeralConversation(options);
+  if (params.backendMode === "local") {
+    return createLocalEphemeralConversation(options);
+  }
+  const created = await createEphemeralConversation({
+    ...options,
+    // Match createStartupBackend: remote creation belongs to the initiator,
+    // not the account whose credential started the listener.
+    requestOptions: params.usesRemoteComputer
+      ? actingUserRequestOptions(resolveActingUserId())
+      : undefined,
+  });
+  // Nested launches must not recover a parent deliberately omitted above.
+  if (!options.parentAgentId) delete process.env.LETTA_PARENT_AGENT_ID;
+  return created;
 }
 
 export function clearHeadlessClientToolRules(agent: AgentState): void {

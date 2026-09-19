@@ -237,8 +237,11 @@ export function composeSubagentChildEnv(
     ...(subagentType === "reflection" && {
       [LETTA_MOD_CAPABILITY_PROFILE_ENV]: PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
     }),
-    // Replace inherited parent addresses even when the new scope is unknown.
-    LETTA_PARENT_AGENT_ID: parentAgentId,
+    // Preserve resource lineage only for an actual ephemeral parent. Unknown
+    // scopes must clear inherited addresses rather than reuse a stale parent.
+    LETTA_PARENT_AGENT_ID: parentAgentId?.startsWith("conv-")
+      ? parentProcessEnv.LETTA_PARENT_AGENT_ID
+      : parentAgentId,
     LETTA_PARENT_CONVERSATION_ID: options.parentConversationId,
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
   };
@@ -280,6 +283,17 @@ export function composeSubagentChildEnv(
   return childEnv;
 }
 
+/** Resolve conv-only deployments without assigning a resource parent as owner. */
+export async function resolveSubagentDeploymentAgentId(
+  agentId: string | undefined,
+  conversationId: string | undefined,
+  retrieveConversation: (id: string) => Promise<{ agent_id: string | null }>,
+): Promise<string | undefined> {
+  if (agentId || !conversationId || conversationId === "default")
+    return agentId;
+  return (await retrieveConversation(conversationId)).agent_id ?? undefined;
+}
+
 export function shouldLaunchThroughListener(options: {
   launchProfile?: string;
   cloudBackend: boolean;
@@ -287,13 +301,6 @@ export function shouldLaunchThroughListener(options: {
   computer?: string;
   ephemeral?: boolean;
 }): boolean {
-  if (options.ephemeral) {
-    if (options.computer)
-      throw new Error(
-        "Ephemeral conversations cannot be routed to a Cloud computer",
-      );
-    return false;
-  }
   // Memory workers need whole-process confinement for Edit/Write as well as
   // Bash. A listener can execute ordinary children, but cannot host that boundary.
   // They remain one-shot workers, not resumable or addressable listener sessions.

@@ -5,6 +5,22 @@ import {
   isRemoveQueueItemCommand,
 } from "./task-control-protocol-inbound";
 
+test("agent-free queue removal retains its nullable conversation scope", () => {
+  const command = {
+    type: "remove_queue_item" as const,
+    request_id: "req",
+    item_id: "item",
+    runtime: { agent_id: null, conversation_id: "conv-child" },
+  };
+  expect(isRemoveQueueItemCommand(command)).toBe(true);
+  expect(parseServerMessage(Buffer.from(JSON.stringify(command)))).toEqual(
+    command,
+  );
+  expect(
+    isRemoveQueueItemCommand({ ...command, runtime: { agent_id: null } }),
+  ).toBe(false);
+});
+
 describe("Monitor stop command parsing", () => {
   const command = {
     type: "monitor_stop" as const,

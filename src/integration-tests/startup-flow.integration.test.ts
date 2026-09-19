@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { apiRequest } from "@/backend/api/request";
 import {
   createAuthenticatedCliTestEnv,
   createIsolatedCliTestEnv,
@@ -45,10 +46,11 @@ async function runCli(
     new Promise<{ stdout: string; stderr: string; exitCode: number | null }>(
       (resolve, reject) => {
         const proc = spawn(
-          "bun",
+          process.env.LETTA_TEST_BUILT_CLI === "1" ? "node" : "bun",
           [
-            "run",
-            "dev",
+            ...(process.env.LETTA_TEST_BUILT_CLI === "1"
+              ? [join(projectRoot, "letta.js")]
+              : ["run", "dev"]),
             ...(includeMemfsStartup ? ["--memfs-startup", "skip"] : []),
             ...args,
           ],
@@ -250,7 +252,7 @@ describe("Startup Flow - Integration", () => {
   let testAgentId: string | null = null;
 
   test(
-    "--ephemeral uses saved Cloud authentication without creating an agent",
+    "--ephemeral subagents create, fork, and resume without an agent",
     async () => {
       const apiKey = process.env.LETTA_API_KEY;
       if (!apiKey) {
@@ -270,10 +272,46 @@ describe("Startup Flow - Integration", () => {
         }),
       );
 
+      const conversationIds: string[] = [];
+      const apiOptions = {
+        baseUrl: process.env.LETTA_BASE_URL || "https://api.letta.com",
+        apiKey,
+      };
+      // Resource-scoped development credentials can supply an authorized parent;
+      // CI creates and removes its own fixture rather than relying on ambient IDs.
+      const suppliedParentId = process.env.LETTA_TEST_PARENT_AGENT_ID;
+      const parent = suppliedParentId
+        ? { id: suppliedParentId }
+        : await apiRequest<{ id: string }>(
+            "POST",
+            "/v1/agents/",
+            {
+              name: "Ephemeral lifecycle parent",
+              model: "openai/gpt-5.6-luna",
+              system: "Integration test parent.",
+              memory_blocks: [],
+              tools: [],
+              include_base_tools: false,
+            },
+            apiOptions,
+          );
+      const childEnv = createIsolatedCliTestEnv({
+        HOME: homeDir,
+        LETTA_SKIP_KEYCHAIN_CHECK: "1",
+        LETTA_SUBAGENT_LAUNCH: "1",
+        LETTA_CODE_AGENT_ROLE: "subagent",
+        LETTA_SUBAGENT_NAME: "Ephemeral lifecycle test",
+        LETTA_PARENT_AGENT_ID: parent.id,
+        LETTA_RUNTIME_LISTENER_CONNECTION_ID: undefined,
+        LETTA_SUBAGENT_LAUNCH_PROFILE: "default",
+        AGENT_ID: "agent-ambient-must-not-be-used",
+      });
       try {
         const result = await runCliJson(
           [
             "--ephemeral",
+            "--backend",
+            "api",
             "-m",
             "openai/gpt-5.6-luna",
             "-p",
@@ -284,11 +322,10 @@ describe("Startup Flow - Integration", () => {
           ],
           {
             timeoutMs: 180000,
+            retryOnParseErrors: 0,
+            retryOnTimeouts: 0,
             includeMemfsStartup: false,
-            env: createIsolatedCliTestEnv({
-              HOME: homeDir,
-              LETTA_SKIP_KEYCHAIN_CHECK: "1",
-            }),
+            env: childEnv,
           },
         );
 
@@ -296,11 +333,90 @@ describe("Startup Flow - Integration", () => {
         expect(result.output.agent_id).toBeNull();
         expect(result.output.conversation_id).toStartWith("conv-");
         expect(result.output.result).toBeDefined();
+        const conversationId = result.output.conversation_id as string;
+        conversationIds.push(conversationId);
+        const conversation = await apiRequest<Record<string, unknown>>(
+          "GET",
+          `/v1/conversations/${conversationId}`,
+          undefined,
+          apiOptions,
+        );
+        expect(conversation).toMatchObject({
+          agent_id: null,
+          name: "Ephemeral lifecycle test",
+          is_subagent: true,
+          parent_agent_id: parent.id,
+        });
+        const fork = await apiRequest<{
+          id: string;
+          agent_id: string | null;
+          name: string;
+          is_subagent: boolean;
+        }>(
+          "POST",
+          `/v1/conversations/${conversationId}/fork`,
+          { ephemeral: true, name: "Ephemeral fork test", is_subagent: true },
+          apiOptions,
+        );
+        conversationIds.push(fork.id);
+        expect(fork).toMatchObject({
+          agent_id: null,
+          name: "Ephemeral fork test",
+          is_subagent: true,
+          parent_agent_id: parent.id,
+        });
+        for (const id of conversationIds) {
+          const resumed = await runCliJson(
+            [
+              "--conv",
+              id,
+              "-p",
+              "Reply with EPHEMERAL_RESUMED_OK and nothing else",
+              "--tools=",
+              "--output-format",
+              "json",
+            ],
+            {
+              timeoutMs: 180000,
+              retryOnTimeouts: 0,
+              retryOnParseErrors: 0,
+              includeMemfsStartup: false,
+              env: {
+                ...childEnv,
+                LETTA_API_KEY: apiKey,
+                LETTA_SUBAGENT_LAUNCH: undefined,
+                LETTA_CODE_AGENT_ROLE: undefined,
+                LETTA_PARENT_AGENT_ID:
+                  "agent-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+              },
+            },
+          );
+          expect(resumed.exitCode).toBe(0);
+          expect(resumed.output.agent_id).toBeNull();
+          expect(resumed.output.conversation_id).toBe(id);
+          expect(resumed.output.result).toContain("EPHEMERAL_RESUMED_OK");
+        }
       } finally {
+        for (const id of conversationIds.reverse()) {
+          await apiRequest(
+            "DELETE",
+            `/v1/conversations/${id}`,
+            undefined,
+            apiOptions,
+          );
+        }
+        if (!suppliedParentId) {
+          await apiRequest(
+            "DELETE",
+            `/v1/agents/${parent.id}`,
+            undefined,
+            apiOptions,
+          );
+        }
         await rm(homeDir, { recursive: true, force: true });
       }
     },
-    { timeout: 190000 },
+    { timeout: 550000 },
   );
 
   test(

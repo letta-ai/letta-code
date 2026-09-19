@@ -2,7 +2,7 @@ import type {
   MonitorStopCommand,
   RemoveQueueItemCommand,
 } from "@/types/task-control-protocol";
-import { isAgentRuntimeScope } from "./protocol-validation";
+import { isAgentRuntimeScope, isRuntimeScope } from "./protocol-validation";
 
 export function isRemoveQueueItemCommand(
   value: unknown,
@@ -12,7 +12,7 @@ export function isRemoveQueueItemCommand(
   return (
     c.type === "remove_queue_item" &&
     typeof c.request_id === "string" &&
-    isAgentRuntimeScope(c.runtime) &&
+    isRuntimeScope(c.runtime) &&
     typeof c.item_id === "string"
   );
 }
