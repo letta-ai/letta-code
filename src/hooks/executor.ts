@@ -4,6 +4,7 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { buildShellLaunchers } from "@/tools/impl/shell-launchers";
+import { LIMITS, truncateByChars } from "@/tools/impl/truncation";
 import { executePromptHook } from "./prompt-executor";
 import {
   type CommandHookConfig,
@@ -18,6 +19,20 @@ import {
 
 /** Default timeout for hook execution (60 seconds) */
 const DEFAULT_TIMEOUT_MS = 60000;
+
+/**
+ * Cap a model-facing hook string. Oversized text is saved to a file and
+ * replaced with a short prefix plus the file path.
+ */
+export function truncateHookFeedback(
+  text: string,
+  workingDirectory: string,
+): string {
+  return truncateByChars(text, LIMITS.HOOK_OUTPUT_CHARS, "Hook", {
+    workingDirectory,
+    previewChars: LIMITS.OVERFLOW_PREVIEW_CHARS,
+  }).content;
+}
 
 /**
  * Get a display identifier for a hook (for logging and feedback)
@@ -363,7 +378,8 @@ export async function executeHooks(
     results.push(result);
 
     // Collect feedback from stdout when hook succeeds (exit 0)
-    // Only for UserPromptSubmit and SessionStart hooks
+    // Only for UserPromptSubmit hooks; runSessionStartHooks collects
+    // SessionStart stdout itself, regardless of exit code
     if (result.exitCode === HookExitCode.ALLOW) {
       if (result.stdout?.trim()) {
         // Try to parse updatedInput from hook output (PreToolUse rewrite protocol)
@@ -383,10 +399,7 @@ export async function executeHooks(
           }
         }
 
-        if (
-          input.event_type === "UserPromptSubmit" ||
-          input.event_type === "SessionStart"
-        ) {
+        if (input.event_type === "UserPromptSubmit") {
           feedback.push(result.stdout.trim());
         }
       }
@@ -417,7 +430,12 @@ export async function executeHooks(
   return {
     blocked,
     errored,
-    feedback,
+    // runSessionStartHooks discards this feedback and caps the stdout it
+    // rebuilds, so capping here would save a file nobody is pointed to.
+    feedback:
+      input.event_type === "SessionStart"
+        ? feedback
+        : feedback.map((text) => truncateHookFeedback(text, workingDirectory)),
     results,
     ...(updatedInput && { updatedInput }),
   };
@@ -452,7 +470,7 @@ export async function executeHooksParallel(
         const additionalContext =
           json?.hookSpecificOutput?.additionalContext ||
           json?.additionalContext;
-        if (additionalContext) {
+        if (typeof additionalContext === "string" && additionalContext) {
           feedback.push(additionalContext);
         }
       } catch {
@@ -480,7 +498,9 @@ export async function executeHooksParallel(
   return {
     blocked,
     errored,
-    feedback,
+    feedback: feedback.map((text) =>
+      truncateHookFeedback(text, workingDirectory),
+    ),
     results,
   };
 }
