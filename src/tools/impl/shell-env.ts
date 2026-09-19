@@ -540,3 +540,14 @@ export function getShellEnv(): NodeJS.ProcessEnv {
 
   return env;
 }
+
+/**
+ * Return credentials owned by the active shell environment that must be
+ * redacted from output without being treated as environment overrides.
+ */
+export function getShellOutputRedactions(
+  env: NodeJS.ProcessEnv = getShellEnv(),
+): Record<string, string> {
+  const apiKey = env.LETTA_API_KEY;
+  return apiKey ? { LETTA_API_KEY: apiKey } : {};
+}

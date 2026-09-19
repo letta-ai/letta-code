@@ -68,6 +68,7 @@ import {
 } from "./client-tool-serialization";
 import { normalizeExternalToolResultContent } from "./external-tool-content";
 import { toolFilter } from "./filter";
+import { getShellOutputRedactions } from "./impl/shell-env";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import { resolveBackendSpecificToolAssets } from "./memory-tool-assets";
 import {
@@ -2416,14 +2417,14 @@ async function executeToolInner(
       }
 
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
-        // Redact only this invocation's secrets.
         const command = enhancedArgs.command ?? enhancedArgs.cmd;
-        invocationSecrets =
+        const secretEnv =
           typeof command === "string" ||
           (Array.isArray(command) &&
             command.every((part) => typeof part === "string"))
             ? extractSecretEnvFromCommand(command, scopedAgentId)
             : {};
+        invocationSecrets = { ...secretEnv, ...getShellOutputRedactions() };
         if (options?.onOutput) {
           enhancedArgs = {
             ...enhancedArgs,
@@ -2435,9 +2436,11 @@ async function executeToolInner(
             },
           };
         }
-        if (Object.keys(invocationSecrets).length > 0) {
-          enhancedArgs = { ...enhancedArgs, secretEnv: invocationSecrets };
-        }
+        enhancedArgs = {
+          ...enhancedArgs,
+          ...(Object.keys(secretEnv).length > 0 && { secretEnv }),
+          secretRedactions: invocationSecrets,
+        };
         const parentScope =
           options?.parentScope ??
           (internalName === "Monitor" && scopedAgentId

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INHERITED_SECRET_NAMES_ENV } from "@/agent/subagents/subagent-launcher";
@@ -20,6 +20,7 @@ import {
   __testSeedSecretsCache,
   clearSecretsCache,
 } from "@/utils/secrets-store";
+import { backgroundProcesses } from "./impl/process_manager";
 import { createTempRuntimeScriptCommand } from "./runtime-script";
 
 const AGENT_A = "agent-secret-substitution-a";
@@ -396,7 +397,8 @@ describe("managed cloud shell secret execution", () => {
       );
       const text = asText(result.toolReturn);
       expect(text).not.toContain(configuredAgentKey);
-      expect(text).toContain(managedRuntimeKey);
+      expect(text).not.toContain(managedRuntimeKey);
+      expect(text).toContain("LETTA_API_KEY=<REDACTED>");
       expect(text).not.toContain(staleAgentId);
       expect(text).not.toContain(staleConversationId);
       expect(text).not.toContain(staleMemoryDir);
@@ -429,6 +431,84 @@ describe("managed cloud shell secret execution", () => {
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;
       }
+    }
+  });
+
+  test("managed runtime auth is scrubbed from streaming and persisted shell output", async () => {
+    const managedRuntimeKey = "managed-sandbox-persisted-runtime-key";
+    const configuredAgentKey = "configured-agent-persisted-runtime-key";
+    __testSeedSecretsCache(AGENT_A, { LETTA_API_KEY: configuredAgentKey });
+    const originalEnv = {
+      marker: process.env.LETTA_MANAGED_CLOUD_SANDBOX,
+      apiKey: process.env.LETTA_API_KEY,
+    };
+    process.env.LETTA_MANAGED_CLOUD_SANDBOX = "1";
+    process.env.LETTA_API_KEY = managedRuntimeKey;
+    const chunks: string[] = [];
+    let prepared: Awaited<
+      ReturnType<typeof prepareToolExecutionContextForSpecificTools>
+    > | null = null;
+    let taskId: string | undefined;
+
+    try {
+      prepared = await prepareToolExecutionContextForSpecificTools(
+        ["Bash", "TaskOutput"],
+        {
+          runtimeContext: {
+            agentId: AGENT_A,
+            workingDirectory: process.cwd(),
+          },
+          workingDirectory: process.cwd(),
+        },
+      );
+      const launched = await executeTool(
+        "Bash",
+        {
+          command:
+            "node -e \"const value=process.env.LETTA_API_KEY??''; process.stdout.write(value.slice(0,5)); setTimeout(()=>process.stdout.write(value.slice(5)),25)\"",
+          run_in_background: true,
+          timeout: 5000,
+        },
+        {
+          toolContextId: prepared.contextId,
+          onOutput: (chunk) => chunks.push(chunk),
+        },
+      );
+      taskId = asText(launched.toolReturn).match(/ID: (bash_\d+)/)?.[1];
+      expect(taskId).toBeString();
+      const completed = await executeTool(
+        "TaskOutput",
+        { task_id: taskId, block: true, timeout: 5000 },
+        {
+          toolContextId: prepared.contextId,
+          onOutput: (chunk) => chunks.push(chunk),
+        },
+      );
+      const text = asText(completed.toolReturn);
+      expect(text).toContain("LETTA_API_KEY=<REDACTED>");
+      expect(text).not.toContain(managedRuntimeKey);
+      expect(text).not.toContain(configuredAgentKey);
+      expect(chunks.join("")).not.toContain(managedRuntimeKey);
+      const outputFile = backgroundProcesses.get(taskId as string)?.outputFile;
+      expect(outputFile).toBeString();
+      expect(readFileSync(outputFile as string, "utf8")).not.toContain(
+        managedRuntimeKey,
+      );
+    } finally {
+      if (taskId) {
+        const processState = backgroundProcesses.get(taskId);
+        if (processState?.outputFile)
+          rmSync(processState.outputFile, { force: true });
+        backgroundProcesses.delete(taskId);
+      }
+      if (prepared) releaseToolExecutionContext(prepared.contextId);
+      if (originalEnv.marker === undefined) {
+        delete process.env.LETTA_MANAGED_CLOUD_SANDBOX;
+      } else {
+        process.env.LETTA_MANAGED_CLOUD_SANDBOX = originalEnv.marker;
+      }
+      if (originalEnv.apiKey === undefined) delete process.env.LETTA_API_KEY;
+      else process.env.LETTA_API_KEY = originalEnv.apiKey;
     }
   });
 

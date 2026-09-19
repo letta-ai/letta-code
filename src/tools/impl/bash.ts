@@ -293,6 +293,7 @@ interface BashArgs {
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
+  secretRedactions?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
   /** Test-only override; not exposed in the Bash tool schema. */
   foregroundYieldMs?: number;
@@ -316,12 +317,14 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     signal,
     onOutput,
     secretEnv,
+    secretRedactions,
     parentScope,
     foregroundYieldMs = DEFAULT_FOREGROUND_YIELD_MS,
   } = args;
+  const outputRedactions = secretRedactions ?? secretEnv ?? {};
   const userCwd = getCurrentWorkingDirectory();
   const sanitizeOutput = (text: string) =>
-    scrubSecretsFromString(text, secretEnv ?? {});
+    scrubSecretsFromString(text, outputRedactions);
 
   if (command === "/bg") {
     const processes = Array.from(backgroundProcesses.entries());
@@ -437,7 +440,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     totalStdoutLines: 0,
     totalStderrLines: 0,
     runtimeScope: parentScope,
-    secrets: secretEnv,
+    secrets: outputRedactions,
   };
   backgroundProcesses.set(bashId, bgProcess);
 
@@ -527,7 +530,11 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         output || "(Command completed with no output)",
         LIMITS.BASH_OUTPUT_CHARS,
         "Bash",
-        { workingDirectory: userCwd, toolName: "Bash", secrets: secretEnv },
+        {
+          workingDirectory: userCwd,
+          toolName: "Bash",
+          secrets: outputRedactions,
+        },
       );
       if (result.status === "failed") {
         const isAbort =

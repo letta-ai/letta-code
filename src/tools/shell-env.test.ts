@@ -16,6 +16,7 @@ import {
   ensureLettaShimDir,
   getLettaShimDir,
   getShellEnv,
+  getShellOutputRedactions,
   resolveLettaInvocation,
 } from "@/tools/impl/shell-env";
 
@@ -271,6 +272,23 @@ test("getShellEnv injects AGENT_ID aliases", () => {
 
     expect(env.AGENT_ID).toBeTruthy();
     expect(env.LETTA_AGENT_ID).toBe(env.AGENT_ID);
+  });
+});
+
+test("shell output redactions use the effective runtime credential only", () => {
+  expect(
+    getShellOutputRedactions({
+      LETTA_API_KEY: "effective-shell-runtime-key",
+      HOME: "/ordinary/home",
+      PATH: "/ordinary/bin",
+    }),
+  ).toEqual({ LETTA_API_KEY: "effective-shell-runtime-key" });
+  expect(getShellOutputRedactions({ HOME: "/ordinary/home" })).toEqual({});
+  withTemporaryEnv({ LETTA_API_KEY: "active-process-runtime-key" }, () => {
+    expect(getShellEnv().LETTA_API_KEY).toBe("active-process-runtime-key");
+    expect(getShellOutputRedactions()).toEqual({
+      LETTA_API_KEY: "active-process-runtime-key",
+    });
   });
 });
 

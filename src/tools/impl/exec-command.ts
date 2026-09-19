@@ -63,6 +63,7 @@ interface ExecCommandArgs {
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
+  secretRedactions?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
 }
 
@@ -557,6 +558,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   const outputFile = createBackgroundOutputFile(`exec_${id}`);
   const cwd = resolveShellWorkdir(args.workdir);
   const env = { ...getShellEnv(), ...(args.secretEnv ?? {}) };
+  const outputRedactions = args.secretRedactions ?? args.secretEnv ?? {};
   const launchers = buildExecLaunchers(args);
   const rawLauncher = selectAvailableShellLauncher(launchers, env);
   if (!rawLauncher) {
@@ -584,7 +586,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     status: "running",
     exitCode: null,
     tty: args.tty ?? false,
-    secrets: args.secretEnv ?? {},
+    secrets: outputRedactions,
     notificationScope: resolveNotificationScope(args.parentScope),
     notificationArmed: false,
     completionDelivered: false,
@@ -595,7 +597,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   const appendOutput = createSessionOutputAppender({
     session,
     outputFile,
-    secrets: args.secretEnv ?? {},
+    secrets: outputRedactions,
   });
   let runningProcess: RunningShellProcess;
   try {
