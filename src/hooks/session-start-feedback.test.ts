@@ -4,7 +4,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runSessionStartHooks } from "@/hooks";
@@ -79,6 +85,24 @@ describe.skipIf(isWindows)("SessionStart hook feedback", () => {
     expectPrefixPreview(result.feedback[0] ?? "", "s");
     // The executor must not also cap (and save) the stdout it hands back
     expect(readdirSync(getOverflowDirectory(projectDir))).toHaveLength(1);
+  });
+
+  test("does not save discarded stderr from a failing hook", async () => {
+    configureSessionStartHook(
+      `node -e 'process.stderr.write("e".repeat(${LIMITS.HOOK_OUTPUT_CHARS + 1})); process.exitCode = 1'`,
+    );
+
+    const result = await runSessionStartHooks(
+      true,
+      "agent-123",
+      "Test Agent",
+      undefined,
+      projectDir,
+    );
+
+    expect(result.errored).toBe(true);
+    expect(result.feedback).toEqual([]);
+    expect(existsSync(getOverflowDirectory(projectDir))).toBe(false);
   });
 
   test("leaves stdout within the cap untouched", async () => {

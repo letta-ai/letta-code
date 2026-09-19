@@ -430,9 +430,12 @@ export async function executeHooks(
   return {
     blocked,
     errored,
-    feedback: feedback.map((text) =>
-      truncateHookFeedback(text, workingDirectory),
-    ),
+    // runSessionStartHooks discards this feedback and caps the stdout it
+    // rebuilds, so capping here would save a file nobody is pointed to.
+    feedback:
+      input.event_type === "SessionStart"
+        ? feedback
+        : feedback.map((text) => truncateHookFeedback(text, workingDirectory)),
     results,
     ...(updatedInput && { updatedInput }),
   };
