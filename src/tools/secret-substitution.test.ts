@@ -354,6 +354,7 @@ describe("managed cloud shell secret execution", () => {
       conversationId: process.env.CONVERSATION_ID,
       memoryDir: process.env.MEMORY_DIR,
       lettaMemoryDir: process.env.LETTA_MEMORY_DIR,
+      memoryDirExplicit: process.env.LETTA_MEMORY_DIR_EXPLICIT,
       deviceId: process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID,
       path: process.env.PATH,
     };
@@ -363,6 +364,7 @@ describe("managed cloud shell secret execution", () => {
     process.env.CONVERSATION_ID = staleConversationId;
     process.env.MEMORY_DIR = staleMemoryDir;
     process.env.LETTA_MEMORY_DIR = staleMemoryDir;
+    process.env.LETTA_MEMORY_DIR_EXPLICIT = "1";
     process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = staleDeviceId;
     let prepared: Awaited<
       ReturnType<typeof prepareToolExecutionContextForSpecificTools>
@@ -420,6 +422,7 @@ describe("managed cloud shell secret execution", () => {
         ["CONVERSATION_ID", originalEnv.conversationId],
         ["MEMORY_DIR", originalEnv.memoryDir],
         ["LETTA_MEMORY_DIR", originalEnv.lettaMemoryDir],
+        ["LETTA_MEMORY_DIR_EXPLICIT", originalEnv.memoryDirExplicit],
         ["LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID", originalEnv.deviceId],
         ["PATH", originalEnv.path],
       ] as const) {
