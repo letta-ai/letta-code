@@ -377,6 +377,40 @@ describe("managed cloud shell secret execution", () => {
     }
   });
 
+  test("does not add unreferenced protected ambient values to command secrets", () => {
+    const originalEnv = {
+      marker: process.env.LETTA_MANAGED_CLOUD_SANDBOX,
+      home: process.env.HOME,
+      agentId: process.env.AGENT_ID,
+    };
+    process.env.LETTA_MANAGED_CLOUD_SANDBOX = "1";
+    process.env.HOME = "/synthetic/home/path";
+    process.env.AGENT_ID = "agent-listener-scope";
+    __testSeedSecretsCache(AGENT_A, { LETTA_API_KEY: SECRET_A });
+
+    try {
+      expect(extractSecretEnvFromCommand("printf ordinary", AGENT_A)).toEqual(
+        {},
+      );
+      const referenced = extractSecretEnvFromCommand(
+        "printf %s $LETTA_API_KEY",
+        AGENT_A,
+      );
+      expect(referenced.HOME).toBeUndefined();
+      expect(referenced.AGENT_ID).toBeUndefined();
+      expect(referenced.LETTA_API_KEY).toBe(process.env.LETTA_API_KEY);
+    } finally {
+      for (const [name, value] of [
+        ["LETTA_MANAGED_CLOUD_SANDBOX", originalEnv.marker],
+        ["HOME", originalEnv.home],
+        ["AGENT_ID", originalEnv.agentId],
+      ] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
   test("local explicit references still use the configured agent secret", () => {
     __testSeedSecretsCache(AGENT_A, { LETTA_API_KEY: SECRET_A });
     expect(extractSecretEnvFromCommand("echo $LETTA_API_KEY", AGENT_A)).toEqual(

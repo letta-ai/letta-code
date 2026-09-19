@@ -139,7 +139,9 @@ export function extractSecretEnvFromCommand(
   if (!isManagedCloudSandbox()) return env;
 
   const managedEnv = getManagedCloudAgentSecretEnv(agentId);
-  for (const name of PROTECTED_MANAGED_CLOUD_ENV_NAMES) {
+  for (const name of Object.keys(env)) {
+    if (!PROTECTED_MANAGED_CLOUD_ENV_NAMES.has(name)) continue;
+    delete env[name];
     const ambientValue = process.env[name];
     if (ambientValue !== undefined) managedEnv[name] = ambientValue;
   }
