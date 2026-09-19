@@ -540,8 +540,8 @@ export async function handleApprovalStop(params: {
 
   let executionResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
   try {
-    if (agentId) {
-      await ensureSecretsHydrated(runtime.listener, agentId);
+    if (agentId || conversationId) {
+      await ensureSecretsHydrated(runtime.listener, agentId || conversationId!);
     }
     if (shouldInterrupt()) {
       return interruptTermination();

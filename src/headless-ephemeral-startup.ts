@@ -62,6 +62,7 @@ export function resumeHeadlessEphemeralConversation(
 
 export async function createHeadlessEphemeralConversation(params: {
   backendMode: string;
+  isAgentLaunch?: boolean;
   personality: string | null | undefined;
   model: string | undefined;
   systemPromptPreset: string | undefined;
@@ -72,16 +73,23 @@ export async function createHeadlessEphemeralConversation(params: {
       "--ephemeral cannot be used with --personality because it has no memory blocks",
     );
   }
+  const identity = getHeadlessEphemeralIdentity();
   const options = {
-    ...getHeadlessEphemeralIdentity(),
+    ...identity,
+    // Only harness-created children acquire the explicit creation linkage.
+    parentAgentId: params.isAgentLaunch ? identity.parentAgentId : undefined,
     model: params.model,
     systemPromptPreset: params.systemPromptPreset,
     systemPromptCustom: params.systemPromptCustom,
     memoryPromptMode: "standard" as const,
   };
-  return params.backendMode === "local"
-    ? createLocalEphemeralConversation(options)
-    : createEphemeralConversation(options);
+  if (params.backendMode === "local") {
+    return createLocalEphemeralConversation(options);
+  }
+  const created = await createEphemeralConversation(options);
+  // Nested launches must not recover a parent deliberately omitted above.
+  if (!options.parentAgentId) delete process.env.LETTA_PARENT_AGENT_ID;
+  return created;
 }
 
 export function clearHeadlessClientToolRules(agent: AgentState): void {

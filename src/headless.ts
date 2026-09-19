@@ -1146,6 +1146,7 @@ export async function handleHeadlessCommand(
     try {
       const result = await createHeadlessEphemeralConversation({
         backendMode: startupBackendMode,
+        isAgentLaunch,
         personality: personalityInput,
         model,
         systemPromptPreset,
@@ -1360,12 +1361,10 @@ export async function handleHeadlessCommand(
   let memfsBgPromise: Promise<unknown> | undefined;
 
   // Init secrets cache — runs in parallel with memfs sync below.
-  const secretsAgentId = ephemeralFlag ? undefined : agent?.id;
-  const secretsInitPromise = secretsAgentId
-    ? import("@/utils/secrets-store").then(({ initSecretsFromServer }) =>
-        initSecretsFromServer(secretsAgentId),
-      )
-    : Promise.resolve();
+  const secretsScopeId = agent.id;
+  const secretsInitPromise = import("@/utils/secrets-store").then(
+    ({ initSecretsFromServer }) => initSecretsFromServer(secretsScopeId),
+  );
 
   // Apply memfs flags and auto-enable from server tag when local settings are missing.
   // Respects memfsStartupPolicy:

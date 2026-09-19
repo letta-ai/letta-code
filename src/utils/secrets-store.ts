@@ -12,6 +12,7 @@ import { isLocalAgentId } from "@/agent/agent-id";
 import { getCurrentAgentId } from "@/agent/context";
 import { getBackend } from "@/backend";
 import { getLocalBackendStorageDir } from "@/backend/local/paths";
+import { getRuntimeContext } from "@/runtime-context";
 import {
   deleteSecretValue,
   getSecretValue,
@@ -344,6 +345,10 @@ function resolveSecretsAgentId(explicitAgentId?: string): string | null {
     return trimmedExplicit;
   }
 
+  const runtime = getRuntimeContext();
+  // A null-owned runtime is explicit, not permission to use ambient credentials.
+  if (runtime?.agentId === null) return runtime.conversationId ?? null;
+
   try {
     const scopedAgentId = getCurrentAgentId().trim();
     if (scopedAgentId) {
@@ -361,11 +366,48 @@ function resolveSecretsAgentId(explicitAgentId?: string): string | null {
   return envAgentId || null;
 }
 
+// Execution scopes reference their authorized owner; secret values stay in the
+// owner's cache, not a child store. Never derive this linkage from ambient env.
+const secretScopeOwners = new Map<string, string>();
+const secretScopeRefreshes = new Map<string, object>();
+
+function assertAgentSecretWriteScope(scopeId: string): void {
+  if (scopeId.startsWith("conv-")) {
+    throw new Error(
+      "Conversation secrets are inherited; edit the parent agent's secrets instead.",
+    );
+  }
+}
+
 /**
- * Initialize the agent-scoped secrets cache. Cloud agents fetch from the
- * server. Local agents read from OS secure storage through Bun.secrets.
+ * Hydrate the execution scope using the existing agent secret endpoint/storage.
+ * Agent-free children resolve only the server-authorized persisted parent.
  */
 export async function initSecretsFromServer(agentId: string): Promise<void> {
+  if (agentId.startsWith("conv-")) {
+    secretScopeOwners.delete(agentId);
+    getCache().delete(agentId);
+    const refresh = {};
+    secretScopeRefreshes.set(agentId, refresh);
+    try {
+      const conversation = await getBackend().retrieveConversation(agentId);
+      const owner =
+        conversation.agent_id ??
+        (conversation as { parent_agent_id?: string | null }).parent_agent_id;
+      if (owner?.startsWith("agent-") && !isLocalAgentId(owner)) {
+        await initSecretsFromServer(owner);
+        // A clear or newer refresh must not be undone by an older request.
+        if (secretScopeRefreshes.get(agentId) === refresh) {
+          secretScopeOwners.set(agentId, owner);
+        }
+      }
+    } finally {
+      if (secretScopeRefreshes.get(agentId) === refresh) {
+        secretScopeRefreshes.delete(agentId);
+      }
+    }
+    return;
+  }
   if (isLocalAgentId(agentId)) {
     setCache(agentId, await loadLocalAgentSecrets(agentId));
     return;
@@ -399,7 +441,8 @@ export function loadSecrets(agentId?: string): Record<string, string> {
   if (!resolvedAgentId) {
     return {};
   }
-  return { ...(getCache().get(resolvedAgentId) ?? {}) };
+  const owner = secretScopeOwners.get(resolvedAgentId) ?? resolvedAgentId;
+  return { ...(getCache().get(owner) ?? {}) };
 }
 
 /**
@@ -446,6 +489,7 @@ export async function applySecretBatch(
     throw new Error("No agent context set. Agent ID is required.");
   }
 
+  assertAgentSecretWriteScope(agentId);
   const normalized = normalizeSecretMutations(options);
 
   if (isLocalAgentId(agentId)) {
@@ -484,6 +528,7 @@ export async function setSecretOnServer(
     throw new Error("No agent context set. Agent ID is required.");
   }
 
+  assertAgentSecretWriteScope(agentId);
   const normalizedKey = normalizeSecretKey(key);
 
   if (isLocalAgentId(agentId)) {
@@ -521,6 +566,7 @@ export async function deleteSecretOnServer(
     throw new Error("No agent context set. Agent ID is required.");
   }
 
+  assertAgentSecretWriteScope(agentId);
   const normalizedKey = normalizeSecretKey(key);
 
   if (isLocalAgentId(agentId)) {
@@ -552,14 +598,19 @@ export async function deleteSecretOnServer(
  * Clear the in-memory cache (useful for testing).
  */
 export function clearSecretsCache(agentId?: string | null): void {
+  // Pending child lookups may depend on the cleared parent.
+  secretScopeRefreshes.clear();
   if (agentId === null) {
+    secretScopeOwners.clear();
     getCache().clear();
     return;
   }
   const resolvedAgentId = resolveSecretsAgentId(agentId);
   if (resolvedAgentId) {
+    secretScopeOwners.delete(resolvedAgentId);
     getCache().delete(resolvedAgentId);
     return;
   }
+  secretScopeOwners.clear();
   getCache().clear();
 }
