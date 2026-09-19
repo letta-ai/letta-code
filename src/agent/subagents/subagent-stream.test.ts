@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   type ExecutionState,
+  hasSuccessfulToolCall,
   looksLikeTruncatedStreamJson,
   parseResultFromStdout,
   processStreamEvent,
@@ -15,6 +16,7 @@ test("agent-free init preserves conversation identity without a parent owner", (
     resultStats: null,
     enqueueReceipt: null,
     displayedToolCalls: new Set(),
+    toolCallStatuses: new Map(),
   };
   processStreamEvent(
     JSON.stringify({
@@ -39,6 +41,78 @@ const resultLine = JSON.stringify({
   type: "result",
   result: "done",
   is_error: false,
+});
+
+function createState(): ExecutionState {
+  return {
+    agentId: null,
+    conversationId: null,
+    finalResult: null,
+    finalError: null,
+    enqueueReceipt: null,
+    resultStats: null,
+    displayedToolCalls: new Set(),
+    toolCallStatuses: new Map(),
+  };
+}
+
+function processEvent(
+  state: ExecutionState,
+  event: Record<string, unknown>,
+): void {
+  processStreamEvent(JSON.stringify(event), state, "subagent-1");
+}
+
+describe("hasSuccessfulToolCall", () => {
+  test("rejects a final report after every tool call failed", () => {
+    const state = createState();
+    processEvent(state, {
+      type: "message",
+      message_type: "tool_call_message",
+      tool_call: { tool_call_id: "call-1", name: "Bash", arguments: "{}" },
+    });
+    processEvent(state, {
+      type: "message",
+      message_type: "tool_return_message",
+      tool_call_id: "call-1",
+      status: "error",
+      tool_return: "EPERM",
+    });
+    processEvent(state, {
+      type: "result",
+      result: "I could not inspect the memory.",
+      is_error: false,
+    });
+
+    expect(state.finalError).toBeNull();
+    expect(hasSuccessfulToolCall(state)).toBe(false);
+  });
+
+  test("accepts a run with a successful tool", () => {
+    const state = createState();
+    processEvent(state, {
+      type: "message",
+      message_type: "tool_call_message",
+      tool_calls: [
+        { tool_call_id: "call-1", name: "Bash", arguments: "{}" },
+        { tool_call_id: "call-2", name: "Edit", arguments: "{}" },
+      ],
+    });
+    processEvent(state, {
+      type: "message",
+      message_type: "tool_return_message",
+      tool_returns: [
+        { tool_call_id: "call-1", status: "error", tool_return: "EPERM" },
+        { tool_call_id: "call-2", status: "success", tool_return: "ok" },
+      ],
+    });
+
+    expect(hasSuccessfulToolCall(state)).toBe(true);
+  });
+
+  test("rejects a final report with no tool calls", () => {
+    expect(hasSuccessfulToolCall(createState())).toBe(false);
+  });
 });
 
 describe("looksLikeTruncatedStreamJson", () => {
@@ -94,6 +168,7 @@ function freshState(): ExecutionState {
     enqueueReceipt: null,
     resultStats: null,
     displayedToolCalls: new Set(),
+    toolCallStatuses: new Map(),
   };
 }
 

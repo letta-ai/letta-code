@@ -85,10 +85,11 @@ import {
 } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import {
+  clearPersistedClientToolRules,
   loadStartupTools,
-  type StartupToolsetPreference,
-} from "./tools/letta-toolset";
-import { clearPersistedClientToolRules } from "./tools/toolset";
+} from "./tools/toolset";
+import { isToolsetPreference, TOOLSET_OPTIONS } from "./tools/toolset-catalog";
+import type { ToolsetPreference } from "./tools/toolset-types";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
 import { startOrphanDetection } from "./utils/orphan-detection";
 import { markMilestone } from "./utils/timing";
@@ -946,17 +947,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Validate toolset if provided
-  if (
-    specifiedToolset &&
-    specifiedToolset !== "codex" &&
-    specifiedToolset !== "default" &&
-    specifiedToolset !== "gemini" &&
-    specifiedToolset !== "letta" &&
-    specifiedToolset !== "auto"
-  ) {
+  // Validate against the same options advertised by /toolset and the listener.
+  if (specifiedToolset && !isToolsetPreference(specifiedToolset)) {
     console.error(
-      `Error: Invalid toolset "${specifiedToolset}". Must be "auto", "letta", "codex", "default", or "gemini".`,
+      `Error: Invalid toolset "${specifiedToolset}". Must be ${TOOLSET_OPTIONS.map((option) => `"${option.id}"`).join(", ")}.`,
     );
     process.exit(1);
   }
@@ -1310,7 +1304,7 @@ async function main(): Promise<void> {
     // For headless mode, load tools synchronously (respecting model/toolset when provided)
     await loadStartupTools({
       modelIdentifier: specifiedModel,
-      toolset: specifiedToolset as StartupToolsetPreference | undefined,
+      toolset: specifiedToolset as ToolsetPreference | undefined,
       exclude: ["AskUserQuestion"],
     });
     markMilestone("TOOLS_LOADED");
@@ -1365,7 +1359,7 @@ async function main(): Promise<void> {
     preResolvedAgent?: AgentState | null;
     model?: string;
     systemPromptPreset?: string;
-    toolset?: StartupToolsetPreference;
+    toolset?: ToolsetPreference;
     skillsDirectory?: string;
   }) {
     const [showKeybindingSetup, setShowKeybindingSetup] = useState<
@@ -2599,7 +2593,7 @@ async function main(): Promise<void> {
       preResolvedAgent: nameResolvedAgent,
       model: specifiedModel,
       systemPromptPreset: systemPromptPreset,
-      toolset: specifiedToolset as StartupToolsetPreference | undefined,
+      toolset: specifiedToolset as ToolsetPreference | undefined,
       skillsDirectory: skillsDirectory,
     }),
     {

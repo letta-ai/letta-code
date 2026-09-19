@@ -188,6 +188,31 @@ describe("local MCP tool search", () => {
     ]);
   });
 
+  test("matches camelCase schema words as separate terms", () => {
+    // `variableName` must be searchable by its trailing word; a whole-token
+    // prefix match alone cannot find it.
+    expect(
+      searchLocalMcpTools({
+        tools,
+        query: "name",
+        searchMode: "fts",
+        limit: 5,
+      }),
+    ).toEqual([
+      {
+        tool: {
+          name: "mcp__everything__print_env",
+          description: "Returns an environment value",
+          parameters: {
+            type: "object",
+            properties: { variableName: { type: "string" } },
+          },
+        },
+        score: 0.25,
+      },
+    ]);
+  });
+
   test("rejects vector mode because local agents have no MCP embedding index", () => {
     expect(() =>
       searchLocalMcpTools({

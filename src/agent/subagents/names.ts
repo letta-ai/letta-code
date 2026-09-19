@@ -150,9 +150,8 @@ export function createSubagentNameAllocator(
 const nextName = createSubagentNameAllocator();
 
 /** Allocate in the parent before spawning, so sibling CLI processes cannot collide. */
-export function allocateSubagentName(parentName?: string | null): string {
-  const parent = parentName?.trim();
-  return `${nextName()} (${parent ? `${parent}'s shadow` : "shadow"})`;
+export function allocateSubagentName(_parentName?: string | null): string {
+  return nextName();
 }
 
 export function resolveCreatedAgentName(

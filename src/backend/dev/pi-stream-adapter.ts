@@ -39,6 +39,7 @@ import {
 } from "./pi-model-factory";
 import { LocalPiModelsRuntime } from "./pi-models-runtime";
 import { resolvePiRequestHeaders } from "./pi-request-headers";
+import { isPiModelOutputEvent } from "./pi-stream-output";
 import type {
   LlmEndErrorInfo,
   LlmEndInfo,
@@ -484,19 +485,6 @@ function toLocalAssistantMessage(
   };
 }
 
-function isModelOutputEvent(event: ProviderStreamEvent): boolean {
-  if (event.type === "local-message") return true;
-  if (event.type !== "provider-part") return false;
-  switch (event.part.type) {
-    case "text_delta":
-    case "thinking_delta":
-    case "toolcall_end":
-      return true;
-    default:
-      return false;
-  }
-}
-
 function llmEndErrorFromError(error: unknown): {
   error: LlmEndErrorInfo;
   stopReason: string;
@@ -745,6 +733,11 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
             streamError = error;
             break;
           }
+          if (part.error.content.length > 0) {
+            yield providerLocalMessage(
+              toLocalAssistantMessage(part.error, input),
+            );
+          }
         }
         if (part.type === "done") {
           finalMessage = part.message;
@@ -842,9 +835,11 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       }
 
       let emittedModelOutput = false;
+      let emittedLocalMessage = false;
       try {
         for await (const event of this.streamOnce(activeInput)) {
-          if (isModelOutputEvent(event)) emittedModelOutput = true;
+          if (isPiModelOutputEvent(event)) emittedModelOutput = true;
+          if (event.type === "local-message") emittedLocalMessage = true;
           yield event;
         }
         return;
@@ -958,6 +953,16 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           transientRetries >= LOCAL_PROVIDER_MAX_RETRIES ||
           !retryableTransportError
         ) {
+          if (
+            emittedModelOutput &&
+            !emittedLocalMessage &&
+            error instanceof PiProviderError &&
+            error.assistant.content.length > 0
+          ) {
+            yield providerLocalMessage(
+              toLocalAssistantMessage(error.assistant, activeInput),
+            );
+          }
           throw error;
         }
 

@@ -898,7 +898,7 @@ async function writeState(
 
 function buildPayloadPath(
   rootDir: string,
-  kind: "auto" | "candidates" | "multi" | "remember" | "slice",
+  kind: "auto" | "candidates" | "multi" | "slice",
 ): string {
   const nonce = Math.random().toString(36).slice(2, 8);
   return join(rootDir, `payload-${kind}-${nonce}.json`);

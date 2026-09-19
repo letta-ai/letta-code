@@ -367,4 +367,35 @@ describe("skills frontmatter metadata", () => {
     expect(skill?.disableModelInvocation).toBe(true);
     expect(skill?.userInvocable).toBe(false);
   });
+
+  test("discovers descriptions written as YAML block scalars", async () => {
+    const skillDir = join(projectSkillsDir, "firecrawl-agent");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: firecrawl-agent",
+        "description: |",
+        "  Autonomous multi-page extraction into structured JSON.",
+        "  Use when the user wants website data matching a schema.",
+        "allowed-tools:",
+        "  - Bash(firecrawl *)",
+        "---",
+        "",
+        "# Firecrawl agent",
+      ].join("\n"),
+    );
+
+    const result = await discoverSkills(projectSkillsDir, undefined, {
+      skipBundled: true,
+      sources: ["project"],
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0]?.description).toBe(
+      "Autonomous multi-page extraction into structured JSON.\nUse when the user wants website data matching a schema.",
+    );
+  });
 });

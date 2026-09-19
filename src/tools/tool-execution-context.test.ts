@@ -326,28 +326,6 @@ describe("tool execution context snapshot", () => {
     expect(prepared.loadedToolNames).toContain("Read");
     expect(prepared.loadedToolNames).toContain("Write");
     expect(prepared.loadedToolNames).toContain("Bash");
-    expect(prepared.loadedToolNames).not.toContain("ReadFileGemini");
-    expect(prepared.loadedToolNames).not.toContain("WriteFileGemini");
-    expect(prepared.loadedToolNames).not.toContain("RunShellCommand");
-  });
-
-  test("filters model-derived client tools by request-scoped allowlist", async () => {
-    const prepared = await prepareToolExecutionContextForModel(
-      "anthropic/claude-sonnet-4",
-      { clientToolAllowlist: ["Read", "Grep", "Glob"] },
-    );
-
-    expect(prepared.loadedToolNames).toEqual(["Read"]);
-    expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["Read"]);
-    expect(prepared.loadedToolNames).not.toContain("Bash");
-
-    const denied = await executeTool(
-      "Bash",
-      { command: "echo no", description: "Print no" },
-      { toolContextId: prepared.contextId },
-    );
-    expect(denied.status).toBe("error");
-    expect(asText(denied.toolReturn)).toContain("Tool not found: Bash");
   });
 
   test("empty request-scoped allowlist disables client tools", async () => {

@@ -26,6 +26,7 @@ import type {
 } from "./reflection-settings";
 import { getRuntimeContext } from "./runtime-context";
 import { trackBoundaryError } from "./telemetry/error-reporting";
+import { isToolsetPreference } from "./tools/toolset-catalog";
 import type { ToolsetPreference } from "./tools/toolset-types";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
@@ -77,7 +78,7 @@ export interface Settings {
   includeWorktreeTool: boolean; // Include EnterWorktree in toolsets when true
   preferredBackendMode?: "api" | "local"; // Startup backend preference when no explicit --backend is provided
   channelCredentialsStore?: "file" | "keyring" | "auto"; // Where channel/connection tokens are persisted
-  recentModels: string[]; // Recently used model IDs (most recent first, max 5)
+  recentModels: string[]; // Recently used model IDs (most recent first, max 10)
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: ReflectionTrigger;
   reflectionStepCount: number;
@@ -641,7 +642,7 @@ class SettingsManager {
 
   addRecentModel(modelId: string): void {
     const current = this.getRecentModels().filter((id) => id !== modelId);
-    const updated = [modelId, ...current].slice(0, 5);
+    const updated = [modelId, ...current].slice(0, 10);
     this.updateSettings({ recentModels: updated });
   }
 
@@ -1740,15 +1741,13 @@ class SettingsManager {
     this.upsertAgentSettings(agentId, { mcpServers: servers });
   }
   /** Resolve the manual override for one conversation; unset means auto. */
-  getToolsetPreference(
-    agentId: string,
-    conversationId: string = "default",
-  ): ToolsetPreference {
+  getToolsetPreference(agentId: string, conversationId = "default") {
     const agentSettings = this.getAgentSettings(agentId);
-    if (!conversationId || conversationId === "default") {
-      return agentSettings?.toolset ?? "auto";
-    }
-    return agentSettings?.toolsetsByConversation?.[conversationId] ?? "auto";
+    const preference =
+      !conversationId || conversationId === "default"
+        ? agentSettings?.toolset
+        : agentSettings?.toolsetsByConversation?.[conversationId];
+    return isToolsetPreference(preference) ? preference : "auto";
   }
 
   /** Persist a manual override for one conversation; auto clears it. */

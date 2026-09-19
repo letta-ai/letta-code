@@ -381,7 +381,7 @@ resent. Interrupt handler marking tools cancelled even when execution completed.
 ### Shell Tool Parity Gap
 
 Policy/UI layer treats all shell variants (`Bash`, `shell_command`,
-`ShellCommand`, `run_shell_command`) identically, but the implementation
+`ShellCommand`, `exec_command`) identically, but the implementation
 layer differs. Features added to one tool may be missing from others.
 
 - **Review signal:** any shell tool change, check ALL variants have parity.

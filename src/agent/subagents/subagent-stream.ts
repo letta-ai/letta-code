@@ -38,6 +38,7 @@ export interface ExecutionState {
     stepCount?: number;
   } | null;
   displayedToolCalls: Set<string>;
+  toolCallStatuses: Map<string, "success" | "error">;
 }
 
 /**
@@ -120,6 +121,30 @@ function handleToolCallEvent(
         toolArgs,
         state.displayedToolCalls,
       );
+    }
+  }
+}
+
+function handleToolReturnEvent(
+  event: {
+    tool_call_id?: string;
+    status?: string;
+    tool_returns?: Array<{
+      tool_call_id?: string;
+      status?: string;
+    }>;
+  },
+  state: ExecutionState,
+): void {
+  const returns = Array.isArray(event.tool_returns)
+    ? event.tool_returns
+    : [event];
+
+  for (const toolReturn of returns) {
+    const toolCallId = toolReturn.tool_call_id;
+    if (!toolCallId) continue;
+    if (toolReturn.status === "success" || toolReturn.status === "error") {
+      state.toolCallStatuses.set(toolCallId, toolReturn.status);
     }
   }
 }
@@ -245,6 +270,9 @@ export function processStreamEvent(
         if (event.message_type === "tool_call_message") {
           handleToolCallEvent(event, state, subagentId);
         }
+        if (event.message_type === "tool_return_message") {
+          handleToolReturnEvent(event, state);
+        }
         emitStreamEvent(subagentId, event);
         break;
 
@@ -259,6 +287,16 @@ export function processStreamEvent(
   } catch {
     // Not valid JSON, ignore
   }
+}
+
+/** Whether at least one identified tool call reached a successful terminal state. */
+export function hasSuccessfulToolCall(state: ExecutionState): boolean {
+  for (const toolCallId of state.displayedToolCalls) {
+    if (state.toolCallStatuses.get(toolCallId) === "success") {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
