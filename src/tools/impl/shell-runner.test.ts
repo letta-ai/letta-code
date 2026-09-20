@@ -137,10 +137,14 @@ describe("shared shell process", () => {
     expect(streamed).toBe("streamed");
   });
 
-  test("tracks PR output from the shared completion path", async () => {
-    let resolveUpdate!: (tags: string[]) => void;
-    const updateObserved = new Promise<string[]>((resolve) => {
-      resolveUpdate = resolve;
+  test("waits for PR attribution before completing the shell", async () => {
+    let releaseUpdate!: () => void;
+    const updateAllowed = new Promise<void>((resolve) => {
+      releaseUpdate = resolve;
+    });
+    let resolveUpdateStarted!: (tags: string[]) => void;
+    const updateStarted = new Promise<string[]>((resolve) => {
+      resolveUpdateStarted = resolve;
     });
     __testSetBackend({
       retrieveConversation: async () => ({
@@ -152,7 +156,8 @@ describe("shared shell process", () => {
         body: ConversationUpdateBody,
       ) => {
         const tags = Reflect.get(body, "tags");
-        resolveUpdate(Array.isArray(tags) ? tags : []);
+        resolveUpdateStarted(Array.isArray(tags) ? tags : []);
+        await updateAllowed;
         return { id: "conv-shell", tags };
       },
     } as unknown as Backend);
@@ -176,11 +181,20 @@ describe("shared shell process", () => {
         ),
     );
 
-    await running.completion;
-    await expect(updateObserved).resolves.toEqual([
+    await expect(updateStarted).resolves.toEqual([
       "channel:slack",
       "github:pull-request:letta-ai:letta-code:3744",
     ]);
+    const completionState = running.completion.then(() => "completed");
+    expect(
+      await Promise.race([
+        completionState,
+        Bun.sleep(20).then(() => "pending"),
+      ]),
+    ).toBe("pending");
+
+    releaseUpdate();
+    await expect(completionState).resolves.toBe("completed");
   });
 
   test("decodes buffered output after joining split UTF-8 bytes", async () => {
