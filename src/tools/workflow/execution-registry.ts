@@ -2,9 +2,10 @@
  * In-process registry of Workflow tool runs, kept for status reporting.
  *
  * The Workflow tool launches a run in the background and returns at once; the
- * run then reports progress here. The /workflows command and the completion
- * summary read from it. Entries for finished runs are retained for a short
- * while so the final numbers stay visible.
+ * run then reports progress here. The /workflows command, the status rows
+ * under the input, and the completion summary read from it; the TUI
+ * subscribes to change notifications so nothing polls. Entries for finished
+ * runs are retained for a short while so the final numbers stay visible.
  */
 
 import type { WorkflowMeta, WorkflowProgressEvent } from "./types.ts";
@@ -44,6 +45,7 @@ export interface WorkflowExecutionSnapshot {
   description: string;
   status: WorkflowExecutionStatus;
   error?: string;
+  finishedAt?: number;
   /** Wall-clock so far (running) or total (finished). */
   durationMs: number;
   agentsTotal: number;
@@ -57,9 +59,35 @@ export interface WorkflowExecutionSnapshot {
 
 const runs = new Map<string, WorkflowExecutionRecord>();
 const cleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const listeners = new Set<() => void>();
 
 const FINISHED_RUN_RETENTION_MS = 5 * 60 * 1000;
 const MAX_LOG_LINES = 50;
+
+let version = 0;
+
+function notify(): void {
+  version += 1;
+  for (const listener of listeners) listener();
+}
+
+/**
+ * Monotonic change counter; a stable primitive for useSyncExternalStore so
+ * UI subscribers re-render only when the registry actually changes.
+ */
+export function getWorkflowExecutionsVersion(): number {
+  return version;
+}
+
+/** Subscribe to registry changes; returns an unsubscribe function. */
+export function subscribeToWorkflowExecutions(
+  listener: () => void,
+): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
 
 export function registerWorkflowExecution(params: {
   taskId: string;
@@ -85,6 +113,7 @@ export function registerWorkflowExecution(params: {
     logs: [],
     totalTokens: 0,
   });
+  notify();
 }
 
 /** Apply one engine progress event to a run. */
@@ -121,6 +150,7 @@ export function recordWorkflowProgress(
       break;
     }
   }
+  notify();
 }
 
 export function finishWorkflowExecution(
@@ -141,10 +171,14 @@ export function finishWorkflowExecution(
   }
   const timer = setTimeout(() => {
     cleanupTimers.delete(taskId);
-    if (runs.get(taskId) === record) runs.delete(taskId);
+    if (runs.get(taskId) === record) {
+      runs.delete(taskId);
+      notify();
+    }
   }, FINISHED_RUN_RETENTION_MS);
   if (typeof timer === "object" && "unref" in timer) timer.unref();
   cleanupTimers.set(taskId, timer);
+  notify();
 }
 
 function snapshot(
@@ -172,6 +206,7 @@ function snapshot(
     description: record.meta.description,
     status: record.status,
     error: record.error,
+    finishedAt: record.finishedAt,
     durationMs: Math.max(0, (record.finishedAt ?? now) - record.startedAt),
     agentsTotal: agents.length,
     agentsDone: agents.filter((a) => a.status === "done").length,
@@ -205,4 +240,6 @@ export function __resetWorkflowExecutionsForTests(): void {
   for (const timer of cleanupTimers.values()) clearTimeout(timer);
   cleanupTimers.clear();
   runs.clear();
+  listeners.clear();
+  version = 0;
 }

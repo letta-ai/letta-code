@@ -3,9 +3,11 @@ import {
   __resetWorkflowExecutionsForTests,
   finishWorkflowExecution,
   getWorkflowExecution,
+  getWorkflowExecutionsVersion,
   listWorkflowExecutions,
   recordWorkflowProgress,
   registerWorkflowExecution,
+  subscribeToWorkflowExecutions,
 } from "./execution-registry.ts";
 
 const META = {
@@ -126,5 +128,22 @@ describe("workflow execution registry", () => {
       "workflow_2",
     ]);
     expect(getWorkflowExecution("workflow_9")).toBeNull();
+  });
+
+  test("notifies subscribers and bumps the version on every change", () => {
+    let calls = 0;
+    const unsubscribe = subscribeToWorkflowExecutions(() => {
+      calls += 1;
+    });
+    const before = getWorkflowExecutionsVersion();
+    register();
+    recordWorkflowProgress("workflow_1", { kind: "log", message: "hi" });
+    finishWorkflowExecution("workflow_1", { status: "completed" });
+    expect(calls).toBe(3);
+    expect(getWorkflowExecutionsVersion()).toBe(before + 3);
+    expect(getWorkflowExecution("workflow_1")?.finishedAt).toBeGreaterThan(0);
+    unsubscribe();
+    recordWorkflowProgress("workflow_1", { kind: "log", message: "later" });
+    expect(calls).toBe(3);
   });
 });
