@@ -71,7 +71,7 @@ For an upgrade:
 3. Follow repository instructions for every generated dependency artifact affected by the lockfile.
 4. Fix required application integration and add focused tests.
 5. Run `bun run check`, the relevant pi-ai/provider/runtime tests, and build validation appropriate to the diff. If a documented platform-specific validation cannot run, say so in the PR body and tracker note.
-6. Open one draft PR with a Conventional Commit title.
+6. Open one ready-for-review PR with a Conventional Commit title.
 7. Include all of these in the PR body:
    - `Pi-ai-watch: <previous>...<current>`
    - installed and target package versions
@@ -79,7 +79,7 @@ For an upgrade:
    - changelog items that matter locally
    - application changes or explicit reasons none were needed
    - validation performed
-8. Immediately verify `draft: true` and that the PR author matches the Expected GitHub login. If either is wrong, fix or close the PR instead of reporting success.
+8. Immediately verify `draft: false` and that the PR author matches the Expected GitHub login. If either is wrong, fix or close the PR instead of reporting success.
 9. Request the single GitHub reviewer from the run inputs unless already requested.
 
 ## Tracker updates

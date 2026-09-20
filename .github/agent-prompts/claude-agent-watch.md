@@ -48,7 +48,7 @@ Immediately after the block succeeds, use `SetWorkingDirectory` to select `/tmp/
 2. Inspect the current official docs directly when a preview is truncated or the evidence points at an unwatched page.
 3. Review every relevant signal against the corresponding local Letta Code mirror. Account for each signal in the tracker note.
 4. Compare implementation behavior, parsing, mutation ordering, output formatting, failure semantics, defaults, and model-facing guidance when the two harnesses mirror the same contract. A matching tool name or schema is not enough.
-5. If a concrete local mirror should change, make only that change with focused tests and open one separate draft PR.
+5. If a concrete local mirror should change, make only that change with focused tests and open one separate ready-for-review PR.
 6. If the change is upstream-only, record `no_local_impact` with a specific reason. Claude-only UI, IDE, Desktop, hosted-cloud, subscription, MCP/plugin, and model-routing changes often do not belong locally.
 7. If public evidence is incomplete or a probe is inconclusive, do not guess. Record `needs_human_review` with the exact uncertainty.
 8. Search open and closed PRs for the exact `Claude-watch: <candidate-id>` marker before creating a PR. A retry must never duplicate a PR.
@@ -125,8 +125,8 @@ If a local change is required:
 - use `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN"` for every GitHub CLI operation
 - make the minimum mirror change and focused tests only; do not include watcher implementation changes
 - use a Conventional Commit title
-- open the PR as a draft
-- immediately verify `draft: true` and that the PR author matches the Expected GitHub login from the run inputs; if either is wrong, fix or close it instead of reporting success
+- open the PR as ready for review
+- immediately verify `draft: false` and that the PR author matches the Expected GitHub login from the run inputs; if either is wrong, fix or close it instead of reporting success
 - before the tracker update, GET `repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers` with the same explicit Amelia credential, then request each configured reviewer that is not already present with `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh api --method POST "repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers" -f "reviewers[]=<login>"`
 - include `Claude-watch: <candidate-id>`, package version, release URL, docs/runtime evidence, and validation in the body
 - never commit generated snapshots or analysis files to the parity branch
