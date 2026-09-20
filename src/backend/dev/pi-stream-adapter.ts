@@ -324,31 +324,6 @@ function withOpenAIResponsesReplayIdSanitizer(
   };
 }
 
-function withMidConversationSystemPrompt(
-  existing: SimpleStreamOptions["onPayload"] | undefined,
-  systemPrompt: string | undefined,
-): SimpleStreamOptions["onPayload"] {
-  if (!systemPrompt) return existing;
-  return async (payload, model) => {
-    let next = payload;
-    let upstreamChanged = false;
-    const upstream = await existing?.(payload, model);
-    if (upstream !== undefined) {
-      next = upstream;
-      upstreamChanged = true;
-    }
-    if (model.id !== "claude-opus-4-8" || !isRecord(next)) {
-      return upstreamChanged ? next : undefined;
-    }
-    const messages = Array.isArray(next.messages) ? next.messages : undefined;
-    if (!messages) return upstreamChanged ? next : undefined;
-    return {
-      ...next,
-      messages: [...messages, { role: "system", content: systemPrompt }],
-    };
-  };
-}
-
 function withAnthropicOutputEffort(
   existing: SimpleStreamOptions["onPayload"] | undefined,
   effort: string | undefined,
@@ -616,9 +591,17 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       },
     );
     assertPromptFloorFitsContextWindow(input, resolved.model);
+    const messages = toPiMessages(input.uiMessages);
+    if (input.midConversationSystemPrompt) {
+      messages.push({
+        role: "system",
+        content: input.midConversationSystemPrompt,
+        timestamp: Date.now(),
+      });
+    }
     const context: Context = {
       systemPrompt: input.systemPrompt ?? input.agent.system,
-      messages: toPiMessages(input.uiMessages),
+      messages,
       ...(tools ? { tools } : {}),
     };
     const reasoning = reasoningForSettings(
@@ -674,10 +657,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       );
     }
     if (resolved.model.api === "anthropic-messages") {
-      options.onPayload = withMidConversationSystemPrompt(
-        options.onPayload,
-        input.midConversationSystemPrompt,
-      );
       if (
         resolved.model.id.includes("claude-fable-5") &&
         anthropicEffortForSettings(input.agent.model_settings) === "max"
