@@ -72,7 +72,7 @@ interface TrackedToolCall {
   lastInput: unknown;
   /** Running concatenation of raw argument fragments, when any were seen. */
   raw?: string;
-  /** Last argument value observed to be complete (a parsed object). */
+  /** Complete decoded arguments when no raw delta stream was available. */
   complete?: unknown;
 }
 
@@ -80,18 +80,6 @@ function asArgumentObject(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-/** Parse a raw argument string into an object, or undefined if incomplete. */
-function parseArgumentObject(
-  text: string,
-): Record<string, unknown> | undefined {
-  if (!text.trim()) return undefined;
-  try {
-    return asArgumentObject(JSON.parse(text));
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -124,11 +112,9 @@ function stringifyArguments(value: unknown): string {
 }
 
 /**
- * Fold one streamed argument fragment into the call's accumulated state. A
- * fragment that already parses as complete JSON replaces earlier partial state;
- * otherwise fragments concatenate. Incomplete fragments never overwrite a call
- * that already has complete arguments, so a trailing empty delta cannot erase
- * the real identity.
+ * Fold one streamed argument delta into the call's accumulated state. A delta
+ * can itself be valid JSON (for example an interior `{}`), so raw fragments
+ * are always concatenated and are never treated as standalone snapshots.
  */
 function recordArgumentFragment(
   call: TrackedToolCall,
@@ -137,16 +123,8 @@ function recordArgumentFragment(
 ): void {
   const fragment = argumentFragment(input, rawArguments);
   if (fragment !== undefined) {
-    const parsed = parseArgumentObject(fragment);
-    if (parsed) {
-      call.raw = fragment;
-      call.complete = parsed;
-      return;
-    }
-    if (call.complete === undefined) {
-      call.raw = call.raw === undefined ? fragment : call.raw + fragment;
-      call.complete = parseArgumentObject(call.raw);
-    }
+    call.raw = call.raw === undefined ? fragment : call.raw + fragment;
+    call.complete = undefined;
     return;
   }
   // No raw fragment on the wire: a fully decoded, non-empty object input is
