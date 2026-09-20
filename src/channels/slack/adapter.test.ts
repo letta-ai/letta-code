@@ -625,3 +625,45 @@ test("slack adapter sendMessage renders a View on web context footnote when iden
   // Without identity: plain text, no blocks.
   expect(postCalls[1]?.[0]?.blocks).toBeUndefined();
 });
+
+test("slack adapter sendMessage renders the gateway-style footnote when the model is known", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  await adapter.start();
+
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Reply with a rich footnote.",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+    modelHandle: "openai/kimi-k3",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  const postCalls = writeClient?.chat.postMessage.mock
+    .calls as unknown as Array<
+    Array<{
+      blocks?: Array<{
+        type: string;
+        elements?: Array<{ type: string; text: string }>;
+      }>;
+    }>
+  >;
+  const blocks = postCalls[0]?.[0]?.blocks ?? [];
+  const footnoteBlock = blocks[blocks.length - 1];
+  expect(footnoteBlock?.type).toBe("context");
+  expect(footnoteBlock?.elements?.[0]?.text).toBe(
+    "kimi-k3 · <https://chat.letta.com/chat/agent-1/connections/slack|Configure> · <https://chat.letta.com/chat/agent-1?conversation=conv-1|View>",
+  );
+});

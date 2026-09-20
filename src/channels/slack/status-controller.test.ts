@@ -405,6 +405,36 @@ test("slack terminal table: fatal stops post one quiet error with a web footnote
   );
 });
 
+test("slack terminal table: fatal stop renders the gateway-style footer when the model is known", async () => {
+  const adapter = await createStartedSlackAdapter();
+  const source = createSlackTurnSource({ modelHandle: "openai/kimi-k3" });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    sources: [source],
+    outcome: "error",
+    stopReason: "llm_api_error",
+    error: "Provider request failed.",
+    runId: "run-1",
+  });
+
+  const client = getSlackWriteClient();
+  expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+  const postCalls = client.chat.postMessage.mock.calls as unknown as Array<
+    Array<{
+      blocks?: Array<{
+        type: string;
+        elements?: Array<{ text: string }>;
+      }>;
+    }>
+  >;
+  const blocks = postCalls[0]?.[0]?.blocks;
+  expect(blocks?.at(-1)?.elements?.[0]?.text).toBe(
+    "kimi-k3 · <https://chat.letta.com/chat/agent-1/connections/slack|Configure> · <https://chat.letta.com/chat/agent-1?conversation=conv-1|View>",
+  );
+});
+
 test("slack terminal table: tool_rule is quiet, no_tool_call is fatal, and approval is non-terminal", async () => {
   const adapter = await createStartedSlackAdapter();
   const source = createSlackTurnSource();

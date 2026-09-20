@@ -48,6 +48,7 @@ async function sendSlackMessage(
     parseMode: formatted.parseMode,
     agentId: route.agentId,
     conversationId: route.conversationId,
+    modelHandle: context.modelHandle,
   });
   const confirmation = request.mediaPath
     ? `Attachment sent to slack (message_id: ${result.messageId})`

@@ -297,6 +297,8 @@ export interface ChannelMessageActionContext {
   request: ChannelMessageActionRequest;
   route: ChannelMessageActionRoute;
   adapter: ChannelMessageActionTransport;
+  /** Model handle for the sending runtime, when known. Used to render rich web footnotes. */
+  modelHandle?: string | null;
   /**
    * Format user-authored markdown/plain text for the target channel before the
    * plugin sends it. The shared MessageChannel tool owns cross-channel text

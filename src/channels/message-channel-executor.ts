@@ -21,6 +21,8 @@ import type { ChannelTurnSource, SupportedChannelId } from "./types";
 export interface MessageChannelExecutionScope {
   agentId: string;
   conversationId: string;
+  /** Model handle for the sending runtime, when known. Used to render rich web footnotes. */
+  modelHandle?: string | null;
 }
 
 export interface ResolvedMessageChannelContext {
@@ -279,6 +281,7 @@ function buildProactiveRoute(params: {
 async function dispatchMessageChannelAction(params: {
   request: ChannelMessageActionRequest;
   context: ResolvedMessageChannelContext;
+  modelHandle?: string | null;
 }): Promise<string> {
   const discovery = params.context.messageActions.describeMessageTool({
     accountId: params.context.route.accountId ?? null,
@@ -293,6 +296,7 @@ async function dispatchMessageChannelAction(params: {
     request: params.request,
     route: params.context.route,
     adapter: params.context.transport,
+    modelHandle: params.modelHandle,
     formatText: (text) =>
       formatOutboundChannelMessage(params.request.channel, text),
   });
@@ -485,6 +489,7 @@ export async function executeMessageChannel(
         request,
         context,
         options.idempotencyScope,
+        options.scope.modelHandle,
       );
     }
 
@@ -515,6 +520,7 @@ export async function executeMessageChannel(
       request,
       context,
       options.idempotencyScope,
+      options.scope.modelHandle,
     );
   } catch (error) {
     if (error instanceof MessageChannelDuplicateActionError) throw error;
@@ -537,8 +543,10 @@ function dispatchWithIdempotency(
   request: ChannelMessageActionRequest,
   context: ResolvedMessageChannelContext,
   scope: MessageChannelIdempotencyScope | null | undefined,
+  modelHandle?: string | null,
 ): Promise<string> {
-  const dispatch = () => dispatchMessageChannelAction({ request, context });
+  const dispatch = () =>
+    dispatchMessageChannelAction({ request, context, modelHandle });
   const key = messageIdempotencyKey(request, context.route);
   return scope ? scope.execute(key, dispatch) : dispatch();
 }

@@ -101,6 +101,7 @@ function buildSlackOutboundBlocks(
   const footnote = buildSlackChatFootnote({
     agentId: message.agentId,
     conversationId: message.conversationId,
+    modelHandle: message.modelHandle,
   });
   if (!footnote) {
     return undefined;

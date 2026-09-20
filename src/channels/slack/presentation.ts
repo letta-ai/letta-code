@@ -34,10 +34,29 @@ function buildSlackChatUrl(
     : base;
 }
 
+function slackFooterModelName(modelHandle: string): string {
+  const short = modelHandle.split("/").pop() ?? modelHandle;
+  return short
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 export function buildSlackChatFootnote(identity: {
   agentId: string;
   conversationId: string;
+  modelHandle?: string | null;
 }): string {
+  // When the model is known, match the Cloud Slack gateway footer exactly
+  // (`model · Configure · View`) so harness-posted and gateway-posted
+  // messages render identically.
+  const modelHandle = identity.modelHandle?.trim();
+  if (modelHandle && !isLocalAgentId(identity.agentId)) {
+    const base = `https://chat.letta.com/chat/${encodeURIComponent(identity.agentId)}`;
+    const configureUrl = `${base}/connections/slack`;
+    const conversationUrl = `${base}?conversation=${encodeURIComponent(identity.conversationId)}`;
+    return `${slackFooterModelName(modelHandle)} · <${configureUrl}|Configure> · <${conversationUrl}|View>`;
+  }
   const chatUrl = buildSlackChatUrl(identity.agentId, identity.conversationId);
   return chatUrl ? `<${chatUrl}|View on web>` : "";
 }

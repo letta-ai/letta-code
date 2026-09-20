@@ -299,6 +299,7 @@ export function createSlackAdapter(
         ? buildSlackChatFootnote({
             agentId: msg.agentId,
             conversationId: msg.conversationId,
+            modelHandle: msg.modelHandle,
           })
         : "";
     const blocks = footnote

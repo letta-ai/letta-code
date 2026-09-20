@@ -165,6 +165,8 @@ export interface ChannelTurnSource {
   threadId?: string | null;
   agentId: string;
   conversationId: string;
+  /** Model handle for the turn's runtime, when the gateway knows it. Used to render rich web footnotes. */
+  modelHandle?: string | null;
 }
 
 export type ChannelTurnOutcome = "completed" | "error" | "cancelled";
@@ -431,6 +433,8 @@ export interface OutboundChannelMessage {
   agentId?: string;
   /** Optional: conversation identity, used by adapters that render web deep links. */
   conversationId?: string;
+  /** Optional: model handle for the sending runtime, used by adapters that render rich web footnotes. */
+  modelHandle?: string | null;
 }
 
 export interface OutboundChannelRichMessageDraft {

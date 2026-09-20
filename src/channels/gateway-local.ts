@@ -45,6 +45,7 @@ import { handleChannelsSlashCommand } from "./slash-command";
 import type {
   ChannelModelPickerData,
   ChannelStartupLogger,
+  ChannelTurnLifecycleEvent,
   ChannelTurnSource,
 } from "./types";
 
@@ -63,6 +64,23 @@ export interface LocalChannelGatewayHandle {
   executeCommand(
     command: ServiceCommandRequest,
   ): Promise<ServiceCommandResponse>;
+}
+
+function enrichLifecycleEventWithModelHandle(
+  gateway: ChannelGateway,
+  event: ChannelTurnLifecycleEvent,
+): ChannelTurnLifecycleEvent {
+  const withModel = (source: ChannelTurnSource): ChannelTurnSource => ({
+    ...source,
+    modelHandle:
+      gateway.getModelStatus({
+        agent_id: source.agentId,
+        conversation_id: source.conversationId,
+      })?.modelHandle ?? null,
+  });
+  return event.type === "queued"
+    ? { ...event, source: withModel(event.source) }
+    : { ...event, sources: event.sources.map(withModel) };
 }
 
 async function executeChannelServiceCommand(
@@ -262,13 +280,21 @@ export async function startLocalChannelGateway(
           parentScope: {
             agentId: request.runtime.agent_id,
             conversationId: request.runtime.conversation_id,
+            modelHandle:
+              gateway.getModelStatus({
+                agent_id: request.runtime.agent_id,
+                conversation_id: request.runtime.conversation_id,
+              })?.modelHandle ?? null,
           },
           channelTurnSources: sources,
         },
         idempotencyScope,
       );
     },
-    onLifecycle: (event) => registry.dispatchTurnLifecycleEvent(event),
+    onLifecycle: (event) =>
+      registry.dispatchTurnLifecycleEvent(
+        enrichLifecycleEventWithModelHandle(gateway, event),
+      ),
     onProgress: (event) => registry.dispatchTurnProgressEvent(event),
     onControlRequest: (event) => registry.registerPendingControlRequest(event),
   });
