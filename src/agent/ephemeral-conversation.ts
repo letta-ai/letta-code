@@ -1,4 +1,8 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import {
+  actingUserRequestOptions,
+  resolveActingUserId,
+} from "@/agent/acting-user";
 import { getModelContextWindow } from "@/agent/available-models";
 import { buildCreateAgentRequest } from "@/agent/create-agent-request";
 import { getModelUpdateArgs } from "@/agent/model";
@@ -15,6 +19,9 @@ export interface CreateEphemeralConversationOptions {
   systemPromptPreset?: string;
   systemPromptCustom?: string;
   memoryPromptMode?: MemoryPromptMode;
+  parentAgentId?: string;
+  name?: string;
+  isSubagent?: boolean;
 }
 
 export async function buildEphemeralConversationCreateBody(
@@ -43,6 +50,13 @@ export async function buildEphemeralConversationCreateBody(
   return {
     model: request.model,
     system: request.system,
+    ...(options.parentAgentId
+      ? { parent_agent_id: options.parentAgentId }
+      : {}),
+    ...(options.name ? { name: options.name } : {}),
+    ...(options.isSubagent !== undefined
+      ? { is_subagent: options.isSubagent }
+      : {}),
     ...(modelSettings ? { model_settings: modelSettings } : {}),
     ...(contextWindow ? { context_window_limit: contextWindow } : {}),
   };
@@ -51,10 +65,11 @@ export async function buildEphemeralConversationCreateBody(
 function projectEphemeralAgent(
   conversationId: string,
   body: EphemeralConversationCreateBody,
+  name?: string | null,
 ): AgentState {
   return {
     id: conversationId,
-    name: "Ephemeral conversation",
+    name: name ?? "Ephemeral conversation",
     system: body.system,
     tools: [],
     memory: { blocks: [] },
@@ -73,9 +88,12 @@ export async function createEphemeralConversation(
   options: CreateEphemeralConversationOptions,
 ): Promise<{ agent: AgentState; conversationId: string }> {
   const body = await buildEphemeralConversationCreateBody(options);
-  const conversation = await createEphemeralConversationRequest(body);
+  const conversation = await createEphemeralConversationRequest(
+    body,
+    actingUserRequestOptions(resolveActingUserId()),
+  );
   return {
-    agent: projectEphemeralAgent(conversation.id, body),
+    agent: projectEphemeralAgent(conversation.id, body, conversation.name),
     conversationId: conversation.id,
   };
 }

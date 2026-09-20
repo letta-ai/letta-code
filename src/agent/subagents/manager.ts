@@ -179,22 +179,22 @@ export function buildSubagentArgs(
     // Don't pass --system (existing agent keeps its prompt)
     // Don't pass --model (existing agent keeps its model)
   } else {
-    // Create new agent (original behavior). A systemPromptOverride replaces the
-    // configured persona with a caller-supplied prompt via `--system-custom`
-    // (mutually exclusive with `--system`).
+    // Cloud subagents use agent-free ephemeral conversations. The local backend
+    // keeps its existing hidden-agent storage because it has no matching API.
+    const isCloudEphemeral = options.backendMode === "api";
+    args.push(isCloudEphemeral ? "--ephemeral" : "--new-agent");
     if (options.systemPromptOverride) {
-      args.push("--new-agent", "--system-custom", options.systemPromptOverride);
+      args.push("--system-custom", options.systemPromptOverride);
     } else {
-      args.push("--new-agent", "--system", type);
+      args.push("--system", type);
     }
-    const subagentTags = [`type:${type}`];
-    if (options.parentAgentId) {
-      subagentTags.push(`parent:${options.parentAgentId}`);
+    if (!isCloudEphemeral) {
+      const subagentTags = [`type:${type}`];
+      if (options.parentAgentId) {
+        subagentTags.push(`parent:${options.parentAgentId}`);
+      }
+      args.push("--tags", subagentTags.join(","));
     }
-    args.push("--tags", subagentTags.join(","));
-    // Newly spawned subagents are stateless (non-memfs). The headless
-    // entrypoint derives this from LETTA_CODE_AGENT_ROLE=subagent — no CLI
-    // flag needed, and no user-facing opt-out exists.
     if (model) {
       args.push("--model", model);
     }

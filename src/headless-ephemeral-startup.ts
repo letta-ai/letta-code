@@ -9,6 +9,7 @@ import {
 } from "@/backend";
 import { clearPersistedClientToolRules } from "@/tools/toolset";
 import { debugLog, debugWarn } from "@/utils/debug";
+import { SUBAGENT_NAME_ENV } from "@/utils/subagent-launch-marker";
 
 export function prepareHeadlessEphemeralBackend(enabled: boolean): void {
   if (enabled && isLocalBackendEnabled()) {
@@ -33,6 +34,9 @@ export async function createHeadlessEphemeralConversation(params: {
     systemPromptPreset: params.systemPromptPreset,
     systemPromptCustom: params.systemPromptCustom,
     memoryPromptMode: "standard" as const,
+    parentAgentId: process.env.LETTA_PARENT_AGENT_ID,
+    name: process.env[SUBAGENT_NAME_ENV],
+    isSubagent: process.env.LETTA_CODE_AGENT_ROLE === "subagent",
   };
   return params.backendMode === "local"
     ? createLocalEphemeralConversation(options)

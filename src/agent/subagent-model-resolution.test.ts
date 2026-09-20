@@ -314,6 +314,24 @@ describe("buildSubagentArgs", () => {
     expect(args).toContain("--new-agent");
   });
 
+  test("uses an ephemeral conversation for fresh Cloud subagents", () => {
+    const args = buildSubagentArgs(
+      "explore",
+      baseConfig,
+      "openai/gpt-5.6-luna",
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { backendMode: "api", parentAgentId: "agent-parent-123" },
+    );
+
+    expect(args).toContain("--ephemeral");
+    expect(args).not.toContain("--new-agent");
+    expect(args).not.toContain("--tags");
+    expect(args[args.indexOf("--system") + 1]).toBe("explore");
+  });
+
   test("tags new subagents with type and combines parent into one --tags value", () => {
     const args = buildSubagentArgs(
       "explore",
