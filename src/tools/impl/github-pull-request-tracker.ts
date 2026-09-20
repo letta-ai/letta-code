@@ -369,6 +369,7 @@ export function createGitHubPullRequestOutputTracker(
     conversationId?: string;
     attributionConversationIds?: string[];
     backend?: ConversationTagBackend;
+    signal?: AbortSignal;
   },
 ): GitHubPullRequestOutputTracker | undefined {
   if (!isGitHubPullRequestCreateCommand(command)) {
@@ -426,9 +427,12 @@ export function createGitHubPullRequestOutputTracker(
         const backend = options?.backend ?? getBackend();
         finishPromise = Promise.all(
           targetConversationIds.map((targetConversationId) =>
-            queueConversationTagUpdate(backend, targetConversationId, [
-              ...tags,
-            ]),
+            queueConversationTagUpdate(
+              backend,
+              targetConversationId,
+              [...tags],
+              options?.signal,
+            ),
           ),
         ).then(() => undefined);
       } catch (error) {

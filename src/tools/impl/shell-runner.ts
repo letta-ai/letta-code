@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { isUsableDirectory } from "@/helpers/usable-directory";
+import { debugLog } from "@/utils/debug";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
@@ -17,6 +18,8 @@ export class ShellExecutionError extends Error {
 }
 
 export type ShellOutputStream = "stdout" | "stderr";
+
+export const GITHUB_PR_ATTRIBUTION_TIMEOUT_MS = 2_000;
 
 export type ShellSpawnOptions = {
   cwd: string;
@@ -378,8 +381,16 @@ export function startShellProcess(
 
   noteExpectedWorktreeForLauncher(launcher, options.cwd);
 
+  const attributionTimeoutSignal = AbortSignal.timeout(
+    GITHUB_PR_ATTRIBUTION_TIMEOUT_MS,
+  );
   const pullRequestTracker = createGitHubPullRequestOutputTracker(
     options.sourceCommand ?? launcher,
+    {
+      signal: options.signal
+        ? AbortSignal.any([options.signal, attributionTimeoutSignal])
+        : attributionTimeoutSignal,
+    },
   );
 
   const stdoutChunks: Buffer[] = [];
@@ -442,6 +453,13 @@ export function startShellProcess(
     emitDecodedOutput(outputDecoders.stdout.end(), "stdout");
     emitDecodedOutput(outputDecoders.stderr.end(), "stderr");
   };
+  const finishPullRequestTracking = async (): Promise<void> => {
+    try {
+      await pullRequestTracker?.finish();
+    } catch (error) {
+      debugLog("github-pr-tracking", "PR attribution deadline expired", error);
+    }
+  };
 
   const events: ProcessEvents = {
     output(data, stream) {
@@ -460,7 +478,7 @@ export function startShellProcess(
       completed = true;
       cleanup();
       flushOutputDecoders();
-      await pullRequestTracker?.finish();
+      await finishPullRequestTracking();
       rejectCompletion(buildSpawnError(error, executable, options.cwd));
     },
     async close(code) {
@@ -468,7 +486,7 @@ export function startShellProcess(
       completed = true;
       cleanup();
       flushOutputDecoders();
-      await pullRequestTracker?.finish();
+      await finishPullRequestTracking();
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
       if (timedOut) {

@@ -197,6 +197,46 @@ describe("shared shell process", () => {
     await expect(completionState).resolves.toBe("completed");
   });
 
+  test("bounds stalled PR attribution after shell completion", async () => {
+    __testSetBackend({
+      retrieveConversation: async () => ({ id: "conv-shell", tags: [] }),
+      updateConversation: async (
+        _id: string,
+        _body: ConversationUpdateBody,
+        options?: { signal?: AbortSignal },
+      ) =>
+        await new Promise((_, reject) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason),
+            { once: true },
+          );
+        }),
+    } as unknown as Backend);
+
+    const startedAt = Date.now();
+    const running = runWithRuntimeContext(
+      { agentId: "agent-shell", conversationId: "conv-shell" },
+      () =>
+        startShellProcess(
+          [
+            process.execPath,
+            "-e",
+            'process.stdout.write("https://github.com/letta-ai/letta-code/pull/3745\\n")',
+          ],
+          {
+            cwd: process.cwd(),
+            env: process.env,
+            timeoutMs: 1000,
+            sourceCommand: "gh pr create --fill",
+          },
+        ),
+    );
+
+    await expect(running.completion).resolves.toMatchObject({ exitCode: 0 });
+    expect(Date.now() - startedAt).toBeLessThan(3_000);
+  });
+
   test("decodes buffered output after joining split UTF-8 bytes", async () => {
     const result = await spawnWithLauncher(
       [
