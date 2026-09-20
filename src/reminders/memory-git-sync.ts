@@ -13,7 +13,7 @@ import { debugWarn } from "@/utils/debug";
 export interface RunPostTurnMemorySyncParams {
   agentId: string;
   isEnabled?: (agentId: string) => boolean;
-  enqueueReminder?: (text: string) => void;
+  launchConversation?: (text: string) => void | Promise<void>;
   emitWarning?: (text: string) => void | Promise<void>;
   debugLabel?: string;
 }
@@ -131,6 +131,7 @@ export async function runPostTurnMemorySync(
     dependencies.syncAttachedRepositories ??
     syncPendingAttachedRepositoryCommitsAfterTurn;
   let memorySyncEnabled = true;
+  const actionRequired: string[] = [];
 
   try {
     if (params.isEnabled && !params.isEnabled(params.agentId)) {
@@ -151,16 +152,18 @@ export async function runPostTurnMemorySync(
       const syncResult = await syncMemory(params.agentId);
       const syncReminder = formatMemoryPostTurnSyncReminder(syncResult);
       if (syncReminder) {
-        params.enqueueReminder?.(syncReminder);
-        await params.emitWarning?.(syncReminder);
+        actionRequired.push(syncReminder);
       }
     } catch (error) {
-      debugWarn(
-        "memfs-git",
-        `${debugLabel} failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      debugWarn("memfs-git", `${debugLabel} failed: ${message}`);
+      actionRequired.push(`${SYSTEM_REMINDER_OPEN}
+MEMORY SYNC FAILED: The harness could not inspect or synchronize the memory repository.
+
+Status: ${message}
+
+Inspect the memory repository and resolve any local git issue.
+${SYSTEM_REMINDER_CLOSE}`);
     }
   }
 
@@ -169,15 +172,25 @@ export async function runPostTurnMemorySync(
     for (const reminder of formatAttachedRepositoriesPostTurnSyncReminders(
       repositorySyncResult,
     )) {
-      params.enqueueReminder?.(reminder);
-      await params.emitWarning?.(reminder);
+      actionRequired.push(reminder);
     }
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     debugWarn(
       "memfs-git",
-      `${debugLabel} shared-memory sync failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `${debugLabel} shared-memory sync failed: ${message}`,
     );
+    actionRequired.push(`${SYSTEM_REMINDER_OPEN}
+SHARED MEMORY SYNC FAILED: The harness could not inspect or synchronize attached shared-memory repositories.
+
+Status: ${message}
+
+Inspect the attached repositories and resolve any local git issue.
+${SYSTEM_REMINDER_CLOSE}`);
   }
+
+  if (actionRequired.length === 0) return;
+  const context = actionRequired.join("\n\n");
+  await params.launchConversation?.(context);
+  await params.emitWarning?.(context);
 }

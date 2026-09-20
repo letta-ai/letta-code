@@ -364,19 +364,6 @@ async function buildPermissionModeReminder(
   return `${SYSTEM_REMINDER_OPEN}${prefix}: ${currentMode}. ${description}${SYSTEM_REMINDER_CLOSE}\n\n`;
 }
 
-async function buildMemoryGitSyncReminder(
-  context: SharedReminderContext,
-): Promise<string | null> {
-  if (context.state.pendingMemoryGitSyncReminders.length === 0) {
-    return null;
-  }
-
-  return context.state.pendingMemoryGitSyncReminders
-    .splice(0)
-    .map((reminder) => reminder.text)
-    .join("\n\n");
-}
-
 const MAX_COMMAND_REMINDERS_PER_TURN = 10;
 const MAX_TOOLSET_REMINDERS_PER_TURN = 5;
 const MAX_COMMAND_INPUT_CHARS = 2000;
@@ -490,7 +477,6 @@ export const sharedReminderProviders: Record<
   "mcp-servers-info": buildMcpServersInfoReminder,
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,
-  "memory-git-sync": buildMemoryGitSyncReminder,
   "command-io": buildCommandIoReminder,
   "toolset-change": buildToolsetChangeReminder,
 };

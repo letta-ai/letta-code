@@ -173,11 +173,9 @@ import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "./reminders/engine";
+import { createMemoryConversationLauncher } from "./reminders/memory-conversation";
 import { runPostTurnMemorySync } from "./reminders/memory-git-sync";
-import {
-  createSharedReminderState,
-  enqueueMemoryGitSyncReminder,
-} from "./reminders/state";
+import { createSharedReminderState } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
@@ -4774,9 +4772,10 @@ async function runBidirectionalMode(
           agentId: agent.id,
           isEnabled: (id) => settingsManager.isMemfsEnabled(id),
           debugLabel: "Post-turn headless memory sync",
-          enqueueReminder: (text) => {
-            enqueueMemoryGitSyncReminder(sharedReminderState, { text });
-          },
+          launchConversation: createMemoryConversationLauncher({
+            agentId: agent.id,
+            sourceConversationId: conversationId,
+          }),
           emitWarning: (text) => {
             debugWarn("memfs-git", text);
           },

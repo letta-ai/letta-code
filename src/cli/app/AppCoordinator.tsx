@@ -167,6 +167,7 @@ import type {
   QueueRuntime,
   TaskNotificationQueueItem,
 } from "@/queue/queue-runtime";
+import { launchMemoryConversation } from "@/reminders/memory-conversation";
 import {
   createSharedReminderState,
   enqueueCommandIoReminder,
@@ -756,11 +757,6 @@ export function App({
   const memfsWatcherRef = useRef<ReturnType<
     typeof import("node:fs").watch
   > | null>(null);
-  const pendingGitReminderRef = useRef<{
-    dirty: boolean;
-    aheadOfRemote: boolean;
-    summary: string;
-  } | null>(null);
   const [feedbackPrefill, setFeedbackPrefill] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [modelSelectorOptions, setModelSelectorOptions] = useState<{
@@ -3556,22 +3552,24 @@ export function App({
         if (!isGitRepo(agentId)) {
           await cloneMemoryRepo(agentId);
         } else {
-          await pullMemory(agentId);
+          await pullMemory(agentId, { throwOnFailure: true });
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         debugWarn("memfs-git", `Startup sync failed: ${errMsg}`);
-        // Warn user visually
-        appendError(`Memory git sync failed: ${errMsg}`);
-        // Inject reminder so the agent also knows memory isn't synced
-        pendingGitReminderRef.current = {
-          dirty: false,
-          aheadOfRemote: false,
-          summary: `Git memory sync failed on startup: ${errMsg}\nMemory may be stale. Try running: git -C ${getScopedMemoryFilesystemRoot(agentId)} pull`,
-        };
+        launchMemoryConversation({
+          agentId,
+          sourceConversationId: conversationIdRef.current ?? "default",
+          context: `MEMORY SYNC FAILED: Startup memory synchronization failed.
+
+Memory directory: ${getScopedMemoryFilesystemRoot(agentId)}
+Status: ${errMsg}
+
+Inspect the memory repository and resolve any local git issue.`,
+        });
       }
     })();
-  }, [agentId, agentName, loadingState, appendError]);
+  }, [agentId, agentName, loadingState]);
 
   // Set up fs.watch on the memory directory to detect external file edits.
   // When a change is detected, set a dirty flag — the actual conflict check
@@ -4200,7 +4198,6 @@ export function App({
     overrideContentPartsRef,
     pendingApprovals,
     pendingConversationSwitchRef,
-    pendingGitReminderRef,
     processConversation,
     processConversationWithQueuedApprovals,
     profileConfirmPending,

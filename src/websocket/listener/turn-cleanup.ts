@@ -1,5 +1,5 @@
+import { launchMemoryConversation } from "@/reminders/memory-conversation";
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
-import { enqueueMemoryGitSyncReminder } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
 import { releaseChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
 import {
@@ -47,8 +47,12 @@ export async function runListenerTurnCleanup(params: {
       agentId,
       isEnabled: (id) => settingsManager.isMemfsEnabled(id),
       debugLabel: "Post-turn listener memory sync",
-      enqueueReminder: (text) => {
-        enqueueMemoryGitSyncReminder(runtime.reminderState, { text });
+      launchConversation: (context) => {
+        launchMemoryConversation({
+          agentId,
+          sourceConversationId: conversationId,
+          context,
+        });
       },
     });
   }

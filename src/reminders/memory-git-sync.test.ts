@@ -72,9 +72,15 @@ describe("shared-memory post-turn reminders", () => {
 
   test("still syncs attached repositories when the MemFS sync fails", async () => {
     let sharedSyncRan = false;
+    const launched: string[] = [];
 
     await runPostTurnMemorySync(
-      { agentId: "agent-test" },
+      {
+        agentId: "agent-test",
+        launchConversation: (context) => {
+          launched.push(context);
+        },
+      },
       {
         syncMemory: async () => {
           throw new Error("MemFS unavailable");
@@ -87,6 +93,44 @@ describe("shared-memory post-turn reminders", () => {
     );
 
     expect(sharedSyncRan).toBe(true);
+    expect(launched).toHaveLength(1);
+    expect(launched[0]).toContain("MEMORY SYNC FAILED");
+  });
+
+  test("routes all actionable memory context to one new conversation", async () => {
+    const launched: string[] = [];
+
+    await runPostTurnMemorySync(
+      {
+        agentId: "agent-test",
+        launchConversation: (context) => {
+          launched.push(context);
+        },
+      },
+      {
+        syncMemory: async () => ({
+          status: "conflict",
+          summary: "rebase in progress",
+          memoryDir: "/tmp/memory",
+          localOnly: false,
+        }),
+        syncAttachedRepositories: async () => ({
+          results: [
+            {
+              name: "shared-notes",
+              path: "/tmp/shared-notes",
+              permissions: "read_write",
+              status: "dirty",
+              summary: "1 uncommitted shared-memory change.",
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(launched).toHaveLength(1);
+    expect(launched[0]).toContain("MEMORY GIT CONFLICT");
+    expect(launched[0]).toContain("SHARED MEMORY COMMIT NEEDED");
   });
 
   test("syncs attachments when MemFS sync is disabled", async () => {
