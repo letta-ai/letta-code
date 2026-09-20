@@ -25,7 +25,9 @@ import { finishPendingTeleport, handleTeleportRequest } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import { releaseListenerTurnContext } from "./turn-context";
+import { createTurnCorrelation } from "./turn-correlation";
 import type { TurnLease } from "./turn-lifecycle";
+import { finishListenerTurn } from "./turn-terminal";
 
 function createOpenTransport(sentPayloads: string[] = []): ListenerTransport {
   return {
@@ -769,6 +771,181 @@ describe("listener turn lifecycle integration", () => {
     expect(runtime.turnLifecycle.kind).toBe("active");
     expect(sentPayloads).toEqual([]);
   });
+
+  test.each([
+    "owned",
+    "replace-before-consume",
+    "replace-after-consume",
+  ] as const)(
+    "queued continuation correlation belongs to the finishing lease: %s",
+    async (boundary) => {
+      const runtime = getOrCreateScopedRuntime(
+        createRuntime(),
+        "agent-1",
+        "conv-1",
+      );
+      const sent: string[] = [];
+      const socket = createOpenTransport(sent);
+      const input = (id: string) => ({
+        type: "message" as const,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        noCoalesce: true,
+        messages: [
+          { role: "user" as const, content: id, client_message_id: id },
+        ],
+      });
+      const correlation = createTurnCorrelation(
+        runtime,
+        input("original"),
+        "initial",
+      );
+      // A recovered approval lease need not have observed a run in this process.
+      const lease = runtime.turnLifecycle.begin({
+        origin: "approval_recovery",
+        workingDirectory: process.cwd(),
+      });
+      const approval = {
+        toolCallId: "call-1",
+        toolName: "Bash",
+        toolArgs: "{}",
+      };
+      const dependencies = {
+        classifyApprovals: async () => ({
+          autoAllowed: [{ approval, parsedArgs: {}, context: null }],
+          autoDenied: [],
+          needsUserInput: [],
+        }),
+        executeApprovalBatch: async () => [],
+        ensureSecretsHydrated: async () => {},
+        sendApprovalContinuation: async (
+          _id: string,
+          _messages: unknown[],
+        ) => ({
+          kind: "stream" as const,
+          stream: {} as never,
+        }),
+      };
+      const runApproval = (overrides: Partial<typeof dependencies> = {}) =>
+        startQuestionApproval(runtime, lease, {
+          socket,
+          approvals: [approval],
+          processOwnedTurn: true,
+          turnCorrelation: correlation,
+          dependencies: { ...dependencies, ...overrides } as never,
+        });
+      enqueueInboundUserMessage(runtime, input("first-batch"));
+      enqueueInboundUserMessage(runtime, input("second-batch"));
+      enqueueInboundUserMessage(runtime, input("unconsumed"));
+      expect((await runApproval()).kind).toBe("continue");
+      expect(correlation.getClientMessageIds()).toEqual([
+        "original",
+        "first-batch",
+      ]);
+      expect(runtime.queueRuntime.peekReady()).toHaveLength(2);
+      expect(runtime.turnLifecycle.isCurrent(lease)).toBe(true);
+
+      let enter!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const requestContents: unknown[] = [];
+      const pending = runApproval({
+        executeApprovalBatch: async () => {
+          if (boundary === "replace-before-consume") {
+            enter();
+            await gate;
+          }
+          return [];
+        },
+        sendApprovalContinuation: async (_id: string, messages: unknown[]) => {
+          requestContents.push(...messages);
+          enter();
+          await gate;
+          throw new Error("Continuation rejected before a new run");
+        },
+      });
+      let replacement: TurnLease | undefined;
+      try {
+        await entered;
+        expect(correlation.getClientMessageIds()).toEqual(
+          boundary === "replace-before-consume"
+            ? ["original", "first-batch"]
+            : ["original", "first-batch", "second-batch"],
+        );
+        expect(runtime.queueRuntime.peekReady()).toHaveLength(
+          boundary === "replace-before-consume" ? 2 : 1,
+        );
+        if (boundary !== "owned") {
+          clearConversationRuntimeState(runtime);
+          replacement = runtime.turnLifecycle.begin({
+            origin: "message",
+            workingDirectory: process.cwd(),
+          });
+          enqueueInboundUserMessage(runtime, input("replacement-queued"));
+        }
+        const queuedBeforeUnwind = runtime.queueRuntime.peekReady();
+        const result = pending.catch((error: Error) => error);
+        release();
+        if (boundary === "owned") {
+          expect(await result).toEqual(
+            new Error("Continuation rejected before a new run"),
+          );
+        } else {
+          expect(await result).toMatchObject({ kind: "interrupted" });
+          expect(runtime.queueRuntime.peekReady()).toEqual(queuedBeforeUnwind);
+          expect(correlation.getClientMessageIds()).not.toContain(
+            "replacement-queued",
+          );
+        }
+        if (boundary === "replace-before-consume") {
+          expect(requestContents).toEqual([]);
+        } else {
+          expect(requestContents).toContainEqual(
+            expect.objectContaining({ content: "second-batch" }),
+          );
+          expect(requestContents).not.toContainEqual(
+            expect.objectContaining({ content: "unconsumed" }),
+          );
+        }
+        // Exercise the real terminal lease guard after the actual approval
+        // await/queue-consumption path, not just the correlation accumulator.
+        const transition = finishListenerTurn(runtime, lease, {
+          socket,
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          turnId: "old-turn",
+          stopReason: boundary === "owned" ? "error" : "cancelled",
+          clientMessageIds: correlation.getClientMessageIds(),
+        });
+        expect(transition.finished).toBe(boundary === "owned");
+        const terminals = sent
+          .map((raw) => JSON.parse(raw))
+          .filter((m) => m.type === "turn_finished");
+        if (boundary === "owned") {
+          expect(terminals).toHaveLength(1);
+          expect(terminals[0]).toMatchObject({
+            stop_reason: "error",
+            client_message_ids: ["original", "first-batch", "second-batch"],
+          });
+          expect(terminals[0]).not.toHaveProperty("run_id");
+        } else {
+          expect(terminals).toEqual([]);
+          if (!replacement)
+            throw new Error("Replacement lease was not created");
+          expect(runtime.turnLifecycle.isCurrent(replacement)).toBe(true);
+        }
+      } finally {
+        release();
+        await pending.catch(() => {});
+        clearConversationRuntimeState(runtime);
+      }
+    },
+  );
 
   test("an externally reset owner releases its process context", () => {
     const runtime = getOrCreateScopedRuntime(

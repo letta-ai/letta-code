@@ -9,6 +9,7 @@ import {
   getTranscriptLoopErrorMessage,
 } from "./recoverable-notices";
 import type { ListenerTransport } from "./transport";
+import { createTurnCorrelation } from "./turn-correlation";
 import { finishListenerTurn } from "./turn-terminal";
 
 test("finishListenerTurn emits exactly one correlated terminal event", () => {
@@ -62,6 +63,64 @@ test("finishListenerTurn emits exactly one correlated terminal event", () => {
     }),
   ]);
 });
+
+test.each(["error", "cancelled", "end_turn"] as const)(
+  "terminal %s carries only its turn's inputs even before a run exists",
+  (stopReason) => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "default");
+    const sent: string[] = [];
+    const socket: ListenerTransport = {
+      kind: "local",
+      bufferedAmount: 0,
+      isOpen: () => true,
+      send: (payload: string) => sent.push(payload),
+    };
+    runtime.dequeuedClientMessageIdsByBatchId.set("batch-own", ["cm-queued"]);
+    runtime.dequeuedClientMessageIdsByBatchId.set("batch-other", ["cm-other"]);
+    const correlation = createTurnCorrelation(
+      runtime,
+      {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "default",
+        messages: [
+          { role: "user", content: "hello", client_message_id: "cm-direct" },
+        ],
+      },
+      "batch-own",
+    );
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    const options = {
+      stopReason,
+      socket,
+      agentId: "agent-1",
+      conversationId: "default",
+      turnId: "batch-own",
+      clientMessageIds: correlation.getClientMessageIds(),
+      error: stopReason === "error" ? "Request rejected" : undefined,
+    };
+    expect(finishListenerTurn(runtime, lease, options).finished).toBe(true);
+    expect(finishListenerTurn(runtime, lease, options).finished).toBe(false);
+    const terminal = sent
+      .map((payload) => JSON.parse(payload))
+      .filter((message) => message.type === "turn_finished");
+    expect(terminal).toHaveLength(1);
+    expect(terminal[0]).toMatchObject({
+      runtime: { agent_id: "agent-1", conversation_id: "default" },
+      stop_reason: stopReason,
+      client_message_ids: ["cm-direct", "cm-queued"],
+    });
+    expect(terminal[0]).not.toHaveProperty("run_id");
+    expect(runtime.isProcessing).toBe(false);
+    expect(
+      runtime.dequeuedClientMessageIdsByBatchId.get("batch-other"),
+    ).toEqual(["cm-other"]);
+  },
+);
 
 test("terminal error formatting preserves classifications and rejects raw fallbacks", () => {
   const unknownApiError = new APIError(

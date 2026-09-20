@@ -538,6 +538,111 @@ test.each(["run", "messages", "super-run"] as const)(
   },
 );
 
+test.each(["error", "cancelled"] as const)(
+  "default conversation rejects its correlated runless %s before any run exists",
+  async (stopReason) => {
+    const wire = transport();
+    const defaultScope = { ...scope, conversation_id: "default" };
+    const retrieveRun = mock(backend.retrieveRun);
+    const launch = launchListenerConversation(
+      {
+        connectionId: "conn-target",
+        scope: defaultScope,
+        content: "hello",
+        backend: { retrieveRun },
+        settings,
+        mode: "standard",
+      },
+      {
+        client: wire.client,
+        pollMs: 1,
+        waitDeadline: AbortSignal.timeout(100),
+        enqueue: async (input) => {
+          wire.emit({
+            type: "update_loop_status",
+            runtime: defaultScope,
+            loop_status: {
+              status: "WAITING_ON_INPUT",
+              active_run_ids: [],
+              executing_tool_call_ids: [],
+            },
+          });
+          // Fast rejection can precede the HTTP enqueue acknowledgement.
+          wire.emit({
+            type: "turn_finished",
+            runtime: defaultScope,
+            turn_id: "batch-direct-own",
+            client_message_ids: [input.clientMessageId],
+            stop_reason: stopReason,
+            error: "This input was rejected before a run was created",
+            usage: { total_tokens: 0, step_count: 0 },
+          });
+          return {
+            ...receipt(input.clientMessageId),
+            conversation_id: "default",
+          };
+        },
+      },
+    );
+    await expect(launch).rejects.toThrow(
+      "This input was rejected before a run was created",
+    );
+    expect(retrieveRun).not.toHaveBeenCalled();
+    expect(wire.commands.some((c) => c.type === "abort_message")).toBe(false);
+  },
+);
+
+test("uncorrelated runless errors cannot terminate another input on a shared runtime", async () => {
+  const wire = transport();
+  const defaultScope = { ...scope, conversation_id: "default" };
+  const launch = launchListenerConversation(
+    {
+      connectionId: "conn-target",
+      scope: defaultScope,
+      content: "hello",
+      backend,
+      settings,
+      mode: "standard",
+    },
+    {
+      client: wire.client,
+      pollMs: 1,
+      waitDeadline: AbortSignal.timeout(100),
+      enqueue: async (input) => {
+        for (const [runtime, ids] of [
+          [defaultScope, undefined], // Older listener: no safe attribution.
+          [defaultScope, []],
+          [defaultScope, ["another-message"]],
+          [
+            { ...defaultScope, agent_id: "another-agent" },
+            [input.clientMessageId],
+          ],
+          [
+            { ...defaultScope, conversation_id: "other" },
+            [input.clientMessageId],
+          ],
+        ] as const) {
+          wire.emit({
+            type: "turn_finished",
+            runtime,
+            turn_id: "batch-direct-other",
+            client_message_ids: ids,
+            stop_reason: "error",
+            error: "Unrelated rejection",
+          });
+        }
+        return {
+          ...receipt(input.clientMessageId),
+          conversation_id: "default",
+        };
+      },
+    },
+  );
+  // With no ownership evidence the caller must wait, not report another
+  // input's failure. An old listener needs upgrading for runless attribution.
+  await expect(launch).rejects.toThrow("Stopped waiting for the listener");
+});
+
 test("noWait returns the enqueue receipt once Cloud accepts the send and reads nothing else", async () => {
   // The Agent tool's child uses this: it configures the listener, submits,
   // and exits. The parent process follows the remote turn from the receipt.
