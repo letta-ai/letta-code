@@ -27,7 +27,7 @@ import { finishListenerTurn } from "./turn-terminal";
 import type { StartListenerOptions } from "./types";
 import { __listenerWarmupTestUtils } from "./warmup";
 
-test("turn setup delivers the abort monitor notice once, only to the interrupted scope", async () => {
+test("turn setup delivers the interrupt recovery notice once, only to the interrupted scope", async () => {
   const directory = new TestDirectory();
   const originalHome = process.env.HOME;
   await settingsManager.reset();
@@ -86,7 +86,7 @@ test("turn setup delivers the abort monitor notice once, only to the interrupted
           type: "message",
           agentId: scopeAgentId,
           conversationId: scopeConversationId,
-          messages: [{ role: "user", content: "continue without monitors" }],
+          messages: [{ role: "user", content: "continue after interrupt" }],
           clientToolset: { base: "default" },
         },
         runtime,
@@ -151,7 +151,6 @@ test("turn setup delivers the abort monitor notice once, only to the interrupted
     const messages = await prepareInput(agentId, conversationId);
     const serialized = JSON.stringify(messages);
     expect(serialized.split(INTERRUPT_RECOVERY_ALERT.trim())).toHaveLength(2);
-    expect(serialized).toContain("Do not restart them unless the user asks.");
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatchObject({ role: "user" });
     expect(JSON.stringify(messages[0])).toContain(
@@ -159,7 +158,7 @@ test("turn setup delivers the abort monitor notice once, only to the interrupted
     );
     expect(messages[1]).toMatchObject({
       role: "user",
-      content: "continue without monitors",
+      content: "continue after interrupt",
     });
     const laterMessages = await prepareInput(agentId, conversationId);
     expect(JSON.stringify(laterMessages)).not.toContain(

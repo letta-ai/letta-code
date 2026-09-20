@@ -9,7 +9,11 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { isRecord } from "@/utils/type-guards";
-import { emptyLocalUsage, type LocalMessage } from "./local-message";
+import {
+  emptyLocalUsage,
+  type LocalMessage,
+  localToolArgumentsFromUnknown,
+} from "./local-message";
 import {
   LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT,
   LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
@@ -298,9 +302,7 @@ function convertLegacyMessage(
           type: "toolCall" as const,
           id: part.toolCallId,
           name: toolName,
-          arguments: isRecord(part.input)
-            ? part.input
-            : { input: part.input ?? {} },
+          arguments: localToolArgumentsFromUnknown(part.input),
         });
         if (
           part.state === "output-available" ||

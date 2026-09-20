@@ -1,6 +1,11 @@
 {
   "tests": [
     {
+      "path": "src/tools/impl/task-fork-receipt.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Replaces billing I/O and the child process while exercising real fork launch state and task receipts with process-global backend, settings, and subagent state."
+    },
+    {
       "path": "src/tools/impl/task-computer-routing.test.ts",
       "timeoutMs": 15000,
       "reason": "Mocks subagent discovery and the child-process launch boundary while exercising task() with process-global backend and subagent state."
