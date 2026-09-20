@@ -413,6 +413,21 @@ corrupted state is a workaround, not a fix.
 4. Boolean terminal outcomes shared across cleanup layers, use a
    discriminated result (`continue | completed | interrupted | error`) instead.
 
+### Startup Backend-Mode Changes
+
+A startup change that defaulted to Cloud with a saved backend choice was merged
+and then reverted after an existing authenticated user's TUI showed persistent
+"busy"/"Turn still running" behavior in active conversations. First-launch and
+setup-menu tests do not exercise an existing authenticated interactive
+conversation completing repeated turns while other runtime/listener owners exist.
+
+- **Review signal:** any PR changing startup backend-mode selection, `--backend`
+  flag precedence, or saved backend-preference handling must verify behavior on
+  an existing authenticated interactive conversation, not only first-launch or
+  setup-menu flows. Startup argument interpretation, listener selection, and
+  conversation ownership for existing authenticated sessions need particular
+  scrutiny.
+
 ### pi-ai Ownership Boundary
 
 Letta Code depends on `@earendil-works/pi-ai` specifically so that pi-ai owns:
