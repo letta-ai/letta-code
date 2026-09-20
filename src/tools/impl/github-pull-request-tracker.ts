@@ -26,7 +26,7 @@ export type ConversationTagBackend = {
 
 export interface GitHubPullRequestOutputTracker {
   append(text: string, stream: OutputStream): void;
-  finish(): Promise<void>;
+  finish(signal?: AbortSignal): Promise<void>;
 }
 
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=.*/;
@@ -369,7 +369,6 @@ export function createGitHubPullRequestOutputTracker(
     conversationId?: string;
     attributionConversationIds?: string[];
     backend?: ConversationTagBackend;
-    signal?: AbortSignal;
   },
 ): GitHubPullRequestOutputTracker | undefined {
   if (!isGitHubPullRequestCreateCommand(command)) {
@@ -406,7 +405,7 @@ export function createGitHubPullRequestOutputTracker(
       }
       appendOutputTail(outputByStream, text, stream);
     },
-    finish() {
+    finish(signal) {
       if (finishPromise) {
         return finishPromise;
       }
@@ -431,7 +430,7 @@ export function createGitHubPullRequestOutputTracker(
               backend,
               targetConversationId,
               [...tags],
-              options?.signal,
+              signal,
             ),
           ),
         ).then(() => undefined);
