@@ -189,6 +189,42 @@ describe("createSdkSpawner", () => {
     expect(bad.error).toContain("not valid JSON");
   });
 
+  test("sums usage_statistics stream events into totalTokens, even on an early stop", async () => {
+    const usage = (total: number) => ({
+      type: "stream_event",
+      event: { message_type: "usage_statistics", total_tokens: total },
+    });
+    const done = await createSdkSpawner(
+      fakeClient([
+        usage(1_000),
+        { type: "stream_event", event: { message_type: "reasoning" } },
+        usage(2_500),
+        { type: "result", success: true, result: "ok" },
+      ]),
+      CONFIG,
+    )(request(), new AbortController().signal);
+    expect(done).toMatchObject({ value: "ok", totalTokens: 3_500 });
+
+    const repeated: SdkStreamMessage[] = [usage(700)];
+    for (let i = 0; i < 3; i++) {
+      repeated.push(
+        {
+          type: "tool_call",
+          toolCallId: `c${i}`,
+          toolName: "Read",
+          toolInput: {},
+        },
+        { type: "tool_result", toolCallId: `c${i}` },
+      );
+    }
+    const stopped = await createSdkSpawner(fakeClient(repeated), CONFIG)(
+      request(),
+      new AbortController().signal,
+    );
+    expect(stopped.failed).toBe(true);
+    expect(stopped.totalTokens).toBe(700);
+  });
+
   test("falls back to streamed assistant text and reports turn failures", async () => {
     const text = await createSdkSpawner(
       fakeClient([

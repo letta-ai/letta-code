@@ -67,6 +67,8 @@ export interface SubagentOutcome {
   /** Optional failure detail for the journal / progress display. */
   error?: string;
   durationMs?: number;
+  /** Total tokens consumed by the subagent session (prompt + completion). */
+  totalTokens?: number;
 }
 
 /**
@@ -90,6 +92,7 @@ export type WorkflowProgressEvent =
       status: "queued" | "running" | "done" | "error";
       detail?: string;
       durationMs?: number;
+      totalTokens?: number;
     };
 
 export interface RunWorkflowOptions {
@@ -114,6 +117,8 @@ export interface WorkflowExecutionResult {
   /** The script's return value. */
   result: unknown;
   agentsSpawned: number;
+  /** Sum of subagent token usage across the run. */
+  totalTokens: number;
 }
 
 // ── Structural view of the Letta Agent SDK surface the engine touches ──────
@@ -127,6 +132,8 @@ export interface SdkStreamMessage {
   error?: string;
   errorCode?: string;
   durationMs?: number;
+  /** Raw Letta stream payload for `type: "stream_event"` messages. */
+  event?: Record<string, unknown>;
   /** Tool call details for `type: "tool_call"` / `"tool_result"` messages. */
   toolCallId?: string;
   toolName?: string;

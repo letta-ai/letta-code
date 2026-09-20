@@ -213,11 +213,34 @@ interface DrainedTurn {
   finalText: string;
   success: boolean;
   error?: string;
+  totalTokens?: number;
+}
+
+/** Token usage observed so far on a query; shared so an early stop keeps it. */
+interface RunningUsage {
+  totalTokens?: number;
+}
+
+/**
+ * The SDK forwards Letta `usage_statistics` stream payloads verbatim as
+ * `stream_event` messages (its result message carries cost but not tokens).
+ * One usage record is emitted per agent step; summing `total_tokens` across
+ * them is the session's token usage.
+ */
+function usageTokensFromEvent(
+  event: Record<string, unknown> | undefined,
+): number | undefined {
+  if (!event || event.message_type !== "usage_statistics") return undefined;
+  const total = event.total_tokens;
+  return typeof total === "number" && Number.isFinite(total)
+    ? total
+    : undefined;
 }
 
 /** Consume the query stream to its result; `stop` is called on a runaway. */
 async function drainTurn(
   query: SdkQuery,
+  usage: RunningUsage,
   stop: (reason: string) => void,
   maxToolCalls: number,
 ): Promise<DrainedTurn> {
@@ -228,6 +251,12 @@ async function drainTurn(
   const guard = createToolCallGuard(maxToolCalls);
   for await (const message of query) {
     if (message.type === "assistant") assistantText += message.content ?? "";
+    if (message.type === "stream_event") {
+      const tokens = usageTokensFromEvent(message.event);
+      if (tokens !== undefined) {
+        usage.totalTokens = (usage.totalTokens ?? 0) + tokens;
+      }
+    }
     if (message.type === "tool_call") {
       const reason = guard.onCall(
         message.toolCallId ?? "",
@@ -247,7 +276,12 @@ async function drainTurn(
       error = message.error ?? message.errorCode;
     }
   }
-  return { finalText: (resultText ?? assistantText).trim(), success, error };
+  return {
+    finalText: (resultText ?? assistantText).trim(),
+    success,
+    error,
+    totalTokens: usage.totalTokens,
+  };
 }
 
 function buildQueryOptions(
@@ -308,6 +342,7 @@ export function createSdkSpawner(
     }
 
     const startedAt = Date.now();
+    const usage: RunningUsage = {};
     const query = client.query({
       prompt,
       options: buildQueryOptions(options, model, config, request.callIndex),
@@ -324,7 +359,12 @@ export function createSdkSpawner(
       finished = true;
       void query.interrupt().catch(() => undefined);
       query.close();
-      settleStopped({ finalText: "", success: false, error: reason });
+      settleStopped({
+        finalText: "",
+        success: false,
+        error: reason,
+        totalTokens: usage.totalTokens,
+      });
     };
     const abort = () => stop("Workflow subagent interrupted");
     signal.addEventListener("abort", abort, { once: true });
@@ -338,13 +378,17 @@ export function createSdkSpawner(
       const turn = await Promise.race([
         drainTurn(
           query,
+          usage,
           stop,
           options.maxToolCalls ?? DEFAULT_MAX_SUBAGENT_TOOL_CALLS,
         ),
         stopped,
       ]);
-      const usage = {
+      const stats = {
         durationMs: Date.now() - startedAt,
+        ...(turn.totalTokens !== undefined
+          ? { totalTokens: turn.totalTokens }
+          : {}),
         ...(query.conversationId
           ? { conversationId: query.conversationId }
           : {}),
@@ -354,7 +398,7 @@ export function createSdkSpawner(
           value: null,
           failed: true,
           error: turn.error ?? "subagent turn failed",
-          ...usage,
+          ...stats,
         };
       }
       if (options.json) {
@@ -362,18 +406,18 @@ export function createSdkSpawner(
           return {
             value: parseJsonReply(turn.finalText),
             failed: false,
-            ...usage,
+            ...stats,
           };
         } catch {
           return {
             value: null,
             failed: true,
             error: `Subagent reply was not valid JSON: ${turn.finalText.slice(0, 200)}`,
-            ...usage,
+            ...stats,
           };
         }
       }
-      return { value: turn.finalText, failed: false, ...usage };
+      return { value: turn.finalText, failed: false, ...stats };
     } catch (error) {
       return { value: null, failed: true, error: String(error) };
     } finally {
