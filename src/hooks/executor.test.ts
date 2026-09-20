@@ -15,13 +15,7 @@ import {
   type PreToolUseHookInput,
   type SessionStartHookInput,
   type StopHookInput,
-  type UserPromptSubmitHookInput,
 } from "@/hooks/types";
-import {
-  expectOverflowPath,
-  expectPrefixPreview,
-} from "@/test-utils/overflow-preview";
-import { LIMITS } from "@/tools/impl/truncation";
 
 // Skip on Windows - test commands use bash syntax (&&, >&2, sleep, etc.)
 // The executor itself is cross-platform, but these test commands are bash-specific
@@ -292,52 +286,6 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       expect(result.results).toHaveLength(0);
     });
 
-    test("caps each plain stdout feedback string with a prefix preview", async () => {
-      const hooks: HookCommand[] = [
-        {
-          type: "command",
-          command: `node -e 'process.stdout.write("x".repeat(${LIMITS.HOOK_OUTPUT_CHARS + 1}))'`,
-          quiet: true,
-        },
-      ];
-      const input: UserPromptSubmitHookInput = {
-        event_type: "UserPromptSubmit",
-        working_directory: tempDir,
-        prompt: "hello",
-        is_command: false,
-      };
-
-      const result = await executeHooks(hooks, input, tempDir);
-
-      expectPrefixPreview(result.feedback[0] ?? "", "x");
-    });
-
-    test("caps stderr feedback from a blocking hook", async () => {
-      const hooks: HookCommand[] = [
-        {
-          type: "command",
-          command: `node -e 'process.stderr.write("e".repeat(${LIMITS.HOOK_OUTPUT_CHARS + 1})); process.exitCode = 2'`,
-          quiet: true,
-        },
-      ];
-      const input: PreToolUseHookInput = {
-        event_type: "PreToolUse",
-        working_directory: tempDir,
-        tool_name: "Bash",
-        tool_input: {},
-      };
-
-      const result = await executeHooks(hooks, input, tempDir);
-      const feedback = result.feedback[0] ?? "";
-
-      expect(result.blocked).toBe(true);
-      expect(feedback).toContain(
-        `[Output truncated: showing ${LIMITS.OVERFLOW_PREVIEW_CHARS.toLocaleString()}`,
-      );
-      expect(feedback.length).toBeLessThan(LIMITS.OVERFLOW_PREVIEW_CHARS + 500);
-      expectOverflowPath(feedback);
-    });
-
     test("collects feedback from blocking hooks", async () => {
       const hooks: HookCommand[] = [
         {
@@ -440,27 +388,6 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       expect(result.errored).toBe(false);
       expect(result.feedback).toEqual([]);
       expect(result.results).toEqual([]);
-    });
-
-    test("caps each additionalContext string with a prefix preview", async () => {
-      const hooks: HookCommand[] = [
-        {
-          type: "command",
-          command: `node -e 'process.stdout.write(JSON.stringify({additionalContext: "y".repeat(${LIMITS.HOOK_OUTPUT_CHARS + 1})}))'`,
-          quiet: true,
-        },
-      ];
-      const input: PostToolUseHookInput = {
-        event_type: "PostToolUse",
-        working_directory: tempDir,
-        tool_name: "Read",
-        tool_input: {},
-        tool_result: { status: "success" },
-      };
-
-      const result = await executeHooksParallel(hooks, input, tempDir);
-
-      expectPrefixPreview(result.feedback[0] ?? "", "y");
     });
 
     test("parallel execution is faster than sequential for slow hooks", async () => {

@@ -63,41 +63,6 @@ describe("connect provider protocol", () => {
       }),
     ).toBe(false);
   });
-
-  test("accepts subscription OAuth tokens from a client-run device login", () => {
-    expect(
-      isConnectProviderCommand({
-        type: "connect_provider",
-        request_id: "request-1",
-        target: "local",
-        provider_id: "xai",
-        fields: {},
-        oauth_config: {
-          type: "oauth",
-          access: "access-token",
-          refresh: "refresh-token",
-          expires: 2_000_000_000_000,
-        },
-      }),
-    ).toBe(true);
-  });
-
-  test("rejects subscription OAuth tokens that cannot be refreshed", () => {
-    expect(
-      isConnectProviderCommand({
-        type: "connect_provider",
-        request_id: "request-1",
-        target: "local",
-        provider_id: "xai",
-        fields: {},
-        oauth_config: {
-          type: "oauth",
-          access: "access-token",
-          expires: 2_000_000_000_000,
-        },
-      }),
-    ).toBe(false);
-  });
 });
 
 describe("input protocol-inbound validators", () => {

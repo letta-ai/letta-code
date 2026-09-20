@@ -51,7 +51,6 @@ import {
   type LocalToolCall,
   type LocalToolResultMessage,
   type LocalUserMessage,
-  localToolArgumentsFromUnknown,
 } from "./local-message";
 import {
   clipOversizedLocalToolResults,
@@ -71,10 +70,8 @@ import {
   supportedModelSettingsFromBody,
 } from "./local-model-normalization";
 import {
-  canonicalizeLocalStreamChunk,
   getAttachedLocalMessage,
   isLocalStateChunkOnly,
-  toStoredOutputFields,
 } from "./local-stream-chunks";
 import type { LocalAgentRecord, StoredMessage } from "./local-types";
 import type { LocalCompiledSystemPrompt } from "./system-prompt-compilation";
@@ -308,6 +305,13 @@ function getIncludedMessageTypes(
     (item): item is string => typeof item === "string" && item.length > 0,
   );
   return messageTypes.length > 0 ? new Set(messageTypes) : undefined;
+}
+
+function toStoredOutputFields(chunk: Record<string, unknown>) {
+  const { id: _id, date: _date, agent_id, conversation_id, ...fields } = chunk;
+  void agent_id;
+  void conversation_id;
+  return fields;
 }
 
 export interface StoredTurnInput {
@@ -1515,11 +1519,7 @@ export class LocalStore {
       chunk,
       storedChunk,
     );
-    return canonicalizeLocalStreamChunk(
-      chunk,
-      storedChunk,
-      this.localMessagesForConversation(conversationId, agentId).at(-1),
-    ) as unknown as LettaStreamingResponse;
+    return storedChunk as unknown as LettaStreamingResponse;
   }
 
   listLocalMessages(conversationId: string, agentId?: string): LocalMessage[] {
@@ -1919,7 +1919,9 @@ export class LocalStore {
       type: "toolCall",
       id: toolCall.toolCallId,
       name: toolCall.toolName,
-      arguments: localToolArgumentsFromUnknown(toolCall.input),
+      arguments: isRecord(toolCall.input)
+        ? toolCall.input
+        : { input: toolCall.input },
     };
     const existing = this.findToolCall(
       conversationId,

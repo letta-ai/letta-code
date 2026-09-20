@@ -4,8 +4,25 @@ import type {
 } from "@/types/task-control-protocol";
 import { addToMessageQueue } from "@/utils/message-queue-bridge";
 import { formatMonitorEventNotification } from "@/utils/task-notifications";
-import { kill_bash } from "./kill-bash";
-import { backgroundProcesses } from "./process_manager";
+import { kill_bash, killBackgroundProcess } from "./kill-bash";
+import {
+  type BackgroundRuntimeScope,
+  backgroundProcesses,
+} from "./process_manager";
+
+/** Stop this conversation's monitors without queuing a turn that undoes the abort. */
+export function stopMonitorsForScope(scope: BackgroundRuntimeScope): void {
+  for (const [id, process] of backgroundProcesses) {
+    if (
+      process.kind === "monitor" &&
+      process.status === "running" &&
+      process.runtimeScope?.agentId === scope.agentId &&
+      process.runtimeScope.conversationId === scope.conversationId
+    ) {
+      killBackgroundProcess(id);
+    }
+  }
+}
 
 export async function stopMonitor(
   command: MonitorStopCommand,

@@ -398,8 +398,7 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       expect(turn.model).toBeUndefined();
 
       await runtime.refreshAll();
-      expect(runtime.getModel("radius", "account-a-model")).toBeUndefined();
-      expect(runtime.getModel("radius", "balanced")).toBeDefined();
+      expect(runtime.getModels("radius")).toHaveLength(0);
     } finally {
       globalThis.fetch = realFetch;
     }

@@ -535,7 +535,7 @@ describe("local pi provider catalog", () => {
         (model) => model.handle,
       );
 
-      expect(handles).toContain("deepseek/deepseek-flash");
+      expect(handles).toContain("deepseek/deepseek-v4-flash");
       expect(handles).toContain("deepseek/deepseek-v4-pro");
     } finally {
       await rm(storageDir, { recursive: true, force: true });

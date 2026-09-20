@@ -181,6 +181,7 @@ import {
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
+import { stopMonitorsForScope } from "./tools/impl/stop-monitor";
 import {
   INTERACTIVE_USER_INPUT_TOOL_NAMES,
   isInteractiveApprovalTool,
@@ -2188,6 +2189,11 @@ export async function handleHeadlessCommand(
 
   // One-shot mode has no input loop, so wire SIGINT directly into the turn.
   const sigintSignal = createSigintAbortSignal();
+  sigintSignal.addEventListener(
+    "abort",
+    () => stopMonitorsForScope({ agentId: agent.id, conversationId }),
+    { once: true },
+  );
   const exitInterrupted = async (): Promise<never> => {
     if (outputFormat === "stream-json") {
       const errorMsg: ErrorMessage = {
@@ -4198,8 +4204,13 @@ async function runBidirectionalMode(
         continue;
       }
 
-      // Drain any interrupt that arrived before the controller existed.
+      // Drain pre-controller interrupts after installing scoped monitor cleanup.
       currentAbortController = new AbortController();
+      currentAbortController.signal.addEventListener(
+        "abort",
+        () => stopMonitorsForScope({ agentId: agent.id, conversationId }),
+        { once: true },
+      );
       if (pendingInterrupt) {
         pendingInterrupt = false;
         currentAbortController.abort();

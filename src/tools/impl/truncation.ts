@@ -11,10 +11,7 @@ import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 export const LIMITS = {
   // Command output limits
   BASH_OUTPUT_CHARS: 30_000, // 30K characters for bash/shell output
-  BASH_FAILURE_OUTPUT_CHARS: 10_000, // Head-and-tail excerpt for failures
   TASK_OUTPUT_CHARS: 30_000, // 30K characters for subagent task output
-  HOOK_OUTPUT_CHARS: 10_000, // Max characters per model-facing hook string
-  OVERFLOW_PREVIEW_CHARS: 2_000, // Prefix shown when full output is saved
   // Background shell completion notifications are injected into the agent's
   // context unprompted, so they get a tighter budget than a tool return the
   // agent actually asked for. The full transcript stays in the output file.
@@ -43,38 +40,12 @@ export const LIMITS = {
 export interface TruncationOptions {
   /** Working directory for overflow file creation */
   workingDirectory?: string;
+  /** Tool name for overflow file naming */
+  toolName?: string;
   /** Whether to use middle truncation (keep beginning and end) */
   useMiddleTruncation?: boolean;
-  /** Prefix to show instead of the maxChars excerpt when the full output was saved to a file */
-  previewChars?: number;
   /** Secret values available to this tool invocation */
   secrets?: Readonly<Record<string, string>>;
-}
-
-/**
- * Writes the full output to an overflow file when overflow is enabled and a
- * working directory was provided. Returns undefined when nothing was written.
- */
-function writeOverflow(
-  getContent: () => string,
-  toolName: string,
-  options?: TruncationOptions,
-): string | undefined {
-  if (!OVERFLOW_CONFIG.ENABLED || !options?.workingDirectory) {
-    return undefined;
-  }
-  try {
-    return writeOverflowFile(
-      getContent(),
-      options.workingDirectory,
-      toolName,
-      options.secrets,
-    );
-  } catch (error) {
-    // Silently fail if overflow file creation fails
-    debugLog("truncation", "Failed to write overflow file: %O", error);
-    return undefined;
-  }
 }
 
 /**
@@ -92,32 +63,42 @@ export function truncateByChars(
     return { content: text, wasTruncated: false };
   }
 
-  const overflowPath = writeOverflow(() => text, toolName, options);
-
-  // A prefix preview only applies when the full output was saved; otherwise
-  // fall back to the normal maxChars excerpt so nothing becomes unreachable.
-  const filePreviewChars = overflowPath ? options?.previewChars : undefined;
-  const shownChars = Math.min(maxChars, filePreviewChars ?? maxChars);
+  // Determine if we should use middle truncation
   const useMiddleTruncation =
-    filePreviewChars === undefined &&
-    (options?.useMiddleTruncation ?? OVERFLOW_CONFIG.MIDDLE_TRUNCATE);
+    options?.useMiddleTruncation ?? OVERFLOW_CONFIG.MIDDLE_TRUNCATE;
+
+  // Write to overflow file if enabled and working directory provided
+  let overflowPath: string | undefined;
+  if (OVERFLOW_CONFIG.ENABLED && options?.workingDirectory) {
+    try {
+      overflowPath = writeOverflowFile(
+        text,
+        options.workingDirectory,
+        options.toolName ?? toolName,
+        options.secrets,
+      );
+    } catch (error) {
+      // Silently fail if overflow file creation fails
+      debugLog("truncation", "Failed to write overflow file: %O", error);
+    }
+  }
 
   let truncated: string;
   if (useMiddleTruncation) {
     // Middle truncation: keep beginning and end
-    const halfMax = Math.floor(shownChars / 2);
+    const halfMax = Math.floor(maxChars / 2);
     const beginning = text.slice(0, halfMax);
     const end = text.slice(-halfMax);
-    const omittedChars = text.length - shownChars;
+    const omittedChars = text.length - maxChars;
     const middleNotice = `\n... [${omittedChars.toLocaleString()} characters omitted] ...\n`;
     truncated = beginning + middleNotice + end;
   } else {
     // Post truncation: keep beginning only
-    truncated = text.slice(0, shownChars);
+    truncated = text.slice(0, maxChars);
   }
 
   const noticeLines = [
-    `[Output truncated: showing ${shownChars.toLocaleString()} of ${text.length.toLocaleString()} characters.]`,
+    `[Output truncated: showing ${maxChars.toLocaleString()} of ${text.length.toLocaleString()} characters.]`,
   ];
 
   if (overflowPath) {
@@ -190,9 +171,21 @@ export function truncateByLines(
 
   const wasTruncated = lines.length > maxLines || linesWereTruncatedInLength;
 
-  const overflowPath = wasTruncated
-    ? writeOverflow(() => text, toolName, options)
-    : undefined;
+  // Write to overflow file if enabled and working directory provided
+  let overflowPath: string | undefined;
+  if (wasTruncated && OVERFLOW_CONFIG.ENABLED && options?.workingDirectory) {
+    try {
+      overflowPath = writeOverflowFile(
+        text,
+        options.workingDirectory,
+        options.toolName ?? toolName,
+        options.secrets,
+      );
+    } catch (error) {
+      // Silently fail if overflow file creation fails
+      debugLog("truncation", "Failed to write overflow file: %O", error);
+    }
+  }
 
   let content = selectedLines.join("\n");
 
@@ -261,7 +254,22 @@ export function truncateArray<T>(
     selectedItems = items.slice(0, maxItems);
   }
 
-  const overflowPath = writeOverflow(() => formatter(items), toolName, options);
+  // Write to overflow file if enabled and working directory provided
+  let overflowPath: string | undefined;
+  if (OVERFLOW_CONFIG.ENABLED && options?.workingDirectory) {
+    try {
+      const fullContent = formatter(items);
+      overflowPath = writeOverflowFile(
+        fullContent,
+        options.workingDirectory,
+        options.toolName ?? toolName,
+        options.secrets,
+      );
+    } catch (error) {
+      // Silently fail if overflow file creation fails
+      debugLog("truncation", "Failed to write overflow file: %O", error);
+    }
+  }
 
   const content = formatter(selectedItems);
   const noticeLines = [

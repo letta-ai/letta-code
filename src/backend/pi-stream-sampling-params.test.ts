@@ -2,8 +2,6 @@ import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Context } from "@earendil-works/pi-ai";
-import { normalizeContext } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/api/openai-responses";
 import { buildModelSettings } from "@/agent/modify";
 import { PiStreamAdapter } from "@/backend/dev/pi-stream-adapter";
@@ -16,7 +14,6 @@ test("local sampling overrides reach the real pi-ai request builder", async () =
     text: { verbosity: "medium" },
   };
   let payload: unknown;
-  let capturedContext: Context | undefined;
   try {
     await createOrUpdateLocalProvider({
       storageDir,
@@ -32,22 +29,17 @@ test("local sampling overrides reach the real pi-ai request builder", async () =
     const adapter = new PiStreamAdapter({
       localProviderAuthStorageDir: storageDir,
       stream: (model, context, options) => {
-        capturedContext = context;
         if (model.api !== "openai-responses") {
           throw new Error(`Expected OpenAI Responses, received ${model.api}`);
         }
-        return streamSimple(
-          { ...model, api: model.api },
-          normalizeContext(context),
-          {
-            ...options,
-            // Stop after real provider conversion, before any network request.
-            onPayload: (request) => {
-              payload = request;
-              throw new Error("captured request without inference");
-            },
+        return streamSimple({ ...model, api: model.api }, context, {
+          ...options,
+          // Stop after real provider conversion, before any network request.
+          onPayload: (request) => {
+            payload = request;
+            throw new Error("captured request without inference");
           },
-        );
+        });
       },
     });
     try {
@@ -68,7 +60,6 @@ test("local sampling overrides reach the real pi-ai request builder", async () =
         uiMessages: [
           { id: "hello", role: "user", content: "Hi", timestamp: Date.now() },
         ],
-        midConversationSystemPrompt: "Use the freshly committed memory.",
         clientTools: [],
         clientSkills: [],
       })) {
@@ -78,10 +69,6 @@ test("local sampling overrides reach the real pi-ai request builder", async () =
       expect(String(error)).toContain("captured request without inference");
     }
     expect(payload).toMatchObject({ model: "gpt-5.6-sol", ...sampling });
-    expect(capturedContext?.messages.at(-1)).toMatchObject({
-      role: "system",
-      content: "Use the freshly committed memory.",
-    });
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }

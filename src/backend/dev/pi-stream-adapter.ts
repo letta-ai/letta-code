@@ -39,7 +39,6 @@ import {
 } from "./pi-model-factory";
 import { LocalPiModelsRuntime } from "./pi-models-runtime";
 import { resolvePiRequestHeaders } from "./pi-request-headers";
-import { isPiModelOutputEvent } from "./pi-stream-output";
 import type {
   LlmEndErrorInfo,
   LlmEndInfo,
@@ -324,6 +323,31 @@ function withOpenAIResponsesReplayIdSanitizer(
   };
 }
 
+function withMidConversationSystemPrompt(
+  existing: SimpleStreamOptions["onPayload"] | undefined,
+  systemPrompt: string | undefined,
+): SimpleStreamOptions["onPayload"] {
+  if (!systemPrompt) return existing;
+  return async (payload, model) => {
+    let next = payload;
+    let upstreamChanged = false;
+    const upstream = await existing?.(payload, model);
+    if (upstream !== undefined) {
+      next = upstream;
+      upstreamChanged = true;
+    }
+    if (model.id !== "claude-opus-4-8" || !isRecord(next)) {
+      return upstreamChanged ? next : undefined;
+    }
+    const messages = Array.isArray(next.messages) ? next.messages : undefined;
+    if (!messages) return upstreamChanged ? next : undefined;
+    return {
+      ...next,
+      messages: [...messages, { role: "system", content: systemPrompt }],
+    };
+  };
+}
+
 function withAnthropicOutputEffort(
   existing: SimpleStreamOptions["onPayload"] | undefined,
   effort: string | undefined,
@@ -460,6 +484,19 @@ function toLocalAssistantMessage(
   };
 }
 
+function isModelOutputEvent(event: ProviderStreamEvent): boolean {
+  if (event.type === "local-message") return true;
+  if (event.type !== "provider-part") return false;
+  switch (event.part.type) {
+    case "text_delta":
+    case "thinking_delta":
+    case "toolcall_end":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function llmEndErrorFromError(error: unknown): {
   error: LlmEndErrorInfo;
   stopReason: string;
@@ -591,17 +628,9 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       },
     );
     assertPromptFloorFitsContextWindow(input, resolved.model);
-    const messages = toPiMessages(input.uiMessages);
-    if (input.midConversationSystemPrompt) {
-      messages.push({
-        role: "system",
-        content: input.midConversationSystemPrompt,
-        timestamp: Date.now(),
-      });
-    }
     const context: Context = {
       systemPrompt: input.systemPrompt ?? input.agent.system,
-      messages,
+      messages: toPiMessages(input.uiMessages),
       ...(tools ? { tools } : {}),
     };
     const reasoning = reasoningForSettings(
@@ -657,6 +686,10 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       );
     }
     if (resolved.model.api === "anthropic-messages") {
+      options.onPayload = withMidConversationSystemPrompt(
+        options.onPayload,
+        input.midConversationSystemPrompt,
+      );
       if (
         resolved.model.id.includes("claude-fable-5") &&
         anthropicEffortForSettings(input.agent.model_settings) === "max"
@@ -711,11 +744,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           ) {
             streamError = error;
             break;
-          }
-          if (part.error.content.length > 0) {
-            yield providerLocalMessage(
-              toLocalAssistantMessage(part.error, input),
-            );
           }
         }
         if (part.type === "done") {
@@ -814,11 +842,9 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       }
 
       let emittedModelOutput = false;
-      let emittedLocalMessage = false;
       try {
         for await (const event of this.streamOnce(activeInput)) {
-          if (isPiModelOutputEvent(event)) emittedModelOutput = true;
-          if (event.type === "local-message") emittedLocalMessage = true;
+          if (isModelOutputEvent(event)) emittedModelOutput = true;
           yield event;
         }
         return;
@@ -932,16 +958,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           transientRetries >= LOCAL_PROVIDER_MAX_RETRIES ||
           !retryableTransportError
         ) {
-          if (
-            emittedModelOutput &&
-            !emittedLocalMessage &&
-            error instanceof PiProviderError &&
-            error.assistant.content.length > 0
-          ) {
-            yield providerLocalMessage(
-              toLocalAssistantMessage(error.assistant, activeInput),
-            );
-          }
           throw error;
         }
 

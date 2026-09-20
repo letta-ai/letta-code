@@ -2,8 +2,6 @@ import type {
   Api,
   AssistantMessage,
   ImageContent,
-  JsonObject,
-  JsonValue,
   Message as PiMessage,
   ProviderId,
   TextContent,
@@ -86,15 +84,6 @@ export type LocalMessage =
   | LocalToolResultMessage;
 
 export type LocalPiMessage = PiMessage;
-
-export function localToolArgumentsFromUnknown(value: unknown): JsonObject {
-  const serialized = JSON.stringify(value ?? {});
-  const parsed =
-    serialized === undefined ? null : (JSON.parse(serialized) as JsonValue);
-  return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-    ? (parsed as JsonObject)
-    : { input: parsed };
-}
 
 export function emptyLocalUsage(): Usage {
   return {

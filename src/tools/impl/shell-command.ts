@@ -37,6 +37,7 @@ function normalizeShellCommandResult(
     "Bash",
     {
       workingDirectory: resolvedWorkdir,
+      toolName: "Bash",
       secrets,
     },
   );

@@ -12,7 +12,6 @@ import {
   checkProviderApiKey,
   createOrUpdateProvider,
   getProviderByName,
-  isXaiOAuthProvider,
   type ProviderStorageTarget,
   providerStorageTargetLabel,
 } from "@/providers/byok-providers";
@@ -43,7 +42,6 @@ import {
   isChatGPTOAuthConnected,
   runChatGPTOAuthConnectFlow,
 } from "./connect-oauth-core";
-import { runCloudXaiOAuthConnectFlow } from "./connect-xai-oauth";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
@@ -132,7 +130,6 @@ function formatConnectUsage(): string {
     "Examples:",
     "  /connect chatgpt",
     "  /connect chatgpt --name chatgpt-work",
-    "  /connect grok",
     "  /connect codex",
     "  /connect anthropic <api_key>",
     "  /connect openai <api_key>",
@@ -574,8 +571,7 @@ async function handleConnectCloudOAuthProvider(
     provider.byokProvider.providerName,
     { target: "api" },
   );
-  // Grok/xAI OAuth upserts `lc-xai` in place so reconnect is not a dead-end.
-  if (existingProvider && !isXaiOAuthProvider(provider.byokProvider)) {
+  if (existingProvider) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -599,23 +595,19 @@ async function handleConnectCloudOAuthProvider(
   );
 
   try {
-    const onStatus = (status: string) =>
-      updateCommandResult(
-        ctx.buffersRef,
-        ctx.refreshDerived,
-        cmdId,
-        msg,
-        status,
-        true,
-        "running",
-      );
-    const oauthCallbacks = {
+    const result = await runCloudOAuthConnectFlow(provider.byokProvider, {
       signal: abortController.signal,
-      onStatus,
-    };
-    const result = isXaiOAuthProvider(provider.byokProvider)
-      ? await runCloudXaiOAuthConnectFlow(provider.byokProvider, oauthCallbacks)
-      : await runCloudOAuthConnectFlow(provider.byokProvider, oauthCallbacks);
+      onStatus: (status) =>
+        updateCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          cmdId,
+          msg,
+          status,
+          true,
+          "running",
+        ),
+    });
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,

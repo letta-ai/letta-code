@@ -67,7 +67,7 @@ async function waitFor(
 describe("listener interrupt queue handoff", () => {
   afterEach(() => setActiveRuntime(null));
 
-  test("abort preserves earlier-turn Monitor sources", async () => {
+  test("abort stops earlier-turn monitor sources only in the exact runtime scope", async () => {
     const listener = createRuntime();
     const socket = createOpenTransport();
     const options = {} as StartListenerOptions;
@@ -137,7 +137,7 @@ describe("listener interrupt queue handoff", () => {
       const beforeBash = new Set(backgroundProcesses.keys());
       await bash({
         command: `${JSON.stringify(process.execPath)} ${JSON.stringify(script)}`,
-        description: "ordinary background task survives turn interruption",
+        description: "ordinary background task survives monitor cancellation",
         run_in_background: true,
         parentScope: scopes[0],
       });
@@ -180,7 +180,7 @@ describe("listener interrupt queue handoff", () => {
         });
       }
       const baseline = target.queueRuntime.peek().map((item) => item.id);
-      requireFixture(peers[0]).send("buffered-before-interrupt");
+      requireFixture(peers[0]).send("buffered-before-cancel");
       const wsState = requireFixture(
         backgroundProcesses.get(requireFixture(taskIds[1])),
       );
@@ -212,30 +212,34 @@ describe("listener interrupt queue handoff", () => {
           },
         ),
       ).toBe(true);
-      // Turn cancellation leaves previously started Monitor sources running.
-      expect(commandState.status).toBe("running");
-      expect(wsState.status).toBe("running");
-      expect(requireFixture(peers[0]).readyState).toBe(1);
-      process.kill(pid, 0);
-      for (const peer of peers) peer.send("still-delivering-after-interrupt");
+      // Cancellation must stop local sources without waiting for the backend.
+      expect(commandState.status).not.toBe("running");
+      expect(wsState.status).not.toBe("running");
+      await waitFor(() => requireFixture(peers[0]).readyState === 3, 4000);
+      await waitFor(() => {
+        try {
+          process.kill(pid, 0);
+          return false;
+        } catch {
+          return true;
+        }
+      }, 4000);
+      for (const peer of peers.slice(1))
+        peer.send("still-delivering-after-cancel");
       await waitFor(
         () =>
-          runtimes.every((runtime) =>
-            JSON.stringify(runtime.queueRuntime.peek()).includes(
-              "still-delivering-after-interrupt",
-            ),
-          ),
+          runtimes.slice(1).every((runtime) => runtime.queueRuntime.length > 0),
         4000,
       );
       await Bun.sleep(MONITOR_EVENT_BATCH_MS * 2);
-      expect(JSON.stringify(target.queueRuntime.peek())).toContain(
-        "buffered-before-interrupt",
+      expect(target.queueRuntime.peek().map((item) => item.id)).toEqual(
+        baseline,
       );
-      for (const id of taskIds.slice(0, -1))
+      for (const id of taskIds.slice(2))
         expect(backgroundProcesses.get(id)?.status).toBe("running");
-      for (const runtime of runtimes) {
+      for (const runtime of runtimes.slice(1)) {
         expect(JSON.stringify(runtime.queueRuntime.peek())).toContain(
-          "still-delivering-after-interrupt",
+          "still-delivering-after-cancel",
         );
       }
       expect(bashState.status).toBe("running");

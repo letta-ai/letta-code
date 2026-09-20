@@ -48,7 +48,7 @@ await handleHeadlessCommand(parseCliArgs([
 ], true), undefined, undefined, undefined, false);
 `;
 
-test("headless interrupt preserves a real Monitor and its queued events", async () => {
+test("headless interrupt stops a real Monitor, preserves its queued event, and sends recovery on the next turn", async () => {
   const home = mkdtempSync(join(tmpdir(), "letta-headless-monitor-interrupt-"));
   let onHandshake!: (accept: (verified: boolean) => void) => void;
   const handshakeRequested = new Promise<(verified: boolean) => void>(
@@ -165,9 +165,7 @@ test("headless interrupt preserves a real Monitor and its queued events", async 
                 request_id: "after-first-turn",
                 request: { subtype: "initialize" },
               });
-            } else if (results === 3) {
-              socket.send("real Monitor event after interrupt");
-            } else if (results === 4) finish();
+            } else if (results === 3) finish();
           }
           if (
             event.type === "control_response" &&
@@ -203,24 +201,23 @@ test("headless interrupt preserves a real Monitor and its queued events", async 
     });
     expect(survivedCompletion).toBe(true);
     expect(survivedIdleInterrupt).toBe(true);
-    expect(closed).toBe(false);
+    const deadline = Date.now() + 2000;
+    while (!closed && Date.now() < deadline) await Bun.sleep(10);
+    expect(closed).toBe(true);
     expect(
       events
         .filter((event) => event.type === "result")
         .map((event) => event.subtype),
-    ).toEqual(["success", "interrupted", "success", "success"]);
+    ).toEqual(["success", "interrupted", "success"]);
     const nextTurn = events.find(
       (event) => event.type === "fixture_input" && event.turn === 3,
     );
     const body = JSON.stringify(nextTurn?.body);
     expect(body).toContain("queued real Monitor event before interrupt");
-    expect(body).not.toContain("Any pending monitors");
-    const eventAfterInterrupt = events.find(
-      (event) => event.type === "fixture_input" && event.turn === 4,
+    expect(body).toContain(
+      "Any pending monitors in this conversation were also cancelled",
     );
-    expect(JSON.stringify(eventAfterInterrupt?.body)).toContain(
-      "real Monitor event after interrupt",
-    );
+    expect(body).toContain("Do not restart them unless the user asks.");
   } finally {
     child.stdin.end();
     child.kill("SIGKILL");

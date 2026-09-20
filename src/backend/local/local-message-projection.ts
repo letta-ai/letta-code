@@ -263,7 +263,7 @@ export function projectLocalMessageToStoredMessages(
     if (pendingReasoningContent.length > 0) {
       const reasoningMessage = projectThinkingContent(
         message,
-        pendingReasoningContent.join(""),
+        pendingReasoningContent.join("\n\n"),
         pendingReasoningStartIndex,
         date,
         agentId,

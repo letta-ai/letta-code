@@ -6,7 +6,10 @@
 import { hostname } from "node:os";
 import { parseArgs } from "node:util";
 import { MessageChannel } from "node:worker_threads";
-import { render } from "ink";
+import { Box, render, Text } from "ink";
+import TextInput from "ink-text-input";
+import type React from "react";
+import { useState } from "react";
 import { configureBackendMode } from "@/backend";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import type { ChannelGatewaySupervisor } from "@/channels/gateway-supervisor";
@@ -18,7 +21,6 @@ import {
   RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV,
 } from "@/channels/restore-scope";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
-import { printFirstRunWelcome } from "@/cli/subcommands/listen-first-run-welcome";
 import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
@@ -59,6 +61,29 @@ type CreateListenerProcessAnchor = () => ListenerProcessAnchor;
 // Without a retained reference, the MessageChannel anchor could be garbage
 // collected even though it is intended to hold channel-only listeners open.
 const activeListenerProcessAnchors = new Set<ListenerProcessAnchor>();
+
+/**
+ * Interactive prompt for computer name
+ */
+function PromptEnvName(props: {
+  onSubmit: (envName: string) => void;
+}): React.ReactElement {
+  const [value, setValue] = useState("");
+
+  return (
+    <Box flexDirection="column">
+      <Text>Enter computer name (or press Enter for hostname): </Text>
+      <TextInput
+        value={value}
+        onChange={setValue}
+        onSubmit={(input) => {
+          const finalName = input.trim() || hostname();
+          props.onSubmit(finalName);
+        }}
+      />
+    </Box>
+  );
+}
 
 function formatTimestamp(): string {
   const now = new Date();
@@ -392,7 +417,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   // Determine connection name
   let connectionName: string;
-  let showedFirstRunWelcome = false;
 
   const explicitComputerName = values["computer-name"] ?? values["env-name"];
   const spawnerDeviceId = getSpawnerDeviceId();
@@ -407,13 +431,25 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     if (savedName) {
       // Reuse saved name
       connectionName = savedName;
-    } else {
-      // No saved name - default to hostname so a first run (e.g. pasted from
-      // onboarding) registers without an interactive prompt.
-      connectionName = hostname() || "my-computer";
+    } else if (debugMode) {
+      // In debug mode, default to hostname without prompting
+      connectionName = hostname();
       settingsManager.setListenerEnvName(connectionName);
-      printFirstRunWelcome(connectionName);
-      showedFirstRunWelcome = true;
+    } else {
+      // No saved name - prompt user
+      connectionName = await new Promise<string>((resolve) => {
+        const { unmount } = render(
+          <PromptEnvName
+            onSubmit={(name) => {
+              unmount();
+              resolve(name);
+            }}
+          />,
+        );
+      });
+
+      // Save to local project settings for future runs
+      settingsManager.setListenerEnvName(connectionName);
     }
   }
 
@@ -847,9 +883,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         supportsPairedListenerGenerations,
       );
     } else {
-      // Normal mode: interactive Ink UI. On a first run keep the welcome banner
-      // and sign-in output on screen instead of clearing them.
-      if (!showedFirstRunWelcome) console.clear();
+      // Normal mode: interactive Ink UI
+      console.clear();
 
       let updateStatusCallback:
         | ((status: "idle" | "receiving" | "processing") => void)
@@ -863,7 +898,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         <ListenerStatusUI
           connectionId={connectionId}
           envName={connectionName}
-          isFirstRun={showedFirstRunWelcome}
           onReady={(callbacks) => {
             updateStatusCallback = callbacks.updateStatus;
             updateRetryStatusCallback = callbacks.updateRetryStatus;
