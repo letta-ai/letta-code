@@ -15,6 +15,8 @@ export interface ProviderOAuthTokensConfig {
   refresh: string;
   /** Epoch milliseconds, matching pi-ai. */
   expires: number;
+  /** Provider-specific refresh metadata, such as GitHub Copilot's enterpriseUrl. */
+  [key: string]: unknown;
 }
 
 /** Credentials `connect_provider` accepts for an OAuth provider. */
@@ -32,9 +34,9 @@ export function isProviderOAuthTokensConfig(
   return (
     config.type === "oauth" &&
     typeof config.access === "string" &&
-    config.access.length > 0 &&
+    config.access.trim().length > 0 &&
     typeof config.refresh === "string" &&
-    config.refresh.length > 0 &&
+    config.refresh.trim().length > 0 &&
     typeof config.expires === "number" &&
     Number.isFinite(config.expires)
   );

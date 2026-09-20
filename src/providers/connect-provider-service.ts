@@ -429,12 +429,7 @@ export async function connectProvider<TTarget extends ProviderStorageTarget>(
       setLocalOAuthProvider({
         providerName: oauthConnection.providerName,
         providerType: oauthConnection.providerType,
-        auth: localOAuthAuthFromCredentials({
-          type: oauthConnection.credentials.type,
-          access: oauthConnection.credentials.access,
-          refresh: oauthConnection.credentials.refresh,
-          expires: oauthConnection.credentials.expires,
-        }),
+        auth: localOAuthAuthFromCredentials(oauthConnection.credentials),
       });
     }
     return listConnectProviders(input.target);

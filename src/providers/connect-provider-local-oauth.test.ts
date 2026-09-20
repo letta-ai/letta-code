@@ -62,6 +62,23 @@ describe("connect_provider with subscription OAuth tokens", () => {
     });
   });
 
+  test("preserves provider-specific OAuth credential fields", async () => {
+    await connectProvider({
+      target: "local",
+      providerId: XAI_LOCAL_PROVIDER_ID,
+      fields: {},
+      oauthConfig: {
+        ...tokens,
+        enterpriseUrl: "https://github.example.com",
+      },
+    });
+
+    const record = getLocalProviderRecordByName("xai", storageDir);
+    expect(record?.auth).toMatchObject({
+      enterpriseUrl: "https://github.example.com",
+    });
+  });
+
   test("keeps the tokens out of the connect response", async () => {
     const result = await connectProvider({
       target: "local",

@@ -28,10 +28,16 @@ describe("provider OAuth tokens config", () => {
     const { refresh: _refresh, ...withoutRefresh } = tokens;
     expect(isProviderOAuthTokensConfig(withoutRefresh)).toBe(false);
     expect(isProviderOAuthTokensConfig({ ...tokens, refresh: "" })).toBe(false);
+    expect(isProviderOAuthTokensConfig({ ...tokens, refresh: "   " })).toBe(
+      false,
+    );
   });
 
   test("rejects a bundle without an access token", () => {
     expect(isProviderOAuthTokensConfig({ ...tokens, access: "" })).toBe(false);
+    expect(isProviderOAuthTokensConfig({ ...tokens, access: "   " })).toBe(
+      false,
+    );
     const { access: _access, ...withoutAccess } = tokens;
     expect(isProviderOAuthTokensConfig(withoutAccess)).toBe(false);
   });
