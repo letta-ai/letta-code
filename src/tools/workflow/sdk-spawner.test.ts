@@ -386,7 +386,7 @@ describe("createSdkSpawner", () => {
     const messages: SdkStreamMessage[] = [];
     for (let i = 0; i < 4; i++) {
       const id = `call_${i}`;
-      const fragments = [`{\"command\":\"run-${i}\",\"options\":`, "{}", "}"];
+      const fragments = [`{"command":"run-${i}","options":`, "{}", "}"];
       for (const fragment of fragments) {
         messages.push({
           type: "tool_call",

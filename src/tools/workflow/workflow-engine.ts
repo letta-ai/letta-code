@@ -7,6 +7,12 @@
  * The engine is deliberately small: it schedules calls to the injected
  * spawner and nothing else. Everything a subagent does happens in the
  * spawner (sdk-spawner.ts in production).
+ *
+ * The vm context gives the script a clean global scope with only the hooks
+ * in it. It is not a security boundary: the hooks are host-realm functions,
+ * so a script can reach the host through them (node:vm documents this). The
+ * script runs with the CLI's own privileges, like the Bash tool; the
+ * approval prompt shows its source so the user approves what actually runs.
  */
 
 import vm from "node:vm";
@@ -58,9 +64,15 @@ export async function executeWorkflow(
 ): Promise<WorkflowExecutionResult> {
   const meta = parseWorkflowMeta(options.script);
   const signal = options.signal ?? new AbortController().signal;
+  // Progress stops once the run has settled, not at abort: an interrupted
+  // subagent still reports its outcome (and tokens) while the run drains.
+  let settled = false;
   const emit = (event: WorkflowProgressEvent) => {
-    if (!signal.aborted) options.onProgress?.(event);
+    if (!settled) options.onProgress?.(event);
   };
+  // Every agent() call, awaited by the script or not. The run does not
+  // settle until all of them have, so a completion never precedes a worker.
+  const inFlight = new Set<Promise<unknown>>();
   const maxTotalAgents = options.maxTotalAgents ?? DEFAULT_MAX_TOTAL_AGENTS;
   const semaphore = new Semaphore(
     options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
@@ -76,6 +88,8 @@ export async function executeWorkflow(
     // Scripts can forget to await a call; that must not surface as an
     // unhandled rejection. Awaiting it still observes the original error.
     void pending.catch(() => {});
+    inFlight.add(pending);
+    void pending.finally(() => inFlight.delete(pending)).catch(() => {});
     return pending;
   }
 
@@ -119,7 +133,8 @@ export async function executeWorkflow(
         { prompt, options: opts, callIndex },
         signal,
       );
-      if (signal.aborted) throw new Error("Workflow aborted.");
+      // Account for the outcome even when the run was aborted meanwhile: the
+      // spawner returns what the interrupted subagent had already consumed.
       totalTokens += outcome.totalTokens ?? 0;
       if (options.journalPath) {
         appendJournalEntry(options.journalPath, {
@@ -139,6 +154,7 @@ export async function executeWorkflow(
         durationMs: outcome.durationMs,
         totalTokens: outcome.totalTokens,
       });
+      if (signal.aborted) throw new Error("Workflow aborted.");
       return outcome.failed ? null : outcome.value;
     } finally {
       semaphore.release();
@@ -255,6 +271,20 @@ export async function executeWorkflow(
     );
   });
   void abortRun.catch(() => {});
-  const result = await Promise.race([pending, abortRun]);
-  return { meta, result, agentsSpawned, totalTokens };
+  // Whether the script returned, threw, or was aborted, wait for every
+  // launched subagent to report back before settling. Aborted ones return
+  // promptly because the spawner honors the signal.
+  const drain = async () => {
+    while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
+  };
+  try {
+    const result = await Promise.race([pending, abortRun]);
+    await drain();
+    return { meta, result, agentsSpawned, totalTokens };
+  } catch (error) {
+    await drain();
+    throw error;
+  } finally {
+    settled = true;
+  }
 }

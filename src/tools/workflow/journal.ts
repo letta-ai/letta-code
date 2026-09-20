@@ -3,6 +3,9 @@
  * ran, its args, and a JSONL journal with one line per completed subagent
  * call. The journal is a debugging record (what each agent actually
  * returned); nothing replays from it.
+ *
+ * Everything here holds prompts, responses, and script source, so files are
+ * created owner-only regardless of the process umask.
  */
 
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
@@ -31,6 +34,9 @@ export function newExecutionId(): string {
 }
 
 /** Create the run directory and persist the script (and args) it will run. */
+const DIR_MODE = 0o700;
+const FILE_MODE = 0o600;
+
 export function createExecutionDir(
   executionsDir: string,
   executionId: string,
@@ -38,13 +44,14 @@ export function createExecutionDir(
   args: unknown,
 ): { executionDir: string; scriptPath: string; journalPath: string } {
   const executionDir = join(executionsDir, executionId);
-  mkdirSync(executionDir, { recursive: true });
+  mkdirSync(executionDir, { recursive: true, mode: DIR_MODE });
   const scriptPath = join(executionDir, "script.js");
-  writeFileSync(scriptPath, script);
+  writeFileSync(scriptPath, script, { mode: FILE_MODE });
   if (args !== undefined) {
     writeFileSync(
       join(executionDir, "args.json"),
       JSON.stringify(args, null, 2),
+      { mode: FILE_MODE },
     );
   }
   return {
@@ -58,5 +65,7 @@ export function appendJournalEntry(
   journalPath: string,
   entry: JournalEntry,
 ): void {
-  appendFileSync(journalPath, `${JSON.stringify(entry)}\n`);
+  appendFileSync(journalPath, `${JSON.stringify(entry)}\n`, {
+    mode: FILE_MODE,
+  });
 }

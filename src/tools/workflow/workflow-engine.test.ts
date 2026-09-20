@@ -239,4 +239,74 @@ return errors`,
     // Nothing is emitted after the abort, even if the script body continues.
     expect(events.some((e) => e.kind === "log")).toBe(false);
   });
+
+  test("an interrupted subagent still reports its outcome and tokens", async () => {
+    const controller = new AbortController();
+    const spawner: SubagentSpawner = (_request, signal) =>
+      new Promise<SubagentOutcome>((resolve) => {
+        signal.addEventListener("abort", () =>
+          resolve({
+            value: null,
+            failed: true,
+            error: "interrupted",
+            totalTokens: 4_200,
+          }),
+        );
+      });
+    const events: WorkflowProgressEvent[] = [];
+    const dir = mkdtempSync(join(tmpdir(), "workflow-abort-journal-"));
+    try {
+      const journalPath = join(dir, "journal.jsonl");
+      const pending = executeWorkflow(spawner, {
+        script: `${META}await agent('slow')`,
+        signal: controller.signal,
+        journalPath,
+        onProgress: (event) => events.push(event),
+      });
+      await Bun.sleep(10);
+      controller.abort();
+      await expect(pending).rejects.toThrow("Workflow aborted.");
+      // The terminal event and journal line carry what the worker consumed
+      // before TaskStop, so /workflows and the journal do not undercount.
+      expect(events.at(-1)).toMatchObject({
+        kind: "agent",
+        status: "error",
+        detail: "interrupted",
+        totalTokens: 4_200,
+      });
+      const journal = readFileSync(journalPath, "utf8").trim().split("\n");
+      expect(journal).toHaveLength(1);
+      expect(JSON.parse(journal[0] ?? "{}").outcome.totalTokens).toBe(4_200);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("waits for un-awaited agent() calls before settling", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const spawner: SubagentSpawner = async (request) => {
+      if (request.prompt === "slow") await gate;
+      return { value: request.prompt, failed: false, totalTokens: 10 };
+    };
+    let settledResult: unknown = "unsettled";
+    const pending = executeWorkflow(spawner, {
+      script: `${META}agent('slow'); return 'done'`,
+    }).then((run) => {
+      settledResult = run;
+      return run;
+    });
+    await Bun.sleep(20);
+    // The script returned, but its fire-and-forget worker is still running.
+    expect(settledResult).toBe("unsettled");
+    release();
+    const run = await pending;
+    expect(run).toMatchObject({
+      result: "done",
+      agentsSpawned: 1,
+      totalTokens: 10,
+    });
+  });
 });

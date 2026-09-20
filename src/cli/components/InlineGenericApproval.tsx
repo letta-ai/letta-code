@@ -23,12 +23,37 @@ type Props = {
 // Horizontal line character for Claude Code style
 const SOLID_LINE = "─";
 
+const SCRIPT_PREVIEW_MAX_LINES = 40;
+
+/**
+ * A `script` argument is source the user is approving to run; show it
+ * verbatim (not JSON-escaped and cut mid-line) after the other arguments.
+ */
+function formatScriptArgs(parsed: Record<string, unknown>): string {
+  const { script, ...rest } = parsed;
+  const lines = String(script).split("\n");
+  const shown = lines.slice(0, SCRIPT_PREVIEW_MAX_LINES);
+  if (lines.length > shown.length) {
+    shown.push(`… (${lines.length - shown.length} more lines)`);
+  }
+  const header =
+    Object.keys(rest).length > 0 ? `${JSON.stringify(rest, null, 2)}\n\n` : "";
+  return `${header}${shown.join("\n")}`;
+}
+
 /**
  * Format tool arguments for display
  */
 function formatArgs(toolArgs: string): string {
   try {
     const parsed = JSON.parse(toolArgs);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof parsed.script === "string"
+    ) {
+      return formatScriptArgs(parsed as Record<string, unknown>);
+    }
     // Pretty print with 2-space indent, but limit length
     const formatted = JSON.stringify(parsed, null, 2);
     // Truncate if too long

@@ -100,8 +100,12 @@ Workflow subagents require the API backend.
 Scripts are plain JavaScript, NOT TypeScript — type annotations, interfaces,
 and generics fail to parse. The script body runs in an async context — use
 `await` directly and `return` the final result. Standard JS built-ins (JSON,
-Math, Array, etc.) are available. No filesystem or network access from the
-script itself; subagents do the I/O.
+Math, Array, etc.) are available; the hooks are the only globals provided.
+The script runs inside the CLI process with the CLI's own privileges (the
+`vm` context is a scope, not a security boundary), and the user approves it
+by reading it. Keep the script to orchestration: decide what runs and combine
+results. All reading, searching, and writing belongs in subagents, where the
+tool allowlist applies.
 
 ## Pipeline vs barrier
 

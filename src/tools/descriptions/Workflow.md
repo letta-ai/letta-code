@@ -4,7 +4,7 @@ Workflows run in the background — this tool validates the script and returns i
 
 ONLY call this tool when the user has explicitly opted into multi-agent orchestration. Workflows can spawn dozens of subagent sessions and cost real money; the user must request that scale, not have it inferred. Explicit opt-in means: the user directly asked for a workflow or multi-agent orchestration in their own words ("use a workflow", "fan out agents", "orchestrate this with subagents"), asked for a comprehensive audit/sweep at a scale that plainly requires it, or invoked a skill whose instructions call this tool. For any other task — even one that would benefit from parallelism — describe what a workflow could do and ask first.
 
-Every script must begin with `export const meta = {...}`: a PURE LITERAL (no variables, calls, or interpolation) giving the workflow's `name` (kebab-case), a one-line `description`, and optionally `phases` — one `{ title, detail? }` per phase() call. Scripts are plain JavaScript, not TypeScript.
+Every script must begin with `export const meta = {...}`: a PURE LITERAL (no variables, calls, or interpolation) giving the workflow's `name` (kebab-case), a one-line `description`, and optionally `phases` — one `{ title, detail? }` per phase() call. Scripts are plain JavaScript, not TypeScript. The script runs in the CLI process with the CLI's privileges and the user approves it by reading it, so keep it to orchestration (deciding what runs, combining results); reading, searching, and writing belong in subagents, where the tool allowlist applies.
 
 The canonical multi-stage pattern — pipeline by default, each item verifies as soon as its review completes:
 
