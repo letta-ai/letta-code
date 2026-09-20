@@ -37,6 +37,24 @@ function withEnv<T>(
 }
 
 describe("connect provider normalization", () => {
+  test("resolves Grok as cloud xAI OAuth", () => {
+    const resolved = resolveConnectProvider("grok", "api");
+
+    if (!resolved) {
+      throw new Error("Expected Grok cloud provider to resolve");
+    }
+    expect(resolved.canonical).toBe("xai");
+    expect(resolved.byokId).toBe("grok");
+    expect(resolved.byokProvider).toMatchObject({
+      providerType: "xai",
+      providerName: "lc-xai",
+      oauthProviderId: "xai",
+      isOAuth: true,
+    });
+    expect(isConnectOAuthProvider(resolved)).toBe(true);
+    expect(listConnectProviderTokens("api")).toContain("grok");
+  });
+
   test("normalizes codex alias to chatgpt provider", () => {
     const resolved = resolveConnectProvider("codex", "api");
 
@@ -186,7 +204,7 @@ describe("connect provider normalization", () => {
       oauthProviderId: "xai",
     });
     expect(listConnectProviderTokens("local")).toContain("grok");
-    expect(listConnectProviderTokens("api")).not.toContain("grok");
+    expect(listConnectProviderTokens("api")).toContain("grok");
   });
 
   test("uses environment keys before API-key optional defaults", () => {

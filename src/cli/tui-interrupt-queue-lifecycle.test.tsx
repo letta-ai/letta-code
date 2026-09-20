@@ -316,7 +316,7 @@ describe("TUI interrupt queue lifecycle", () => {
     executor.settleInterruptedTurn();
   });
 
-  test("typed prompt, notification queued, Esc: the notification drains once cancellation settles", async () => {
+  test("typed prompt, notification queued, Esc: the Monitor survives and notifications drain after cancellation", async () => {
     const executor = new DelayedInterruptExecutor();
     const { stdin } = await renderTestApp(executor);
 
@@ -335,8 +335,8 @@ describe("TUI interrupt queue lifecycle", () => {
     await sleep(300);
     stdin.push("\u001b");
     await executor.abortObserved;
-    await waitFor(source.isClosed, "the Monitor socket to close on Esc");
-    expect(source.state.status).not.toBe("running");
+    expect(source.isClosed()).toBe(false);
+    expect(source.state.status).toBe("running");
 
     // Cancellation has not settled yet: nothing may start a replacement turn.
     await sleep(100);
@@ -349,10 +349,17 @@ describe("TUI interrupt queue lifecycle", () => {
     );
     const nextTurn = JSON.stringify(executor.inputs[1]?.body);
     expect(nextTurn).toContain("queued before Esc");
-    expect(nextTurn).toContain(
-      "Any pending monitors in this conversation were also cancelled",
+    expect(nextTurn).not.toContain("Any pending monitors");
+
+    source.socket.send("still watching after active Esc");
+    await waitFor(
+      () => executor.inputs.length === 3,
+      "the Monitor event after active Esc",
     );
-    expect(nextTurn).toContain("Do not restart them unless the user asks.");
+    expect(JSON.stringify(executor.inputs[2]?.body)).toContain(
+      "still watching after active Esc",
+    );
+    expect(source.state.status).toBe("running");
   }, 15_000);
 
   test("typed prompt, Esc, then a notification that arrives after cancellation settled", async () => {

@@ -4,16 +4,22 @@ import {
   canConnectAnotherProvider,
   connectAnotherProviderOption,
   connectedProviderSummary,
+  connectProviderTabOrder,
   fieldValuesFromProviderPlaceholders,
   filterProviderConfigs,
+  formatConnectProviderTab,
   hasCloudProviderStoreCredentials,
   isChatGPTUsageProvider,
   isProviderTargetLoading,
   nextProviderConnectionName,
   providerApiKeyFromInput,
+  providerManageActionLabel,
+  providerManageActions,
   providerSelectionFlow,
+  reconnectProviderOption,
+  shouldForceLocalProviderTab,
   shouldShowProviderStoreTabs,
-} from "@/cli/components/ProviderSelector";
+} from "@/cli/components/provider-selector-helpers";
 import {
   type ByokProvider,
   defaultProviderApiKey,
@@ -339,6 +345,42 @@ describe("ProviderSelector connected provider actions", () => {
     expect(connectAnotherProviderOption(codexProvider)).toBe(
       "Connect another ChatGPT / Codex plan",
     );
+  });
+
+  test("offers reconnect for Cloud Grok instead of a dead-end manage view", () => {
+    const grok = getProviderConfigs("api").find(
+      (provider) => provider.id === "grok",
+    );
+    if (!grok) throw new Error("Expected grok provider config");
+    const lcXai: ProviderResponse = {
+      id: "provider-lc-xai",
+      name: "lc-xai",
+      provider_type: "xai",
+    };
+
+    expect(canConnectAnotherProvider(grok, "api")).toBe(false);
+    expect(reconnectProviderOption(grok)).toBe(
+      "Reconnect xAI (Grok/X subscription)",
+    );
+    expect(
+      providerManageActions(grok, "api", [lcXai]).map((action) =>
+        providerManageActionLabel(action, grok),
+      ),
+    ).toEqual([
+      "Disconnect lc-xai",
+      "Reconnect xAI (Grok/X subscription)",
+      "Back",
+    ]);
+  });
+
+  test("defaults Cloud sessions to the Cloud connect tab", () => {
+    expect(shouldForceLocalProviderTab(null, "api")).toBe(false);
+    expect(shouldForceLocalProviderTab(true, "api")).toBe(false);
+    expect(shouldForceLocalProviderTab(false, "api")).toBe(true);
+    expect(connectProviderTabOrder("api")).toEqual(["api", "local"]);
+    expect(connectProviderTabOrder("local")).toEqual(["local", "api"]);
+    expect(formatConnectProviderTab("api", "api")).toBe("[ Cloud ]");
+    expect(formatConnectProviderTab("local", "api")).toBe("  Local  ");
   });
 
   test("suggests the next available ChatGPT OAuth provider name", () => {
