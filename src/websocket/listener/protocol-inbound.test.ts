@@ -145,6 +145,27 @@ describe("input protocol-inbound validators", () => {
     }
   });
 
+  test("accepts task-scoped PR attribution on create_message", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            github_pull_request_conversation_ids: [
+              "conv-root",
+              "conv-launcher",
+            ],
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("input");
+  });
+
   test("accepts a teleport continuation without a synthetic user message", () => {
     const parsed = parseServerMessage(
       Buffer.from(

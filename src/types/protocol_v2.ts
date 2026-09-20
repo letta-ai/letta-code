@@ -660,8 +660,8 @@ export interface InputCreateMessagePayload {
    * interactive tools are covered without client updates.
    */
   exclude_interactive_tools?: boolean;
+  github_pull_request_conversation_ids?: string[];
 }
-
 export type InputApprovalResponsePayload = {
   kind: "approval_response";
 } & ApprovalResponseBody;

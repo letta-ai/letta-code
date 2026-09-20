@@ -110,6 +110,8 @@ export interface IncomingMessage {
   externalToolScopeIds?: string[];
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
+  /** Durable ancestor conversations that receive PRs created during this turn. */
+  githubPullRequestConversationIds?: string[];
   messages: Array<
     (AttributedMessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;

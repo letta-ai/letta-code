@@ -553,6 +553,8 @@ export function createListenerMessageHandler(
           clientToolset: inputPayload.client_toolset,
           externalToolScopeIds: inputPayload.external_tool_scope_ids,
           excludeInteractiveTools: inputPayload.exclude_interactive_tools,
+          githubPullRequestConversationIds:
+            inputPayload.github_pull_request_conversation_ids,
           imageFailureMode: inputPayload.image_failure_mode,
           messages: inputPayload.messages,
         };

@@ -88,3 +88,51 @@ test("an ordinary child's caller routes it without changing the parent's environ
   expect(env[LISTENER_CONNECTION_ENV]).toBe("conn-parent");
   expect(parentProcessEnv).toEqual({ USER_CWD: "/workspace" });
 });
+
+test("nested children keep the root task's PR attribution conversation", () => {
+  const topLevel = composeSubagentChildEnv({
+    parentProcessEnv: {},
+    subagentType: "general-purpose",
+    parentAgentId: "agent-parent",
+    parentConversationId: "conv-launcher",
+    inheritedPrimaryRoot: null,
+    launchProfile: "default",
+  });
+  const nested = composeSubagentChildEnv({
+    parentProcessEnv: topLevel,
+    subagentType: "general-purpose",
+    parentAgentId: "agent-worker",
+    parentConversationId: "conv-middle",
+    inheritedPrimaryRoot: null,
+    launchProfile: "default",
+  });
+  const nestedDefault = composeSubagentChildEnv({
+    parentProcessEnv: nested,
+    subagentType: "general-purpose",
+    parentAgentId: "agent-worker-2",
+    parentConversationId: "default",
+    inheritedPrimaryRoot: null,
+    launchProfile: "default",
+  });
+
+  expect(topLevel.LETTA_GITHUB_PR_CONVERSATION_IDS).toBe("conv-launcher");
+  expect(nested.LETTA_GITHUB_PR_CONVERSATION_IDS).toBe(
+    "conv-launcher,conv-middle",
+  );
+  expect(nestedDefault.LETTA_GITHUB_PR_CONVERSATION_IDS).toBe(
+    "conv-launcher,conv-middle",
+  );
+});
+
+test("default launch parents do not create an invalid PR attribution target", () => {
+  const env = composeSubagentChildEnv({
+    parentProcessEnv: {},
+    subagentType: "general-purpose",
+    parentAgentId: "agent-parent",
+    parentConversationId: "default",
+    inheritedPrimaryRoot: null,
+    launchProfile: "default",
+  });
+
+  expect(env.LETTA_GITHUB_PR_CONVERSATION_IDS).toBeUndefined();
+});

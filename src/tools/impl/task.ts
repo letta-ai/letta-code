@@ -41,7 +41,6 @@ import {
   formatTaskNotification,
   resolveNotificationScope,
 } from "@/utils/task-notifications.js";
-import { copyGitHubPullRequestTags } from "./github-pull-request-tracker.js";
 import {
   appendToOutputFile,
   assertBackgroundTaskCapacity,
@@ -174,7 +173,6 @@ export interface SpawnBackgroundSubagentTaskResult {
 
 interface SpawnBackgroundSubagentTaskDeps {
   spawnSubagentImpl: typeof spawnSubagent;
-  copyGitHubPullRequestTagsImpl: typeof copyGitHubPullRequestTags;
   addToMessageQueueImpl: typeof addToMessageQueue;
   formatTaskNotificationImpl: typeof formatTaskNotification;
   runSubagentStopHooksImpl: typeof runSubagentStopHooks;
@@ -393,8 +391,6 @@ export function spawnBackgroundSubagentTask(
     process.env[ACTING_USER_ID_ENV];
 
   const spawnSubagentFn = deps?.spawnSubagentImpl ?? spawnSubagent;
-  const copyGitHubPullRequestTagsFn =
-    deps?.copyGitHubPullRequestTagsImpl ?? copyGitHubPullRequestTags;
   const addToMessageQueueFn = deps?.addToMessageQueueImpl ?? addToMessageQueue;
   const formatTaskNotificationFn =
     deps?.formatTaskNotificationImpl ?? formatTaskNotification;
@@ -473,11 +469,6 @@ export function spawnBackgroundSubagentTask(
   );
   subagentExecution
     .then(async (result) => {
-      await copyGitHubPullRequestTagsFn(
-        result.conversationId,
-        resolvedParentScope?.conversationId,
-      );
-
       bgTask.status = result.success ? "completed" : "failed";
       if (result.error) {
         bgTask.error = result.error;

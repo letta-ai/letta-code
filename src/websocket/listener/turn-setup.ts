@@ -325,6 +325,7 @@ export async function prepareListenerTurn(params: {
       ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
       : {}),
     externalToolScopeIds: msg.externalToolScopeIds,
+    githubPullRequestConversationIds: msg.githubPullRequestConversationIds,
     workingDirectory,
     permissionModeState,
     skillsDirectory: listenerOptions?.skillsDirectory,

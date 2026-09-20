@@ -6,6 +6,7 @@ import {
 } from "@/permissions/shell-analysis";
 import { getRuntimeContext } from "@/runtime-context";
 import { debugLog } from "@/utils/debug";
+import { GITHUB_PR_CONVERSATIONS_ENV } from "@/utils/subagent-launch-marker";
 
 export type ShellSourceCommand = string | readonly string[];
 
@@ -362,57 +363,11 @@ function queueConversationTagUpdate(
   return update;
 }
 
-/** Copy PRs opened in an Agent conversation onto its launching conversation. */
-export async function copyGitHubPullRequestTags(
-  sourceConversationId: string | undefined,
-  targetConversationId: string | undefined,
-  backend?: ConversationTagBackend,
-  signal?: AbortSignal,
-): Promise<void> {
-  if (
-    !sourceConversationId ||
-    !targetConversationId ||
-    sourceConversationId === "default" ||
-    targetConversationId === "default" ||
-    sourceConversationId === targetConversationId
-  ) {
-    return;
-  }
-
-  try {
-    const activeBackend = backend ?? getBackend();
-    const sourceConversation = await activeBackend.retrieveConversation(
-      sourceConversationId,
-      { signal },
-    );
-    const pullRequestTags = conversationTags(sourceConversation).filter((tag) =>
-      tag.startsWith(GITHUB_PR_TAG_PREFIX),
-    );
-    if (pullRequestTags.length === 0) {
-      return;
-    }
-    await queueConversationTagUpdate(
-      activeBackend,
-      targetConversationId,
-      pullRequestTags,
-      signal,
-    );
-  } catch (error) {
-    if (signal?.aborted) {
-      signal.throwIfAborted();
-    }
-    debugLog(
-      "github-pr-tracking",
-      `Failed to copy PR tags from ${sourceConversationId} to ${targetConversationId}`,
-      error,
-    );
-  }
-}
-
 export function createGitHubPullRequestOutputTracker(
   command: ShellSourceCommand,
   options?: {
     conversationId?: string;
+    attributionConversationIds?: string[];
     backend?: ConversationTagBackend;
   },
 ): GitHubPullRequestOutputTracker | undefined {
@@ -422,7 +377,18 @@ export function createGitHubPullRequestOutputTracker(
 
   const conversationId =
     options?.conversationId ?? getRuntimeContext()?.conversationId;
-  if (!conversationId || conversationId === "default") {
+  const attributionConversationIds =
+    options?.attributionConversationIds ??
+    getRuntimeContext()?.githubPullRequestConversationIds ??
+    process.env[GITHUB_PR_CONVERSATIONS_ENV]?.split(",") ??
+    [];
+  const targetConversationIds = [conversationId, ...attributionConversationIds]
+    .filter(
+      (id): id is string =>
+        typeof id === "string" && id.length > 0 && id !== "default",
+    )
+    .filter((id, index, ids) => ids.indexOf(id) === index);
+  if (targetConversationIds.length === 0) {
     return undefined;
   }
 
@@ -457,15 +423,18 @@ export function createGitHubPullRequestOutputTracker(
         return finishPromise;
       }
       try {
-        finishPromise = queueConversationTagUpdate(
-          options?.backend ?? getBackend(),
-          conversationId,
-          [...tags],
-        );
+        const backend = options?.backend ?? getBackend();
+        finishPromise = Promise.all(
+          targetConversationIds.map((targetConversationId) =>
+            queueConversationTagUpdate(backend, targetConversationId, [
+              ...tags,
+            ]),
+          ),
+        ).then(() => undefined);
       } catch (error) {
         debugLog(
           "github-pr-tracking",
-          `Failed to tag conversation ${conversationId}`,
+          `Failed to tag conversations ${targetConversationIds.join(", ")}`,
           error,
         );
         finishPromise = Promise.resolve();
