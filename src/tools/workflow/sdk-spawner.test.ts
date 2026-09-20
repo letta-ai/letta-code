@@ -52,6 +52,55 @@ function fakeClient(messages: SdkStreamMessage[]): SdkClient & {
   };
 }
 
+/**
+ * Mirror the SDK's `toolInputFromArguments()`: a fragment that is already an
+ * object (or parses as one) passes through, otherwise the raw fragment is
+ * wrapped as `{ raw }`. This is the partial `toolInput` the guard sees on every
+ * streamed `tool_call` message.
+ */
+function partialToolInput(fragment: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(fragment);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {}
+  return { raw: fragment };
+}
+
+/**
+ * Replay the real streamed shape: the SDK emits one `tool_call` message per
+ * argument fragment (see `transformStreamDelta`), each carrying a *partial*
+ * `toolInput` plus the raw fragment. Concatenating the raw fragments yields the
+ * complete argument JSON.
+ */
+function streamedToolCall(
+  id: string,
+  name: string,
+  argsJson: string,
+  fragmentSize = 12,
+): SdkStreamMessage[] {
+  const fragments: string[] = [];
+  for (let i = 0; i < argsJson.length; i += fragmentSize) {
+    fragments.push(argsJson.slice(i, i + fragmentSize));
+  }
+  if (fragments.length === 0) fragments.push(argsJson);
+  return fragments.map((fragment) => ({
+    type: "tool_call",
+    toolCallId: id,
+    toolName: name,
+    toolInput: partialToolInput(fragment),
+    rawArguments: fragment,
+  }));
+}
+
+function bashArgs(issue: number): string {
+  return JSON.stringify({
+    command: `gh issue view ${issue} --repo letta-ai/letta-code --json number,title,body`,
+    description: `View issue ${issue}`,
+  });
+}
+
 describe("parseJsonReply", () => {
   test("accepts bare JSON and a fenced block, rejects prose", () => {
     expect(parseJsonReply(' {"a":1}\n')).toEqual({ a: 1 });
@@ -259,5 +308,162 @@ describe("createSdkSpawner", () => {
     );
     expect(outcome.failed).toBe(true);
     expect(client.calls).toHaveLength(0);
+  });
+
+  test("does not stop distinct commands streamed as argument fragments", async () => {
+    // Regression: the SDK streams one `tool_call` message per argument delta,
+    // each carrying a PARTIAL `toolInput`. Reading that partial as the call's
+    // identity collapsed every distinct command onto the same key and tripped
+    // the identical-call guard on the third call.
+    const messages: SdkStreamMessage[] = [];
+    for (let i = 0; i < 4; i++) {
+      const id = `call_${i}`;
+      messages.push(...streamedToolCall(id, "Bash", bashArgs(4400 + i)));
+      messages.push({ type: "tool_result", toolCallId: id });
+    }
+    messages.push({ type: "result", success: true, result: "done" });
+
+    const outcome = await createSdkSpawner(fakeClient(messages), CONFIG)(
+      request(),
+      new AbortController().signal,
+    );
+    expect(outcome).toMatchObject({ value: "done", failed: false });
+  });
+
+  test("does not stop distinct calls that share an identical fragment tail", async () => {
+    // The last streamed fragment of every JSON tool call is `"}`, so a guard
+    // that keys on the last partial fragment sees an identical value for
+    // distinct commands. Accumulation must use the whole running arguments.
+    const messages: SdkStreamMessage[] = [];
+    for (let i = 0; i < 4; i++) {
+      const id = `call_${i}`;
+      const args = bashArgs(4400 + i);
+      const head = args.slice(0, args.length - 2);
+      const tail = args.slice(args.length - 2);
+      messages.push(
+        {
+          type: "tool_call",
+          toolCallId: id,
+          toolName: "Bash",
+          toolInput: partialToolInput(head),
+          rawArguments: head,
+        },
+        {
+          type: "tool_call",
+          toolCallId: id,
+          toolName: "Bash",
+          toolInput: partialToolInput(tail),
+          rawArguments: tail,
+        },
+        { type: "tool_result", toolCallId: id },
+      );
+    }
+    messages.push({ type: "result", success: true, result: "done" });
+
+    const outcome = await createSdkSpawner(fakeClient(messages), CONFIG)(
+      request(),
+      new AbortController().signal,
+    );
+    expect(outcome).toMatchObject({ value: "done", failed: false });
+  });
+
+  test("does not stop when a terminal empty-arguments delta follows each call", async () => {
+    // Some streams re-send a terminal `tool_call` message with no parsed
+    // arguments (`toolInputFromArguments("")` === `{}`). That trailing empty
+    // delta must not overwrite an already-complete call identity.
+    const messages: SdkStreamMessage[] = [];
+    for (let i = 0; i < 4; i++) {
+      const id = `call_${i}`;
+      messages.push(...streamedToolCall(id, "Bash", bashArgs(4400 + i)));
+      messages.push({
+        type: "tool_call",
+        toolCallId: id,
+        toolName: "Bash",
+        toolInput: {},
+      });
+      messages.push({ type: "tool_result", toolCallId: id });
+    }
+    messages.push({ type: "result", success: true, result: "done" });
+
+    const outcome = await createSdkSpawner(fakeClient(messages), CONFIG)(
+      request(),
+      new AbortController().signal,
+    );
+    expect(outcome).toMatchObject({ value: "done", failed: false });
+  });
+
+  test("still stops a subagent that repeats an identical streamed call", async () => {
+    const messages: SdkStreamMessage[] = [];
+    for (let i = 0; i < 3; i++) {
+      const id = `call_${i}`;
+      messages.push(...streamedToolCall(id, "Bash", bashArgs(4412)));
+      messages.push({ type: "tool_result", toolCallId: id });
+    }
+    messages.push({ type: "result", success: true, result: "late" });
+
+    const outcome = await createSdkSpawner(fakeClient(messages), CONFIG)(
+      request(),
+      new AbortController().signal,
+    );
+    expect(outcome.failed).toBe(true);
+    expect(outcome.error).toContain("identical Bash call 3 times");
+  });
+
+  test("still stops a subagent that repeats an argument-less call", async () => {
+    const messages: SdkStreamMessage[] = [];
+    for (let i = 0; i < 3; i++) {
+      const id = `call_${i}`;
+      messages.push({
+        type: "tool_call",
+        toolCallId: id,
+        toolName: "Glob",
+        toolInput: {},
+        rawArguments: "{}",
+      });
+      messages.push({ type: "tool_result", toolCallId: id });
+    }
+    messages.push({ type: "result", success: true, result: "late" });
+
+    const outcome = await createSdkSpawner(fakeClient(messages), CONFIG)(
+      request(),
+      new AbortController().signal,
+    );
+    expect(outcome.failed).toBe(true);
+    expect(outcome.error).toContain("identical Glob call 3 times");
+  });
+
+  test("judges duplicate results for one call once", async () => {
+    // A call can surface more than one result message (local execution plus the
+    // server's tool return). Those must not inflate the repeat counter.
+    const messages: SdkStreamMessage[] = [
+      ...streamedToolCall("call_0", "Bash", bashArgs(4412)),
+      { type: "tool_result", toolCallId: "call_0" },
+      { type: "tool_result", toolCallId: "call_0" },
+      { type: "result", success: true, result: "done" },
+    ];
+
+    const outcome = await createSdkSpawner(fakeClient(messages), CONFIG)(
+      request(),
+      new AbortController().signal,
+    );
+    expect(outcome).toMatchObject({ value: "done", failed: false });
+  });
+
+  test("counts streamed fragments as one call for the tool-call budget", async () => {
+    // Many argument fragments for a few unique ids must not trip the 60-call
+    // budget, which counts calls (unique toolCallIds), not messages.
+    const messages: SdkStreamMessage[] = [];
+    for (let i = 0; i < 30; i++) {
+      const id = `call_${i}`;
+      messages.push(...streamedToolCall(id, "Bash", bashArgs(4400 + i)));
+      messages.push({ type: "tool_result", toolCallId: id });
+    }
+    messages.push({ type: "result", success: true, result: "done" });
+
+    const outcome = await createSdkSpawner(fakeClient(messages), CONFIG)(
+      request(),
+      new AbortController().signal,
+    );
+    expect(outcome).toMatchObject({ value: "done", failed: false });
   });
 });

@@ -129,6 +129,12 @@ export interface SdkStreamMessage {
   toolCallId?: string;
   toolName?: string;
   toolInput?: Record<string, unknown>;
+  /**
+   * Raw, possibly-partial argument fragment from the wire. The SDK emits one
+   * `tool_call` message per argument delta; concatenating the fragments for a
+   * `toolCallId` yields the complete argument JSON.
+   */
+  rawArguments?: string;
 }
 
 export interface SdkQuery extends AsyncIterable<SdkStreamMessage> {
