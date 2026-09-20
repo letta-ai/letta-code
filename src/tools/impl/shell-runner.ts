@@ -381,16 +381,8 @@ export function startShellProcess(
 
   noteExpectedWorktreeForLauncher(launcher, options.cwd);
 
-  const attributionTimeoutSignal = AbortSignal.timeout(
-    GITHUB_PR_ATTRIBUTION_TIMEOUT_MS,
-  );
   const pullRequestTracker = createGitHubPullRequestOutputTracker(
     options.sourceCommand ?? launcher,
-    {
-      signal: options.signal
-        ? AbortSignal.any([options.signal, attributionTimeoutSignal])
-        : attributionTimeoutSignal,
-    },
   );
 
   const stdoutChunks: Buffer[] = [];
@@ -454,8 +446,12 @@ export function startShellProcess(
     emitDecodedOutput(outputDecoders.stderr.end(), "stderr");
   };
   const finishPullRequestTracking = async (): Promise<void> => {
+    const timeoutSignal = AbortSignal.timeout(GITHUB_PR_ATTRIBUTION_TIMEOUT_MS);
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, timeoutSignal])
+      : timeoutSignal;
     try {
-      await pullRequestTracker?.finish();
+      await pullRequestTracker?.finish(signal);
     } catch (error) {
       debugLog("github-pr-tracking", "PR attribution deadline expired", error);
     }

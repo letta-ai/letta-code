@@ -8,6 +8,7 @@ import {
 } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
 import {
+  GITHUB_PR_ATTRIBUTION_TIMEOUT_MS,
   spawnWithLauncher,
   startShellProcess,
 } from "@/tools/impl/shell-runner";
@@ -195,6 +196,38 @@ describe("shared shell process", () => {
 
     releaseUpdate();
     await expect(completionState).resolves.toBe("completed");
+  });
+
+  test("starts the attribution deadline only after a long-running shell exits", async () => {
+    let persisted = false;
+    __testSetBackend({
+      retrieveConversation: async () => ({ id: "conv-shell", tags: [] }),
+      updateConversation: async () => {
+        persisted = true;
+        return { id: "conv-shell" };
+      },
+    } as unknown as Backend);
+
+    const running = runWithRuntimeContext(
+      { agentId: "agent-shell", conversationId: "conv-shell" },
+      () =>
+        startShellProcess(
+          [
+            process.execPath,
+            "-e",
+            `setTimeout(() => process.stdout.write("https://github.com/letta-ai/letta-code/pull/3746\\n"), ${GITHUB_PR_ATTRIBUTION_TIMEOUT_MS + 100})`,
+          ],
+          {
+            cwd: process.cwd(),
+            env: process.env,
+            timeoutMs: GITHUB_PR_ATTRIBUTION_TIMEOUT_MS + 1_000,
+            sourceCommand: "gh pr create --fill",
+          },
+        ),
+    );
+
+    await expect(running.completion).resolves.toMatchObject({ exitCode: 0 });
+    expect(persisted).toBe(true);
   });
 
   test("bounds stalled PR attribution after shell completion", async () => {
