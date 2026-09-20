@@ -14,6 +14,7 @@ import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
  */
 
 const projectRoot = process.cwd();
+const CLI_TIMEOUT_MS = 30_000;
 
 async function runCli(
   args: string[],
@@ -22,7 +23,7 @@ async function runCli(
     expectExit?: number;
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
-  const { timeoutMs = 30000, expectExit } = options;
+  const { timeoutMs = CLI_TIMEOUT_MS, expectExit } = options;
   const homeDir = await mkdtemp(join(tmpdir(), "letta-startup-flow-home-"));
 
   try {
@@ -263,17 +264,22 @@ describe("Startup Flow - Smoke", () => {
     expect(result.stderr).not.toContain("Unknown option '-C'");
   });
 
-  test.each(["--import", "--from-af"])(
-    "%s rejects AgentFile paths and registry handles before startup",
-    async (flag) => {
-      for (const value of ["test.af", "@author/agent"]) {
-        const result = await runCli([flag, value, "-p", "Say OK"], {
-          expectExit: 1,
-        });
-        expect(result.stderr).toContain(`Unknown option '${flag}'`);
-        expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
-      }
+  test.each([
+    ["--import", "test.af"],
+    ["--import", "@author/agent"],
+    ["--from-af", "test.af"],
+    ["--from-af", "@author/agent"],
+  ])(
+    "%s %s rejects before startup",
+    async (flag, value) => {
+      const result = await runCli([flag, value, "-p", "Say OK"], {
+        expectExit: 1,
+      });
+      expect(result.stderr).toContain(`Unknown option '${flag}'`);
+      expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
     },
+    // Let the subprocess deadline fire before Bun's, with time for home cleanup.
+    CLI_TIMEOUT_MS + 5_000,
   );
 
   test("--max-turns and --pre-load-skills are accepted in headless mode", async () => {
