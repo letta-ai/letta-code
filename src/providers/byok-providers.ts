@@ -391,7 +391,11 @@ function byokProviderFromPiSpec(provider: string): ByokProvider | undefined {
 
 // Providers that support both OAuth and API-key authentication need distinct
 // local /connect entries for each method.
-const LOCAL_DUAL_AUTH_PROVIDER_IDS = new Set(["anthropic", "openrouter"]);
+const LOCAL_DUAL_AUTH_PROVIDER_IDS = new Set([
+  "anthropic",
+  "meta",
+  "openrouter",
+]);
 
 function localOAuthConfigId(providerId: string): string {
   if (providerId === "openai-codex") return "openai-codex-oauth";
