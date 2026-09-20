@@ -1,4 +1,16 @@
+import { isToolsetPreference } from "@/tools/toolset-catalog";
+import type { ClientToolsetConfig } from "@/types/protocol_v2";
 import type { RuntimeScope } from "@/types/runtime-scope";
+
+export function isClientToolsetConfig(
+  value: unknown,
+): value is ClientToolsetConfig {
+  if (!isObjectRecord(value)) return false;
+  return (
+    (value.base === undefined || isToolsetPreference(value.base)) &&
+    (value.include === undefined || isStringArray(value.include))
+  );
+}
 
 export function isStringArray(value: unknown): value is string[] {
   return (
