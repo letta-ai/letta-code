@@ -60,12 +60,17 @@ describe("probeInstalledSdkDirs", () => {
   });
 });
 
+// realpathSync.native: on Windows the plain form keeps 8.3 short names
+// (RUNNER~1) while the subprocess's process.cwd() reports the long name; on
+// macOS both resolve the /var -> /private/var symlink.
 describe("loadAgentSdk after a late install", () => {
   test("loads through the probe when the resolver already cached a miss", async () => {
     // A subprocess whose loader copy and cwd start without the SDK: the
     // resolver paths fail (and may be cached), then the package appears on
     // disk and the next load must still succeed via the direct probe.
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "sdk-late-install-")));
+    const root = realpathSync.native(
+      mkdtempSync(join(tmpdir(), "sdk-late-install-")),
+    );
     try {
       // An empty node_modules keeps Bun from auto-installing the package
       // from its cache, which would defeat the "not installed yet" setup.
@@ -117,7 +122,7 @@ describe("loadAgentSdk after a late install", () => {
   });
 
   test("names the installed path and says to restart when nothing loads", async () => {
-    const root = realpathSync(
+    const root = realpathSync.native(
       mkdtempSync(join(tmpdir(), "sdk-broken-install-")),
     );
     try {
