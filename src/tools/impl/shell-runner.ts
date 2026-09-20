@@ -455,20 +455,20 @@ export function startShellProcess(
       }
       emitDecodedOutput(outputDecoders[stream].write(buffer), stream);
     },
-    error(error) {
+    async error(error) {
       if (completed) return;
       completed = true;
       cleanup();
       flushOutputDecoders();
-      void pullRequestTracker?.finish();
+      await pullRequestTracker?.finish();
       rejectCompletion(buildSpawnError(error, executable, options.cwd));
     },
-    close(code) {
+    async close(code) {
       if (completed) return;
       completed = true;
       cleanup();
       flushOutputDecoders();
-      void pullRequestTracker?.finish();
+      await pullRequestTracker?.finish();
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
       if (timedOut) {
