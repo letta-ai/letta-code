@@ -139,6 +139,7 @@ test.each([
       settings,
       cwd: "/workspace",
       mode: "standard",
+      githubPullRequestConversationIds: ["conv-root", "conv-launcher"],
       onMessage,
     },
     {
@@ -152,6 +153,7 @@ test.each([
         expect(input).toMatchObject({
           computer: "conn-target",
           actingUserId: "user-parent",
+          githubPullRequestConversationIds: ["conv-root", "conv-launcher"],
           content,
         });
         wire.emit({

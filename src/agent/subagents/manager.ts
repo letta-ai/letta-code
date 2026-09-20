@@ -402,6 +402,8 @@ async function executeSubagent(
       parentAgentId,
       subagentType: type,
       parentConversationId,
+      githubPullRequestConversationIds:
+        getRuntimeContext()?.githubPullRequestConversationIds,
       launchProfile: effectiveLaunchProfile,
       inheritedPrimaryRoot,
       memoryScope,

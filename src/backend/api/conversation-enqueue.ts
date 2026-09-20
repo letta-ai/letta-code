@@ -23,6 +23,7 @@ export interface EnqueueConversationInput {
   content: MessageCreate["content"];
   computer?: string;
   actingUserId?: string;
+  githubPullRequestConversationIds?: string[];
 }
 
 /** Cloud owns delivery after this request returns 202. Never retry by executing locally. */
@@ -40,6 +41,12 @@ export async function enqueueConversationMessage(
       agent_id: input.agentId,
       client_message_id: input.clientMessageId,
       ...(input.computer !== undefined ? { computer: input.computer } : {}),
+      ...(input.githubPullRequestConversationIds
+        ? {
+            github_pull_request_conversation_ids:
+              input.githubPullRequestConversationIds,
+          }
+        : {}),
       messages: [
         {
           role: "user",

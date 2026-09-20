@@ -91,11 +91,16 @@ test.each([undefined, "My laptop", "cloud"])(
         clientMessageId: "cm-1",
         content: "hello",
         computer,
+        githubPullRequestConversationIds: ["conv-root", "conv-launcher"],
       },
       undefined,
       request,
     );
     expect(body?.computer).toBe(computer);
+    expect(body?.github_pull_request_conversation_ids).toEqual([
+      "conv-root",
+      "conv-launcher",
+    ]);
     expect(body?.messages).toEqual([
       { role: "user", content: "hello", client_message_id: "cm-1" },
     ]);
