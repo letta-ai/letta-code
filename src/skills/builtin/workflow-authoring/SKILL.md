@@ -76,7 +76,8 @@ Workflow subagents require the API backend.
   pipeline()/parallel() stages to avoid races on the global phase() state),
   `json`, `model`, `effort` (`'low'` for mechanical stages, higher for the
   hardest verify/judge stages), `allowedTools`, `systemPrompt` (extra system
-  prompt for this subagent), `timeoutMs` (default 10 minutes).
+  prompt for this subagent), `timeoutMs` (default 10 minutes), `maxToolCalls`
+  (positive safe integer; default 1000 unique tool calls for this subagent).
 - `pipeline(items, stage1, stage2, ...)` → run each item through all stages
   independently, NO barrier between stages. Item A can be in stage 3 while
   item B is still in stage 1. This is the DEFAULT for multi-stage work.

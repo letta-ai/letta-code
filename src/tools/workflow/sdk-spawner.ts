@@ -36,7 +36,7 @@ export const DEFAULT_ALLOWED_TOOLS = ["Read", "Grep", "Glob"];
  * guard, so the journal explains the null.
  */
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
-export const MAX_SUBAGENT_TOOL_CALLS = 60;
+export const DEFAULT_MAX_SUBAGENT_TOOL_CALLS = 1000;
 export const MAX_IDENTICAL_TOOL_CALLS = 3;
 
 const SUBAGENT_PREAMBLE = `You are a subagent inside a deterministic workflow. \
@@ -57,23 +57,134 @@ export function parseJsonReply(text: string): unknown {
  * Watches tool calls for the runaway patterns above; returns a stop reason.
  *
  * The SDK streams one `tool_call` message per argument delta, so a call is
- * counted once per toolCallId, and the identical-call check runs when the
- * call's result arrives (its input is complete by then).
+ * counted once per toolCallId. Each message carries only a *partial* `toolInput`
+ * (often `{}` or `{ raw: "<fragment>" }`), so the guard accumulates the raw
+ * argument fragments and judges the identical-call check on the assembled
+ * arguments when the call's result arrives. Reading the per-delta `toolInput`
+ * directly would treat an incomplete fragment as the call's identity and
+ * false-flag distinct calls.
  */
-function createToolCallGuard(): {
-  onCall(id: string, name: string, input: unknown): string | null;
+
+/** What the guard tracks for one streamed tool call. */
+interface TrackedToolCall {
+  name: string;
+  /** Most recent decoded `toolInput`; a last-resort identity fallback. */
+  lastInput: unknown;
+  /** Running concatenation of raw argument fragments, when any were seen. */
+  raw?: string;
+  /** Last argument value observed to be complete (a parsed object). */
+  complete?: unknown;
+}
+
+function asArgumentObject(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/** Parse a raw argument string into an object, or undefined if incomplete. */
+function parseArgumentObject(
+  text: string,
+): Record<string, unknown> | undefined {
+  if (!text.trim()) return undefined;
+  try {
+    return asArgumentObject(JSON.parse(text));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The argument fragment carried by a streamed `tool_call` message. Prefers the
+ * explicit `rawArguments`; SDKs that omit it wrap the fragment as
+ * `{ raw: "<fragment>" }` via their own argument decoder, which is unwrapped
+ * here. A fragment only counts when it carries content.
+ */
+function argumentFragment(
+  input: unknown,
+  rawArguments: string | undefined,
+): string | undefined {
+  if (typeof rawArguments === "string" && rawArguments.length > 0) {
+    return rawArguments;
+  }
+  const wrapped = asArgumentObject(input);
+  if (wrapped && Object.keys(wrapped).length === 1) {
+    const raw = wrapped.raw;
+    if (typeof raw === "string" && raw.length > 0) return raw;
+  }
+  return undefined;
+}
+
+function stringifyArguments(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * Fold one streamed argument fragment into the call's accumulated state. A
+ * fragment that already parses as complete JSON replaces earlier partial state;
+ * otherwise fragments concatenate. Incomplete fragments never overwrite a call
+ * that already has complete arguments, so a trailing empty delta cannot erase
+ * the real identity.
+ */
+function recordArgumentFragment(
+  call: TrackedToolCall,
+  input: unknown,
+  rawArguments: string | undefined,
+): void {
+  const fragment = argumentFragment(input, rawArguments);
+  if (fragment !== undefined) {
+    const parsed = parseArgumentObject(fragment);
+    if (parsed) {
+      call.raw = fragment;
+      call.complete = parsed;
+      return;
+    }
+    if (call.complete === undefined) {
+      call.raw = call.raw === undefined ? fragment : call.raw + fragment;
+      call.complete = parseArgumentObject(call.raw);
+    }
+    return;
+  }
+  // No raw fragment on the wire: a fully decoded, non-empty object input is
+  // authoritative (older SDKs and direct callers supply whole arguments).
+  if (call.complete === undefined && call.raw === undefined) {
+    const decoded = asArgumentObject(input);
+    if (decoded && Object.keys(decoded).length > 0) {
+      call.complete = decoded;
+    }
+  }
+}
+
+function createToolCallGuard(maxToolCalls: number): {
+  onCall(
+    id: string,
+    name: string,
+    input: unknown,
+    rawArguments?: string,
+  ): string | null;
   onResult(id: string): string | null;
 } {
-  const calls = new Map<string, { name: string; input: unknown }>();
+  const calls = new Map<string, TrackedToolCall>();
   const judged = new Set<string>();
   let lastKey = "";
   let repeats = 0;
   return {
-    onCall(id, name, input) {
-      const first = !calls.has(id);
-      calls.set(id, { name, input });
-      if (first && calls.size > MAX_SUBAGENT_TOOL_CALLS) {
-        return `subagent exceeded ${MAX_SUBAGENT_TOOL_CALLS} tool calls`;
+    onCall(id, name, input, rawArguments) {
+      let call = calls.get(id);
+      const first = call === undefined;
+      if (!call) {
+        call = { name: name || "?", lastInput: input };
+        calls.set(id, call);
+      }
+      if (name && name !== "?") call.name = name;
+      call.lastInput = input;
+      recordArgumentFragment(call, input, rawArguments);
+      if (first && calls.size > maxToolCalls) {
+        return `subagent exceeded ${maxToolCalls} tool calls`;
       }
       return null;
     },
@@ -83,12 +194,11 @@ function createToolCallGuard(): {
       // plus the server's tool return); judge each call once.
       if (!call || judged.has(id)) return null;
       judged.add(id);
-      let key: string;
-      try {
-        key = `${call.name}:${JSON.stringify(call.input)}`;
-      } catch {
-        key = `${call.name}:${String(call.input)}`;
-      }
+      const identity =
+        call.complete !== undefined
+          ? stringifyArguments(call.complete)
+          : (call.raw ?? stringifyArguments(call.lastInput));
+      const key = `${call.name}:${identity}`;
       repeats = key === lastKey ? repeats + 1 : 1;
       lastKey = key;
       if (repeats >= MAX_IDENTICAL_TOOL_CALLS) {
@@ -132,12 +242,13 @@ async function drainTurn(
   query: SdkQuery,
   usage: RunningUsage,
   stop: (reason: string) => void,
+  maxToolCalls: number,
 ): Promise<DrainedTurn> {
   let assistantText = "";
   let resultText: string | undefined;
   let success = false;
   let error: string | undefined;
-  const guard = createToolCallGuard();
+  const guard = createToolCallGuard(maxToolCalls);
   for await (const message of query) {
     if (message.type === "assistant") assistantText += message.content ?? "";
     if (message.type === "stream_event") {
@@ -151,6 +262,7 @@ async function drainTurn(
         message.toolCallId ?? "",
         message.toolName ?? "?",
         message.toolInput,
+        message.rawArguments,
       );
       if (reason) stop(reason);
     }
@@ -263,7 +375,15 @@ export function createSdkSpawner(
     );
 
     try {
-      const turn = await Promise.race([drainTurn(query, usage, stop), stopped]);
+      const turn = await Promise.race([
+        drainTurn(
+          query,
+          usage,
+          stop,
+          options.maxToolCalls ?? DEFAULT_MAX_SUBAGENT_TOOL_CALLS,
+        ),
+        stopped,
+      ]);
       const stats = {
         durationMs: Date.now() - startedAt,
         ...(turn.totalTokens !== undefined

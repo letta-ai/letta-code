@@ -99,6 +99,12 @@ export async function executeWorkflow(
       throw new Error("agent() options must be an object.");
     }
     const opts: AgentCallOptions = { ...(callOptions as AgentCallOptions) };
+    if (
+      opts.maxToolCalls !== undefined &&
+      (!Number.isSafeInteger(opts.maxToolCalls) || opts.maxToolCalls <= 0)
+    ) {
+      throw new Error("agent() maxToolCalls must be a positive safe integer.");
+    }
     const callIndex = callCounter++;
     const label = opts.label ?? defaultLabel(prompt);
     const phase = opts.phase ?? currentPhase;
