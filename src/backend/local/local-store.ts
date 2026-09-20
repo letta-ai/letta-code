@@ -51,6 +51,7 @@ import {
   type LocalToolCall,
   type LocalToolResultMessage,
   type LocalUserMessage,
+  localToolArgumentsFromUnknown,
 } from "./local-message";
 import {
   clipOversizedLocalToolResults,
@@ -1918,9 +1919,7 @@ export class LocalStore {
       type: "toolCall",
       id: toolCall.toolCallId,
       name: toolCall.toolName,
-      arguments: isRecord(toolCall.input)
-        ? toolCall.input
-        : { input: toolCall.input },
+      arguments: localToolArgumentsFromUnknown(toolCall.input),
     };
     const existing = this.findToolCall(
       conversationId,
