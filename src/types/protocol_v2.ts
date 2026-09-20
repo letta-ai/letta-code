@@ -30,7 +30,7 @@ import type {
   MessageListParams,
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type { ChatGPTOAuthConfig } from "@/types/chatgpt-oauth";
+import type { ConnectProviderOAuthConfig } from "@/types/provider-oauth-config";
 import type {
   AppServerInfoCommand,
   AppServerInfoResponseMessage,
@@ -1277,7 +1277,7 @@ export interface ConnectProviderCommand {
   auth_method_id?: string;
   fields: Record<string, string>;
   provider_name?: string;
-  oauth_config?: ChatGPTOAuthConfig;
+  oauth_config?: ConnectProviderOAuthConfig;
 }
 
 export interface DisconnectProviderCommand {
