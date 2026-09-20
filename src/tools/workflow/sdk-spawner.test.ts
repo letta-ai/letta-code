@@ -382,6 +382,31 @@ describe("createSdkSpawner", () => {
     expect(outcome).toMatchObject({ value: "done", failed: false });
   });
 
+  test("does not treat a valid interior JSON delta as the complete arguments", async () => {
+    const messages: SdkStreamMessage[] = [];
+    for (let i = 0; i < 4; i++) {
+      const id = `call_${i}`;
+      const fragments = [`{\"command\":\"run-${i}\",\"options\":`, "{}", "}"];
+      for (const fragment of fragments) {
+        messages.push({
+          type: "tool_call",
+          toolCallId: id,
+          toolName: "Bash",
+          toolInput: partialToolInput(fragment),
+          rawArguments: fragment,
+        });
+      }
+      messages.push({ type: "tool_result", toolCallId: id });
+    }
+    messages.push({ type: "result", success: true, result: "done" });
+
+    const outcome = await createSdkSpawner(fakeClient(messages), CONFIG)(
+      request(),
+      new AbortController().signal,
+    );
+    expect(outcome).toMatchObject({ value: "done", failed: false });
+  });
+
   test("does not stop distinct calls that share an identical fragment tail", async () => {
     // The last streamed fragment of every JSON tool call is `"}`, so a guard
     // that keys on the last partial fragment sees an identical value for
