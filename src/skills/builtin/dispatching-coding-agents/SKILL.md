@@ -184,7 +184,7 @@ Both CLIs persist full session data (tool calls, reasoning, files read) to disk.
 ### Session storage paths
 
 **Claude Code:** `~/.claude/projects/<encoded-path>/<session-id>.jsonl`
-- `<encoded-path>` = working directory with `/` replaced by `-` (e.g. `/Users/foo/repos/bar` becomes `-Users-foo-repos-bar`)
+- `<encoded-path>` = working directory with every non-alphanumeric character replaced by `-` (e.g. `/Users/foo/repos/bar` becomes `-Users-foo-repos-bar`, `/Users/foo/my_repo` becomes `-Users-foo-my-repo`)
 - Use `--output-format json` to get the `session_id` in the response
 
 **Codex:** `~/.codex/sessions/<year>/<month>/<day>/rollout-*-<session-id>.jsonl`
