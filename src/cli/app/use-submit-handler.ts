@@ -14,6 +14,7 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
+import { resolveActingUserId } from "@/agent/acting-user";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import {
   buildFreshDenialApprovals,
@@ -3721,6 +3722,7 @@ ${SYSTEM_REMINDER_CLOSE}
           launchMemoryConversation({
             agentId,
             sourceConversationId: conversationIdRef.current,
+            actingUserId: resolveActingUserId(),
             context,
           });
         },

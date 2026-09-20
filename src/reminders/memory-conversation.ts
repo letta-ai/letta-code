@@ -7,10 +7,23 @@ import { debugWarn } from "@/utils/debug";
 
 const MEMORY_CONVERSATION_TITLE = "Memory maintenance";
 const activeMemoryConversations = new Set<string>();
+const pendingMemoryConversations = new Map<
+  string,
+  PendingMemoryConversation[]
+>();
+const scheduledRetries = new Set<string>();
+const retryAttempts = new Map<string, number>();
+const MAX_RETRY_DELAY_MS = 30_000;
+
+interface PendingMemoryConversation {
+  params: LaunchMemoryConversationParams;
+  dependencies: LaunchMemoryConversationDependencies;
+}
 
 export interface LaunchMemoryConversationParams {
   agentId: string;
   sourceConversationId: string;
+  actingUserId?: string;
   context: string;
 }
 
@@ -21,16 +34,18 @@ export interface LaunchMemoryConversationDependencies {
     conversationId: string,
     body: { summary: string },
   ) => Promise<unknown>;
+  scheduleRetry?: (callback: () => void, delayMs: number) => void;
 }
 
 export interface LaunchMemoryConversationResult {
   launched: boolean;
-  reason?: "already_active" | "launch_failed";
+  reason?: "queued" | "launch_failed";
 }
 
 export function createMemoryConversationLauncher(params: {
   agentId: string;
   sourceConversationId: string;
+  actingUserId?: string;
 }): (context: string) => void {
   return (context) => {
     launchMemoryConversation({ ...params, context });
@@ -54,9 +69,22 @@ export function launchMemoryConversation(
   params: LaunchMemoryConversationParams,
   dependencies: LaunchMemoryConversationDependencies = {},
 ): LaunchMemoryConversationResult {
-  if (activeMemoryConversations.has(params.agentId)) {
-    return { launched: false, reason: "already_active" };
+  const queue = pendingMemoryConversations.get(params.agentId) ?? [];
+  queue.push({ params, dependencies });
+  pendingMemoryConversations.set(params.agentId, queue);
+  return drainMemoryConversationQueue(params.agentId);
+}
+
+function drainMemoryConversationQueue(
+  agentId: string,
+): LaunchMemoryConversationResult {
+  if (activeMemoryConversations.has(agentId)) {
+    return { launched: false, reason: "queued" };
   }
+
+  const pending = pendingMemoryConversations.get(agentId)?.[0];
+  if (!pending) return { launched: false, reason: "queued" };
+  const { params, dependencies } = pending;
 
   const spawnTask = dependencies.spawnTask ?? spawnBackgroundSubagentTask;
   const waitForConversationId =
@@ -67,7 +95,6 @@ export function launchMemoryConversation(
     ((conversationId, body) =>
       getBackend().updateConversation(conversationId, body));
 
-  activeMemoryConversations.add(params.agentId);
   let taskDone = false;
   try {
     const { subagentId } = spawnTask({
@@ -80,10 +107,13 @@ export function launchMemoryConversation(
         agentId: params.agentId,
         conversationId: params.sourceConversationId,
       },
+      actingUserId: params.actingUserId,
       silentCompletion: true,
       emitCompletionNotification: false,
       onComplete: async (result) => {
         taskDone = true;
+        activeMemoryConversations.delete(params.agentId);
+        drainMemoryConversationQueue(params.agentId);
         try {
           if (result.conversationId) {
             await updateConversation(result.conversationId, {
@@ -99,11 +129,15 @@ export function launchMemoryConversation(
               error instanceof Error ? error.message : String(error)
             }`,
           );
-        } finally {
-          activeMemoryConversations.delete(params.agentId);
         }
       },
     });
+    activeMemoryConversations.add(params.agentId);
+    retryAttempts.delete(params.agentId);
+    pendingMemoryConversations.get(params.agentId)?.shift();
+    if (pendingMemoryConversations.get(params.agentId)?.length === 0) {
+      pendingMemoryConversations.delete(params.agentId);
+    }
 
     void waitForConversationId(subagentId, 10_000)
       .then(async (conversationId) => {
@@ -123,13 +157,34 @@ export function launchMemoryConversation(
 
     return { launched: true };
   } catch (error) {
-    activeMemoryConversations.delete(params.agentId);
     debugWarn(
       "memory",
       `Failed to launch memory maintenance conversation: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
+    scheduleMemoryConversationRetry(params.agentId, dependencies);
     return { launched: false, reason: "launch_failed" };
   }
+}
+
+function scheduleMemoryConversationRetry(
+  agentId: string,
+  dependencies: LaunchMemoryConversationDependencies,
+): void {
+  if (scheduledRetries.has(agentId)) return;
+  scheduledRetries.add(agentId);
+  const attempt = (retryAttempts.get(agentId) ?? 0) + 1;
+  retryAttempts.set(agentId, attempt);
+  const delayMs = Math.min(1_000 * 2 ** (attempt - 1), MAX_RETRY_DELAY_MS);
+  const retry = () => {
+    scheduledRetries.delete(agentId);
+    drainMemoryConversationQueue(agentId);
+  };
+  if (dependencies.scheduleRetry) {
+    dependencies.scheduleRetry(retry, delayMs);
+    return;
+  }
+  const timer = setTimeout(retry, delayMs);
+  timer.unref();
 }

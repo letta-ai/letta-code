@@ -14,10 +14,17 @@ export async function runListenerTurnCleanup(params: {
   agentId?: string | null;
   normalizedAgentId: string | null;
   conversationId: string;
+  actingUserId?: string;
   finalized: boolean;
 }): Promise<void> {
-  const { runtime, agentId, normalizedAgentId, conversationId, finalized } =
-    params;
+  const {
+    runtime,
+    agentId,
+    normalizedAgentId,
+    conversationId,
+    actingUserId,
+    finalized,
+  } = params;
 
   if (runtime.transientChannelRuntimeTools) {
     if (agentId) {
@@ -51,6 +58,7 @@ export async function runListenerTurnCleanup(params: {
         launchMemoryConversation({
           agentId,
           sourceConversationId: conversationId,
+          actingUserId,
           context,
         });
       },

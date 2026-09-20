@@ -982,13 +982,13 @@ async function handleIncomingMessageInner(
     if (runtime.activeConnectionId === connectionId) {
       runtime.activeConnectionId = null;
     }
-
     try {
       await runListenerTurnCleanup({
         runtime,
         agentId,
         normalizedAgentId: agentId,
         conversationId,
+        actingUserId: msg.actingUserId,
         finalized: finalizedByThisInvocation,
       });
     } finally {

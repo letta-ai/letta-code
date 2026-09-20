@@ -4775,6 +4775,7 @@ async function runBidirectionalMode(
           launchConversation: createMemoryConversationLauncher({
             agentId: agent.id,
             sourceConversationId: conversationId,
+            actingUserId: resolveActingUserId(),
           }),
           emitWarning: (text) => {
             debugWarn("memfs-git", text);

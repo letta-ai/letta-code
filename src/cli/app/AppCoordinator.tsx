@@ -15,6 +15,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { resolveActingUserId } from "@/agent/acting-user";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import { prefetchAvailableModelHandles } from "@/agent/available-models";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
@@ -3560,6 +3561,7 @@ export function App({
         launchMemoryConversation({
           agentId,
           sourceConversationId: conversationIdRef.current ?? "default",
+          actingUserId: resolveActingUserId(),
           context: `MEMORY SYNC FAILED: Startup memory synchronization failed.
 
 Memory directory: ${getScopedMemoryFilesystemRoot(agentId)}

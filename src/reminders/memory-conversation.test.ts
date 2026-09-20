@@ -22,6 +22,7 @@ describe("memory maintenance conversations", () => {
       {
         agentId: "agent-memory-route",
         sourceConversationId: "conv-active",
+        actingUserId: "user-source",
         context:
           "<system-reminder>MEMORY GIT CONFLICT: rebase in progress</system-reminder>",
       },
@@ -43,6 +44,7 @@ describe("memory maintenance conversations", () => {
         agentId: "agent-memory-route",
         conversationId: "conv-active",
       },
+      actingUserId: "user-source",
       silentCompletion: true,
       emitCompletionNotification: false,
     });
@@ -64,42 +66,85 @@ describe("memory maintenance conversations", () => {
     });
   });
 
-  test("deduplicates maintenance while the agent already has one running", async () => {
-    let onComplete:
-      | Parameters<typeof spawnBackgroundSubagentTask>[0]["onComplete"]
-      | undefined;
+  test("queues maintenance while the agent already has one running", async () => {
+    const launches: Parameters<typeof spawnBackgroundSubagentTask>[0][] = [];
     const spawnTask: typeof spawnBackgroundSubagentTask = (args) => {
-      onComplete = args.onComplete;
+      launches.push(args);
       return {
-        taskId: "task-memory",
-        outputFile: "/tmp/task-memory.log",
-        subagentId: "subagent-memory",
+        taskId: `task-memory-${launches.length}`,
+        outputFile: `/tmp/task-memory-${launches.length}.log`,
+        subagentId: `subagent-memory-${launches.length}`,
       };
     };
-    const params = {
+    const first = {
       agentId: "agent-memory-dedupe",
       sourceConversationId: "conv-active",
-      context: "memory needs attention",
+      context: "first memory issue",
     };
+    const second = { ...first, context: "second memory issue" };
     const dependencies = {
       spawnTask,
       waitForConversationId: async () => null,
       updateConversation: async () => undefined,
     };
 
-    expect(launchMemoryConversation(params, dependencies)).toEqual({
+    expect(launchMemoryConversation(first, dependencies)).toEqual({
       launched: true,
     });
-    expect(launchMemoryConversation(params, dependencies)).toEqual({
+    expect(launchMemoryConversation(second, dependencies)).toEqual({
       launched: false,
-      reason: "already_active",
+      reason: "queued",
     });
+    expect(launches).toHaveLength(1);
 
-    await onComplete?.({ success: false });
-    expect(launchMemoryConversation(params, dependencies)).toEqual({
-      launched: true,
-    });
-    await onComplete?.({ success: false });
+    await launches[0]?.onComplete?.({ success: false });
+    expect(launches).toHaveLength(2);
+    expect(launches[1]?.prompt).toContain("second memory issue");
+    await launches[1]?.onComplete?.({ success: false });
+  });
+
+  test("retries a maintenance launch without dropping its context", async () => {
+    let attempts = 0;
+    let retry: (() => void) | undefined;
+    let retryDelayMs: number | undefined;
+    let completed:
+      | Parameters<typeof spawnBackgroundSubagentTask>[0]["onComplete"]
+      | undefined;
+    const spawnTask: typeof spawnBackgroundSubagentTask = (args) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("task pool full");
+      completed = args.onComplete;
+      return {
+        taskId: "task-memory-retry",
+        outputFile: "/tmp/task-memory-retry.log",
+        subagentId: "subagent-memory-retry",
+      };
+    };
+
+    expect(
+      launchMemoryConversation(
+        {
+          agentId: "agent-memory-retry",
+          sourceConversationId: "conv-active",
+          context: "retry this memory issue",
+        },
+        {
+          spawnTask,
+          waitForConversationId: async () => null,
+          updateConversation: async () => undefined,
+          scheduleRetry: (callback, delayMs) => {
+            retry = callback;
+            retryDelayMs = delayMs;
+          },
+        },
+      ),
+    ).toEqual({ launched: false, reason: "launch_failed" });
+    expect(attempts).toBe(1);
+    expect(retryDelayMs).toBe(1_000);
+
+    retry?.();
+    expect(attempts).toBe(2);
+    await completed?.({ success: false });
   });
 
   test("tells the maintenance turn not to return context to the source", () => {
